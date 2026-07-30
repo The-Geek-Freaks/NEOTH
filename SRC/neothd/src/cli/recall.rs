@@ -392,24 +392,35 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         let config = crate::config::FreedomConfig::load_from_default_path()
             .context("load freedom.yaml for entity extraction")?;
         let neoth_home = crate::config::FreedomConfig::default_neoth_home();
+        // Validate the local sink before opening the mandatory provider-call
+        // audit lifecycle. No fallible setup may return after the one-shot
+        // writer is owned but before `finish`.
+        let db_path = args.db.clone().unwrap_or_else(store::default_path);
+        let conn = store::open(&db_path).context("open views.db")?;
         let provider = crate::providers::from_config_at(&config, &neoth_home)
             .await
             .context("build provider for entity extraction")?;
         let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
-        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
-            provider,
+        let provider_audit =
             crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
                 config.autonomy_policy(),
                 config.tokens.max_per_request,
-            )?,
+            )
+            .await?;
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            provider,
+            provider_audit.authorizer(),
             default_model,
             "recall.entity_extract",
         );
-        let db_path = args.db.clone().unwrap_or_else(store::default_path);
-        let conn = store::open(&db_path).context("open views.db")?;
         let now_unix = crate::time::now_unix_i64();
-        let (ents, rels) =
-            crate::memory::entities::extract_and_persist(&conn, &text, &provider, now_unix).await?;
+        let extracted =
+            crate::memory::entities::extract_and_persist(&conn, &text, &provider, now_unix).await;
+        provider_audit
+            .finish(provider)
+            .await
+            .context("finalize entity-extraction provider-call audit WAL")?;
+        let (ents, rels) = extracted?;
         match args.output {
             crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
                 println!(
@@ -2129,18 +2140,30 @@ struct ReinforceFrame {
 /// Best-effort throughout — failures log warn but never abort the
 /// recall reply.
 async fn emit_reinforce_audit_frames(events: &[(i64, ReinforceFrame)]) {
-    let segment_path = FreedomConfig::default_wal_dir().join("000001.wal");
-    let (writer, _join) = match crate::wal::writer::spawn(segment_path) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "M-02: WAL writer spawn failed for IMPORTANCE_REINFORCED audit \
-                 frames — recall reply continues, audit chain has a hole"
-            );
-            return;
-        }
-    };
+    let home = FreedomConfig::default_neoth_home();
+    let wal_dir = home.join("wal");
+    if let Err(e) = std::fs::create_dir_all(&wal_dir) {
+        tracing::warn!(
+            error = %e,
+            "M-02: WAL directory creation failed for IMPORTANCE_REINFORCED audit \
+             frames — recall reply continues, audit chain has a hole"
+        );
+        return;
+    }
+    let segment_path =
+        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "recall-reinforce");
+    let (writer, completion) =
+        match crate::wal::writer::spawn_for_home_with_completion(segment_path, home) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "M-02: WAL writer spawn failed for IMPORTANCE_REINFORCED audit \
+                     frames — recall reply continues, audit chain has a hole"
+                );
+                return;
+            }
+        };
     let now_unix = crate::time::now_unix_secs();
     for (event_id, frame) in events {
         let payload = serde_json::to_vec(&serde_json::json!({
@@ -2164,6 +2187,14 @@ async fn emit_reinforce_audit_frames(events: &[(i64, ReinforceFrame)]) {
                 "M-02: IMPORTANCE_REINFORCED frame append failed (audit chain has a row gap)"
             );
         }
+    }
+    drop(writer);
+    if let Err(e) = completion.wait().await {
+        tracing::warn!(
+            error = %e,
+            "M-02: IMPORTANCE_REINFORCED audit WAL finalization failed \
+             (recall reply continues, audit chain may have a tail gap)"
+        );
     }
 }
 

@@ -1,6 +1,6 @@
 # CLI Codemap — Ingest + Models
 
-**Last Updated:** 2026-05-15
+**Last Updated:** 2026-07-29
 **Entry Points:** `SRC/neothd/src/cli/ingest.rs`, `SRC/neothd/src/cli/models.rs`
 
 ## cli/ingest.rs
@@ -13,9 +13,10 @@ embedding → emit WAL audit events → print report.
 ```
 neoth ingest <PATH>
   [--db PATH]           override views.db path
-  [--wal-segment PATH]  override WAL segment path
+  [--wal-segment PATH]  canonical segment directly under the instance wal/
   [--no-persist]        skip embedding persistence (inspection / tests)
   [--no-audit]          skip WAL audit events (batch reprocessing)
+  [--no-index]          skip ctx/recall chunk indexing
   [--output table|json] output format (inherited from global --output)
 ```
 
@@ -39,20 +40,35 @@ detect_kind(path)
 if !no_persist && metadata.embedding present:
   → embeddings::upsert(conn, source_kind, source_ref, model, embedding)
 
+if audio/video:
+  → dedicated home-bound STT audit writer
+  → local STT may continue when finalization fails
+  → cloud STT requires authorization + durable intent/result and fails closed
+    when its required audit writer/finalization is unavailable
+
+if !no_audit && live daemon:
+  → same-user audit RPC forwards 0x2C/0x2D to the daemon-owned writer
+  → an unreachable listener is visible in debug logs; ingest still completes
+
 if !no_audit && no live daemon:
-  → WAL writer (one-shot spawn)
+  → collision-resistant home-bound one-shot writer under <home>/wal/
   → append 0x2C INGEST_EXTRACTED
   → append 0x2D EMBED_PERSISTED (only if embedding landed)
+  → wait for writer completion before reporting success
 
 print IngestReport { path, kind, text_bytes, preview, embed_status, embed_persisted, metadata }
 ```
 
 ### WAL concurrency contract
 
-`neoth ingest` emits audit events only when no `neoth serve` daemon owns the WAL segment
-(checked via pidfile). If the daemon is running, audit emission is skipped with a WARN log;
-the extraction report still prints. This avoids interleaved frames between two concurrent
-O_APPEND writers.
+`neoth ingest` never opens the daemon's active transport. When `neoth serve`
+owns the WAL, ingest forwards the allowlisted `0x2C`/`0x2D` payloads through the
+same-user audit RPC. If that listener is unavailable the condition is logged
+and the extraction report still prints. Without a live daemon, ingest creates a
+collision-resistant, canonical segment directly under the selected instance
+home's `wal/`, appends through one home-bound writer, and waits for finalization.
+The explicit `--wal-segment` override must satisfy that same canonical
+home/`wal/` path contract.
 
 ### Source ref
 

@@ -149,6 +149,20 @@ already-gated release workflow itself.
 already-open `GOLD-R4-13` rollup and therefore are not added a second time to
 the WS-R4 top-level total.
 
+**Current count semantics (machine-recomputed 2026-07-29):** the dashboard
+tracks broad/workstream rollups, whose current OPEN column sums to **164**
+(`1 + 6 + 13 + 116 + 28`). The release workflow uses a different and stricter
+contract: `packaging/roadmap_release_gate.py` counts every Markdown task outside
+fenced code, including mandatory child contracts. Its current whole-file result
+from `python packaging/roadmap_release_gate.py --summary-json` is **1,208 total
+/ 988 done / 220 raw open / 0 partial**. A release tag therefore has **219
+pre-tag blockers**, because only the single
+`GOLD-RELEASE-ARTIFACTS` task may remain open while that workflow creates its
+evidence. The values 164, 220 and 219 answer different questions and must not be
+substituted for one another in release-readiness claims.
+
+<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1208 complete=988 open=220 partial=0 raw_blockers=220 release_tag_blockers=219 release_generated_items=1 -->
+
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
 
 **SUPERSEDED adoption verdict (2026-07-15):** the 2026-07-11 sentence above
@@ -1139,7 +1153,8 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   Until that is implemented, independently reviewed and exact-head green, this
   checkpoint is progress evidence only, not a release-completion claim.
 
-  **Installed-authority forensic correction 2026-07-28 (R3-17 remains OPEN):**
+  **HISTORICAL — superseded installed-authority forensic correction 2026-07-28
+  (R3-17 remains OPEN):**
   the 2026-07-22 local-checkpoint prose above does not describe the current
   source tree and must not be used as implementation evidence. A current-HEAD
   source/history audit found no authenticated installed-Skill authority record,
@@ -1157,6 +1172,9 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   receipt. Migration, rollback and crash recovery must fail closed. The old
   paragraph is retained as historical worktree prose only; counts and the open
   R3-17 box do not change.
+  This section records the 2026-07-28 audited snapshot and is superseded as
+  current implementation evidence by the 2026-07-29 source-truth checkpoint
+  below.
 
   **Mutation-WAL integrity checkpoint 2026-07-28 (R3-17 remains OPEN; counts
   unchanged):** the current source now treats every cooperating NEOTH Skill
@@ -1190,10 +1208,10 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   exact PID/nonce snapshot remains unchanged between lock proofs, so unlocked
   or predecessor-owned stale tuples are not daemon authority.
 
-  This is mutation-integrity progress, **not installed-Skill activation
-  authority**. The versioned authority record, independent current anchor and
-  exact activation receipt consumed by loader/router/updater/extractor are
-  still absent and remain the blocking R3-17 slice described above.
+  At this 2026-07-28 checkpoint this was mutation-integrity progress, not
+  installed-Skill activation authority. The record/anchor/receipt absence
+  claim is superseded by the 2026-07-29 checkpoint below; use its residual
+  list as current truth.
 
   **Same-user audit-RPC transport checkpoint 2026-07-28 (R3-17 remains OPEN):**
   the old loopback-TCP endpoint and port sidecar are replaced by a typed,
@@ -1227,12 +1245,10 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   grants no MCP tools; `Some(non-empty)` allows only the listed tools. This
   closes the old "empty is behaviorally unrestricted" ambiguity for routed
   Skill MCP dispatch while preserving global autonomy, permission, cost, WAL,
-  server and agent deny/allow gates. It does **not** close R3-17 because the
-  authenticated authority record/current anchor/activation receipt, GUI/Buddy
-  parity and authority invalidation, revocation and migration remain
-  release-blocking. Install/replace/remove intent/result correlation and
-  package rollback are now completed mutation-lifecycle substrate and must no
-  longer be listed as missing authority work.
+  server and agent deny/allow gates. This narrow allowlist slice did not close
+  R3-17 at that checkpoint. Its record/current-anchor/receipt absence statement
+  is superseded below; the explicit allowlist semantics and completed
+  mutation-lifecycle substrate remain valid historical evidence.
 
   **R3-18 recurring-egress correction 2026-07-22, containment completed
   2026-07-29:** forensic leaf tracing found
@@ -1257,12 +1273,154 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   recurring audit pair. The old standalone updater spawn symbols were never
   published under a signed tag or crates.io release and are deliberately
   internalized before the v1 API freeze documented in README.
-  Required closure is now the leaf half: add one exact remote-update
-  authorizer/audit contract, consume its generation-bound permit at every
-  HTTP/Git/npm/install leaf, emit mandatory pre-effect intent plus terminal
-  result, disable inherited proxy/credential/config state and unsafe redirects,
-  bound/sanitize transport diagnostics, own child cancellation/reaping, and
-  expose the same typed state in CLI/GUI/Cron. R3-18 remains OPEN.
+  At this checkpoint, required closure was the leaf half; the current boundary
+  and residuals are superseded by the 2026-07-29 source-truth checkpoint below.
+
+  **SUPERSEDING R3-17/R3-18 source-truth checkpoint 2026-07-29 (current dirty
+  tree; both parent boxes remain OPEN; no checkbox/count change):** this
+  checkpoint supersedes the contradictory absence claims at the
+  `Installed-authority forensic correction`, mutation/RPC follow-ups and the
+  older R3-18 “leaf half” description above. It is source evidence only, not
+  exact-head build, test, Security or CodeQL evidence.
+  The audit's green Preflight and CodeQL evidence belongs to base HEAD
+  `1e4bc196`, not this dirty tree, and cannot be inherited by the eventual
+  candidate SHA.
+
+  R3-17 now has a real versioned authenticated installed-Skill authority
+  record, an independent generation-bound Current Anchor plus authority WAL
+  head, and a non-freely-constructible
+  `ValidatedInstalledSkillAuthority`. The runtime loader admits an installed
+  candidate only when that exact package generation, install incarnation,
+  terminal install receipt, provenance, manifest claims, delegation, model and
+  tool scope validate against the current accepted policy; missing, stale,
+  revoked, mismatched or invalid evidence falls back to the trusted
+  bundled-only runtime. CLI and native GUI decisions bind the exact expected
+  generation/incarnation/install receipt, publish the authority transition,
+  re-read the authenticated record and Current Anchor and compare that
+  persisted state with the returned receipt. Therefore the older statements
+  that installed Skills can route from `enabled: true` alone or that record,
+  anchor and loader-consumed receipt are absent are no longer current truth.
+  R3-17 remains OPEN for proof that an already-running separate daemon adopted
+  the exact generation, the real subprocess mock-MCP reconnect/poisoning E2E,
+  any separately claimed Buddy interaction parity, and complete exact-head CI,
+  Security and CodeQL gates.
+
+  R3-18 now has a typed request-bound updater-leaf authority for the adopted
+  NEOTH self-update HTTP and verified-stage leaves. Its immutable binding
+  covers operation/request identity, accepted config epoch, task, lane,
+  component, exact effect and redacted target; permission and durable
+  pre-effect Intent precede the concrete transport, and one exact terminal
+  Result follows success, failure, panic or cancellation. The verified-stage
+  path is explicitly two-phase: its bound write may terminalize only as
+  `prepared`, while an owned completion retains the generation lease through
+  the later visibility publication. The reload-owned supervisor, same-kind
+  audit locks, per-generation updater admission/drain gate, daemon singleton
+  and WAL-writer lock prevent queued revoked work, pair interleaving and
+  competing writers from silently gaining effect authority.
+
+  Startup and ordered shutdown call the same bounded updater reconciler while
+  the daemon owns the instance lock. An HMAC-authenticated atomic checkpoint
+  stores the exact open intents plus a header-identity-bound
+  `HomeWalFrontier`; duplicate live intents, result-without-intent, conflicting
+  bindings, corrupt checkpoints and non-contiguous/tampered predecessor
+  segments fail closed. A crash-stranded exact Leaf Intent receives one
+  synthetic `interrupted` Result, and the checkpoint advances only after that
+  terminal acknowledgement. WAL startup now resolves the latest validated
+  member of the selected rotating namespace, waits for writer readiness before
+  reconciliation, keeps the stable base for full-chain recovery and resumes
+  only a frontier whose segment name, generation, sequence, start timestamp,
+  node id and logical offset still match.
+
+  **WAL compression/restart truth correction:** the scan/recovery substrate can
+  reconstruct supported sealed compressed segments, and the internal zstd
+  writer path now treats a sealed predecessor as immutable and continues in a
+  fresh successor instead of appending raw frames into compressed bytes.
+  Unsealed staging resumes only after bounded reconstruction; ambiguous legacy
+  `COMPRESSED`-without-`SEALED` state fails closed. This supersedes prose that
+  described reopening and re-finalizing the same compressed segment across a
+  restart. It does **not** claim production compression enablement:
+  daemon `spawn_for_home_ready` currently selects `CompressionPolicy::None`;
+  no public `freedom.yaml` compression switch or release journey is proven
+  active by this substrate.
+
+  The current dirty tree closes the original default-namespace status defects
+  at source level and lands a durable schema-v2 outer-pass identity: `0x44
+  FIRED` and `0x45 RESULT` share `pass_id`, concrete lane and accepted config
+  epoch; `neoth updater status` scans the complete canonical rotating chain,
+  fails closed on chain/decode corruption, and projects one latest state per
+  lane plus explicit open, failed, interrupted and indeterminate evidence.
+
+  This is not full R3-18 closure. Status now accepts the same explicit
+  `--config` home rule as Serve plus a complete rotating `--wal-chain-base`,
+  but it cannot yet discover a live daemon's custom base automatically.
+  Startup/shutdown reconciliation terminalizes updater Leaf Intent/Result
+  pairs only, not outer `0x44`/`0x45` passes; the status projection uses a
+  later daemon BOOT boundary to classify a crash-stranded FIRED as interrupted,
+  but no synthetic outer RESULT is durably published for other consumers. The
+  outer identity also lacks accepted-policy/snapshot and exact-FIRED-frame
+  digest provenance, and GUI/Buddy/Cron do not consume this typed projection.
+  R3-18A, R3-18B, every still-denied Git/npm/OSV/installer/Skill leaf, and
+  complete exact-head gates keep R3-18 OPEN.
+
+  - [ ] **GOLD-R3-18A Bounded standalone-WAL namespace lifecycle:** replace
+    unbounded UUID-per-command accumulation with one cross-process-owned,
+    home-bound append/rotation contract (daemon audit RPC while live; locked
+    offline writer otherwise), plus authenticated retention/compaction and a
+    beta-layout migration. The producer ceiling, directory-entry ceiling,
+    segment-count ceiling and full-home scanner ceiling must be one enforced
+    invariant, so 4,097 ordinary CLI runs cannot permanently brick Skill,
+    authority or self-improvement consumers. Prove concurrent CLI/daemon
+    admission, crash/restart, rotation, quota, retention, migration and
+    Windows/Linux/macOS clean-home journeys.
+    Current dirty-tree progress aligns full-home byte limits with the enforced
+    writer quota and hardens chain publication and recovery only. Standalone
+    producers still create one UUIDv7 namespace per invocation against a
+    4,096-segment scan ceiling, and status requires an explicit
+    `--wal-chain-base` for a custom daemon namespace. Shared
+    live-daemon/offline append
+    ownership, authenticated retention/compaction, beta-layout migration, and
+    Windows/Linux/macOS clean-home proof remain open.
+    The current dirty-tree integrity slice now publishes each rotated
+    successor atomically as `header + neoth.wal.cross-segment.v1 link +
+    immediate HMAC marker`. The authenticated link binds both canonical
+    segment names and headers, logical/physical predecessor lengths and the
+    complete final predecessor digest. Full-home, selected-chain and
+    checkpoint-frontier scanners validate every marker window and link before
+    their first consumer callback; header-only, earlier-marker, CRC-recomputed
+    link-tamper, missing-marker and namespace-transplant regressions fail
+    closed. Recovery checkpoints accept the active HMAC key only.
+    Physical payload redaction of a marker-bearing or linked segment now
+    refuses byte-identically before mutation instead of poisoning that chain.
+    R3-18A still requires a redaction-stable authenticated commitment,
+    verified operator-signed redaction proofs and a recoverable
+    intent/rewrite/result transaction covering raw, compressed and encrypted
+    predecessor/middle/tail cases before physical erasure can be called
+    complete; logical forget remains available meanwhile.
+    Historical HMAC keys are not yet bounded to the WAL interval they
+    originally authenticated. Final acceptance therefore additionally
+    requires a signed key-epoch frontier (maximal segment/header/offset) for
+    every archived key: checkpoints accept the active key only; a historical
+    key may verify compaction markers only at or before its authenticated
+    frontier; pre-rotation K1 markers remain readable after K2 activation,
+    while post-rotation markers and checkpoints signed with K1 fail closed.
+    Prove K1-to-K2 crash/restart and invalidation paths, including accepted
+    pre-frontier history, rejected post-frontier history, rejected K1
+    checkpoints and accepted K2 checkpoints.
+
+  - [ ] **GOLD-R3-18B Bound updater lifecycle budgets and owned effect
+    termination:** bind finite absolute operation/effect/quiesce/terminal
+    deadlines into each request hash and WAL Intent/Result; cancel admitted
+    HTTP cooperatively, contain/kill/reap future process trees, classify
+    mutating timeout readback as committed/unchanged/indeterminate, retain
+    Pass/Leaf leases through terminal WAL ACK and bound reload/shutdown drain
+    without detaching work. `SelfStage` must remain fail-closed until its
+    prepare/publish effects run in an owned killable helper; Git/npm/OSV/
+    installer/Skill leaves remain denied until the same contract is proven.
+    Current updater request bindings carry no absolute operation, effect,
+    quiesce or terminal deadlines, and cancellation still awaits admitted work
+    without a supervisor bound. `SelfStage` is not yet an owned killable
+    helper, future process-backed leaves remain fail closed, and bounded
+    terminate/kill/reap proof is still absent.
 
 - [x] **GOLD-R3-19 Endpoint-bound remote/configurable-provider consent and
   interface parity:** every configurable remote route now binds authority to
@@ -1320,7 +1478,37 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
   present in the top-level About dialog to satisfy the selected Slint
   attribution branch. Native Linux SNI runtime and clean-machine package
   journeys are still required before this box closes.
+  - [ ] **GOLD-R4-01a Alpine exact-artifact qualification:** run the already
+    built headless musl archive inside a digest-pinned Alpine clean machine;
+    verify every packaged binary, daemon start/stop and release
+    self-knowledge without checkout, compiler or rebuild.
+  - [ ] **GOLD-R4-01b GNU glibc-floor qualification:** publish one explicit
+    oldest-supported glibc contract and execute the downloaded portable GNU
+    archive on that class; unsupported older systems must fail with a clear
+    diagnostic.
+  - [ ] **GOLD-R4-01c Fedora/RHEL RPM qualification:** install the exact RPM
+    through `dnf`, execute CLI/daemon/GUI-desktop contracts, remove it and
+    prove operator-state preservation. The current Ubuntu `rpm --root`
+    structure probe is not a Fedora runtime receipt.
+  - [ ] **GOLD-R4-01d Windows installed-surface qualification:** from a fresh
+    `NEOTH_HOME`, exercise Start-menu launch, first-run GUI/CLI choice,
+    persisted `interface show/set`, `neoth gui`, GUI-to-CLI handoff and
+    installed Buddy runtime on x64 and ARM64.
+  - [ ] **GOLD-R4-01e macOS installed-surface qualification:** from a fresh
+    home, exercise Application/LaunchServices start, first-run GUI/CLI choice,
+    persisted surface switching and Main/Buddy runtime on Intel and Apple
+    Silicon signed/notarized packages.
+  - [ ] **GOLD-R4-01f Closed release-acceptance receipts:** every support-class
+    smoke emits a schema/tag/SHA/artifact-digest/journey/version/knowledge-bound
+    receipt; a verifier rejects missing, duplicate, unknown or mismatched
+    receipts before signing/publication.
 - [ ] **GOLD-R4-02 Package-manager and update reach:** wire GitHub Releases, crates.io where appropriate, WinGet, Homebrew and maintained Linux package metadata to the same signed version contract. Install, upgrade, downgrade/recovery and uninstall must leave no ambiguous mixed-version CLI/GUI state; generated manifests and checksums are artifact-tested.
+  - [ ] **GOLD-R4-02a Real version-transition matrix:** Windows, macOS, DEB and
+    RPM journeys must install an authenticated older RC/release, upgrade to the
+    candidate, roll code plus release knowledge back together while preserving
+    operator overlay/state, reinstall the candidate and uninstall. A
+    same-version reinstall remains an idempotency test and cannot satisfy this
+    box.
 
   **Current self-update boundary (2026-07-15; remains OPEN):** portable bundles
   now use one exact-profile journaled transaction. Its generated ownership
@@ -3678,8 +3866,27 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
     closed with machine-readable errors and never fall back to process groups.
     Provisioned Linux qualification makes a missing containment capability
     fatal and exercises crash, double-fork, cgroup and D-Bus escape attempts.
-    Unsupported Unix targets remain explicitly fail closed. All provider routes
-    converge through one typed stream-framing seam.
+    macOS and every other non-Linux Unix target remain explicitly fail closed
+    for GUI-owned chat-child launch; Main and Buddy chat cannot ship there
+    until GOLD-LF-P2-26b replaces both children with the daemon-owned ADR-010
+    runtime. All provider routes converge through one typed stream-framing
+    seam.
+    Stream protocol v2 now binds request id, version, monotonic delta sequence,
+    count, visible-content hash and finalization receipt end to end. Main and
+    Buddy materialize authenticated `review_result` and
+    `finalization_error` notices even after `provider_done`. Active
+    `PostProviderCall` mutators defer all provider output so `Block` releases
+    no model bytes and `Replace` releases only the replacement body.
+  - [ ] **GOLD-LF-P2-26a Blocking/replacing post-provider stream regression:**
+    drive a multi-chunk secret through the executable chat producer and both
+    Main/Buddy consumers. `Block` must emit no delta/text/completion;
+    `Replace` must emit only replacement bytes with matching count, hash and
+    receipt. Source inspection alone does not close this evidence leaf.
+  - [ ] **GOLD-LF-P2-26b daemon-owned macOS/reconnect runtime:** replace both
+    GUI-owned provider-child paths with the authenticated ADR-010
+    start/attach/stream/cancel/status runtime; prove real resume/dedup/error
+    semantics plus macOS start/stop/no-orphan and Main/Buddy parity from the
+    packaged application.
     Background-job results are transactionally inserted once into `views.db`
     under their stable job id before a notice may advertise `durable=true`.
     The authenticated notice is then inserted idempotently into canonical rows

@@ -209,20 +209,44 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
         } => {
             // GOLD-ADAPT-IGNIS-04: a standalone sync owns a collision-resistant
             // one-shot segment. This keeps the conflict guard audited without
-            // racing a daemon that may own the primary segment.
-            let wal_dir = crate::config::FreedomConfig::default_wal_dir();
+            // racing the daemon-owned WAL. The conflict gate currently requires
+            // a concrete writer handle, so a live daemon must be stopped until
+            // that EXTENDED event is supported by the audit-RPC bridge.
+            let home = crate::config::FreedomConfig::default_neoth_home();
+            let pidfile = home.join("neothd.pid");
+            if let Some(pid) = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+                .with_context(|| format!("inspect daemon ownership via {}", pidfile.display()))?
+            {
+                anyhow::bail!(
+                    "neoth daemon is live (pid {pid}); stop it before `obsidian sync` so the \
+                     conflict audit cannot race the daemon-owned WAL writer"
+                );
+            }
+            let wal_dir = home.join("wal");
             std::fs::create_dir_all(&wal_dir)
                 .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
-            let sequence =
-                crate::time::now_unix_ns().saturating_add(u64::from(std::process::id()) << 12);
-            let segment = wal_dir.join(format!("{sequence:020}-obsidian-sync.wal"));
-            let (writer, join) = crate::wal::writer::spawn(segment)
-                .context("spawn one-shot Obsidian sync WAL writer")?;
+            let segment =
+                crate::wal::writer::unique_standalone_segment_path(&wal_dir, "obsidian-sync");
+            let (writer, completion) =
+                crate::wal::writer::spawn_for_home_with_completion(segment, home)
+                    .context("spawn home-bound one-shot Obsidian sync WAL writer")?;
             let result = sync_archive(&root, &vault, &subdir, dry_run, Some(&writer)).await;
             drop(writer);
-            join.await
-                .context("join one-shot Obsidian sync WAL writer")?;
-            let stats = result?;
+            let shutdown = completion
+                .wait()
+                .await
+                .context("finalize one-shot Obsidian sync WAL writer");
+            let stats = match (result, shutdown) {
+                (Ok(stats), Ok(())) => stats,
+                (Err(operation), Ok(())) => return Err(operation),
+                (Ok(_), Err(shutdown)) => return Err(shutdown),
+                (Err(operation), Err(shutdown)) => {
+                    return Err(anyhow::anyhow!(
+                        "{operation:#}; additionally failed to finalize Obsidian sync audit WAL: \
+                         {shutdown:#}"
+                    ));
+                }
+            };
             render_sync(stats, args.output);
         }
         ObsidianAction::Days => {

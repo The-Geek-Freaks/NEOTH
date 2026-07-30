@@ -39,6 +39,10 @@
 //!     non-redactable. Their authenticated payloads are live authorization
 //!     inputs, not memory content; erasing one would silently invalidate the
 //!     installed runtime authority chain.
+//!   - Segments containing authenticated chain-structural frames
+//!     (`COMPACTION_MARKER`, `SEGMENT_ROLLOVER`, or `REDACTION_MARKER`) are not
+//!     physically rewritten. Their offsets and authenticated links require a
+//!     dedicated transaction that can replace the chain evidence atomically.
 //!   - Every original frame CRC validates before predicates or redaction run;
 //!     the eraser never converts pre-existing corruption into a newly valid
 //!     redacted frame.
@@ -59,6 +63,8 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
+use cap_std::fs::OpenOptions as CapOpenOptions;
 
 use super::header::{CRC_LEN, EventHeaderV2, HEADER_BODY_LEN, MAGIC, PREAMBLE_LEN};
 use super::segment_header::{SEGMENT_HEADER_LEN, SEGMENT_HEADER_V3_LEN, parse_segment_header};
@@ -86,6 +92,37 @@ fn is_installed_skill_runtime_proof(header: &EventHeaderV2) -> bool {
     )
 }
 
+fn is_authenticated_chain_structure(header: &EventHeaderV2) -> bool {
+    matches!(
+        header.event_type,
+        super::events::EVENT_TYPE_COMPACTION_MARKER
+            | super::events::EVENT_TYPE_SEGMENT_ROLLOVER
+            | super::events::EVENT_TYPE_REDACTION_MARKER
+    )
+}
+
+#[derive(Debug, Default)]
+struct StagedRedaction {
+    report: RedactReport,
+    contains_authenticated_chain_structure: bool,
+    matched_authenticated_chain_structure: bool,
+}
+
+fn refuse_chain_structural_rewrite(segment_path: &Path, staged: &StagedRedaction) -> Result<()> {
+    let has_physical_match =
+        !staged.report.frames_redacted.is_empty() || staged.matched_authenticated_chain_structure;
+    if staged.contains_authenticated_chain_structure && has_physical_match {
+        anyhow::bail!(
+            "wal::redact: refusing physical redaction of segment {} because it contains \
+             authenticated chain-structural frames (COMPACTION_MARKER, \
+             SEGMENT_ROLLOVER/cross-link, or REDACTION_MARKER); physical redaction awaits an \
+             authenticated rewrite transaction; logical forget is still usable",
+            segment_path.display()
+        );
+    }
+    Ok(())
+}
+
 /// Stable sibling lock shared by the WAL writer and physical redactors.
 ///
 /// Locking the segment file itself is not sufficient: both redaction paths
@@ -106,10 +143,99 @@ pub(crate) fn segment_rewrite_lock_path(segment_path: &Path) -> PathBuf {
 /// barrier. This closes both append-vs-replace data loss and concurrent-redactor
 /// resurrection.
 pub(crate) fn lock_segment_for_rewrite(segment_path: &Path) -> Result<std::fs::File> {
-    crate::util::locked_file::lock_file_blocking(
-        &segment_rewrite_lock_path(segment_path),
-        "WAL segment rewrite",
-    )
+    let lock_path = segment_rewrite_lock_path(segment_path);
+    let started = std::time::Instant::now();
+    loop {
+        if let Some(file) = try_lock_segment_rewrite_once(&lock_path)? {
+            return Ok(file);
+        }
+        if started.elapsed() >= std::time::Duration::from_secs(5) {
+            anyhow::bail!(
+                "WAL segment rewrite lock {} held by another process for >5s",
+                lock_path.display()
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+fn try_lock_segment_rewrite_once(lock_path: &Path) -> Result<Option<std::fs::File>> {
+    let parent = lock_path
+        .parent()
+        .context("WAL rewrite lock omitted its parent")?;
+    let name = lock_path
+        .file_name()
+        .context("WAL rewrite lock omitted its file name")?;
+    let root =
+        crate::skills::store::open_bound_directory(parent, false, "WAL rewrite lock parent")?
+            .with_context(|| format!("WAL rewrite lock parent is missing: {}", parent.display()))?;
+    let mut options = CapOpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .create(true)
+        .follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH, FILE_GENERIC_READ,
+            FILE_GENERIC_WRITE, FILE_SHARE_READ, READ_CONTROL, WRITE_DAC,
+        };
+        options
+            .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | READ_CONTROL | WRITE_DAC)
+            .share_mode(FILE_SHARE_READ)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_WRITE_THROUGH);
+    }
+    let file = match root.dir.open_with(name, &options) {
+        Ok(file) => file,
+        #[cfg(windows)]
+        Err(error) if error.raw_os_error() == Some(32) => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "open capability-bound WAL rewrite lock {}",
+                    lock_path.display()
+                )
+            });
+        }
+    };
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("inspect WAL rewrite lock {}", lock_path.display()))?;
+    anyhow::ensure!(
+        metadata.is_file() && !crate::skills::store::cap_metadata_is_link_like(&metadata),
+        "WAL rewrite lock must be a real regular file without links: {}",
+        lock_path.display()
+    );
+    #[cfg(unix)]
+    {
+        use cap_std::fs::PermissionsExt as _;
+        use std::os::unix::io::AsRawFd as _;
+        file.set_permissions(cap_std::fs::Permissions::from_mode(0o600))?;
+        let file = file.into_std();
+        // SAFETY: `file` owns a valid descriptor for the exact no-follow leaf.
+        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if rc == 0 {
+            return Ok(Some(file));
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            return Ok(None);
+        }
+        return Err(error).with_context(|| format!("flock {}", lock_path.display()));
+    }
+    #[cfg(windows)]
+    {
+        let file = file.into_std();
+        super::win_native::set_private_current_user_file_handle_dacl(&file)?;
+        Ok(Some(file))
+    }
 }
 
 /// Outcome of one redaction pass over one segment.
@@ -294,13 +420,15 @@ where
     // `allow_torn_tail: true` — a live segment may have a partial last frame
     // from an unclean shutdown; the buffer walker treats it as end-of-frames
     // (break) rather than corruption (bail).
-    let report = redact_frames_in_buffer(
+    let staged = redact_frames_in_buffer(
         &mut frames,
         &mut predicate,
         header_len,
         segment_path,
         /* allow_torn_tail = */ true,
     )?;
+    refuse_chain_structural_rewrite(segment_path, &staged)?;
+    let report = staged.report;
 
     // No match ⇒ leave the file byte-identical; no rewrite needed.
     if report.frames_redacted.is_empty() {
@@ -497,13 +625,15 @@ where
     let mut frames = decompress_frames(&compressed_blob)
         .with_context(|| format!("decompress sealed WAL segment {}", segment_path.display()))?;
 
-    let report = redact_frames_in_buffer(
+    let staged = redact_frames_in_buffer(
         &mut frames,
         &mut predicate,
         header_len as u64,
         segment_path,
         /* allow_torn_tail = */ false,
     )?;
+    refuse_chain_structural_rewrite(segment_path, &staged)?;
+    let report = staged.report;
 
     // No predicate match ⇒ leave the file byte-identical (no needless recompress
     // /rename). Frames skipped or already-redacted both land here.
@@ -554,11 +684,11 @@ fn redact_frames_in_buffer<F>(
     base_offset: u64,
     segment_path: &Path,
     allow_torn_tail: bool,
-) -> Result<RedactReport>
+) -> Result<StagedRedaction>
 where
     F: FnMut(&[u8]) -> bool,
 {
-    let mut report = RedactReport::default();
+    let mut staged = StagedRedaction::default();
     let buf_len = frames.len() as u64;
     let mut cursor: u64 = 0;
 
@@ -638,13 +768,24 @@ where
                 segment_path.display()
             );
         }
+        let is_chain_structure = is_authenticated_chain_structure(&header);
+        staged.contains_authenticated_chain_structure |= is_chain_structure;
         if header.flags.contains(EventFlags::REDACTED) {
-            report.already_redacted += 1;
+            staged.report.already_redacted += 1;
             cursor += total_len;
             continue;
         }
-        if !predicate(&frames[payload_start..payload_start + payload_len]) {
-            report.frames_skipped += 1;
+        let predicate_matched = predicate(&frames[payload_start..payload_start + payload_len]);
+        if is_chain_structure {
+            staged.matched_authenticated_chain_structure |= predicate_matched;
+            if !predicate_matched {
+                staged.report.frames_skipped += 1;
+            }
+            cursor += total_len;
+            continue;
+        }
+        if !predicate_matched {
+            staged.report.frames_skipped += 1;
             cursor += total_len;
             continue;
         }
@@ -668,8 +809,8 @@ where
         let new_crc = crc32c::crc32c(&frames[start..start + total - CRC_LEN]);
         frames[start + total - CRC_LEN..start + total].copy_from_slice(&new_crc.to_le_bytes());
 
-        report.frames_redacted.push(base_offset + cursor);
-        report.bytes_redacted += payload_len as u64;
+        staged.report.frames_redacted.push(base_offset + cursor);
+        staged.report.bytes_redacted += payload_len as u64;
         cursor += total_len;
     }
 
@@ -691,7 +832,7 @@ where
         );
     }
 
-    Ok(report)
+    Ok(staged)
 }
 
 /// Idempotent low-level primitive: take an open r/w file positioned
@@ -704,12 +845,12 @@ where
 /// crash-consistent atomic replacement path above; exposing an unlocked
 /// `File`-only rewrite API would let a future caller bypass that contract.
 ///
-/// Installed-Skill mutation/authority proof frames are rejected before the
-/// first write. Their authenticated payload is part of the live execution
-/// authority chain and therefore is not operator memory content. The header is
-/// re-read from `file` at `frame_offset` and must exactly match the supplied
-/// parsed header, so a stale or forged caller argument cannot bypass that
-/// classification.
+/// Installed-Skill mutation/authority proof frames and authenticated
+/// chain-structural frames are rejected before the first write. Their payloads
+/// are live execution/verification inputs rather than operator memory content.
+/// The header is re-read from `file` at `frame_offset` and must exactly match
+/// the supplied parsed header, so a stale or forged caller argument cannot
+/// bypass that classification.
 #[cfg(test)]
 pub(crate) fn redact_frame_in_place(
     file: &mut std::fs::File,
@@ -777,6 +918,12 @@ pub(crate) fn redact_frame_in_place(
         !is_installed_skill_runtime_proof(&actual_header),
         "refusing to redact protected installed-Skill runtime proof {}",
         super::events::extended_subtype_name(actual_header.event_subtype)
+    );
+    anyhow::ensure!(
+        !is_authenticated_chain_structure(&actual_header),
+        "refusing direct physical redaction of authenticated chain-structural frame at offset \
+         {frame_offset}; physical redaction awaits an authenticated rewrite transaction; logical \
+         forget is still usable"
     );
     let payload_offset = frame_offset
         + (PREAMBLE_LEN + HEADER_BODY_LEN + actual_header.reserved_len as usize) as u64;
@@ -937,6 +1084,28 @@ mod tests {
     use crate::wal::segment_header::SegmentHeader;
     use crate::wal::types::{EventId, Importance, NodeId, SessionId};
 
+    #[cfg(unix)]
+    #[test]
+    fn rewrite_lock_rejects_a_symlink_leaf_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("000001.wal");
+        let outside = dir.path().join("outside.lock");
+        std::fs::write(&outside, b"outside").unwrap();
+        symlink(&outside, segment_rewrite_lock_path(&segment)).unwrap();
+
+        let error = lock_segment_for_rewrite(&segment)
+            .err()
+            .expect("rewrite lock symlink must fail closed");
+        assert!(
+            format!("{error:#}").contains("without following links")
+                || format!("{error:#}").contains("real regular file"),
+            "unexpected no-follow refusal: {error:#}"
+        );
+        assert_eq!(std::fs::read(&outside).unwrap(), b"outside");
+    }
+
     /// Build a frame header for testing (matches the `populated_header`
     /// pattern in `wal::frame::tests` but private to this module to
     /// avoid cross-test coupling).
@@ -1034,6 +1203,43 @@ mod tests {
         bytes.extend_from_slice(&encode_frame(&header, payload));
         std::fs::write(&path, bytes).unwrap();
         (dir, path, offset, header)
+    }
+
+    fn encode_typed_frame_stream(frames: &[(u8, &[u8])], base_offset: u64) -> (Vec<u8>, Vec<u64>) {
+        let mut bytes = Vec::new();
+        let mut offsets = Vec::with_capacity(frames.len());
+        for (index, (event_type, payload)) in frames.iter().enumerate() {
+            offsets.push(base_offset + bytes.len() as u64);
+            let header =
+                make_typed_header(payload.len() as u32, (index + 1) as u64, *event_type, 0);
+            bytes.extend_from_slice(&encode_frame(&header, payload));
+        }
+        (bytes, offsets)
+    }
+
+    fn write_segment_with_typed_frames(
+        frames: &[(u8, &[u8])],
+    ) -> (tempfile::TempDir, std::path::PathBuf, Vec<u64>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("000001.wal");
+        let header = SegmentHeader::new(1, 1, 0, 0, [0u8; 16]).to_le_bytes();
+        let (body, offsets) = encode_typed_frame_stream(frames, header.len() as u64);
+        let mut bytes = header.to_vec();
+        bytes.extend_from_slice(&body);
+        std::fs::write(&path, bytes).unwrap();
+        (dir, path, offsets)
+    }
+
+    fn assert_authenticated_rewrite_refusal(error: &anyhow::Error) {
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("authenticated rewrite transaction"),
+            "refusal must name the required authenticated rewrite transaction: {message}"
+        );
+        assert!(
+            message.contains("logical forget is still usable"),
+            "refusal must preserve the logical-forget recovery path: {message}"
+        );
     }
 
     #[test]
@@ -1279,6 +1485,32 @@ mod tests {
         assert_eq!(report.frames_skipped, 1);
     }
 
+    #[test]
+    fn raw_chain_structural_segment_refuses_matching_physical_redaction_byte_identically() {
+        for structural_type in [
+            crate::wal::events::EVENT_TYPE_COMPACTION_MARKER,
+            crate::wal::events::EVENT_TYPE_SEGMENT_ROLLOVER,
+            crate::wal::events::EVENT_TYPE_REDACTION_MARKER,
+        ] {
+            let frames: &[(u8, &[u8])] = &[
+                (0x01, b"AcmeCorp user memory"),
+                (structural_type, b"AcmeCorp authenticated chain structure"),
+            ];
+            let (_dir, path, _) = write_segment_with_typed_frames(frames);
+            let before = std::fs::read(&path).expect("read raw segment before refusal");
+
+            let error = scan_and_redact(&path, payload_contains_topic("acmecorp"))
+                .expect_err("chain-structural segment must await authenticated rewrite");
+
+            assert_authenticated_rewrite_refusal(&error);
+            assert_eq!(
+                std::fs::read(&path).expect("read raw segment after refusal"),
+                before,
+                "raw chain-structural refusal must not publish staged frame edits"
+            );
+        }
+    }
+
     /// Write a *sealed compressed* (v2/zstd) segment: 61-byte v2 header with the
     /// COMPRESSED flag set, followed by `compress_frames(raw_frames)` — exactly
     /// what the writer's `finalize_compressed_segment` produces. Returns the
@@ -1382,6 +1614,41 @@ mod tests {
         assert_eq!(
             before, after,
             "a no-match sealed segment must not be recompressed/rewritten"
+        );
+    }
+
+    #[test]
+    fn sealed_chain_structural_segment_refuses_matching_physical_redaction_byte_identically() {
+        use crate::wal::compress::compress_frames;
+        use crate::wal::segment_header::{
+            SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_V2_LEN, SegmentHeaderV2,
+        };
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("000001.wal");
+        let frames: &[(u8, &[u8])] = &[
+            (0x01, b"AcmeCorp user memory"),
+            (
+                crate::wal::events::EVENT_TYPE_COMPACTION_MARKER,
+                b"authenticated chain structure",
+            ),
+        ];
+        let (raw_frames, _) = encode_typed_frame_stream(frames, SEGMENT_HEADER_V2_LEN as u64);
+        let mut bytes = SegmentHeaderV2::new(1, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED)
+            .to_le_bytes()
+            .to_vec();
+        bytes.extend_from_slice(&compress_frames(&raw_frames).expect("compress typed frames"));
+        std::fs::write(&path, bytes).expect("write sealed chain-structural segment");
+        let before = std::fs::read(&path).expect("read sealed segment before refusal");
+
+        let error = scan_and_redact(&path, payload_contains_topic("acmecorp"))
+            .expect_err("sealed chain-structural segment must await authenticated rewrite");
+
+        assert_authenticated_rewrite_refusal(&error);
+        assert_eq!(
+            std::fs::read(&path).expect("read sealed segment after refusal"),
+            before,
+            "sealed chain-structural refusal must not recompress or publish staged frame edits"
         );
     }
 

@@ -305,28 +305,34 @@ async fn diagnose_with_llm(outcomes: &[CheckOutcome], home: &Path) {
             }
         }
     }
-    let provider = match crate::providers::from_config_for_utility_at(&config, home).await {
+    let (provider, provider_audit) = match crate::providers::from_config_for_utility_at(
+        &config, home,
+    )
+    .await
+    {
         Ok(p) => {
             let default_model = crate::providers::provider_default_wire_model(p.as_ref());
-            let wal_dir = home.join("wal");
-            let authorizer = match crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot_at(
-                config.autonomy_policy(),
-                &wal_dir,
-                config.tokens.max_per_request,
-            ) {
-                Ok(authorizer) => {
-                    authorizer.with_ephemeral_consent(ephemeral_consent.clone())
-                }
+            let provider_audit = match crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot_at_home(
+                    config.autonomy_policy(),
+                    home,
+                    config.tokens.max_per_request,
+                )
+                .await
+            {
+                Ok(provider_audit) => provider_audit,
                 Err(error) => {
                     eprintln!("diagnose: cannot open provider-call audit WAL ({error}); skipping LLM pass.");
                     return;
                 }
             };
-            crate::providers::cost_authorization::AuthorizedProvider::from_box(
-                p,
-                authorizer,
-                default_model,
-                "doctor.diagnose",
+            (
+                crate::providers::cost_authorization::AuthorizedProvider::from_box(
+                    p,
+                    provider_audit.authorizer_with_ephemeral_consent(ephemeral_consent.clone()),
+                    default_model,
+                    "doctor.diagnose",
+                ),
+                provider_audit,
             )
         }
         Err(e) => {
@@ -358,6 +364,9 @@ async fn diagnose_with_llm(outcomes: &[CheckOutcome], home: &Path) {
         }
         Ok(_) => eprintln!("diagnose: provider returned an empty response."),
         Err(e) => eprintln!("diagnose: provider call failed ({e})."),
+    }
+    if let Err(error) = provider_audit.finish(provider).await {
+        eprintln!("diagnose: provider-call audit WAL finalization failed ({error}).");
     }
 }
 

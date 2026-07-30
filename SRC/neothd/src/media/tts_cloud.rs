@@ -688,9 +688,24 @@ pub async fn synthesize_to_file_at(
         }
     };
 
-    if let Some((writer, join)) = audit {
+    let audit_finalization = if let Some((writer, completion)) = audit {
         drop(writer);
-        let _ = join.await;
+        completion.wait().await.err()
+    } else {
+        None
+    };
+    if let Some(error) = audit_finalization {
+        if external_provider_may_run {
+            return match synthesis {
+                Ok(_) => Err(format!(
+                    "external TTS audit WAL finalization failed: {error}"
+                )),
+                Err(operation) => Err(format!(
+                    "{operation}; additionally failed to finalize external TTS audit WAL: {error}"
+                )),
+            };
+        }
+        tracing::warn!(%error, "local TTS audit WAL finalization failed (non-fatal)");
     }
     let (actual_kind, actual_request, response) = synthesis?;
     write_tts_output_atomic(out_path, &response.audio_bytes)?;
@@ -924,7 +939,7 @@ fn open_tts_audit_writer(
 ) -> Result<
     Option<(
         crate::wal::writer::WalWriterHandle,
-        tokio::task::JoinHandle<()>,
+        crate::wal::writer::WalWriterCompletion,
     )>,
     String,
 > {
@@ -940,7 +955,7 @@ fn open_tts_audit_writer(
         return Ok(None);
     }
     let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "tts");
-    match crate::wal::writer::spawn(segment) {
+    match crate::wal::writer::spawn_for_home_with_completion(segment, neoth_home.to_path_buf()) {
         Ok(pair) => Ok(Some(pair)),
         Err(error) => {
             if required {

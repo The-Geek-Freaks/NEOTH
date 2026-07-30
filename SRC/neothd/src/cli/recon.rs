@@ -139,11 +139,18 @@ async fn emit_recon_run(
     .expect("RECON_RUN payload contains only infallibly serializable fields");
     let event_type = crate::wal::events::EVENT_TYPE_RECON_RUN;
 
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
-    );
+    let pidfile = home.join("neothd.pid");
+    let daemon_live = match crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+        Ok(pid) => pid.is_some(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                pidfile = %pidfile.display(),
+                "recon audit ownership is uncertain; refusing a local WAL writer"
+            );
+            return;
+        }
+    };
     if daemon_live {
         if let Err(e) =
             crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
@@ -151,15 +158,30 @@ async fn emit_recon_run(
             tracing::debug!(error = %e, "recon RECON_RUN audit forward failed (best-effort)");
         }
     } else {
-        let segment = home.join("wal").join("000001.wal");
-        if let Some(parent) = segment.parent() {
-            let _ = std::fs::create_dir_all(parent);
+        let wal_dir = home.join("wal");
+        if let Err(e) = std::fs::create_dir_all(&wal_dir) {
+            tracing::warn!(
+                error = %e,
+                wal_dir = %wal_dir.display(),
+                "recon RECON_RUN audit directory unavailable (best-effort)"
+            );
+            return;
         }
-        if let Ok((writer, join)) = crate::wal::spawn(segment) {
-            let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
-            let _ = writer.append(header, payload).await;
-            drop(writer);
-            let _ = join.await;
+        let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "recon-run");
+        match crate::wal::writer::spawn_for_home_with_completion(segment, home.to_path_buf()) {
+            Ok((writer, completion)) => {
+                let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+                if let Err(e) = writer.append(header, payload).await {
+                    tracing::warn!(error = %e, "recon RECON_RUN audit append failed (best-effort)");
+                }
+                drop(writer);
+                if let Err(e) = completion.wait().await {
+                    tracing::warn!(error = %e, "recon RECON_RUN audit writer finalization failed");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "recon RECON_RUN audit writer unavailable (best-effort)");
+            }
         }
     }
 }

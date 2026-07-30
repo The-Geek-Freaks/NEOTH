@@ -3663,7 +3663,7 @@ fn scan_authority_wal_heads(
         BTreeMap::<String, BTreeMap<u64, AuthenticatedSkillAuthorityWalHead>>::new();
     crate::wal::scan::for_each_frame_at_home(
         home,
-        crate::wal::scan::HomeWalScanLimits::default(),
+        crate::wal::scan::supported_home_scan_limits(),
         |location, frame| {
             if frame.header.event_type != crate::wal::events::EVENT_TYPE_EXTENDED
                 || frame.header.event_subtype

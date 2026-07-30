@@ -77,7 +77,7 @@ pub async fn run_identity(args: IdentityArgs, output: OutputFormat) -> Result<()
             // audit-RPC listener is unreachable.
             let cfg = FreedomConfig::load_from_default_path_or_default()?;
             let daemon_live = matches!(
-                crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
+                crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid")),
                 Ok(Some(_))
             );
             crate::daemon::audit_rpc::enforce_required_audit(
@@ -180,18 +180,24 @@ async fn emit_identity_merged(
         })?;
         return Ok(());
     }
-    let segment = FreedomConfig::default_wal_dir().join("000001.wal");
-    if let Some(p) = segment.parent() {
-        std::fs::create_dir_all(p).with_context(|| format!("create WAL dir {}", p.display()))?;
-    }
-    let (writer, _join) = crate::wal::writer::spawn(segment)
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create WAL dir {}", wal_dir.display()))?;
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "identity-merge");
+    let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
         .context("0x9B IDENTITY_MERGED: WAL writer spawn failed; merge not recorded")?;
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_IDENTITY_MERGED, &payload)
             .build();
-    writer
+    let append = writer
         .try_append_sync(header, payload)
-        .context("0x9B IDENTITY_MERGED: frame append failed (audit gap)")?;
+        .context("0x9B IDENTITY_MERGED: frame append failed (audit gap)");
+    drop(writer);
+    let drained = join
+        .await
+        .context("0x9B IDENTITY_MERGED: WAL writer task panicked");
+    append?;
+    drained?;
     Ok(())
 }
 

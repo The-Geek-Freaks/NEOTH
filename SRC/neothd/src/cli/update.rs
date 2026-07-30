@@ -210,9 +210,11 @@ async fn run_self_apply(
     {
         let home = crate::config::FreedomConfig::default_neoth_home();
         let stage_dir = home.join("staged");
-        if let Some(pending) = crate::updater::self_update::read_pending(&stage_dir) {
+        if let Some(mut locked_stage) =
+            crate::updater::self_update::lock_pending_stage_async(stage_dir.clone()).await?
+            && let Some(pending) = locked_stage.pending().cloned()
+        {
             let current = crate::updater::self_update::current_version();
-            let staged_present = std::path::Path::new(&pending.staged_archive).exists();
             let staged_policy_matches = crate::updater::self_update::pending_matches_policy(
                 &pending, repo, channel, target,
             );
@@ -227,7 +229,7 @@ async fn run_self_apply(
                     false
                 }
             };
-            if !staged_present || !staged_newer || !staged_policy_matches {
+            if !staged_newer || !staged_policy_matches {
                 if !staged_policy_matches {
                     warn!(
                         staged_channel = %pending.channel,
@@ -239,7 +241,9 @@ async fn run_self_apply(
                         "discarding staged update that does not match current self-update policy"
                     );
                 }
-                crate::updater::self_update::clear_staged(&stage_dir, &pending);
+                locked_stage
+                    .clear()
+                    .context("clear unusable staged self-update")?;
             } else {
                 info!(
                     to = %pending.to_version,
@@ -249,14 +253,10 @@ async fn run_self_apply(
                 let install_dir = exe
                     .parent()
                     .ok_or_else(|| anyhow::anyhow!("current_exe() has no parent directory"))?;
-                match crate::updater::self_update::apply_from_staged(
-                    &pending,
-                    &stage_dir,
-                    install_dir,
-                    require_signature,
-                ) {
+                match locked_stage.apply(install_dir, require_signature) {
                     Ok(outcome) => {
-                        crate::updater::self_update::clear_staged(&stage_dir, &pending);
+                        let cleanup = locked_stage.clear();
+                        drop(locked_stage);
                         finish_self_update_outcome(
                             &outcome,
                             repo,
@@ -266,6 +266,9 @@ async fn run_self_apply(
                             output,
                         )
                         .await?;
+                        cleanup.context(
+                            "self-update applied but its staged payload could not be cleared",
+                        )?;
                         return Ok(());
                     }
                     Err(e) => {
@@ -281,7 +284,8 @@ async fn run_self_apply(
                                 error = %format!("{e:#}"),
                                 "staged self-update FAILED integrity/signature re-verification — refusing (tamper-suspect)"
                             );
-                            crate::updater::self_update::clear_staged(&stage_dir, &pending);
+                            let cleanup_error = locked_stage.clear().err();
+                            drop(locked_stage);
                             emit_self_update_rejected(
                                 repo,
                                 &pending,
@@ -289,14 +293,24 @@ async fn run_self_apply(
                                 "manual_from_staged",
                             )
                             .await;
-                            return Err(e.context(
-                                "staged self-update failed integrity verification — refusing to apply a tamper-suspect artifact",
-                            ));
+                            let context = cleanup_error.map_or_else(
+                                || {
+                                    "staged self-update failed integrity verification — refusing to apply a tamper-suspect artifact".to_string()
+                                },
+                                |cleanup| {
+                                    format!(
+                                        "staged self-update failed integrity verification and capability-bound cleanup also failed: {cleanup:#}"
+                                    )
+                                },
+                            );
+                            return Err(e.context(context));
                         }
                         // Non-security failure (I/O / extraction): clear the broken
                         // stage and fall back to a fresh download.
                         warn!(error = %e, "staged apply failed (non-security); clearing stage and falling back to fresh download");
-                        crate::updater::self_update::clear_staged(&stage_dir, &pending);
+                        locked_stage
+                            .clear()
+                            .context("clear failed staged self-update before fresh download")?;
                     }
                 }
             }
@@ -347,11 +361,10 @@ async fn run_self_apply(
     )
     .await?;
 
-    // WAL audit frame 0xD2 SELF_UPDATE_APPLIED — best-effort one-shot
-    // writer (HF-01 pattern). Guard: if the daemon is live it owns the
-    // segment, so skip the open to preserve the single-writer invariant
-    // (the binary swap already succeeded; the audit frame is a nicety,
-    // never load-bearing for the update itself). `trigger_source =
+    // WAL audit frame 0xD2 SELF_UPDATE_APPLIED — same-home audit-RPC when
+    // the daemon is live, otherwise a unique home-bound one-shot writer.
+    // The binary swap already succeeded, so this audit remains non-fatal.
+    // `trigger_source =
     // "manual"` — the operator ran `neoth update --self --apply`. The
     // The daemon's stage-only path emits its own staged-pending frame through
     // the live WAL writer; binary replacement remains operator-initiated.
@@ -409,9 +422,9 @@ fn now_unix_secs() -> u64 {
 }
 
 /// Emit the `0xD2 SELF_UPDATE_APPLIED` audit frame after a successful
-/// manual `neoth update --self --apply`. Skips silently when the daemon
-/// is live (it owns the WAL segment) or the WAL dir is unwritable —
-/// every failure is logged at WARN, never fatal.
+/// manual `neoth update --self --apply`. A live daemon receives it over
+/// same-home audit-RPC; otherwise a unique home-bound writer is drained.
+/// Every failure is logged, never fatal to an already-applied update.
 pub(super) async fn emit_self_update_applied(
     outcome: &crate::updater::self_update::UpdateApplied,
     repo: &str,
@@ -434,29 +447,44 @@ pub(super) async fn emit_self_update_applied(
         "ts_unix": now_unix_secs(),
     }))
     .expect("self-update applied payload contains only infallible JSON values");
-    if let Ok(Some(_pid)) =
-        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
-    {
-        // AUDIT-RPC-01: daemon owns the writer → forward the 0xD2 frame over
-        // the same-user OS channel instead of silently skipping. Best-effort.
-        let home = crate::config::FreedomConfig::default_neoth_home();
-        if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
-            &home,
-            crate::wal::events::EVENT_TYPE_SELF_UPDATE_APPLIED,
-            &payload,
-        )
-        .await
-        {
-            tracing::debug!(error = %e, "0xD2 audit forward skipped (daemon listener unreachable)");
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let pidfile = home.join("neothd.pid");
+    match crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+        Ok(Some(_pid)) => {
+            // AUDIT-RPC-01: daemon owns the writer → forward the 0xD2 frame over
+            // the same-user OS channel instead of silently skipping. Best-effort.
+            if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+                &home,
+                crate::wal::events::EVENT_TYPE_SELF_UPDATE_APPLIED,
+                &payload,
+            )
+            .await
+            {
+                tracing::debug!(error = %e, "0xD2 audit forward skipped (daemon listener unreachable)");
+            }
+            return;
         }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                pidfile = %pidfile.display(),
+                "SELF_UPDATE_APPLIED audit ownership is uncertain; refusing a local WAL writer"
+            );
+            return;
+        }
+    }
+    let wal_dir = home.join("wal");
+    if let Err(e) = std::fs::create_dir_all(&wal_dir) {
+        tracing::warn!(
+            error = %e,
+            wal_dir = %wal_dir.display(),
+            "SELF_UPDATE_APPLIED WAL directory unavailable (non-fatal)"
+        );
         return;
     }
-    let wal_dir = crate::config::FreedomConfig::default_wal_dir();
-    if std::fs::create_dir_all(&wal_dir).is_err() {
-        return;
-    }
-    let seg = wal_dir.join("000001.wal");
-    let (writer, join) = match crate::wal::writer::spawn(seg) {
+    let seg = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "self-update-applied");
+    let (writer, completion) = match crate::wal::writer::spawn_for_home_with_completion(seg, home) {
         Ok(pair) => pair,
         Err(e) => {
             tracing::warn!(error = %e, "SELF_UPDATE_APPLIED WAL writer spawn failed (non-fatal)");
@@ -472,7 +500,9 @@ pub(super) async fn emit_self_update_applied(
         tracing::warn!(error = %e, "SELF_UPDATE_APPLIED WAL emit failed (non-fatal)");
     }
     drop(writer);
-    let _ = join.await;
+    if let Err(e) = completion.wait().await {
+        tracing::warn!(error = %e, "SELF_UPDATE_APPLIED WAL writer finalization failed (non-fatal)");
+    }
 }
 
 /// F55 — audit a tamper-suspect staged-apply rejection (0xDE). Mirrors
@@ -497,27 +527,42 @@ async fn emit_self_update_rejected(
         "ts_unix": now_unix_secs(),
     }))
     .expect("self-update rejected payload contains only infallible JSON values");
-    if let Ok(Some(_pid)) =
-        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
-    {
-        let home = crate::config::FreedomConfig::default_neoth_home();
-        if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
-            &home,
-            crate::wal::events::EVENT_TYPE_SELF_UPDATE_REJECTED,
-            &payload,
-        )
-        .await
-        {
-            tracing::debug!(error = %e, "0xDE audit forward skipped (daemon listener unreachable)");
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let pidfile = home.join("neothd.pid");
+    match crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+        Ok(Some(_pid)) => {
+            if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+                &home,
+                crate::wal::events::EVENT_TYPE_SELF_UPDATE_REJECTED,
+                &payload,
+            )
+            .await
+            {
+                tracing::debug!(error = %e, "0xDE audit forward skipped (daemon listener unreachable)");
+            }
+            return;
         }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                pidfile = %pidfile.display(),
+                "SELF_UPDATE_REJECTED audit ownership is uncertain; refusing a local WAL writer"
+            );
+            return;
+        }
+    }
+    let wal_dir = home.join("wal");
+    if let Err(e) = std::fs::create_dir_all(&wal_dir) {
+        tracing::warn!(
+            error = %e,
+            wal_dir = %wal_dir.display(),
+            "SELF_UPDATE_REJECTED WAL directory unavailable (non-fatal)"
+        );
         return;
     }
-    let wal_dir = crate::config::FreedomConfig::default_wal_dir();
-    if std::fs::create_dir_all(&wal_dir).is_err() {
-        return;
-    }
-    let seg = wal_dir.join("000001.wal");
-    let (writer, join) = match crate::wal::writer::spawn(seg) {
+    let seg = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "self-update-rejected");
+    let (writer, completion) = match crate::wal::writer::spawn_for_home_with_completion(seg, home) {
         Ok(pair) => pair,
         Err(e) => {
             tracing::warn!(error = %e, "SELF_UPDATE_REJECTED WAL writer spawn failed (non-fatal)");
@@ -533,7 +578,9 @@ async fn emit_self_update_rejected(
         tracing::warn!(error = %e, "SELF_UPDATE_REJECTED WAL emit failed (non-fatal)");
     }
     drop(writer);
-    let _ = join.await;
+    if let Err(e) = completion.wait().await {
+        tracing::warn!(error = %e, "SELF_UPDATE_REJECTED WAL writer finalization failed (non-fatal)");
+    }
 }
 
 fn render_self_apply(applied: &crate::updater::self_update::UpdateApplied, output: OutputFormat) {

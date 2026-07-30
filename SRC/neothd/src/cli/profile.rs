@@ -642,8 +642,9 @@ pub(crate) async fn append_communication_control_audit_at(
         &wal_dir,
         "communication-profile-control",
     );
-    let (writer, join) = crate::wal::spawn_for_home(segment, home.to_path_buf())
-        .context("spawn one-shot communication-profile control WAL writer")?;
+    let (writer, completion) =
+        crate::wal::writer::spawn_for_home_with_completion(segment, home.to_path_buf())
+            .context("spawn one-shot communication-profile control WAL writer")?;
     let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
         .event_subtype(subtype)
         .build();
@@ -653,9 +654,10 @@ pub(crate) async fn append_communication_control_audit_at(
         .context("append required communication-profile control audit")
         .map(|_| ());
     drop(writer);
-    let shutdown = join
+    let shutdown = completion
+        .wait()
         .await
-        .context("join one-shot communication-profile control WAL writer");
+        .context("finalize one-shot communication-profile control WAL writer");
     match (append, shutdown) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
@@ -1896,6 +1898,136 @@ fn find_baseline_snapshot_id(frames: &[u8]) -> Option<String> {
     None
 }
 
+fn ensure_no_live_daemon_writer(home: &std::path::Path, operation: &str) -> Result<()> {
+    let pidfile = home.join("neothd.pid");
+    if let Some(pid) = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon ownership via {}", pidfile.display()))?
+    {
+        anyhow::bail!(
+            "neoth daemon is live (pid {pid}); stop it before `{operation}` so the command's \
+             required writer cannot race the daemon-owned WAL"
+        );
+    }
+    Ok(())
+}
+
+static PENDING_RESOLUTION_PROCESS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+struct PendingResolutionGuard {
+    _process: tokio::sync::MutexGuard<'static, ()>,
+    _file: std::fs::File,
+}
+
+/// Serialize one pending-profile resolution from the initial row read through
+/// the terminal WAL ACK and commit-last delete. The process mutex prevents
+/// same-process contenders from relying on platform-specific advisory-lock
+/// reentrancy; the sibling OS lock excludes separate `neoth` processes.
+async fn acquire_pending_resolution_guard(
+    db_path: &std::path::Path,
+) -> Result<PendingResolutionGuard> {
+    let process = PENDING_RESOLUTION_PROCESS_LOCK.lock().await;
+    let db_path = db_path.to_path_buf();
+    let file = tokio::task::spawn_blocking(move || -> Result<std::fs::File> {
+        let canonical_db = std::fs::canonicalize(&db_path)
+            .with_context(|| format!("resolve profile database {}", db_path.display()))?;
+        let mut lock_name = canonical_db.as_os_str().to_os_string();
+        lock_name.push(".pending-resolution.lock");
+        let lock_path = std::path::PathBuf::from(lock_name);
+        crate::util::locked_file::lock_file_blocking(&lock_path, "pending profile resolution")
+    })
+    .await
+    .context("join pending profile resolution lock acquisition")??;
+    Ok(PendingResolutionGuard {
+        _process: process,
+        _file: file,
+    })
+}
+
+async fn finalize_ready_profile_writer(
+    writer: crate::wal::writer::WalWriterHandle,
+    completion: tokio::task::JoinHandle<std::result::Result<(), String>>,
+    operation: &str,
+) -> Result<()> {
+    drop(writer);
+    completion
+        .await
+        .with_context(|| format!("join {operation} WAL writer"))?
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("finalize {operation} WAL writer"))
+}
+
+fn pending_resolution_id(row: &crate::profile::approval_gate::PendingRow) -> String {
+    format!("profile-pending:{}:{}", row.id, row.extraction_id)
+}
+
+fn decode_bound_pending_delta(
+    row: &crate::profile::approval_gate::PendingRow,
+) -> Result<crate::profile::delta::ProfileDelta> {
+    let delta: crate::profile::delta::ProfileDelta =
+        serde_json::from_str(&row.delta_json).context("decode parked delta_json")?;
+    if delta.extraction_id != row.extraction_id {
+        anyhow::bail!(
+            "pending delta binding mismatch: row extraction_id={} but delta carries {}",
+            row.extraction_id,
+            delta.extraction_id
+        );
+    }
+    if delta.claims.len() as i64 != row.claim_count {
+        anyhow::bail!(
+            "pending delta binding mismatch: row claim_count={} but delta carries {} claims",
+            row.claim_count,
+            delta.claims.len()
+        );
+    }
+    Ok(delta)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingResolutionFailureStage {
+    Append,
+    Apply,
+    Finalize,
+}
+
+#[cfg(test)]
+static PENDING_RESOLUTION_FAILURES: std::sync::Mutex<Vec<(String, PendingResolutionFailureStage)>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn fail_pending_resolution_for_test(extraction_id: &str, stage: PendingResolutionFailureStage) {
+    PENDING_RESOLUTION_FAILURES
+        .lock()
+        .expect("pending-resolution failure hook poisoned")
+        .push((extraction_id.to_owned(), stage));
+}
+
+#[cfg(test)]
+fn inject_pending_resolution_failure(
+    extraction_id: &str,
+    stage: PendingResolutionFailureStage,
+) -> Result<()> {
+    let mut failures = PENDING_RESOLUTION_FAILURES
+        .lock()
+        .expect("pending-resolution failure hook poisoned");
+    let Some(index) = failures
+        .iter()
+        .position(|entry| entry == &(extraction_id.to_owned(), stage))
+    else {
+        return Ok(());
+    };
+    failures.swap_remove(index);
+    anyhow::bail!("injected pending-resolution {stage:?} failure")
+}
+
+#[cfg(not(test))]
+#[inline]
+fn inject_pending_resolution_failure(
+    _extraction_id: &str,
+    _stage: PendingResolutionFailureStage,
+) -> Result<()> {
+    Ok(())
+}
+
 /// Emit the one-shot `0xB3 PROFILE_BASELINE_SNAPSHOT` drift anchor.
 ///
 /// Reads every active `idx_profile` claim, hashes each, and writes a
@@ -1908,7 +2040,8 @@ async fn run_seed_baseline(
     dry_run: bool,
     output: &OutputFormat,
 ) -> Result<()> {
-    let wal_dir = FreedomConfig::default_wal_dir();
+    let home = FreedomConfig::default_neoth_home();
+    let wal_dir = home.join("wal");
 
     // Exactly-once gate — scan the WAL for a prior baseline first.
     let prior = scan_for_prior_baseline_snapshot(&wal_dir);
@@ -1942,32 +2075,38 @@ async fn run_seed_baseline(
     // Single-writer safety: never open a 2nd writer on a segment the
     // live daemon owns. The operator stops the daemon, runs seed-baseline,
     // restarts — a one-time onboarding/migration action.
-    if let Ok(Some(pid)) =
-        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
-    {
-        anyhow::bail!(
-            "neoth daemon is live (pid {pid}); stop it before `profile seed-baseline` \
-             so the one-shot 0xB3 frame doesn't race the daemon's WAL writer"
-        );
-    }
+    ensure_no_live_daemon_writer(&home, "profile seed-baseline")?;
 
     std::fs::create_dir_all(&wal_dir)
         .with_context(|| format!("create WAL dir {}", wal_dir.display()))?;
-    let seg = wal_dir.join("000001.wal");
-    let (writer, writer_join) =
-        crate::wal::writer::spawn(seg).context("spawn WAL writer for seed-baseline")?;
+    let seg = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "profile-seed-baseline");
+    let (writer, writer_completion) = crate::wal::writer::spawn_for_home_with_completion(seg, home)
+        .context("spawn home-bound WAL writer for seed-baseline")?;
     let header = crate::wal::HeaderBuilder::new(
         crate::wal::events::EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT,
         &payload,
     )
     .importance(1.0)
     .build();
-    writer
+    let append_result = writer
         .append(header, payload)
         .await
-        .context("emit 0xB3 PROFILE_BASELINE_SNAPSHOT")?;
+        .context("emit 0xB3 PROFILE_BASELINE_SNAPSHOT");
     drop(writer);
-    let _ = writer_join.await;
+    let shutdown_result = writer_completion
+        .wait()
+        .await
+        .context("finalize profile seed-baseline WAL writer");
+    match (append_result, shutdown_result) {
+        (Ok(_), Ok(())) => {}
+        (Err(append), Ok(())) => return Err(append),
+        (Ok(_), Err(shutdown)) => return Err(shutdown),
+        (Err(append), Err(shutdown)) => {
+            return Err(anyhow::anyhow!(
+                "{append:#}; additionally failed to close profile seed-baseline WAL: {shutdown:#}"
+            ));
+        }
+    }
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -2450,15 +2589,19 @@ fn run_pending_list(
         OutputFormat::Json | OutputFormat::Jsonl => {
             let arr: Vec<_> = rows
                 .iter()
-                .map(|r| {
-                    serde_json::json!({
+                .map(|r| -> Result<_> {
+                    let decision = r
+                        .resolution_decision()
+                        .context("read pending resolution decision")?;
+                    Ok(serde_json::json!({
                         "id": r.id,
                         "extraction_id": r.extraction_id,
                         "claim_count": r.claim_count,
                         "created_at_unix": r.created_at_unix,
-                    })
+                        "resolution_decision": decision.as_str(),
+                    }))
                 })
-                .collect();
+                .collect::<Result<_>>()?;
             println!("{}", serde_json::to_string_pretty(&arr)?);
         }
         OutputFormat::Table => {
@@ -2466,13 +2609,19 @@ fn run_pending_list(
                 println!("No pending profile deltas. Operator-confirmation gate is idle.");
             } else {
                 println!(
-                    "{:<32} {:>8} {:>18}",
-                    "extraction_id", "claims", "created_at_unix"
+                    "{:<32} {:>8} {:<9} {:>18}",
+                    "extraction_id", "claims", "decision", "created_at_unix"
                 );
                 for r in &rows {
+                    let decision = r
+                        .resolution_decision()
+                        .context("read pending resolution decision")?;
                     println!(
-                        "{:<32} {:>8} {:>18}",
-                        r.extraction_id, r.claim_count, r.created_at_unix
+                        "{:<32} {:>8} {:<9} {:>18}",
+                        r.extraction_id,
+                        r.claim_count,
+                        decision.as_str(),
+                        r.created_at_unix
                     );
                 }
                 println!();
@@ -2491,38 +2640,88 @@ async fn run_pending_approve(
     extraction_id: &str,
     output: &OutputFormat,
 ) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    run_pending_approve_at(&home, db_path, extraction_id, output).await
+}
+
+async fn run_pending_approve_at(
+    home: &std::path::Path,
+    db_path: &std::path::Path,
+    extraction_id: &str,
+    output: &OutputFormat,
+) -> Result<()> {
+    let _resolution_guard = acquire_pending_resolution_guard(db_path).await?;
+    ensure_no_live_daemon_writer(home, "profile approve")?;
     let mut conn = crate::memory::store::open(db_path).context("open views.db")?;
-    let row = match crate::profile::approval_gate::pop_pending(&conn, extraction_id)? {
-        Some(r) => r,
-        None => {
-            anyhow::bail!(
+    let mut row =
+        crate::profile::approval_gate::get_pending(&conn, extraction_id)?.ok_or_else(|| {
+            anyhow::anyhow!(
                 "no pending row for extraction_id={extraction_id} \
                  (already resolved or typo?)"
-            );
-        }
-    };
-    // Decode the parked delta + push through the existing apply_delta
-    // path. The delete inside pop_pending already happened; if
-    // apply_delta fails the operator can re-extract — the queued
-    // row's purpose was the gate, not durability.
-    let delta: crate::profile::delta::ProfileDelta =
-        serde_json::from_str(&row.delta_json).context("decode parked delta_json")?;
+            )
+        })?;
+    let delta = decode_bound_pending_delta(&row)?;
+    crate::profile::approval_gate::bind_pending_resolution(
+        &mut conn,
+        &mut row,
+        crate::profile::approval_gate::PendingResolutionDecision::Approve,
+    )
+    .context("bind pending row to approve decision")?;
+    let resolution_id = pending_resolution_id(&row);
 
-    // Spin up a fresh WAL writer for the apply call. Heavy but
-    // bounded — operators run approve interactively from a tty
-    // session, not in a hot loop.
-    let segment_path = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
-    let (writer, _join) =
-        crate::wal::writer::spawn(segment_path).context("spawn WAL writer for approve")?;
+    // Pending is only read/bound above. It remains recoverable until apply,
+    // terminal audit append, writer finalization, and the exact-row
+    // compare-and-delete commit below have all succeeded.
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create profile-approve WAL dir {}", wal_dir.display()))?;
+    let segment_path =
+        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "profile-approve");
+    let (writer, writer_completion, writer_ready) =
+        crate::wal::writer::spawn_for_home_ready(segment_path, home.to_path_buf())
+            .context("spawn home-bound WAL writer for approve")?;
+    if let Err(startup) = writer_ready.wait().await {
+        let shutdown =
+            finalize_ready_profile_writer(writer, writer_completion, "profile-approve").await;
+        return match shutdown {
+            Ok(()) => Err(startup).context("initialize profile-approve WAL writer"),
+            Err(shutdown) => Err(anyhow::anyhow!(
+                "{startup}; additionally failed to finalize profile-approve WAL: {shutdown:#}"
+            )),
+        };
+    }
 
     let now_unix = crate::time::now_unix_secs();
+    let apply_result = async {
+        inject_pending_resolution_failure(extraction_id, PendingResolutionFailureStage::Apply)?;
+        crate::profile::apply::apply_delta(&mut conn, &writer, &delta, now_unix as i64)
+            .await
+            .context("apply approved delta")
+    }
+    .await;
+    let outcome = match apply_result {
+        Ok(outcome) => outcome,
+        Err(operation) => {
+            let shutdown =
+                finalize_ready_profile_writer(writer, writer_completion, "profile-approve").await;
+            return match shutdown {
+                Ok(()) => Err(operation),
+                Err(shutdown) => Err(anyhow::anyhow!(
+                    "{operation:#}; additionally failed to finalize profile-approve WAL: \
+                     {shutdown:#}"
+                )),
+            };
+        }
+    };
 
-    // Emit the 0xB6 audit frame BEFORE apply_delta — so a crash mid-
-    // apply leaves a clear "operator approved this delta" record
-    // even when the row writes to idx_profile didn't all land.
+    // 0xB6 is a terminal result, never an intent. A failed apply therefore
+    // cannot leave behind an APPROVED event that falsely claims success.
     let approved_payload = crate::profile::approval_gate::approved_payload(
         extraction_id,
+        row.id,
+        &resolution_id,
         row.claim_count as usize,
+        outcome.idempotent_skip,
         now_unix,
     );
     let header = crate::wal::HeaderBuilder::new(
@@ -2530,17 +2729,38 @@ async fn run_pending_approve(
         &approved_payload,
     )
     .build();
-    if let Err(e) = writer.try_append_sync(header, approved_payload) {
-        tracing::warn!(
-            error = %e,
-            extraction_id,
-            "WAL append of APPROVED profile-delta audit frame failed"
-        );
+    let append_result: Result<()> = async {
+        inject_pending_resolution_failure(extraction_id, PendingResolutionFailureStage::Append)?;
+        writer
+            .append(header, approved_payload)
+            .await
+            .context("append required APPROVED profile-delta audit")
+            .map(|_| ())
+    }
+    .await;
+    let shutdown_result =
+        finalize_ready_profile_writer(writer, writer_completion, "profile-approve").await;
+    let injected_finalizer =
+        inject_pending_resolution_failure(extraction_id, PendingResolutionFailureStage::Finalize);
+    let shutdown_result = match (shutdown_result, injected_finalizer) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(shutdown), Err(injected)) => Err(anyhow::anyhow!(
+            "{shutdown:#}; additionally hit pending-resolution finalizer hook: {injected:#}"
+        )),
+    };
+    match (append_result, shutdown_result) {
+        (Ok(()), Ok(())) => {}
+        (Err(operation), Ok(())) | (Ok(()), Err(operation)) => return Err(operation),
+        (Err(operation), Err(shutdown)) => {
+            return Err(anyhow::anyhow!(
+                "{operation:#}; additionally failed to finalize profile-approve WAL: {shutdown:#}"
+            ));
+        }
     }
 
-    let outcome = crate::profile::apply::apply_delta(&mut conn, &writer, &delta, now_unix as i64)
-        .await
-        .context("apply approved delta")?;
+    crate::profile::approval_gate::delete_pending_if_unchanged(&mut conn, &row)
+        .context("commit approved pending resolution")?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -2573,23 +2793,59 @@ async fn run_pending_decline(
     reason: Option<&str>,
     output: &OutputFormat,
 ) -> Result<()> {
-    let conn = crate::memory::store::open(db_path).context("open views.db")?;
-    let row = match crate::profile::approval_gate::pop_pending(&conn, extraction_id)? {
-        Some(r) => r,
-        None => {
-            anyhow::bail!(
+    let home = FreedomConfig::default_neoth_home();
+    run_pending_decline_at(&home, db_path, extraction_id, reason, output).await
+}
+
+async fn run_pending_decline_at(
+    home: &std::path::Path,
+    db_path: &std::path::Path,
+    extraction_id: &str,
+    reason: Option<&str>,
+    output: &OutputFormat,
+) -> Result<()> {
+    let _resolution_guard = acquire_pending_resolution_guard(db_path).await?;
+    ensure_no_live_daemon_writer(home, "profile decline")?;
+    let mut conn = crate::memory::store::open(db_path).context("open views.db")?;
+    let mut row =
+        crate::profile::approval_gate::get_pending(&conn, extraction_id)?.ok_or_else(|| {
+            anyhow::anyhow!(
                 "no pending row for extraction_id={extraction_id} \
                  (already resolved or typo?)"
-            );
-        }
-    };
+            )
+        })?;
+    crate::profile::approval_gate::bind_pending_resolution(
+        &mut conn,
+        &mut row,
+        crate::profile::approval_gate::PendingResolutionDecision::Decline,
+    )
+    .context("bind pending row to decline decision")?;
+    let resolution_id = pending_resolution_id(&row);
 
-    let segment_path = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
-    let (writer, _join) =
-        crate::wal::writer::spawn(segment_path).context("spawn WAL writer for decline")?;
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create profile-decline WAL dir {}", wal_dir.display()))?;
+    let segment_path =
+        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "profile-decline");
+    let (writer, writer_completion, writer_ready) =
+        crate::wal::writer::spawn_for_home_ready(segment_path, home.to_path_buf())
+            .context("spawn home-bound WAL writer for decline")?;
+    if let Err(startup) = writer_ready.wait().await {
+        let shutdown =
+            finalize_ready_profile_writer(writer, writer_completion, "profile-decline").await;
+        return match shutdown {
+            Ok(()) => Err(startup).context("initialize profile-decline WAL writer"),
+            Err(shutdown) => Err(anyhow::anyhow!(
+                "{startup}; additionally failed to finalize profile-decline WAL: {shutdown:#}"
+            )),
+        };
+    }
+
     let now_unix = crate::time::now_unix_secs();
     let payload = crate::profile::approval_gate::declined_payload(
         extraction_id,
+        row.id,
+        &resolution_id,
         row.claim_count as usize,
         now_unix,
         reason,
@@ -2597,13 +2853,38 @@ async fn run_pending_decline(
     let header =
         crate::wal::HeaderBuilder::new(crate::profile::approval_gate::DECLINED_EVENT, &payload)
             .build();
-    if let Err(e) = writer.try_append_sync(header, payload) {
-        tracing::warn!(
-            error = %e,
-            extraction_id,
-            "WAL append of DECLINED profile-delta audit frame failed"
-        );
+    let append_result: Result<()> = async {
+        inject_pending_resolution_failure(extraction_id, PendingResolutionFailureStage::Append)?;
+        writer
+            .append(header, payload)
+            .await
+            .context("append required DECLINED profile-delta audit")
+            .map(|_| ())
     }
+    .await;
+    let shutdown_result =
+        finalize_ready_profile_writer(writer, writer_completion, "profile-decline").await;
+    let injected_finalizer =
+        inject_pending_resolution_failure(extraction_id, PendingResolutionFailureStage::Finalize);
+    let shutdown_result = match (shutdown_result, injected_finalizer) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(shutdown), Err(injected)) => Err(anyhow::anyhow!(
+            "{shutdown:#}; additionally hit pending-resolution finalizer hook: {injected:#}"
+        )),
+    };
+    match (append_result, shutdown_result) {
+        (Ok(()), Ok(())) => {}
+        (Err(operation), Ok(())) | (Ok(()), Err(operation)) => return Err(operation),
+        (Err(operation), Err(shutdown)) => {
+            return Err(anyhow::anyhow!(
+                "{operation:#}; additionally failed to finalize profile-decline WAL: {shutdown:#}"
+            ));
+        }
+    }
+
+    crate::profile::approval_gate::delete_pending_if_unchanged(&mut conn, &row)
+        .context("commit declined pending resolution")?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -2797,6 +3078,7 @@ async fn run_pipeline_cli_batch(
     // mode this is identical to `from_config`; in Triplet/Custom modes
     // the operator's per-role Left provider wins.
     let neoth_home = FreedomConfig::default_neoth_home();
+    ensure_no_live_daemon_writer(&neoth_home, "profile run")?;
     let provider = crate::providers::from_config_for_role_at(
         &config,
         crate::config::inference::HemisphereRole::Left,
@@ -2805,12 +3087,14 @@ async fn run_pipeline_cli_batch(
     .await
     .context("build provider for profile.extract")?;
     let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
+    let mut conn = store::open(db_path).context("reopen views.db for pipeline")?;
 
-    let wal_dir = FreedomConfig::default_wal_dir();
+    let wal_dir = neoth_home.join("wal");
     std::fs::create_dir_all(&wal_dir).context("create WAL dir")?;
-    let segment = wal_dir.join(format!("profile-run-{}.wal", crate::time::now_unix_secs(),));
-    let (writer, writer_join) =
-        crate::wal::writer::spawn(segment.clone()).context("spawn WAL writer")?;
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "profile-run");
+    let (writer, writer_completion) =
+        crate::wal::writer::spawn_for_home_with_completion(segment, neoth_home.clone())
+            .context("spawn home-bound profile-run WAL writer")?;
     let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
         provider,
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
@@ -2822,7 +3106,6 @@ async fn run_pipeline_cli_batch(
         "profile.cli_batch",
     );
 
-    let mut conn = store::open(db_path).context("reopen views.db for pipeline")?;
     let guard = crate::profile::claim_guard::ProfileClaimGuard::default();
     let now_unix = crate::time::now_unix_secs();
 
@@ -2856,7 +3139,10 @@ async fn run_pipeline_cli_batch(
     }
     drop(provider);
     drop(writer);
-    let _ = writer_join.await;
+    writer_completion
+        .wait()
+        .await
+        .context("finalize profile-run WAL writer")?;
 
     let summary = summarise_runs(&runs);
     match output {
@@ -3265,17 +3551,74 @@ async fn run_persona_sub(sub: PersonaSub, output: &OutputFormat) -> Result<()> {
                 "ts_unix": crate::time::now_unix_secs(),
             }))
             .unwrap_or_default();
-            let segment = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
-            if let Some(p) = segment.parent() {
-                let _ = std::fs::create_dir_all(p);
-            }
-            if let Ok((writer, _join)) = crate::wal::writer::spawn(segment) {
-                let header = crate::wal::HeaderBuilder::new(
-                    crate::wal::events::EVENT_TYPE_LOYAL_BUDDY_ACTIVATED,
-                    &payload,
-                )
-                .build();
-                let _ = writer.try_append_sync(header, payload);
+            let event_type = crate::wal::events::EVENT_TYPE_LOYAL_BUDDY_ACTIVATED;
+            let pidfile = home.join("neothd.pid");
+            let daemon_live = match crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+                Ok(pid) => pid.is_some(),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        pidfile = %pidfile.display(),
+                        "loyal-buddy audit ownership is uncertain; refusing a local WAL writer"
+                    );
+                    true
+                }
+            };
+            if daemon_live {
+                if let Err(e) =
+                    crate::daemon::audit_rpc::try_post_audit_frame(&home, event_type, &payload)
+                        .await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        "loyal-buddy activation persisted, but daemon audit forwarding failed"
+                    );
+                }
+            } else {
+                let wal_dir = home.join("wal");
+                match std::fs::create_dir_all(&wal_dir) {
+                    Ok(()) => {
+                        let segment = crate::wal::writer::unique_standalone_segment_path(
+                            &wal_dir,
+                            "loyal-buddy",
+                        );
+                        match crate::wal::writer::spawn_for_home_with_completion(
+                            segment,
+                            home.clone(),
+                        ) {
+                            Ok((writer, completion)) => {
+                                let header =
+                                    crate::wal::HeaderBuilder::new(event_type, &payload).build();
+                                if let Err(e) = writer.append(header, payload).await {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "loyal-buddy activation audit append failed"
+                                    );
+                                }
+                                drop(writer);
+                                if let Err(e) = completion.wait().await {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "loyal-buddy activation audit writer finalization failed"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    "loyal-buddy activation persisted without a local audit writer"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            wal_dir = %wal_dir.display(),
+                            "loyal-buddy activation persisted without a writable WAL directory"
+                        );
+                    }
+                }
             }
 
             match output {
@@ -4074,6 +4417,72 @@ mod tests {
 
     // ── ADV-03 item 4 Phase 6: pending/approve/decline/migrate CLI tests ───
 
+    fn resolution_test_delta(extraction_id: &str) -> crate::profile::delta::ProfileDelta {
+        use crate::profile::delta::{ProfileDelta, RawClaim};
+        ProfileDelta {
+            extraction_id: extraction_id.into(),
+            conversation_hash: format!("hash-{extraction_id}"),
+            claims: vec![RawClaim {
+                field: "identity.role".into(),
+                value_json: serde_json::json!("dev"),
+                confidence: 0.9,
+                reasoning: "operator said so".into(),
+                evidence_event_ids: vec![1],
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn pending_row_exists(db_path: &std::path::Path, extraction_id: &str) -> bool {
+        let conn = crate::memory::store::open(db_path).unwrap();
+        crate::profile::approval_gate::get_pending(&conn, extraction_id)
+            .unwrap()
+            .is_some()
+    }
+
+    fn pending_resolution_decision(
+        db_path: &std::path::Path,
+        extraction_id: &str,
+    ) -> crate::profile::approval_gate::PendingResolutionDecision {
+        let conn = crate::memory::store::open(db_path).unwrap();
+        crate::profile::approval_gate::get_pending(&conn, extraction_id)
+            .unwrap()
+            .expect("pending row")
+            .resolution_decision()
+            .unwrap()
+    }
+
+    fn profile_row_count(db_path: &std::path::Path, extraction_id: &str) -> i64 {
+        let conn = crate::memory::store::open(db_path).unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM idx_profile WHERE extraction_id = ?1",
+            rusqlite::params![extraction_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn wal_payloads_for_event(home: &std::path::Path, event_type: u8) -> Vec<serde_json::Value> {
+        let mut payloads = Vec::new();
+        for path in std::fs::read_dir(home.join("wal"))
+            .unwrap()
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("wal"))
+        {
+            let bytes = std::fs::read(path).unwrap();
+            let segment_header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+            let mut cursor = segment_header.header_len();
+            while cursor < bytes.len() {
+                let decoded = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+                if decoded.header.event_type == event_type {
+                    payloads.push(serde_json::from_slice(decoded.payload).unwrap());
+                }
+                cursor += decoded.header.total_len as usize;
+            }
+        }
+        payloads
+    }
+
     /// Test-only migrate helper that targets an explicit yaml path
     /// instead of `FreedomConfig::default_path()` — keeps the test
     /// off the global HOME / USERPROFILE env vars (Session 24 env-
@@ -4300,6 +4709,472 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].extraction_id, "ext-cli-test-1");
         assert_eq!(rows[0].claim_count, 1);
+    }
+
+    #[tokio::test]
+    async fn resolutions_keep_pending_rows_when_required_writer_cannot_spawn() {
+        use crate::profile::approval_gate::{insert_pending, list_pending};
+        use crate::profile::delta::{ProfileDelta, RawClaim};
+
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "wal:\n  encryption: aes256_gcm_siv\n",
+        )
+        .unwrap();
+        let db_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let decline_delta = ProfileDelta {
+            extraction_id: "ext-decline-writer-spawn-failure".into(),
+            conversation_hash: "h".into(),
+            claims: vec![RawClaim {
+                field: "identity.role".into(),
+                value_json: serde_json::json!("dev"),
+                confidence: 0.9,
+                reasoning: "operator said so".into(),
+                evidence_event_ids: vec![1],
+            }],
+            ..Default::default()
+        };
+        let approve_delta = ProfileDelta {
+            extraction_id: "ext-approve-writer-spawn-failure".into(),
+            ..decline_delta.clone()
+        };
+        insert_pending(&conn, &decline_delta, 100).unwrap();
+        insert_pending(&conn, &approve_delta, 101).unwrap();
+        drop(conn);
+
+        let decline_error = run_pending_decline_at(
+            home.path(),
+            &db_path,
+            &decline_delta.extraction_id,
+            Some("test"),
+            &OutputFormat::Table,
+        )
+        .await
+        .expect_err("unimplemented WAL encryption must refuse the resolution writer");
+        assert!(
+            format!("{decline_error:#}").contains("spawn home-bound WAL writer for decline"),
+            "unexpected decline error: {decline_error:#}"
+        );
+        let approve_error = run_pending_approve_at(
+            home.path(),
+            &db_path,
+            &approve_delta.extraction_id,
+            &OutputFormat::Table,
+        )
+        .await
+        .expect_err("unimplemented WAL encryption must refuse the resolution writer");
+        assert!(
+            format!("{approve_error:#}").contains("spawn home-bound WAL writer for approve"),
+            "unexpected approve error: {approve_error:#}"
+        );
+
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let rows = list_pending(&conn, 10).unwrap();
+        assert_eq!(
+            rows.iter()
+                .filter(|row| {
+                    row.extraction_id == decline_delta.extraction_id
+                        || row.extraction_id == approve_delta.extraction_id
+                })
+                .count(),
+            2,
+            "writer spawn failure must not consume the pending row"
+        );
+    }
+
+    #[tokio::test]
+    async fn approve_decode_failure_keeps_pending_row_without_opening_a_writer() {
+        let home = tempfile::tempdir().unwrap();
+        let db_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO idx_profile_pending \
+             (extraction_id, delta_json, claim_count, created_at_unix) \
+             VALUES (?1, '{not-json', 1, 100)",
+            rusqlite::params!["ext-approve-decode-failure"],
+        )
+        .unwrap();
+        drop(conn);
+
+        let error = run_pending_approve_at(
+            home.path(),
+            &db_path,
+            "ext-approve-decode-failure",
+            &OutputFormat::Table,
+        )
+        .await
+        .expect_err("malformed parked delta must fail closed");
+        assert!(
+            format!("{error:#}").contains("decode parked delta_json"),
+            "unexpected error: {error:#}"
+        );
+        assert!(pending_row_exists(&db_path, "ext-approve-decode-failure"));
+        assert!(
+            !home.path().join("wal").exists(),
+            "decode fails before any writer is opened"
+        );
+    }
+
+    #[tokio::test]
+    async fn required_append_failures_keep_approve_and_decline_pending_rows() {
+        use crate::profile::approval_gate::insert_pending;
+
+        let home = tempfile::tempdir().unwrap();
+        let db_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let approve = resolution_test_delta("ext-approve-append-failure");
+        let decline = resolution_test_delta("ext-decline-append-failure");
+        insert_pending(&conn, &approve, 100).unwrap();
+        insert_pending(&conn, &decline, 101).unwrap();
+        drop(conn);
+        fail_pending_resolution_for_test(
+            &approve.extraction_id,
+            PendingResolutionFailureStage::Append,
+        );
+        fail_pending_resolution_for_test(
+            &decline.extraction_id,
+            PendingResolutionFailureStage::Append,
+        );
+
+        let approve_error = run_pending_approve_at(
+            home.path(),
+            &db_path,
+            &approve.extraction_id,
+            &OutputFormat::Table,
+        )
+        .await
+        .expect_err("required APPROVED append failure must fail the command");
+        assert!(
+            format!("{approve_error:#}").contains("injected pending-resolution Append failure"),
+            "unexpected approve error: {approve_error:#}"
+        );
+        let decline_error = run_pending_decline_at(
+            home.path(),
+            &db_path,
+            &decline.extraction_id,
+            Some("test"),
+            &OutputFormat::Table,
+        )
+        .await
+        .expect_err("required DECLINED append failure must fail the command");
+        assert!(
+            format!("{decline_error:#}").contains("injected pending-resolution Append failure"),
+            "unexpected decline error: {decline_error:#}"
+        );
+
+        assert!(pending_row_exists(&db_path, &approve.extraction_id));
+        assert!(pending_row_exists(&db_path, &decline.extraction_id));
+        assert_eq!(
+            profile_row_count(&db_path, &approve.extraction_id),
+            1,
+            "approve apply may commit before audit fails, but retained Pending makes retry safe"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_approve_audit_cannot_be_reinterpreted_as_decline() {
+        use crate::profile::approval_gate::{
+            APPROVED_EVENT, DECLINED_EVENT, PendingResolutionDecision, insert_pending,
+        };
+
+        let home = tempfile::tempdir().unwrap();
+        let db_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let delta = resolution_test_delta("ext-approve-decision-binding");
+        insert_pending(&conn, &delta, 100).unwrap();
+        drop(conn);
+        fail_pending_resolution_for_test(
+            &delta.extraction_id,
+            PendingResolutionFailureStage::Append,
+        );
+
+        run_pending_approve_at(
+            home.path(),
+            &db_path,
+            &delta.extraction_id,
+            &OutputFormat::Table,
+        )
+        .await
+        .expect_err("injected approve audit failure must fail the command");
+        assert_eq!(
+            pending_resolution_decision(&db_path, &delta.extraction_id),
+            PendingResolutionDecision::Approve
+        );
+        assert_eq!(profile_row_count(&db_path, &delta.extraction_id), 1);
+
+        let decline_error = run_pending_decline_at(
+            home.path(),
+            &db_path,
+            &delta.extraction_id,
+            Some("changed my mind"),
+            &OutputFormat::Table,
+        )
+        .await
+        .expect_err("an applied approve decision must not switch to decline");
+        assert!(
+            format!("{decline_error:#}").contains("already bound to approve"),
+            "{decline_error:#}"
+        );
+        assert!(wal_payloads_for_event(home.path(), DECLINED_EVENT).is_empty());
+
+        run_pending_approve_at(
+            home.path(),
+            &db_path,
+            &delta.extraction_id,
+            &OutputFormat::Table,
+        )
+        .await
+        .expect("same approve decision must recover idempotently");
+        assert!(!pending_row_exists(&db_path, &delta.extraction_id));
+        assert_eq!(wal_payloads_for_event(home.path(), APPROVED_EVENT).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn approve_apply_persistence_failure_keeps_pending_and_emits_no_approved_result() {
+        use crate::profile::approval_gate::insert_pending;
+
+        let home = tempfile::tempdir().unwrap();
+        let db_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let delta = resolution_test_delta("ext-approve-apply-failure");
+        insert_pending(&conn, &delta, 100).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_profile_insert \
+             BEFORE INSERT ON idx_profile \
+             BEGIN \
+               SELECT RAISE(ABORT, 'injected profile apply persistence failure'); \
+             END;",
+        )
+        .unwrap();
+        drop(conn);
+
+        let error = run_pending_approve_at(
+            home.path(),
+            &db_path,
+            &delta.extraction_id,
+            &OutputFormat::Table,
+        )
+        .await
+        .expect_err("profile transaction failure must fail approval");
+        assert!(
+            format!("{error:#}").contains("apply approved delta"),
+            "unexpected error: {error:#}"
+        );
+        assert!(pending_row_exists(&db_path, &delta.extraction_id));
+        assert_eq!(profile_row_count(&db_path, &delta.extraction_id), 0);
+        assert!(
+            wal_payloads_for_event(home.path(), crate::profile::approval_gate::APPROVED_EVENT)
+                .is_empty(),
+            "failed apply must not emit a terminal APPROVED result"
+        );
+    }
+
+    #[tokio::test]
+    async fn writer_finalizer_failures_keep_approve_and_decline_pending_rows() {
+        use crate::profile::approval_gate::insert_pending;
+
+        let home = tempfile::tempdir().unwrap();
+        let db_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let approve = resolution_test_delta("ext-approve-finalizer-failure");
+        let decline = resolution_test_delta("ext-decline-finalizer-failure");
+        insert_pending(&conn, &approve, 100).unwrap();
+        insert_pending(&conn, &decline, 101).unwrap();
+        drop(conn);
+        fail_pending_resolution_for_test(
+            &approve.extraction_id,
+            PendingResolutionFailureStage::Finalize,
+        );
+        fail_pending_resolution_for_test(
+            &decline.extraction_id,
+            PendingResolutionFailureStage::Finalize,
+        );
+
+        let approve_error = run_pending_approve_at(
+            home.path(),
+            &db_path,
+            &approve.extraction_id,
+            &OutputFormat::Table,
+        )
+        .await
+        .expect_err("finalizer failure must fail approval");
+        assert!(
+            format!("{approve_error:#}").contains("injected pending-resolution Finalize failure"),
+            "unexpected approve error: {approve_error:#}"
+        );
+        let decline_error = run_pending_decline_at(
+            home.path(),
+            &db_path,
+            &decline.extraction_id,
+            None,
+            &OutputFormat::Table,
+        )
+        .await
+        .expect_err("finalizer failure must fail decline");
+        assert!(
+            format!("{decline_error:#}").contains("injected pending-resolution Finalize failure"),
+            "unexpected decline error: {decline_error:#}"
+        );
+        assert!(pending_row_exists(&db_path, &approve.extraction_id));
+        assert!(pending_row_exists(&db_path, &decline.extraction_id));
+    }
+
+    #[tokio::test]
+    async fn pending_delete_persistence_failure_is_commit_last_for_both_resolutions() {
+        use crate::profile::approval_gate::insert_pending;
+
+        let home = tempfile::tempdir().unwrap();
+        let db_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let approve = resolution_test_delta("ext-approve-delete-failure");
+        let decline = resolution_test_delta("ext-decline-delete-failure");
+        insert_pending(&conn, &approve, 100).unwrap();
+        insert_pending(&conn, &decline, 101).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_pending_delete \
+             BEFORE DELETE ON idx_profile_pending \
+             BEGIN \
+               SELECT RAISE(ABORT, 'injected pending delete persistence failure'); \
+             END;",
+        )
+        .unwrap();
+        drop(conn);
+
+        let approve_error = run_pending_approve_at(
+            home.path(),
+            &db_path,
+            &approve.extraction_id,
+            &OutputFormat::Table,
+        )
+        .await
+        .expect_err("commit-last delete failure must fail approval");
+        assert!(
+            format!("{approve_error:#}").contains("commit approved pending resolution"),
+            "unexpected approve error: {approve_error:#}"
+        );
+        let decline_error = run_pending_decline_at(
+            home.path(),
+            &db_path,
+            &decline.extraction_id,
+            Some("test"),
+            &OutputFormat::Table,
+        )
+        .await
+        .expect_err("commit-last delete failure must fail decline");
+        assert!(
+            format!("{decline_error:#}").contains("commit declined pending resolution"),
+            "unexpected decline error: {decline_error:#}"
+        );
+        assert!(pending_row_exists(&db_path, &approve.extraction_id));
+        assert!(pending_row_exists(&db_path, &decline.extraction_id));
+        assert_eq!(profile_row_count(&db_path, &approve.extraction_id), 1);
+    }
+
+    #[tokio::test]
+    async fn successful_resolutions_delete_pending_only_after_truthful_terminal_audit() {
+        use crate::profile::approval_gate::insert_pending;
+
+        let home = tempfile::tempdir().unwrap();
+        let db_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let approve = resolution_test_delta("ext-approve-success");
+        let decline = resolution_test_delta("ext-decline-success");
+        insert_pending(&conn, &approve, 100).unwrap();
+        insert_pending(&conn, &decline, 101).unwrap();
+        drop(conn);
+
+        run_pending_approve_at(
+            home.path(),
+            &db_path,
+            &approve.extraction_id,
+            &OutputFormat::Table,
+        )
+        .await
+        .unwrap();
+        run_pending_decline_at(
+            home.path(),
+            &db_path,
+            &decline.extraction_id,
+            Some("noise"),
+            &OutputFormat::Table,
+        )
+        .await
+        .unwrap();
+
+        assert!(!pending_row_exists(&db_path, &approve.extraction_id));
+        assert!(!pending_row_exists(&db_path, &decline.extraction_id));
+        assert_eq!(profile_row_count(&db_path, &approve.extraction_id), 1);
+        let approved =
+            wal_payloads_for_event(home.path(), crate::profile::approval_gate::APPROVED_EVENT);
+        assert_eq!(approved.len(), 1);
+        assert_eq!(approved[0]["resolution_phase"], "result");
+        assert_eq!(approved[0]["resolution_status"], "applied");
+        assert_eq!(
+            approved[0]["resolution_id"],
+            format!(
+                "profile-pending:{}:{}",
+                approved[0]["pending_row_id"].as_i64().unwrap(),
+                approve.extraction_id
+            )
+        );
+        let declined =
+            wal_payloads_for_event(home.path(), crate::profile::approval_gate::DECLINED_EVENT);
+        assert_eq!(declined.len(), 1);
+        assert_eq!(declined[0]["resolution_phase"], "decision");
+        assert_eq!(declined[0]["resolution_status"], "declined");
+        assert_eq!(declined[0]["reason"], "noise");
+    }
+
+    #[tokio::test]
+    async fn concurrent_approve_and_decline_emit_only_one_terminal_resolution() {
+        use crate::profile::approval_gate::insert_pending;
+
+        let home = tempfile::tempdir().unwrap();
+        let db_path = home.path().join("views.db");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let delta = resolution_test_delta("ext-concurrent-resolution");
+        insert_pending(&conn, &delta, 100).unwrap();
+        drop(conn);
+
+        let approve = run_pending_approve_at(
+            home.path(),
+            &db_path,
+            &delta.extraction_id,
+            &OutputFormat::Table,
+        );
+        let decline = run_pending_decline_at(
+            home.path(),
+            &db_path,
+            &delta.extraction_id,
+            Some("concurrent-decline"),
+            &OutputFormat::Table,
+        );
+        let (approve_result, decline_result) = tokio::join!(approve, decline);
+
+        assert_ne!(
+            approve_result.is_ok(),
+            decline_result.is_ok(),
+            "exactly one competing resolution may commit: approve={approve_result:?}, \
+             decline={decline_result:?}"
+        );
+        assert!(!pending_row_exists(&db_path, &delta.extraction_id));
+
+        let approved =
+            wal_payloads_for_event(home.path(), crate::profile::approval_gate::APPROVED_EVENT);
+        let declined =
+            wal_payloads_for_event(home.path(), crate::profile::approval_gate::DECLINED_EVENT);
+        assert_eq!(
+            approved.len() + declined.len(),
+            1,
+            "serialized resolution must publish exactly one terminal audit"
+        );
+        assert_eq!(
+            profile_row_count(&db_path, &delta.extraction_id),
+            if approve_result.is_ok() { 1 } else { 0 },
+            "profile mutation must agree with the sole successful resolution"
+        );
     }
 
     // ── AR-05 (Session 24) profile conflicts ──────────────────────────

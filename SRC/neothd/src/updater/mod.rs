@@ -4,14 +4,17 @@
 //! installs must be auto-updatable. Operator never runs `npm update` or
 //! chases version drift manually.
 //!
-//! V1 scope: npm-installed CLIs (claude-cli, gemini-cli, codex). Each has
+//! Managed CLI scope: npm-installed Claude/Codex plus vendor-distributed
+//! Antigravity. npm components use
 //! - `installed_version()` → ask the binary itself (e.g. `claude --version`)
 //! - `latest_version()` → query the npm registry via `npm view <pkg> version`
 //! - `apply()` → `npm install -g <pkg>@latest`
+//! Antigravity resolves version/install through its separately hardened vendor
+//! descriptor; it is never represented as an npm package.
 //!
-//! V2 (deferred): obsidian, hysteria, neothd self-update.
-//! The trait + reporting machinery is laid out so a v2 implementor only adds
-//! a new variant to `Component`.
+//! NEOTH self-update lives in [`self_update`]; recurring self-probe/stage use
+//! the request-bound authority core, while CLI/npm/Git/install recurring lanes
+//! remain denied until their sealed leaf adoption is complete.
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -24,9 +27,11 @@ use tracing::{info, warn};
 // CLI auto-update logic — same `updater` module, separate file so
 // the GitHub-Releases-API path doesn't entangle with the npm-aware
 // installer path.
+pub(crate) mod authority;
 pub mod install_transaction;
 pub mod pipeline;
 pub mod probes;
+pub(crate) mod reconcile;
 pub mod release_bundle;
 pub mod self_update;
 /// MAR-02 — in-process minisign keypair generation + release signing (the
@@ -35,8 +40,9 @@ pub mod sig_keygen;
 pub mod sig_verify;
 pub mod skill_resolver;
 
-#[cfg_attr(not(test), allow(unused_imports))]
-use crate::installers::{ALL as ALL_INSTALLERS, build_cmd};
+#[cfg(test)]
+use crate::installers::ALL as ALL_INSTALLERS;
+use crate::installers::build_cmd;
 
 /// What we update. One discriminant per managed component. Adding a non-npm
 /// component (Obsidian, Hysteria, …) is "new variant + match arm in the four

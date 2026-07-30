@@ -42,17 +42,31 @@ use rusqlite::params;
 
 const DAY_NS: i64 = 86_400 * 1_000_000_000;
 
+fn spawn_home_writer(
+    home: &Path,
+) -> (
+    std::path::PathBuf,
+    writer::WalWriterHandle,
+    tokio::task::JoinHandle<()>,
+) {
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir).expect("create test WAL directory");
+    let segment = wal_dir.join("000001.wal");
+    let (handle, join) = writer::spawn_for_home(segment.clone(), home.to_path_buf())
+        .expect("spawn home-bound writer");
+    (segment, handle, join)
+}
+
 // ── WAL → indexer → views.db round-trip ───────────────────────────────
 
 #[tokio::test(flavor = "current_thread")]
 async fn wal_raw_text_frame_round_trips_through_indexer_into_idx_episode() {
     let dir = tempfile::tempdir().unwrap();
-    let segment = dir.path().join("000001.wal");
     let db = dir.path().join("views.db");
 
-    // Real WAL writer. spawn() does the SegmentHeader prelude on
-    // first append; we don't have to fabricate it.
-    let (handle, join) = writer::spawn(segment.clone()).expect("spawn writer");
+    // Real production writer. It owns the selected instance home's WAL
+    // namespace and writes the SegmentHeader prelude before the first frame.
+    let (segment, handle, join) = spawn_home_writer(dir.path());
 
     let body = b"the operator typed this exact prompt";
     let header = make_header(EVENT_TYPE_RAW_TEXT, body);
@@ -71,7 +85,10 @@ async fn wal_raw_text_frame_round_trips_through_indexer_into_idx_episode() {
     let indexed = neothd::memory::indexer::replay_once(&mut conn, &segment)
         .await
         .expect("replay_once");
-    assert_eq!(indexed, 1, "exactly one RAW_TEXT frame was appended");
+    assert_eq!(
+        indexed, 2,
+        "the RAW_TEXT frame and mandatory shutdown HMAC marker must be replayed"
+    );
 
     // The row must be queryable via the schema the recall path uses.
     let (text, hash): (String, String) = conn
@@ -90,10 +107,9 @@ async fn indexer_replay_is_idempotent_across_calls() {
     // Replaying the same segment twice must not duplicate rows —
     // the per-segment cursor in `wal_cursor` is the contract.
     let dir = tempfile::tempdir().unwrap();
-    let segment = dir.path().join("000001.wal");
     let db = dir.path().join("views.db");
 
-    let (handle, join) = writer::spawn(segment.clone()).unwrap();
+    let (segment, handle, join) = spawn_home_writer(dir.path());
     for i in 0..3 {
         let body = format!("event-{i}");
         let header = make_header(EVENT_TYPE_RAW_TEXT, body.as_bytes());
@@ -109,7 +125,7 @@ async fn indexer_replay_is_idempotent_across_calls() {
     let first = neothd::memory::indexer::replay_once(&mut conn, &segment)
         .await
         .unwrap();
-    assert_eq!(first, 3);
+    assert_eq!(first, 4, "three events plus the shutdown HMAC marker");
     let second = neothd::memory::indexer::replay_once(&mut conn, &segment)
         .await
         .unwrap();
@@ -343,10 +359,9 @@ async fn indexer_can_catch_up_after_writer_flush_completes() {
     // writer to be alive to find the bytes — the segment file is
     // the source of truth.
     let dir = tempfile::tempdir().unwrap();
-    let segment = dir.path().join("000001.wal");
     let db = dir.path().join("views.db");
 
-    let (handle, join) = writer::spawn(segment.clone()).unwrap();
+    let (segment, handle, join) = spawn_home_writer(dir.path());
     for i in 0..5 {
         let body = format!("flush-then-index-{i}");
         let header = make_header(EVENT_TYPE_RAW_TEXT, body.as_bytes());
@@ -360,5 +375,5 @@ async fn indexer_can_catch_up_after_writer_flush_completes() {
     let n = neothd::memory::indexer::replay_once(&mut conn, &segment)
         .await
         .unwrap();
-    assert_eq!(n, 5);
+    assert_eq!(n, 6, "five events plus the shutdown HMAC marker");
 }

@@ -108,7 +108,9 @@ pub struct ServeArgs {
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
-    /// Override the WAL segment path. Defaults to ~/.neoth/wal/000001.wal.
+    /// Override the WAL segment path. It must be a canonical direct child of
+    /// the selected config home's `wal` directory with a six-digit segment
+    /// suffix. Defaults to `<config-home>/wal/000001.wal`.
     #[arg(long, value_name = "PATH")]
     pub wal_segment: Option<PathBuf>,
 
@@ -215,10 +217,29 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // is rebound `mut` because the idle-wait `select!` borrows `&mut writer_join`.
     let crate::cli::serve_tasks::WalSetup {
         wal_dir,
+        segment_chain_base_path,
         segment_path,
         writer,
         mut writer_join,
-    } = crate::cli::serve_tasks::prepare_wal(&neoth_home, args.wal_segment.clone())?;
+    } = crate::cli::serve_tasks::prepare_wal(&neoth_home, args.wal_segment.clone()).await?;
+
+    // GOLD-R3-18: a daemon may have died after durably admitting an updater
+    // leaf but before recording its terminal result. Reconcile those exact
+    // request bindings before BOOT or any runtime producer can append new
+    // updater work. One-shot diagnostics must never race a live daemon's WAL.
+    if !args.one_shot
+        && let Err(error) = crate::updater::reconcile::reconcile_unfinished_updater_leaves(
+            &neoth_home,
+            &segment_chain_base_path,
+            &writer,
+            crate::updater::reconcile::UpdaterReconcilePhase::Startup,
+        )
+        .await
+    {
+        drop(writer);
+        let _ = writer_join.await;
+        return Err(error).context("reconcile interrupted updater leaves at daemon startup");
+    }
 
     // ── 3b'. Hot-reload controller (construction only) ─────────────────────
     // Built HERE (before the plugin bootstrap) so the compiled plugin
@@ -385,7 +406,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         info!("--one-shot: closing writer and exiting");
         drop(plugin_invoker_registration);
         drop(writer);
-        writer_join.await.ok();
+        writer_join
+            .await
+            .context("join one-shot WAL writer")?
+            .map_err(anyhow::Error::msg)?;
         return Ok(());
     }
 
@@ -1945,8 +1969,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     //
     // Spawn only after the last fallible startup constructor above. This keeps
     // an early cluster-start failure from dropping a JoinHandle and detaching a
-    // recurring updater generation. The handle also has a fail-closed RAII
-    // abort fallback; normal shutdown explicitly cancels and joins all lanes.
+    // recurring updater generation. Normal shutdown signals the supervisor and
+    // joins every admitted lane. An unexpected owner drop sends the same
+    // shutdown signal and leaves the supervisor attached to the runtime long
+    // enough to drain, because aborting it could manufacture an audit orphan.
     let mut updater_supervisor = crate::cli::serve_tasks::spawn_updater_supervisor(
         &neoth_home,
         std::sync::Arc::clone(&reload_controller),
@@ -2111,6 +2137,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     };
 
     let mut audit_rpc_task = audit_rpc_task;
+    let mut writer_join_result: Option<
+        std::result::Result<Result<(), String>, tokio::task::JoinError>,
+    > = None;
     let required_boundary_died = tokio::select! {
         biased;
         _ = shutdown::wait_for_signal() => false,
@@ -2121,9 +2150,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             false
         }
         result = &mut writer_join => {
-            match result {
-                Ok(()) => warn!(
+            writer_join_result = Some(result);
+            match writer_join_result.as_ref().expect("writer result just stored") {
+                Ok(Ok(())) => warn!(
                     "WAL writer task exited unexpectedly without error — daemon cannot persist events; treating as fatal"
+                ),
+                Ok(Err(e)) => error!(
+                    error = %e,
+                    "WAL writer task failed — daemon cannot persist events; treating as fatal"
                 ),
                 Err(e) => error!(
                     error = %e,
@@ -2170,10 +2204,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     audit_rpc_guard.take();
     restart_watcher.abort();
     let _ = restart_watcher.await;
-    // Linearize Dream shutdown at the signal/fatal-boundary decision, before
-    // breaker persistence and operator hooks can extend teardown. Existing
-    // commits drain; no new generation lease can start after this returns.
-    crate::cli::serve_tasks::retire_dream_runtime(&reload_controller).await;
+    // Linearize generation-bound effect shutdown at the signal/fatal-boundary
+    // decision, before breaker persistence and operator hooks can extend
+    // teardown. Existing Dream commits and updater leaves drain; no new
+    // generation lease can start after this returns.
+    crate::cli::serve_tasks::retire_generation_effect_runtime(&reload_controller).await;
     if required_boundary_died {
         info!("required daemon persistence/authority boundary died; aborting channels + exiting");
     } else {
@@ -2323,7 +2358,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         ssh_tunnel_handles,
         confirm_drain_task,
     };
-    crate::cli::serve_tasks::shutdown_background_tasks(&neoth_home, bg, writer, writer_join).await;
+    crate::cli::serve_tasks::shutdown_background_tasks(
+        &neoth_home,
+        &segment_chain_base_path,
+        bg,
+        writer,
+        writer_join,
+        writer_join_result,
+    )
+    .await?;
     anyhow::ensure!(
         !required_boundary_died,
         "required daemon persistence/authority/update boundary exited unexpectedly"

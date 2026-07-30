@@ -100,11 +100,11 @@ pub struct MemoryArgs {
     #[arg(long, requires = "forget")]
     pub confirm: bool,
 
-    /// C-15: also physically redact matching frames in every WAL
-    /// segment (zero the payload bytes, set `EventFlags::REDACTED`,
-    /// recompute CRC, fsync). Operator-controlled GDPR-grade erasure;
-    /// the default `--confirm` path only wipes the SQLite tiers + emits
-    /// the TOMBSTONE_REQUESTED audit anchor. Requires `--confirm`.
+    /// C-15: attempt physical WAL payload erasure in addition to the
+    /// SQLite/tombstone transaction. Authenticated chain segments fail
+    /// closed before mutation until the recoverable signed rewrite
+    /// transaction ships; a non-zero exit means physical erasure is
+    /// incomplete, while logical forget has still run. Requires `--confirm`.
     #[arg(long, requires = "confirm")]
     pub physical: bool,
 
@@ -850,8 +850,9 @@ async fn append_communication_subject_erasure_audit_at(
         &wal_dir,
         "communication-profile-control",
     );
-    let (writer, join) = crate::wal::spawn_for_home(segment, home.to_path_buf())
-        .context("spawn one-shot communication-subject control WAL writer")?;
+    let (writer, completion) =
+        crate::wal::writer::spawn_for_home_with_completion(segment, home.to_path_buf())
+            .context("spawn one-shot communication-subject control WAL writer")?;
     let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
         .event_subtype(subtype)
         .build();
@@ -861,9 +862,10 @@ async fn append_communication_subject_erasure_audit_at(
         .context("append required communication-subject erasure audit")
         .map(|_| ());
     drop(writer);
-    let shutdown = join
+    let shutdown = completion
+        .wait()
         .await
-        .context("join one-shot communication-subject control WAL writer");
+        .context("finalize one-shot communication-subject control WAL writer");
     match (append, shutdown) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
@@ -979,31 +981,55 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
     // WAL dir so the TOMBSTONE_REQUESTED audit frame lands in the
     // canonical audit log alongside other operator-state events.
     let now_unix = crate::time::now_unix_i64();
-    let wal_dir = crate::config::FreedomConfig::default_wal_dir();
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let pidfile = home.join("neothd.pid");
+    if let Some(pid) = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon ownership via {}", pidfile.display()))?
+    {
+        anyhow::bail!(
+            "neoth daemon is live (pid {pid}); stop it before `memory --forget --confirm` \
+             so the tombstone transaction and optional physical redaction cannot race the \
+             daemon-owned WAL writer"
+        );
+    }
+    let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir).context("create WAL dir")?;
     let segment = memory_forget_audit_segment_path(&wal_dir);
-    let (writer, writer_join) =
-        crate::wal::writer::spawn(segment.clone()).context("spawn WAL writer for tombstone")?;
+    let (writer, writer_completion) =
+        crate::wal::writer::spawn_for_home_with_completion(segment.clone(), home.clone())
+            .context("spawn home-bound WAL writer for tombstone")?;
     // `rusqlite::Connection` is Send but not Sync. Move it through the
     // audited async operation so no `&Connection` survives the WAL await.
-    let (conn, report) =
-        forget::forget_by_topic_with_audit(conn, topic, now_unix, "cli", &writer).await?;
+    let forget_result =
+        forget::forget_by_topic_with_audit(conn, topic, now_unix, "cli", &writer).await;
     drop(writer);
-    writer_join.await.context("join memory-forget WAL writer")?;
+    let shutdown_result = writer_completion
+        .wait()
+        .await
+        .context("finalize memory-forget WAL writer");
+    let (conn, report) = match (forget_result, shutdown_result) {
+        (Ok(result), Ok(())) => result,
+        (Err(operation), Ok(())) => return Err(operation),
+        (Ok(_), Err(shutdown)) => return Err(shutdown),
+        (Err(operation), Err(shutdown)) => {
+            return Err(anyhow::anyhow!(
+                "{operation:#}; additionally failed to close memory-forget audit WAL: {shutdown:#}"
+            ));
+        }
+    };
     // GR-005: the idx_embedding SQLite wipe inside forget does NOT touch the
     // on-disk HNSW snapshot — forgotten vectors stay searchable via the
     // cold-load path until a rebuild. Purge them by invalidating the old snapshot
     // first, then rebuilding it from the now-wiped SQLite. A rebuild failure is
     // surfaced, but recall remains privacy-safe because the stale snapshot is no
     // longer present. Acts only when embeddings were forgotten.
-    if report.embedding_rows > 0 {
-        let home = crate::config::FreedomConfig::default_neoth_home();
-        if let Some(n) = crate::memory::embeddings::rebuild_snapshot_if_present(&conn, &home)? {
-            info!(
-                vectors = n,
-                "GR-005: HNSW snapshot rebuilt after forget — forgotten embeddings purged from the searchable index"
-            );
-        }
+    if report.embedding_rows > 0
+        && let Some(n) = crate::memory::embeddings::rebuild_snapshot_if_present(&conn, &home)?
+    {
+        info!(
+            vectors = n,
+            "GR-005: HNSW snapshot rebuilt after forget — forgotten embeddings purged from the searchable index"
+        );
     }
     // Bind the machine-readable acknowledgement to evidence that can be
     // independently inspected after this process exits. The returned
@@ -1026,7 +1052,7 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
     // pre-redaction digest. Keep the report in the same JSON document: emitting
     // two adjacent objects violated both the JSON and JSONL contracts.
     let physical_report = if args.physical {
-        let report = run_physical_redaction(&wal_dir, topic, now_unix).await?;
+        let report = run_physical_redaction(&home, topic, now_unix).await?;
         info!(
             topic = topic,
             segments_touched = report.segments_touched,
@@ -1183,8 +1209,9 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                 if physical_erasure_incomplete(redact_report) {
                     println!(
                         "  ⚠ INCOMPLETE: {} segment(s) errored — a sealed/compressed \
-                         segment may have REFUSED redaction (the data could persist) \
-                         and/or an audit marker failed. Physical erasure is NOT \
+                         or authenticated-chain segment may have REFUSED redaction \
+                         before mutation (the data could persist), and/or an audit \
+                         marker failed. Physical erasure is NOT \
                          confirmed complete; see the warnings above + the audit log.",
                         redact_report.errors
                     );
@@ -1208,8 +1235,9 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
         if physical_erasure_incomplete(redact_report) {
             anyhow::bail!(
                 "physical WAL erasure for topic `{topic}` reported {} error(s) — erasure is \
-                 INCOMPLETE / unconfirmed (a sealed segment may have refused redaction; see \
-                 GOLD-ARCH-03b). Review the audit log; the affected data may still persist.",
+                 INCOMPLETE / unconfirmed (an authenticated-chain segment may have refused \
+                 mutation until its recoverable signed rewrite transaction exists). Review the \
+                 audit log; the affected data may still persist.",
                 redact_report.errors
             );
         }
@@ -1235,14 +1263,15 @@ fn physical_redaction_audit_segment_path(wal_dir: &std::path::Path) -> std::path
 }
 
 async fn run_physical_redaction(
-    wal_dir: &std::path::Path,
+    home: &std::path::Path,
     topic: &str,
     now_unix: i64,
 ) -> Result<PhysicalRedactSummary> {
     use crate::wal::redact;
 
+    let wal_dir = home.join("wal");
     let mut summary = PhysicalRedactSummary::default();
-    let entries = match std::fs::read_dir(wal_dir) {
+    let entries = match std::fs::read_dir(&wal_dir) {
         Ok(it) => it,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // WAL dir might not exist yet (fresh install, no daemon run).
@@ -1263,14 +1292,17 @@ async fn run_physical_redaction(
 
     // Open a dedicated audit-only segment for the REDACTION_MARKER
     // frames. Same pattern as the TOMBSTONE_REQUESTED segment.
-    std::fs::create_dir_all(wal_dir).context("create WAL dir for redaction audit")?;
+    std::fs::create_dir_all(&wal_dir).context("create WAL dir for redaction audit")?;
     // Concurrent invocations can share the same `now_unix` second. A
     // deterministic name let their audit writers target one segment, which is
     // both a lock collision and an audit-integrity failure. Reuse the writer's
     // UUIDv7 standalone namespace; rotation remains namespace-safe.
-    let audit_segment = physical_redaction_audit_segment_path(wal_dir);
-    let (audit_writer, audit_join) = crate::wal::writer::spawn(audit_segment.clone())
-        .context("spawn WAL writer for redaction audit")?;
+    let audit_segment = physical_redaction_audit_segment_path(&wal_dir);
+    let (audit_writer, audit_completion) = crate::wal::writer::spawn_for_home_with_completion(
+        audit_segment.clone(),
+        home.to_path_buf(),
+    )
+    .context("spawn home-bound WAL writer for redaction audit")?;
 
     for entry in entries {
         let entry = match entry {
@@ -1339,11 +1371,11 @@ async fn run_physical_redaction(
     }
 
     drop(audit_writer);
-    if let Err(e) = audit_join.await {
+    if let Err(e) = audit_completion.wait().await {
         tracing::warn!(
             audit_segment = %audit_segment.display(),
             error = %e,
-            "redaction audit WAL writer task failed to join; audit completion is unconfirmed"
+            "redaction audit WAL writer failed to finalize; audit completion is unconfirmed"
         );
         summary.errors += 1;
     }
@@ -1369,11 +1401,11 @@ struct PhysicalRedactSummary {
 }
 
 /// GR-008 — a `--physical` erasure is only a CONFIRMED success when no segment
-/// errored. Any `errors > 0` means a segment refused redaction (e.g. a sealed /
-/// compressed v2 segment — GOLD-ARCH-03b — whose data could still persist) or a
-/// redaction-marker audit emit failed, so the GDPR-grade wipe is not provably
-/// complete. The CLI must NOT print an affirmative "sufficient / GDPR-grade
-/// erasure" message and must fail loud (non-zero exit) in that case.
+/// errored. Any `errors > 0` means a segment refused redaction (including an
+/// authenticated chain whose signed rewrite transaction is not implemented)
+/// or a redaction-marker audit emit failed, so the GDPR-grade wipe is not
+/// provably complete. The CLI must NOT print an affirmative
+/// "sufficient / GDPR-grade erasure" message and must fail loud in that case.
 fn physical_erasure_incomplete(summary: &PhysicalRedactSummary) -> bool {
     summary.errors > 0
 }
@@ -2280,8 +2312,8 @@ mod tests {
         // must be a no-op rather than a hard error so `--physical`
         // works on a pre-daemon-boot system.
         let dir = tempdir().unwrap();
-        let wal_dir = dir.path().join("never_existed");
-        let summary = run_physical_redaction(&wal_dir, "anything", 1700)
+        let home = dir.path().join("never_existed");
+        let summary = run_physical_redaction(&home, "anything", 1700)
             .await
             .unwrap();
         assert_eq!(summary.segments_touched, 0);
@@ -2296,10 +2328,12 @@ mod tests {
         // no-op. A configured path that cannot be enumerated must never turn
         // into a zero-error GDPR success report.
         let dir = tempdir().unwrap();
-        let not_a_directory = dir.path().join("wal-is-a-file");
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let not_a_directory = home.join("wal");
         std::fs::write(&not_a_directory, b"not a directory").unwrap();
 
-        let error = run_physical_redaction(&not_a_directory, "anything", 1700)
+        let error = run_physical_redaction(&home, "anything", 1700)
             .await
             .expect_err("non-directory WAL root must fail closed");
         assert!(
@@ -2314,8 +2348,10 @@ mod tests {
         // `~/.neoth/wal/`. The scanner must ignore them (no extension
         // mismatch errors crash the run).
         let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join("notes.txt"), b"not a wal").unwrap();
-        std::fs::write(dir.path().join("000001.wal.bak"), b"backup").unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        std::fs::write(wal_dir.join("notes.txt"), b"not a wal").unwrap();
+        std::fs::write(wal_dir.join("000001.wal.bak"), b"backup").unwrap();
         let summary = run_physical_redaction(dir.path(), "topic", 1701)
             .await
             .unwrap();
@@ -2359,7 +2395,9 @@ mod tests {
         use crate::wal::{HeaderBuilder, frame::encode_frame};
 
         let dir = tempdir().unwrap();
-        let seg_path = dir.path().join("000001.wal");
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg_path = wal_dir.join("000001.wal");
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&SegmentHeader::new(1, 1, 0, 0, [0u8; 16]).to_le_bytes());
         for payload in [b"unrelated frame".as_slice(), b"AcmeCorp data".as_slice()] {
@@ -2387,7 +2425,17 @@ mod tests {
         // C-15 follow-up: REDACTION_MARKER must fire on segments that
         // actually had frames redacted.
         assert_eq!(summary.markers_emitted, 1, "one marker per touched segment");
-        assert!(summary.audit_segment.is_some());
+        let audit_segment = std::path::PathBuf::from(
+            summary
+                .audit_segment
+                .as_deref()
+                .expect("redaction marker segment"),
+        );
+        assert_eq!(audit_segment.parent(), Some(wal_dir.as_path()));
+        assert!(
+            wal_dir.join("hmac.key").is_file(),
+            "spawn_for_home must keep the audit key inside the supplied home"
+        );
     }
 
     #[test]
@@ -2438,7 +2486,9 @@ mod tests {
         use crate::wal::{HeaderBuilder, frame::encode_frame};
 
         let dir = tempdir().unwrap();
-        let seg_path = dir.path().join("clean.wal");
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg_path = wal_dir.join("clean.wal");
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&SegmentHeader::new(1, 1, 0, 0, [0u8; 16]).to_le_bytes());
         let p = b"completely unrelated frame body";

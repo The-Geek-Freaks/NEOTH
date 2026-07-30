@@ -388,16 +388,18 @@ async fn fetch_and_triage(
             Ok(provider) => {
                 let default_model =
                     crate::providers::provider_default_wire_model(provider.as_ref());
-                let provider =
-                    crate::providers::cost_authorization::AuthorizedProvider::from_box(
-                        provider,
-                        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
-                            fcfg.autonomy_policy(),
-                            fcfg.tokens.max_per_request,
-                        )?,
-                        default_model,
-                        "email.threat_tiebreak",
-                    );
+                let provider_audit =
+                    crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
+                        fcfg.autonomy_policy(),
+                        fcfg.tokens.max_per_request,
+                    )
+                    .await?;
+                let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+                    provider,
+                    provider_audit.authorizer(),
+                    default_model,
+                    "email.threat_tiebreak",
+                );
                 let allow = fcfg.email.llm_tiebreak_allow_downgrade;
                 let mut reviewed = Vec::with_capacity(triaged.len());
                 for t in triaged {
@@ -416,6 +418,10 @@ async fn fetch_and_triage(
                         reviewed.push(t);
                     }
                 }
+                provider_audit
+                    .finish(provider)
+                    .await
+                    .context("finalize email tiebreak provider-call audit WAL")?;
                 triaged = reviewed;
             }
             Err(e) => tracing::warn!(
@@ -597,12 +603,12 @@ async fn emit_email_audit_batch(triaged: &[crate::email::inbound::InboundTriage]
         }
     }
 
+    let home = crate::config::FreedomConfig::default_neoth_home();
     let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
+        crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid")),
         Ok(Some(_))
     );
     if daemon_live {
-        let home = crate::config::FreedomConfig::default_neoth_home();
         for (event_type, payload) in &frames {
             if let Err(e) =
                 crate::daemon::audit_rpc::try_post_audit_frame(&home, *event_type, payload).await
@@ -612,11 +618,13 @@ async fn emit_email_audit_batch(triaged: &[crate::email::inbound::InboundTriage]
         }
         return;
     }
-    let segment = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
-    if let Some(p) = segment.parent() {
-        let _ = std::fs::create_dir_all(p);
+    let wal_dir = home.join("wal");
+    if let Err(error) = std::fs::create_dir_all(&wal_dir) {
+        tracing::warn!(%error, "email: WAL directory unavailable; inbound audit not recorded");
+        return;
     }
-    let (writer, _join) = match crate::wal::writer::spawn(segment) {
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "email-inbound");
+    let (writer, join) = match crate::wal::writer::spawn_for_home(segment, home) {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(error = %e, "email: WAL writer spawn failed; inbound audit not recorded");
@@ -628,6 +636,10 @@ async fn emit_email_audit_batch(triaged: &[crate::email::inbound::InboundTriage]
         if let Err(e) = writer.try_append_sync(header, payload) {
             tracing::warn!(error = %e, "email: inbound audit frame append failed (audit gap)");
         }
+    }
+    drop(writer);
+    if let Err(error) = join.await {
+        tracing::warn!(%error, "email: inbound audit writer task panicked");
     }
 }
 

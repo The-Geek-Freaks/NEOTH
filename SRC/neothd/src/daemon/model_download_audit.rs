@@ -14,7 +14,7 @@ use crate::config::FreedomConfig;
 use crate::media::model_manager::{
     ModelDownloadAttempt, ModelDownloadAuditSink, ModelDownloadPermit, PendingModelDownloadOutcome,
 };
-use crate::wal::{spawn as wal_spawn, writer::WalWriterHandle};
+use crate::wal::writer::{WalWriterCompletion, WalWriterHandle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ImplicitModelDownloadSource {
@@ -52,25 +52,24 @@ impl ModelDownloadAuditSink for ImplicitAuditSink {
 
 struct ImplicitAuditTransport {
     sink: ImplicitAuditSink,
-    join: Option<tokio::task::JoinHandle<()>>,
+    completion: Option<WalWriterCompletion>,
 }
 
 impl ImplicitAuditTransport {
     fn open() -> Result<Self> {
-        let pidfile = crate::daemon::pidfile::default_pidfile();
+        let home = FreedomConfig::default_neoth_home();
+        let pidfile = home.join("neothd.pid");
         let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
             .with_context(|| format!("inspect daemon pidfile {}", pidfile.display()))?
             .is_some();
         if daemon_live {
             return Ok(Self {
-                sink: ImplicitAuditSink::Daemon {
-                    home: FreedomConfig::default_neoth_home(),
-                },
-                join: None,
+                sink: ImplicitAuditSink::Daemon { home },
+                completion: None,
             });
         }
 
-        let wal_dir = FreedomConfig::default_wal_dir();
+        let wal_dir = home.join("wal");
         std::fs::create_dir_all(&wal_dir).with_context(|| {
             format!(
                 "create mandatory implicit model-download WAL directory {}",
@@ -79,20 +78,23 @@ impl ImplicitAuditTransport {
         })?;
         let segment =
             crate::wal::writer::unique_standalone_segment_path(&wal_dir, "implicit-model-download");
-        let (writer, join) =
-            wal_spawn(segment).context("spawn mandatory implicit model-download WAL writer")?;
+        let (writer, completion) =
+            crate::wal::writer::spawn_for_home_with_completion(segment, home)
+                .context("spawn mandatory home-bound implicit model-download WAL writer")?;
         Ok(Self {
             sink: ImplicitAuditSink::Wal(writer),
-            join: Some(join),
+            completion: Some(completion),
         })
     }
 
     async fn shutdown(self) -> Result<()> {
-        let Self { sink, join } = self;
+        let Self { sink, completion } = self;
         drop(sink);
-        if let Some(join) = join {
-            join.await
-                .context("join mandatory implicit model-download WAL writer")?;
+        if let Some(completion) = completion {
+            completion
+                .wait()
+                .await
+                .context("finalize mandatory implicit model-download WAL writer")?;
         }
         Ok(())
     }

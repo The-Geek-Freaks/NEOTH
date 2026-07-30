@@ -39,7 +39,10 @@ pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
     0x3D, // EMAIL_INGRESS_TRIAGED  — `neoth email fetch` triaged an inbound mail
     0x3E, // EVAL_CRITICAL_DIVERGENCE — `neoth recall-score` flagged a CRITICAL query
     0x65, // CONSENT_DECISION       — interactive allow-once/always/deny choice
+    0x8E, // PTY_SESSION_STARTED    — `neoth terminal` opened a PTY session
+    0x8F, // PTY_SESSION_ENDED      — `neoth terminal` closed a PTY session
     0x9B, // IDENTITY_MERGED        — `neoth identity merge` folded two identities
+    0xBB, // OPERATOR_FEEDBACK      — chat detected an operator correction
     0xC8, // TODO_WRITE             — `neoth todo add/close` mutated an external task list
     0xCA, // CALENDAR_WRITE         — `neoth calendar add` wrote an external calendar event
     0xCB, // CALENDAR_WRITE_DENIED  — `neoth calendar add` refused (writes_enabled off)
@@ -64,9 +67,11 @@ pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
     0xDB, // CONSENT_GRANTED        — `neoth consent grant` wrote a cloud-provider consent marker
     0xDC, // CONSENT_REVOKED        — `neoth consent revoke` removed a consent marker
     0xDD, // SUDOMODE_PRESET_APPLIED — FULL-AUTO config transaction phase
+    0xDE, // SELF_UPDATE_REJECTED   — staged update failed integrity validation
     0x54, // RISK_CONFIRM_GRANTED   — `neoth risk-confirm` granted a risk-override lease
     0xF5, // MEMORY_TRANSFER_EXPORTED — `neoth transfer export` sealed a bundle
     0xF6, // RECON_RUN              — `neoth recon uncover/tlsx` ran a gated recon tool
+    0xFE, // LOYAL_BUDDY_ACTIVATED — `neoth profile mode apply loyal-buddy`
 ];
 
 /// The ONLY EXTENDED subtypes accepted from one-shot clients. This list is

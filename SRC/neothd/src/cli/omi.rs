@@ -2,7 +2,8 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
@@ -15,8 +16,6 @@ use crate::config::{FreedomConfig, OmiIngestMode, SecretsBackend};
 use crate::secret::SecretString;
 use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 use crate::wal::writer::WalWriterHandle;
-
-static OMI_OPERATOR_AUDIT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Args, Debug, Clone)]
 pub struct OmiArgs {
@@ -269,12 +268,7 @@ impl OperatorAudit {
         let wal_dir = home.join("wal");
         std::fs::create_dir_all(&wal_dir)
             .with_context(|| format!("create OMI operator WAL dir {}", wal_dir.display()))?;
-        let sequence = OMI_OPERATOR_AUDIT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let segment = wal_dir.join(format!(
-            "omi-operator-{}-{}-{sequence}.wal",
-            crate::time::now_unix_ns(),
-            std::process::id(),
-        ));
+        let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "omi-operator");
         let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
             .context("spawn dedicated OMI operator WAL writer")?;
         Ok(Self { writer, join })
@@ -2473,13 +2467,9 @@ mod tests {
             .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("wal"))
             .collect();
         assert_eq!(segments.len(), 1);
-        assert!(
-            segments[0]
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("omi-operator-")
-        );
+        let segment_name = segments[0].file_name().unwrap();
+        assert!(crate::wal::scan::canonical_segment_name(segment_name));
+        assert!(segment_name.to_string_lossy().contains("-omi-operator-"));
         let bytes = std::fs::read(&segments[0]).unwrap();
         let segment_header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
         let frame = crate::wal::frame::decode_frame(&bytes[segment_header.header_len()..]).unwrap();

@@ -392,7 +392,7 @@ async fn append_proof_key_rotation_audit(
     std::fs::create_dir_all(&wal_dir)
         .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
     let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "proof-key-rotate");
-    let (writer, join) = crate::wal::writer::spawn(segment)
+    let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
         .context("spawn one-shot proof-key rotation WAL writer")?;
     let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_EXTENDED, payload)
         .event_subtype(subtype)

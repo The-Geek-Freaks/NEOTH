@@ -51,7 +51,7 @@ fn attachment_ignoring_slashes_are_rejected_before_extraction() {
     let route = runner
         .find("resolve_turn_input(&args")
         .expect("route-first input");
-    let wal = runner.find("wal_spawn(").expect("turn WAL");
+    let wal = runner.find("spawn_for_home(").expect("home-bound turn WAL");
     let extract = runner
         .find("extract_attachment_contexts(")
         .expect("attachment extraction");

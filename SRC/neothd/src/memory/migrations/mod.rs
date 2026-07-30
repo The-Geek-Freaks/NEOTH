@@ -265,7 +265,24 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "M1 membership-fence durable mesh state and quarantine v33 rows",
         run: migration_v33_to_v34,
     },
+    Migration {
+        from: 34,
+        to: 35,
+        description: "GOLD profile resolution: persist the first approve/decline decision",
+        run: migration_v34_to_v35,
+    },
 ];
+
+fn migration_v34_to_v35(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "ALTER TABLE idx_profile_pending \
+         ADD COLUMN resolution_decision TEXT NOT NULL DEFAULT 'pending' \
+         CHECK (resolution_decision IN ('pending', 'approve', 'decline'))",
+        [],
+    )
+    .context("v35 add durable profile pending resolution decision")?;
+    Ok(())
+}
 
 fn migration_v33_to_v34(conn: &Connection) -> Result<()> {
     for table in [
@@ -2542,6 +2559,44 @@ mod tests {
             [format!("{:064x}", 1_u64)],
         )
         .expect("coalescing an existing peer must remain allowed at the cap");
+    }
+
+    #[test]
+    fn migration_v34_to_v35_binds_profile_resolution_decisions() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE idx_profile_pending (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                extraction_id TEXT NOT NULL UNIQUE,
+                delta_json TEXT NOT NULL,
+                claim_count INTEGER NOT NULL,
+                created_at_unix INTEGER NOT NULL
+             );
+             INSERT INTO idx_profile_pending
+                (extraction_id, delta_json, claim_count, created_at_unix)
+             VALUES ('ext-migrate', '{}', 0, 1);",
+        )
+        .unwrap();
+
+        migration_v34_to_v35(&conn).unwrap();
+        let decision: String = conn
+            .query_row(
+                "SELECT resolution_decision FROM idx_profile_pending \
+                 WHERE extraction_id = 'ext-migrate'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(decision, "pending");
+        assert!(
+            conn.execute(
+                "UPDATE idx_profile_pending SET resolution_decision = 'invalid' \
+                 WHERE extraction_id = 'ext-migrate'",
+                [],
+            )
+            .is_err(),
+            "v35 must reject unknown decision states"
+        );
     }
 
     #[test]

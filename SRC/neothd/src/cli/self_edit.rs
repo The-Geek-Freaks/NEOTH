@@ -18,8 +18,8 @@
 //!
 //! ## WAL audit
 //!
-//! The CLI opens a dedicated WAL segment at
-//! `~/.neoth/wal/self_edit_audit.wal` for audit frames. For a real apply the
+//! The CLI opens a collision-resistant dedicated segment below
+//! `~/.neoth/wal/` for audit frames. For a real apply the
 //! audit trail is REQUIRED: if the WAL writer cannot be opened the command
 //! refuses (rather than mutating the source tree with no forensic record).
 //! `--dry-run` (which never applies) may proceed with only a warning.
@@ -147,8 +147,28 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
     // audit trail is REQUIRED: if the WAL is unavailable we refuse rather than
     // silently mutate the source tree with no forensic record. Dry-run (no
     // apply) may proceed without it.
-    let wal_dir = FreedomConfig::default_wal_dir();
-    let wal = open_audit_wal(&wal_dir);
+    let home = FreedomConfig::default_neoth_home();
+    let wal_dir = home.join("wal");
+    let pidfile = home.join("neothd.pid");
+    let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon ownership via {}", pidfile.display()))?
+        .is_some();
+    if daemon_live && !args.dry_run {
+        anyhow::bail!(
+            "self-edit requires a concrete audit writer, but the live daemon owns {}. \
+             Stop the daemon before applying this diff; the self-edit EXTENDED audit sequence \
+             cannot yet be proxied through the central audit-RPC writer.",
+            wal_dir.display()
+        );
+    }
+    let wal = if daemon_live {
+        warn!(
+            "self_edit: daemon owns the WAL; dry-run proceeds without opening a competing writer"
+        );
+        None
+    } else {
+        open_audit_wal(&home)
+    };
     if wal.is_none() {
         if args.dry_run {
             warn!("self_edit: WAL writer unavailable — dry-run proceeds without audit");
@@ -161,8 +181,8 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
             );
         }
     }
-    let (wal_handle, wal_join) = match wal {
-        Some((handle, join)) => (Some(handle), Some(join)),
+    let (wal_handle, wal_completion) = match wal {
+        Some((handle, completion)) => (Some(handle), Some(completion)),
         None => (None, None),
     };
 
@@ -182,12 +202,23 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
     // before the process can exit. A kill between apply and flush would
     // otherwise leave a live-tree mutation with no `applied` forensic record.
     drop(wal_handle);
-    if let Some(join) = wal_join
-        && tokio::time::timeout(std::time::Duration::from_secs(5), join)
-            .await
-            .is_err()
-    {
-        warn!("self_edit: WAL writer did not flush within 5s — audit frame may be incomplete");
+    let wal_shutdown_error = if let Some(completion) = wal_completion {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), completion.wait()).await {
+            Ok(Ok(())) => None,
+            Ok(Err(e)) => Some(format!("WAL writer failed to finalize: {e}")),
+            Err(_) => Some("WAL writer did not flush within 5s".to_string()),
+        }
+    } else {
+        None
+    };
+    if let Some(error) = wal_shutdown_error {
+        if matches!(&result, Ok(outcome) if !outcome.dry_run) {
+            anyhow::bail!(
+                "INCONSISTENT: the edit was applied, but its required audit writer did not \
+                 complete cleanly ({error}). Verify the working tree and WAL before continuing."
+            );
+        }
+        warn!(%error, "self_edit: audit writer shutdown was incomplete");
     }
 
     match result {
@@ -265,25 +296,27 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
 
 // ── WAL open helper ───────────────────────────────────────────────────────────
 
-/// Try to open a short-lived WAL writer at `<wal_dir>/self_edit_audit.wal`.
+/// Try to open a short-lived, home-bound WAL writer below `<home>/wal`.
 ///
-/// Returns the writer handle AND its task `JoinHandle` — the caller must await
-/// the join after dropping the handle so audit frames are flushed before exit.
-/// Returns `None` on failure — the caller logs a warning and continues without
-/// WAL (gates provide the security; WAL is best-effort audit trail).
+/// Returns the writer handle and completion receipt. The caller must await the
+/// receipt after dropping the handle so initialization, final-sync, mandatory
+/// markers, and finalizers are confirmed before exit. Returns `None` on
+/// failure. The caller permits that only for a dry-run; a live-tree apply
+/// remains fail-closed without a concrete audit writer.
 type AuditWal = (
     crate::wal::writer::WalWriterHandle,
-    tokio::task::JoinHandle<()>,
+    crate::wal::writer::WalWriterCompletion,
 );
 
-fn open_audit_wal(wal_dir: &std::path::Path) -> Option<AuditWal> {
-    if let Err(e) = std::fs::create_dir_all(wal_dir) {
+fn open_audit_wal(home: &std::path::Path) -> Option<AuditWal> {
+    let wal_dir = home.join("wal");
+    if let Err(e) = std::fs::create_dir_all(&wal_dir) {
         warn!(error = %e, dir = %wal_dir.display(), "self_edit: cannot create WAL dir");
         return None;
     }
-    let segment = wal_dir.join("self_edit_audit.wal");
-    match crate::wal::writer::spawn(segment) {
-        Ok((handle, join)) => Some((handle, join)),
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "self-edit");
+    match crate::wal::writer::spawn_for_home_with_completion(segment, home.to_path_buf()) {
+        Ok((handle, completion)) => Some((handle, completion)),
         Err(e) => {
             warn!(error = %e, "self_edit: cannot open WAL writer");
             None

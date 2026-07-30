@@ -360,7 +360,7 @@ One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply. Both re
 - `--attach <PATH>` — Attach files to this turn. Each file runs through bounded admission and the media extraction pipeline; extracted data stays separate from the operator message as canonical untrusted context. Repeatable
 - `--edit` — GOLD-ADOPT-24 — compose the prompt in `$VISUAL`/`$EDITOR` instead of passing it inline. Any inline message/`--message` seeds the editor as prefill. Aborts if the editor is left empty
 - `--config <PATH>` — Override the freedom.yaml path (mostly for tests)
-- `--wal-segment <PATH>` — Override the WAL segment path (mostly for tests)
+- `--wal-segment <PATH>` — Diagnostic/test WAL override. Must be a canonical direct child of the selected config home's `wal` directory with a six-digit segment suffix
 - `--temperature <T>` — Sampling temperature for providers that support it. Range [0.0, 2.0]; Cohere, Bedrock, and legacy Anthropic cap it at 1.0, while Anthropic models after Opus 4.6 accept only 1.0. An unsupported selected provider returns a clear error before transport
 - `--top-p <P>` — Top-p (nucleus) sampling cutoff. Range (0.0, 1.0]; `1.0` keeps every token. Anthropic models after Opus 4.6 accept only [0.99, 1.0]. An unsupported selected provider fails before transport
 - `--sampling-seed <SEED>` — Optional RNG seed for reproducible sampling. Portable range [0, 4294967295]. Pair with `--temperature > 0` for a replayable non-greedy call. Unsupported providers fail
@@ -582,10 +582,10 @@ Repository code-map (K-Repo-Map Phase 1, Session 14 Pick #13). `scan` walks the 
 Compute the structural blast radius of changed files or exact declarations in the active persisted repository. Callers (dependents) are the default; every result is bound to matching index/graph generations, refuses a stale index unless explicitly overridden, and reports node-cap versus evidence-budget truncation separately
 
 - `--file <FILE>` — Changed repo-relative file. Repeat for multiple files. Every persisted declaration in the file becomes a seed
-- `--symbol <FILE::SYMBOL>` — Exact changed declaration as `FILE::SYMBOL`. Repeatable
-- `--direction <DIRECTION>` — Relationship direction from each changed declaration. `callers | callees | both`. Defaults to `callers`
-- `--max-depth <N>` — Maximum relationship hops. Hard ceiling 32. Defaults to 3
-- `--max-nodes <N>` — Maximum affected declarations returned. Hard ceiling 10000. Defaults to 250
+- `--symbol <FILE::SYMBOL>` — Exact changed declaration as FILE::SYMBOL. Repeatable
+- `--direction <DIRECTION>` — Relationship direction from each changed declaration
+- `--max-depth <N>` — Maximum relationship hops. Hard ceiling 32
+- `--max-nodes <N>` — Maximum affected declarations returned. Hard ceiling 10000
 - `--allow-stale` — Permit analysis against an index known to predate on-disk edits. The result still records `stale: true`
 
 ### `neoth code-map load`
@@ -1424,7 +1424,7 @@ Apply a named hemisphere preset to `freedom.yaml` non-interactively (GOLD-ADOPT-
 
 ### `neoth hemispheres set`
 
-Rebind one hemisphere role to a provider. Writes `~/.neoth/freedom.yaml` atomically and emits a WAL 0x1F HEMISPHERE_REBOUND audit frame immediately into `~/.neoth/wal/hemisphere-rebind-<ts>.wal`
+Rebind one hemisphere role to a provider. Writes `~/.neoth/freedom.yaml` atomically and emits a WAL 0x1F HEMISPHERE_REBOUND audit frame immediately into `~/.neoth/wal/<uuid>-hemisphere-rebind-000001.wal`
 
 - `--role <ROLE>` — Role to rebind: `left` / `right` / `cerebellum`
 - `--provider <PROVIDER>` — Provider name: `claude_cli` / `anthropic_api` / `openai_api` / `openai_compat` / `gemini_api` / `local_qwen` / `local_ouro` / `aws_bedrock` / `azure_openai`
@@ -1525,7 +1525,7 @@ Multimodal asset ingest pipeline
 
 - `<PATH>` — File to ingest. Extension drives the kind: `.pdf` → pdf, `.png|.jpg|.jpeg|.webp|.gif` → image, `.wav|.mp3|.flac|.ogg|.m4a` → audio, `.mp4|.mov|.mkv|.webm` → video, `.docx|.pptx|.xlsx|.odt|.ods|.odp|.epub|.rtf` → document
 - `--db <PATH>` — Override the views.db path. Defaults to `~/.neoth/views.db`
-- `--wal-segment <PATH>` — Override the WAL segment path the audit events land in. Defaults to `~/.neoth/wal/000001.wal` — the same surface `neothd serve` writes to
+- `--wal-segment <PATH>` — Override the WAL segment used for audit events. It must be a canonical direct child of the selected instance home's `wal` directory and use a six-digit standalone/rotation suffix. Defaults to a collision-resistant standalone segment under `~/.neoth/wal`
 - `--no-persist` — Skip the embedding persistence pass — useful when running the pipeline against fixtures in tests or when the operator is just inspecting the metadata
 - `--no-audit` — Skip emitting `INGEST_EXTRACTED` / `EMBED_PERSISTED` WAL audit events. Useful for batch reprocessing where the audit trail is already known
 - `--no-index` — Skip writing extracted text chunks into the ctx/recall memory store (`views.db`). Useful when the operator just wants the extraction report or embedding persistence without indexing the text for recall
@@ -1550,8 +1550,8 @@ Interactive onboarding wizard. Sets up ~/.neoth/ config
 - `--provider-model <MODEL>` — Override default model
 - `--provider-region <REGION>` — AWS region for `aws_bedrock` (for example `eu-central-1`). Falls back to AWS_REGION/AWS_DEFAULT_REGION, then `us-east-1`
 - `--provider-api-version <VERSION>` — Azure OpenAI API version (for example `2024-10-21`)
-- `--auto-update` — Arm the recurring release-check supervisor. The current v1 safety boundary keeps unattended GitHub/npm/Git network probes `SkippedByGate` until request-bound transport authorization and mandatory intent/result WAL are wired. Manual `neoth update` remains available
-- `--auto-update-apply` — Arm the recurring update supervisor with apply intent. The current v1 safety boundary performs no unattended network probe, staging, or replacement until the concrete transport authorization/audit contract is complete. Binary replacement remains an explicit `neoth update --self --apply`
+- `--auto-update` — Arm the recurring release-check supervisor and status. The current v1 safety boundary keeps every unattended network, process, staging, and replacement effect `SkippedByGate`; no GitHub/npm/Git probe runs until request-bound transport authorization and mandatory intent/result WAL are wired. Manual `neoth update` remains available
+- `--auto-update-apply` — Arm the recurring supervisor and record future verified-staging intent. The current v1 boundary still performs no unattended probe, process, staging, handoff, or replacement until request-bound authorization, mandatory WAL, and finite kill/reap lifecycle are complete. Binary replacement remains an explicit `neoth update --self --apply`
 - `--no-auto-update` — Explicitly disable release checks during unattended reconfiguration
 - `--telegram-token <TOKEN>` — Telegram bot token. Prefer env NEOTH_TELEGRAM_TOKEN
 - `--telegram-user-id <USER_ID>` — Restrict Telegram bot to a single user ID
@@ -1899,7 +1899,7 @@ Inspect the assembled NEOTH.md operator context
 - `--archive <YYYY-MM-DD>` — List archived session MD files for the given day (YYYY-MM-DD)
 - `--forget <TOPIC>` — GDPR retroactive wipe — delete every row in hot/warm/long-term plus embeddings plus revoke ground-truth assertions where the text matches the topic (LIKE pattern, case-insensitive). Use `--confirm` to execute; without it the command dry-runs and prints what would be deleted
 - `--confirm` — Required to actually execute `--forget`. Without it the command is a preview only
-- `--physical` — C-15: also physically redact matching frames in every WAL segment (zero the payload bytes, set `EventFlags::REDACTED`, recompute CRC, fsync). Operator-controlled GDPR-grade erasure; the default `--confirm` path only wipes the SQLite tiers + emits the TOMBSTONE_REQUESTED audit anchor. Requires `--confirm`
+- `--physical` — C-15: attempt physical WAL payload erasure in addition to the SQLite/tombstone transaction. Authenticated chain segments fail closed before mutation until the recoverable signed rewrite transaction ships; a non-zero exit means physical erasure is incomplete, while logical forget has still run. Requires `--confirm`
 - `--pin <EVENT_ID>` — NN-MEM-01: pin a hot-tier episode by `event_id` so it becomes decay-immune — the daily consolidation pass skips its importance decay, so a critical-but-rarely-accessed memory can never fall below FORGET_FLOOR and be forgotten. Reverse with `--unpin`
 - `--unpin <EVENT_ID>` — NN-MEM-01: unpin a previously-pinned hot-tier episode by `event_id` (re-subjects it to the normal importance decay)
 - `--dimension` — Compute the fractal-dimension D_mem across the four memory tiers (EXP-FD-0 from `PLAN/FRACTAL_DIMENSION.md`). Pure read, no behaviour change. Prints the per-tier byte counts + the regressed log-log slope + an honest verdict on whether D_mem is meaningful for this operator's data
@@ -2493,7 +2493,7 @@ Proactive proposal management (OB-03). Subcommands: `list`, `accept`, `reject`, 
 
 ### `neoth proactive accept`
 
-Mark a proposal Approved. For a **Skill** proposal (KF-04 idle forge) this ADOPTS it — the draft manifest is written live to `~/.neoth/skills/<id>/skill.yaml` (the operator's accept is the per-command GO; the skill system still gates loading). For config/cron proposals NEOTH never edits operator config: the operator copy-pastes the draft YAML into the live config + runs `neoth reload`
+Mark a proposal Approved. For a **Skill** proposal (KF-04 idle forge) this installs it — a canonical `enabled: false` manifest is written to `~/.neoth/skills/<id>/skill.yaml`. Approval permits package installation only; routing requires a separate activation decision. For config/cron proposals NEOTH never edits operator config: the operator copy-pastes the draft YAML into the live config + runs `neoth reload`
 
 - `<ID>`
 - `--note <NOTE>`
@@ -3332,7 +3332,7 @@ Verify an archive snapshot without materializing it or opening NEOTH_HOME
 Run the daemon. Reads ~/.neoth/freedom.yaml, opens the WAL, awaits SIGTERM / Ctrl+C, drains cleanly on shutdown
 
 - `--config <PATH>` — Override the path to freedom.yaml. Defaults to ~/.neoth/freedom.yaml
-- `--wal-segment <PATH>` — Override the WAL segment path. Defaults to ~/.neoth/wal/000001.wal
+- `--wal-segment <PATH>` — Override the WAL segment path. It must be a canonical direct child of the selected config home's `wal` directory with a six-digit segment suffix. Defaults to `<config-home>/wal/000001.wal`
 - `--allow-clock-rollback` — Override the clock-rollback guard. Use only when restoring from a backup or recovering from a VM snapshot rewind — operator promises the timestamps in the WAL are intentional. Phase 33c BS-5
 
 ## `neoth skills`
@@ -3364,6 +3364,10 @@ _Aliases:_ `neoth skill`
 - `--non-interactive` — UX-06: skip interactive prompts even on a TTY (drives `--create` from the `--create-*` flags only)
 - `--enable <SKILL_ID>` — GOLD-ADOPT-14 — activate a skill that ships disabled (e.g. the imported `pm-*` skills): adds it to `freedom.yaml::skills.enabled` (clearing any disable). Persists across restarts + binary upgrades
 - `--disable <SKILL_ID>` — GOLD-ADOPT-14 — deactivate a bundled skill: adds it to `freedom.yaml::skills.disabled` (clearing any enable). `disabled` always wins, so this also overrides a prior `--enable`
+- `--revoke <SKILL_ID>` — Revoke the exact current installed-Skill generation. Revocation writes an authenticated authority record and also disables the Skill in freedom.yaml. Bundled Skills use `--disable` instead
+- `--expected-authority-generation-sha256 <SHA256>` — Bind a GUI/Buddy authority action to the exact package generation shown before consent
+- `--expected-authority-incarnation <N>` — Bind authority consent across identical-byte reinstall (ABA)
+- `--expected-authority-install-receipt-sha256 <SHA256>` — Bind authority consent to the authenticated terminal install receipt
 
 ## `neoth slack`
 
@@ -3615,7 +3619,9 @@ Run the canonical component update check (`neoth update --check`)
 
 Print the most recent updater task results in a readable table
 
-- `--wal-segment <PATH>` — Path to a specific WAL segment to scan for `0x45 UPDATER_TASK_RESULT` frames. Defaults to `~/.neoth/wal/000001.wal`
+- `--config <PATH>` — Instance freedom.yaml. Its parent is the authoritative home, using the same rule as `neoth serve --config`
+- `--wal-chain-base <PATH>` — First segment of the complete rotating namespace to scan. Must be a canonical direct child of the selected instance home's `wal` directory. Unlike `--wal-segment`, rotations are followed
+- `--wal-segment <PATH>` — Path to one specific WAL segment. This is diagnostic mode and does not follow rotations. Omit it for the complete canonical home chain
 - `--from-jsonl <PATH>` — Path to a JSONL file containing one `UpdaterTaskResultPayload` per line. Overrides the WAL scan when set; used by tests + operator dry-runs
 
 ## `neoth usage`

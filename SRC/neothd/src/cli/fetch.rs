@@ -146,17 +146,25 @@ pub async fn run_fetch(args: FetchArgs) -> Result<()> {
             .await
             .context("build utility provider for goal extraction")?;
         let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
-        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
-            provider,
+        let provider_audit =
             crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
                 config.autonomy_policy(),
                 config.tokens.max_per_request,
-            )?,
+            )
+            .await?;
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            provider,
+            provider_audit.authorizer(),
             default_model,
             "fetch.goal_extract",
         );
         let extraction =
-            crate::tools::web_fetch::fetch_with_goal(&args.url, &goal, &provider).await?;
+            crate::tools::web_fetch::fetch_with_goal(&args.url, &goal, &provider).await;
+        provider_audit
+            .finish(provider)
+            .await
+            .context("finalize goal-extraction provider-call audit WAL")?;
+        let extraction = extraction?;
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 println!(

@@ -1,6 +1,6 @@
 # NEOTH Threat Model
 
-**Last updated:** 2026-07-14 (release, channel, IMAP, cluster, and TTS live-path correction)
+**Last updated:** 2026-07-29 (provider lifecycle, model-download, TTS, updater, and channel correction)
 **Audience:** operators running NEOTH on a personal machine,
 security reviewers, and anyone reasoning about what NEOTH can and
 cannot do over the network or with local files.
@@ -17,34 +17,35 @@ flow](../../SECURITY.md).
 
 ## TL;DR
 
-This document enumerates **twelve core I/O and network-surface groups**. Their controls are
+This document enumerates **thirteen core I/O and network-surface groups**. Their controls are
 not identical: operator-supplied HTTP URLs use the SSRF guard, policy-gated
 actions use the permission engine, and explicitly configured background
 integrations use their own default-off switches. WAL coverage and exceptions
 are stated per surface below. Beyond the original six (web_fetch,
 provider APIs, n8n loopback, HuggingFace downloads, cluster gossip,
 Obsidian sync) the map now also covers the search APIs (web_search,
-arXiv), cloud TTS, the self-updater, the Discord channel, and the
-(build-feature-gated, default-off) IMAP email surface. The mapped services
+arXiv), cloud TTS, the self-updater, Discord, the
+(build-feature-gated, default-off) IMAP email surface, and the shared immutable
+sender gate for Slack, WhatsApp Business, Signal, and LINE. The mapped services
 primarily persist under `~/.neoth/`, an opted-in Obsidian vault, and the WAL +
 SQLite views database. Operator-directed file, coding, backup, export, ingest,
 and TTS commands can also read or write the explicit paths supplied to those
 commands, under their documented command-specific gates.
 
-## 1. The 12 mapped I/O and network surfaces
+## 1. The 13 mapped I/O and network surfaces
 
 | # | Surface | Code module | Where it goes | Status |
 |---|---|---|---|---|
 | 1 | `web_fetch` | `tools/web_fetch.rs`, `cli/fetch.rs` | Any operator-supplied public HTTP(S) URL | SX-01 SSRF-guarded and no-redirect; explicit CLI/tool invocation; rejection is log-only and the fetch has no dedicated WAL event today |
-| 2 | Provider API calls | `providers/*.rs` plus caller orchestration | Cloud LLM endpoints (OpenAI, Anthropic via CLI, Gemini, Azure, AWS Bedrock) | Governed callers apply consent/cost/autonomy authorization; adapters are circuit-broken; request/result WAL coverage is caller-specific |
+| 2 | Provider API calls | `providers/*.rs` plus caller orchestration | Configured cloud/CLI LLM endpoints | Governed callers resolve the final wire provider/model and bounded request before cost/consent/autonomy authorization, then hold a non-constructible leaf permit through their mandatory intent/result lifecycle. Fallback leaves authorize independently; exact coverage and exceptions remain caller-specific rather than adapter-inferred. |
 | 3 | n8n localhost ingress API | `n8n_api/server.rs`, `n8n_api/handlers.rs` | Listens on `127.0.0.1:9744` by default | Default off; loopback-only bind + peer check; bearer-token scopes; bounded bodies; best-effort pre-dispatch `0x39` request audit |
-| 4 | Hugging Face downloads | `providers/local_qwen.rs`, `clip_engine.rs`, `whisper.rs`, `ouro/adapter.rs`, `cli/models.rs` | `huggingface.co` model weights | **HF-01 config gate shipped** (`updater.allow_huggingface_downloads`); durable `0xD7/0xD8` transaction on explicit pull, best-effort audit on implicit Qwen/Ouro pull |
+| 4 | Hugging Face downloads | `providers/local_qwen.rs`, `clip_engine.rs`, `whisper.rs`, `ouro/adapter.rs`, `daemon/model_download_audit.rs`, `cli/models.rs` | `huggingface.co` model weights | **HF-01 config gate shipped** (`updater.allow_huggingface_downloads`). Every network-capable explicit CLIP/Whisper pull and implicit Qwen/Ouro materialization crosses one cache/model-bound durable `0xD7` intent before network and a replayable ready/failed `0xD8` terminal; runtime-only constructors refuse a missing verified cache. |
 | 5 | Cluster gossip | `cluster/*` | Authenticated members of the operator's private cluster | Default peeroxide Noise transport or opt-in iroh QUIC; shared-cluster-key proof, default-deny event ACL, bounded replay/dedup, foreign-event persistence, consent-gated restore |
 | 6 | Obsidian sync | `obsidian/*` | Local filesystem ONLY (operator's vault path) | No network |
 | 7 | Web search | `tools/web_search.rs`, `cli/search.rs` | Fixed Brave/Tavily APIs or trusted operator-configured SearXNG | Explicit command; Brave/Tavily need an API key; no dedicated autonomy action or typed WAL event |
 | 8 | arXiv search | `tools/arxiv.rs`, `cli/arxiv.rs` | `export.arxiv.org/api/query` | Explicit anonymous read-only command; current constant starts with HTTP and follows the service redirect to HTTPS; no dedicated autonomy action or typed WAL event |
-| 9 | Text-to-speech | `media/tts_dispatch.rs`, `media/tts_cloud.rs`, `media/tts_provider.rs`, `cli/tts.rs` | Offline system/Piper engines; Microsoft Edge speech, ElevenLabs, Azure Speech, or an operator-configured ViitorVoice sidecar | Local by default; every non-local provider requires `media.cloud_tts_enabled`; credential requirements are provider-specific; metadata-only `0xCD` audit when a WAL sink is available |
-| 10 | Self-updater | `updater/self_update.rs`, `daemon/updater_cron.rs` | `api.github.com` releases + GitHub CDN; npm/Git sources for component probes | Manual update uses bounded download/extraction + SHA-256 + **minisign signature and signed asset-name binding** (`updater/sig_verify.rs`, compile-time pinned pubkey) + stage-path confinement + release-bound closed-set self-knowledge verification + primary-last transactional bundle/directory rollback. Recurring daemon probes are currently denied before network and report `SkippedByGate` until request-bound leaf authorization plus intent/result WAL exist. Explicit manual `--allow-unsigned` recovery only. |
+| 9 | Text-to-speech | `media/tts_dispatch.rs`, `media/tts_cloud.rs`, `media/tts_provider.rs`, `cli/tts.rs` | Offline system/Piper engines; Microsoft Edge speech, ElevenLabs, Azure Speech, or an operator-configured ViitorVoice sidecar | Local by default. Every non-local provider requires `media.cloud_tts_enabled`, a request-bound `ExternalTtsSynthesis` decision, and a required WAL writer. Metadata-only `0xCD` intent plus success/failure bind the provider, destination, request, and invocation; missing intent/finalization fails closed for cloud egress. |
+| 10 | Self-updater | `updater/self_update.rs`, `daemon/updater_cron.rs` | `api.github.com` releases + GitHub CDN; npm/Git sources for component probes | Manual update uses bounded download/extraction + SHA-256 + **minisign signature and signed asset-name binding** (`updater/sig_verify.rs`, compile-time pinned pubkey) + stage-path confinement + release-bound closed-set self-knowledge verification + primary-last transactional bundle/directory rollback. Recurring lanes are reload-owned but currently return `SkippedByGate` before unattended network, process, staging, handoff, or replacement effects. Explicit manual `--allow-unsigned` recovery only. |
 | 11 | Discord channel | `channels/discord.rs` | `discord.com/api` | REST send and read-only bot-identity probe; Gateway receive requires an exact immutable sender snowflake; rejected senders get a metadata-only WAL gate event; CHANNEL_EGRESS audit on sends |
 | 12 | Email / Gmail IMAP ingest | `email/imap_fetch.rs`, `cli/email.rs`, `daemon/email_ingest_cron.rs` | Configured IMAP/TLS server (Gmail default); `oauth2.googleapis.com` only when refreshing XOAUTH2 credentials | Network-live only in builds with `imap_fetch`; daemon poll default OFF; non-destructive fetch, local triage, fail-closed quarantine; no SMTP |
 | 13 | Slack, WhatsApp Business, Signal and LINE inbound | `channels/slack_socket.rs`, `channels/webhook_listener.rs`, `channels/signal.rs` | Slack Socket Mode, signed Meta/LINE webhooks, local signal-cli | Transport authentication is followed by an exact immutable sender gate before pipeline dispatch. Missing policy prevents inbound startup; mismatches are dropped without reply and append metadata-only `CHANNEL_GATE_REJECTED` evidence. |
@@ -143,32 +144,25 @@ boundary.
 
 ### 1.4 Hugging Face model downloads
 
-`providers/local_qwen.rs`, `clip_engine.rs`, `whisper.rs`, and
-`ouro/adapter.rs` use the `hf-hub` crate to download model
-weights on first use. After the v0.2.1 hotfix (SX-05b),
+`providers/local_qwen.rs`, `clip_engine.rs`, `whisper.rs`, and the Ouro adapter
+use the `hf-hub` crate to materialize reviewed model artifacts. After the
+v0.2.1 hotfix (SX-05b),
 `hf-hub` is pinned at `0.5.0` with `default-features = false,
 features = ["tokio", "rustls-tls"]` — `openssl-sys` is gone from
 the dependency graph entirely (was a banned transitive via the
 0.3.x `native-tls` path).
 
-**HF-01 shipped (2026-05-29):** `cli/models.rs::run_pull` reads
-`freedom.yaml::updater.allow_huggingface_downloads` (default `true`)
-BEFORE any fetch and refuses the download when it's `false`
-(air-gapped / bandwidth-controlled installs). A permitted download
-emits `0xD7 MODEL_DOWNLOAD_START` before + `0xD8
-MODEL_DOWNLOAD_COMPLETE` after, so exactly-what-was-fetched-when is
-in the audit chain. The **implicit** first-use download (a
-local-inference provider — `local_qwen` / `local_ouro` — that doesn't
-find its weights in cache) ALSO honours the gate as of 2026-05-29:
-`ensure_artifacts` reads `allow_huggingface_downloads` before any fetch
-and bails with an actionable error when it's `false`, so an air-gapped
-/ bandwidth-capped operator never triggers a silent ~3 GB download.
-(Audit caveat: the implicit Qwen/Ouro path currently emits best-effort
-`0xD7/0xD8` frames through `daemon/model_download_audit.rs`, but skips them
-when a live daemon owns the segment and does not abort the download when the
-append fails. The explicit `neoth model pull` path instead uses the durable,
-replayable `ModelDownloadAttempt` transaction and fails closed until `0xD7`
-authorises network access. These guarantees are not yet equivalent.)
+**HF-01:** every network-capable path reads
+`freedom.yaml::updater.allow_huggingface_downloads` before fetch and refuses
+when it is false. The central `ModelDownloadAttempt` binds one cache root,
+model ID, attempt ID, and trigger. It must durably append `0xD7
+MODEL_DOWNLOAD_START` before minting the permit that reaches `hf-hub`, then
+persist a replayable ready/failed `0xD8 MODEL_DOWNLOAD_COMPLETE`. This contract
+now covers explicit CLIP/Whisper pulls and implicit first-use Qwen/Ouro
+materialization; an audit failure prevents network access, and a missing
+terminal is replayed without repeating a completed download. Runtime-only
+CLIP/Whisper constructors never download and instead tell the operator to run
+the explicit pull when their reviewed, hash-verified cache is incomplete.
 
 ### 1.5 Cluster gossip
 
@@ -313,13 +307,15 @@ refuse before dispatch unless `media.cloud_tts_enabled: true`:
   public-URL SSRF guard and may intentionally be loopback or private-LAN.
 
 The first gate is the explicit default-off `media.cloud_tts_enabled` config
-switch. Every non-local synthesis also evaluates `ExternalTtsSynthesis` and
-requires an available permission-audit WAL before provider dispatch. Successful
-synthesis emits metadata-only `0xCD TTS_SYNTHESIZED`: provider, input hash, and
-byte counts, never spoken text. With `media.required_audit_for_cloud_media: true`, a non-local call
-fails before dispatch when no WAL sink can be opened; an append failure after a
-completed provider call is still logged rather than rolling back the remote
-side effect.
+switch. Every non-local synthesis also evaluates a request-bound
+`ExternalTtsSynthesis` action and requires an available WAL before provider
+dispatch. The same metadata-only `0xCD TTS_SYNTHESIZED` family now carries an
+`intent` before egress and a bound `success` or `failure` terminal afterwards:
+provider, destination, invocation/request binding, input hash, and byte counts,
+never spoken text, credentials, or a reference-audio path. Missing intent,
+required append, or writer finalization fails the external call instead of
+reporting unaudited success. Local engines may run without this external-egress
+lifecycle.
 
 ### 1.10 Self-updater (`updater/self_update.rs`)
 
@@ -526,6 +522,25 @@ enabled.
 channel (CLI, GUI, Telegram inline buttons) and refuses the
 action on timeout / decline.
 
+### 2.7 Authenticated WAL rewrite and physical erasure
+
+Rotated WAL chains use an immediate HMAC-authenticated cross-segment link that
+binds both canonical segment identities, logical and physical predecessor
+lengths, and the final predecessor digest. Full-home, selected-chain, and
+frontier scanners validate the complete relevant chain before exposing any
+frame to an authority consumer. A successor is published atomically as its
+header, link, and immediate marker; a partial successor is never canonical.
+
+Physical payload redaction changes frame bytes and therefore cannot currently
+rewrite a marker-bearing or linked segment without invalidating that evidence.
+NEOTH now refuses such a rewrite byte-for-byte before mutation and returns a
+non-zero incomplete-erasure result; logical SQLite/profile forget remains
+available. v1 release acceptance still requires a redaction-stable commitment,
+verified operator-signed redaction proofs, and a crash-recoverable
+intent/rewrite/result transaction for raw, compressed, and encrypted chains.
+The refusal is a fail-closed integrity boundary, not a claim that physical
+erasure already completed.
+
 ## 3. Audit trail coverage
 
 Where a surface emits typed WAL frames, operators verify them with `neoth wal
@@ -543,8 +558,8 @@ and durable quarantine/seen state rather than WAL frames.
 | Main chat / n8n provider call (success) | `PROVIDER_REQUEST` + `PROVIDER_RESPONSE` | `0x20`, `0x21` | `neoth wal show --type provider_request` |
 | Main chat / n8n provider call (error, including an open breaker where the caller records it) | `PROVIDER_ERROR` | `0x22` | `neoth wal show --type provider_error` |
 | Main chat 429 quota handling | `PROVIDER_QUOTA_EXCEEDED` (best-effort append) | `0x24` | `neoth wal show --type provider_quota_exceeded` |
-| HF model download (start/done) | `MODEL_DOWNLOAD_START` / `MODEL_DOWNLOAD_COMPLETE` | `0xD7`, `0xD8` | `neoth wal show --type model_download_start` (HF-01) |
-| TTS synthesis (when a WAL sink is available) | `TTS_SYNTHESIZED` | `0xCD` | `neoth wal show --type tts_synthesized` |
+| HF model materialization (intent/ready-or-failed terminal) | `MODEL_DOWNLOAD_START` / `MODEL_DOWNLOAD_COMPLETE` | `0xD7`, `0xD8` | `neoth wal show --type model_download_start` (HF-01) |
+| External TTS lifecycle (intent/success/failure; local audit when available) | `TTS_SYNTHESIZED` | `0xCD` | `neoth wal show --type tts_synthesized` |
 | Channel inbound (Telegram, etc.) | `CHANNEL_INGRESS` | `0x32` | `neoth wal show --type channel_ingress` |
 | Channel outbound | `CHANNEL_EGRESS` | `0x33` | as above |
 | Inbound sanitised | `INGRESS_SANITIZED` | `0x36` | `neoth wal show --type ingress_sanitized` |

@@ -158,13 +158,29 @@ pub fn pending_payload(delta: &ProfileDelta, now_unix: u64) -> Vec<u8> {
     serde_json::to_vec(&value).expect("PROFILE_DELTA_PENDING payload is a serde_json::Value")
 }
 
-/// Build the JSON payload for an `EVENT_TYPE_PROFILE_DELTA_APPROVED`
-/// frame. Operator resolved a previously-queued pending row.
-pub fn approved_payload(extraction_id: &str, claim_count: usize, now_unix: u64) -> Vec<u8> {
+/// Build the terminal JSON payload for an
+/// `EVENT_TYPE_PROFILE_DELTA_APPROVED` frame.
+///
+/// This event is emitted only after `apply_delta` has committed. It therefore
+/// records an applied result, not an approval intent that could later fail.
+pub fn approved_payload(
+    extraction_id: &str,
+    pending_row_id: i64,
+    resolution_id: &str,
+    claim_count: usize,
+    idempotent_skip: bool,
+    now_unix: u64,
+) -> Vec<u8> {
     let value = serde_json::json!({
+        "schema_version": 2,
+        "resolution_id": resolution_id,
+        "resolution_phase": "result",
+        "resolution_status": "applied",
         "extraction_id": extraction_id,
+        "pending_row_id": pending_row_id,
         "claim_count": claim_count,
-        "approved_at_ts_unix": now_unix,
+        "idempotent_skip": idempotent_skip,
+        "applied_at_ts_unix": now_unix,
     });
     serde_json::to_vec(&value).expect("PROFILE_DELTA_APPROVED payload is a serde_json::Value")
 }
@@ -175,12 +191,19 @@ pub fn approved_payload(extraction_id: &str, claim_count: usize, now_unix: u64) 
 /// `neoth profile decline <id> --reason ...` flow.
 pub fn declined_payload(
     extraction_id: &str,
+    pending_row_id: i64,
+    resolution_id: &str,
     claim_count: usize,
     now_unix: u64,
     reason: Option<&str>,
 ) -> Vec<u8> {
     let value = serde_json::json!({
+        "schema_version": 2,
+        "resolution_id": resolution_id,
+        "resolution_phase": "decision",
+        "resolution_status": "declined",
         "extraction_id": extraction_id,
+        "pending_row_id": pending_row_id,
         "claim_count": claim_count,
         "declined_at_ts_unix": now_unix,
         "reason": reason,
@@ -196,6 +219,32 @@ pub const DECLINED_EVENT: u8 = EVENT_TYPE_PROFILE_DELTA_DECLINED;
 
 // ── idx_profile_pending repository ─────────────────────────────────────────
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingResolutionDecision {
+    Pending,
+    Approve,
+    Decline,
+}
+
+impl PendingResolutionDecision {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Approve => "approve",
+            Self::Decline => "decline",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "approve" => Ok(Self::Approve),
+            "decline" => Ok(Self::Decline),
+            other => anyhow::bail!("unknown pending profile resolution decision `{other}`"),
+        }
+    }
+}
+
 /// One row in `idx_profile_pending`. Operator-facing summary the
 /// `neoth profile pending` CLI command renders into a table.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -207,6 +256,13 @@ pub struct PendingRow {
     /// JSON-encoded ProfileDelta. Caller deserialises before
     /// passing to `apply_delta`.
     pub delta_json: String,
+    resolution_decision: String,
+}
+
+impl PendingRow {
+    pub fn resolution_decision(&self) -> Result<PendingResolutionDecision> {
+        PendingResolutionDecision::parse(&self.resolution_decision)
+    }
 }
 
 /// Insert (or noop on conflict) a pending row. Returns the row id.
@@ -251,7 +307,8 @@ pub fn insert_pending(conn: &Connection, delta: &ProfileDelta, now_unix: u64) ->
 pub fn list_pending(conn: &Connection, limit: usize) -> Result<Vec<PendingRow>> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, extraction_id, delta_json, claim_count, created_at_unix \
+            "SELECT id, extraction_id, delta_json, claim_count, created_at_unix, \
+                    resolution_decision \
              FROM idx_profile_pending \
              ORDER BY created_at_unix ASC \
              LIMIT ?1",
@@ -265,49 +322,154 @@ pub fn list_pending(conn: &Connection, limit: usize) -> Result<Vec<PendingRow>> 
                 delta_json: row.get(2)?,
                 claim_count: row.get(3)?,
                 created_at_unix: row.get(4)?,
+                resolution_decision: row.get(5)?,
             })
         })
         .context("query idx_profile_pending")?;
     let mut out = Vec::new();
     for r in rows {
-        out.push(r.context("decode pending row")?);
+        let row = r.context("decode pending row")?;
+        row.resolution_decision()
+            .context("validate pending resolution decision")?;
+        out.push(row);
     }
     Ok(out)
 }
 
-/// Pop a pending row by `extraction_id`: deletes it from the table
-/// AND returns its contents. Used by `neoth profile approve` to take
-/// the row, hand the delta to `apply_delta`, then commit deletion in
-/// the same transaction the caller controls.
+/// Read and bind a pending row without consuming it.
 ///
-/// Returns `Ok(None)` when no row matches (operator typo / race).
-pub fn pop_pending(conn: &Connection, extraction_id: &str) -> Result<Option<PendingRow>> {
-    let row: Option<PendingRow> = conn
-        .query_row(
-            "SELECT id, extraction_id, delta_json, claim_count, created_at_unix \
-             FROM idx_profile_pending \
-             WHERE extraction_id = ?1",
-            rusqlite::params![extraction_id],
-            |row| {
-                Ok(PendingRow {
-                    id: row.get(0)?,
-                    extraction_id: row.get(1)?,
-                    delta_json: row.get(2)?,
-                    claim_count: row.get(3)?,
-                    created_at_unix: row.get(4)?,
-                })
-            },
+/// Resolution callers retain this exact snapshot through apply/audit
+/// finalization and delete it only as their last visible state transition.
+pub fn get_pending(conn: &Connection, extraction_id: &str) -> Result<Option<PendingRow>> {
+    match conn.query_row(
+        "SELECT id, extraction_id, delta_json, claim_count, created_at_unix, \
+                resolution_decision \
+         FROM idx_profile_pending \
+         WHERE extraction_id = ?1",
+        rusqlite::params![extraction_id],
+        |row| {
+            Ok(PendingRow {
+                id: row.get(0)?,
+                extraction_id: row.get(1)?,
+                delta_json: row.get(2)?,
+                claim_count: row.get(3)?,
+                created_at_unix: row.get(4)?,
+                resolution_decision: row.get(5)?,
+            })
+        },
+    ) {
+        Ok(row) => {
+            row.resolution_decision()
+                .context("validate pending resolution decision")?;
+            Ok(Some(row))
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(error).context("read idx_profile_pending row"),
+    }
+}
+
+/// Persist the first operator decision before either resolution path performs
+/// side effects. The same decision may resume after a crash or audit failure;
+/// switching to the opposite decision is rejected permanently for this row.
+pub fn bind_pending_resolution(
+    conn: &mut Connection,
+    expected: &mut PendingRow,
+    decision: PendingResolutionDecision,
+) -> Result<()> {
+    let current = expected.resolution_decision()?;
+    if current == decision {
+        return Ok(());
+    }
+    if current != PendingResolutionDecision::Pending {
+        anyhow::bail!(
+            "pending profile resolution is already bound to {} \
+             (requested {}, extraction_id={}, row_id={})",
+            current.as_str(),
+            decision.as_str(),
+            expected.extraction_id,
+            expected.id
+        );
+    }
+
+    let tx = conn
+        .transaction()
+        .context("begin pending-resolution decision transaction")?;
+    let updated = tx
+        .execute(
+            "UPDATE idx_profile_pending \
+             SET resolution_decision = ?6 \
+             WHERE id = ?1 \
+               AND extraction_id = ?2 \
+               AND delta_json = ?3 \
+               AND claim_count = ?4 \
+               AND created_at_unix = ?5 \
+               AND resolution_decision = 'pending'",
+            rusqlite::params![
+                expected.id,
+                expected.extraction_id,
+                expected.delta_json,
+                expected.claim_count,
+                expected.created_at_unix,
+                decision.as_str(),
+            ],
         )
-        .ok();
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    conn.execute(
-        "DELETE FROM idx_profile_pending WHERE id = ?1",
-        rusqlite::params![row.id],
-    )
-    .context("delete pending row after pop")?;
-    Ok(Some(row))
+        .context("bind idx_profile_pending resolution decision")?;
+    if updated != 1 {
+        anyhow::bail!(
+            "pending row changed or disappeared before decision binding \
+             (extraction_id={}, row_id={})",
+            expected.extraction_id,
+            expected.id
+        );
+    }
+    tx.commit()
+        .context("commit pending-resolution decision transaction")?;
+    expected.resolution_decision = decision.as_str().to_owned();
+    Ok(())
+}
+
+/// Delete the exact pending snapshot previously returned by [`get_pending`].
+///
+/// The compare-and-delete runs in its own transaction and is the resolution
+/// commit point. If another actor changed or removed the row, zero rows match
+/// and the caller fails closed instead of reporting a resolution it did not
+/// commit.
+pub fn delete_pending_if_unchanged(conn: &mut Connection, expected: &PendingRow) -> Result<()> {
+    anyhow::ensure!(
+        expected.resolution_decision()? != PendingResolutionDecision::Pending,
+        "cannot commit an unbound pending profile resolution"
+    );
+    let tx = conn
+        .transaction()
+        .context("begin pending-resolution commit transaction")?;
+    let deleted = tx
+        .execute(
+            "DELETE FROM idx_profile_pending \
+             WHERE id = ?1 \
+               AND extraction_id = ?2 \
+                AND delta_json = ?3 \
+                AND claim_count = ?4 \
+                AND created_at_unix = ?5 \
+                AND resolution_decision = ?6",
+            rusqlite::params![
+                expected.id,
+                expected.extraction_id,
+                expected.delta_json,
+                expected.claim_count,
+                expected.created_at_unix,
+                expected.resolution_decision,
+            ],
+        )
+        .context("commit-delete bound idx_profile_pending row")?;
+    if deleted != 1 {
+        anyhow::bail!(
+            "pending row changed or disappeared before resolution commit \
+             (extraction_id={}, row_id={})",
+            expected.extraction_id,
+            expected.id
+        );
+    }
+    tx.commit().context("commit pending-resolution transaction")
 }
 
 #[cfg(test)]
@@ -493,16 +655,89 @@ mod tests {
     }
 
     #[test]
-    fn pop_pending_returns_row_and_deletes_it() {
-        let conn = open_test_db();
+    fn pending_resolution_is_read_then_exactly_deleted_commit_last() {
+        let mut conn = open_test_db();
         let delta = fixture_delta();
         let _ = insert_pending(&conn, &delta, 100).unwrap();
-        let popped = pop_pending(&conn, &delta.extraction_id).unwrap();
-        let row = popped.expect("row must exist before pop");
+        let mut row = get_pending(&conn, &delta.extraction_id)
+            .unwrap()
+            .expect("row must exist");
         assert_eq!(row.extraction_id, delta.extraction_id);
-        // Now gone.
+        assert_eq!(
+            list_pending(&conn, 10).unwrap().len(),
+            1,
+            "read/bind must not consume the recoverable row"
+        );
+        bind_pending_resolution(&mut conn, &mut row, PendingResolutionDecision::Approve).unwrap();
+        delete_pending_if_unchanged(&mut conn, &row).unwrap();
         assert!(list_pending(&conn, 10).unwrap().is_empty());
-        assert!(pop_pending(&conn, &delta.extraction_id).unwrap().is_none());
+        assert!(get_pending(&conn, &delta.extraction_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn pending_resolution_persists_first_decision_and_rejects_switching() {
+        let mut conn = open_test_db();
+        let delta = fixture_delta();
+        insert_pending(&conn, &delta, 100).unwrap();
+        let mut row = get_pending(&conn, &delta.extraction_id)
+            .unwrap()
+            .expect("row must exist");
+
+        bind_pending_resolution(&mut conn, &mut row, PendingResolutionDecision::Approve).unwrap();
+        assert_eq!(
+            get_pending(&conn, &delta.extraction_id)
+                .unwrap()
+                .unwrap()
+                .resolution_decision()
+                .unwrap(),
+            PendingResolutionDecision::Approve
+        );
+        bind_pending_resolution(&mut conn, &mut row, PendingResolutionDecision::Approve)
+            .expect("same-decision recovery must remain idempotent");
+        let error =
+            bind_pending_resolution(&mut conn, &mut row, PendingResolutionDecision::Decline)
+                .expect_err("opposite decision must fail closed");
+        assert!(
+            format!("{error:#}").contains("already bound to approve"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn pending_resolution_refuses_to_delete_a_changed_binding() {
+        let mut conn = open_test_db();
+        let delta = fixture_delta();
+        insert_pending(&conn, &delta, 100).unwrap();
+        let mut row = get_pending(&conn, &delta.extraction_id)
+            .unwrap()
+            .expect("row must exist");
+        bind_pending_resolution(&mut conn, &mut row, PendingResolutionDecision::Approve).unwrap();
+        conn.execute(
+            "UPDATE idx_profile_pending SET created_at_unix = created_at_unix + 1 \
+             WHERE id = ?1",
+            rusqlite::params![row.id],
+        )
+        .unwrap();
+
+        let error = delete_pending_if_unchanged(&mut conn, &row)
+            .expect_err("changed binding must fail closed");
+        assert!(
+            format!("{error:#}").contains("changed or disappeared"),
+            "unexpected error: {error:#}"
+        );
+        assert_eq!(list_pending(&conn, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn get_pending_surfaces_database_errors() {
+        let conn = open_test_db();
+        conn.execute("DROP TABLE idx_profile_pending", []).unwrap();
+        let error = get_pending(&conn, "ext-missing-table")
+            .expect_err("database failure must not be collapsed into not-found");
+        assert!(
+            format!("{error:#}").contains("read idx_profile_pending row"),
+            "unexpected error: {error:#}"
+        );
     }
 
     #[test]
@@ -541,15 +776,36 @@ mod tests {
 
     #[test]
     fn approved_and_declined_payloads_carry_metadata() {
-        let a = approved_payload("ext-1", 3, 1_716_000_500);
+        let a = approved_payload(
+            "ext-1",
+            41,
+            "profile-pending:41:ext-1",
+            3,
+            false,
+            1_716_000_500,
+        );
         let av: serde_json::Value = serde_json::from_slice(&a).unwrap();
         assert_eq!(av["extraction_id"], "ext-1");
         assert_eq!(av["claim_count"], 3);
-        assert_eq!(av["approved_at_ts_unix"], 1_716_000_500u64);
+        assert_eq!(av["pending_row_id"], 41);
+        assert_eq!(av["resolution_phase"], "result");
+        assert_eq!(av["resolution_status"], "applied");
+        assert_eq!(av["idempotent_skip"], false);
+        assert_eq!(av["applied_at_ts_unix"], 1_716_000_500u64);
 
-        let d = declined_payload("ext-2", 5, 1_716_000_600, Some("noise"));
+        let d = declined_payload(
+            "ext-2",
+            42,
+            "profile-pending:42:ext-2",
+            5,
+            1_716_000_600,
+            Some("noise"),
+        );
         let dv: serde_json::Value = serde_json::from_slice(&d).unwrap();
         assert_eq!(dv["extraction_id"], "ext-2");
+        assert_eq!(dv["pending_row_id"], 42);
+        assert_eq!(dv["resolution_phase"], "decision");
+        assert_eq!(dv["resolution_status"], "declined");
         assert_eq!(dv["reason"], "noise");
     }
 

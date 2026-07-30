@@ -26,7 +26,6 @@ use crate::installers::{gpu, ollama};
 use crate::models::gguf_variants::{self, GgufVariant, VariantClass};
 use crate::models::selector::{self, Quant};
 use crate::providers::clip_engine;
-use crate::wal::spawn as wal_spawn;
 
 #[derive(Args, Debug, Clone)]
 pub struct ModelsArgs {
@@ -120,7 +119,6 @@ impl From<RecClass> for VariantClass {
 }
 
 const MODEL_NAMES: [&str; 4] = ["clip", "whisper", "whisper-candle", "whisper-faster"];
-static MODEL_PULL_WAL_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[derive(Clone)]
 enum ManagedModel {
@@ -808,28 +806,28 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
             .context("join model cache integrity check")?;
     let lifecycle_needed = attempt.is_pending() || !initial_health.is_ready();
 
-    let mut audit_join = None;
+    let mut audit_completion = None;
     let audit_sink = if lifecycle_needed {
-        let daemon_live = matches!(
-            crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
-            Ok(Some(_))
-        );
+        let pidfile = neoth_home.join("neothd.pid");
+        let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+            .with_context(|| format!("inspect daemon pidfile {}", pidfile.display()))?
+            .is_some();
         if daemon_live {
             Some(PullAuditSink::Daemon {
                 home: neoth_home.clone(),
             })
         } else {
-            let wal_dir = FreedomConfig::default_wal_dir();
+            let wal_dir = neoth_home.join("wal");
             std::fs::create_dir_all(&wal_dir)
                 .with_context(|| format!("create model-download WAL dir {}", wal_dir.display()))?;
-            let sequence = crate::time::now_unix_ns()
-                .saturating_add(u64::from(std::process::id()) << 12)
-                .saturating_add(
-                    MODEL_PULL_WAL_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-                );
-            let (writer, join) = wal_spawn(wal_dir.join(format!("{sequence:020}.wal")))
-                .context("spawn mandatory model-download WAL writer")?;
-            audit_join = Some(join);
+            let segment = crate::wal::writer::unique_standalone_segment_path(
+                &wal_dir,
+                "explicit-model-download",
+            );
+            let (writer, completion) =
+                crate::wal::writer::spawn_for_home_with_completion(segment, neoth_home.clone())
+                    .context("spawn mandatory home-bound model-download WAL writer")?;
+            audit_completion = Some(completion);
             Some(PullAuditSink::Wal(writer))
         }
     } else {
@@ -966,11 +964,23 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
 
     drop(attempt);
     drop(audit_sink);
-    if let Some(join) = audit_join {
-        join.await
-            .context("model-download WAL writer task panicked")?;
+    let audit_shutdown = match audit_completion {
+        Some(completion) => completion
+            .wait()
+            .await
+            .context("finalize mandatory model-download WAL writer"),
+        None => Ok(()),
+    };
+    match (operation_result, audit_shutdown) {
+        (Ok(()), Ok(())) => {}
+        (Err(error), Ok(())) => return Err(error),
+        (Ok(()), Err(error)) => return Err(error),
+        (Err(operation), Err(shutdown)) => {
+            return Err(anyhow::anyhow!(
+                "{operation:#}; additionally failed to close model-download audit WAL: {shutdown:#}"
+            ));
+        }
     }
-    operation_result?;
 
     println!("{} cached at {}", name, cache_dir.display());
     Ok(())

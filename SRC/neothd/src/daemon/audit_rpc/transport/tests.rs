@@ -25,7 +25,7 @@ fn transport_sources_have_no_tcp_fallback_surface() {
         );
     }
     assert!(
-        windows_source.contains(".reject_remote_clients(true)"),
+        windows_source.contains(".reject_remote_clients(PIPE_REJECT_REMOTE_CLIENTS)"),
         "Windows audit-RPC listener must reject remote named-pipe clients"
     );
 }
@@ -331,7 +331,7 @@ async fn windows_round_trip_proves_dacl_sid_revert_and_first_instance() {
     // first bind also performs an exact protected current-TokenUser DACL
     // read-back before it succeeds.
     assert!(bind(home.path(), TEST_NONCE).await.is_err());
-    assert!(windows::PIPE_REJECT_REMOTE_CLIENTS);
+    const { assert!(windows::PIPE_REJECT_REMOTE_CLIENTS) };
     let client_endpoint = endpoint.clone();
     let client = tokio::spawn(async move {
         let mut stream = connect(&client_endpoint).await.unwrap();

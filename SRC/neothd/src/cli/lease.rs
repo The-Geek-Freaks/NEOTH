@@ -198,28 +198,37 @@ fn lease_payload(event_type: u8, lease: &CapabilityLease) -> Vec<u8> {
 /// lease mutation itself already succeeded on disk before we get here.
 async fn emit_lease(home: &std::path::Path, event_type: u8, lease: &CapabilityLease) {
     let payload = lease_payload(event_type, lease);
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    if let Ok(Some(_pid)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
-        // AUDIT-RPC-01: the daemon owns the single WAL writer → forward the
-        // lease audit over the same-user OS channel (0xA5/0xA6/0xA7 allowlisted)
-        // instead of silently dropping it. Best-effort: a disabled audit route
-        // or unreachable listener falls through to no-frame (the lease itself
-        // still applied).
-        if let Err(e) =
-            crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
-        {
-            tracing::debug!(error = %e, "lease audit forward skipped (daemon listener unreachable)");
+    let pidfile = home.join("neothd.pid");
+    match crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+        Ok(Some(_pid)) => {
+            // AUDIT-RPC-01: the daemon owns the single WAL writer → forward the
+            // lease audit over the same-user OS channel (0xA5/0xA6/0xA7 allowlisted)
+            // instead of silently dropping it. Best-effort: a disabled audit route
+            // or unreachable listener leaves the already-applied lease unchanged.
+            if let Err(e) =
+                crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
+            {
+                tracing::debug!(error = %e, "lease audit forward skipped (daemon listener unreachable)");
+            }
+            return;
         }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                path = %pidfile.display(),
+                "lease audit refused an unowned WAL writer"
+            );
+            return;
+        }
+    }
+    let wal_dir = home.join("wal");
+    if std::fs::create_dir_all(&wal_dir).is_err() {
         return;
     }
-    let segment = home.join("wal").join("000001.wal");
-    if let Some(parent) = segment.parent()
-        && std::fs::create_dir_all(parent).is_err()
-    {
-        return;
-    }
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "lease");
     let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
-    match crate::wal::spawn(segment) {
+    match crate::wal::spawn_for_home(segment, home.to_path_buf()) {
         Ok((writer, join)) => {
             if let Err(e) = writer.append(header, payload).await {
                 tracing::warn!(error = %e, "lease audit append failed (lease still applied)");
@@ -258,5 +267,22 @@ mod tests {
         assert_eq!(short_id("0123456789abcdef"), "0123456789ab");
         assert_eq!(truncate("short", 28), "short");
         assert_eq!(truncate("0123456789", 5), "0123…");
+    }
+
+    #[tokio::test]
+    async fn lease_audit_uses_the_selected_home_and_collision_free_segments() {
+        let home = tempfile::tempdir().unwrap();
+        let lease = CapabilityLease::new("peerA", LeaseScope::Read, 3600, 1_700_000_000);
+        emit_lease(home.path(), EVENT_TYPE_LEASE_GRANTED, &lease).await;
+        emit_lease(home.path(), EVENT_TYPE_LEASE_REVOKED, &lease).await;
+
+        let wal_dir = home.path().join("wal");
+        assert!(wal_dir.join("hmac.key").is_file());
+        let segments = std::fs::read_dir(&wal_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "wal"))
+            .count();
+        assert_eq!(segments, 2, "one-shot lease writers must not collide");
     }
 }

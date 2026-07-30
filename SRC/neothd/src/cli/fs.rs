@@ -68,7 +68,7 @@ async fn run_write(
     let now = now_unix();
     let contents = content.as_bytes();
     let home = FreedomConfig::default_neoth_home();
-    let pidfile = crate::daemon::pidfile::default_pidfile();
+    let pidfile = home.join("neothd.pid");
     let daemon_live = matches!(
         crate::daemon::pidfile::live_daemon_pid(&pidfile),
         Ok(Some(_))
@@ -97,13 +97,15 @@ async fn run_write(
             )
             .await
         } else {
-            let segment = FreedomConfig::default_neoth_home()
-                .join("wal")
-                .join("000001.wal");
-            if let Some(parent) = segment.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            match crate::wal::spawn(segment) {
+            let wal_dir = home.join("wal");
+            let opened = std::fs::create_dir_all(&wal_dir)
+                .map_err(crate::wal::error::WalError::Io)
+                .and_then(|()| {
+                    let segment =
+                        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "fs-write");
+                    crate::wal::writer::spawn_for_home(segment, home.clone())
+                });
+            match opened {
                 Ok((writer, join)) => {
                     let r = crate::os_tools::write_os_file(
                         path,
@@ -166,7 +168,7 @@ async fn run_write(
 async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Result<()> {
     let now = now_unix();
     let home = FreedomConfig::default_neoth_home();
-    let pidfile = crate::daemon::pidfile::default_pidfile();
+    let pidfile = home.join("neothd.pid");
     let daemon_live = matches!(
         crate::daemon::pidfile::live_daemon_pid(&pidfile),
         Ok(Some(_))
@@ -194,13 +196,15 @@ async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Res
             )
             .await
         } else {
-            let segment = FreedomConfig::default_neoth_home()
-                .join("wal")
-                .join("000001.wal");
-            if let Some(parent) = segment.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            match crate::wal::spawn(segment) {
+            let wal_dir = home.join("wal");
+            let opened = std::fs::create_dir_all(&wal_dir)
+                .map_err(crate::wal::error::WalError::Io)
+                .and_then(|()| {
+                    let segment =
+                        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "fs-read");
+                    crate::wal::writer::spawn_for_home(segment, home.clone())
+                });
+            match opened {
                 Ok((writer, join)) => {
                     let r = read_os_file(
                         path,

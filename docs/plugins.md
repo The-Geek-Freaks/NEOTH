@@ -60,12 +60,15 @@ the ID is absent afterwards. Broken inventory rows are typed as
 for an unsafe or structurally ambiguous directory.
 
 This storage contract prevents partial generations, link traversal and stale
-GUI success. It is **not an activation or capability grant**. External Skills
-are data/prompt packages rather than WASM code, but their provenance, enabled
-state, effective tool scope, delegation and model override still need the
-explicit operator-visible authority contract tracked by GOLD-R3-17. In
-particular, a generation receipt does not assign a safe meaning to an omitted
-or empty `tool_allowlist`.
+GUI success. It is **not runtime authority**. An external installed Skill is
+routable only through a versioned authenticated authority record and Current
+Anchor that exactly bind package generation/incarnation, terminal receipt,
+provenance, enabled state, effective tool scope, delegation, model, source, and
+policy. Missing, stale, revoked, edited, or mismatched authority falls back to
+bundled-only routing; a generation receipt alone never grants tools or assigns
+a permissive meaning to an omitted/empty `tool_allowlist`. GOLD-R3-17 remains
+open for running-daemon adoption/revocation, subprocess MCP
+reconnect/poisoning, Buddy parity, and exact-head gates.
 
 An optional `source: git+https://...` enables version checks only for an
 effectively enabled Skill. Version probes currently accept repositories hosted

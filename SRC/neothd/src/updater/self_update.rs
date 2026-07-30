@@ -8,14 +8,27 @@
 //! signed-app layouts fail closed and require their platform installer.
 
 use std::collections::BTreeSet;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
+use reqwest::header::LOCATION;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::config::ReleaseChannel;
+use crate::permissions::gate::ConfirmStrategy;
+use crate::updater::authority::{
+    UpdaterAuthorityComponent, UpdaterAuthorityLane, UpdaterAuthorityTask, UpdaterHttpMethod,
+    UpdaterLeafAuthorizer, UpdaterLeafEffect, UpdaterLeafFailure, UpdaterLeafFailureKind,
+    UpdaterLeafOutcomeCode, UpdaterLeafRequest, UpdaterLeafSuccess, UpdaterStageCompletion,
+};
+use crate::wal::writer::WalWriterHandle;
 
 /// One GitHub Release as returned by
 /// `/repos/{owner}/{repo}/releases/latest`. We only care about the
@@ -45,7 +58,9 @@ pub struct ReleaseAsset {
     /// File name as it lands on disk after download
     /// (e.g. `"neoth-x86_64-pc-windows-msvc.zip"`).
     pub name: String,
-    /// Direct download URL — caller `GET`s it to fetch the bytes.
+    /// GitHub-provided direct URL retained for API/schema compatibility.
+    /// The transport ignores it and derives the destination from the validated
+    /// repository, release tag, and exact expected asset name.
     pub browser_download_url: String,
     /// Reported file size in bytes. Set to 0 by GitHub when the
     /// upload is still in progress; the download path treats that
@@ -173,15 +188,660 @@ fn validate_owner_repo(owner_repo: &str) -> Result<()> {
     }
 }
 
-/// Build one anonymous GitHub API GET for the public release feed.
+const MAX_RELEASE_METADATA_BYTES: usize = 4 * 1024 * 1024;
+const RELEASE_DNS_TIMEOUT: Duration = Duration::from_secs(5);
+const RELEASE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const RELEASE_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+const RELEASE_SMALL_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const RELEASE_ARCHIVE_REQUEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const RELEASE_ASSET_REDIRECT_HOST: &str = "release-assets.githubusercontent.com";
+
+#[derive(Clone, Copy)]
+enum GithubReleaseFeed {
+    Latest,
+    List,
+}
+
+impl GithubReleaseFeed {
+    fn url(self, owner_repo: &str) -> Result<String> {
+        validate_owner_repo(owner_repo)?;
+        Ok(match self {
+            Self::Latest => {
+                format!("https://api.github.com/repos/{owner_repo}/releases/latest")
+            }
+            Self::List => {
+                format!("https://api.github.com/repos/{owner_repo}/releases?per_page=100")
+            }
+        })
+    }
+}
+
+/// One immutable recurring self-update operation bound to the exact accepted
+/// reload generation that admitted it. The constructor is intentionally
+/// limited to the two self-update lanes; CLI/npm/Git/install work cannot reuse
+/// this authority.
+pub(crate) struct RecurringSelfUpdateAuthority {
+    authorizer: Arc<UpdaterLeafAuthorizer>,
+    operation_id: String,
+    accepted_epoch: u64,
+    lane: UpdaterAuthorityLane,
+    next_request: AtomicU64,
+}
+
+impl RecurringSelfUpdateAuthority {
+    pub(crate) fn for_probe(
+        writer: WalWriterHandle,
+        snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+    ) -> Self {
+        Self::new(
+            writer,
+            snapshot,
+            UpdaterAuthorityLane::NeothSelfProbe,
+            "self-probe",
+        )
+    }
+
+    pub(crate) fn for_stage(
+        writer: WalWriterHandle,
+        snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+    ) -> Self {
+        Self::new(
+            writer,
+            snapshot,
+            UpdaterAuthorityLane::SelfStage,
+            "self-stage",
+        )
+    }
+
+    fn new(
+        writer: WalWriterHandle,
+        snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+        lane: UpdaterAuthorityLane,
+        lane_id: &str,
+    ) -> Self {
+        let accepted_epoch = snapshot.epoch();
+        let operation_id = format!(
+            "{lane_id}-{accepted_epoch}-{}",
+            uuid::Uuid::now_v7().simple()
+        );
+        Self {
+            authorizer: Arc::new(UpdaterLeafAuthorizer::for_snapshot(
+                writer,
+                snapshot,
+                ConfirmStrategy::FailClosed,
+            )),
+            operation_id,
+            accepted_epoch,
+            lane,
+            next_request: AtomicU64::new(1),
+        }
+    }
+
+    fn request_id(&self, effect: &str) -> String {
+        let sequence = self.next_request.fetch_add(1, Ordering::Relaxed);
+        format!("{}:{effect}:{sequence}", self.operation_id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_http<F, Fut, T>(
+        &self,
+        effect_id: &str,
+        effect: UpdaterLeafEffect,
+        url: &str,
+        expected_content_sha256: Option<&str>,
+        max_response_bytes: usize,
+        run: F,
+    ) -> Result<T>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<
+                Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>,
+            >,
+    {
+        let max_response_bytes =
+            u64::try_from(max_response_bytes).context("self-update response cap overflow")?;
+        let request = UpdaterLeafRequest::http(
+            &self.operation_id,
+            self.request_id(effect_id),
+            self.accepted_epoch,
+            UpdaterAuthorityTask::NeothSelf,
+            self.lane,
+            UpdaterAuthorityComponent::Neoth,
+            effect,
+            UpdaterHttpMethod::Get,
+            url,
+            &[],
+            expected_content_sha256,
+            max_response_bytes,
+        )?;
+        self.authorizer
+            .execute_http(
+                request,
+                effect,
+                UpdaterHttpMethod::Get,
+                url,
+                &[],
+                expected_content_sha256,
+                max_response_bytes,
+                run,
+            )
+            .await
+            .map_err(anyhow::Error::new)
+    }
+
+    async fn execute_stage<F, Fut, T>(
+        &self,
+        neoth_home: &Path,
+        stage_namespace: &Path,
+        content_sha256: &str,
+        content_size_bytes: u64,
+        run: F,
+    ) -> Result<UpdaterStageCompletion<T>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<
+                Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>,
+            >,
+    {
+        let request = UpdaterLeafRequest::verified_stage(
+            &self.operation_id,
+            self.request_id("verified-stage"),
+            self.accepted_epoch,
+            UpdaterAuthorityTask::NeothSelf,
+            self.lane,
+            UpdaterAuthorityComponent::Neoth,
+            UpdaterLeafEffect::VerifiedStageWrite,
+            neoth_home,
+            stage_namespace,
+            content_sha256,
+            content_size_bytes,
+        )?;
+        self.authorizer
+            .execute_stage(
+                request,
+                neoth_home,
+                stage_namespace,
+                content_sha256,
+                content_size_bytes,
+                run,
+            )
+            .await
+            .map_err(anyhow::Error::new)
+    }
+}
+
+/// Anonymous, proxy-free, DNS-pinned GitHub release transport.
 ///
-/// The runtime updater deliberately has no credential input. NEOTH releases
-/// are public, so accepting `GITHUB_TOKEN` would widen the secret-handling
-/// surface without changing which signed artifacts the updater may install.
-fn github_api_get(client: &reqwest::Client, url: &str) -> reqwest::RequestBuilder {
-    client
-        .get(url)
-        .header("Accept", "application/vnd.github+json")
+/// Every request resolves and validates the complete address set before a
+/// per-request client pins that exact set. Redirects are disabled in reqwest;
+/// release assets may perform one manually validated
+/// `github.com -> release-assets.githubusercontent.com` hop.
+struct GithubReleaseTransport {
+    user_agent: String,
+}
+
+impl GithubReleaseTransport {
+    fn new(user_agent: String) -> Self {
+        Self { user_agent }
+    }
+
+    async fn fetch_metadata(
+        &self,
+        owner_repo: &str,
+        feed: GithubReleaseFeed,
+        label: &str,
+    ) -> Result<Vec<u8>> {
+        let url = feed.url(owner_repo)?;
+        validate_github_metadata_url(&url, owner_repo, feed)?;
+        self.fetch_metadata_url(&url, label).await
+    }
+
+    async fn fetch_metadata_authorized(
+        &self,
+        authority: &RecurringSelfUpdateAuthority,
+        owner_repo: &str,
+        feed: GithubReleaseFeed,
+        label: &str,
+    ) -> Result<Vec<u8>> {
+        let url = feed.url(owner_repo)?;
+        validate_github_metadata_url(&url, owner_repo, feed)?;
+        authority
+            .execute_http(
+                "release-metadata",
+                UpdaterLeafEffect::ReleaseMetadataFetch,
+                &url,
+                None,
+                MAX_RELEASE_METADATA_BYTES,
+                || async {
+                    match self.fetch_metadata_url(&url, label).await {
+                        Ok(body) => observed_body_success(body, None),
+                        Err(error) => Err(release_transport_leaf_failure(error)),
+                    }
+                },
+            )
+            .await
+    }
+
+    async fn fetch_metadata_url(&self, url: &str, label: &str) -> Result<Vec<u8>> {
+        let response = self.send_pinned(url, true, label).await?;
+        if response.status().is_redirection() {
+            anyhow::bail!("{label} returned an unexpected redirect");
+        }
+        read_response_bounded(response, MAX_RELEASE_METADATA_BYTES, label).await
+    }
+
+    async fn fetch_asset(
+        &self,
+        owner_repo: &str,
+        release_tag: &str,
+        asset_name: &str,
+        max_bytes: usize,
+        label: &str,
+    ) -> Result<Vec<u8>> {
+        // Never trust `browser_download_url` from release JSON as an authority
+        // to choose the destination. Asset identity already came from the exact
+        // expected filename; derive its URL from the validated repo/tag/name.
+        let url = github_release_asset_url(owner_repo, release_tag, asset_name)?;
+        match self.fetch_asset_first_hop(&url, max_bytes, label).await? {
+            GithubAssetHop::Body(body) => Ok(body),
+            GithubAssetHop::Redirect(location) => {
+                self.fetch_asset_redirect(&location, max_bytes, label).await
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn fetch_asset_authorized(
+        &self,
+        authority: &RecurringSelfUpdateAuthority,
+        effect_id: &str,
+        effect: UpdaterLeafEffect,
+        owner_repo: &str,
+        release_tag: &str,
+        asset_name: &str,
+        expected_content_sha256: Option<&str>,
+        max_bytes: usize,
+        label: &str,
+    ) -> Result<Vec<u8>> {
+        let url = github_release_asset_url(owner_repo, release_tag, asset_name)?;
+        let first = authority
+            .execute_http(
+                effect_id,
+                effect,
+                &url,
+                expected_content_sha256,
+                max_bytes,
+                || async {
+                    match self.fetch_asset_first_hop(&url, max_bytes, label).await {
+                        Ok(GithubAssetHop::Body(body)) => {
+                            observed_body_success(body, expected_content_sha256)
+                                .map(|success| success.map_value(GithubAssetHop::Body))
+                        }
+                        Ok(GithubAssetHop::Redirect(location)) => Ok(UpdaterLeafSuccess::new(
+                            GithubAssetHop::Redirect(location),
+                            UpdaterLeafOutcomeCode::Redirected,
+                        )),
+                        Err(error) => Err(release_transport_leaf_failure(error)),
+                    }
+                },
+            )
+            .await?;
+        match first {
+            GithubAssetHop::Body(body) => Ok(body),
+            GithubAssetHop::Redirect(location) => {
+                authority
+                    .execute_http(
+                        &format!("{effect_id}-cdn"),
+                        effect,
+                        &location,
+                        expected_content_sha256,
+                        max_bytes,
+                        || async {
+                            match self.fetch_asset_redirect(&location, max_bytes, label).await {
+                                Ok(body) => observed_body_success(body, expected_content_sha256),
+                                Err(error) => Err(release_transport_leaf_failure(error)),
+                            }
+                        },
+                    )
+                    .await
+            }
+        }
+    }
+
+    async fn fetch_asset_first_hop(
+        &self,
+        url: &str,
+        max_bytes: usize,
+        label: &str,
+    ) -> Result<GithubAssetHop> {
+        let response = self.send_pinned(url, false, label).await?;
+        if !response.status().is_redirection() {
+            return read_response_bounded(response, max_bytes, label)
+                .await
+                .map(GithubAssetHop::Body);
+        }
+        let location = response
+            .headers()
+            .get(LOCATION)
+            .ok_or_else(|| anyhow::anyhow!("{label} redirect omitted Location"))?
+            .to_str()
+            .context("release asset redirect Location is not valid ASCII")?
+            .to_string();
+        validate_github_release_redirect_url(&location)?;
+        Ok(GithubAssetHop::Redirect(location))
+    }
+
+    async fn fetch_asset_redirect(
+        &self,
+        location: &str,
+        max_bytes: usize,
+        label: &str,
+    ) -> Result<Vec<u8>> {
+        validate_github_release_redirect_url(location)?;
+        let redirected = self.send_pinned(location, false, label).await?;
+        if redirected.status().is_redirection() {
+            anyhow::bail!("{label} exceeded the single allowed GitHub release redirect");
+        }
+        read_response_bounded(redirected, max_bytes, label).await
+    }
+
+    async fn send_pinned(
+        &self,
+        url: &str,
+        github_json: bool,
+        label: &str,
+    ) -> Result<reqwest::Response> {
+        let parsed = ::url::Url::parse(url).context("parse validated release URL")?;
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("{label} URL has no host"))?;
+        let port = parsed
+            .port_or_known_default()
+            .ok_or_else(|| anyhow::anyhow!("{label} URL has no effective port"))?;
+        let addrs = resolve_public_addresses(host, port, label).await?;
+        let request_timeout = if label == "binary release archive" {
+            RELEASE_ARCHIVE_REQUEST_TIMEOUT
+        } else {
+            RELEASE_SMALL_REQUEST_TIMEOUT
+        };
+        let client = reqwest::Client::builder()
+            .user_agent(&self.user_agent)
+            .https_only(true)
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(RELEASE_CONNECT_TIMEOUT)
+            .read_timeout(RELEASE_BODY_IDLE_TIMEOUT)
+            .timeout(request_timeout)
+            .resolve_to_addrs(host, &addrs)
+            .build()
+            .context("build DNS-pinned GitHub release client")?;
+        github_anonymous_get(&client, parsed, github_json)
+            .send()
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "send {label} request failed ({})",
+                    sanitized_reqwest_error_kind(&error)
+                )
+            })
+    }
+}
+
+enum GithubAssetHop {
+    Body(Vec<u8>),
+    Redirect(String),
+}
+
+fn observed_body_success(
+    body: Vec<u8>,
+    expected_content_sha256: Option<&str>,
+) -> std::result::Result<UpdaterLeafSuccess<Vec<u8>>, UpdaterLeafFailure> {
+    if let Some(expected) = expected_content_sha256 {
+        verify_sha256_bytes(&body, expected)
+            .map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Integrity, error))?;
+    }
+    let digest = hex::encode(Sha256::digest(&body));
+    let size_bytes = u64::try_from(body.len()).map_err(|error| {
+        UpdaterLeafFailure::new(
+            UpdaterLeafFailureKind::Protocol,
+            anyhow::Error::new(error).context("self-update response length overflow"),
+        )
+    })?;
+    UpdaterLeafSuccess::new(
+        body,
+        if expected_content_sha256.is_some() {
+            UpdaterLeafOutcomeCode::Verified
+        } else {
+            UpdaterLeafOutcomeCode::Completed
+        },
+    )
+    .with_observed_artifact(&digest, size_bytes)
+    .map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Protocol, error))
+}
+
+fn release_transport_leaf_failure(error: anyhow::Error) -> UpdaterLeafFailure {
+    let diagnostic = format!("{error:#}").to_ascii_lowercase();
+    let kind = if diagnostic.contains("timed out") || diagnostic.contains("timeout") {
+        UpdaterLeafFailureKind::Timeout
+    } else if diagnostic.contains("redirect")
+        || diagnostic.contains("url")
+        || diagnostic.contains("http ")
+        || diagnostic.contains("download cap")
+        || diagnostic.contains("response length")
+        || diagnostic.contains("non-public address")
+    {
+        UpdaterLeafFailureKind::Protocol
+    } else {
+        UpdaterLeafFailureKind::Transport
+    };
+    UpdaterLeafFailure::new(kind, error)
+}
+
+fn sanitized_reqwest_error_kind(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else if error.is_request() {
+        "request"
+    } else if error.is_body() {
+        "body"
+    } else if error.is_decode() {
+        "decode"
+    } else if error.is_redirect() {
+        "redirect"
+    } else {
+        "transport"
+    }
+}
+
+fn github_anonymous_get(
+    client: &reqwest::Client,
+    url: ::url::Url,
+    github_json: bool,
+) -> reqwest::RequestBuilder {
+    let request = client.get(url);
+    if github_json {
+        request.header("Accept", "application/vnd.github+json")
+    } else {
+        request
+    }
+}
+
+fn validate_https_url_basics(parsed: &::url::Url, expected_host: &str, label: &str) -> Result<()> {
+    if parsed.scheme() != "https"
+        || parsed.host_str() != Some(expected_host)
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.port().is_some_and(|port| port != 443)
+        || parsed.fragment().is_some()
+    {
+        anyhow::bail!("{label} URL is outside the fixed HTTPS GitHub release boundary");
+    }
+    Ok(())
+}
+
+fn validate_github_metadata_url(
+    url: &str,
+    owner_repo: &str,
+    feed: GithubReleaseFeed,
+) -> Result<()> {
+    let parsed = ::url::Url::parse(url).context("parse GitHub release metadata URL")?;
+    validate_https_url_basics(&parsed, "api.github.com", "release metadata")?;
+    let expected = feed.url(owner_repo)?;
+    if parsed.as_str() != expected {
+        anyhow::bail!("release metadata URL does not match the selected repository and feed");
+    }
+    Ok(())
+}
+
+fn github_release_asset_url(
+    owner_repo: &str,
+    release_tag: &str,
+    asset_name: &str,
+) -> Result<String> {
+    validate_owner_repo(owner_repo)?;
+    parse_semver_version(release_tag).context("release asset tag is not valid SemVer")?;
+    if asset_name.is_empty()
+        || asset_name.contains('/')
+        || asset_name.contains('\\')
+        || asset_name == "."
+        || asset_name == ".."
+    {
+        anyhow::bail!("release asset name is not one safe path component");
+    }
+    let expected =
+        format!("https://github.com/{owner_repo}/releases/download/{release_tag}/{asset_name}");
+    let parsed = ::url::Url::parse(&expected).context("construct GitHub release asset URL")?;
+    validate_https_url_basics(&parsed, "github.com", "release asset")?;
+    if parsed.query().is_some() {
+        anyhow::bail!("constructed release asset URL contains a query");
+    }
+    Ok(parsed.into())
+}
+
+fn validate_github_release_redirect_url(url: &str) -> Result<()> {
+    let parsed = ::url::Url::parse(url).context("parse GitHub release redirect URL")?;
+    validate_https_url_basics(&parsed, RELEASE_ASSET_REDIRECT_HOST, "release redirect")?;
+    if parsed.path().is_empty() || parsed.path() == "/" {
+        anyhow::bail!("release redirect URL has no asset path");
+    }
+    Ok(())
+}
+
+async fn resolve_public_addresses(host: &str, port: u16, label: &str) -> Result<Vec<SocketAddr>> {
+    let resolved = tokio::time::timeout(RELEASE_DNS_TIMEOUT, tokio::net::lookup_host((host, port)))
+        .await
+        .with_context(|| format!("{label} DNS resolution timed out"))?
+        .with_context(|| format!("{label} DNS resolution failed"))?;
+    let mut addrs = BTreeSet::new();
+    for address in resolved {
+        if is_blocked_release_ip(address.ip()) {
+            anyhow::bail!("{label} DNS returned a non-public address");
+        }
+        addrs.insert(address);
+    }
+    if addrs.is_empty() {
+        anyhow::bail!("{label} DNS returned no addresses");
+    }
+    Ok(addrs.into_iter().collect())
+}
+
+fn is_blocked_release_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(address) => {
+            let [a, b, c, _] = address.octets();
+            a == 0
+                || a == 10
+                || a == 127
+                || (a == 100 && (64..=127).contains(&b))
+                || (a == 169 && b == 254)
+                || (a == 172 && (16..=31).contains(&b))
+                || (a == 192 && b == 0 && c == 0)
+                || (a == 192 && b == 0 && c == 2)
+                || (a == 192 && b == 88 && c == 99)
+                || (a == 192 && b == 168)
+                || (a == 198 && (b == 18 || b == 19))
+                || (a == 198 && b == 51 && c == 100)
+                || (a == 203 && b == 0 && c == 113)
+                || a >= 224
+        }
+        IpAddr::V6(address) => {
+            // Reject every embedded-IPv4 spelling. The DNS result must carry a
+            // native public v4 address instead of an alias whose inner address
+            // could bypass a later classifier.
+            if address.to_ipv4().is_some() {
+                return true;
+            }
+            let segments = address.segments();
+            address.is_unspecified()
+                || address.is_loopback()
+                // GitHub release endpoints must resolve inside the currently
+                // allocated global-unicast 2000::/3 space. Rejecting all other
+                // top-level ranges is fail-closed against future special-use
+                // aliases instead of maintaining an incomplete deny list.
+                || (segments[0] & 0xe000) != 0x2000
+                // IPv4/IPv6 translation prefixes (RFC 6052 / RFC 8215).
+                || (segments[0] == 0x0064
+                    && segments[1] == 0xff9b
+                    && (segments[2] == 0 || segments[2] == 1))
+                // Discard-only prefix 100::/64.
+                || (segments[0] == 0x0100
+                    && segments[1] == 0
+                    && segments[2] == 0
+                    && segments[3] == 0)
+                // IETF protocol assignments 2001::/23, including Teredo,
+                // benchmarking, ORCHID and documentation ranges. GitHub does
+                // not publish release endpoints from this special-use block.
+                || (segments[0] == 0x2001 && segments[1] < 0x0200)
+                // Documentation prefix 2001:db8::/32.
+                || (segments[0] == 0x2001 && segments[1] == 0x0db8)
+                // 6to4 embeds an arbitrary IPv4 address.
+                || segments[0] == 0x2002
+                // Documentation prefix 3fff::/20.
+                || (segments[0] == 0x3fff && (segments[1] & 0xf000) == 0)
+                // Segment-routing SIDs are not globally reachable endpoints.
+                || segments[0] == 0x5f00
+                || (segments[0] & 0xfe00) == 0xfc00
+                || (segments[0] & 0xffc0) == 0xfe80
+                || (segments[0] & 0xffc0) == 0xfec0
+                || (segments[0] & 0xff00) == 0xff00
+        }
+    }
+}
+
+async fn read_response_bounded(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+    label: &str,
+) -> Result<Vec<u8>> {
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("{label} failed with HTTP {status}");
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes as u64)
+    {
+        anyhow::bail!("{label} exceeds the {max_bytes}-byte download cap");
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        anyhow::anyhow!(
+            "read {label} response body failed ({})",
+            sanitized_reqwest_error_kind(&error)
+        )
+    })? {
+        let next_len = body
+            .len()
+            .checked_add(chunk.len())
+            .ok_or_else(|| anyhow::anyhow!("{label} response length overflow"))?;
+        if next_len > max_bytes {
+            anyhow::bail!("{label} exceeds the {max_bytes}-byte download cap");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 /// Pick the highest SemVer release admitted by the configured ring. Invalid
@@ -217,29 +877,16 @@ pub fn select_release_for_channel(
 /// distinguish update-check traffic from other reqwest callers.
 pub async fn fetch_latest_release(owner_repo: &str) -> Result<LatestRelease> {
     validate_owner_repo(owner_repo)?;
-    let url = format!("https://api.github.com/repos/{owner_repo}/releases/latest");
     let ua = format!("NEOTH/{} (update-check)", current_version());
-    let client = reqwest::Client::builder()
-        .user_agent(ua)
-        .build()
-        .context("build update-check reqwest client")?;
-    let resp = github_api_get(&client, &url)
-        .send()
-        .await
-        .with_context(|| format!("GET {url}"))?;
-    let status = resp.status();
-    if !status.is_success() {
-        anyhow::bail!(
-            "GitHub release check failed: HTTP {} — {}",
-            status,
-            match status.as_u16() {
-                403 => "rate-limited (wait for the public API window to reset, then retry)",
-                404 => "repo has no published releases yet",
-                _ => "see GitHub status page",
-            },
-        );
-    }
-    let release: LatestRelease = resp.json().await.context("parse GitHub release JSON")?;
+    let body = GithubReleaseTransport::new(ua)
+        .fetch_metadata(
+            owner_repo,
+            GithubReleaseFeed::Latest,
+            "GitHub latest release metadata",
+        )
+        .await?;
+    let release: LatestRelease =
+        serde_json::from_slice(&body).context("parse GitHub release JSON")?;
     Ok(release)
 }
 
@@ -267,33 +914,57 @@ pub async fn fetch_release_for_channel(
 
     validate_owner_repo(owner_repo)?;
 
-    let url = format!("https://api.github.com/repos/{owner_repo}/releases?per_page=100");
     let ua = format!("NEOTH/{} (update-check)", current_version());
-    let client = reqwest::Client::builder()
-        .user_agent(ua)
-        .build()
-        .context("build update-check reqwest client")?;
-    let resp = github_api_get(&client, &url)
-        .send()
-        .await
-        .with_context(|| format!("GET {url}"))?;
-    let status = resp.status();
-    if !status.is_success() {
-        anyhow::bail!(
-            "GitHub {} release check failed: HTTP {} — {}",
-            channel,
-            status,
-            match status.as_u16() {
-                403 => "rate-limited (wait for the public API window to reset, then retry)",
-                404 => "repo has no published releases yet",
-                _ => "see GitHub status page",
-            },
-        );
+    let body = GithubReleaseTransport::new(ua)
+        .fetch_metadata(
+            owner_repo,
+            GithubReleaseFeed::List,
+            "GitHub release-list metadata",
+        )
+        .await?;
+    let releases: Vec<LatestRelease> =
+        serde_json::from_slice(&body).context("parse GitHub releases-list JSON")?;
+    select_release_for_channel(releases, channel).ok_or_else(|| {
+        anyhow::anyhow!(
+            "repo {owner_repo} has no valid SemVer release admitted by channel {channel}"
+        )
+    })
+}
+
+/// Recurring counterpart to [`fetch_release_for_channel`]. The metadata HTTP
+/// leaf is bound to the exact accepted reload epoch, permission-audited, and
+/// wrapped in mandatory updater intent/result frames before JSON is consumed.
+pub(crate) async fn fetch_release_for_channel_authorized(
+    authority: &RecurringSelfUpdateAuthority,
+    owner_repo: &str,
+    channel: ReleaseChannel,
+) -> Result<LatestRelease> {
+    validate_owner_repo(owner_repo)?;
+    let feed = if channel == ReleaseChannel::Stable {
+        GithubReleaseFeed::Latest
+    } else {
+        GithubReleaseFeed::List
+    };
+    let transport = GithubReleaseTransport::new(format!(
+        "NEOTH/{} (recurring-self-update)",
+        current_version()
+    ));
+    let body = transport
+        .fetch_metadata_authorized(authority, owner_repo, feed, "GitHub release metadata")
+        .await?;
+    if channel == ReleaseChannel::Stable {
+        let release: LatestRelease =
+            serde_json::from_slice(&body).context("parse GitHub latest-release JSON")?;
+        if !release_tag_matches_channel(&release.tag_name, ReleaseChannel::Stable) {
+            anyhow::bail!(
+                "latest GitHub release tag {:?} is not a final SemVer release admitted by channel stable",
+                release.tag_name
+            );
+        }
+        return Ok(release);
     }
-    let releases: Vec<LatestRelease> = resp
-        .json()
-        .await
-        .context("parse GitHub releases-list JSON")?;
+    let releases: Vec<LatestRelease> =
+        serde_json::from_slice(&body).context("parse GitHub releases-list JSON")?;
     select_release_for_channel(releases, channel).ok_or_else(|| {
         anyhow::anyhow!(
             "repo {owner_repo} has no valid SemVer release admitted by channel {channel}"
@@ -315,6 +986,22 @@ pub async fn check_for_update_channel(
     channel: ReleaseChannel,
 ) -> Result<UpdateCheck> {
     let release = fetch_release_for_channel(owner_repo, channel).await?;
+    let needs = version_is_newer(&release.tag_name, current_version())?;
+    Ok(UpdateCheck {
+        current: current_version().to_string(),
+        latest: release.tag_name,
+        needs_update: needs,
+        release_url: release.html_url,
+        published_at: release.published_at,
+    })
+}
+
+pub(crate) async fn check_for_update_channel_authorized(
+    authority: &RecurringSelfUpdateAuthority,
+    owner_repo: &str,
+    channel: ReleaseChannel,
+) -> Result<UpdateCheck> {
+    let release = fetch_release_for_channel_authorized(authority, owner_repo, channel).await?;
     let needs = version_is_newer(&release.tag_name, current_version())?;
     Ok(UpdateCheck {
         current: current_version().to_string(),
@@ -528,6 +1215,11 @@ const MAX_RELEASE_ARCHIVE_BYTES: usize = 512 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES: usize = 16 * 1024;
 const MAX_SIGNATURE_BYTES: usize = 64 * 1024;
 const MAX_PENDING_JSON_BYTES: usize = 64 * 1024;
+const STAGE_MUTATION_LOCK_NAME: &str = ".neoth-self-update.lock";
+const MAX_STAGE_GENERATION_ENTRIES: usize = 64;
+const MAX_STAGE_FILES_PER_GENERATION: usize = 8;
+const MAX_STAGE_GC_FILES: usize = 128;
+const MAX_STAGE_GC_BYTES: u64 = (MAX_RELEASE_ARCHIVE_BYTES as u64) * 4;
 
 /// A file-backed `Write` that errors once more than `limit` bytes are written.
 /// XZ is decoded into the private extraction directory instead of allocating a
@@ -1012,9 +1704,8 @@ pub struct UpdateApplied {
     /// prove exactly which artifact was installed. MV-01b audit
     /// enrichment (senior-dev panel 2026-05-29).
     pub archive_sha256: String,
-    /// Exact `browser_download_url` the archive was fetched from. Lets an
-    /// auditor catch a fork-repo swap that the version fields alone
-    /// wouldn't reveal.
+    /// Exact canonical GitHub URL the archive was fetched from, derived from
+    /// the validated repository, release tag, and expected asset name.
     pub download_url: String,
     /// MV-01b #2 — minisign signature outcome
     /// ([`crate::updater::sig_verify::SigStatus::as_str`]): `verified`,
@@ -2188,54 +2879,6 @@ pub(crate) fn cleanup_windows_handoff(
     remove_windows_cleanup_tree(&quarantined)
 }
 
-async fn fetch_bytes_bounded(
-    client: &reqwest::Client,
-    url: &str,
-    max_bytes: usize,
-    label: &str,
-) -> Result<Vec<u8>> {
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("GET {url}"))?
-        .error_for_status()
-        .with_context(|| format!("fetch {label}"))?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > max_bytes as u64)
-    {
-        anyhow::bail!("{label} exceeds the {max_bytes}-byte download cap");
-    }
-
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .with_context(|| format!("read {label} response body"))?
-    {
-        let next_len = body
-            .len()
-            .checked_add(chunk.len())
-            .ok_or_else(|| anyhow::anyhow!("{label} response length overflow"))?;
-        if next_len > max_bytes {
-            anyhow::bail!("{label} exceeds the {max_bytes}-byte download cap");
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
-async fn fetch_text_bounded(
-    client: &reqwest::Client,
-    url: &str,
-    max_bytes: usize,
-    label: &str,
-) -> Result<String> {
-    let bytes = fetch_bytes_bounded(client, url, max_bytes, label).await?;
-    String::from_utf8(bytes).with_context(|| format!("{label} is not valid UTF-8"))
-}
-
 /// Network-driven update flow. Wraps the shared bundle transaction with
 /// HTTP fetches against the release's `browser_download_url`
 /// fields. Returns [`UpdateApplyOutcome::Applied`] after a synchronous commit,
@@ -2270,27 +2913,29 @@ pub async fn apply_update(
         )
     })?;
 
-    let ua = format!("NEOTH/{} (self-update)", current_version());
-    let client = reqwest::Client::builder()
-        .user_agent(ua)
-        .build()
-        .context("build self-update reqwest client")?;
+    let transport =
+        GithubReleaseTransport::new(format!("NEOTH/{} (self-update)", current_version()));
+    let companion_bytes = transport
+        .fetch_asset(
+            source_repo,
+            &release.tag_name,
+            &companion.name,
+            MAX_CHECKSUM_BYTES,
+            "sha256 companion",
+        )
+        .await?;
+    let companion_text =
+        String::from_utf8(companion_bytes).context("sha256 companion is not valid UTF-8")?;
 
-    let companion_text = fetch_text_bounded(
-        &client,
-        &companion.browser_download_url,
-        MAX_CHECKSUM_BYTES,
-        "sha256 companion",
-    )
-    .await?;
-
-    let asset_bytes = fetch_bytes_bounded(
-        &client,
-        &assets.binary.browser_download_url,
-        MAX_RELEASE_ARCHIVE_BYTES,
-        "binary release archive",
-    )
-    .await?;
+    let asset_bytes = transport
+        .fetch_asset(
+            source_repo,
+            &release.tag_name,
+            &assets.binary.name,
+            MAX_RELEASE_ARCHIVE_BYTES,
+            "binary release archive",
+        )
+        .await?;
 
     // MV-01b #2 — minisign signature verification BEFORE the swap. Fetch
     // the `.minisig` companion (if published) then gate on it. `require`
@@ -2300,15 +2945,18 @@ pub async fn apply_update(
     // present-but-invalid sig still bails). Runs before bundle application so
     // a failed verify never reaches the native transaction.
     let signature_text = match assets.signature {
-        Some(sig_asset) => Some(
-            fetch_text_bounded(
-                &client,
-                &sig_asset.browser_download_url,
-                MAX_SIGNATURE_BYTES,
-                "minisig companion",
-            )
-            .await?,
-        ),
+        Some(sig_asset) => {
+            let bytes = transport
+                .fetch_asset(
+                    source_repo,
+                    &release.tag_name,
+                    &sig_asset.name,
+                    MAX_SIGNATURE_BYTES,
+                    "minisig companion",
+                )
+                .await?;
+            Some(String::from_utf8(bytes).context("minisig companion is not valid UTF-8")?)
+        }
         None => None,
     };
     let sig_status = crate::updater::sig_verify::check_signature_for_file(
@@ -2332,7 +2980,8 @@ pub async fn apply_update(
     }
 
     let format = archive_format_for_target(target_triple);
-    let download_url = assets.binary.browser_download_url.clone();
+    let download_url =
+        github_release_asset_url(source_repo, &release.tag_name, &assets.binary.name)?;
     let bundle_outcome = apply_downloaded_bundle_for_update(DownloadedBundleUpdateRequest {
         asset_bytes: &asset_bytes,
         companion_text: &companion_text,
@@ -2410,6 +3059,11 @@ pub struct PendingUpdate {
     /// can't bypass the SEC-10 signature gate. `None` when no companion exists.
     #[serde(default)]
     pub staged_signature: Option<String>,
+    /// Transaction generation containing this archive and signature. New
+    /// records always set a 32-hex UUID. `None` preserves compatibility with
+    /// pre-1.0 direct-child staging records.
+    #[serde(default)]
+    pub stage_generation: Option<String>,
     pub target_triple: String,
     pub staged_ts_unix: i64,
 }
@@ -3037,6 +3691,7 @@ fn read_exact_private_windows_file_bounded(
 
 fn read_validated_staged_file_bounded(
     stage_dir: &Path,
+    stage_generation: Option<&str>,
     recorded_path: &str,
     expected_name: &str,
     label: &str,
@@ -3050,10 +3705,16 @@ fn read_validated_staged_file_bounded(
     let trusted_root = stage_dir
         .parent()
         .ok_or_else(|| anyhow::anyhow!("staged {label} directory has no trusted namespace"))?;
+    let expected_path = match stage_generation {
+        Some(generation) => {
+            validated_stage_generation_dir(stage_dir, generation)?.join(expected_name)
+        }
+        None => stage_dir.join(expected_name),
+    };
     read_file_bounded_with_policy(
         trusted_root,
         &recorded,
-        Some(&stage_dir.join(expected_name)),
+        Some(&expected_path),
         max_bytes,
         &format!("staged {label}"),
         false,
@@ -3061,9 +3722,17 @@ fn read_validated_staged_file_bounded(
     .with_context(|| {
         format!(
             "staged {label} path failed exact stage slot validation: {}",
-            stage_dir.join(expected_name).display()
+            expected_path.display()
         )
     })
+}
+
+fn validated_stage_generation_dir(stage_dir: &Path, generation: &str) -> Result<PathBuf> {
+    anyhow::ensure!(
+        generation.len() == 32 && generation.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "invalid staged transaction generation"
+    );
+    Ok(stage_dir.join("generations").join(generation))
 }
 
 /// Apply an ALREADY-STAGED update — skips the network entirely. The staging
@@ -3127,6 +3796,7 @@ pub fn apply_from_staged(
     }
     let bytes = read_validated_staged_file_bounded(
         stage_dir,
+        pending.stage_generation.as_deref(),
         &pending.staged_archive,
         &expected_asset,
         "archive",
@@ -3145,6 +3815,7 @@ pub fn apply_from_staged(
             let expected_signature = minisig_companion_name(&expected_asset);
             let signature_bytes = read_validated_staged_file_bounded(
                 stage_dir,
+                pending.stage_generation.as_deref(),
                 sig_path,
                 &expected_signature,
                 "minisig",
@@ -3222,22 +3893,380 @@ pub fn apply_from_staged(
     }
 }
 
-/// Remove the staged archive + `pending.json` after a successful apply.
-/// Best-effort — a leftover staged file is harmless (re-validated next time).
-pub fn clear_staged(stage_dir: &Path, pending: &PendingUpdate) {
+fn stage_mutation_lock_path(stage_dir: &Path) -> PathBuf {
+    stage_dir.join(STAGE_MUTATION_LOCK_NAME)
+}
+
+#[cfg(all(test, unix))]
+const DISPLACED_STAGE_LOCK_TEST_NAME: &str = ".neoth-self-update.lock.displaced-test";
+
+#[cfg(all(test, unix))]
+static STAGE_LOCK_REPLACEMENT_TEST_PATH: std::sync::Mutex<Option<PathBuf>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(all(test, unix))]
+fn replace_stage_lock_after_acquire_for_test(lock_path: &Path) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let mut armed = STAGE_LOCK_REPLACEMENT_TEST_PATH
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if armed.as_deref() != Some(lock_path) {
+        return Ok(());
+    }
+    armed.take();
+    let displaced = lock_path.with_file_name(DISPLACED_STAGE_LOCK_TEST_NAME);
+    std::fs::rename(lock_path, &displaced).context("displace stage lock in regression test")?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(lock_path)
+        .context("install replacement stage lock in regression test")?;
+    Ok(())
+}
+
+fn acquire_stage_mutation_lock(
+    stage: &cap_std::fs::Dir,
+    stage_dir: &Path,
+) -> Result<std::fs::File> {
+    let lock_path = stage_mutation_lock_path(stage_dir);
+    let lock_name = std::ffi::OsStr::new(STAGE_MUTATION_LOCK_NAME);
+    let started = std::time::Instant::now();
+    let retry_every = Duration::from_millis(50);
+    let give_up_after = Duration::from_secs(5);
+
+    loop {
+        let mut options = cap_std::fs::OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .create(true)
+            .follow(FollowSymlinks::No);
+        #[cfg(unix)]
+        {
+            use cap_std::fs::OpenOptionsExt as _;
+            options.mode(0o600).custom_flags(libc::O_NONBLOCK);
+        }
+        #[cfg(windows)]
+        {
+            use cap_std::fs::OpenOptionsExt as _;
+            const FILE_SHARE_READ: u32 = 0x0000_0001;
+            options.share_mode(FILE_SHARE_READ);
+        }
+
+        // Open/create through the already-validated stage capability. The
+        // handle that passes the regular-file/no-link check below is the exact
+        // handle we lock; never resolve the ambient path into a second inode.
+        let lock = match stage.open_with(lock_name, &options) {
+            Ok(lock) => lock,
+            #[cfg(windows)]
+            Err(error) if error.raw_os_error() == Some(32) => {
+                if started.elapsed() >= give_up_after {
+                    anyhow::bail!(
+                        "self-update stage mutation lock {} held by another process for >5s",
+                        lock_path.display()
+                    );
+                }
+                std::thread::sleep(retry_every);
+                continue;
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "capability-open self-update stage mutation lock {}",
+                        lock_path.display()
+                    )
+                });
+            }
+        };
+        let metadata = lock.metadata().with_context(|| {
+            format!(
+                "inspect capability-opened self-update stage mutation lock {}",
+                lock_path.display()
+            )
+        })?;
+        if !metadata.is_file() || crate::skills::store::cap_metadata_is_link_like(&metadata) {
+            anyhow::bail!(
+                "self-update stage mutation lock is not a real regular file: {}",
+                lock_path.display()
+            );
+        }
+        let lock = lock.into_std();
+
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd as _;
+
+            // SAFETY: flock operates on the live, capability-opened regular
+            // file descriptor whose metadata was checked immediately above.
+            let result = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    && started.elapsed() < give_up_after
+                {
+                    drop(lock);
+                    std::thread::sleep(retry_every);
+                    continue;
+                }
+                if error.kind() == std::io::ErrorKind::WouldBlock {
+                    anyhow::bail!(
+                        "self-update stage mutation lock {} held by another process for >5s",
+                        lock_path.display()
+                    );
+                }
+                return Err(error)
+                    .with_context(|| format!("flock self-update stage {}", lock_path.display()));
+            }
+        }
+
+        #[cfg(all(test, unix))]
+        replace_stage_lock_after_acquire_for_test(&lock_path)?;
+
+        // A rename between open and flock would otherwise split cooperative
+        // callers across two inodes. Re-open the current direct-child slot
+        // through the same capability and require exact stable identity while
+        // the first inode is locked. A transient replacement retries only
+        // within the same bounded five-second acquisition window.
+        let namespace = crate::skills::store::open_regular_file(stage, lock_name, &lock_path)
+            .context("re-open current self-update stage mutation lock slot")?
+            .into_std();
+        match verify_open_file_identity(
+            &lock,
+            &namespace,
+            &lock_path,
+            "self-update stage mutation lock",
+        ) {
+            Ok(()) => return Ok(lock),
+            Err(_error) if started.elapsed() < give_up_after => {
+                drop(namespace);
+                drop(lock);
+                std::thread::sleep(retry_every);
+            }
+            Err(error) => {
+                return Err(error).context(
+                    "self-update stage mutation lock namespace remained unstable for >5s",
+                );
+            }
+        }
+    }
+}
+
+fn read_visible_pending_strict(
+    stage: &cap_std::fs::Dir,
+    stage_dir: &Path,
+) -> Result<Option<PendingUpdate>> {
+    let pending_path = pending_json_path(stage_dir);
+    let pending_name = std::ffi::OsStr::new("pending.json");
+    match stage.symlink_metadata(pending_name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error)
+            .with_context(|| format!("inspect visible pending update {}", pending_path.display())),
+        Ok(_) => {
+            let body = crate::skills::store::read_regular_file_bounded(
+                stage,
+                pending_name,
+                &pending_path,
+                MAX_PENDING_JSON_BYTES,
+            )
+            .context("read visible pending update for serialized stage mutation")?;
+            let pending = serde_json::from_slice(&body)
+                .context("parse visible pending update for serialized stage mutation")?;
+            Ok(Some(pending))
+        }
+    }
+}
+
+/// One serialized view of the optional staged update.
+///
+/// The cross-process mutation lock remains owned from the strict pending read
+/// through policy/version checks, payload re-verification, apply, and cleanup.
+/// Callers must not invoke [`clear_staged`] while this guard is alive; use
+/// [`LockedPendingStage::clear`] to avoid reentrant lock acquisition.
+pub(crate) struct LockedPendingStage {
+    stage: crate::skills::store::BoundDirectory,
+    stage_dir: PathBuf,
+    pending: Option<PendingUpdate>,
+    _mutation_lock: std::fs::File,
+}
+
+impl LockedPendingStage {
+    pub(crate) fn pending(&self) -> Option<&PendingUpdate> {
+        self.pending.as_ref()
+    }
+
+    pub(crate) fn apply(
+        &self,
+        install_dir: &Path,
+        require_signature: bool,
+    ) -> Result<UpdateApplyOutcome> {
+        let pending = self
+            .pending
+            .as_ref()
+            .context("no staged self-update is visible under the mutation lock")?;
+        apply_from_staged(pending, &self.stage_dir, install_dir, require_signature)
+    }
+
+    pub(crate) fn clear(&mut self) -> Result<()> {
+        let Some(pending) = self.pending.take() else {
+            return Ok(());
+        };
+        if let Err(error) = clear_staged_locked(&self.stage.dir, &self.stage_dir, &pending) {
+            self.pending = Some(pending);
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
+fn lock_pending_stage(stage_dir: &Path) -> Result<Option<LockedPendingStage>> {
+    let Some(stage) = crate::skills::store::open_bound_directory(
+        stage_dir,
+        false,
+        "serialized self-update stage",
+    )?
+    else {
+        return Ok(None);
+    };
+    let mutation_lock = acquire_stage_mutation_lock(&stage.dir, stage_dir)?;
+    let pending = read_visible_pending_strict(&stage.dir, stage_dir)?;
+    Ok(Some(LockedPendingStage {
+        stage,
+        stage_dir: stage_dir.to_path_buf(),
+        pending,
+        _mutation_lock: mutation_lock,
+    }))
+}
+
+pub(crate) async fn lock_pending_stage_async(
+    stage_dir: PathBuf,
+) -> Result<Option<LockedPendingStage>> {
+    tokio::task::spawn_blocking(move || lock_pending_stage(&stage_dir))
+        .await
+        .context("join serialized staged-update read")?
+}
+
+/// Remove the staged archive + `pending.json` after an apply or rejection.
+///
+/// The same cross-process lock used by prepare/publish prevents a stale CLI
+/// cleanup from racing a daemon publication. If a newer pending record is
+/// already visible, this call preserves both that record and its generation.
+pub fn clear_staged(stage_dir: &Path, pending: &PendingUpdate) -> Result<()> {
+    let Some(stage) =
+        crate::skills::store::open_bound_directory(stage_dir, false, "self-update stage cleanup")?
+    else {
+        return Ok(());
+    };
+    let _mutation_lock = acquire_stage_mutation_lock(&stage.dir, stage_dir)?;
+    if let Some(visible) = read_visible_pending_strict(&stage.dir, stage_dir)?
+        && visible != *pending
+    {
+        tracing::warn!(
+            visible_generation = ?visible.stage_generation,
+            cleanup_generation = ?pending.stage_generation,
+            "preserving a newer staged self-update during stale cleanup"
+        );
+        return Ok(());
+    }
+    clear_staged_locked(&stage.dir, stage_dir, pending)
+}
+
+fn clear_staged_locked(
+    stage: &cap_std::fs::Dir,
+    stage_dir: &Path,
+    pending: &PendingUpdate,
+) -> Result<()> {
+    clear_staged_payload_capability(stage, stage_dir, pending)?;
+    if crate::skills::store::remove_child_file_if_present(
+        stage,
+        std::ffi::OsStr::new("pending.json"),
+        &pending_json_path(stage_dir),
+    )? {
+        crate::skills::store::sync_parent_directory(stage, stage_dir)?;
+    }
+    Ok(())
+}
+
+fn clear_staged_payload_capability(
+    stage: &cap_std::fs::Dir,
+    stage_dir: &Path,
+    pending: &PendingUpdate,
+) -> Result<()> {
     // `pending.json` is operator-writable and therefore untrusted. Never delete
     // the recorded arbitrary path; derive the only safe stage children from a
     // validated version + release target.
-    if parse_semver_version(&pending.to_version).is_ok()
-        && release_target_is_supported(&pending.target_triple)
+    if parse_semver_version(&pending.to_version).is_err()
+        || !release_target_is_supported(&pending.target_triple)
     {
-        let asset = expected_asset_name("neoth", &pending.to_version, &pending.target_triple);
-        let _ = std::fs::remove_file(stage_dir.join(&asset));
-        let _ = std::fs::remove_file(stage_dir.join(minisig_companion_name(&asset)));
+        return Ok(());
     }
-    let _ = std::fs::remove_file(pending_json_path(stage_dir));
+    let asset = expected_asset_name("neoth", &pending.to_version, &pending.target_triple);
+    let signature = minisig_companion_name(&asset);
+
+    let Some(generation) = pending.stage_generation.as_deref() else {
+        let removed_archive = crate::skills::store::remove_child_file_if_present(
+            stage,
+            std::ffi::OsStr::new(&asset),
+            &stage_dir.join(&asset),
+        )?;
+        let removed_signature = crate::skills::store::remove_child_file_if_present(
+            stage,
+            std::ffi::OsStr::new(&signature),
+            &stage_dir.join(&signature),
+        )?;
+        if removed_archive || removed_signature {
+            crate::skills::store::sync_parent_directory(stage, stage_dir)?;
+        }
+        return Ok(());
+    };
+
+    let generation_dir = match validated_stage_generation_dir(stage_dir, generation) {
+        Ok(path) => path,
+        Err(_) => return Ok(()),
+    };
+    let generations_path = stage_dir.join("generations");
+    let Some(generations) = crate::skills::store::open_real_child_dir_if_present(
+        stage,
+        std::ffi::OsStr::new("generations"),
+        &generations_path,
+    )?
+    else {
+        return Ok(());
+    };
+    let Some(generation_slot) = crate::skills::store::open_real_child_dir_if_present(
+        &generations,
+        std::ffi::OsStr::new(generation),
+        &generation_dir,
+    )?
+    else {
+        return Ok(());
+    };
+    let removed_archive = crate::skills::store::remove_child_file_if_present(
+        &generation_slot,
+        std::ffi::OsStr::new(&asset),
+        &generation_dir.join(&asset),
+    )?;
+    let removed_signature = crate::skills::store::remove_child_file_if_present(
+        &generation_slot,
+        std::ffi::OsStr::new(&signature),
+        &generation_dir.join(&signature),
+    )?;
+    if removed_archive || removed_signature {
+        crate::skills::store::sync_parent_directory(&generation_slot, &generation_dir)?;
+    }
+    drop(generation_slot);
+    if crate::skills::store::remove_empty_real_child_dir_if_present(
+        &generations,
+        std::ffi::OsStr::new(generation),
+        &generation_dir,
+    )? {
+        crate::skills::store::sync_parent_directory(&generations, &generations_path)?;
+    }
+    Ok(())
 }
 
+#[cfg(test)]
 fn ensure_private_stage_directory(stage_dir: &Path) -> Result<()> {
     #[cfg(unix)]
     {
@@ -3311,6 +4340,66 @@ pub async fn stage_update(
     require_signature: bool,
     now_unix: i64,
 ) -> Result<PendingUpdate> {
+    stage_update_inner(
+        None,
+        release,
+        owner_repo,
+        channel,
+        target_triple,
+        binary,
+        stage_dir,
+        require_signature,
+        now_unix,
+    )
+    .await
+}
+
+/// Recurring staging entry point. Every HTTP request and the final local stage
+/// transaction consumes a request-bound authority tied to one accepted reload
+/// generation. Permission refusal happens before the corresponding effect.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn stage_update_authorized(
+    authority: &RecurringSelfUpdateAuthority,
+    neoth_home: &Path,
+    release: &LatestRelease,
+    owner_repo: &str,
+    channel: ReleaseChannel,
+    target_triple: &str,
+    binary: &str,
+    stage_dir: &Path,
+    require_signature: bool,
+    now_unix: i64,
+) -> Result<PendingUpdate> {
+    anyhow::ensure!(
+        neoth_home.is_absolute() && stage_dir == neoth_home.join("staged"),
+        "recurring self-update stage namespace is not the accepted NEOTH home"
+    );
+    stage_update_inner(
+        Some((authority, neoth_home)),
+        release,
+        owner_repo,
+        channel,
+        target_triple,
+        binary,
+        stage_dir,
+        require_signature,
+        now_unix,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn stage_update_inner(
+    authorized: Option<(&RecurringSelfUpdateAuthority, &Path)>,
+    release: &LatestRelease,
+    owner_repo: &str,
+    channel: ReleaseChannel,
+    target_triple: &str,
+    binary: &str,
+    stage_dir: &Path,
+    require_signature: bool,
+    now_unix: i64,
+) -> Result<PendingUpdate> {
     validate_owner_repo(owner_repo)?;
     let assets = resolve_update_assets(release, target_triple, binary)?;
     let companion = assets.sha256.ok_or_else(|| {
@@ -3321,44 +4410,60 @@ pub async fn stage_update(
         )
     })?;
 
-    let ua = format!("NEOTH/{} (self-update-stage)", current_version());
-    let client = reqwest::Client::builder()
-        .user_agent(ua)
-        .build()
-        .context("build stage reqwest client")?;
-
-    let companion_text = fetch_text_bounded(
-        &client,
-        &companion.browser_download_url,
+    let transport =
+        GithubReleaseTransport::new(format!("NEOTH/{} (self-update-stage)", current_version()));
+    let companion_bytes = fetch_stage_asset(
+        &transport,
+        authorized.map(|(authority, _)| authority),
+        "release-checksum",
+        UpdaterLeafEffect::ReleaseChecksumFetch,
+        owner_repo,
+        &release.tag_name,
+        &companion.name,
+        None,
         MAX_CHECKSUM_BYTES,
         "sha256 companion",
     )
     .await?;
-
-    let asset_bytes = fetch_bytes_bounded(
-        &client,
-        &assets.binary.browser_download_url,
-        MAX_RELEASE_ARCHIVE_BYTES,
-        "binary release archive",
-    )
-    .await?;
+    let companion_text =
+        String::from_utf8(companion_bytes).context("sha256 companion is not valid UTF-8")?;
 
     // Integrity check (SHA-256) then authenticity (minisig). require=true
     // for the unattended path → any non-verified outcome bails before the
     // archive is written to the staging dir.
     let expected = parse_sha256_companion(&companion_text).context("parse sha256 companion")?;
+    let asset_bytes = fetch_stage_asset(
+        &transport,
+        authorized.map(|(authority, _)| authority),
+        "release-archive",
+        UpdaterLeafEffect::ReleaseArchiveFetch,
+        owner_repo,
+        &release.tag_name,
+        &assets.binary.name,
+        Some(&expected),
+        MAX_RELEASE_ARCHIVE_BYTES,
+        "binary release archive",
+    )
+    .await?;
     verify_sha256_bytes(&asset_bytes, &expected).context("verify staged asset sha256")?;
 
     let signature_text = match assets.signature {
-        Some(sig_asset) => Some(
-            fetch_text_bounded(
-                &client,
-                &sig_asset.browser_download_url,
+        Some(sig_asset) => {
+            let bytes = fetch_stage_asset(
+                &transport,
+                authorized.map(|(authority, _)| authority),
+                "release-signature",
+                UpdaterLeafEffect::ReleaseSignatureFetch,
+                owner_repo,
+                &release.tag_name,
+                &sig_asset.name,
+                None,
                 MAX_SIGNATURE_BYTES,
                 "minisig companion",
             )
-            .await?,
-        ),
+            .await?;
+            Some(String::from_utf8(bytes).context("minisig companion is not valid UTF-8")?)
+        }
         None => None,
     };
     let sig_status = crate::updater::sig_verify::check_signature_for_file(
@@ -3369,42 +4474,889 @@ pub async fn stage_update(
     )
     .context("staged self-update signature gate")?;
 
-    ensure_private_stage_directory(stage_dir)?;
-    let staged_archive = stage_dir.join(&assets.binary.name);
-    crate::util::atomic_write::atomic_write_private(&staged_archive, &asset_bytes)
-        .with_context(|| format!("write staged archive {}", staged_archive.display()))?;
-
-    // GR-043 — persist the `.minisig` next to the staged archive so
-    // `apply_from_staged` can RE-VERIFY authenticity offline at apply time
-    // (against the in-binary pinned key), not just trust the recorded status.
-    let staged_signature = match signature_text.as_deref() {
-        Some(sig) => {
-            let sig_path = stage_dir.join(minisig_companion_name(&assets.binary.name));
-            crate::util::atomic_write::atomic_write_private(&sig_path, sig.as_bytes())
-                .with_context(|| format!("write staged minisig {}", sig_path.display()))?;
-            Some(sig_path.display().to_string())
-        }
-        None => None,
-    };
+    // Each candidate lands in a unique generation. Preparing that generation
+    // and publishing `pending.json` are deliberately separate phases: the
+    // recurring authority must first durably record a `prepared` terminal
+    // result. Only the returned one-shot PreparedStage may then make the exact
+    // pending bytes visible. A terminal-WAL failure therefore leaves the old
+    // pending record authoritative and the new private generation unreachable.
+    let stage_generation = uuid::Uuid::now_v7().simple().to_string();
+    let generation_dir = validated_stage_generation_dir(stage_dir, &stage_generation)?;
+    let staged_archive = generation_dir.join(&assets.binary.name);
+    let staged_signature_path = signature_text
+        .as_ref()
+        .map(|_| generation_dir.join(minisig_companion_name(&assets.binary.name)));
 
     let pending = PendingUpdate {
         to_version: release.tag_name.clone(),
         source_repo: owner_repo.to_string(),
         channel,
         archive_sha256: expected,
-        download_url: assets.binary.browser_download_url.clone(),
+        download_url: github_release_asset_url(owner_repo, &release.tag_name, &assets.binary.name)?,
         signature_status: sig_status.as_str().to_string(),
         staged_archive: staged_archive.display().to_string(),
-        staged_signature,
+        staged_signature: staged_signature_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        stage_generation: Some(stage_generation),
         target_triple: target_triple.to_string(),
         staged_ts_unix: now_unix,
     };
-    let pending_path = pending_json_path(stage_dir);
     let body = serde_json::to_vec_pretty(&pending).context("serialise pending.json")?;
-    crate::util::atomic_write::atomic_write_private(&pending_path, &body)
-        .with_context(|| format!("write {}", pending_path.display()))?;
+    let (transaction_sha256, transaction_size) =
+        staged_transaction_binding(&asset_bytes, signature_text.as_deref(), &body)?;
+    let preparation = StagePreparation {
+        stage_dir: stage_dir.to_path_buf(),
+        generation_dir,
+        staged_archive,
+        staged_signature: staged_signature_path,
+        archive_bytes: asset_bytes,
+        signature_text,
+        pending,
+        pending_body: body,
+    };
 
-    Ok(pending)
+    match authorized {
+        Some((authority, neoth_home)) => {
+            let completion = authority
+                .execute_stage(
+                    neoth_home,
+                    stage_dir,
+                    &transaction_sha256,
+                    transaction_size,
+                    move || async move {
+                        match preparation.run_blocking().await {
+                            Ok(prepared) => {
+                                let observed_sha256 = prepared.binding_sha256().to_string();
+                                let observed_size = prepared.binding_size_bytes();
+                                UpdaterLeafSuccess::new(prepared, UpdaterLeafOutcomeCode::Prepared)
+                                    .with_observed_artifact(&observed_sha256, observed_size)
+                                    .map_err(|error| {
+                                        UpdaterLeafFailure::new(
+                                            UpdaterLeafFailureKind::Protocol,
+                                            error,
+                                        )
+                                    })
+                            }
+                            Err(error) => {
+                                let kind = error
+                                    .chain()
+                                    .find_map(|cause| {
+                                        cause.downcast_ref::<tokio::task::JoinError>()
+                                    })
+                                    .filter(|join| join.is_panic())
+                                    .map_or(UpdaterLeafFailureKind::Io, |_| {
+                                        UpdaterLeafFailureKind::Panic
+                                    });
+                                Err(UpdaterLeafFailure::new(kind, error))
+                            }
+                        }
+                    },
+                )
+                .await?;
+            tokio::task::spawn_blocking(move || completion.publish_with(PreparedStage::publish))
+                .await
+                .context("join updater stage publication task")?
+        }
+        None => {
+            let prepared = preparation.run_blocking().await?;
+            tokio::task::spawn_blocking(move || prepared.publish())
+                .await
+                .context("join updater stage publication task")?
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fetch_stage_asset(
+    transport: &GithubReleaseTransport,
+    authority: Option<&RecurringSelfUpdateAuthority>,
+    effect_id: &str,
+    effect: UpdaterLeafEffect,
+    owner_repo: &str,
+    release_tag: &str,
+    asset_name: &str,
+    expected_content_sha256: Option<&str>,
+    max_bytes: usize,
+    label: &str,
+) -> Result<Vec<u8>> {
+    match authority {
+        Some(authority) => {
+            transport
+                .fetch_asset_authorized(
+                    authority,
+                    effect_id,
+                    effect,
+                    owner_repo,
+                    release_tag,
+                    asset_name,
+                    expected_content_sha256,
+                    max_bytes,
+                    label,
+                )
+                .await
+        }
+        None => {
+            transport
+                .fetch_asset(owner_repo, release_tag, asset_name, max_bytes, label)
+                .await
+        }
+    }
+}
+
+fn staged_transaction_binding(
+    archive: &[u8],
+    signature: Option<&str>,
+    pending_json: &[u8],
+) -> Result<(String, u64)> {
+    let mut digest = Sha256::new();
+    for (label, bytes) in [
+        (b"archive".as_slice(), archive),
+        (
+            b"signature".as_slice(),
+            signature.map(str::as_bytes).unwrap_or_default(),
+        ),
+        (b"pending".as_slice(), pending_json),
+    ] {
+        digest.update((label.len() as u64).to_be_bytes());
+        digest.update(label);
+        digest.update(
+            u64::try_from(bytes.len())
+                .context("self-update transaction member length overflow")?
+                .to_be_bytes(),
+        );
+        digest.update(bytes);
+    }
+    let size = archive
+        .len()
+        .checked_add(signature.map(str::len).unwrap_or_default())
+        .and_then(|size| size.checked_add(pending_json.len()))
+        .ok_or_else(|| anyhow::anyhow!("self-update stage transaction size overflow"))?;
+    Ok((
+        hex::encode(digest.finalize()),
+        u64::try_from(size).context("self-update stage transaction size overflow")?,
+    ))
+}
+
+#[derive(Debug)]
+struct OrphanStageGeneration {
+    name: std::ffi::OsString,
+    files: Vec<std::ffi::OsString>,
+}
+
+#[derive(Debug, Default)]
+struct StageGcBudget {
+    generation_entries: usize,
+    files: usize,
+    bytes: u64,
+}
+
+impl StageGcBudget {
+    fn charge_generation(&mut self, display_path: &Path) -> Result<()> {
+        self.generation_entries = self
+            .generation_entries
+            .checked_add(1)
+            .context("staged-generation entry counter overflow")?;
+        anyhow::ensure!(
+            self.generation_entries <= MAX_STAGE_GENERATION_ENTRIES,
+            "refuse staged-generation GC exceeding the {MAX_STAGE_GENERATION_ENTRIES}-entry limit at {}",
+            display_path.display()
+        );
+        Ok(())
+    }
+
+    fn charge_file(&mut self, bytes: u64, display_path: &Path) -> Result<()> {
+        self.files = self
+            .files
+            .checked_add(1)
+            .context("staged-generation file counter overflow")?;
+        anyhow::ensure!(
+            self.files <= MAX_STAGE_GC_FILES,
+            "refuse staged-generation GC exceeding the {MAX_STAGE_GC_FILES}-file limit at {}",
+            display_path.display()
+        );
+        self.bytes = self
+            .bytes
+            .checked_add(bytes)
+            .context("staged-generation byte counter overflow")?;
+        anyhow::ensure!(
+            self.bytes <= MAX_STAGE_GC_BYTES,
+            "refuse staged-generation GC exceeding the {MAX_STAGE_GC_BYTES}-byte limit at {}",
+            display_path.display()
+        );
+        Ok(())
+    }
+}
+
+fn inspect_stage_generation_files(
+    generation: &cap_std::fs::Dir,
+    generation_path: &Path,
+    budget: &mut StageGcBudget,
+) -> Result<Vec<std::ffi::OsString>> {
+    let entries = generation
+        .entries()
+        .with_context(|| format!("enumerate staged generation {}", generation_path.display()))?;
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = entry.with_context(|| {
+            format!(
+                "read staged-generation directory entry {}",
+                generation_path.display()
+            )
+        })?;
+        anyhow::ensure!(
+            files.len() < MAX_STAGE_FILES_PER_GENERATION,
+            "refuse staged generation with more than {MAX_STAGE_FILES_PER_GENERATION} files: {}",
+            generation_path.display()
+        );
+        let name = entry.file_name();
+        let display_path = generation_path.join(&name);
+        let file = crate::skills::store::open_regular_file(generation, &name, &display_path)
+            .with_context(|| {
+                format!(
+                    "staged generation contains a link or non-regular object: {}",
+                    display_path.display()
+                )
+            })?;
+        let metadata = file.metadata().with_context(|| {
+            format!("inspect staged-generation file {}", display_path.display())
+        })?;
+        anyhow::ensure!(
+            metadata.len() <= MAX_RELEASE_ARCHIVE_BYTES as u64,
+            "refuse oversized staged-generation file {}",
+            display_path.display()
+        );
+        budget.charge_file(metadata.len(), &display_path)?;
+        files.push(name);
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn is_private_empty_delete_tombstone(name: &str) -> bool {
+    let Some(suffix) = name.strip_prefix(".neoth-empty-delete-") else {
+        return false;
+    };
+    suffix.len() == 32 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn ensure_empty_stage_directory(directory: &cap_std::fs::Dir, display_path: &Path) -> Result<()> {
+    let mut entries = directory
+        .entries()
+        .with_context(|| format!("enumerate staged tombstone {}", display_path.display()))?;
+    match entries.next() {
+        None => Ok(()),
+        Some(Ok(_)) => anyhow::bail!(
+            "refuse non-empty staged-generation tombstone {}",
+            display_path.display()
+        ),
+        Some(Err(error)) => Err(error)
+            .with_context(|| format!("inspect staged tombstone {}", display_path.display())),
+    }
+}
+
+/// Remove every private generation that is neither the exact visible pending
+/// generation nor the candidate currently being prepared.
+///
+/// Inspection is a complete bounded first phase: any link, nested directory,
+/// device, socket, oversized file, or entry-budget overflow aborts before the
+/// collector deletes anything. The second phase reopens and compares every
+/// orphan's exact file-name set before unlinking it through capabilities.
+fn collect_orphan_stage_generations(
+    stage: &cap_std::fs::Dir,
+    generations: &cap_std::fs::Dir,
+    stage_dir: &Path,
+    candidate_generation: &str,
+) -> Result<()> {
+    validated_stage_generation_dir(stage_dir, candidate_generation)?;
+    let visible_generation = read_visible_pending_strict(stage, stage_dir)?
+        .and_then(|pending| pending.stage_generation)
+        .map(|generation| {
+            validated_stage_generation_dir(stage_dir, &generation)?;
+            Ok::<_, anyhow::Error>(generation)
+        })
+        .transpose()?;
+
+    let generations_path = stage_dir.join("generations");
+    let mut budget = StageGcBudget::default();
+    let mut orphans = Vec::new();
+    let mut tombstones = Vec::new();
+    let entries = generations.entries().with_context(|| {
+        format!(
+            "enumerate staged generations {}",
+            generations_path.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.with_context(|| {
+            format!(
+                "read staged-generation namespace entry {}",
+                generations_path.display()
+            )
+        })?;
+        let name = entry.file_name();
+        let display_path = generations_path.join(&name);
+        budget.charge_generation(&display_path)?;
+        let text = name
+            .to_str()
+            .context("staged-generation name is not valid UTF-8")?;
+
+        if is_private_empty_delete_tombstone(text) {
+            let tombstone =
+                crate::skills::store::open_real_child_dir(generations, &name, &display_path)
+                    .with_context(|| {
+                        format!(
+                            "staged-generation tombstone is not a real directory: {}",
+                            display_path.display()
+                        )
+                    })?;
+            ensure_empty_stage_directory(&tombstone, &display_path)?;
+            tombstones.push(name);
+            continue;
+        }
+
+        validated_stage_generation_dir(stage_dir, text)?;
+        let directory =
+            crate::skills::store::open_real_child_dir(generations, &name, &display_path)
+                .with_context(|| {
+                    format!(
+                        "staged generation is not a real directory: {}",
+                        display_path.display()
+                    )
+                })?;
+        let files = inspect_stage_generation_files(&directory, &display_path, &mut budget)?;
+        if visible_generation.as_deref() != Some(text) && candidate_generation != text {
+            orphans.push(OrphanStageGeneration { name, files });
+        }
+    }
+
+    let mut removed_directory = false;
+    let mut verification_budget = StageGcBudget::default();
+    for orphan in orphans {
+        let display_path = generations_path.join(&orphan.name);
+        let Some(directory) = crate::skills::store::open_real_child_dir_if_present(
+            generations,
+            &orphan.name,
+            &display_path,
+        )?
+        else {
+            continue;
+        };
+        let observed =
+            inspect_stage_generation_files(&directory, &display_path, &mut verification_budget)?;
+        anyhow::ensure!(
+            observed == orphan.files,
+            "staged orphan changed between GC validation and deletion: {}",
+            display_path.display()
+        );
+        for name in &orphan.files {
+            crate::skills::store::remove_child_file(&directory, name, &display_path.join(name))?;
+        }
+        if !orphan.files.is_empty() {
+            crate::skills::store::sync_parent_directory(&directory, &display_path)?;
+        }
+        drop(directory);
+        removed_directory |= crate::skills::store::remove_empty_real_child_dir_if_present(
+            generations,
+            &orphan.name,
+            &display_path,
+        )?;
+    }
+
+    for name in tombstones {
+        let display_path = generations_path.join(&name);
+        let Some(directory) = crate::skills::store::open_real_child_dir_if_present(
+            generations,
+            &name,
+            &display_path,
+        )?
+        else {
+            continue;
+        };
+        ensure_empty_stage_directory(&directory, &display_path)?;
+        drop(directory);
+        removed_directory |= crate::skills::store::remove_empty_real_child_dir_if_present(
+            generations,
+            &name,
+            &display_path,
+        )?;
+    }
+
+    if removed_directory {
+        crate::skills::store::sync_parent_directory(generations, &generations_path)?;
+    }
+    Ok(())
+}
+
+/// One durably written but deliberately non-visible self-update generation.
+///
+/// Construction is private and publication consumes the value, so callers
+/// cannot forge or replay the right to replace `pending.json`. In the recurring
+/// path this value remains inside `UpdaterLeafSuccess` until the authoritative
+/// `prepared` result is durable; an audit failure drops it without publication.
+#[derive(Debug)]
+#[must_use = "a prepared self-update remains private until its audited publish step"]
+struct PreparedStage {
+    stage_dir: PathBuf,
+    generation_dir: PathBuf,
+    staged_archive: PathBuf,
+    staged_signature: Option<PathBuf>,
+    pending: PendingUpdate,
+    pending_body: Vec<u8>,
+    binding_sha256: String,
+    binding_size_bytes: u64,
+    _mutation_lock: std::fs::File,
+}
+
+impl PreparedStage {
+    fn binding_sha256(&self) -> &str {
+        &self.binding_sha256
+    }
+
+    fn binding_size_bytes(&self) -> u64 {
+        self.binding_size_bytes
+    }
+
+    /// Publish the exact pending bytes bound into the prepared terminal result.
+    /// A failed atomic commit is indeterminate: neither the candidate nor the
+    /// prior visible generation is removed.
+    fn publish(self) -> Result<PendingUpdate> {
+        self.publish_with_pending_commit(|parent, name, path, body| {
+            crate::skills::store::atomic_write_private_child(parent, name, path, body)
+        })
+    }
+
+    fn publish_with_pending_commit<F>(self, commit_pending: F) -> Result<PendingUpdate>
+    where
+        F: FnOnce(&cap_std::fs::Dir, &std::ffi::OsStr, &Path, &[u8]) -> Result<()>,
+    {
+        let (stage, generations, generation) = self.open_and_validate()?;
+        let previous = read_pending_from_capability(&stage.dir, &self.stage_dir);
+        let pending_path = pending_json_path(&self.stage_dir);
+        let pending_name = pending_path
+            .file_name()
+            .context("pending update path omitted its file name")?;
+
+        // Visibility commit point. If this returns an error, the rename may or
+        // may not already be visible; retaining both generations is the only
+        // safe response to post-rename sync uncertainty.
+        commit_pending(&stage.dir, pending_name, &pending_path, &self.pending_body)?;
+
+        drop(generation);
+        if let Some(previous) = previous {
+            if previous.stage_generation == self.pending.stage_generation {
+                tracing::warn!(
+                    stage_generation = ?self.pending.stage_generation,
+                    "published self-update reused the previous generation binding; preserving it"
+                );
+                return Ok(self.pending);
+            }
+            let still_published = match crate::skills::store::read_regular_file_bounded(
+                &stage.dir,
+                pending_name,
+                &pending_path,
+                MAX_PENDING_JSON_BYTES,
+            ) {
+                Ok(published) => published == self.pending_body,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "could not confirm exact published pending bytes; preserving all generations"
+                    );
+                    return Err(error)
+                        .context("confirm exact pending bytes before staged-generation cleanup");
+                }
+            };
+            if !still_published {
+                anyhow::bail!(
+                    "pending update changed after publication; preserved all staged generations"
+                );
+            }
+            if let Err(error) = remove_previous_staged_payload_capability(
+                &stage.dir,
+                &generations,
+                &self.stage_dir,
+                &previous,
+            ) {
+                tracing::warn!(
+                    error = %error,
+                    "new staged update published but previous generation cleanup failed"
+                );
+            }
+        }
+        Ok(self.pending)
+    }
+
+    fn open_and_validate(
+        &self,
+    ) -> Result<(
+        crate::skills::store::BoundDirectory,
+        cap_std::fs::Dir,
+        cap_std::fs::Dir,
+    )> {
+        let stage = crate::skills::store::open_bound_directory(
+            &self.stage_dir,
+            false,
+            "prepared self-update stage",
+        )?
+        .context("prepared self-update stage directory is missing")?;
+        let generations_path = self.stage_dir.join("generations");
+        let generations = crate::skills::store::open_real_child_dir(
+            &stage.dir,
+            std::ffi::OsStr::new("generations"),
+            &generations_path,
+        )
+        .context("prepared self-update generations directory is missing or unsafe")?;
+        let generation_name = self.generation_name()?;
+        let generation = crate::skills::store::open_real_child_dir(
+            &generations,
+            std::ffi::OsStr::new(generation_name),
+            &self.generation_dir,
+        )
+        .context("prepared self-update generation is missing or unsafe")?;
+
+        let archive_name = self
+            .staged_archive
+            .file_name()
+            .context("prepared archive omitted its file name")?;
+        let archive = crate::skills::store::read_regular_file_bounded(
+            &generation,
+            archive_name,
+            &self.staged_archive,
+            MAX_RELEASE_ARCHIVE_BYTES,
+        )
+        .context("re-read prepared self-update archive before publication")?;
+        verify_sha256_bytes(&archive, &self.pending.archive_sha256)
+            .context("prepared self-update archive changed before publication")?;
+
+        let signature = match self.staged_signature.as_deref() {
+            Some(path) => {
+                let name = path
+                    .file_name()
+                    .context("prepared signature omitted its file name")?;
+                let bytes = crate::skills::store::read_regular_file_bounded(
+                    &generation,
+                    name,
+                    path,
+                    MAX_SIGNATURE_BYTES,
+                )
+                .context("re-read prepared self-update signature before publication")?;
+                Some(
+                    String::from_utf8(bytes)
+                        .context("prepared self-update signature is not valid UTF-8")?,
+                )
+            }
+            None => None,
+        };
+        let decoded_pending: PendingUpdate = serde_json::from_slice(&self.pending_body)
+            .context("prepared pending bytes no longer decode")?;
+        anyhow::ensure!(
+            decoded_pending == self.pending,
+            "prepared pending bytes do not match their sealed value"
+        );
+        let (binding_sha256, binding_size_bytes) =
+            staged_transaction_binding(&archive, signature.as_deref(), &self.pending_body)?;
+        anyhow::ensure!(
+            binding_sha256.eq_ignore_ascii_case(&self.binding_sha256)
+                && binding_size_bytes == self.binding_size_bytes,
+            "prepared self-update transaction changed before publication"
+        );
+        Ok((stage, generations, generation))
+    }
+
+    fn generation_name(&self) -> Result<&str> {
+        self.generation_dir
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .context("prepared stage generation is not valid UTF-8")
+    }
+}
+
+#[derive(Debug)]
+struct StagePreparation {
+    stage_dir: PathBuf,
+    generation_dir: PathBuf,
+    staged_archive: PathBuf,
+    staged_signature: Option<PathBuf>,
+    archive_bytes: Vec<u8>,
+    signature_text: Option<String>,
+    pending: PendingUpdate,
+    pending_body: Vec<u8>,
+}
+
+impl StagePreparation {
+    async fn run_blocking(self) -> Result<PreparedStage> {
+        tokio::task::spawn_blocking(move || {
+            prepare_stage_generation(
+                &self.stage_dir,
+                &self.generation_dir,
+                &self.staged_archive,
+                self.staged_signature.as_deref(),
+                &self.archive_bytes,
+                self.signature_text.as_deref(),
+                self.pending,
+                self.pending_body,
+            )
+        })
+        .await
+        .context("join serialized self-update stage preparation")?
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_stage_generation(
+    stage_dir: &Path,
+    generation_dir: &Path,
+    staged_archive: &Path,
+    staged_signature: Option<&Path>,
+    archive_bytes: &[u8],
+    signature_text: Option<&str>,
+    pending: PendingUpdate,
+    pending_body: Vec<u8>,
+) -> Result<PreparedStage> {
+    let pending_path = pending_json_path(stage_dir);
+    anyhow::ensure!(
+        pending_path == stage_dir.join("pending.json"),
+        "pending update commit path escaped the stage namespace"
+    );
+    let generation_name = generation_dir
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .context("stage generation is not valid UTF-8")?;
+    anyhow::ensure!(
+        generation_dir == validated_stage_generation_dir(stage_dir, generation_name)?,
+        "stage generation path does not match its validated namespace"
+    );
+    anyhow::ensure!(
+        staged_archive.parent() == Some(generation_dir),
+        "staged archive escaped its generation directory"
+    );
+    if let Some(path) = staged_signature {
+        anyhow::ensure!(
+            path.parent() == Some(generation_dir),
+            "staged signature escaped its generation directory"
+        );
+    }
+    anyhow::ensure!(
+        pending.stage_generation.as_deref() == Some(generation_name),
+        "pending update is not bound to its prepared generation"
+    );
+    anyhow::ensure!(
+        pending.staged_archive == staged_archive.display().to_string(),
+        "pending update archive path differs from its prepared generation"
+    );
+    anyhow::ensure!(
+        pending.staged_signature.as_deref()
+            == staged_signature
+                .map(|path| path.display().to_string())
+                .as_deref(),
+        "pending update signature path differs from its prepared generation"
+    );
+    let decoded_pending: PendingUpdate =
+        serde_json::from_slice(&pending_body).context("prepared pending bytes do not decode")?;
+    anyhow::ensure!(
+        decoded_pending == pending,
+        "prepared pending bytes do not match their sealed value"
+    );
+    verify_sha256_bytes(archive_bytes, &pending.archive_sha256)
+        .context("prepared archive bytes do not match pending SHA-256")?;
+    let (binding_sha256, binding_size_bytes) =
+        staged_transaction_binding(archive_bytes, signature_text, &pending_body)?;
+
+    let stage = crate::skills::store::open_bound_directory(stage_dir, true, "self-update stage")?
+        .context("self-update stage directory was not created")?;
+    harden_stage_directory_capability(&stage.dir, &stage.display_path)?;
+    let mutation_lock = acquire_stage_mutation_lock(&stage.dir, stage_dir)?;
+    let generations_path = stage_dir.join("generations");
+    let generations = crate::skills::store::open_or_create_private_child_dir(
+        &stage.dir,
+        std::ffi::OsStr::new("generations"),
+        &generations_path,
+    )?;
+    harden_stage_directory_capability(&generations, &generations_path)?;
+    collect_orphan_stage_generations(&stage.dir, &generations, stage_dir, generation_name)
+        .context("collect bounded orphaned self-update generations")?;
+    let generation = crate::skills::store::open_or_create_private_child_dir(
+        &generations,
+        std::ffi::OsStr::new(generation_name),
+        generation_dir,
+    )?;
+    harden_stage_directory_capability(&generation, generation_dir)?;
+
+    let archive_name = staged_archive
+        .file_name()
+        .context("staged archive omitted its file name")?;
+    let signature_name = staged_signature.and_then(Path::file_name);
+
+    let prepare = (|| -> Result<()> {
+        crate::skills::store::atomic_write_private_child(
+            &generation,
+            archive_name,
+            staged_archive,
+            archive_bytes,
+        )
+        .with_context(|| format!("write staged archive {}", staged_archive.display()))?;
+        match (staged_signature, signature_text) {
+            (Some(path), Some(text)) => {
+                crate::skills::store::atomic_write_private_child(
+                    &generation,
+                    signature_name.expect("signature path has a file name"),
+                    path,
+                    text.as_bytes(),
+                )
+                .with_context(|| format!("write staged minisig {}", path.display()))?;
+            }
+            (None, None) => {}
+            _ => anyhow::bail!("self-update signature path/content binding mismatch"),
+        }
+        // Persist the new generation directory entry before publishing a
+        // pending record that refers to it. The payload writers already sync
+        // the generation itself; this orders its parent namespace as well.
+        crate::skills::store::sync_parent_directory(&generations, &generations_path)
+            .context("sync staged generation namespace before prepared result")
+    })();
+
+    // A partial private candidate cannot become applyable because this phase
+    // never touches pending.json. Preserve it for bounded serialized recovery;
+    // deletion here could race filesystem sync uncertainty.
+    prepare?;
+
+    Ok(PreparedStage {
+        stage_dir: stage_dir.to_path_buf(),
+        generation_dir: generation_dir.to_path_buf(),
+        staged_archive: staged_archive.to_path_buf(),
+        staged_signature: staged_signature.map(Path::to_path_buf),
+        pending,
+        pending_body,
+        binding_sha256,
+        binding_size_bytes,
+        _mutation_lock: mutation_lock,
+    })
+}
+
+fn read_pending_from_capability(
+    stage: &cap_std::fs::Dir,
+    stage_dir: &Path,
+) -> Option<PendingUpdate> {
+    let path = pending_json_path(stage_dir);
+    let body = crate::skills::store::read_regular_file_bounded(
+        stage,
+        std::ffi::OsStr::new("pending.json"),
+        &path,
+        MAX_PENDING_JSON_BYTES,
+    )
+    .ok()?;
+    serde_json::from_slice(&body).ok()
+}
+
+fn harden_stage_directory_capability(
+    directory: &cap_std::fs::Dir,
+    display_path: &Path,
+) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use cap_std::fs::PermissionsExt as _;
+        directory
+            .set_permissions(".", cap_std::fs::Permissions::from_mode(0o700))
+            .with_context(|| {
+                format!(
+                    "restrict bound stage directory {} to mode 0700",
+                    display_path.display()
+                )
+            })?;
+        anyhow::ensure!(
+            directory
+                .dir_metadata()
+                .with_context(|| format!("inspect bound stage {}", display_path.display()))?
+                .permissions()
+                .mode()
+                & 0o777
+                == 0o700,
+            "bound stage directory is not mode 0700: {}",
+            display_path.display()
+        );
+    }
+    #[cfg(windows)]
+    crate::wal::win_native::set_private_current_user_directory_dacl_bound(display_path, directory)
+        .with_context(|| {
+            format!(
+                "apply private DACL to bound stage directory {}",
+                display_path.display()
+            )
+        })?;
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (directory, display_path);
+        anyhow::bail!("capability-bound stage writes are unsupported on this platform");
+    }
+    Ok(())
+}
+
+fn remove_previous_staged_payload_capability(
+    stage: &cap_std::fs::Dir,
+    generations: &cap_std::fs::Dir,
+    stage_dir: &Path,
+    pending: &PendingUpdate,
+) -> Result<()> {
+    if parse_semver_version(&pending.to_version).is_err()
+        || !release_target_is_supported(&pending.target_triple)
+    {
+        return Ok(());
+    }
+    let asset = expected_asset_name("neoth", &pending.to_version, &pending.target_triple);
+    let signature = minisig_companion_name(&asset);
+    match pending.stage_generation.as_deref() {
+        Some(name) => {
+            let display_dir = validated_stage_generation_dir(stage_dir, name)?;
+            let Some(directory) = crate::skills::store::open_real_child_dir_if_present(
+                generations,
+                std::ffi::OsStr::new(name),
+                &display_dir,
+            )?
+            else {
+                return Ok(());
+            };
+            let removed_archive = crate::skills::store::remove_child_file_if_present(
+                &directory,
+                std::ffi::OsStr::new(&asset),
+                &display_dir.join(&asset),
+            )?;
+            let removed_signature = crate::skills::store::remove_child_file_if_present(
+                &directory,
+                std::ffi::OsStr::new(&signature),
+                &display_dir.join(&signature),
+            )?;
+            if removed_archive || removed_signature {
+                crate::skills::store::sync_parent_directory(&directory, &display_dir)?;
+            }
+            drop(directory);
+            let generations_path = stage_dir.join("generations");
+            if crate::skills::store::remove_empty_real_child_dir_if_present(
+                generations,
+                std::ffi::OsStr::new(name),
+                &display_dir,
+            )? {
+                crate::skills::store::sync_parent_directory(generations, &generations_path)?;
+            }
+            Ok(())
+        }
+        None => {
+            let removed_archive = crate::skills::store::remove_child_file_if_present(
+                stage,
+                std::ffi::OsStr::new(&asset),
+                &stage_dir.join(&asset),
+            )?;
+            let removed_signature = crate::skills::store::remove_child_file_if_present(
+                stage,
+                std::ffi::OsStr::new(&signature),
+                &stage_dir.join(&signature),
+            )?;
+            if removed_archive || removed_signature {
+                crate::skills::store::sync_parent_directory(stage, stage_dir)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Resolve every asset needed to stage or apply an update.
@@ -3451,6 +5403,153 @@ pub fn resolve_update_assets<'a>(
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn release_metadata_url_stays_on_anonymous_github_api_https() {
+        let repo = "The-Geek-Freaks/NEOTH";
+        assert!(
+            validate_github_metadata_url(
+                "https://api.github.com/repos/The-Geek-Freaks/NEOTH/releases/latest",
+                repo,
+                GithubReleaseFeed::Latest,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_github_metadata_url(
+                "https://api.github.com/repos/The-Geek-Freaks/NEOTH/releases?per_page=100",
+                repo,
+                GithubReleaseFeed::List,
+            )
+            .is_ok()
+        );
+        for (rejected, feed) in [
+            (
+                "http://api.github.com/repos/The-Geek-Freaks/NEOTH/releases/latest",
+                GithubReleaseFeed::Latest,
+            ),
+            (
+                "https://user@api.github.com/repos/The-Geek-Freaks/NEOTH/releases/latest",
+                GithubReleaseFeed::Latest,
+            ),
+            (
+                "https://api.github.com.evil.example/repos/The-Geek-Freaks/NEOTH/releases/latest",
+                GithubReleaseFeed::Latest,
+            ),
+            (
+                "https://api.github.com/repos/attacker/NEOTH/releases/latest",
+                GithubReleaseFeed::Latest,
+            ),
+            (
+                "https://api.github.com/repos/The-Geek-Freaks/NEOTH/releases?per_page=1000",
+                GithubReleaseFeed::List,
+            ),
+            (
+                "https://api.github.com:444/repos/The-Geek-Freaks/NEOTH/releases/latest",
+                GithubReleaseFeed::Latest,
+            ),
+        ] {
+            assert!(
+                validate_github_metadata_url(rejected, repo, feed).is_err(),
+                "accepted hostile metadata URL {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn release_asset_url_is_derived_from_repo_tag_and_exact_asset_name() {
+        let repo = "the-geek-freaks/neoth";
+        let tag = "v1.0.0";
+        let asset = "neoth-v1.0.0-x86_64-pc-windows-msvc.zip";
+        let url = format!("https://github.com/{repo}/releases/download/{tag}/{asset}");
+        assert_eq!(github_release_asset_url(repo, tag, asset).unwrap(), url);
+        assert_eq!(
+            github_release_asset_url("The-Geek-Freaks/NEOTH", tag, asset).unwrap(),
+            format!("https://github.com/The-Geek-Freaks/NEOTH/releases/download/{tag}/{asset}"),
+            "operator slug case is preserved; GitHub resolves it case-insensitively"
+        );
+        for (bad_repo, bad_tag, bad_asset) in [
+            ("owner/repo/extra", tag, asset),
+            (repo, "../v1.0.0", asset),
+            (repo, tag, "../other.zip"),
+            (repo, tag, "nested/other.zip"),
+        ] {
+            assert!(
+                github_release_asset_url(bad_repo, bad_tag, bad_asset).is_err(),
+                "constructed a release URL from unsafe components"
+            );
+        }
+    }
+
+    #[test]
+    fn release_redirect_is_one_fixed_https_cdn_origin() {
+        assert!(
+            validate_github_release_redirect_url(
+                "https://release-assets.githubusercontent.com/github-production-release-asset/123?sig=opaque"
+            )
+            .is_ok()
+        );
+        for rejected in [
+            "http://release-assets.githubusercontent.com/object?sig=x",
+            "https://user@release-assets.githubusercontent.com/object?sig=x",
+            "https://objects.githubusercontent.com/object?sig=x",
+            "https://release-assets.githubusercontent.com/",
+            "https://release-assets.githubusercontent.com:444/object?sig=x",
+            "https://release-assets.githubusercontent.com/object#fragment",
+        ] {
+            assert!(
+                validate_github_release_redirect_url(rejected).is_err(),
+                "accepted hostile release redirect URL {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn release_dns_guard_blocks_private_reserved_and_mapped_addresses() {
+        use std::net::{Ipv4Addr, Ipv6Addr};
+
+        for blocked in [
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(198, 18, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)),
+            IpAddr::V4(Ipv4Addr::new(224, 0, 0, 1)),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            IpAddr::V6("fc00::1".parse().unwrap()),
+            IpAddr::V6("fe80::1".parse().unwrap()),
+            IpAddr::V6("64:ff9b::0a00:0001".parse().unwrap()),
+            IpAddr::V6("64:ff9b:1::1".parse().unwrap()),
+            IpAddr::V6("2001::1".parse().unwrap()),
+            IpAddr::V6("2001:db8::1".parse().unwrap()),
+            IpAddr::V6("2002:0a00:0001::1".parse().unwrap()),
+            IpAddr::V6("3fff::1".parse().unwrap()),
+            IpAddr::V6("3fff:0fff::1".parse().unwrap()),
+            IpAddr::V6("4000::1".parse().unwrap()),
+            IpAddr::V6("::10.0.0.1".parse().unwrap()),
+            IpAddr::V6("::ffff:10.0.0.1".parse().unwrap()),
+        ] {
+            assert!(
+                is_blocked_release_ip(blocked),
+                "did not block reserved address {blocked}"
+            );
+        }
+        for public in [
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            IpAddr::V6("2606:4700:4700::1111".parse().unwrap()),
+            IpAddr::V6("3fff:1000::1".parse().unwrap()),
+        ] {
+            assert!(
+                !is_blocked_release_ip(public),
+                "blocked public address {public}"
+            );
+        }
+    }
 
     #[test]
     fn parse_semver_strips_leading_v() {
@@ -3624,12 +5723,9 @@ mod tests {
     #[test]
     fn github_api_request_is_anonymous_and_pins_accept_header() {
         let client = reqwest::Client::new();
-        let request = github_api_get(
-            &client,
-            "https://api.github.com/repos/owner/repo/releases/latest",
-        )
-        .build()
-        .unwrap();
+        let url =
+            ::url::Url::parse("https://api.github.com/repos/owner/repo/releases/latest").unwrap();
+        let request = github_anonymous_get(&client, url, true).build().unwrap();
         assert_eq!(
             request.headers().get(reqwest::header::ACCEPT).unwrap(),
             "application/vnd.github+json"
@@ -3912,6 +6008,7 @@ mod tests {
             signature_status: "verified".into(),
             staged_archive: staged_archive.display().to_string(),
             staged_signature: None,
+            stage_generation: None,
             target_triple: target.into(),
             staged_ts_unix: 1_700_000_000,
         };
@@ -3947,7 +6044,7 @@ mod tests {
             "self-update must not mutate User Overlays"
         );
 
-        clear_staged(&stage_dir, &pending);
+        clear_staged(&stage_dir, &pending).unwrap();
         assert!(!staged_archive.exists(), "staged archive removed");
         assert!(read_pending(&stage_dir).is_none(), "pending.json removed");
     }
@@ -3977,6 +6074,7 @@ mod tests {
             signature_status: "verified".into(),
             staged_archive: staged_archive.display().to_string(),
             staged_signature: None,
+            stage_generation: None,
             target_triple: "x86_64-pc-windows-msvc".into(),
             staged_ts_unix: 0,
         };
@@ -4029,6 +6127,7 @@ mod tests {
             signature_status: "verified".into(), // forged claim
             staged_archive: staged_archive.display().to_string(),
             staged_signature: None, // no real signature → can't be verified
+            stage_generation: None,
             target_triple: "x86_64-pc-windows-msvc".into(),
             staged_ts_unix: 0,
         };
@@ -4078,6 +6177,7 @@ mod tests {
             signature_status: "verified".into(),
             staged_archive: outside.display().to_string(),
             staged_signature: None,
+            stage_generation: None,
             target_triple: "x86_64-pc-windows-msvc".into(),
             staged_ts_unix: 0,
         };
@@ -4098,7 +6198,6 @@ mod tests {
         let outside = dir.path().join("operator-data.txt");
         std::fs::write(&expected, b"staged").unwrap();
         std::fs::write(&outside, b"keep").unwrap();
-        std::fs::write(pending_json_path(&stage_dir), b"{}").unwrap();
         let pending = PendingUpdate {
             to_version: "v9.9.9".into(),
             source_repo: "The-Geek-Freaks/NEOTH".into(),
@@ -4108,14 +6207,71 @@ mod tests {
             signature_status: "verified".into(),
             staged_archive: outside.display().to_string(),
             staged_signature: Some(outside.display().to_string()),
+            stage_generation: None,
             target_triple: "x86_64-pc-windows-msvc".into(),
             staged_ts_unix: 0,
         };
+        std::fs::write(
+            pending_json_path(&stage_dir),
+            serde_json::to_vec_pretty(&pending).unwrap(),
+        )
+        .unwrap();
 
-        clear_staged(&stage_dir, &pending);
+        clear_staged(&stage_dir, &pending).unwrap();
         assert_eq!(std::fs::read(outside).unwrap(), b"keep");
         assert!(!expected.exists());
         assert!(!pending_json_path(&stage_dir).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clear_staged_refuses_symlinked_generation_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let stage_dir = dir.path().join("staged");
+        let generations = stage_dir.join("generations");
+        let outside = dir.path().join("operator-data");
+        std::fs::create_dir_all(&generations).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let generation = "d".repeat(32);
+        let asset_name = expected_asset_name("neoth", "v9.9.9", "x86_64-unknown-linux-gnu");
+        let outside_asset = outside.join(&asset_name);
+        std::fs::write(&outside_asset, b"never delete through generation link").unwrap();
+        symlink(&outside, generations.join(&generation)).unwrap();
+        let pending = PendingUpdate {
+            to_version: "v9.9.9".into(),
+            source_repo: "The-Geek-Freaks/NEOTH".into(),
+            channel: ReleaseChannel::Stable,
+            archive_sha256: "0".repeat(64),
+            download_url: format!("https://example.com/{asset_name}"),
+            signature_status: "verified".into(),
+            staged_archive: outside_asset.display().to_string(),
+            staged_signature: None,
+            stage_generation: Some(generation),
+            target_triple: "x86_64-unknown-linux-gnu".into(),
+            staged_ts_unix: 0,
+        };
+        std::fs::write(
+            pending_json_path(&stage_dir),
+            serde_json::to_vec_pretty(&pending).unwrap(),
+        )
+        .unwrap();
+
+        let error =
+            clear_staged(&stage_dir, &pending).expect_err("a linked generation must fail closed");
+        assert!(
+            format!("{error:#}").contains("without following links")
+                || format!("{error:#}").contains("real directory")
+        );
+        assert_eq!(
+            std::fs::read(outside_asset).unwrap(),
+            b"never delete through generation link"
+        );
+        assert!(
+            pending_json_path(&stage_dir).exists(),
+            "cleanup failure must leave the visible retry marker"
+        );
     }
 
     #[test]
@@ -4407,6 +6563,7 @@ mod tests {
             signature_status: "verified".into(),
             staged_archive: "/home/user/.neoth/staged/neoth.tar.gz".into(),
             staged_signature: Some("/home/user/.neoth/staged/neoth.tar.gz.minisig".into()),
+            stage_generation: None,
             target_triple: "x86_64-unknown-linux-gnu".into(),
             staged_ts_unix: 1_700_000_000,
         };
@@ -4434,6 +6591,7 @@ mod tests {
             signature_status: "verified".into(),
             staged_archive: "/tmp/neoth.tar.gz".into(),
             staged_signature: None,
+            stage_generation: None,
             target_triple: "x86_64-unknown-linux-gnu".into(),
             staged_ts_unix: 0,
         };
@@ -4468,6 +6626,782 @@ mod tests {
     fn pending_json_path_is_under_stage_dir() {
         let p = pending_json_path(Path::new("/home/user/.neoth/staged"));
         assert!(p.ends_with("pending.json"));
+    }
+
+    fn pending_fixture(
+        stage_dir: &Path,
+        generation: &str,
+        version: &str,
+        archive_bytes: &[u8],
+        timestamp: i64,
+    ) -> (PendingUpdate, PathBuf) {
+        let target = "x86_64-unknown-linux-gnu";
+        let generation_dir = validated_stage_generation_dir(stage_dir, generation).unwrap();
+        let asset = expected_asset_name("neoth", version, target);
+        let archive = generation_dir.join(&asset);
+        (
+            PendingUpdate {
+                to_version: version.into(),
+                source_repo: "The-Geek-Freaks/NEOTH".into(),
+                channel: ReleaseChannel::Stable,
+                archive_sha256: hex::encode(Sha256::digest(archive_bytes)),
+                download_url: format!(
+                    "https://github.com/The-Geek-Freaks/NEOTH/releases/download/{version}/{asset}"
+                ),
+                signature_status: "not_present".into(),
+                staged_archive: archive.display().to_string(),
+                staged_signature: None,
+                stage_generation: Some(generation.into()),
+                target_triple: target.into(),
+                staged_ts_unix: timestamp,
+            },
+            archive,
+        )
+    }
+
+    fn install_visible_pending_fixture(
+        stage_dir: &Path,
+        generation: &str,
+        version: &str,
+        archive_bytes: &[u8],
+        timestamp: i64,
+    ) -> (PendingUpdate, PathBuf) {
+        let (pending, archive) =
+            pending_fixture(stage_dir, generation, version, archive_bytes, timestamp);
+        ensure_private_stage_directory(archive.parent().unwrap()).unwrap();
+        std::fs::write(&archive, archive_bytes).unwrap();
+        crate::util::atomic_write::atomic_write_private(
+            &pending_json_path(stage_dir),
+            &serde_json::to_vec_pretty(&pending).unwrap(),
+        )
+        .unwrap();
+        (pending, archive)
+    }
+
+    fn prepare_fixture(
+        stage_dir: &Path,
+        generation: &str,
+        version: &str,
+        archive_bytes: &[u8],
+        timestamp: i64,
+    ) -> (PreparedStage, PendingUpdate, PathBuf) {
+        let (pending, archive) =
+            pending_fixture(stage_dir, generation, version, archive_bytes, timestamp);
+        let body = serde_json::to_vec_pretty(&pending).unwrap();
+        let prepared = prepare_stage_generation(
+            stage_dir,
+            archive.parent().unwrap(),
+            &archive,
+            None,
+            archive_bytes,
+            None,
+            pending.clone(),
+            body,
+        )
+        .unwrap();
+        (prepared, pending, archive)
+    }
+
+    #[test]
+    fn prepared_stage_holds_the_shared_mutation_lock_until_drop() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        let (prepared, _pending, _archive) = prepare_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v1.0.1",
+            b"verified archive",
+            1,
+        );
+
+        assert!(
+            crate::util::locked_file::try_lock_file_once(
+                &stage_mutation_lock_path(&stage_dir),
+                "self-update stage test",
+            )
+            .unwrap()
+            .is_none(),
+            "prepare must retain the cross-process lock through terminal result and publish"
+        );
+        drop(prepared);
+        assert!(
+            crate::util::locked_file::try_lock_file_once(
+                &stage_mutation_lock_path(&stage_dir),
+                "self-update stage test",
+            )
+            .unwrap()
+            .is_some(),
+            "dropping an unpublished prepared stage must release its mutation lock"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stage_mutation_lock_retries_onto_replaced_namespace_inode() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        ensure_private_stage_directory(&stage_dir).unwrap();
+        let stage = crate::skills::store::open_bound_directory(
+            &stage_dir,
+            false,
+            "stage-lock inode replacement test",
+        )
+        .unwrap()
+        .unwrap();
+        let lock_path = stage_mutation_lock_path(&stage_dir);
+        *STAGE_LOCK_REPLACEMENT_TEST_PATH
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(lock_path.clone());
+
+        let lock = acquire_stage_mutation_lock(&stage.dir, &stage_dir).unwrap();
+        assert!(
+            stage_dir.join(DISPLACED_STAGE_LOCK_TEST_NAME).exists(),
+            "regression hook did not replace the first locked namespace inode"
+        );
+        assert!(
+            crate::util::locked_file::try_lock_file_once(
+                &lock_path,
+                "self-update replaced stage-lock regression",
+            )
+            .unwrap()
+            .is_none(),
+            "acquisition returned the displaced inode instead of retrying onto the current slot"
+        );
+
+        drop(lock);
+        assert!(
+            crate::util::locked_file::try_lock_file_once(
+                &lock_path,
+                "self-update replaced stage-lock regression",
+            )
+            .unwrap()
+            .is_some(),
+            "dropping the capability-bound lock did not release the current namespace inode"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stage_lock_contention_does_not_stall_runtime_progress() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        ensure_private_stage_directory(&stage_dir).unwrap();
+        let blocker = crate::util::locked_file::lock_file_blocking(
+            &stage_mutation_lock_path(&stage_dir),
+            "self-update stage contention test",
+        )
+        .unwrap();
+        let generation = "a".repeat(32);
+        let (pending, archive) =
+            pending_fixture(&stage_dir, &generation, "v1.0.1", b"verified archive", 1);
+        let preparation = StagePreparation {
+            stage_dir: stage_dir.clone(),
+            generation_dir: archive.parent().unwrap().to_path_buf(),
+            staged_archive: archive,
+            staged_signature: None,
+            archive_bytes: b"verified archive".to_vec(),
+            signature_text: None,
+            pending: pending.clone(),
+            pending_body: serde_json::to_vec_pretty(&pending).unwrap(),
+        };
+        let blocked_prepare = tokio::spawn(preparation.run_blocking());
+
+        let heartbeat = tokio::time::timeout(Duration::from_millis(500), async {
+            for _ in 0..4 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            "terminal-lane-progress"
+        })
+        .await
+        .expect(
+            "a contended stage lock must run on the blocking pool so Tokio can persist terminals",
+        );
+        assert_eq!(heartbeat, "terminal-lane-progress");
+
+        drop(blocker);
+        let prepared = tokio::time::timeout(Duration::from_secs(2), blocked_prepare)
+            .await
+            .expect("stage prepare did not resume after the lock was released")
+            .expect("stage prepare task panicked")
+            .expect("stage prepare failed after the lock was released");
+        drop(prepared);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stage_publication_revalidation_keeps_runtime_live_and_holds_lock_and_lease() {
+        let root = tempdir().unwrap();
+        let home = root.path().join("home");
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let (writer, writer_join, ready) =
+            crate::wal::writer::spawn_for_home_ready(wal_dir.join("000001.wal"), home.clone())
+                .unwrap();
+        ready.wait().await.unwrap();
+
+        let reload = crate::config::reload::ReloadController::new(
+            crate::config::FreedomConfig::default(),
+            home.join("freedom.yaml"),
+        );
+        let snapshot = reload.accepted_snapshot();
+        let updater_gate = snapshot.updater_leaf_gate();
+        let authority = RecurringSelfUpdateAuthority::for_stage(writer.clone(), snapshot);
+        let stage_dir = home.join("staged");
+        let (prepared, pending, _archive) = prepare_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v1.0.1",
+            b"verified archive",
+            1,
+        );
+        let binding_sha256 = prepared.binding_sha256().to_string();
+        let binding_size_bytes = prepared.binding_size_bytes();
+        let observed_sha256 = binding_sha256.clone();
+        let completion = authority
+            .execute_stage(
+                &home,
+                &stage_dir,
+                &binding_sha256,
+                binding_size_bytes,
+                move || async move {
+                    UpdaterLeafSuccess::new(prepared, UpdaterLeafOutcomeCode::Prepared)
+                        .with_observed_artifact(&observed_sha256, binding_size_bytes)
+                        .map_err(|error| {
+                            UpdaterLeafFailure::new(UpdaterLeafFailureKind::Protocol, error)
+                        })
+                },
+            )
+            .await
+            .unwrap();
+
+        // This is the exact blocking-pool composition used by
+        // `stage_update_inner`. The first barrier proves the current-thread
+        // executor remains live while the publication closure owns the
+        // PreparedStage. The second barrier is reached only after
+        // `open_and_validate` has re-read and rebound every prepared byte.
+        let (publication_started_tx, publication_started_rx) = tokio::sync::oneshot::channel();
+        let (run_revalidation_tx, run_revalidation_rx) = std::sync::mpsc::channel();
+        let (commit_reached_tx, commit_reached_rx) = tokio::sync::oneshot::channel();
+        let (finish_commit_tx, finish_commit_rx) = std::sync::mpsc::channel();
+        let publish = tokio::task::spawn_blocking(move || {
+            completion.publish_with(|prepared| {
+                publication_started_tx.send(()).unwrap();
+                run_revalidation_rx.recv().unwrap();
+                prepared.publish_with_pending_commit(|parent, name, path, body| {
+                    commit_reached_tx.send(()).unwrap();
+                    finish_commit_rx.recv().unwrap();
+                    crate::skills::store::atomic_write_private_child(parent, name, path, body)
+                })
+            })
+        });
+        publication_started_rx
+            .await
+            .expect("publication closure did not enter the blocking pool");
+
+        let retire_gate = Arc::clone(&updater_gate);
+        let retire = std::thread::spawn(move || retire_gate.retire_and_wait());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while updater_gate.acquire().is_ok() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("updater generation did not close admission");
+
+        let heartbeat = tokio::time::timeout(Duration::from_millis(500), async {
+            for _ in 0..4 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            "publication-lane-progress"
+        })
+        .await
+        .expect("stage publication blocked the current-thread Tokio runtime");
+        assert_eq!(heartbeat, "publication-lane-progress");
+        assert!(
+            !retire.is_finished(),
+            "generation lease drained before stage publication completed"
+        );
+        assert!(
+            crate::util::locked_file::try_lock_file_once(
+                &stage_mutation_lock_path(&stage_dir),
+                "self-update publication test",
+            )
+            .unwrap()
+            .is_none(),
+            "stage mutation lock was released before revalidation"
+        );
+
+        run_revalidation_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), commit_reached_rx)
+            .await
+            .expect("prepared-stage revalidation did not reach the visibility commit")
+            .expect("publication task ended before the visibility commit");
+        assert!(
+            !pending_json_path(&stage_dir).exists(),
+            "pending update became visible before its commit point"
+        );
+        assert!(
+            !retire.is_finished(),
+            "generation lease drained after revalidation but before publication"
+        );
+        assert!(
+            crate::util::locked_file::try_lock_file_once(
+                &stage_mutation_lock_path(&stage_dir),
+                "self-update publication test",
+            )
+            .unwrap()
+            .is_none(),
+            "stage mutation lock was released after revalidation but before publication"
+        );
+
+        finish_commit_tx.send(()).unwrap();
+        assert_eq!(publish.await.unwrap().unwrap(), pending);
+        retire.join().unwrap();
+        assert!(
+            crate::util::locked_file::try_lock_file_once(
+                &stage_mutation_lock_path(&stage_dir),
+                "self-update publication test",
+            )
+            .unwrap()
+            .is_some(),
+            "stage mutation lock remained held after publication completed"
+        );
+
+        drop(authority);
+        drop(writer);
+        writer_join.await.unwrap().unwrap();
+    }
+
+    #[test]
+    fn stale_cleanup_preserves_a_newer_pending_generation() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        let (old, old_archive) = install_visible_pending_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v1.0.0",
+            b"old verified archive",
+            1,
+        );
+        let (new, new_archive) = install_visible_pending_fixture(
+            &stage_dir,
+            &"b".repeat(32),
+            "v1.0.1",
+            b"new verified archive",
+            2,
+        );
+
+        clear_staged(&stage_dir, &old).unwrap();
+
+        assert_eq!(read_pending(&stage_dir), Some(new));
+        assert_eq!(std::fs::read(old_archive).unwrap(), b"old verified archive");
+        assert_eq!(std::fs::read(new_archive).unwrap(), b"new verified archive");
+    }
+
+    #[test]
+    fn locked_pending_cleanup_uses_its_existing_guard_without_relocking() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        let (_pending, archive) = install_visible_pending_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v1.0.1",
+            b"verified archive",
+            1,
+        );
+        let mut locked = lock_pending_stage(&stage_dir)
+            .unwrap()
+            .expect("the staged namespace exists");
+        assert!(locked.pending().is_some());
+
+        locked.clear().unwrap();
+
+        assert!(locked.pending().is_none());
+        assert!(!archive.exists());
+        assert!(!pending_json_path(&stage_dir).exists());
+    }
+
+    #[test]
+    fn locked_pending_read_fails_closed_on_malformed_visible_record() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        ensure_private_stage_directory(&stage_dir).unwrap();
+        std::fs::write(pending_json_path(&stage_dir), b"{}").unwrap();
+
+        let error = match lock_pending_stage(&stage_dir) {
+            Ok(_) => panic!("a malformed visible pending record must not be treated as absent"),
+            Err(error) => error,
+        };
+
+        assert!(format!("{error:#}").contains("parse visible pending update"));
+        assert_eq!(std::fs::read(pending_json_path(&stage_dir)).unwrap(), b"{}");
+    }
+
+    #[test]
+    fn orphan_gc_bounds_repeated_terminal_failures_to_one_private_candidate() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        let (_visible, visible_archive) = install_visible_pending_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v1.0.0",
+            b"visible verified archive",
+            1,
+        );
+        let (first, _pending, first_archive) = prepare_fixture(
+            &stage_dir,
+            &"b".repeat(32),
+            "v1.0.1",
+            b"first private candidate",
+            2,
+        );
+        drop(first);
+        assert!(first_archive.exists());
+
+        let (second, _pending, second_archive) = prepare_fixture(
+            &stage_dir,
+            &"c".repeat(32),
+            "v1.0.2",
+            b"second private candidate",
+            3,
+        );
+        assert!(
+            !first_archive.exists(),
+            "the next serialized prepare must collect the abandoned generation"
+        );
+        assert!(second_archive.exists());
+        assert!(visible_archive.exists());
+        drop(second);
+
+        let (third, _pending, third_archive) = prepare_fixture(
+            &stage_dir,
+            &"d".repeat(32),
+            "v1.0.3",
+            b"third private candidate",
+            4,
+        );
+        assert!(!second_archive.exists());
+        assert!(third_archive.exists());
+        assert!(visible_archive.exists());
+        drop(third);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn orphan_gc_fails_closed_on_linked_generation_before_creating_candidate() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        let generations = stage_dir.join("generations");
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(&generations).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let safe_orphan = generations.join("0".repeat(32));
+        std::fs::create_dir(&safe_orphan).unwrap();
+        std::fs::write(safe_orphan.join("orphan.bin"), b"preserve on failed scan").unwrap();
+        std::fs::write(outside.join("sentinel"), b"never traverse").unwrap();
+        symlink(&outside, generations.join("a".repeat(32))).unwrap();
+
+        let generation = "b".repeat(32);
+        let (pending, archive) =
+            pending_fixture(&stage_dir, &generation, "v1.0.1", b"candidate", 1);
+        let pending_body = serde_json::to_vec_pretty(&pending).unwrap();
+        let error = prepare_stage_generation(
+            &stage_dir,
+            archive.parent().unwrap(),
+            &archive,
+            None,
+            b"candidate",
+            None,
+            pending,
+            pending_body,
+        )
+        .expect_err("a linked orphan generation must block collection");
+
+        assert!(
+            format!("{error:#}").contains("not a real directory")
+                || format!("{error:#}").contains("without following links")
+        );
+        assert!(!archive.parent().unwrap().exists());
+        assert_eq!(
+            std::fs::read(safe_orphan.join("orphan.bin")).unwrap(),
+            b"preserve on failed scan",
+            "the validation phase must finish before any orphan is deleted"
+        );
+        assert_eq!(
+            std::fs::read(outside.join("sentinel")).unwrap(),
+            b"never traverse"
+        );
+    }
+
+    #[test]
+    fn orphan_gc_entry_budget_fails_before_creating_candidate() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        let generations = stage_dir.join("generations");
+        std::fs::create_dir_all(&generations).unwrap();
+        for index in 0..=MAX_STAGE_GENERATION_ENTRIES {
+            std::fs::create_dir(generations.join(format!("{index:032x}"))).unwrap();
+        }
+
+        let generation = "f".repeat(32);
+        let (pending, archive) =
+            pending_fixture(&stage_dir, &generation, "v1.0.1", b"candidate", 1);
+        let pending_body = serde_json::to_vec_pretty(&pending).unwrap();
+        let error = prepare_stage_generation(
+            &stage_dir,
+            archive.parent().unwrap(),
+            &archive,
+            None,
+            b"candidate",
+            None,
+            pending,
+            pending_body,
+        )
+        .expect_err("an over-budget generation namespace must fail closed");
+
+        assert!(format!("{error:#}").contains("64-entry limit"));
+        assert!(!archive.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn prepared_stage_is_not_published_when_terminal_result_fails() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        ensure_private_stage_directory(&stage_dir).unwrap();
+        let (previous, previous_archive) = install_visible_pending_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v1.0.0",
+            b"previous verified archive",
+            1,
+        );
+        let (prepared, next, next_archive) = prepare_fixture(
+            &stage_dir,
+            &"b".repeat(32),
+            "v1.0.1",
+            b"next verified archive",
+            2,
+        );
+
+        // `UpdaterLeafAuthorizer::execute_stage` owns this value while it
+        // appends the terminal result. A terminal-WAL error drops it here and
+        // never returns publication authority to stage_update_inner.
+        drop(prepared);
+
+        assert_eq!(read_pending(&stage_dir), Some(previous));
+        assert_ne!(read_pending(&stage_dir), Some(next));
+        assert_eq!(
+            std::fs::read(previous_archive).unwrap(),
+            b"previous verified archive"
+        );
+        assert_eq!(
+            std::fs::read(next_archive).unwrap(),
+            b"next verified archive"
+        );
+    }
+
+    #[test]
+    fn prepared_stage_failed_publish_preserves_previous_and_candidate_generations() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        ensure_private_stage_directory(&stage_dir).unwrap();
+        let (previous, previous_archive) = install_visible_pending_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v1.0.0",
+            b"previous verified archive",
+            1,
+        );
+        let (prepared, _next, next_archive) = prepare_fixture(
+            &stage_dir,
+            &"b".repeat(32),
+            "v1.0.1",
+            b"next verified archive",
+            2,
+        );
+
+        let result = prepared.publish_with_pending_commit(|_parent, _name, _path, _body| {
+            anyhow::bail!("injected pending commit failure")
+        });
+
+        assert!(result.is_err());
+        assert_eq!(read_pending(&stage_dir), Some(previous));
+        assert_eq!(
+            std::fs::read(previous_archive).unwrap(),
+            b"previous verified archive"
+        );
+        assert_eq!(
+            std::fs::read(next_archive).unwrap(),
+            b"next verified archive"
+        );
+    }
+
+    #[test]
+    fn prepared_stage_post_rename_sync_uncertainty_preserves_both_generations() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        ensure_private_stage_directory(&stage_dir).unwrap();
+        let (_previous, previous_archive) = install_visible_pending_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v1.0.0",
+            b"previous verified archive",
+            1,
+        );
+        let (prepared, next, next_archive) = prepare_fixture(
+            &stage_dir,
+            &"c".repeat(32),
+            "v1.0.1",
+            b"committed verified archive",
+            2,
+        );
+
+        let result = prepared.publish_with_pending_commit(|parent, name, path, body| {
+            crate::skills::store::atomic_write_private_child(parent, name, path, body)?;
+            anyhow::bail!("injected parent sync uncertainty after rename")
+        });
+
+        assert!(result.is_err());
+        assert_eq!(read_pending(&stage_dir), Some(next));
+        assert_eq!(
+            std::fs::read(previous_archive).unwrap(),
+            b"previous verified archive"
+        );
+        assert_eq!(
+            std::fs::read(next_archive).unwrap(),
+            b"committed verified archive"
+        );
+    }
+
+    #[test]
+    fn prepared_stage_success_commits_exact_pending_then_cleans_previous_generation() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        ensure_private_stage_directory(&stage_dir).unwrap();
+        let (_previous, previous_archive) = install_visible_pending_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v1.0.0",
+            b"previous verified archive",
+            1,
+        );
+        let (prepared, next, next_archive) = prepare_fixture(
+            &stage_dir,
+            &"d".repeat(32),
+            "v1.0.1",
+            b"next verified archive",
+            2,
+        );
+        let expected_pending_body = serde_json::to_vec_pretty(&next).unwrap();
+
+        assert_eq!(prepared.publish().unwrap(), next);
+        assert_eq!(read_pending(&stage_dir), Some(next));
+        assert_eq!(
+            std::fs::read(pending_json_path(&stage_dir)).unwrap(),
+            expected_pending_body
+        );
+        assert!(!previous_archive.exists());
+        assert_eq!(
+            std::fs::read(next_archive).unwrap(),
+            b"next verified archive"
+        );
+    }
+
+    #[test]
+    fn prepared_stage_never_cleans_its_own_generation_via_previous_alias() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        ensure_private_stage_directory(&stage_dir).unwrap();
+        let (prepared, next, next_archive) = prepare_fixture(
+            &stage_dir,
+            &"f".repeat(32),
+            "v1.0.1",
+            b"next verified archive",
+            2,
+        );
+        crate::util::atomic_write::atomic_write_private(
+            &pending_json_path(&stage_dir),
+            &serde_json::to_vec_pretty(&next).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(prepared.publish().unwrap(), next);
+        assert_eq!(read_pending(&stage_dir), Some(next));
+        assert_eq!(
+            std::fs::read(next_archive).unwrap(),
+            b"next verified archive"
+        );
+    }
+
+    #[test]
+    fn prepared_stage_changed_pending_after_commit_preserves_all_generations() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        ensure_private_stage_directory(&stage_dir).unwrap();
+        let (previous, previous_archive) = install_visible_pending_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v1.0.0",
+            b"previous verified archive",
+            1,
+        );
+        let (prepared, _next, next_archive) = prepare_fixture(
+            &stage_dir,
+            &"1".repeat(32),
+            "v1.0.1",
+            b"next verified archive",
+            2,
+        );
+        let previous_body = serde_json::to_vec_pretty(&previous).unwrap();
+
+        let result = prepared.publish_with_pending_commit(|parent, name, path, body| {
+            crate::skills::store::atomic_write_private_child(parent, name, path, body)?;
+            crate::skills::store::atomic_write_private_child(parent, name, path, &previous_body)
+        });
+
+        let error = result.unwrap_err();
+        assert!(format!("{error:#}").contains("changed after publication"));
+        assert_eq!(read_pending(&stage_dir), Some(previous));
+        assert_eq!(
+            std::fs::read(previous_archive).unwrap(),
+            b"previous verified archive"
+        );
+        assert_eq!(
+            std::fs::read(next_archive).unwrap(),
+            b"next verified archive"
+        );
+    }
+
+    #[test]
+    fn prepared_stage_binding_refuses_payload_drift_without_changing_pending() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("staged");
+        ensure_private_stage_directory(&stage_dir).unwrap();
+        let (previous, previous_archive) = install_visible_pending_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v1.0.0",
+            b"previous verified archive",
+            1,
+        );
+        let (prepared, _next, next_archive) = prepare_fixture(
+            &stage_dir,
+            &"e".repeat(32),
+            "v1.0.1",
+            b"next verified archive",
+            2,
+        );
+        std::fs::write(&next_archive, b"tampered candidate").unwrap();
+
+        let error = prepared.publish().unwrap_err();
+
+        assert!(format!("{error:#}").contains("changed before publication"));
+        assert_eq!(read_pending(&stage_dir), Some(previous));
+        assert_eq!(
+            std::fs::read(previous_archive).unwrap(),
+            b"previous verified archive"
+        );
+        assert_eq!(std::fs::read(next_archive).unwrap(), b"tampered candidate");
     }
 
     #[cfg(unix)]

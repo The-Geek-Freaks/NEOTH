@@ -395,17 +395,19 @@ pub(crate) fn take_finished_cron_tasks(fleet: &CronFleet) -> Vec<(CronKey, CronT
         .collect()
 }
 
-/// Permanently close Dream effect authority without blocking a Tokio worker.
+/// Permanently close all generation-bound effect authority without blocking a
+/// Tokio worker.
 ///
 /// Idempotent: the shutdown entry point invokes this immediately after the
 /// shutdown signal, and the centralized teardown repeats it defensively.
-pub(crate) async fn retire_dream_runtime(controller: &Arc<ReloadController>) {
+pub(crate) async fn retire_generation_effect_runtime(controller: &Arc<ReloadController>) {
     let retire_controller = Arc::clone(controller);
     if let Err(error) =
-        tokio::task::spawn_blocking(move || retire_controller.retire_dream_runtime()).await
+        tokio::task::spawn_blocking(move || retire_controller.retire_generation_effect_runtime())
+            .await
     {
-        warn!(%error, "Dream runtime shutdown retirement task failed");
-        controller.retire_dream_runtime();
+        warn!(%error, "generation effect runtime shutdown retirement task failed");
+        controller.retire_generation_effect_runtime();
     }
 }
 
@@ -6156,9 +6158,15 @@ pub(crate) async fn abort_join<T>(task: JoinHandle<T>) {
 /// `select!` borrows `&mut writer_join`).
 pub(crate) struct WalSetup {
     pub wal_dir: std::path::PathBuf,
+    /// Stable first segment of the selected daemon WAL namespace.
+    ///
+    /// Recovery must always scan from this path, even when the writer resumes a
+    /// later rotated segment.
+    pub segment_chain_base_path: std::path::PathBuf,
+    /// Physical segment reopened by the writer (the latest validated member).
     pub segment_path: std::path::PathBuf,
     pub writer: WalWriterHandle,
-    pub writer_join: JoinHandle<()>,
+    pub writer_join: JoinHandle<Result<(), String>>,
 }
 
 /// GOLD-ARCH-01: WAL setup (steps 2/2b/3/3b/BS-4). Prepares the WAL dir (0700 on
@@ -6169,7 +6177,7 @@ pub(crate) struct WalSetup {
 /// plugin invoker bootstrap, and the council-depth warning STAY in `run_serve`
 /// (they run after the writer exists). Behaviour-identical to the prior inline
 /// WAL prelude.
-pub(crate) fn prepare_wal(
+pub(crate) async fn prepare_wal(
     home: &std::path::Path,
     wal_segment: Option<std::path::PathBuf>,
 ) -> anyhow::Result<WalSetup> {
@@ -6189,9 +6197,9 @@ pub(crate) fn prepare_wal(
             absolute_wal_dir.display()
         );
     }
-    let segment_path = absolute_segment;
+    let segment_chain_base_path = absolute_segment;
 
-    if let Some(parent) = segment_path.parent() {
+    if let Some(parent) = segment_chain_base_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create WAL dir {}", parent.display()))?;
         #[cfg(unix)]
@@ -6245,10 +6253,27 @@ pub(crate) fn prepare_wal(
         }
     };
 
+    // Production writers rotate within the selected namespace. On restart the
+    // CLI still supplies its stable base (`000001.wal`), but reopening that
+    // literal file after `000002+` exists would append new events before older
+    // sequence files and eventually overwrite a rotation target. Resume the
+    // highest validated member instead.
+    let segment_path = crate::wal::scan::latest_home_segment_in_chain(
+        home,
+        &segment_chain_base_path,
+        crate::wal::scan::HomeWalScanLimits::default(),
+    )
+    .context("resolve latest active instance WAL segment")?;
+
     // ── 3. Spawn writer task ───────────────────────────────────────────────
-    let (writer, writer_join) =
-        crate::wal::spawn_for_home(segment_path.clone(), home.to_path_buf())
+    let (writer, writer_join, writer_ready) =
+        crate::wal::writer::spawn_for_home_ready(segment_path.clone(), home.to_path_buf())
             .context("spawn instance-bound WAL writer task")?;
+    if let Err(error) = writer_ready.wait().await {
+        drop(writer);
+        let _ = writer_join.await;
+        return Err(error).context("initialize instance-bound WAL writer");
+    }
 
     // ── 3b. ADV-01 — emit deferred audit frames for quarantined `.cpt`s ────
     for report in pending_auth_failures {
@@ -6272,7 +6297,7 @@ pub(crate) fn prepare_wal(
                 &payload,
             )
             .build();
-            writer.try_append_sync(header, payload).with_context(|| {
+            writer.append(header, payload).await.with_context(|| {
                 format!(
                     "emit compaction-auth failure audit for {}",
                     quarantine_path.display()
@@ -6296,6 +6321,7 @@ pub(crate) fn prepare_wal(
 
     Ok(WalSetup {
         wal_dir,
+        segment_chain_base_path,
         segment_path,
         writer,
         writer_join,
@@ -6475,9 +6501,9 @@ pub(crate) async fn prime_runtime_services(
 /// clock-rollback guard (BS-5), and the single-instance PID lock (BS-12). These
 /// run at the very top of `run_serve` BEFORE config load and produce only the
 /// `PidGuard` (returned so the caller binds it for the daemon lifetime — its
-/// `Drop` releases the lock). `--one-shot` skips isolation + the PID lock
-/// (ephemeral tempdirs / shared CI runners). Synchronous; bails on a tripped
-/// guard. Behaviour-identical to the prior inline `run_serve` prelude.
+/// `Drop` releases the lock). `--one-shot` skips only the home-permission
+/// isolation check; it still opens and writes the production WAL and therefore
+/// must own the same instance lock. Synchronous; bails on a tripped guard.
 pub(crate) fn run_preflight_guards(
     home: &std::path::Path,
     one_shot: bool,
@@ -6502,17 +6528,13 @@ pub(crate) fn run_preflight_guards(
     }
 
     // ── 0b. Single-instance lock (Phase 33c BS-12) ──────────────────────────
-    // Acquire `~/.neoth/neothd.pid` BEFORE touching the WAL — a second daemon
-    // writing the same segment would corrupt the byte stream. Skipped under
-    // `--one-shot` so integration tests can run in parallel.
-    let pid_guard = if one_shot {
-        None
-    } else {
-        match crate::daemon::pidfile::acquire(&home.join("neothd.pid")) {
-            Ok(g) => Some(g),
-            Err(e) => {
-                anyhow::bail!("{e}");
-            }
+    // Acquire `~/.neoth/neothd.pid` BEFORE touching the WAL. One-shot mode
+    // still spawns the writer and its shutdown reconciler, so per-segment
+    // locks cannot protect it across a concurrent daemon rotation.
+    let pid_guard = match crate::daemon::pidfile::acquire(&home.join("neothd.pid")) {
+        Ok(g) => Some(g),
+        Err(e) => {
+            anyhow::bail!("{e}");
         }
     };
     Ok(pid_guard)
@@ -6647,17 +6669,20 @@ fn release_wal_sender_roots(
 }
 
 /// GOLD-ARCH-01: ordered daemon shutdown sequence extracted from `run_serve`.
-/// Dream authority is permanently retired first; background tasks then drain in
-/// the documented dependency order (worker-watch before watched tasks,
-/// WAL-emitting tasks before `drop(writer)`, outboxes before writer shutdown,
-/// then transports), followed by `writer_join.await`. Optional tasks use
-/// abort-plus-join rather than detaching their real children.
+/// Dream and updater authority are permanently retired first; background tasks
+/// then drain in the documented dependency order (worker-watch before watched
+/// tasks, WAL-emitting tasks before `drop(writer)`, outboxes before writer
+/// shutdown, then transports). Interrupted updater leaves are terminalized
+/// before the final writer drain. Optional tasks use abort-plus-join rather than
+/// detaching their real children.
 pub(crate) async fn shutdown_background_tasks(
     home: &std::path::Path,
+    segment_path: &std::path::Path,
     handles: BackgroundHandles,
     writer: WalWriterHandle,
-    writer_join: JoinHandle<()>,
-) {
+    writer_join: JoinHandle<Result<(), String>>,
+    writer_join_result: Option<std::result::Result<Result<(), String>, tokio::task::JoinError>>,
+) -> anyhow::Result<()> {
     let BackgroundHandles {
         plugin_invoker_registration,
         shared_provider,
@@ -6720,11 +6745,12 @@ pub(crate) async fn shutdown_background_tasks(
         confirm_drain_task,
     } = handles;
 
-    // Close Dream's permanent effect authority before tearing down any other
-    // subsystem. Publication uses the same lock, so a concurrent reload cannot
-    // create a fresh gate after this point; active commits drain before the
-    // shutdown sequence advances.
-    retire_dream_runtime(&reload_controller).await;
+    // Close every generation-bound effect authority before tearing down any
+    // other subsystem. Publication uses the same lock, so a concurrent reload
+    // cannot create fresh gates after this point; admitted Dream commits and
+    // updater leaves drain through their mandatory terminal WAL result before
+    // the shutdown sequence advances.
+    retire_generation_effect_runtime(&reload_controller).await;
 
     // No hook may start a new plugin invocation after OnShutdown. The
     // registration guard owns the compiled invoker and its WAL sender.
@@ -7045,15 +7071,69 @@ pub(crate) async fn shutdown_background_tasks(
     // can safely stop here, just before the writer closes.
     crate::cli::serve_tasks::abort_optional(confirm_drain_task).await;
 
+    // GOLD-R3-18: every updater producer and its generation lease is now
+    // stopped. Terminalize any durable intent left without a result before the
+    // writer closes, so the next boot never has to infer whether this shutdown
+    // completed the external effect.
+    let updater_reconcile_error =
+        match crate::updater::reconcile::reconcile_unfinished_updater_leaves(
+            home,
+            segment_path,
+            &writer,
+            crate::updater::reconcile::UpdaterReconcilePhase::Shutdown,
+        )
+        .await
+        {
+            Ok(summary) => {
+                if summary.interrupted > 0 {
+                    warn!(
+                        scanned = summary.scanned_intents,
+                        already_terminal = summary.already_terminal,
+                        interrupted = summary.interrupted,
+                        "terminalized interrupted updater leaves during shutdown"
+                    );
+                }
+                None
+            }
+            Err(error) => Some(
+                error.context("reconcile interrupted updater leaves before daemon WAL shutdown"),
+            ),
+        };
+
     // Every task that cloned either root has now stopped. Consume both roots
     // before closing the last WAL sender; each owns a sender even when its
     // corresponding feature is disabled.
     release_wal_sender_roots(shared_provider, companion_state);
     drop(writer);
-    match writer_join.await {
-        Ok(()) => info!("WAL writer task drained cleanly"),
-        Err(e) => warn!(error = %e, "WAL writer task panicked during drain"),
+    let writer_join_result = match writer_join_result {
+        Some(result) => result,
+        None => writer_join.await,
+    };
+    let writer_join_error = match writer_join_result {
+        Ok(Ok(())) => {
+            info!("WAL writer task drained cleanly");
+            None
+        }
+        Ok(Err(error)) => {
+            warn!(%error, "WAL writer task failed during drain");
+            Some(anyhow::anyhow!(
+                "WAL writer task failed during drain: {error}"
+            ))
+        }
+        Err(error) => {
+            warn!(%error, "WAL writer task panicked during drain");
+            Some(anyhow::anyhow!(
+                "WAL writer task panicked during drain: {error}"
+            ))
+        }
+    };
+    if let Some(error) = updater_reconcile_error {
+        return Err(error);
     }
+    if let Some(error) = writer_join_error {
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub(crate) fn build_boot_payload(config: &FreedomConfig) -> anyhow::Result<Vec<u8>> {
@@ -7366,7 +7446,7 @@ mod tests {
             writer,
             writer_join,
             ..
-        } = prepare_wal(home.path(), None).unwrap();
+        } = prepare_wal(home.path(), None).await.unwrap();
         let shared_provider: Option<Arc<dyn Provider>> = Some(Arc::new(WriterOwningProvider {
             _writer: writer.clone(),
         }));
@@ -7380,15 +7460,20 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(3), writer_join)
             .await
             .expect("retained shutdown root kept the WAL writer channel open")
-            .expect("WAL writer task panicked");
+            .expect("WAL writer task panicked")
+            .expect("WAL writer runtime failed");
     }
 
     #[tokio::test]
     async fn prepare_wal_binds_segment_key_and_quota_home_to_custom_instance() {
         let home = tempfile::tempdir().unwrap();
-        let setup = prepare_wal(home.path(), None).unwrap();
+        let setup = prepare_wal(home.path(), None).await.unwrap();
 
         assert_eq!(setup.wal_dir, home.path().join("wal"));
+        assert_eq!(
+            setup.segment_chain_base_path,
+            home.path().join("wal/000001.wal")
+        );
         assert_eq!(setup.segment_path, home.path().join("wal/000001.wal"));
         assert!(
             home.path().join("wal/hmac.key").is_file(),
@@ -7402,11 +7487,34 @@ mod tests {
             ..
         } = setup;
         drop(writer);
-        writer_join.await.unwrap();
+        writer_join.await.unwrap().unwrap();
         assert!(
             segment_path.is_file(),
             "instance WAL segment must be opened under the selected home"
         );
+    }
+
+    #[test]
+    fn one_shot_preflight_still_excludes_a_second_instance() {
+        let home = tempfile::tempdir().unwrap();
+        let first = run_preflight_guards(home.path(), true, true)
+            .unwrap()
+            .expect("one-shot must own the instance lock");
+
+        let error = run_preflight_guards(home.path(), true, true)
+            .err()
+            .expect("a concurrent one-shot/daemon must be refused");
+        assert!(
+            format!("{error:#}").contains("already running")
+                || format!("{error:#}").contains("lock"),
+            "unexpected instance-lock refusal: {error:#}"
+        );
+
+        drop(first);
+        let retry = run_preflight_guards(home.path(), true, true)
+            .unwrap()
+            .expect("dropping the owner must release the instance lock");
+        drop(retry);
     }
 
     #[test]
@@ -7518,7 +7626,8 @@ mod tests {
         .unwrap();
 
         let controller = Arc::new(ReloadController::new(initial.clone(), config_path.clone()));
-        let (writer, writer_task) = crate::wal::spawn(home.path().join("omi-reload.wal")).unwrap();
+        let (writer, writer_task) =
+            crate::wal::spawn(home.path().join("omi-reload-000001.wal")).unwrap();
         let supervisor = spawn_omi_ingest(
             &controller,
             credentials_path,
@@ -7692,7 +7801,7 @@ mod tests {
 
             let controller = Arc::new(ReloadController::new(initial.clone(), config_path.clone()));
             let (writer, writer_task) =
-                crate::wal::spawn(home.path().join("omi-private.wal")).unwrap();
+                crate::wal::spawn(home.path().join("omi-private-000001.wal")).unwrap();
             let supervisor = spawn_omi_ingest(
                 &controller,
                 credentials_path,
@@ -7914,7 +8023,8 @@ mod tests {
         .unwrap();
 
         let controller = Arc::new(ReloadController::new(initial.clone(), config_path.clone()));
-        let (writer, writer_task) = crate::wal::spawn(home.path().join("omi-auth.wal")).unwrap();
+        let (writer, writer_task) =
+            crate::wal::spawn(home.path().join("omi-auth-000001.wal")).unwrap();
         let supervisor = spawn_omi_ingest(
             &controller,
             credentials_path.clone(),
@@ -8104,7 +8214,8 @@ mod tests {
         let config_path = tmp.path().join("freedom.yaml");
         std::fs::write(&config_path, serde_yaml::to_string(&cfg).unwrap()).unwrap();
         let reload = Arc::new(ReloadController::new(cfg.clone(), config_path));
-        let (writer, join) = crate::wal::spawn(tmp.path().join("disabled-spawns.wal")).unwrap();
+        let (writer, join) =
+            crate::wal::spawn(tmp.path().join("disabled-spawns-000001.wal")).unwrap();
         // GOLD-ADAPT-IGNIS-04: spawn_obsidian_sync now takes a WAL writer, so
         // its no-vault→None case moved to its own tokio test below.
         assert!(
@@ -8181,7 +8292,8 @@ mod tests {
         // Default config: obsidian_vault = None → spawn must return None.
         let cfg = FreedomConfig::default();
         let wal_dir = tempfile::tempdir().unwrap();
-        let (writer, _join) = crate::wal::writer::spawn(wal_dir.path().join("neoth.wal")).unwrap();
+        let (writer, _join) =
+            crate::wal::writer::spawn(wal_dir.path().join("neoth-000001.wal")).unwrap();
         let handle = spawn_obsidian_wiki_rebuild(&cfg, wal_dir.path(), writer);
         assert!(
             handle.is_none(),
@@ -8195,7 +8307,8 @@ mod tests {
     async fn spawn_obsidian_sync_returns_none_when_no_vault() {
         let cfg = FreedomConfig::default();
         let wal_dir = tempfile::tempdir().unwrap();
-        let (writer, _join) = crate::wal::writer::spawn(wal_dir.path().join("neoth.wal")).unwrap();
+        let (writer, _join) =
+            crate::wal::writer::spawn(wal_dir.path().join("neoth-000001.wal")).unwrap();
         assert!(
             spawn_obsidian_sync(&cfg, wal_dir.path(), writer).is_none(),
             "no obsidian_vault → spawn_obsidian_sync must return None"
@@ -8413,7 +8526,7 @@ mod tests {
         let wal_dir = home.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
         let (writer, writer_join) = crate::wal::spawn_for_home(
-            wal_dir.join("prime-runtime-services.wal"),
+            wal_dir.join("prime-runtime-services-000001.wal"),
             home.path().to_path_buf(),
         )
         .unwrap();

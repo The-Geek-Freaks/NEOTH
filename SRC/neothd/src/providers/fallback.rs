@@ -809,7 +809,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let wal_dir = dir.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
-        let seg = wal_dir.join("authorized-fallback.wal");
+        let seg = wal_dir.join("authorized-fallback-000001.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

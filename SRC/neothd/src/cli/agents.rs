@@ -164,8 +164,8 @@ async fn run_fan_out(
     std::fs::create_dir_all(&wal_dir)
         .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
     let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "sub-agents");
-    let (writer, writer_join) =
-        crate::wal::writer::spawn(segment).context("spawn sub-agent audit WAL writer")?;
+    let (writer, writer_join) = crate::wal::writer::spawn_for_home(segment, neoth_home.clone())
+        .context("spawn sub-agent audit WAL writer")?;
 
     let raw_provider =
         crate::providers::fallback_chain_from_config(&config, &neoth_home, Some(writer.clone()))

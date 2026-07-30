@@ -400,7 +400,9 @@ mod tests {
     }
 
     fn make_wal(home: &Path) -> (WalWriterHandle, tokio::task::JoinHandle<()>) {
-        crate::wal::writer::spawn_for_home(home.join("000001.wal"), home.to_path_buf()).unwrap()
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        crate::wal::writer::spawn_for_home(wal_dir.join("000001.wal"), home.to_path_buf()).unwrap()
     }
 
     #[tokio::test]
@@ -638,7 +640,9 @@ entries:
         let _loopback = crate::tools::web_fetch::test_overrides::LoopbackGuard::enable();
         let dir = tempdir().unwrap();
         let server = mock_feed(RSS2_ONE_ITEM, 200).await;
-        let wal_path = dir.path().join("000001.wal");
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let wal_path = wal_dir.join("000001.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(wal_path.clone(), dir.path().to_path_buf()).unwrap();
         let client = reqwest::Client::new();

@@ -87,17 +87,152 @@ impl DreamCommitGate {
         })
     }
 
-    fn retire_and_wait(&self) {
+    fn retire(&self) {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         state.retired = true;
+    }
+
+    fn wait_for_drain(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         while state.active != 0 {
             state = self
                 .drained
                 .wait(state)
                 .unwrap_or_else(|poison| poison.into_inner());
+        }
+    }
+}
+
+/// Typed refusal returned when a leaf tries to enter a generation after reload
+/// has closed its admission window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GenerationRetired {
+    accepted_epoch: u64,
+}
+
+impl GenerationRetired {
+    #[cfg(test)]
+    pub(crate) const fn accepted_epoch(self) -> u64 {
+        self.accepted_epoch
+    }
+}
+
+impl std::fmt::Display for GenerationRetired {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "accepted config generation {} is retired",
+            self.accepted_epoch
+        )
+    }
+}
+
+impl std::error::Error for GenerationRetired {}
+
+#[derive(Debug, Default)]
+struct UpdaterLeafGateState {
+    retired: bool,
+    active: usize,
+}
+
+/// Per-snapshot admission/drain gate for updater leaves.
+///
+/// Admission and retirement serialize on one mutex. Retirement closes the
+/// generation before reload waits for existing leaves to finish their terminal
+/// WAL append.
+#[derive(Debug)]
+pub(crate) struct UpdaterLeafGate {
+    accepted_epoch: u64,
+    state: Mutex<UpdaterLeafGateState>,
+    drained: Condvar,
+}
+
+impl UpdaterLeafGate {
+    pub(crate) fn new(accepted_epoch: u64) -> Self {
+        Self {
+            accepted_epoch,
+            state: Mutex::new(UpdaterLeafGateState::default()),
+            drained: Condvar::new(),
+        }
+    }
+
+    pub(crate) fn acquire(
+        self: &Arc<Self>,
+    ) -> std::result::Result<UpdaterLeafLease, GenerationRetired> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if state.retired {
+            return Err(GenerationRetired {
+                accepted_epoch: self.accepted_epoch,
+            });
+        }
+        state.active = state
+            .active
+            .checked_add(1)
+            .expect("updater leaf lease counter overflow");
+        drop(state);
+        Ok(UpdaterLeafLease {
+            gate: Arc::clone(self),
+        })
+    }
+
+    fn retire(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.retired = true;
+    }
+
+    fn wait_for_drain(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        while state.active != 0 {
+            state = self
+                .drained
+                .wait(state)
+                .unwrap_or_else(|poison| poison.into_inner());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retire_and_wait(&self) {
+        self.retire();
+        self.wait_for_drain();
+    }
+}
+
+/// Generation lease retained by the updater audit ticket until its terminal
+/// WAL append has completed.
+#[derive(Debug)]
+#[must_use = "the updater leaf lease must be held through terminal WAL acknowledgement"]
+pub(crate) struct UpdaterLeafLease {
+    gate: Arc<UpdaterLeafGate>,
+}
+
+impl Drop for UpdaterLeafLease {
+    fn drop(&mut self) {
+        let mut state = self
+            .gate
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.active = state
+            .active
+            .checked_sub(1)
+            .expect("updater leaf lease counter underflow");
+        if state.active == 0 {
+            self.gate.drained.notify_all();
         }
     }
 }
@@ -126,7 +261,8 @@ impl Drop for DreamCommitLease {
     }
 }
 
-/// Config, epoch identity and Dream commit gate published by one ArcSwap store.
+/// Config, epoch identity and generation effect gates published by one ArcSwap
+/// store.
 ///
 /// Consumers that bind work to an accepted generation must retain this exact
 /// `Arc`; reading `latest()` and a watch counter separately is not an authority
@@ -135,6 +271,7 @@ pub struct AcceptedConfigSnapshot {
     config: Arc<FreedomConfig>,
     epoch: u64,
     dream_commit_gate: Arc<DreamCommitGate>,
+    updater_leaf_gate: Arc<UpdaterLeafGate>,
 }
 
 impl AcceptedConfigSnapshot {
@@ -146,12 +283,13 @@ impl AcceptedConfigSnapshot {
             // A policy-disabled generation has no lease-acquisition window at
             // all. This hardens the gate itself instead of relying solely on
             // every caller remembering a separate policy check.
-            dream_commit_gate.retire_and_wait();
+            dream_commit_gate.retire();
         }
         Self {
             config: Arc::new(config),
             epoch,
             dream_commit_gate,
+            updater_leaf_gate: Arc::new(UpdaterLeafGate::new(epoch)),
         }
     }
 
@@ -167,8 +305,23 @@ impl AcceptedConfigSnapshot {
         self.dream_commit_gate.acquire(effect)
     }
 
+    pub(crate) fn updater_leaf_gate(&self) -> Arc<UpdaterLeafGate> {
+        Arc::clone(&self.updater_leaf_gate)
+    }
+
     pub(crate) fn retire_dream_commits_and_wait(&self) {
-        self.dream_commit_gate.retire_and_wait();
+        self.dream_commit_gate.retire();
+        self.dream_commit_gate.wait_for_drain();
+    }
+
+    fn retire_effect_admission(&self) {
+        self.dream_commit_gate.retire();
+        self.updater_leaf_gate.retire();
+    }
+
+    fn wait_for_effect_drains(&self) {
+        self.dream_commit_gate.wait_for_drain();
+        self.updater_leaf_gate.wait_for_drain();
     }
 }
 
@@ -335,9 +488,9 @@ pub struct ReloadController {
     generation_tx: Arc<tokio::sync::watch::Sender<u64>>,
     /// Serializes accepted-generation publication and permanent shutdown
     /// retirement. Without this lock two concurrent reloads can derive the same
-    /// epoch or shutdown can race publication of a fresh active Dream gate.
+    /// epoch or shutdown can race publication of fresh active effect gates.
     publication_lock: Arc<Mutex<()>>,
-    dream_runtime_retired: Arc<AtomicBool>,
+    generation_effect_runtime_retired: Arc<AtomicBool>,
 }
 
 impl ReloadController {
@@ -354,7 +507,7 @@ impl ReloadController {
             snapshot_hash: Arc::new(std::sync::Mutex::new(initial_hash)),
             generation_tx: Arc::new(generation_tx),
             publication_lock: Arc::new(Mutex::new(())),
-            dream_runtime_retired: Arc::new(AtomicBool::new(false)),
+            generation_effect_runtime_retired: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -373,7 +526,7 @@ impl ReloadController {
         self.accepted_snapshot().config()
     }
 
-    /// Atomically capture config + monotonic epoch + Dream commit gate.
+    /// Atomically capture config + monotonic epoch + generation effect gates.
     pub fn accepted_snapshot(&self) -> Arc<AcceptedConfigSnapshot> {
         self.inner.load_full()
     }
@@ -400,17 +553,20 @@ impl ReloadController {
         publish().map(Some)
     }
 
-    /// Permanently retire Dream effects during daemon shutdown.
+    /// Permanently retire generation-bound effects during daemon shutdown.
     ///
     /// The publication lock closes the reload-vs-shutdown race: after this
     /// returns, no concurrent or future reload can publish a fresh active gate.
-    pub fn retire_dream_runtime(&self) {
+    pub fn retire_generation_effect_runtime(&self) {
         let _publication = self
             .publication_lock
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        self.dream_runtime_retired.store(true, Ordering::Release);
-        self.inner.load_full().retire_dream_commits_and_wait();
+        self.generation_effect_runtime_retired
+            .store(true, Ordering::Release);
+        let accepted = self.inner.load_full();
+        accepted.retire_effect_admission();
+        accepted.wait_for_effect_drains();
     }
 
     /// Immutable snapshot of the currently active autonomy policy.
@@ -466,17 +622,20 @@ impl ReloadController {
     /// immutable field has changed; on validation pass, swaps the
     /// ArcSwap atomically. Caller emits the audit WAL frame.
     ///
-    /// A successful reload waits for active Dream commit leases. Async callers
-    /// must invoke this synchronous boundary through `spawn_blocking` (the
-    /// daemon reload loop does) so a lease-owning future can keep progressing.
+    /// A successful reload closes Dream and updater admission before waiting
+    /// for either generation-bound drain. Async callers must invoke this
+    /// synchronous boundary through `spawn_blocking` (the daemon reload loop
+    /// does) so lease-owning futures can keep progressing.
     pub fn try_reload(&self) -> Result<ReloadResult> {
         let _publication = self
             .publication_lock
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         anyhow::ensure!(
-            !self.dream_runtime_retired.load(Ordering::Acquire),
-            "config reload refused: daemon Dream runtime is retired for shutdown"
+            !self
+                .generation_effect_runtime_retired
+                .load(Ordering::Acquire),
+            "config reload refused: daemon generation-bound runtime is retired for shutdown"
         );
         let old = self.accepted_snapshot();
         let old_config = old.config();
@@ -517,10 +676,12 @@ impl ReloadController {
         let next = Arc::new(AcceptedConfigSnapshot::new(candidate, next_epoch));
 
         // Linearization order:
-        // 1. retire old gate, preventing new irreversible effects;
-        // 2. wait for every already-leased commit to finish;
+        // 1. close both old-generation admissions;
+        // 2. wait for every already-leased Dream commit and updater leaf
+        //    (including its terminal WAL append) to finish;
         // 3. atomically publish config + epoch + fresh gate in one ArcSwap store.
-        old.retire_dream_commits_and_wait();
+        old.retire_effect_admission();
+        old.wait_for_effect_drains();
         self.inner.store(Arc::clone(&next));
 
         // Watch is notification only. Exact authority comes from the accepted
@@ -1397,6 +1558,106 @@ mod tests {
     }
 
     #[test]
+    fn updater_leaf_acquire_and_retire_are_linearized() {
+        let gate = Arc::new(UpdaterLeafGate::new(73));
+        let admitted = gate.acquire().expect("initial generation is active");
+        let retire_gate = Arc::clone(&gate);
+        let retire = std::thread::spawn(move || retire_gate.retire_and_wait());
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let retired = loop {
+            match gate.acquire() {
+                Ok(probe) => {
+                    drop(probe);
+                    if std::time::Instant::now() >= deadline {
+                        break None;
+                    }
+                    std::thread::yield_now();
+                }
+                Err(error) => break Some(error),
+            }
+        };
+        let Some(error) = retired else {
+            drop(admitted);
+            retire.join().unwrap();
+            panic!("updater gate did not close admission");
+        };
+        assert_eq!(error.accepted_epoch(), 73);
+        assert!(
+            !retire.is_finished(),
+            "retirement returned before the admitted leaf released"
+        );
+
+        drop(admitted);
+        retire.join().unwrap();
+        assert_eq!(
+            gate.acquire().unwrap_err(),
+            GenerationRetired { accepted_epoch: 73 }
+        );
+    }
+
+    #[test]
+    fn reload_closes_dream_and_updater_admission_before_either_drain_or_publication() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let mut initial = fresh_config();
+        initial.dreaming.enabled = true;
+        initial.autonomy = crate::permissions::AutonomyLevel::Standard;
+        write_yaml(&yaml_path, &serde_yaml::to_string(&initial).unwrap());
+        let controller = Arc::new(ReloadController::new(initial.clone(), yaml_path.clone()));
+        let old = controller.accepted_snapshot();
+        let dream = old.acquire_dream_commit("reload ordering probe").unwrap();
+        let updater_gate = old.updater_leaf_gate();
+        let updater = updater_gate.acquire().unwrap();
+
+        let mut candidate = initial;
+        candidate.review_gate_enabled = !candidate.review_gate_enabled;
+        write_yaml(&yaml_path, &serde_yaml::to_string(&candidate).unwrap());
+        let reload_controller = Arc::clone(&controller);
+        let reload = std::thread::spawn(move || reload_controller.try_reload());
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let both_retired = loop {
+            let dream_retired = old
+                .acquire_dream_commit("late Dream admission probe")
+                .is_err();
+            let updater_retired = updater_gate.acquire().is_err();
+            if dream_retired && updater_retired {
+                break true;
+            }
+            if std::time::Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::yield_now();
+        };
+        if !both_retired {
+            drop(dream);
+            drop(updater);
+            let _ = reload.join();
+            panic!("reload did not close both admissions before draining");
+        }
+        assert!(
+            Arc::ptr_eq(&controller.accepted_snapshot(), &old),
+            "reload published while old-generation leases were active"
+        );
+
+        drop(dream);
+        std::thread::yield_now();
+        assert!(
+            !reload.is_finished(),
+            "reload published after only the Dream drain completed"
+        );
+        drop(updater);
+        assert!(matches!(
+            reload.join().unwrap().unwrap(),
+            ReloadResult::Reloaded { .. }
+        ));
+        let current = controller.accepted_snapshot();
+        assert!(!Arc::ptr_eq(&current, &old));
+        assert_eq!(current.epoch(), 1);
+    }
+
+    #[test]
     fn strict_and_custom_snapshots_never_open_a_dream_commit_gate() {
         for autonomy in [
             crate::permissions::AutonomyLevel::Strict,
@@ -1452,7 +1713,8 @@ mod tests {
         let active_commit = accepted.acquire_dream_commit("test WAL commit").unwrap();
 
         let retire_controller = Arc::clone(&controller);
-        let retire = std::thread::spawn(move || retire_controller.retire_dream_runtime());
+        let retire =
+            std::thread::spawn(move || retire_controller.retire_generation_effect_runtime());
         while let Ok(probe) = accepted.acquire_dream_commit("shutdown probe") {
             drop(probe);
             std::thread::yield_now();

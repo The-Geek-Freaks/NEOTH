@@ -764,16 +764,26 @@ async fn execute(
 
     let config = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml — run `neoth init` first")?;
+    let pidfile = home.join("neothd.pid");
+    if let Some(pid) = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon ownership via {}", pidfile.display()))?
+    {
+        anyhow::bail!(
+            "neoth daemon is live (pid {pid}); stop it before `self-improve execute` so QA, \
+             provider-cost, and proposal-verdict frames cannot race the daemon-owned WAL writer"
+        );
+    }
     let raw_provider = crate::providers::from_config_for_utility_at(&config, home)
         .await
         .context("build self-improve QA provider")?;
     let model = crate::providers::provider_default_wire_model(raw_provider.as_ref());
-    let wal_dir = FreedomConfig::default_wal_dir();
+    let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir)
         .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
     let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "self-improve-qa");
-    let (writer, writer_join) =
-        crate::wal::writer::spawn(segment).context("spawn self-improve QA WAL writer")?;
+    let (writer, writer_completion) =
+        crate::wal::writer::spawn_for_home_with_completion(segment, home.to_path_buf())
+            .context("spawn home-bound self-improve QA WAL writer")?;
     let provider = std::sync::Arc::new(
         crate::providers::cost_authorization::AuthorizedProvider::from_box(
             raw_provider,
@@ -798,8 +808,20 @@ async fn execute(
         si::execute_proposal_with_verification(home, id, 2, autonomy, &advisor).await;
     drop(advisor);
     drop(writer);
-    let _ = writer_join.await;
-    let (verdict, revises) = execute_result?;
+    let shutdown = writer_completion
+        .wait()
+        .await
+        .context("finalize self-improve QA WAL writer");
+    let (verdict, revises) = match (execute_result, shutdown) {
+        (Ok(outcome), Ok(())) => outcome,
+        (Err(operation), Ok(())) => return Err(operation),
+        (Ok(_), Err(shutdown)) => return Err(shutdown),
+        (Err(operation), Err(shutdown)) => {
+            return Err(anyhow::anyhow!(
+                "{operation:#}; additionally failed to finalize self-improve QA WAL: {shutdown:#}"
+            ));
+        }
+    };
 
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
         let (verdict_str, reason) = match &verdict {

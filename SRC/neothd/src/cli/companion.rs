@@ -167,13 +167,16 @@ async fn run_pair_phone(write_invite_for_serve: bool, output: OutputFormat) -> R
     // so it cannot share the daemon's long-lived state — it mints its own
     // in-process token store that lives for the duration of this command.
     //
-    // WAL: we use a tempfile-backed WAL writer so the 0x0D/0x0E audit frames
-    // land somewhere, even in the standalone case. The operator can redirect
-    // the daemon's WAL for the session-start approach if needed.
-    let wal_dir = tempfile::tempdir().map_err(|e| anyhow::anyhow!("tempdir: {e}"))?;
-    let seg = wal_dir.path().join("companion_pair.wal");
-    let (writer, _wal_join) =
-        crate::wal::writer::spawn(seg).map_err(|e| anyhow::anyhow!("spawn WAL writer: {e}"))?;
+    // WAL: use an isolated temporary instance home. Its key/recovery namespace
+    // must never bind to the real operator home merely because this command is
+    // running in the same process.
+    let wal_home = tempfile::tempdir().map_err(|e| anyhow::anyhow!("tempdir: {e}"))?;
+    let wal_dir = wal_home.path().join("wal");
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create temporary companion WAL {}", wal_dir.display()))?;
+    let seg = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "companion-pair");
+    let (writer, wal_join) = crate::wal::writer::spawn_for_home(seg, wal_home.path().to_path_buf())
+        .map_err(|e| anyhow::anyhow!("spawn WAL writer: {e}"))?;
 
     // The transient state shares port 0 (unused in P2P path — port is only
     // relevant for the HTTP companion server's CSRF check).
@@ -183,7 +186,7 @@ async fn run_pair_phone(write_invite_for_serve: bool, output: OutputFormat) -> R
 
     // Spawn the P2P listener. Under `cluster` this drives the full Noise accept
     // loop; under non-cluster it exits immediately with a warning.
-    let task = spawn_companion_p2p_listener(
+    let mut task = spawn_companion_p2p_listener(
         invite,
         Arc::clone(&state),
         writer,
@@ -199,24 +202,42 @@ async fn run_pair_phone(write_invite_for_serve: bool, output: OutputFormat) -> R
     // the grace timeout. We do NOT simply `.await` the task in case the
     // listener stalls beyond the TTL due to a slow network teardown.
     let grace = tokio::time::Duration::from_secs(PAIR_INVITE_TTL_SECS + PAIR_INVITE_GRACE_SECS);
-    tokio::select! {
-        res = task => {
+    let listener_finished = tokio::select! {
+        res = &mut task => {
             match res {
                 Ok(()) => println!("Pairing complete (check daemon logs for details)."),
                 Err(e) => println!("Pairing listener exited with error: {e}"),
             }
+            true
         }
         _ = tokio::time::sleep(grace) => {
             shutdown.notify_waiters();
             println!("Invite expired — no companion connected within {PAIR_INVITE_TTL_SECS}s.");
+            false
         }
         _ = tokio::signal::ctrl_c() => {
             shutdown.notify_waiters();
             println!("Aborted by operator (Ctrl-C).");
+            false
+        }
+    };
+    if !listener_finished {
+        let shutdown_grace = tokio::time::Duration::from_secs(PAIR_INVITE_GRACE_SECS);
+        if tokio::time::timeout(shutdown_grace, &mut task)
+            .await
+            .is_err()
+        {
+            task.abort();
+            let _ = task.await;
         }
     }
 
-    // `_wal_join` and `wal_dir` drop here; WAL writer flushes its final frame.
+    // Release the final CompanionState writer clone, then drain the WAL task
+    // before the temporary instance home is deleted.
+    drop(state);
+    wal_join
+        .await
+        .context("temporary companion WAL writer task panicked")?;
     Ok(())
 }
 
@@ -256,6 +277,26 @@ mod tests {
         cfg.companion.enabled = true;
         let err = validate_serve_handoff_config(&cfg).expect_err("P2P must be enabled");
         assert!(err.to_string().contains("companion.p2p_enabled"));
+    }
+
+    #[test]
+    fn standalone_pair_segments_are_unique_canonical_children_of_the_isolated_home() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        let first = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "companion-pair");
+        let second = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "companion-pair");
+
+        assert_eq!(first.parent(), Some(wal_dir.as_path()));
+        assert_eq!(second.parent(), Some(wal_dir.as_path()));
+        assert_ne!(first, second);
+        assert!(crate::wal::scan::canonical_segment_name(
+            first.file_name().unwrap()
+        ));
+        assert_ne!(
+            wal_dir,
+            crate::config::FreedomConfig::default_wal_dir(),
+            "temporary pairing must not bind WAL state to the real operator home"
+        );
     }
 
     #[cfg(feature = "cluster")]

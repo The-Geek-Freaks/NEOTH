@@ -33,7 +33,7 @@ pub enum HemisphereAction {
     /// Rebind one hemisphere role to a provider. Writes
     /// `~/.neoth/freedom.yaml` atomically and emits a WAL 0x1F
     /// HEMISPHERE_REBOUND audit frame immediately into
-    /// `~/.neoth/wal/hemisphere-rebind-<ts>.wal`.
+    /// `~/.neoth/wal/<uuid>-hemisphere-rebind-000001.wal`.
     Set {
         /// Role to rebind: `left` / `right` / `cerebellum`.
         #[arg(long)]
@@ -257,10 +257,12 @@ async fn run_preset(
     let prior_yaml_bytes = prepared
         .source_bytes()
         .ok_or_else(|| anyhow::anyhow!("freedom.yaml is missing at {}", path.display()))?;
-    let wal_dir = FreedomConfig::default_wal_dir();
+    let home = FreedomConfig::default_neoth_home();
+    let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemispheres preset audit")?;
-    let snapshot_segment = wal_dir.join(format!("hemispheres-preset-snapshot-{now_unix}.wal"));
-    let (snap_writer, snap_join) = crate::wal::writer::spawn(snapshot_segment)
+    let snapshot_segment =
+        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "hemispheres-preset-snapshot");
+    let (snap_writer, snap_join) = crate::wal::writer::spawn_for_home(snapshot_segment, home)
         .context("spawn WAL writer for hemispheres preset rollback snapshot")?;
     let _ = crate::wal::snapshot::emit_if_policy_allows(
         &snap_writer,
@@ -450,10 +452,12 @@ async fn run_mode_single(
 
     // Pre-mutation rollback snapshot (same policy gate as `run_set`) so
     // `neoth rollback apply` can restore the prior topology.
-    let wal_dir = FreedomConfig::default_wal_dir();
+    let home = FreedomConfig::default_neoth_home();
+    let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemispheres audit")?;
-    let snapshot_segment = wal_dir.join(format!("hemispheres-snapshot-{now_unix}.wal"));
-    let (snap_writer, snap_join) = crate::wal::writer::spawn(snapshot_segment.clone())
+    let snapshot_segment =
+        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "hemispheres-snapshot");
+    let (snap_writer, snap_join) = crate::wal::writer::spawn_for_home(snapshot_segment, home)
         .context("spawn WAL writer for hemispheres rollback snapshot")?;
     let _ = crate::wal::snapshot::emit_if_policy_allows(
         &snap_writer,
@@ -611,7 +615,8 @@ pub(crate) async fn rebind_at(
     let now_unix = crate::time::now_unix_i64();
     let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemispheres audit")?;
-    let snapshot_segment = wal_dir.join(format!("hemispheres-snapshot-{now_unix}.wal"));
+    let snapshot_segment =
+        crate::wal::writer::unique_standalone_segment_path(&wal_dir, "hemispheres-snapshot");
     let (snap_writer, snap_join) =
         crate::wal::writer::spawn_for_home(snapshot_segment, home.to_path_buf())
             .context("spawn WAL writer for hemispheres rollback snapshot")?;
@@ -718,8 +723,7 @@ pub(crate) async fn rebind_at(
         )
         .with_context(|| format!("atomically update {} and credentials", path.display()))?;
 
-    let audit_segment =
-        emit_rebind_audit_to(home, &wal_dir, role, &prior, &new_slot, now_unix).await?;
+    let audit_segment = emit_rebind_audit_to(home, role, &prior, &new_slot, now_unix).await?;
     Ok(RebindResult {
         role,
         provider,
@@ -746,30 +750,22 @@ async fn emit_rebind_audit(
     now_unix: i64,
 ) -> Result<std::path::PathBuf> {
     let home = FreedomConfig::default_neoth_home();
-    emit_rebind_audit_to(
-        &home,
-        &FreedomConfig::default_wal_dir(),
-        role,
-        prior,
-        new_slot,
-        now_unix,
-    )
-    .await
+    emit_rebind_audit_to(&home, role, prior, new_slot, now_unix).await
 }
 
-/// Test-friendly inner helper — accepts an explicit WAL directory so
-/// integration tests can drive the audit path without colliding with the
-/// operator's real `~/.neoth/wal/`.
+/// Test-friendly inner helper — accepts an explicit home so integration tests
+/// can drive the audit path without colliding with the operator's real
+/// `~/.neoth/wal/`.
 async fn emit_rebind_audit_to(
     home: &std::path::Path,
-    wal_dir: &std::path::Path,
     role: HemisphereRole,
     prior: &crate::config::inference::HemisphereSlot,
     new_slot: &crate::config::inference::HemisphereSlot,
     now_unix: i64,
 ) -> Result<std::path::PathBuf> {
-    std::fs::create_dir_all(wal_dir).context("create WAL dir for hemisphere rebind audit")?;
-    let segment = wal_dir.join(format!("hemisphere-rebind-{now_unix}.wal"));
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemisphere rebind audit")?;
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "hemisphere-rebind");
 
     let payload = serde_json::to_vec(&serde_json::json!({
         "role": role.as_str(),
@@ -829,13 +825,15 @@ async fn run_test(
             .await?,
         )?;
     }
-    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
-        provider,
+    let provider_audit =
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
             cfg.autonomy_policy(),
             cfg.tokens.max_per_request,
-        )?
-        .with_ephemeral_consent(ephemeral_consent),
+        )
+        .await?;
+    let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+        provider,
+        provider_audit.authorizer_with_ephemeral_consent(ephemeral_consent),
         default_model,
         "hemispheres.test",
     );
@@ -845,90 +843,102 @@ async fn run_test(
     // existing build-only callers see zero change. `--dry-run` short-
     // circuits the actual `provider.complete` so cost-sensitive operators
     // can verify routing without paying for a token.
-    let live = if let Some(q) = question {
-        if dry_run {
-            Some(LiveResult::dry_run(q))
+    let operation: Result<()> = async {
+        let live = if let Some(q) = question {
+            if dry_run {
+                Some(LiveResult::dry_run(q))
+            } else {
+                Some(run_test_live_call(&provider, q).await?)
+            }
         } else {
-            Some(run_test_live_call(&provider, q).await?)
-        }
-    } else {
-        None
-    };
+            None
+        };
 
-    match output {
-        OutputFormat::Json | OutputFormat::Jsonl => {
-            let mut body = serde_json::json!({
-                "role": role.as_str(),
-                "provider": provider.name(),
-                "construct_latency_ms": construct_elapsed_ms,
-            });
-            if let Some(live) = live {
-                let obj = body.as_object_mut().unwrap();
-                obj.insert("question".into(), serde_json::Value::String(live.question));
-                if live.dry_run {
-                    obj.insert("dry_run".into(), serde_json::Value::Bool(true));
-                    obj.insert(
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                let mut body = serde_json::json!({
+                    "role": role.as_str(),
+                    "provider": provider.name(),
+                    "construct_latency_ms": construct_elapsed_ms,
+                });
+                if let Some(live) = live {
+                    let obj = body.as_object_mut().unwrap();
+                    obj.insert("question".into(), serde_json::Value::String(live.question));
+                    if live.dry_run {
+                        obj.insert("dry_run".into(), serde_json::Value::Bool(true));
+                        obj.insert(
+                            "note".into(),
+                            serde_json::Value::String(
+                                "dry-run: routing verified, no LLM call made".into(),
+                            ),
+                        );
+                    } else {
+                        obj.insert(
+                            "response".into(),
+                            serde_json::Value::String(live.response.unwrap_or_default()),
+                        );
+                        obj.insert(
+                            "completion_latency_ms".into(),
+                            serde_json::Value::Number(
+                                (live.completion_latency_ms.unwrap_or(0) as u64).into(),
+                            ),
+                        );
+                        if let Some(it) = live.input_tokens {
+                            obj.insert("input_tokens".into(), serde_json::Value::Number(it.into()));
+                        }
+                        if let Some(ot) = live.output_tokens {
+                            obj.insert(
+                                "output_tokens".into(),
+                                serde_json::Value::Number(ot.into()),
+                            );
+                        }
+                    }
+                } else {
+                    body.as_object_mut().unwrap().insert(
                         "note".into(),
                         serde_json::Value::String(
-                            "dry-run: routing verified, no LLM call made".into(),
+                            "build-only sanity check; pass --question to fire a live LLM call"
+                                .into(),
                         ),
                     );
-                } else {
-                    obj.insert(
-                        "response".into(),
-                        serde_json::Value::String(live.response.unwrap_or_default()),
-                    );
-                    obj.insert(
-                        "completion_latency_ms".into(),
-                        serde_json::Value::Number(
-                            (live.completion_latency_ms.unwrap_or(0) as u64).into(),
-                        ),
-                    );
-                    if let Some(it) = live.input_tokens {
-                        obj.insert("input_tokens".into(), serde_json::Value::Number(it.into()));
-                    }
-                    if let Some(ot) = live.output_tokens {
-                        obj.insert("output_tokens".into(), serde_json::Value::Number(ot.into()));
-                    }
                 }
-            } else {
-                body.as_object_mut().unwrap().insert(
-                    "note".into(),
-                    serde_json::Value::String(
-                        "build-only sanity check; pass --question to fire a live LLM call".into(),
-                    ),
-                );
+                println!("{}", serde_json::to_string_pretty(&body)?);
             }
-            println!("{}", serde_json::to_string_pretty(&body)?);
-        }
-        OutputFormat::Table => {
-            println!("# Hemisphere test — {}", role.as_str());
-            println!("  provider:  {}", provider.name());
-            println!("  construct: {construct_elapsed_ms}ms");
-            match live {
-                None => println!("  (build-only sanity check; pass --question for live call)"),
-                Some(live) if live.dry_run => {
-                    println!("  question:  {}", live.question);
-                    println!("  dry-run:   would call provider; no token spent");
-                }
-                Some(live) => {
-                    println!("  question:  {}", live.question);
-                    println!(
-                        "  response:  {}",
-                        live.response.as_deref().unwrap_or("(empty)")
-                    );
-                    println!("  complete:  {}ms", live.completion_latency_ms.unwrap_or(0));
-                    if let Some(it) = live.input_tokens {
-                        println!("  in_tokens: {it}");
+            OutputFormat::Table => {
+                println!("# Hemisphere test — {}", role.as_str());
+                println!("  provider:  {}", provider.name());
+                println!("  construct: {construct_elapsed_ms}ms");
+                match live {
+                    None => println!("  (build-only sanity check; pass --question for live call)"),
+                    Some(live) if live.dry_run => {
+                        println!("  question:  {}", live.question);
+                        println!("  dry-run:   would call provider; no token spent");
                     }
-                    if let Some(ot) = live.output_tokens {
-                        println!("  out_tokens:{ot}");
+                    Some(live) => {
+                        println!("  question:  {}", live.question);
+                        println!(
+                            "  response:  {}",
+                            live.response.as_deref().unwrap_or("(empty)")
+                        );
+                        println!("  complete:  {}ms", live.completion_latency_ms.unwrap_or(0));
+                        if let Some(it) = live.input_tokens {
+                            println!("  in_tokens: {it}");
+                        }
+                        if let Some(ot) = live.output_tokens {
+                            println!("  out_tokens:{ot}");
+                        }
                     }
                 }
             }
         }
+        Ok(())
     }
-    Ok(())
+    .await;
+    provider_audit
+        .finish(provider)
+        .await
+        .context("finalize hemisphere-test provider-call audit WAL")?;
+    operation
 }
 
 /// D-1 live-call outcome. Carried back to `run_test` so the rendering
@@ -1328,7 +1338,6 @@ inference:
         };
         let segment = emit_rebind_audit_to(
             dir.path(),
-            dir.path(),
             HemisphereRole::Right,
             &prior,
             &new_slot,
@@ -1389,7 +1398,6 @@ inference:
             voice: None,
         };
         let segment = emit_rebind_audit_to(
-            dir.path(),
             dir.path(),
             HemisphereRole::Cerebellum,
             &prior,

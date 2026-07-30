@@ -23,9 +23,8 @@
 //! to the daemon cron: gather `idx_episode` rows, embed + cosine-cluster into
 //! themes, append Dream records to `~/.neoth/dreams/YYYY-MM-DD.jsonl`.
 //!
-//! Emits `0xF4 DREAM_COMPOSED` for the audit trail — best-effort, and only when
-//! no daemon owns the WAL writer (a live daemon's nightly pass is the primary
-//! path; a one-shot writer would race the daemon's segment).
+//! Emits `0xF4 DREAM_COMPOSED` through a collision-resistant, home-bound
+//! standalone WAL.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -361,6 +360,7 @@ async fn run_now(
     // chat-provider call per cluster, which on a metered cloud provider
     // would bill). Built only when the flag is on AND a provider is
     // configured; otherwise deterministic `cluster-N-seed-id` labels.
+    let mut chat_audit = None;
     let chat: Option<crate::providers::cost_authorization::AuthorizedProvider> = if config
         .dreaming
         .summarize_themes
@@ -372,16 +372,21 @@ async fn run_now(
             Ok(provider) => {
                 let default_model =
                     crate::providers::provider_default_wire_model(provider.as_ref());
-                Some(
-                    crate::providers::cost_authorization::AuthorizedProvider::from_box(
-                    provider,
+                let audit =
                     crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
                         config.autonomy_policy(),
                         config.tokens.max_per_request,
                     )
-                    .context("open cost-authorization WAL for dream theme summaries")?,
-                    default_model,
-                    "dream.now.theme_summary",
+                    .await
+                    .context("open cost-authorization WAL for dream theme summaries")?;
+                let authorizer = audit.authorizer();
+                chat_audit = Some(audit);
+                Some(
+                    crate::providers::cost_authorization::AuthorizedProvider::from_box(
+                        provider,
+                        authorizer,
+                        default_model,
+                        "dream.now.theme_summary",
                     ),
                 )
             }
@@ -399,10 +404,18 @@ async fn run_now(
     // The pass-level writer remains None because `emit_dream_composed` below
     // owns that event. Any theme-summary cloud leaf has its independent,
     // collision-resistant cost/permission WAL through `chat` above.
-    let report = run_one_pass(&home, embed.as_deref(), chat.as_ref(), &pass_config, None).await?;
+    let report = run_one_pass(&home, embed.as_deref(), chat.as_ref(), &pass_config, None).await;
+    if let Some(audit) = chat_audit {
+        audit
+            .finish(chat)
+            .await
+            .context("finalize dream theme-summary provider-call audit WAL")?;
+    } else {
+        drop(chat);
+    }
+    let report = report?;
 
-    // Best-effort DREAM_COMPOSED audit — only when this process wrote dreams
-    // AND no daemon owns the writer (avoid racing the daemon's segment).
+    // Best-effort DREAM_COMPOSED audit — only when this process wrote dreams.
     if report.dreams_written > 0 {
         emit_dream_composed(&report);
     }
@@ -412,28 +425,24 @@ async fn run_now(
 }
 
 fn emit_dream_composed(report: &PassReport) {
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    if matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
-    ) {
-        tracing::info!(
-            "dream: daemon is live — skipping one-shot DREAM_COMPOSED audit to avoid a writer race"
-        );
+    let home = FreedomConfig::default_neoth_home();
+    let now_unix = crate::time::now_unix_secs();
+    // Shared payload builder — identical shape to the daemon cron's 0xF4
+    // frame (only the emit mechanism + provenance flag differ).
+    let payload = dream_composed_payload(report, now_unix);
+    let wal_dir = home.join("wal");
+    if let Err(error) = std::fs::create_dir_all(&wal_dir) {
+        tracing::warn!(%error, "dream: WAL directory unavailable; DREAM_COMPOSED not recorded");
         return;
     }
-    let segment = FreedomConfig::default_wal_dir().join("000001.wal");
-    let (writer, _join) = match crate::wal::writer::spawn(segment) {
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "dream-composed");
+    let (writer, _join) = match crate::wal::writer::spawn_for_home(segment, home) {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(error = %e, "dream: WAL writer spawn failed; DREAM_COMPOSED not recorded");
             return;
         }
     };
-    let now_unix = crate::time::now_unix_secs();
-    // Shared payload builder — identical shape to the daemon cron's 0xF4
-    // frame (only the emit mechanism + provenance flag differ).
-    let payload = dream_composed_payload(report, now_unix);
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_DREAM_COMPOSED, &payload)
             .build();

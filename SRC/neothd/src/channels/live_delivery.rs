@@ -584,9 +584,13 @@ mod tests {
         // Keep HMAC/key-recovery state inside this test's temp home. Using
         // `spawn()` would make independently executed nextest cases race on
         // the runner's process-global ~/.neoth key state.
-        let (writer, join) =
-            crate::wal::writer::spawn_for_home(dir.path().join("ld.wal"), dir.path().to_path_buf())
-                .unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let (writer, join) = crate::wal::writer::spawn_for_home(
+            wal_dir.join("live-delivery-test-000001.wal"),
+            dir.path().to_path_buf(),
+        )
+        .unwrap();
         (writer, join, dir)
     }
 
@@ -654,7 +658,7 @@ mod tests {
         let mut live =
             LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Slack, fast_config());
         let (writer, join, dir) = test_writer();
-        let seg = dir.path().join("ld.wal");
+        let seg = dir.path().join("wal").join("live-delivery-test-000001.wal");
 
         let first = live.send_or_edit(&writer, "draft", false).await.unwrap();
         let second = live.send_or_edit(&writer, "final", true).await.unwrap();
@@ -680,7 +684,7 @@ mod tests {
         let mut live =
             LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Discord, fast_config());
         let (writer, join, dir) = test_writer();
-        let seg = dir.path().join("ld.wal");
+        let seg = dir.path().join("wal").join("live-delivery-test-000001.wal");
 
         let first = live.send_or_edit(&writer, "one", false).await.unwrap();
         let second = live.send_or_edit(&writer, "two", false).await.unwrap();
@@ -820,7 +824,7 @@ mod tests {
         let ch = Arc::new(MockChannel::new(false));
         let mut live = LiveDelivery::new(ch, "c1".into(), ChannelKind::Telegram, fast_config());
         let (writer, join, dir) = test_writer();
-        let seg = dir.path().join("ld.wal");
+        let seg = dir.path().join("wal").join("live-delivery-test-000001.wal");
 
         live.send_or_edit(&writer, "draft", false).await.unwrap();
         live.send_or_edit(&writer, "final", true).await.unwrap();
@@ -923,7 +927,7 @@ mod tests {
             Err(anyhow::anyhow!("upstream exposed detail")),
         ]));
         let (writer, join, dir) = test_writer();
-        let seg = dir.path().join("ld.wal");
+        let seg = dir.path().join("wal").join("live-delivery-test-000001.wal");
 
         let result = collect_provider_stream(stream, live, &writer, 1024)
             .await

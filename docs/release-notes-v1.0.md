@@ -53,14 +53,21 @@ These are unfinished v1 contracts, not accepted post-1.0 limitations:
   `hemispheres test --live` flag. Those are two narrow correctness fixes only.
   OpenClaw-class provider/auth/model/capability parity across every Hemisphere,
   Skill, Cron, Buddy, GUI and migration consumer remains an open v1.0 contract.
-- **Installed-Skill authority:** capability-bound storage, generation receipts
-  and typed repairability prevent partial/stale lifecycle success, but they are
-  not activation authority. External provenance, enabled state, effective tool
-  scope and the meaning of an omitted/empty allowlist remain open.
+- **Installed-Skill authority:** generation and install receipts prove
+  transactional publication, not runtime authority. An external installed
+  Skill is routable only when its versioned authenticated authority record and
+  Current Anchor exactly bind package generation/incarnation, terminal receipt,
+  provenance, enabled state, effective tool scope, delegation, model, source,
+  and policy. Missing, stale, revoked, edited, or mismatched authority falls
+  back to bundled-only routing. Running-daemon adoption/revocation, subprocess
+  MCP reconnect/poisoning, Buddy parity, and exact-head gates remain open under
+  GOLD-R3-17.
 - **Recurring updater egress:** daemon update lanes are reload-aware but
-  deliberately report `SkippedByGate` and perform no GitHub/npm/Git probe until
-  request-bound transport authorization and mandatory intent/result WAL are
-  wired. Manual signed update remains available.
+  deliberately report `SkippedByGate` before unattended GitHub/npm/Git
+  transport because the request-bound network leaf is not yet authorized.
+  Configured apply intent is separately denied before staging, process handoff,
+  or replacement until its finite lifecycle and kill/reap contract is wired.
+  Manual signed update remains available.
 
 ## Implemented boundaries and operational limitations
 
@@ -107,7 +114,7 @@ above.
 | Coding buddy | Planning, canvas/Kanban, repo memory, cargo/check loop, review promotion, recall of decisions. |
 | Release self-knowledge | Every archive and native installer carries a pinned-Graphify map of the exact tag. Runtime verification binds version, source HEAD, closed file set, and canonical payload digest; upgrade/uninstall preserve operator-owned `User Overlays`. |
 | Automation | Local cron plus a default-off, loopback-only n8n ingress API with bearer scopes, endpoint-specific consent/cost gates and typed request/downstream audit events. Zero-friction post-install n8n coupling and the shared adoption lifecycle remain open. |
-| Skills | Bounded, no-follow generation install/create/uninstall with typed preflight/final receipts and broken-entry repairability. External activation/tool authority remains an open Gold contract; Skill receipts are not signatures or capability grants. |
+| Skills | Bounded, no-follow generation install/create/uninstall with typed preflight/final receipts and broken-entry repairability. Receipts prove publication, not authority: external routing additionally requires a versioned authenticated authority record plus Current Anchor that exactly binds generation/incarnation, terminal receipt, provenance, enabled state, effective tool scope, delegation, model, source, and policy. Missing, stale, revoked, edited, or mismatched authority is bundled-only. Running-daemon adoption/revocation, subprocess MCP reconnect/poisoning, Buddy parity, and exact-head gates remain open under GOLD-R3-17. |
 | WASM plugins | Exact manifest/WASM-digest approval, runtime capability enforcement, revocation, bounded discovery, and hostcall WAL events. |
 | Private mesh | Authenticated peeroxide/iroh carriers share durable per-peer pending frames, exact cursor-bound ACKs, restart replay, and transactional receive/materialization for canonical memory and ground-truth snapshots. Raw ingress remains default-off and the mesh is intentionally scoped to typed NEOTH content rather than arbitrary device files. |
 | Doctor | Setup diagnostics for config, secrets, models, channels, plugins, providers, disk, WAL, and cluster discovery. |

@@ -19,7 +19,9 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-use crate::wal::payloads_u04::{ComponentOutcome, UpdaterTaskKind, UpdaterTaskResultPayload};
+use crate::wal::payloads_u04::{
+    ComponentOutcome, UpdaterPassIdentity, UpdaterTaskKind, UpdaterTaskResultPayload,
+};
 
 /// One component spec — name + current version + how to discover
 /// the latest version. Pure-data so tests construct directly.
@@ -58,6 +60,10 @@ pub fn run_updater_pass(
         .collect();
 
     UpdaterTaskResultPayload {
+        // The pure pipeline does not own the durable FIRED append. Its daemon
+        // caller replaces this legacy marker with the pass identity created
+        // before FIRED is written.
+        identity: UpdaterPassIdentity::legacy(),
         task_kind,
         ts_unix,
         duration_ms: started.elapsed().as_millis().min(u32::MAX as u128) as u32,

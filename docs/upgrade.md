@@ -73,13 +73,37 @@ Windows Setup, macOS PKG/App replacement, and Linux DEB/RPM through the native
 package manager are still open v1.0 release work; use the authenticated native
 installer manually until those handoffs are wired and clean-machine tested.
 
-Background self-update is **off by default**. When `auto_update.enabled` is on,
-the daemon checks at `check_interval_secs`; setting that interval to `0`
-disables the task. `auto_apply: true` at `Elevated`/`Full` permits only verified
-**staging** plus notification. The daemon never replaces its own executable:
-the commit step remains `neoth update --self --apply`. Manual check/apply uses
-the same repo, release ring, and optional validated `target_triple`; changing
-any of them invalidates a previously staged artifact and forces a fresh fetch.
+Background self-update is **off by default**. Enabling `auto_update.enabled`
+arms a reload-owned recurring supervisor and its operator-visible status only.
+The current v1 boundary deliberately returns `SkippedByGate` before every
+unattended GitHub/npm/Git probe, download, stage, process handoff, or binary
+replacement. `auto_apply: true` records future verified-staging intent; it does
+not grant those effects. Manual signed `neoth update --check` and
+`neoth update --self --apply` remain available.
+
+Inspect the durable recurring state with:
+
+```bash
+# Default instance home (parent of ~/.neoth/freedom.yaml)
+neoth updater status
+
+# Another configured instance home
+neoth updater status --config /srv/neoth/freedom.yaml
+
+# Complete rotation chain rooted at a canonical segment in that home's wal/
+neoth updater status --config /srv/neoth/freedom.yaml \
+  --wal-chain-base /srv/neoth/wal/updater-000001.wal
+
+# Diagnostic only: inspect exactly one segment, without following rotations
+neoth updater status --wal-segment /srv/neoth/wal/updater-000001.wal
+```
+
+The default and chain modes recover versioned `FIRED`/`RESULT` pairs across the
+bounded authenticated home WAL. A `BOOT` without its terminal result remains
+visible as interrupted or indeterminate rather than being presented as healthy
+success. Human output is capped to the newest ten task states; JSON output
+retains the same bounded projection contract. `--wal-segment` intentionally
+does not infer the config home and cannot be combined with `--config`.
 
 ## Manual upgrade (download yourself)
 

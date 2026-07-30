@@ -1,32 +1,34 @@
 //! MV-01b — daemon mutation primitives for NEOTH-managed updates.
 //!
-//! Elevated/Full plus the operator update switches select the mutation lanes,
-//! but recurring execution currently remains fail-closed for every tier. The
-//! reload-owned supervisor passes an explicit denied gate until the concrete
-//! npm/GitHub/install leaves consume request-bound authority and emit mandatory
-//! intent/result WAL. Manual `neoth update` commands are unaffected.
+//! Elevated/Full plus the operator update switches select the mutation lanes.
+//! NEOTH self-probe and verified self-stage now consume request-bound authority
+//! plus mandatory intent/result WAL at every concrete GitHub/stage leaf. CLI
+//! npm/OSV/install mutation remains explicitly fail-closed until its own leaves
+//! enforce the same contract. Manual `neoth update` commands are unaffected.
 //!
 //! Scope: the three NEOTH-managed CLIs (claude-cli, antigravity-cli, codex)
-//! via [`crate::updater::check_all`] + [`crate::updater::apply_one`]. Each
-//! component actually updated emits one `0x13 UPDATE_RAN` frame carrying
-//! `{component, old_version, new_version, status, ts}` so the audit chain
-//! records exactly what the daemon changed on the operator's box and when.
+//! via [`crate::updater::check_all`] + [`crate::updater::apply_one`]. Their
+//! recurring lanes stay denied until each concrete probe/install leaf consumes
+//! request-bound authority and records mandatory terminal WAL. A future CLI
+//! adoption must also restore a correlated `0x13 UPDATE_RAN` outcome for every
+//! component mutation; no active recurring CLI mutation claims that receipt
+//! today.
 //!
-//! The `neoth` daemon binary's own self-replacement (`updater::self_update`)
-//! is NOT auto-applied here — unattended self-replacement of the running
-//! daemon is a separate, more delicate slice. Operators apply it via
-//! `neoth update --self --apply` (which emits `0xD2`).
+//! The running daemon is never auto-replaced here. The authorized unattended
+//! lane may download, verify and stage a candidate; the actual replacement is
+//! operator-initiated via `neoth update --self --apply` (which emits `0xD2`).
 //!
 //! The pre-release standalone loop entry points were removed instead of kept
 //! as silent no-ops. Embedders get a compile error rather than believing an
 //! update loop is active when the daemon supervisor is not running.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::permissions::AutonomyLevel;
 use crate::updater;
 use crate::updater::pipeline::GateDecision;
-use crate::wal::events::{EVENT_TYPE_SELF_UPDATE_APPLIED, EVENT_TYPE_UPDATE_RAN};
+use crate::wal::events::EVENT_TYPE_SELF_UPDATE_APPLIED;
 use crate::wal::writer::WalWriterHandle;
 use crate::wal::{EventFlags, HeaderBuilder};
 
@@ -39,11 +41,16 @@ pub fn auto_apply_enabled(autonomy: AutonomyLevel) -> bool {
 }
 
 /// Result of one reload-owned mutating lane pass.
-#[allow(dead_code)] // `Completed` becomes reachable with request-bound leaf permits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RecurringMutationOutcome {
     BlockedByGate,
+    SkippedByPolicy,
+    GenerationRetired,
     Completed,
+    Staged {
+        prior_version: String,
+        staged_version: String,
+    },
 }
 
 /// One CLI auto-apply pass. The denied recurring-egress gate is consumed before
@@ -53,7 +60,7 @@ pub(crate) async fn run_cli_auto_apply_pass(
     gate: GateDecision,
     writer: &WalWriterHandle,
     security_policy: &crate::config::SecurityPolicy,
-) -> RecurringMutationOutcome {
+) -> Result<RecurringMutationOutcome, String> {
     match gate {
         GateDecision::Deny { reason } => {
             tracing::debug!(%reason, "CLI auto-apply blocked before recurring egress");
@@ -65,72 +72,7 @@ pub(crate) async fn run_cli_auto_apply_pass(
         }
     }
     let _ = (writer, security_policy);
-    RecurringMutationOutcome::BlockedByGate
-}
-
-/// One auto-apply pass: probe all CLIs, apply each flagged update, emit a
-/// `0x13 UPDATE_RAN` frame per component actually updated.
-#[allow(dead_code)] // Activated only with request-bound authority at every leaf.
-async fn run_pass(writer: &WalWriterHandle, security_policy: &crate::config::SecurityPolicy) {
-    let statuses = updater::check_all().await;
-    for status in statuses {
-        if !status.update_available {
-            continue;
-        }
-        let component = status.component;
-        let old_version = status.installed.clone();
-        match updater::apply_one(component, security_policy).await {
-            Ok(()) => {
-                // Re-probe so the frame records the version actually live
-                // after the install (falls back to the probed `latest`).
-                let new_version = updater::check_one(component)
-                    .await
-                    .installed
-                    .or(status.latest);
-                emit_update_ran(
-                    writer,
-                    component.name(),
-                    old_version,
-                    new_version,
-                    "applied",
-                )
-                .await;
-                tracing::info!(component = component.name(), "CLI auto-updated");
-            }
-            Err(e) => {
-                tracing::warn!(
-                    component = component.name(),
-                    error = %e,
-                    "CLI auto-update failed (will retry next pass)"
-                );
-            }
-        }
-    }
-}
-
-/// Emit one `0x13 UPDATE_RAN` audit frame. Best-effort — a WAL append
-/// failure logs and is swallowed (the install already happened).
-async fn emit_update_ran(
-    writer: &WalWriterHandle,
-    component: &str,
-    old_version: Option<String>,
-    new_version: Option<String>,
-    status: &str,
-) {
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "component": component,
-        "old_version": old_version,
-        "new_version": new_version,
-        "status": status,
-        "ts": now_unix_secs(),
-    }))
-    .expect("UPDATE_RAN payload contains only infallible JSON values");
-    let header = HeaderBuilder::new(EVENT_TYPE_UPDATE_RAN, &payload)
-        .flags(EventFlags::SYNTHETIC)
-        .build();
-    if let Err(e) = writer.append(header, payload).await {
-        tracing::warn!(component, error = %e, "UPDATE_RAN WAL emit failed (non-fatal)");
-    }
+    Ok(RecurringMutationOutcome::BlockedByGate)
 }
 
 fn now_unix_secs() -> u64 {
@@ -154,66 +96,82 @@ fn now_unix_secs() -> u64 {
 pub(crate) async fn run_self_stage_pass(
     gate: GateDecision,
     home: &Path,
-    config: &crate::config::AutoUpdateConfig,
+    snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
     writer: &WalWriterHandle,
-) -> RecurringMutationOutcome {
+) -> Result<RecurringMutationOutcome, String> {
     match gate {
         GateDecision::Deny { reason } => {
             tracing::debug!(%reason, "neoth-self staging blocked before recurring egress");
+            Ok(RecurringMutationOutcome::BlockedByGate)
         }
         GateDecision::Allow => {
-            tracing::error!(
-                "rejected unexpected recurring self-stage Allow before leaf authority wiring"
+            let authority = updater::self_update::RecurringSelfUpdateAuthority::for_stage(
+                writer.clone(),
+                Arc::clone(&snapshot),
             );
+            run_self_stage_pass_allowed(home, &snapshot.config().auto_update, writer, &authority)
+                .await
         }
     }
-    let _ = (home, config, writer);
-    RecurringMutationOutcome::BlockedByGate
 }
 
 /// One staging pass: probe GitHub, and if a newer release exists,
 /// download + verify + stage it + emit `0xD2 (staged_pending)` + notify.
-/// Every failure logs + the loop retries next tick — never crashes the
-/// daemon, never swaps the binary.
-#[allow(dead_code)] // Activated only with request-bound authority at every leaf.
+/// Permission refusal becomes an honest skipped pass. Configuration,
+/// transport, verification, stage, notification and mandatory WAL failures
+/// propagate to the reload-owned supervisor so its outer FIRED/RESULT pair
+/// cannot claim success.
 async fn run_self_stage_pass_allowed(
     home: &Path,
     config: &crate::config::AutoUpdateConfig,
     writer: &WalWriterHandle,
-) {
+    authority: &updater::self_update::RecurringSelfUpdateAuthority,
+) -> Result<RecurringMutationOutcome, String> {
     let target = match updater::self_update::resolve_release_target(config.target_triple.as_deref())
     {
         Ok(target) => target,
         Err(error) => {
-            tracing::warn!(error = %error, "neoth-self staging: invalid release target");
-            return;
+            return Err(format!(
+                "neoth-self staging rejected the configured release target: {error}"
+            ));
         }
     };
-    let release =
-        match updater::self_update::fetch_release_for_channel(&config.repo, config.channel).await {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(error = %e, "neoth-self staging: release probe failed");
-                return;
-            }
-        };
+    let release = match updater::self_update::fetch_release_for_channel_authorized(
+        authority,
+        &config.repo,
+        config.channel,
+    )
+    .await
+    {
+        Ok(release) => release,
+        Err(error) if crate::updater::authority::error_is_generation_retired(&error) => {
+            return Ok(RecurringMutationOutcome::GenerationRetired);
+        }
+        Err(error) if crate::updater::authority::error_is_policy_refusal(&error) => {
+            return Ok(RecurringMutationOutcome::SkippedByPolicy);
+        }
+        Err(error) => {
+            return Err(format!(
+                "neoth-self staging release metadata leaf failed: {error}"
+            ));
+        }
+    };
     let current = updater::self_update::current_version();
     let is_newer = match updater::self_update::version_is_newer(&release.tag_name, current) {
         Ok(is_newer) => is_newer,
         Err(error) => {
-            tracing::warn!(
-                version = %release.tag_name,
-                error = %error,
-                "neoth-self staging: release tag is not valid SemVer"
-            );
-            return;
+            return Err(format!(
+                "neoth-self staging release tag is not valid SemVer: {error}"
+            ));
         }
     };
     if !is_newer {
-        return; // already current — nothing to stage
+        return Ok(RecurringMutationOutcome::Completed);
     }
     let stage_dir = home.join("staged");
-    match updater::self_update::stage_update(
+    let pending = match updater::self_update::stage_update_authorized(
+        authority,
+        home,
         &release,
         &config.repo,
         config.channel,
@@ -227,23 +185,31 @@ async fn run_self_stage_pass_allowed(
     )
     .await
     {
-        Ok(pending) => {
-            emit_self_update_staged(writer, &pending).await;
-            if let Err(error) = write_stage_notification(home, &pending) {
-                tracing::warn!(%error, "self-update notification sidecar write failed");
-            }
-            tracing::info!(
-                to = %pending.to_version,
-                channel = %pending.channel,
-                target = %pending.target_triple,
-                sig = %pending.signature_status,
-                "neoth-self update staged + verified; awaiting operator `neoth update --self --apply`"
-            );
+        Ok(pending) => pending,
+        Err(error) if crate::updater::authority::error_is_generation_retired(&error) => {
+            return Ok(RecurringMutationOutcome::GenerationRetired);
         }
-        Err(e) => {
-            tracing::warn!(error = %e, "neoth-self staging failed (will retry next tick)");
+        Err(error) if crate::updater::authority::error_is_policy_refusal(&error) => {
+            return Ok(RecurringMutationOutcome::SkippedByPolicy);
         }
-    }
+        Err(error) => {
+            return Err(format!("neoth-self staging leaf failed: {error}"));
+        }
+    };
+    emit_self_update_staged(writer, &pending).await?;
+    write_stage_notification(home, &pending)
+        .map_err(|error| format!("self-update notification sidecar write failed: {error}"))?;
+    tracing::info!(
+        to = %pending.to_version,
+        channel = %pending.channel,
+        target = %pending.target_triple,
+        sig = %pending.signature_status,
+        "neoth-self update staged + verified; awaiting operator `neoth update --self --apply`"
+    );
+    Ok(RecurringMutationOutcome::Staged {
+        prior_version: current.to_string(),
+        staged_version: pending.to_version,
+    })
 }
 
 /// Emit the `0xD2 SELF_UPDATE_APPLIED` frame with `trigger_source =
@@ -253,16 +219,15 @@ async fn run_self_stage_pass_allowed(
 async fn emit_self_update_staged(
     writer: &WalWriterHandle,
     pending: &updater::self_update::PendingUpdate,
-) {
+) -> Result<(), String> {
     let payload = serde_json::to_vec(&serde_json::json!({
         "from_version": updater::self_update::current_version(),
         "to_version": pending.to_version,
         "channel": pending.channel.as_str(),
         "target_triple": pending.target_triple,
         "archive_sha256": pending.archive_sha256,
-        "download_url": pending.download_url,
         "signature_status": pending.signature_status,
-        "staged_archive": pending.staged_archive,
+        "stage_generation": pending.stage_generation,
         "trigger_source": "staged_pending",
         "ts_unix": now_unix_secs(),
     }))
@@ -270,9 +235,11 @@ async fn emit_self_update_staged(
     let header = HeaderBuilder::new(EVENT_TYPE_SELF_UPDATE_APPLIED, &payload)
         .flags(EventFlags::SYNTHETIC)
         .build();
-    if let Err(e) = writer.append(header, payload).await {
-        tracing::warn!(error = %e, "SELF_UPDATE_APPLIED (staged) WAL emit failed (non-fatal)");
-    }
+    writer
+        .append(header, payload)
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("mandatory staged self-update WAL append failed: {error}"))
 }
 
 /// Drop an operator-facing notification sidecar
@@ -309,7 +276,6 @@ fn write_stage_notification(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::updater::UpdateStatus;
 
     #[test]
     fn auto_apply_gate_only_elevated_and_full() {
@@ -330,28 +296,20 @@ mod tests {
 
         assert_eq!(
             run_cli_auto_apply_pass(gate(), &writer, &Default::default()).await,
-            RecurringMutationOutcome::BlockedByGate
+            Ok(RecurringMutationOutcome::BlockedByGate)
         );
 
-        let config = crate::config::AutoUpdateConfig {
-            enabled: true,
-            auto_apply: true,
-            check_interval_secs: 60,
-            repo: "owner/repo".into(),
-            ..Default::default()
-        };
+        let controller = crate::config::reload::ReloadController::new(
+            crate::config::FreedomConfig::default(),
+            dir.path().join("freedom.yaml"),
+        );
         assert_eq!(
-            run_self_stage_pass(gate(), dir.path(), &config, &writer).await,
-            RecurringMutationOutcome::BlockedByGate
+            run_self_stage_pass(gate(), dir.path(), controller.accepted_snapshot(), &writer).await,
+            Ok(RecurringMutationOutcome::BlockedByGate)
         );
         assert_eq!(
             run_cli_auto_apply_pass(GateDecision::Allow, &writer, &Default::default()).await,
-            RecurringMutationOutcome::BlockedByGate,
-            "an accidental Allow must remain inert until leaf permits land"
-        );
-        assert_eq!(
-            run_self_stage_pass(GateDecision::Allow, dir.path(), &config, &writer).await,
-            RecurringMutationOutcome::BlockedByGate,
+            Ok(RecurringMutationOutcome::BlockedByGate),
             "an accidental Allow must remain inert until leaf permits land"
         );
         assert!(!dir.path().join("staged").exists());
@@ -387,6 +345,7 @@ mod tests {
             signature_status: "verified".into(),
             staged_archive: home.path().join("stage.tar.gz").display().to_string(),
             staged_signature: None,
+            stage_generation: None,
             target_triple: "x86_64-unknown-linux-gnu".into(),
             staged_ts_unix: 1,
         };
@@ -399,11 +358,5 @@ mod tests {
             serde_json::from_slice(&std::fs::read(first).unwrap()).unwrap();
         assert_eq!(parsed["kind"], "self_update_staged");
         assert_eq!(parsed["to_version"], "1.0.1");
-    }
-
-    #[allow(dead_code)]
-    fn _status_field_access(s: &UpdateStatus) -> bool {
-        // Compile-time guard: the fields run_pass reads must exist.
-        s.update_available && s.installed.is_some() && s.latest.is_some()
     }
 }

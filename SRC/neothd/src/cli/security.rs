@@ -1112,7 +1112,7 @@ async fn append_hmac_key_rotated(home: &Path, daemon_live: bool, payload: &[u8])
         &wal_dir,
         crate::wal::writer::HMAC_ROTATION_SURFACE,
     );
-    let (writer, join) = crate::wal::writer::spawn(segment)
+    let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
         .context("spawn one-shot HMAC-key rotation WAL writer")?;
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED, payload)

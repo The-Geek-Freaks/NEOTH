@@ -155,8 +155,9 @@ pub(crate) fn step7_autonomy(
 
 /// V03-09 Phase 2a wizard step. Two questions, both default to
 /// the conservative answer so a hammered-Enter operator leaves
-/// the daemon in the safest mode (no background HTTP traffic to
-/// GitHub, no auto-apply).
+/// the recurring supervisor disabled. Enabling it records operator intent and
+/// exposes status; the current v1 boundary performs no unattended probe,
+/// staging, handoff, or replacement effect.
 ///
 /// Non-interactive runs preserve the hydrated/default policy unless an
 /// explicit `--auto-update`, `--auto-update-apply`, or `--no-auto-update`
@@ -199,7 +200,8 @@ pub(crate) fn step7b_auto_update(
     {
         let check = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
             .with_prompt(
-                "[7b/9] Allow NEOTH to check GitHub for newer releases? (no background traffic until you say yes)",
+                "[7b/9] Arm recurring update status? The current v1 supervisor remains \
+                 fail-closed before unattended GitHub/npm/Git traffic.",
             )
             .default(false)
             .interact()
@@ -209,7 +211,9 @@ pub(crate) fn step7b_auto_update(
             state.auto_update.enabled = true;
             let apply = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
                 .with_prompt(
-                    "  Also auto-stage verified updates (download + verify, then notify)? The binary is replaced only after `neoth update --self --apply`. Recommend NO for check-only.",
+                    "  Record future verified-staging intent too? Current v1 still performs \
+                     no unattended probe, download, stage, handoff, or replacement; use \
+                     `neoth update --self --apply` explicitly.",
                 )
                 .default(false)
                 .interact()
@@ -429,7 +433,8 @@ pub(crate) fn step7d_supervisor(
         let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
             .with_prompt(format!(
                 "[7d/9] Keep NEOTH running in the background + auto-restart it ({})? \
-                 Needed for auto-update to take effect; survives logout/crash. No root required.",
+                 Needed for channels, cron, and recurring update status; survives \
+                 logout/crash. No root required.",
                 kind.as_str()
             ))
             .default(false)
@@ -454,8 +459,8 @@ pub(crate) fn step7d_supervisor(
         } else {
             state.supervisor.enabled = false;
             println!(
-                "  [7d/9] supervisor: skipped. Run NEOTH with `neoth serve`; auto-update will \
-                 stage updates but you'll restart manually to finish them."
+                "  [7d/9] supervisor: skipped. Run NEOTH with `neoth serve`; recurring update \
+                 status remains inactive and manual signed update commands still work."
             );
         }
     }

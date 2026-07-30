@@ -111,7 +111,7 @@ async fn run_export(
         .context("invalid --dest: expected a base64 X25519 public key (32 bytes)")?;
     let home = FreedomConfig::default_neoth_home();
     let cfg = FreedomConfig::load_from_default_path_or_default()?;
-    let caps = cfg.transfer;
+    let caps = &cfg.transfer;
     let days = days.unwrap_or(DEFAULT_WINDOW_DAYS);
 
     let (payload, event_count) = collect_memory_payload(&home, days)?;
@@ -153,10 +153,10 @@ async fn run_export(
 
     // Audit pre-flight (#1): under required-audit, a live daemon whose audit-RPC
     // listener is unreachable means the export would go un-audited — refuse.
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
-        Ok(Some(_))
-    );
+    let pidfile = home.join("neothd.pid");
+    let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon ownership via {}", pidfile.display()))?
+        .is_some();
     crate::daemon::audit_rpc::enforce_required_audit(
         cfg.audit_rpc.required_for_oneshot_permission_events,
         daemon_live,
@@ -176,8 +176,10 @@ async fn run_export(
         bundle_json.len(),
         event_count,
         days,
+        cfg.audit_rpc.required_for_oneshot_permission_events,
     )
-    .await;
+    .await
+    .context("transfer bundle was written, but its required export audit did not complete")?;
     render_export(
         &dest_b64,
         event_count,
@@ -199,7 +201,8 @@ async fn emit_transfer_exported(
     bundle_bytes: usize,
     events: usize,
     days: u32,
-) {
+    required: bool,
+) -> Result<()> {
     let payload = serde_json::to_vec(&serde_json::json!({
         "dest_pubkey_b64": dest_b64,
         "bundle_bytes": bundle_bytes,
@@ -216,29 +219,74 @@ async fn emit_transfer_exported(
         )
         .await
         {
-            tracing::debug!(error = %e, "transfer: 0xF5 forward skipped (daemon listener unreachable)");
+            if required {
+                return Err(anyhow::anyhow!(
+                    "required 0xF5 audit forward was not acknowledged by the live daemon: {e}"
+                ));
+            }
+            tracing::warn!(error = %e, "transfer: 0xF5 forward skipped (daemon listener unreachable)");
         }
-        return;
+        return Ok(());
     }
-    let segment = FreedomConfig::default_wal_dir().join("000001.wal");
-    if let Some(parent) = segment.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let (writer, _join) = match crate::wal::writer::spawn(segment) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(error = %e, "transfer: WAL writer spawn failed; 0xF5 not recorded");
-            return;
+    let wal_dir = home.join("wal");
+    if let Err(e) = std::fs::create_dir_all(&wal_dir) {
+        if required {
+            return Err(e).with_context(|| {
+                format!(
+                    "create required transfer audit WAL directory {}",
+                    wal_dir.display()
+                )
+            });
         }
-    };
+        tracing::warn!(
+            error = %e,
+            wal_dir = %wal_dir.display(),
+            "transfer: WAL directory unavailable; 0xF5 not recorded"
+        );
+        return Ok(());
+    }
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "transfer-export");
+    let (writer, completion) =
+        match crate::wal::writer::spawn_for_home_with_completion(segment, home.to_path_buf()) {
+            Ok(pair) => pair,
+            Err(e) => {
+                if required {
+                    return Err(e).context("spawn required home-bound transfer audit WAL writer");
+                }
+                tracing::warn!(error = %e, "transfer: WAL writer spawn failed; 0xF5 not recorded");
+                return Ok(());
+            }
+        };
     let header = crate::wal::HeaderBuilder::new(
         crate::wal::events::EVENT_TYPE_MEMORY_TRANSFER_EXPORTED,
         &payload,
     )
     .build();
-    if let Err(e) = writer.try_append_sync(header, payload) {
+    let append_result = writer.append(header, payload).await;
+    drop(writer);
+    let completion_result = completion.wait().await;
+    if required {
+        return match (append_result, completion_result) {
+            (Ok(_), Ok(())) => Ok(()),
+            (Err(append), Ok(())) => {
+                Err(append).context("append required 0xF5 transfer audit frame")
+            }
+            (Ok(_), Err(shutdown)) => {
+                Err(shutdown).context("finalize required transfer audit WAL writer")
+            }
+            (Err(append), Err(shutdown)) => Err(anyhow::anyhow!(
+                "{append}; additionally failed to finalize required transfer audit WAL: \
+                 {shutdown}"
+            )),
+        };
+    }
+    if let Err(e) = append_result {
         tracing::warn!(error = %e, "transfer: 0xF5 frame append failed (audit gap)");
     }
+    if let Err(e) = completion_result {
+        tracing::warn!(error = %e, "transfer: 0xF5 WAL writer finalization failed (audit gap)");
+    }
+    Ok(())
 }
 
 // ── verify / inspect / import ─────────────────────────────────────────────────

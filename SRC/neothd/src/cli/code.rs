@@ -261,12 +261,15 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     .await
     .context("resolve cerebellum hemisphere provider")?;
     let default_model = providers::provider_default_wire_model(provider.as_ref());
-    let provider = providers::cost_authorization::AuthorizedProvider::from_box(
-        provider,
+    let provider_audit =
         providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
             cfg.autonomy_policy(),
             cfg.tokens.max_per_request,
-        )?,
+        )
+        .await?;
+    let provider = providers::cost_authorization::AuthorizedProvider::from_box(
+        provider,
+        provider_audit.authorizer(),
         default_model,
         "coding.decomposer",
     );
@@ -291,84 +294,107 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
         (Some(recall), Some(repo)) => Some(format!("{recall}\n\n{repo}")),
         (recall, repo) => recall.or(repo),
     };
-    let result = decompose(
-        &llm,
-        &conn,
-        session_id,
-        &prompt,
-        project_ctx.as_deref(),
-        now_ns,
-    )
-    .await
-    .context("decompose prompt via cerebellum")?;
-
-    if result.input_truncated {
-        eprintln!("⚠  input was truncated to fit the 12k-token budget");
-    }
-    if let Some(q) = result.clarifying_question.as_ref() {
-        eprintln!("⚠  cerebellum asked a clarifying question:");
-        eprintln!("   {q}");
-    }
-
-    if result.task_ids.is_empty() {
-        // Decomposer surfaced only a clarifying question — flip
-        // session to Abandoned so it doesn't sit in Planning forever
-        // unless the operator re-runs. Their next `neoth code "..."`
-        // opens a fresh session.
-        store::archive_session(
+    let llm_phase: Result<Option<DecompositionResult>> = async {
+        let result = decompose(
+            &llm,
             &conn,
             session_id,
-            SessionStatus::Abandoned,
-            result
-                .clarifying_question
-                .as_deref()
-                .or(Some("decomposer produced no tasks")),
-            None,
+            &prompt,
+            project_ctx.as_deref(),
+            now_ns,
         )
-        .ok();
-        println!(
-            "(no tasks created — session #{} abandoned)",
-            session_id.raw()
-        );
-        return Ok(());
-    }
+        .await
+        .context("decompose prompt via cerebellum")?;
 
-    println!("decomposed into {} task(s):", result.task_ids.len());
+        if result.input_truncated {
+            eprintln!("⚠  input was truncated to fit the 12k-token budget");
+        }
+        if let Some(q) = result.clarifying_question.as_ref() {
+            eprintln!("⚠  cerebellum asked a clarifying question:");
+            eprintln!("   {q}");
+        }
 
-    // GOLD-ADAPT-GRILL-02 — adversarial plan review on the decomposed plan
-    // (spec sections + task list rendered as markdown). Deadlock surfaces
-    // the unresolved critiques and continues — operator sovereignty; the
-    // review must NEVER emit a false approval, and a hard block would make
-    // a flaky reviewer LLM a denial-of-service on `neoth code`.
-    if cfg.coding.plan_review {
-        use crate::coding::plan_review::{MAX_REVIEW_ROUNDS, ReviewOutcome, review_plan};
-        let plan_text = render_plan_text(spec.as_deref(), &prompt, &conn, &result)?;
-        println!("adversarial plan review (≤{MAX_REVIEW_ROUNDS} rounds, cerebellum) …");
-        match review_plan(&llm, &plan_text).await {
-            Ok(ReviewOutcome::Approved { log }) => {
-                println!("plan review: APPROVED after {} round(s)", log.len());
-                write_plan_review_log(&log, session_id);
-            }
-            Ok(ReviewOutcome::Deadlock { log, unresolved }) => {
-                eprintln!(
-                    "⚠  plan review DEADLOCK — {} round(s) without APPROVED; unresolved critiques:",
-                    log.len()
-                );
-                for u in &unresolved {
-                    eprintln!("  • {u}");
+        if result.task_ids.is_empty() {
+            // Decomposer surfaced only a clarifying question — flip
+            // session to Abandoned so it doesn't sit in Planning forever
+            // unless the operator re-runs. Their next `neoth code "..."`
+            // opens a fresh session.
+            store::archive_session(
+                &conn,
+                session_id,
+                SessionStatus::Abandoned,
+                result
+                    .clarifying_question
+                    .as_deref()
+                    .or(Some("decomposer produced no tasks")),
+                None,
+            )
+            .ok();
+            println!(
+                "(no tasks created — session #{} abandoned)",
+                session_id.raw()
+            );
+            return Ok(None);
+        }
+
+        println!("decomposed into {} task(s):", result.task_ids.len());
+
+        // GOLD-ADAPT-GRILL-02 — adversarial plan review on the decomposed plan
+        // (spec sections + task list rendered as markdown). Deadlock surfaces
+        // the unresolved critiques and continues — operator sovereignty; the
+        // review must NEVER emit a false approval, and a hard block would make
+        // a flaky reviewer LLM a denial-of-service on `neoth code`.
+        if cfg.coding.plan_review {
+            use crate::coding::plan_review::{MAX_REVIEW_ROUNDS, ReviewOutcome, review_plan};
+            let plan_text = render_plan_text(spec.as_deref(), &prompt, &conn, &result)?;
+            println!("adversarial plan review (≤{MAX_REVIEW_ROUNDS} rounds, cerebellum) …");
+            match review_plan(&llm, &plan_text).await {
+                Ok(ReviewOutcome::Approved { log }) => {
+                    println!("plan review: APPROVED after {} round(s)", log.len());
+                    write_plan_review_log(&log, session_id);
                 }
-                eprintln!("   (tasks stay queued — review them before dispatching)");
-                write_plan_review_log(&log, session_id);
-            }
-            Err(e) => {
-                eprintln!("⚠  plan review unavailable (reviewer LLM error) — proceeding: {e}");
+                Ok(ReviewOutcome::Deadlock { log, unresolved }) => {
+                    eprintln!(
+                        "⚠  plan review DEADLOCK — {} round(s) without APPROVED; unresolved critiques:",
+                        log.len()
+                    );
+                    for u in &unresolved {
+                        eprintln!("  • {u}");
+                    }
+                    eprintln!("   (tasks stay queued — review them before dispatching)");
+                    write_plan_review_log(&log, session_id);
+                }
+                Err(e) => {
+                    eprintln!("⚠  plan review unavailable (reviewer LLM error) — proceeding: {e}");
+                }
             }
         }
-    }
 
-    if !args.no_assign {
-        auto_classify_and_assign(&conn, &result, Some(&llm as &dyn DecomposerLlm)).await?;
+        if !args.no_assign {
+            auto_classify_and_assign(&conn, &result, Some(&llm as &dyn DecomposerLlm)).await?;
+        }
+
+        Ok(Some(result))
     }
+    .await;
+
+    let audit_finalization = provider_audit
+        .finish(llm)
+        .await
+        .context("finalize cerebellum provider-call audit WAL");
+    let result = match (llm_phase, audit_finalization) {
+        (Ok(result), Ok(())) => result,
+        (Err(operation_error), Ok(())) => return Err(operation_error),
+        (Ok(_), Err(finalization_error)) => return Err(finalization_error),
+        (Err(operation_error), Err(finalization_error)) => {
+            return Err(finalization_error.context(format!(
+                "cerebellum LLM phase also failed before audit finalization: {operation_error:#}"
+            )));
+        }
+    };
+    let Some(result) = result else {
+        return Ok(());
+    };
 
     print_decomposition_summary(&conn, &result)?;
 
@@ -581,7 +607,7 @@ fn intern_label(label: &str) -> &'static str {
 /// bound only one side) — the dispatcher blocks unassigned tasks cleanly.
 /// GR-069b — one-shot WAL writer for the standalone `neoth code` path so the
 /// autonomy decision (0xA0/0xA1), cost estimate, and dispatcher frames land in
-/// the operator's WAL. A timestamp-named segment is independent of the daemon's
+/// the operator's WAL. A UUID-namespaced segment is independent of the daemon's
 /// active segment, so both processes can audit without competing file handles.
 /// When opening the WAL fails, workers remain constructed but the central cloud
 /// boundary blocks dispatch because no audit writer is attached.
@@ -589,10 +615,11 @@ fn coding_audit_writer() -> Option<(
     std::sync::Arc<crate::wal::writer::WalWriterHandle>,
     tokio::task::JoinHandle<()>,
 )> {
-    let wal_dir = FreedomConfig::default_wal_dir();
+    let home = FreedomConfig::default_neoth_home();
+    let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir).ok()?;
-    let seg = wal_dir.join(format!("{:020}.wal", crate::time::now_unix_ns()));
-    match crate::wal::writer::spawn(seg) {
+    let seg = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "code");
+    match crate::wal::writer::spawn_for_home(seg, home) {
         Ok((w, j)) => Some((std::sync::Arc::new(w), j)),
         Err(e) => {
             tracing::warn!(error = %e, "coding: WAL audit writer spawn failed (gate still enforced)");

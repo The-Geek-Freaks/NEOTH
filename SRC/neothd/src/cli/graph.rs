@@ -27,8 +27,8 @@
 //!    `ingest_sources` with scope `graphify-corpus-<corpus_name>` (NOT
 //!    `WIKI_SCOPE` / `neoth-self-map` — distinct scope per corpus for clean
 //!    revoke boundary, pitfall #3/#7).
-//! 7. Emit `0xFB SELF_MAP_COMPLETE` via a best-effort one-shot WAL write
-//!    (pitfall #4 — gracefully skips when daemon owns the WAL).
+//! 7. Emit `0xFB SELF_MAP_COMPLETE` via a collision-resistant, home-bound
+//!    best-effort standalone WAL write.
 //! 8. Print a human-readable summary table.
 
 use std::path::PathBuf;
@@ -496,11 +496,14 @@ async fn emit_wal_frame(
     communities_labeled: u64,
     corpus: &str,
 ) {
-    let segment = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
-    if let Some(p) = segment.parent() {
-        let _ = std::fs::create_dir_all(p);
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let wal_dir = home.join("wal");
+    if let Err(error) = std::fs::create_dir_all(&wal_dir) {
+        warn!(%error, "GRAPH-06: WAL directory unavailable (non-fatal); 0xFB not recorded");
+        return;
     }
-    let (writer, _join) = match crate::wal::writer::spawn(segment) {
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "graph-self-map");
+    let (writer, join) = match crate::wal::writer::spawn_for_home(segment, home) {
         Ok(p) => p,
         Err(e) => {
             warn!(error = %e, "GRAPH-06: WAL writer spawn failed (non-fatal); 0xFB not recorded");
@@ -519,6 +522,10 @@ async fn emit_wal_frame(
     let header = HeaderBuilder::new(EVENT_TYPE_SELF_MAP_COMPLETE, &payload).build();
     if let Err(e) = writer.try_append_sync(header, payload) {
         warn!(error = %e, "GRAPH-06: WAL 0xFB append failed (non-fatal)");
+    }
+    drop(writer);
+    if let Err(error) = join.await {
+        warn!(%error, "GRAPH-06: WAL writer task panicked after 0xFB append");
     }
 }
 

@@ -177,6 +177,16 @@ impl ParsedSegmentHeader {
         }
     }
 
+    /// True only after the live raw frame body was durably replaced by its
+    /// immutable sealed representation.
+    pub fn is_sealed(&self) -> bool {
+        match self {
+            Self::V1(_) => false,
+            Self::V2(h) => (h.flags & SEGMENT_FLAG_SEALED) != 0,
+            Self::V3(h) => (h.flags & SEGMENT_FLAG_SEALED) != 0,
+        }
+    }
+
     /// Wire length of this header in bytes (60 for v1, 61 for v2, 65 for v3).
     pub fn header_len(&self) -> usize {
         match self {

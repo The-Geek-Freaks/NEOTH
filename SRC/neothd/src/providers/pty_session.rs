@@ -374,10 +374,13 @@ pub async fn emit_wal_started(
 /// Payload: `{ session_id, exit_code, ts_unix }`.
 pub fn emit_wal_ended_sync(session_id: &str, exit_code: Option<i32>) {
     use crate::wal::events::EVENT_TYPE_PTY_SESSION_ENDED;
-    let segment = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
-    if let Some(p) = segment.parent() {
-        let _ = std::fs::create_dir_all(p);
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let wal_dir = home.join("wal");
+    if let Err(error) = std::fs::create_dir_all(&wal_dir) {
+        tracing::warn!(%error, "pty_session: WAL directory unavailable for PTY_SESSION_ENDED");
+        return;
     }
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "pty-ended");
     let exit_val: serde_json::Value = match exit_code {
         Some(c) => serde_json::Value::Number(c.into()),
         None => serde_json::Value::Null,
@@ -390,7 +393,7 @@ pub fn emit_wal_ended_sync(session_id: &str, exit_code: Option<i32>) {
         Ok(v) => v,
         Err(_) => return,
     };
-    let (writer, _join) = match crate::wal::writer::spawn(segment) {
+    let (writer, _join) = match crate::wal::writer::spawn_for_home(segment, home) {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(error = %e, "pty_session: WAL writer spawn failed for PTY_SESSION_ENDED");

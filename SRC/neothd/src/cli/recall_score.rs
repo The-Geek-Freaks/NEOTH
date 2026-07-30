@@ -215,19 +215,28 @@ fn render(r: &ParityRunResult, output: &OutputFormat) {
 /// Emit one `0x3E EVAL_CRITICAL_DIVERGENCE` per CRITICAL query (HF-01 one-shot
 /// pattern: skip if `neothd serve` owns the WAL; else open one writer for the
 /// batch). Returns `true` when EVERY frame was durably enqueued — `false` if
-/// any append failed or the writer couldn't open (the caller surfaces that the
-/// abort evidence is incomplete). When the daemon owns the WAL we return `true`
-/// (the daemon's own audit path is responsible; we don't race it).
+/// any local append/flush failed, the writer couldn't open, or the live daemon
+/// did not acknowledge an audit-RPC frame (the caller surfaces that the abort
+/// evidence is incomplete).
 async fn emit_critical_divergences(r: &ParityRunResult) -> bool {
     let now = now_unix();
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    if let Ok(Some(_)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let pidfile = home.join("neothd.pid");
+    let daemon_live = match crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+        Ok(pid) => pid.is_some(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                pidfile = %pidfile.display(),
+                "recall-score: audit ownership is uncertain; refusing a local WAL writer"
+            );
+            return false;
+        }
+    };
+    if daemon_live {
         // AUDIT-RPC-01: daemon owns the WAL → forward each 0x3E frame over the
-        // same-user OS channel instead of silently skipping. Best-effort: a disabled
-        // listener is the operator's config choice, not an audit failure, so we
-        // still report the audit as complete (return true) — symmetric with the
-        // prior daemon-live behaviour.
-        let home = crate::config::FreedomConfig::default_neoth_home();
+        // same-user OS channel instead of silently skipping.
+        let mut all_ok = true;
         for c in &r.critical_queries {
             let payload = serde_json::json!({
                 "query_id": c.query_id,
@@ -246,19 +255,24 @@ async fn emit_critical_divergences(r: &ParityRunResult) -> bool {
             .await
             {
                 tracing::debug!(error = %e, "recall-score: 0x3E forward skipped (daemon listener unreachable)");
+                all_ok = false;
             }
         }
-        return true;
+        return all_ok;
     }
-    let segment = crate::config::FreedomConfig::default_neoth_home()
-        .join("wal")
-        .join("000001.wal");
-    if let Some(parent) = segment.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    let wal_dir = home.join("wal");
+    if let Err(e) = std::fs::create_dir_all(&wal_dir) {
+        tracing::warn!(
+            error = %e,
+            wal_dir = %wal_dir.display(),
+            "recall-score: could not create WAL directory for 0x3E"
+        );
+        return false;
     }
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "recall-critical");
     let mut all_ok = true;
-    match crate::wal::spawn(segment) {
-        Ok((writer, join)) => {
+    match crate::wal::writer::spawn_for_home_with_completion(segment, home) {
+        Ok((writer, completion)) => {
             for c in &r.critical_queries {
                 let payload = serde_json::json!({
                     "query_id": c.query_id,
@@ -280,7 +294,10 @@ async fn emit_critical_divergences(r: &ParityRunResult) -> bool {
                 }
             }
             drop(writer);
-            let _ = join.await;
+            if let Err(e) = completion.wait().await {
+                tracing::warn!(error = %e, "recall-score: 0x3E WAL writer finalization failed");
+                all_ok = false;
+            }
         }
         Err(e) => {
             tracing::warn!(error = %e, "recall-score: could not open WAL writer for 0x3E");

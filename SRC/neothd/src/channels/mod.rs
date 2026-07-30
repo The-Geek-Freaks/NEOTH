@@ -572,13 +572,14 @@ pub async fn send_text_with_snapshot(
     let message_id = channel.send_text(chat_id, text).await?;
     let now_unix = crate::time::now_unix_i64();
     let target = format!("{}:{}:{}", platform.as_str(), chat_id, message_id.0);
-    let wal_dir = crate::config::FreedomConfig::default_wal_dir();
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let wal_dir = home.join("wal");
     if let Err(e) = std::fs::create_dir_all(&wal_dir) {
         tracing::warn!(error = %e, "could not create WAL dir for channel-send snapshot — proceeding without rollback");
         return Ok(message_id);
     }
-    let segment = wal_dir.join(format!("channel-snapshot-{now_unix}.wal"));
-    let (writer, join) = match crate::wal::writer::spawn(segment) {
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "channel-snapshot");
+    let (writer, join) = match crate::wal::writer::spawn_for_home(segment, home) {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(error = %e, "spawn WAL writer failed for channel-send snapshot — proceeding without rollback");

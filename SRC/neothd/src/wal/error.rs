@@ -69,7 +69,7 @@ pub enum WalError {
     #[error("WAL header parse error")]
     Header(#[from] HeaderParseError),
 
-    #[error("WAL I/O error")]
+    #[error("WAL I/O error: {0}")]
     Io(#[from] io::Error),
 
     #[error("HLC tick error")]

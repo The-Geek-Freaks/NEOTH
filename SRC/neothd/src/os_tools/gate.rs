@@ -71,11 +71,56 @@ pub enum AuditSink<'a> {
     /// Append directly to a WAL writer this process owns (the daemon itself, or
     /// a one-shot CLI when no daemon is live).
     Writer(&'a WalWriterHandle),
+    /// Append to a one-shot writer and retain the first append failure for the
+    /// caller to enforce according to its configured required-audit posture.
+    ///
+    /// The gated action still returns its ordinary domain result. This keeps
+    /// optional audit best-effort while allowing required CLI surfaces to
+    /// refuse a false success after the action and writer finalization finish.
+    TrackedWriter {
+        writer: &'a WalWriterHandle,
+        status: &'a AuditStatus,
+    },
     /// Forward the frame to the live daemon's audit-RPC listener. `home` is the
     /// neoth home dir (used to find the sidecar + token). Best-effort: if the
     /// daemon/sidecar is unavailable the frame is dropped (same availability
     /// tradeoff as `None`), but the action already ran gated.
     DaemonRpc(&'a Path),
+    /// Forward to the daemon and retain an exact acknowledgement failure for a
+    /// required-audit caller. This closes the gap between a successful
+    /// pre-flight probe and the later event dispatch.
+    TrackedDaemonRpc {
+        home: &'a Path,
+        status: &'a AuditStatus,
+    },
+}
+
+#[derive(Debug, Default)]
+pub struct AuditStatus {
+    first_failure: std::sync::Mutex<Option<String>>,
+}
+
+impl AuditStatus {
+    fn record(&self, error: &crate::wal::error::WalError) {
+        self.record_message(error.to_string());
+    }
+
+    fn record_message(&self, error: String) {
+        let mut first_failure = self
+            .first_failure
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if first_failure.is_none() {
+            *first_failure = Some(error);
+        }
+    }
+
+    pub fn failure(&self) -> Option<String> {
+        self.first_failure
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone()
+    }
 }
 
 /// Send one audit frame to the chosen sink. Single source of truth for the
@@ -88,6 +133,12 @@ async fn dispatch_frame(sink: AuditSink<'_>, event_type: u8, payload: Vec<u8>) {
             let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
             let _ = w.append(header, payload).await;
         }
+        AuditSink::TrackedWriter { writer, status } => {
+            let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+            if let Err(error) = writer.append(header, payload).await {
+                status.record(&error);
+            }
+        }
         AuditSink::DaemonRpc(home) => {
             // Same-user OS IPC to the WAL-owning daemon. Best-effort: a disabled
             // audit route or unreachable listener means the frame isn't
@@ -96,6 +147,13 @@ async fn dispatch_frame(sink: AuditSink<'_>, event_type: u8, payload: Vec<u8>) {
                 crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
             {
                 tracing::debug!(error = %e, event_type, "audit-RPC forward failed; frame not recorded");
+            }
+        }
+        AuditSink::TrackedDaemonRpc { home, status } => {
+            if let Err(error) =
+                crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
+            {
+                status.record_message(error.to_string());
             }
         }
     }
@@ -799,6 +857,60 @@ mod tests {
         .await
         .expect("read must succeed even when audit-RPC forwarding is unavailable");
         assert_eq!(text, "forwarded-or-not");
+    }
+
+    #[tokio::test]
+    async fn tracked_daemon_rpc_retains_exact_forward_failure() {
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("note.txt");
+        fs::write(&f, b"forwarded-or-not").unwrap();
+        let cfg = cfg_for(dir.path());
+        let home = tempdir().unwrap();
+        let status = AuditStatus::default();
+
+        let text = read_os_file(
+            &f,
+            &cfg,
+            AutonomyLevel::Standard,
+            AuditSink::TrackedDaemonRpc {
+                home: home.path(),
+                status: &status,
+            },
+            0,
+        )
+        .await
+        .expect("domain action remains separate from the caller's required-audit policy");
+
+        assert_eq!(text, "forwarded-or-not");
+        assert!(
+            status.failure().is_some(),
+            "tracked daemon sink must retain the exact acknowledgement failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn tracked_writer_retains_append_failure_for_required_caller() {
+        let dir = tempdir().unwrap();
+        let segment = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment).expect("spawn test writer");
+        join.abort();
+        let _ = join.await;
+        let status = AuditStatus::default();
+
+        dispatch_frame(
+            AuditSink::TrackedWriter {
+                writer: &writer,
+                status: &status,
+            },
+            crate::wal::events::EVENT_TYPE_OS_APP_LAUNCH,
+            br#"{"program":"test"}"#.to_vec(),
+        )
+        .await;
+
+        assert!(
+            status.failure().is_some(),
+            "tracked sink must retain the append failure for the required-audit caller"
+        );
     }
 
     #[tokio::test]

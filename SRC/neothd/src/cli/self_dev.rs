@@ -811,9 +811,9 @@ async fn run_propose(
 ///
 /// Runs the self-improvement collector synchronously (same logic as the daemon
 /// cron), then passes the resulting [`CollectorReport`] through the capability
-/// evolver, and prints a human-readable summary. A temporary WAL segment is
-/// created in `home` for the collector tick's WAL frames and cleaned up on
-/// exit — the CLI scan is not a running daemon so no live writer is present.
+/// evolver, and prints a human-readable summary. An isolated temporary WAL home
+/// is created beneath the selected instance home and removed after its writer
+/// drains — scan-only audit frames never mix with the durable daemon chain.
 ///
 /// Use this to exercise the HERMES-06 pipeline end-to-end without waiting for
 /// the 24h daemon cron tick.
@@ -824,28 +824,49 @@ async fn run_scan(home: &Path, output: crate::cli::OutputFormat) -> Result<()> {
 
     // Missing freedom.yaml uses first-run defaults; malformed existing policy
     // blocks the scan instead of silently changing collector behaviour.
-    let cfg = FreedomConfig::load_from_default_path_or_default()?.self_improvement_collector;
+    let cfg = FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?
+        .self_improvement_collector;
 
-    let db_path = crate::memory::store::default_path();
+    let db_path = home.join("views.db");
     let ts = crate::time::now_unix_i64();
 
-    // Spawn a temporary WAL segment so the collector tick can emit its frames.
-    // The segment lives in home and is deleted on exit — it's not merged into
-    // the live daemon's segment chain (no live daemon on the CLI path).
-    let tmp_seg = home.join("self_dev_scan.wal.tmp");
-    let (tmp_writer, tmp_join) = crate::wal::writer::spawn(tmp_seg.clone())
-        .context("spawn temporary WAL writer for self-dev scan")?;
-
-    let report = run_self_improvement_collector_tick(&db_path, home, cfg, &tmp_writer)
+    // Isolate the scan-only audit stream in an ephemeral home. The collector
+    // still reads and mutates the selected real home, while writer integrity
+    // keys, recovery journals, and segment files are removed only after the
+    // writer has durably drained.
+    std::fs::create_dir_all(home)
+        .with_context(|| format!("create self-dev home {}", home.display()))?;
+    let tmp_home = tempfile::Builder::new()
+        .prefix(".self-dev-scan-")
+        .tempdir_in(home)
+        .context("create isolated temporary home for self-dev scan WAL")?;
+    let tmp_wal_dir = tmp_home.path().join("wal");
+    std::fs::create_dir_all(&tmp_wal_dir)
+        .context("create isolated temporary WAL directory for self-dev scan")?;
+    let tmp_seg = crate::wal::writer::unique_standalone_segment_path(&tmp_wal_dir, "self-dev-scan");
+    let (tmp_writer, tmp_join, tmp_ready) =
+        crate::wal::writer::spawn_for_home_ready(tmp_seg, tmp_home.path().to_path_buf())
+            .context("spawn isolated WAL writer for self-dev scan")?;
+    tmp_ready
+        .wait()
         .await
-        .context("self-improvement collector scan failed")?;
+        .context("initialize isolated WAL writer for self-dev scan")?;
 
-    let evolver = run_evolver_pass(home, &report, ts, Some(&tmp_writer)).await;
-
-    // Shutdown the temporary writer and clean up the segment.
+    let scan_result = async {
+        let report = run_self_improvement_collector_tick(&db_path, home, cfg, &tmp_writer)
+            .await
+            .context("self-improvement collector scan failed")?;
+        let evolver = run_evolver_pass(home, &report, ts, Some(&tmp_writer)).await;
+        Ok::<_, anyhow::Error>((report, evolver))
+    }
+    .await;
     drop(tmp_writer);
-    tmp_join.await.ok();
-    let _ = std::fs::remove_file(&tmp_seg);
+    let writer_result = tmp_join
+        .await
+        .context("join isolated WAL writer for self-dev scan")?
+        .map_err(anyhow::Error::msg);
+    let (report, evolver) = scan_result?;
+    writer_result?;
 
     match output {
         crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => println!(

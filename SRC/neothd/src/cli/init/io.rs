@@ -1226,7 +1226,7 @@ pub(crate) async fn snapshot_existing_config(freedom_yaml: &std::path::Path) -> 
         .unwrap_or_else(|| std::path::Path::new("."));
     let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for init snapshot")?;
-    let segment = wal_dir.join(format!("init-snapshot-{now_unix}.wal"));
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "init-snapshot");
     let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
         .context("spawn WAL snapshot writer")?;
     let _ = crate::wal::snapshot::emit_if_policy_allows(

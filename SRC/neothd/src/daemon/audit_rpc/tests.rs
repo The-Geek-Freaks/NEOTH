@@ -14,6 +14,12 @@ use crate::n8n_api::auth::AuthCooldown;
 
 const TEST_ENDPOINT_NONCE: &str = "00112233445566778899aabbccddeeff";
 
+fn canonical_test_wal(home: &std::path::Path, namespace: &str) -> std::path::PathBuf {
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir).unwrap();
+    wal_dir.join(format!("{namespace}-000001.wal"))
+}
+
 fn publish_test_endpoint(
     home: &std::path::Path,
     endpoint: &AuditEndpointV2,
@@ -76,7 +82,15 @@ async fn recv_runtime_transition_for_home(
 
 #[test]
 fn allowlist_contains_exactly_the_oneshot_codes() {
-    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 35);
+    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 40);
+    let mut unique_event_types = ALLOWED_CLIENT_EVENT_TYPES.to_vec();
+    unique_event_types.sort_unstable();
+    unique_event_types.dedup();
+    assert_eq!(
+        unique_event_types.len(),
+        ALLOWED_CLIENT_EVENT_TYPES.len(),
+        "the compile-time audit-RPC allowlist must not contain duplicate codes"
+    );
     // Autonomy-level changes (`neoth autonomy set`) + the lease/OS one-shots.
     for c in [0xA2u8, 0xA3] {
         assert!(
@@ -115,6 +129,16 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
         is_allowed_client_event(0x54),
         "0x54 (risk_confirm_granted) must be allowed"
     );
+    assert!(
+        is_allowed_client_event(0xBB),
+        "0xBB (operator_feedback) must be allowed"
+    );
+    for c in [0x8Eu8, 0x8F] {
+        assert!(
+            is_allowed_client_event(c),
+            "{c:#x} (PTY session lifecycle) must be allowed"
+        );
+    }
     for c in 0xA5u8..=0xADu8 {
         assert!(is_allowed_client_event(c), "{c:#x} must be allowed");
     }
@@ -123,7 +147,7 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     // pull (0xD7/0xD8) — now forward instead of silently skipping when a
     // daemon owns the WAL.
     for c in [
-        0x2Cu8, 0x2D, 0x30, 0x31, 0x3D, 0x3E, 0x9B, 0xC8, 0xD2, 0xD7, 0xD8, 0xD9, 0xF5,
+        0x2Cu8, 0x2D, 0x30, 0x31, 0x3D, 0x3E, 0x9B, 0xC8, 0xD2, 0xD7, 0xD8, 0xD9, 0xDE, 0xF5,
     ] {
         assert!(
             is_allowed_client_event(c),
@@ -134,6 +158,10 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     assert!(
         is_allowed_client_event(0xF6),
         "0xF6 (recon_run) must be allowed"
+    );
+    assert!(
+        is_allowed_client_event(0xFE),
+        "0xFE (loyal_buddy_activated) must be allowed"
     );
     // Daemon-lifecycle / cluster / quota codes are NOT forwardable — and the
     // autonomy codes must NOT bleed into the neighbouring 0xA4.
@@ -279,7 +307,7 @@ async fn daemon_sidecar_guard_aborts_its_published_listener_on_early_return() {
 #[tokio::test]
 async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
     let segdir = tempdir().unwrap();
-    let seg = segdir.path().join("idle-shutdown.wal");
+    let seg = canonical_test_wal(segdir.path(), "audit-idle-shutdown");
     let (writer, wal_join) = crate::wal::spawn_for_home(seg, segdir.path().to_path_buf()).unwrap();
     let cooldown = Arc::new(AuthCooldown::new());
     let state = AuditRpcState {
@@ -319,7 +347,7 @@ async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
 async fn valid_token_appends_allowed_frame_and_emits_accept() {
     use crate::wal::events::EVENT_TYPE_OS_APP_LAUNCH;
     let segdir = tempdir().unwrap();
-    let seg = segdir.path().join("000001.wal");
+    let seg = canonical_test_wal(segdir.path(), "audit-valid");
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
@@ -378,7 +406,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
 
     let home = tempdir().unwrap();
     let peer_home = tempdir().unwrap();
-    let seg = home.path().join("membership-rpc.wal");
+    let seg = canonical_test_wal(home.path(), "audit-membership-rpc");
     let (writer, wal_join) = crate::wal::spawn_for_home(seg, home.path().to_path_buf()).unwrap();
     let store = MembershipStore::open(home.path()).unwrap();
     let controller = Arc::new(MembershipController::with_audit_writer(
@@ -570,7 +598,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
 #[tokio::test]
 async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
     let segdir = tempdir().unwrap();
-    let seg = segdir.path().join("000001.wal");
+    let seg = canonical_test_wal(segdir.path(), "audit-subtype");
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
@@ -702,7 +730,7 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
     let segdir = tempdir().unwrap();
     let mut transitions =
         crate::skills::registry::subscribe_runtime_authority_transitions_for_test();
-    let seg = segdir.path().join("skill-dedup.wal");
+    let seg = canonical_test_wal(segdir.path(), "audit-skill-dedup");
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
@@ -795,7 +823,7 @@ async fn unauthenticated_authority_ingress_cannot_poison_unrelated_skill_scans()
     std::fs::create_dir_all(&wal_dir).unwrap();
     crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key")).unwrap();
     crate::skills::authority::initialize_authority_key_for_test(home.path()).unwrap();
-    let segment = wal_dir.join("authority-ingress.wal");
+    let segment = wal_dir.join("authority-ingress-000001.wal");
     let (writer, wal_join) =
         crate::wal::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
@@ -861,7 +889,7 @@ async fn unauthenticated_authority_ingress_cannot_poison_unrelated_skill_scans()
 #[tokio::test]
 async fn skill_mutation_dedup_survives_caller_cancellation_after_durable_append() {
     let segdir = tempdir().unwrap();
-    let seg = segdir.path().join("skill-cancel-dedup.wal");
+    let seg = canonical_test_wal(segdir.path(), "audit-skill-cancel-dedup");
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
     let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
@@ -1060,7 +1088,7 @@ async fn cancelled_pre_durability_rpc_append_retains_then_recovers_exact_journal
 #[tokio::test]
 async fn skill_mutation_singleflight_is_bounded_and_recovers_capacity() {
     let segdir = tempdir().unwrap();
-    let seg = segdir.path().join("skill-singleflight-capacity.wal");
+    let seg = canonical_test_wal(segdir.path(), "audit-skill-singleflight");
     let (writer, wal_join) = crate::wal::spawn_for_home(seg, segdir.path().to_path_buf()).unwrap();
     let coordinator = Arc::new(super::server::SkillAuditCoordinator::default());
     let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
@@ -1188,7 +1216,7 @@ async fn skill_mutation_singleflight_is_bounded_and_recovers_capacity() {
 #[tokio::test]
 async fn wrong_token_is_401_and_writes_no_frame() {
     let segdir = tempdir().unwrap();
-    let seg = segdir.path().join("000001.wal");
+    let seg = canonical_test_wal(segdir.path(), "audit-oversized");
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
@@ -1222,7 +1250,7 @@ async fn wrong_token_is_401_and_writes_no_frame() {
 #[tokio::test]
 async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
     let segdir = tempdir().unwrap();
-    let seg = segdir.path().join("000001.wal");
+    let seg = canonical_test_wal(segdir.path(), "audit-cooldown-reset");
     let (writer, wal_join) = crate::wal::spawn_for_home(seg, segdir.path().to_path_buf()).unwrap();
     let cooldown = Arc::new(AuthCooldown::new());
     let now = std::time::Instant::now();
@@ -1259,7 +1287,7 @@ async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
 async fn blocked_event_type_is_422_and_emits_reject() {
     use crate::wal::events::EVENT_TYPE_AUDIT_RPC_REJECT;
     let segdir = tempdir().unwrap();
-    let seg = segdir.path().join("000001.wal");
+    let seg = canonical_test_wal(segdir.path(), "audit-route");
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
@@ -1293,7 +1321,7 @@ async fn client_round_trips_against_a_live_listener() {
     use crate::wal::events::EVENT_TYPE_OS_FILE_READ;
     let home = tempdir().unwrap();
     let seg_dir = tempdir().unwrap();
-    let seg = seg_dir.path().join("000001.wal");
+    let seg = canonical_test_wal(seg_dir.path(), "audit-stale-endpoint");
     let token = init_rpc_token(home.path()).unwrap();
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), seg_dir.path().to_path_buf()).unwrap();
@@ -1338,7 +1366,7 @@ async fn client_round_trips_against_a_live_listener() {
 async fn jobs_run_token_client_is_request_bound_and_single_use() {
     let home = tempdir().unwrap();
     let seg_dir = tempdir().unwrap();
-    let seg = seg_dir.path().join("000001.wal");
+    let seg = canonical_test_wal(seg_dir.path(), "audit-stale-nonce");
     let token = init_rpc_token(home.path()).unwrap();
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), seg_dir.path().to_path_buf()).unwrap();
@@ -1393,7 +1421,7 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
 async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
     let home = tempdir().unwrap();
     let seg_dir = tempdir().unwrap();
-    let seg = seg_dir.path().join("000001.wal");
+    let seg = canonical_test_wal(seg_dir.path(), "audit-dead-writer");
     let token = init_rpc_token(home.path()).unwrap();
     let (writer, wal_join) = crate::wal::spawn_for_home(seg, seg_dir.path().to_path_buf()).unwrap();
     wal_join.abort();
@@ -1426,7 +1454,7 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
 async fn subtype_client_round_trips_against_a_live_listener() {
     let home = tempdir().unwrap();
     let seg_dir = tempdir().unwrap();
-    let seg = seg_dir.path().join("000001.wal");
+    let seg = canonical_test_wal(seg_dir.path(), "audit-token-rotation");
     let token = init_rpc_token(home.path()).unwrap();
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), seg_dir.path().to_path_buf()).unwrap();

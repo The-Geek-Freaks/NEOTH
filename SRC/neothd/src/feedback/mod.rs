@@ -27,9 +27,9 @@ use crate::wal::events::EVENT_TYPE_OPERATOR_FEEDBACK;
 /// `OPERATOR_FEEDBACK` frame. Returns the [`ToneScore`] when a frame was
 /// recorded (i.e. the turn was a correction), else `None`.
 ///
-/// Best-effort + fire-and-forget: it NEVER blocks or fails the chat turn. The
-/// audit emit mirrors the HF-01 one-shot-writer pattern — if `neothd serve`
-/// owns the WAL we skip rather than race the segment.
+/// Best-effort + fire-and-forget: it NEVER fails the chat turn. A live daemon
+/// receives the frame through the same-user audit RPC; otherwise a
+/// collision-free home-bound one-shot writer owns the append.
 pub async fn record_operator_correction(home: &Path, prompt: &str) -> Option<ToneScore> {
     let score = score_follow_up(prompt);
     if !score.is_correction() {
@@ -55,23 +55,44 @@ pub(crate) fn feedback_payload(score: &ToneScore, prompt_hash: u64) -> Vec<u8> {
     .unwrap_or_else(|_| b"{}".to_vec())
 }
 
-/// Best-effort one-shot WAL emit of the feedback frame (HF-01 pattern).
+/// Best-effort WAL emit of the feedback frame (HF-01 pattern).
 async fn emit_operator_feedback(home: &Path, score: &ToneScore, prompt_hash: u64) {
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    if let Ok(Some(_)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
-        // The daemon owns the WAL; don't open a 2nd writer and race it.
-        tracing::debug!("operator-feedback audit skipped: neothd serve owns the WAL writer");
+    let pidfile = home.join("neothd.pid");
+    match crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+        Ok(Some(_)) => {
+            let payload = feedback_payload(score, prompt_hash);
+            if let Err(error) = crate::daemon::audit_rpc::try_post_audit_frame(
+                home,
+                EVENT_TYPE_OPERATOR_FEEDBACK,
+                &payload,
+            )
+            .await
+            {
+                tracing::warn!(
+                    %error,
+                    "operator-feedback audit could not reach the live daemon"
+                );
+            }
+            return;
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                path = %pidfile.display(),
+                "operator-feedback audit refused an unowned WAL writer"
+            );
+            return;
+        }
+    }
+    let wal_dir = home.join("wal");
+    if std::fs::create_dir_all(&wal_dir).is_err() {
         return;
     }
-    let segment = home.join("wal").join("000001.wal");
-    if let Some(parent) = segment.parent()
-        && std::fs::create_dir_all(parent).is_err()
-    {
-        return;
-    }
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "operator-feedback");
     let payload = feedback_payload(score, prompt_hash);
     let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_OPERATOR_FEEDBACK, &payload).build();
-    match crate::wal::spawn(segment) {
+    match crate::wal::spawn_for_home(segment, home.to_path_buf()) {
         Ok((writer, join)) => {
             if let Err(e) = writer.append(header, payload).await {
                 tracing::warn!(error = %e, "operator-feedback audit append failed");
@@ -111,5 +132,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let r = record_operator_correction(dir.path(), "what time is the meeting?").await;
         assert!(r.is_none(), "a neutral question is not a correction");
+    }
+
+    #[tokio::test]
+    async fn correction_audit_uses_the_selected_home_and_collision_free_segments() {
+        let home = tempfile::tempdir().unwrap();
+        for prompt in ["no, that is wrong", "stop, this is incorrect"] {
+            assert!(
+                record_operator_correction(home.path(), prompt)
+                    .await
+                    .is_some()
+            );
+        }
+
+        let wal_dir = home.path().join("wal");
+        assert!(wal_dir.join("hmac.key").is_file());
+        let segments = std::fs::read_dir(&wal_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "wal"))
+            .count();
+        assert_eq!(segments, 2, "one-shot feedback writers must not collide");
     }
 }

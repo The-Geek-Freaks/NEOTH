@@ -28,7 +28,7 @@ use crate::memory::{
 };
 use crate::providers::clip_engine;
 use crate::wal::events::{EVENT_TYPE_EMBED_PERSISTED, EVENT_TYPE_INGEST_EXTRACTED};
-use crate::wal::{make_header, spawn as wal_spawn};
+use crate::wal::make_header;
 
 #[derive(Args, Debug, Clone)]
 pub struct IngestArgs {
@@ -43,9 +43,10 @@ pub struct IngestArgs {
     #[arg(long, value_name = "PATH")]
     pub db: Option<PathBuf>,
 
-    /// Override the WAL segment path the audit events land in. Defaults
-    /// to `~/.neoth/wal/000001.wal` — the same surface `neothd serve`
-    /// writes to.
+    /// Override the WAL segment used for audit events. It must be a canonical
+    /// direct child of the selected instance home's `wal` directory and use a
+    /// six-digit standalone/rotation suffix. Defaults to a collision-resistant
+    /// standalone segment under `~/.neoth/wal`.
     #[arg(long, value_name = "PATH")]
     pub wal_segment: Option<PathBuf>,
 
@@ -110,12 +111,21 @@ async fn run_ingest_with_context(
     // Use an independent segment so a running daemon can keep exclusive
     // ownership of its active segment. `--no-audit` deliberately supplies no
     // sink; proof-hardline cloud STT then refuses before egress.
+    let stt_audit_required = !effective_config.media.stt.primary.is_local()
+        || effective_config
+            .media
+            .stt
+            .fallback
+            .is_some_and(|fallback| !fallback.is_local());
     let stt_audit = if matches!(kind, AssetKind::Audio | AssetKind::Video) && !args.no_audit {
         let wal_dir = neoth_home.join("wal");
         let opened = (|| -> anyhow::Result<_> {
             std::fs::create_dir_all(&wal_dir)?;
-            Ok(wal_spawn(
-                wal_dir.join(format!("{:020}.wal", crate::time::now_unix_ns())),
+            let segment =
+                crate::wal::writer::unique_standalone_segment_path(&wal_dir, "ingest-stt");
+            Ok(crate::wal::writer::spawn_for_home_with_completion(
+                segment,
+                neoth_home.to_path_buf(),
             )?)
         })();
         match opened {
@@ -158,10 +168,19 @@ async fn run_ingest_with_context(
     } else {
         route_to_first_match(&backends, &asset).await
     };
-    if let Some((writer, join)) = stt_audit {
+    if let Some((writer, completion)) = stt_audit {
         drop(writer);
-        join.await
-            .context("ingest: STT audit writer task panicked")?;
+        if let Err(error) = completion.wait().await {
+            if stt_audit_required {
+                return Err(anyhow::anyhow!(
+                    "ingest: required cloud STT audit WAL finalization failed: {error}"
+                ));
+            }
+            tracing::warn!(
+                %error,
+                "ingest: local STT audit WAL finalization failed (non-fatal)"
+            );
+        }
     }
     let extraction = extraction_result.map_err(|e| anyhow::anyhow!("extract: {e}"))?;
 
@@ -409,7 +428,9 @@ async fn emit_audit_events(
     };
 
     let pidfile = home.join("neothd.pid");
-    if let Ok(Some(_pid)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+    if let Some(_pid) = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon pidfile {}", pidfile.display()))?
+    {
         // AUDIT-RPC-01: daemon owns the WAL writer → forward the ingest frames
         // over the same-user OS channel (0x2C/0x2D allowlisted) instead of silently
         // skipping. Best-effort: a disabled audit route or unreachable listener
@@ -433,16 +454,16 @@ async fn emit_audit_events(
         return Ok(());
     }
 
-    let segment_path = args
-        .wal_segment
-        .clone()
-        .unwrap_or_else(|| home.join("wal").join("000001.wal"));
+    let segment_path = args.wal_segment.clone().unwrap_or_else(|| {
+        crate::wal::writer::unique_standalone_segment_path(&home.join("wal"), "ingest")
+    });
     if let Some(parent) = segment_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create WAL dir {}", parent.display()))?;
     }
-    let (writer, writer_join) =
-        wal_spawn(segment_path).context("spawn one-shot WAL writer for ingest audit")?;
+    let (writer, writer_completion) =
+        crate::wal::writer::spawn_for_home_with_completion(segment_path, home.to_path_buf())
+            .context("spawn home-bound one-shot WAL writer for ingest audit")?;
 
     let extracted_header = make_header(EVENT_TYPE_INGEST_EXTRACTED, &extracted_payload);
     writer
@@ -459,7 +480,10 @@ async fn emit_audit_events(
     }
 
     drop(writer);
-    writer_join.await.context("wal writer join")?;
+    writer_completion
+        .wait()
+        .await
+        .context("finalize one-shot ingest audit WAL writer")?;
     Ok(())
 }
 

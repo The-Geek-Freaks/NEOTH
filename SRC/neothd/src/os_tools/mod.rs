@@ -28,6 +28,6 @@ pub mod launch;
 pub mod read;
 pub mod write;
 
-pub use gate::{AuditSink, OsGateError, launch_os_app, read_os_file, write_os_file};
+pub use gate::{AuditSink, AuditStatus, OsGateError, launch_os_app, read_os_file, write_os_file};
 #[cfg(feature = "os-clipboard")]
 pub use gate::{read_os_clipboard, write_os_clipboard};

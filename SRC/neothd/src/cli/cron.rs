@@ -1029,9 +1029,10 @@ fn cron_list(file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
 }
 
 async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Result<()> {
-    // Refuse while the daemon owns the WAL — a 2nd one-shot writer would race
-    // the single append-only segment. The daemon fires scheduled jobs itself.
-    let pidfile = crate::daemon::pidfile::default_pidfile();
+    // Refuse while the daemon owns scheduling so a manual invocation cannot
+    // duplicate a job the daemon may fire concurrently.
+    let home = FreedomConfig::default_neoth_home();
+    let pidfile = home.join("neothd.pid");
     if matches!(
         crate::daemon::pidfile::live_daemon_pid(&pidfile),
         Ok(Some(_))
@@ -1048,20 +1049,20 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
         .with_context(|| format!("load jobs from {}", path.display()))?;
     let job = find_job(&jobs, id)?;
 
-    let home = FreedomConfig::default_neoth_home();
     let config = FreedomConfig::load_from_default_path().context("load freedom.yaml")?;
     let provider = crate::providers::fallback_chain_from_config(&config, &home, None)
         .await
         .context("construct the provider chain for the job")?;
     let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
 
-    // One-shot WAL writer (daemon confirmed not live above, so we hold the
-    // segment exclusively). Same segment the daemon scheduler uses.
-    let segment = home.join("wal").join("000001.wal");
-    if let Some(parent) = segment.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let (writer, join) = crate::wal::spawn(segment).context("open a one-shot WAL writer")?;
+    // One-shot WAL writer (daemon confirmed not live above). It owns a unique
+    // namespace so stale pidfile detection can never create a dual appender.
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "cron-run");
+    let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.clone())
+        .context("open a one-shot WAL writer")?;
 
     let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
         provider,

@@ -187,16 +187,15 @@ impl ExternalHttpAuthorizer {
     /// WAL segment. Any transport setup failure blocks the request.
     #[cfg(not(test))]
     pub fn interactive(policy: AutonomyPolicySnapshot) -> Result<Self> {
-        let pidfile = crate::daemon::pidfile::default_pidfile();
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let pidfile = home.join("neothd.pid");
         let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
             .with_context(|| format!("inspect daemon pidfile {}", pidfile.display()))?
             .is_some();
         let sink: Arc<dyn ExternalHttpAuditSink> = if daemon_live {
-            Arc::new(DaemonAuditSink {
-                home: crate::config::FreedomConfig::default_neoth_home(),
-            })
+            Arc::new(DaemonAuditSink { home })
         } else {
-            let wal_dir = crate::config::FreedomConfig::default_wal_dir();
+            let wal_dir = home.join("wal");
             std::fs::create_dir_all(&wal_dir).with_context(|| {
                 format!(
                     "create mandatory external HTTP WAL directory {}",
@@ -205,8 +204,8 @@ impl ExternalHttpAuthorizer {
             })?;
             let segment =
                 crate::wal::writer::unique_standalone_segment_path(&wal_dir, "external-http");
-            let (writer, _join) =
-                crate::wal::spawn(segment).context("spawn mandatory external HTTP WAL writer")?;
+            let (writer, _join) = crate::wal::writer::spawn_for_home(segment, home)
+                .context("spawn mandatory external HTTP WAL writer")?;
             Arc::new(writer)
         };
         Ok(Self {

@@ -23,6 +23,15 @@ use neothd::profile::lookup::{
 };
 use neothd::wal::writer;
 
+fn spawn_home_writer(
+    home: &std::path::Path,
+) -> (writer::WalWriterHandle, tokio::task::JoinHandle<()>) {
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir).expect("create test WAL directory");
+    writer::spawn_for_home(wal_dir.join("000001.wal"), home.to_path_buf())
+        .expect("spawn home-bound writer")
+}
+
 fn raw_claim(field: &str, value: serde_json::Value, confidence: f32) -> RawClaim {
     RawClaim {
         field: field.to_string(),
@@ -46,10 +55,9 @@ fn delta(extraction_id: &str, claims: Vec<RawClaim>) -> ProfileDelta {
 async fn apply_delta_inserts_claim_visible_to_top_claims_for_chat() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("views.db");
-    let segment = dir.path().join("000001.wal");
 
     let mut conn = store::open(&db).unwrap();
-    let (writer, join) = writer::spawn(segment).unwrap();
+    let (writer, join) = spawn_home_writer(dir.path());
 
     let d = delta(
         "ext-1",
@@ -84,9 +92,8 @@ async fn apply_delta_supersede_path_hides_old_value_from_recall() {
     // prompt and confuse the model.
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("views.db");
-    let segment = dir.path().join("000001.wal");
     let mut conn = store::open(&db).unwrap();
-    let (writer, join) = writer::spawn(segment).unwrap();
+    let (writer, join) = spawn_home_writer(dir.path());
 
     let d1 = delta(
         "ext-old",
@@ -125,9 +132,8 @@ async fn apply_delta_below_min_confidence_is_hidden_from_chat_lookup() {
     // contract.
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("views.db");
-    let segment = dir.path().join("000001.wal");
     let mut conn = store::open(&db).unwrap();
-    let (writer, join) = writer::spawn(segment).unwrap();
+    let (writer, join) = spawn_home_writer(dir.path());
 
     let d = delta(
         "ext-low-conf",
@@ -156,9 +162,8 @@ async fn apply_delta_is_idempotent_on_repeat_extraction_id() {
     // Same extraction_id replayed = idempotent_skip + no duplicate row.
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("views.db");
-    let segment = dir.path().join("000001.wal");
     let mut conn = store::open(&db).unwrap();
-    let (writer, join) = writer::spawn(segment).unwrap();
+    let (writer, join) = spawn_home_writer(dir.path());
 
     let d = delta(
         "ext-repeat",
@@ -192,9 +197,8 @@ async fn rendered_prompt_block_carries_adv_03_boundary_header() {
     // a hostile claim value behave like an instruction.
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("views.db");
-    let segment = dir.path().join("000001.wal");
     let mut conn = store::open(&db).unwrap();
-    let (writer, join) = writer::spawn(segment).unwrap();
+    let (writer, join) = spawn_home_writer(dir.path());
 
     let d = delta(
         "ext-render",
@@ -239,9 +243,8 @@ async fn empty_extraction_id_is_rejected_by_apply_delta() {
     // silently inserting an orphan row.
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("views.db");
-    let segment = dir.path().join("000001.wal");
     let mut conn = store::open(&db).unwrap();
-    let (writer, join) = writer::spawn(segment).unwrap();
+    let (writer, join) = spawn_home_writer(dir.path());
 
     let bad = delta(
         "",

@@ -7,8 +7,11 @@
 
 use std::path::{Path, PathBuf};
 
-use tokio::fs::{File, OpenOptions};
-use tokio::io::AsyncWriteExt;
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
+use cap_std::fs::OpenOptions as CapOpenOptions;
+use sha2::{Digest as _, Sha256};
+use tokio::fs::File;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
@@ -17,15 +20,58 @@ use super::error::WalError;
 use super::frame::encode_frame;
 use super::header::EventHeaderV2;
 use super::segment_header::{
-    ParsedSegmentHeader, SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_LEN, SEGMENT_HEADER_V3_LEN,
-    SegmentHeader, SegmentHeaderV3, parse_segment_header,
+    ParsedSegmentHeader, SEGMENT_FLAG_COMPRESSED, SEGMENT_FLAG_SEALED, SEGMENT_HEADER_LEN,
+    SEGMENT_HEADER_V3_LEN, SegmentHeader, SegmentHeaderV3, parse_segment_header,
 };
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024; // 16 MiB sanity ceiling
+// Marker JSON uses only bounded integers plus a fixed 64-byte HMAC hex tag.
+// Keep a conservative envelope so operator-frame admission can reserve the
+// mandatory authentication record before acknowledging the operator frame.
+const MAX_COMPACTION_MARKER_FRAME_BYTES: usize = 512;
+
+/// Immutable identity of a closed predecessor as observed through the
+/// capability-bound WAL directory after its final sync/seal.
+struct ClosedSegmentBinding {
+    segment_name: String,
+    generation: u32,
+    sequence: u64,
+    start_ts_ns: u64,
+    node_id: [u8; 16],
+    physical_len: u64,
+    sha256_hex: String,
+}
 
 #[cfg(all(test, unix))]
 static TEST_FAIL_SEGMENT_PARENT_SYNC_AT: std::sync::Mutex<Option<PathBuf>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TestSegmentCreateFailure {
+    PrivatePermissions,
+    HeaderWrite,
+    FileSync,
+}
+
+#[cfg(test)]
+static TEST_FAIL_SEGMENT_CREATE_AT: std::sync::Mutex<Vec<(PathBuf, TestSegmentCreateFailure)>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+static TEST_FAIL_COMPACTION_MARKER_WRITE_AT: std::sync::Mutex<Option<PathBuf>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+struct TestSegmentPublicationPause {
+    path: PathBuf,
+    prepared: std::sync::mpsc::SyncSender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+
+#[cfg(test)]
+static TEST_PAUSE_SEGMENT_PUBLICATION_AT: std::sync::Mutex<Option<TestSegmentPublicationPause>> =
     std::sync::Mutex::new(None);
 
 #[cfg(all(test, unix))]
@@ -33,6 +79,112 @@ pub(crate) fn fail_segment_parent_sync_for_test(parent: &Path) {
     *TEST_FAIL_SEGMENT_PARENT_SYNC_AT
         .lock()
         .expect("segment parent-sync test hook poisoned") = Some(parent.to_path_buf());
+}
+
+#[cfg(test)]
+fn fail_segment_create_for_test(path: &Path, failure: TestSegmentCreateFailure) {
+    let mut targets = TEST_FAIL_SEGMENT_CREATE_AT
+        .lock()
+        .expect("segment-create test hook poisoned");
+    targets.retain(|(target, _)| target != path);
+    targets.push((path.to_path_buf(), failure));
+}
+
+#[cfg(test)]
+pub(crate) fn pause_segment_publication_for_test(
+    path: &Path,
+) -> (
+    std::sync::mpsc::Receiver<()>,
+    std::sync::mpsc::SyncSender<()>,
+) {
+    let (prepared_tx, prepared_rx) = std::sync::mpsc::sync_channel(1);
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+    let mut pending = TEST_PAUSE_SEGMENT_PUBLICATION_AT
+        .lock()
+        .expect("segment-publication test hook poisoned");
+    assert!(
+        pending.is_none(),
+        "only one segment-publication pause may be installed at a time"
+    );
+    *pending = Some(TestSegmentPublicationPause {
+        path: path.to_path_buf(),
+        prepared: prepared_tx,
+        release: release_rx,
+    });
+    (prepared_rx, release_tx)
+}
+
+#[cfg(test)]
+fn pause_before_segment_publication(path: &Path) -> std::io::Result<()> {
+    let pause = {
+        let mut pending = TEST_PAUSE_SEGMENT_PUBLICATION_AT
+            .lock()
+            .expect("segment-publication test hook poisoned");
+        if pending.as_ref().is_some_and(|pause| pause.path == path) {
+            pending.take()
+        } else {
+            None
+        }
+    };
+    let Some(pause) = pause else {
+        return Ok(());
+    };
+    pause.prepared.send(()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "segment-publication test observer disconnected",
+        )
+    })?;
+    pause
+        .release
+        .recv_timeout(std::time::Duration::from_secs(15))
+        .map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("segment-publication test release failed: {error}"),
+            )
+        })
+}
+
+#[cfg(test)]
+fn inject_segment_create_failure(
+    path: &Path,
+    failure: TestSegmentCreateFailure,
+) -> std::io::Result<()> {
+    let mut target = TEST_FAIL_SEGMENT_CREATE_AT
+        .lock()
+        .expect("segment-create test hook poisoned");
+    if let Some(index) = target
+        .iter()
+        .position(|(target, target_failure)| target == path && *target_failure == failure)
+    {
+        target.swap_remove(index);
+        return Err(std::io::Error::other(format!(
+            "injected WAL segment create failure at {failure:?}"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn fail_compaction_marker_write_for_test(path: &Path) {
+    *TEST_FAIL_COMPACTION_MARKER_WRITE_AT
+        .lock()
+        .expect("compaction-marker test hook poisoned") = Some(path.to_path_buf());
+}
+
+#[cfg(test)]
+fn inject_compaction_marker_write_failure(path: &Path) -> std::io::Result<()> {
+    let mut target = TEST_FAIL_COMPACTION_MARKER_WRITE_AT
+        .lock()
+        .expect("compaction-marker test hook poisoned");
+    if target.as_deref() == Some(path) {
+        *target = None;
+        return Err(std::io::Error::other(
+            "injected compaction marker write failure",
+        ));
+    }
+    Ok(())
 }
 
 /// Allocate a collision-resistant segment namespace for a standalone writer.
@@ -112,6 +264,22 @@ impl Default for RotationPolicy {
     }
 }
 
+fn validate_rotation_policy(policy: RotationPolicy) -> Result<(), WalError> {
+    if policy.max_bytes > RotationPolicy::DEFAULT_MAX_BYTES {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "WAL rotation max_bytes {} exceeds the supported {}-byte ceiling; \
+                 larger policies can create segments that the bounded recovery scanner \
+                 cannot safely reopen",
+                policy.max_bytes,
+                RotationPolicy::DEFAULT_MAX_BYTES
+            ),
+        )));
+    }
+    Ok(())
+}
+
 /// Active-segment lifecycle. Production rotates on size/age. Capture writers
 /// stay on one fresh segment and fail before a frame would cross their hard
 /// physical ceiling, so a caller cannot decode only `000001.wal` while later
@@ -130,6 +298,7 @@ enum SegmentPolicy {
 enum RotationReason {
     SizeExceeded,
     AgeExceeded,
+    SealedResume,
 }
 
 impl RotationReason {
@@ -137,6 +306,7 @@ impl RotationReason {
         match self {
             RotationReason::SizeExceeded => "size",
             RotationReason::AgeExceeded => "age",
+            RotationReason::SealedResume => "sealed_restart",
         }
     }
 }
@@ -226,6 +396,37 @@ pub struct WalWriterHandle {
     #[cfg(test)]
     test_ack_gate: Option<TestAckGate>,
 }
+
+type WriterStartupSignal =
+    std::sync::Arc<std::sync::Mutex<Option<oneshot::Sender<Result<(), String>>>>>;
+
+/// One-shot readiness boundary for callers that must inspect the active WAL
+/// before admitting any producer work.
+///
+/// Ready means the segment lock is held, the file/header and torn-tail recovery
+/// are durable, and the instance compaction/HMAC state is available. A closed
+/// or failed signal means the asynchronous writer died during initialization.
+#[derive(Debug)]
+pub(crate) struct WalWriterReady {
+    outcome: oneshot::Receiver<Result<(), String>>,
+}
+
+impl WalWriterReady {
+    pub(crate) async fn wait(self) -> Result<(), WalError> {
+        let outcome = self.outcome.await.map_err(|_| {
+            WalError::Io(std::io::Error::other(
+                "WAL writer ended before publishing startup readiness",
+            ))
+        })?;
+        outcome.map_err(|reason| WalError::Io(std::io::Error::other(reason)))
+    }
+}
+
+pub(crate) type ReadyWalWriter = (
+    WalWriterHandle,
+    tokio::task::JoinHandle<Result<(), String>>,
+    WalWriterReady,
+);
 
 /// Pre-write disk-quota guard. Tracks bytes admitted since the last disk walk
 /// and re-measures the home dir when a threshold is crossed. Refuses writes
@@ -704,8 +905,13 @@ impl WalWriterHandle {
     }
 }
 
-/// Spawn the writer task with default rotation policy (16 MiB / 24 h) and
-/// no compression (v0.1.x default).
+/// Spawn the raw unit-test writer with default rotation policy (16 MiB / 24 h)
+/// and no compression.
+///
+/// This `cfg(test)` harness intentionally accepts descriptive fixture leaf
+/// names. Production callers must use `spawn_for_home*` or `spawn_capture`,
+/// which bind the canonical `<home>/wal/<namespace>-NNNNNN.wal` contract.
+#[cfg(test)]
 pub fn spawn(
     segment_path: PathBuf,
 ) -> Result<(WalWriterHandle, tokio::task::JoinHandle<()>), WalError> {
@@ -721,6 +927,7 @@ pub fn spawn_for_home(
     segment_path: PathBuf,
     home: PathBuf,
 ) -> Result<(WalWriterHandle, tokio::task::JoinHandle<()>), WalError> {
+    validate_home_segment_path(&segment_path, &home)?;
     refuse_unimplemented_storage_policy(&home)?;
     let hmac_key_path = home.join("wal").join("hmac.key");
     spawn_with_policy_and_compression_at_home(
@@ -730,24 +937,171 @@ pub fn spawn_for_home(
         home,
         hmac_key_path,
         None,
+        None,
     )
 }
 
-/// Completion handle for a capture-only writer.
+/// Spawn a production writer whose complete asynchronous lifecycle is
+/// observable by a one-shot caller.
 ///
-/// Production spawn APIs intentionally keep returning `JoinHandle<()>`.
-/// Capture needs the underlying [`run_writer`] result because initialization,
-/// HMAC/recovery setup, write, and final-sync errors would otherwise exist only
-/// in logs and the CLI could report an empty successful capture.
+/// Unlike [`spawn_for_home`], the returned completion handle surfaces
+/// initialization, mandatory compaction-marker, final-sync, and shutdown
+/// finalizer failures. Required-audit commands must wait for this completion
+/// after dropping their final writer handle before reporting success.
+pub(crate) fn spawn_for_home_with_completion(
+    segment_path: PathBuf,
+    home: PathBuf,
+) -> Result<(WalWriterHandle, WalWriterCompletion), WalError> {
+    validate_home_segment_path(&segment_path, &home)?;
+    refuse_unimplemented_storage_policy(&home)?;
+    let hmac_key_path = home.join("wal").join("hmac.key");
+    let (outcome_tx, outcome_rx) = oneshot::channel();
+    let (writer, join) = spawn_with_policy_and_compression_at_home(
+        segment_path,
+        SegmentPolicy::Rotating(RotationPolicy::default()),
+        CompressionPolicy::None,
+        home,
+        hmac_key_path,
+        Some(outcome_tx),
+        None,
+    )?;
+    Ok((
+        writer,
+        WalWriterCompletion {
+            join,
+            outcome: outcome_rx,
+        },
+    ))
+}
+
+/// Spawn the production writer plus an explicit initialization barrier.
+///
+/// Daemon startup uses this variant because its crash reconciler must never
+/// race asynchronous segment creation or tail recovery. Profile resolution
+/// also uses the readiness barrier before consuming a pending operator action.
+pub(crate) fn spawn_for_home_ready(
+    segment_path: PathBuf,
+    home: PathBuf,
+) -> Result<ReadyWalWriter, WalError> {
+    let (writer, completion, ready) = spawn_for_home_ready_with_completion(segment_path, home)?;
+    let WalWriterCompletion { join, outcome } = completion;
+    Ok((writer, wrap_writer_runtime_join(join, outcome), ready))
+}
+
+/// Completion-owning readiness variant for short-lived callers.
+///
+/// Unlike [`spawn_for_home_ready`], this retains the real `run_writer`
+/// `JoinHandle`. A bounded caller can therefore abort and reap the task itself
+/// if a leaked sender clone prevents the writer channel from closing.
+pub(crate) fn spawn_for_home_ready_with_completion(
+    segment_path: PathBuf,
+    home: PathBuf,
+) -> Result<(WalWriterHandle, WalWriterCompletion, WalWriterReady), WalError> {
+    validate_home_segment_path(&segment_path, &home)?;
+    refuse_unimplemented_storage_policy(&home)?;
+    let hmac_key_path = home.join("wal").join("hmac.key");
+    let (startup_tx, startup_rx) = oneshot::channel();
+    let startup = std::sync::Arc::new(std::sync::Mutex::new(Some(startup_tx)));
+    let (completion_tx, completion_rx) = oneshot::channel();
+    let (writer, join) = spawn_with_policy_and_compression_at_home(
+        segment_path,
+        SegmentPolicy::Rotating(RotationPolicy::default()),
+        CompressionPolicy::None,
+        home,
+        hmac_key_path,
+        Some(completion_tx),
+        Some(startup),
+    )?;
+    Ok((
+        writer,
+        WalWriterCompletion {
+            join,
+            outcome: completion_rx,
+        },
+        WalWriterReady {
+            outcome: startup_rx,
+        },
+    ))
+}
+
+#[cfg(test)]
+pub(crate) fn spawn_for_home_with_policy_ready(
+    segment_path: PathBuf,
+    home: PathBuf,
+    policy: RotationPolicy,
+) -> Result<ReadyWalWriter, WalError> {
+    validate_home_segment_path(&segment_path, &home)?;
+    let hmac_key_path = home.join("wal").join("hmac.key");
+    let (startup_tx, startup_rx) = oneshot::channel();
+    let startup = std::sync::Arc::new(std::sync::Mutex::new(Some(startup_tx)));
+    let (completion_tx, completion_rx) = oneshot::channel();
+    let (writer, join) = spawn_with_policy_and_compression_at_home(
+        segment_path,
+        SegmentPolicy::Rotating(policy),
+        CompressionPolicy::None,
+        home,
+        hmac_key_path,
+        Some(completion_tx),
+        Some(startup),
+    )?;
+    let join = wrap_writer_runtime_join(join, completion_rx);
+    Ok((
+        writer,
+        join,
+        WalWriterReady {
+            outcome: startup_rx,
+        },
+    ))
+}
+
+fn wrap_writer_runtime_join(
+    join: tokio::task::JoinHandle<()>,
+    outcome: oneshot::Receiver<Result<(), WalError>>,
+) -> tokio::task::JoinHandle<Result<(), String>> {
+    tokio::spawn(async move {
+        join.await
+            .map_err(|error| format!("WAL writer task join failed: {error}"))?;
+        outcome
+            .await
+            .map_err(|_| "WAL writer ended without publishing its outcome".to_string())?
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn validate_home_segment_path(segment_path: &Path, home: &Path) -> Result<(), WalError> {
+    let expected_parent = std::path::absolute(home.join("wal"))?;
+    let segment = std::path::absolute(segment_path)?;
+    if segment.parent() != Some(expected_parent.as_path())
+        || !segment
+            .file_name()
+            .is_some_and(crate::wal::scan::canonical_segment_name)
+    {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "home-bound WAL segment {} must be a canonically named direct child of {}",
+                segment.display(),
+                expected_parent.display()
+            ),
+        )));
+    }
+    Ok(())
+}
+
+/// Completion handle for a writer whose full asynchronous lifecycle must be
+/// observed before its caller reports success.
+///
+/// Capture and required one-shot production writers need the underlying
+/// [`run_writer`] result because initialization, HMAC/recovery setup, write,
+/// and final-sync errors would otherwise exist only in logs and the CLI could
+/// report a false success.
 #[derive(Debug)]
-#[cfg_attr(not(any(test, feature = "wasm-plugin-host")), allow(dead_code))]
 pub(crate) struct WalWriterCompletion {
     join: tokio::task::JoinHandle<()>,
     outcome: oneshot::Receiver<Result<(), WalError>>,
 }
 
 impl WalWriterCompletion {
-    #[cfg_attr(not(any(test, feature = "wasm-plugin-host")), allow(dead_code))]
     pub(crate) async fn wait(self) -> Result<(), WalError> {
         self.join.await.map_err(|error| {
             WalError::Io(std::io::Error::other(format!(
@@ -759,6 +1113,51 @@ impl WalWriterCompletion {
                 "WAL writer task ended without publishing its completion result",
             ))
         })?
+    }
+
+    /// Wait for real writer shutdown under one wall-clock deadline.
+    ///
+    /// A timeout aborts and awaits the actual `run_writer` task rather than a
+    /// wrapper waiting on it. Dropping that future releases its segment file
+    /// and rewrite-lock handles even when a leaked `WalWriterHandle` clone
+    /// keeps the channel sender alive.
+    pub(crate) async fn wait_bounded(
+        mut self,
+        timeout: std::time::Duration,
+    ) -> Result<(), WalError> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let joined = match tokio::time::timeout_at(deadline, &mut self.join).await {
+            Ok(joined) => joined,
+            Err(_) => {
+                self.join.abort();
+                let _ = (&mut self.join).await;
+                return Err(WalError::Io(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "WAL writer did not finalize within {} ms and was aborted",
+                        timeout.as_millis()
+                    ),
+                )));
+            }
+        };
+        joined.map_err(|error| {
+            WalError::Io(std::io::Error::other(format!(
+                "WAL writer task join failed: {error}"
+            )))
+        })?;
+        match tokio::time::timeout_at(deadline, &mut self.outcome).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(_)) => Err(WalError::Io(std::io::Error::other(
+                "WAL writer task ended without publishing its completion result",
+            ))),
+            Err(_) => Err(WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "WAL writer outcome was not published within {} ms",
+                    timeout.as_millis()
+                ),
+            ))),
+        }
     }
 }
 
@@ -784,17 +1183,8 @@ pub(crate) fn spawn_capture(
             ),
         )));
     }
+    validate_home_segment_path(&segment_path, &home)?;
     let expected_parent = home.join("wal");
-    if segment_path.parent() != Some(expected_parent.as_path()) {
-        return Err(WalError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "capture WAL segment {} must be a direct child of throwaway WAL directory {}",
-                segment_path.display(),
-                expected_parent.display()
-            ),
-        )));
-    }
 
     let hmac_key_path = expected_parent.join("hmac.key");
     let (outcome_tx, outcome_rx) = oneshot::channel();
@@ -807,6 +1197,7 @@ pub(crate) fn spawn_capture(
         home,
         hmac_key_path,
         Some(outcome_tx),
+        None,
     )?;
     Ok((
         writer,
@@ -863,9 +1254,10 @@ fn refuse_unimplemented_storage_policy(home: &std::path::Path) -> Result<(), Wal
     Ok(())
 }
 
-/// Spawn the writer task with an explicit rotation policy and no compression.
-/// Production code uses [`spawn`]; tests use this to exercise rotation without
-/// writing 16 MiB.
+/// Spawn the raw unit-test writer with an explicit rotation policy and no
+/// compression. Tests use this to exercise rotation without writing 16 MiB;
+/// production path admission is enforced by the home-bound entrypoints.
+#[cfg(test)]
 pub fn spawn_with_policy(
     segment_path: PathBuf,
     policy: RotationPolicy,
@@ -873,10 +1265,11 @@ pub fn spawn_with_policy(
     spawn_with_policy_and_compression(segment_path, policy, CompressionPolicy::None)
 }
 
-/// Spawn the writer task with explicit rotation policy AND compression policy.
-/// Used by the daemon when `freedom.yaml::wal.compression` is set, and by
-/// tests that need to exercise v2 compressed segments.
-pub fn spawn_with_policy_and_compression(
+/// Spawn the raw unit-test writer with explicit rotation and compression
+/// policies. Tests use this to exercise supported sealed compression
+/// substrates without inheriting production path-admission semantics.
+#[cfg(test)]
+pub(crate) fn spawn_with_policy_and_compression(
     segment_path: PathBuf,
     policy: RotationPolicy,
     compression: CompressionPolicy,
@@ -890,6 +1283,7 @@ pub fn spawn_with_policy_and_compression(
         hmac_home,
         hmac_key_path,
         None,
+        None,
     )
 }
 
@@ -900,7 +1294,53 @@ fn spawn_with_policy_and_compression_at_home(
     hmac_home: PathBuf,
     hmac_key_path: PathBuf,
     completion: Option<oneshot::Sender<Result<(), WalError>>>,
+    startup: Option<WriterStartupSignal>,
 ) -> Result<(WalWriterHandle, tokio::task::JoinHandle<()>), WalError> {
+    let rotating = matches!(segment_policy, SegmentPolicy::Rotating(_));
+    if let SegmentPolicy::Rotating(policy) = segment_policy {
+        validate_rotation_policy(policy)?;
+    }
+    let expected_wal_parent = std::path::absolute(hmac_home.join("wal")).map_err(|error| {
+        WalError::Io(std::io::Error::new(
+            error.kind(),
+            format!("resolve writer WAL parent: {error}"),
+        ))
+    })?;
+    let resolved_segment = std::path::absolute(&segment_path).map_err(|error| {
+        WalError::Io(std::io::Error::new(
+            error.kind(),
+            format!("resolve writer segment path: {error}"),
+        ))
+    })?;
+    if rotating && resolved_segment.parent() == Some(expected_wal_parent.as_path()) {
+        match std::fs::symlink_metadata(&resolved_segment) {
+            Ok(_) => {
+                crate::cli::security::recover_hmac_key_rotation(&hmac_home, &hmac_key_path)
+                    .and_then(|_| crate::wal::compaction::load_or_init_key(&hmac_key_path))
+                    .map_err(|error| {
+                        compaction_recovery_error(format!(
+                            "initialize HMAC authority for existing WAL startup preflight: \
+                             {error:#}"
+                        ))
+                    })?;
+                let base = first_segment_path_in_namespace(&resolved_segment)?;
+                crate::wal::scan::for_each_frame_in_home_segment_chain(
+                    &hmac_home,
+                    &base,
+                    crate::wal::scan::HomeWalScanLimits::default(),
+                    |_, _| Ok(()),
+                )
+                .map_err(|error| {
+                    compaction_recovery_error(format!(
+                        "existing home WAL chain failed authenticated startup preflight: \
+                         {error:#}"
+                    ))
+                })?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(WalError::Io(error)),
+        }
+    }
     // Acquire before spawning so callers never receive an apparently-live
     // writer handle when another process owns the segment for redaction (or a
     // second writer accidentally targets the same path). The guard moves into
@@ -912,6 +1352,7 @@ fn spawn_with_policy_and_compression_at_home(
         })?;
     let (tx, rx) = mpsc::channel(DEFAULT_CHANNEL_CAPACITY);
     let join = tokio::spawn(async move {
+        let startup_for_writer = startup.clone();
         let outcome = run_writer(
             segment_path,
             initial_segment_lock,
@@ -920,8 +1361,20 @@ fn spawn_with_policy_and_compression_at_home(
             compression,
             hmac_home,
             hmac_key_path,
+            startup_for_writer,
         )
         .await;
+        if let Err(error) = &outcome
+            && let Some(startup) = startup
+            && let Some(startup) = startup
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .take()
+        {
+            let _ = startup.send(Err(format!(
+                "WAL writer initialization failed before readiness: {error}"
+            )));
+        }
         if let Err(e) = &outcome {
             error!(error = %e, "WAL writer task exited with error");
         }
@@ -938,6 +1391,31 @@ fn spawn_with_policy_and_compression_at_home(
         },
         join,
     ))
+}
+
+fn first_segment_path_in_namespace(path: &Path) -> Result<PathBuf, WalError> {
+    let parent = path.parent().ok_or_else(|| {
+        WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("WAL segment has no parent: {}", path.display()),
+        ))
+    })?;
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| {
+            WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("WAL segment name is not UTF-8: {}", path.display()),
+            ))
+        })?;
+    let name = match stem.rsplit_once('-') {
+        Some((namespace, sequence)) if sequence.len() == 6 => {
+            format!("{namespace}-000001.wal")
+        }
+        _ => "000001.wal".to_string(),
+    };
+    Ok(parent.join(name))
 }
 
 /// Result of `open_segment`: the file handle plus a flag that tells the
@@ -964,11 +1442,30 @@ struct PendingRecovery {
     bytes_dropped: u64,
 }
 
-async fn open_segment(path: &Path) -> Result<OpenedSegment, WalError> {
+fn new_segment_header_bytes(
+    compression: CompressionPolicy,
+    seq: u64,
+    opened_at_ns: u64,
+) -> Vec<u8> {
+    match compression {
+        CompressionPolicy::None => SegmentHeader::new(0, seq, 0, opened_at_ns, [0u8; 16])
+            .to_le_bytes()
+            .to_vec(),
+        CompressionPolicy::Zstd3 => {
+            // The live body is deliberately raw so crash recovery can scan it.
+            // COMPRESSED|SEALED is published only by the atomic finalizer.
+            SegmentHeaderV3::new(0, seq, 0, opened_at_ns, [0u8; 16], 0, 0)
+                .to_le_bytes()
+                .to_vec()
+        }
+    }
+}
+
+async fn open_segment(path: &Path, new_header: Vec<u8>) -> Result<OpenedSegment, WalError> {
     let segment_rewrite_lock = super::redact::lock_segment_for_rewrite(path).map_err(|error| {
         std::io::Error::other(format!("lock WAL segment for writer: {error:#}"))
     })?;
-    open_segment_with_lock(path, segment_rewrite_lock).await
+    open_segment_with_lock_mode(path, segment_rewrite_lock, true, new_header).await
 }
 
 /// Open a segment after its stable sidecar lock has already been acquired.
@@ -977,83 +1474,324 @@ async fn open_segment(path: &Path) -> Result<OpenedSegment, WalError> {
 async fn open_segment_with_lock(
     path: &Path,
     segment_rewrite_lock: std::fs::File,
+    new_header: Vec<u8>,
 ) -> Result<OpenedSegment, WalError> {
-    let is_new = !path.exists();
+    open_segment_with_lock_mode(path, segment_rewrite_lock, false, new_header).await
+}
 
-    let mut opts = OpenOptions::new();
-    opts.create(true).append(true).read(false);
-
-    // Mode 0600 on unix. `tokio::fs::OpenOptions::mode` is directly available under cfg(unix).
-    #[cfg(unix)]
-    opts.mode(0o600);
-
-    let file = opts.open(path).await?;
-
-    // F-13: dir-fsync after creating the segment file. Without this, on a
-    // crash between file create and the next fsync, the directory entry may
-    // be lost even though the segment bytes are durable — losing the whole
-    // segment. Cheap on most filesystems, mandatory on ext4/xfs/btrfs.
-    if is_new && let Some(parent) = path.parent() {
-        #[cfg(unix)]
-        {
-            let parent_sync = (|| -> std::io::Result<()> {
-                let dir = std::fs::File::open(parent)?;
-                #[cfg(test)]
-                let fail_injected = {
-                    let mut target = TEST_FAIL_SEGMENT_PARENT_SYNC_AT
-                        .lock()
-                        .expect("segment parent-sync test hook poisoned");
-                    if target.as_deref() == Some(parent) {
-                        *target = None;
-                        true
-                    } else {
-                        false
-                    }
-                };
-                #[cfg(test)]
-                if fail_injected {
-                    return Err(std::io::Error::other(
-                        "injected WAL segment parent-directory sync failure",
-                    ));
-                }
-                dir.sync_all()
-            })();
-            if let Err(error) = parent_sync {
-                // Do not leave a zero-byte path that a retry could mistake for
-                // an existing initialized segment. No producer receives an
-                // ACK, so cleanup is safe; a crash during cleanup remains
-                // fail-closed and can never manufacture a durable frame.
-                drop(file);
-                let _ = std::fs::remove_file(path);
-                return Err(error.into());
-            }
-        }
-        // Windows: rename+create are durable via NTFS metadata journal.
-        // No directory fsync equivalent.
-        let _ = parent;
-    }
-
-    // Windows: tokio::fs has no `mode()`. We restrict the file's DACL to the
-    // current user via the native `SetNamedSecurityInfoW` path (E-11,
-    // `win_acl::restrict_to_owner_async` → `win_native::set_owner_dacl`; no
-    // icacls subprocess). Runs on the blocking pool so the Win32 call does
-    // not stall this tokio worker. See OPEN_DECISIONS.md D-008 / GR-16.
-    #[cfg(windows)]
-    {
-        if let Err(e) = super::win_acl::restrict_to_owner_async(path).await {
-            tracing::warn!(
-                path = %path.display(),
-                error = %e,
-                "WAL segment DACL restriction failed; file inherits parent DACL"
-            );
-        }
-    }
+async fn open_segment_with_lock_mode(
+    path: &Path,
+    segment_rewrite_lock: std::fs::File,
+    create_new_only: bool,
+    new_header: Vec<u8>,
+) -> Result<OpenedSegment, WalError> {
+    let owned_path = path.to_path_buf();
+    let (file, is_new) = tokio::task::spawn_blocking(move || {
+        open_segment_capability_bound(&owned_path, create_new_only, &new_header)
+    })
+    .await
+    .map_err(|error| {
+        WalError::Io(std::io::Error::other(format!(
+            "join capability-bound WAL open: {error}"
+        )))
+    })??;
 
     Ok(OpenedSegment {
-        file,
+        file: File::from_std(file),
         is_new,
         segment_rewrite_lock,
     })
+}
+
+fn cleanup_uncommitted_segment(
+    parent: &cap_std::fs::Dir,
+    name: &std::ffi::OsStr,
+    display_path: &Path,
+) -> Result<(), String> {
+    let mut cleanup_failures = Vec::new();
+    if let Err(error) = parent.remove_file(name)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        cleanup_failures.push(format!("remove exact new leaf: {error}"));
+    }
+    #[cfg(unix)]
+    match parent.try_clone() {
+        Ok(directory) => {
+            if let Err(error) = directory.into_std_file().sync_all() {
+                cleanup_failures.push(format!("sync parent after rollback: {error}"));
+            }
+        }
+        Err(error) => cleanup_failures.push(format!("clone parent for rollback sync: {error}")),
+    }
+
+    if cleanup_failures.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "rollback of uncommitted WAL segment {} failed: {}",
+        display_path.display(),
+        cleanup_failures.join("; ")
+    ))
+}
+
+fn rollback_uncommitted_segment(
+    parent: &cap_std::fs::Dir,
+    name: &std::ffi::OsStr,
+    display_path: &Path,
+    primary: std::io::Error,
+) -> WalError {
+    match cleanup_uncommitted_segment(parent, name, display_path) {
+        Ok(()) => WalError::Io(primary),
+        Err(cleanup) => WalError::Io(std::io::Error::new(
+            primary.kind(),
+            format!("{primary}; {cleanup}"),
+        )),
+    }
+}
+
+fn open_segment_capability_bound(
+    path: &Path,
+    create_new_only: bool,
+    new_header: &[u8],
+) -> Result<(std::fs::File, bool), WalError> {
+    let parent = path.parent().ok_or_else(|| {
+        WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("WAL segment has no parent directory: {}", path.display()),
+        ))
+    })?;
+    let name = path.file_name().ok_or_else(|| {
+        WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("WAL segment has no file name: {}", path.display()),
+        ))
+    })?;
+    let root = crate::skills::store::open_bound_directory(parent, false, "WAL segment parent")
+        .map_err(|error| {
+            WalError::Io(std::io::Error::other(format!(
+                "open capability-bound WAL parent {}: {error:#}",
+                parent.display()
+            )))
+        })?
+        .ok_or_else(|| {
+            WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("WAL segment parent is missing: {}", parent.display()),
+            ))
+        })?;
+
+    let open = |child_name: &std::ffi::OsStr, create_new: bool, publishable: bool| {
+        let mut options = CapOpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .append(true)
+            .follow(FollowSymlinks::No);
+        if create_new {
+            options.create_new(true);
+        }
+        #[cfg(unix)]
+        {
+            use cap_std::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        #[cfg(windows)]
+        {
+            use cap_std::fs::OpenOptionsExt as _;
+            use windows_sys::Win32::Storage::FileSystem::{
+                DELETE, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH, FILE_GENERIC_READ,
+                FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, READ_CONTROL, WRITE_DAC,
+            };
+            let publish_access = if publishable { DELETE } else { 0 };
+            options
+                .access_mode(
+                    FILE_GENERIC_READ
+                        | FILE_GENERIC_WRITE
+                        | READ_CONTROL
+                        | WRITE_DAC
+                        | publish_access,
+                )
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_WRITE_THROUGH);
+        }
+        #[cfg(not(windows))]
+        let _ = publishable;
+        root.dir.open_with(child_name, &options)
+    };
+
+    let validate_regular = |file: &cap_std::fs::File| {
+        file.metadata().and_then(|metadata| {
+            if metadata.is_file() && !crate::skills::store::cap_metadata_is_link_like(&metadata) {
+                Ok(())
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "WAL segment must be a real regular file without links: {}",
+                        path.display()
+                    ),
+                ))
+            }
+        })
+    };
+    let secure_opened_file = |file: cap_std::fs::File| -> Result<std::fs::File, WalError> {
+        validate_regular(&file)?;
+        #[cfg(unix)]
+        {
+            use cap_std::fs::PermissionsExt as _;
+            file.set_permissions(cap_std::fs::Permissions::from_mode(0o600))?;
+        }
+        let file = file.into_std();
+        #[cfg(windows)]
+        super::win_native::set_private_current_user_file_handle_dacl(&file)?;
+        Ok(file)
+    };
+    let open_existing =
+        || -> Result<std::fs::File, WalError> { secure_opened_file(open(name, false, false)?) };
+
+    if !create_new_only {
+        match open(name, false, false) {
+            Ok(file) => return Ok((secure_opened_file(file)?, false)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if new_header.is_empty() {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "new WAL segment requires a complete header",
+        )));
+    }
+
+    let mut staged = None;
+    for _ in 0..8 {
+        let candidate = std::ffi::OsString::from(format!(
+            ".neoth-wal-publish-{}.tmp",
+            uuid::Uuid::new_v4().simple()
+        ));
+        match open(&candidate, true, true) {
+            Ok(file) => {
+                staged = Some((candidate, file));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let (stage_name, mut stage) = staged.ok_or_else(|| {
+        WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not allocate a private WAL publication stage",
+        ))
+    })?;
+    let stage_display = root.display_path.join(&stage_name);
+
+    let prepare = (|| -> std::io::Result<()> {
+        validate_regular(&stage)?;
+        #[cfg(test)]
+        inject_segment_create_failure(path, TestSegmentCreateFailure::PrivatePermissions)?;
+        #[cfg(unix)]
+        {
+            use cap_std::fs::PermissionsExt as _;
+            stage.set_permissions(cap_std::fs::Permissions::from_mode(0o600))?;
+        }
+        #[cfg(windows)]
+        super::win_native::set_private_current_user_file_handle_dacl(&stage)?;
+
+        use std::io::Write as _;
+        #[cfg(test)]
+        inject_segment_create_failure(path, TestSegmentCreateFailure::HeaderWrite)?;
+        stage.write_all(new_header)?;
+        #[cfg(test)]
+        inject_segment_create_failure(path, TestSegmentCreateFailure::FileSync)?;
+        stage.sync_all()?;
+        #[cfg(test)]
+        pause_before_segment_publication(path)?;
+        Ok(())
+    })();
+    if let Err(error) = prepare {
+        drop(stage);
+        return Err(rollback_uncommitted_segment(
+            &root.dir,
+            &stage_name,
+            path,
+            error,
+        ));
+    }
+
+    if let Err(error) = crate::skills::store::publish_open_regular_file_child(
+        &root.dir,
+        &stage,
+        &stage_name,
+        &root.dir,
+        name,
+        &stage_display,
+        path,
+    ) {
+        let target_exists = match root.dir.symlink_metadata(name) {
+            Ok(_) => true,
+            Err(inspect_error) if inspect_error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(inspect_error) => {
+                drop(stage);
+                return Err(rollback_uncommitted_segment(
+                    &root.dir,
+                    &stage_name,
+                    path,
+                    std::io::Error::new(
+                        inspect_error.kind(),
+                        format!(
+                            "publish WAL segment {} failed: {error:#}; inspect target after failure: {inspect_error}",
+                            path.display()
+                        ),
+                    ),
+                ));
+            }
+        };
+        drop(stage);
+        let publish_error = if target_exists {
+            std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("WAL segment target already exists: {}", path.display()),
+            )
+        } else {
+            std::io::Error::other(format!(
+                "publish complete WAL segment {}: {error:#}",
+                path.display()
+            ))
+        };
+        if let Err(cleanup) = cleanup_uncommitted_segment(&root.dir, &stage_name, path) {
+            return Err(WalError::Io(std::io::Error::new(
+                publish_error.kind(),
+                format!("{publish_error}; {cleanup}"),
+            )));
+        }
+        if target_exists && !create_new_only {
+            return Ok((open_existing()?, false));
+        }
+        return Err(WalError::Io(publish_error));
+    }
+
+    // Rename makes only the complete, private, file-synced header visible.
+    // A directory-sync error occurs after commit, so the canonical segment is
+    // deliberately retained for restart recovery rather than rolled back.
+    #[cfg(unix)]
+    {
+        #[cfg(test)]
+        {
+            let mut target = TEST_FAIL_SEGMENT_PARENT_SYNC_AT
+                .lock()
+                .expect("segment parent-sync test hook poisoned");
+            if target.as_deref() == Some(parent) {
+                *target = None;
+                return Err(WalError::Io(std::io::Error::other(
+                    "injected WAL segment parent-directory sync failure",
+                )));
+            }
+        }
+        root.dir.try_clone()?.into_std_file().sync_all()?;
+    }
+
+    Ok((stage.into_std(), true))
 }
 
 /// Extract the trailing segment sequence from either `NNNNNN.wal` or a
@@ -1073,7 +1811,11 @@ fn segment_seq_from_path(path: &Path) -> u64 {
 /// Mutable writer state. Encapsulated so rotation can swap segments cleanly.
 struct WriterState {
     /// Open active segment.
-    file: File,
+    ///
+    /// Zstd sealing must close the Windows append handle before capability-
+    /// bound atomic replacement can commit the sealed inode. `None` is valid
+    /// only inside that seal/rotation boundary after all raw bytes are synced.
+    file: Option<File>,
     /// Stable sidecar exclusion held for the active segment's complete
     /// lifecycle. It deliberately outlives atomic inode replacement during
     /// compression finalization and is swapped only after the old file closes.
@@ -1105,14 +1847,51 @@ struct WriterState {
     /// after a crash mid-rename (ADVERSARIAL §SF-06).
     /// Only meaningful when `compression == Zstd3`; kept as 0 otherwise.
     compaction_epoch: u32,
+    /// Exact header identity of the active segment. Keeping it handle-derived
+    /// avoids an ambient path re-read during atomic sealing.
+    segment_header: ParsedSegmentHeader,
 }
 
 impl WriterState {
-    fn should_rotate(&self, now_ns: u64) -> Option<RotationReason> {
+    fn active_file_mut(&mut self) -> Result<&mut File, WalError> {
+        self.file.as_mut().ok_or_else(|| {
+            WalError::Io(std::io::Error::other(
+                "WAL writer has no active segment handle outside a seal boundary",
+            ))
+        })
+    }
+
+    fn take_active_file(&mut self) -> Result<File, WalError> {
+        self.file.take().ok_or_else(|| {
+            WalError::Io(std::io::Error::other(
+                "WAL writer cannot close an absent active segment handle",
+            ))
+        })
+    }
+
+    fn should_rotate(
+        &self,
+        now_ns: u64,
+        next_frame_len: usize,
+        marker_reserve: usize,
+    ) -> Option<RotationReason> {
         let SegmentPolicy::Rotating(policy) = self.segment_policy else {
             return None;
         };
-        if self.offset >= policy.max_bytes {
+        let header_len = match self.compression {
+            CompressionPolicy::None => SEGMENT_HEADER_LEN as u64,
+            CompressionPolicy::Zstd3 => SEGMENT_HEADER_V3_LEN as u64,
+        };
+        let projected = self
+            .offset
+            .saturating_add(next_frame_len as u64)
+            .saturating_add(marker_reserve as u64);
+        // A single legal frame may itself be larger than the rotation target.
+        // Let it occupy an otherwise-empty segment, but never append it behind
+        // existing frames and create a valid segment near twice the ceiling.
+        if self.offset >= policy.max_bytes
+            || (self.offset > header_len && projected > policy.max_bytes)
+        {
             return Some(RotationReason::SizeExceeded);
         }
         if now_ns.saturating_sub(self.opened_at_ns) >= policy.max_age_ns {
@@ -1126,17 +1905,31 @@ impl WriterState {
     }
 
     fn ensure_frame_fits(&self, frame_len: usize) -> std::io::Result<()> {
-        let SegmentPolicy::Fixed { max_bytes } = self.segment_policy else {
-            return Ok(());
+        let (max_bytes, boundary) = match self.segment_policy {
+            SegmentPolicy::Fixed { max_bytes } => (max_bytes, "capture single-segment ceiling"),
+            SegmentPolicy::Rotating(_) => (
+                crate::wal::scan::LEGACY_SAFE_MAX_SEGMENT_PHYSICAL_BYTES as u64,
+                "bounded WAL recovery ceiling",
+            ),
         };
         let projected = self.offset.saturating_add(frame_len as u64);
         if projected > max_bytes {
             return Err(std::io::Error::other(format!(
-                "capture WAL single-segment ceiling exceeded: projected {projected} bytes, \
-                 ceiling {max_bytes} bytes"
+                "{boundary} exceeded: projected {projected} bytes, ceiling {max_bytes} bytes"
             )));
         }
         Ok(())
+    }
+
+    fn ensure_frame_and_marker_fit(
+        &self,
+        frame_len: usize,
+        marker_reserve: usize,
+    ) -> std::io::Result<()> {
+        let reserved_len = frame_len.checked_add(marker_reserve).ok_or_else(|| {
+            std::io::Error::other("WAL operator frame plus marker reserve overflows usize")
+        })?;
+        self.ensure_frame_fits(reserved_len)
     }
 }
 
@@ -1158,6 +1951,388 @@ fn next_segment_path(current: &Path, next_seq: u64) -> PathBuf {
     parent.join(format!("{next_seq:06}.wal"))
 }
 
+fn compaction_recovery_error(reason: impl Into<String>) -> WalError {
+    WalError::CompactionStateUnavailable {
+        reason: reason.into(),
+    }
+}
+
+fn decode_exact_frame<'a>(
+    segment_bytes: &'a [u8],
+    offset: usize,
+    limit: usize,
+) -> Result<(super::frame::DecodedFrame<'a>, usize), WalError> {
+    let frame_bytes = segment_bytes.get(offset..limit).ok_or_else(|| {
+        compaction_recovery_error(format!(
+            "compaction recovery range {offset}..{limit} is outside a {}-byte segment",
+            segment_bytes.len()
+        ))
+    })?;
+    let decoded = super::frame::decode_frame(frame_bytes).map_err(|error| {
+        compaction_recovery_error(format!(
+            "decode WAL frame at logical offset {offset} while rebuilding HMAC state: {error}"
+        ))
+    })?;
+    let total = decoded.header.total_len as usize;
+    let end = offset.checked_add(total).ok_or_else(|| {
+        compaction_recovery_error(format!(
+            "WAL frame length overflows while rebuilding HMAC state at offset {offset}"
+        ))
+    })?;
+    if end > limit {
+        return Err(compaction_recovery_error(format!(
+            "WAL frame at offset {offset} crosses compaction recovery boundary {limit}"
+        )));
+    }
+    Ok((decoded, end))
+}
+
+fn validate_unsigned_marker_prefix(
+    segment_bytes: &[u8],
+    header_len: usize,
+    marker_from: usize,
+) -> Result<(), WalError> {
+    let mut cursor = header_len;
+    while cursor < marker_from {
+        let (decoded, end) = decode_exact_frame(segment_bytes, cursor, marker_from)?;
+        if !matches!(
+            decoded.header.event_type,
+            crate::wal::events::EVENT_TYPE_SEGMENT_ROLLOVER
+                | crate::wal::events::EVENT_TYPE_RECOVERY_TRUNCATED
+        ) {
+            return Err(compaction_recovery_error(format!(
+                "first compaction marker starts at {marker_from}, leaving operator frame \
+                 type 0x{:02X} unsigned at offset {cursor}",
+                decoded.header.event_type
+            )));
+        }
+        cursor = end;
+    }
+    Ok(())
+}
+
+fn validate_existing_compaction_marker(
+    segment_bytes: &[u8],
+    header_len: usize,
+    marker_offset: usize,
+    previous_marker_end: Option<usize>,
+    marker: &crate::wal::compaction::MarkerPayload,
+    verification_keys: &[Vec<u8>],
+) -> Result<(), WalError> {
+    let from = usize::try_from(marker.from_offset).map_err(|_| {
+        compaction_recovery_error(format!(
+            "compaction marker from_offset {} does not fit this platform",
+            marker.from_offset
+        ))
+    })?;
+    let to = usize::try_from(marker.to_offset).map_err(|_| {
+        compaction_recovery_error(format!(
+            "compaction marker to_offset {} does not fit this platform",
+            marker.to_offset
+        ))
+    })?;
+    if to != marker_offset {
+        return Err(compaction_recovery_error(format!(
+            "compaction marker at {marker_offset} claims a non-adjacent to_offset {to}"
+        )));
+    }
+    if from < header_len || from >= to {
+        return Err(compaction_recovery_error(format!(
+            "compaction marker at {marker_offset} has invalid window {from}..{to}"
+        )));
+    }
+    if let Some(previous_end) = previous_marker_end {
+        if from != previous_end {
+            return Err(compaction_recovery_error(format!(
+                "compaction marker at {marker_offset} leaves an unsigned gap \
+                 {previous_end}..{from}"
+            )));
+        }
+    } else if from > header_len {
+        validate_unsigned_marker_prefix(segment_bytes, header_len, from)?;
+    }
+
+    let mut cursor = from;
+    let mut frame_count = 0u32;
+    while cursor < to {
+        let (decoded, end) = decode_exact_frame(segment_bytes, cursor, to)?;
+        if decoded.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+            return Err(compaction_recovery_error(format!(
+                "compaction marker window {from}..{to} recursively covers another marker \
+                 at offset {cursor}"
+            )));
+        }
+        frame_count = frame_count.checked_add(1).ok_or_else(|| {
+            compaction_recovery_error(format!(
+                "compaction marker window {from}..{to} frame count overflow"
+            ))
+        })?;
+        cursor = end;
+    }
+    if frame_count != marker.frame_count {
+        return Err(compaction_recovery_error(format!(
+            "compaction marker at {marker_offset} claims {} frames, decoded {frame_count}",
+            marker.frame_count
+        )));
+    }
+    if verification_keys
+        .iter()
+        .any(|key| crate::wal::compaction::verify_marker_bytes(segment_bytes, key, marker).is_ok())
+    {
+        return Ok(());
+    }
+    Err(compaction_recovery_error(format!(
+        "existing compaction marker at offset {marker_offset} did not verify with the \
+         active HMAC key or any retained rotation archive"
+    )))
+}
+
+/// Verify every persisted compaction-marker window in one logical segment.
+///
+/// Marker windows must be adjacent. A closed predecessor must end at its last
+/// marker; the only unsigned closed-segment prefix permitted by the writer
+/// contract is the synthetic rollover/recovery prelude before the first
+/// authenticated window. The live, final unsealed segment may retain the
+/// in-progress window that writer recovery rebuilds and closes before
+/// readiness.
+pub(crate) fn verify_existing_compaction_marker_windows(
+    segment_bytes: &[u8],
+    header_len: usize,
+    verification_keys: &[Vec<u8>],
+    allow_unmarked_tail: bool,
+) -> Result<usize, WalError> {
+    if header_len > segment_bytes.len() {
+        return Err(compaction_recovery_error(format!(
+            "segment header length {header_len} exceeds the {}-byte logical segment",
+            segment_bytes.len()
+        )));
+    }
+
+    let mut cursor = header_len;
+    let mut previous_marker_end = None;
+    while cursor < segment_bytes.len() {
+        let decoded = match super::frame::decode_frame(&segment_bytes[cursor..]) {
+            Ok(decoded) => decoded,
+            Err(super::error::HeaderParseError::BufferTooShort { .. }) if allow_unmarked_tail => {
+                break;
+            }
+            Err(error) => {
+                return Err(compaction_recovery_error(format!(
+                    "decode WAL frame at logical offset {cursor} while verifying compaction \
+                     markers: {error}"
+                )));
+            }
+        };
+        let end = cursor
+            .checked_add(decoded.header.total_len as usize)
+            .ok_or_else(|| {
+                compaction_recovery_error(format!(
+                    "WAL frame length overflows while verifying compaction markers at \
+                     offset {cursor}"
+                ))
+            })?;
+        if decoded.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+            let marker: crate::wal::compaction::MarkerPayload =
+                serde_json::from_slice(decoded.payload).map_err(|error| {
+                    compaction_recovery_error(format!(
+                        "decode compaction marker payload at offset {cursor}: {error}"
+                    ))
+                })?;
+            validate_existing_compaction_marker(
+                segment_bytes,
+                header_len,
+                cursor,
+                previous_marker_end,
+                &marker,
+                verification_keys,
+            )?;
+            previous_marker_end = Some(end);
+        }
+        cursor = end;
+    }
+
+    let unmarked_from = previous_marker_end.unwrap_or(header_len);
+    if !allow_unmarked_tail {
+        if previous_marker_end.is_some() {
+            if unmarked_from != segment_bytes.len() {
+                return Err(compaction_recovery_error(format!(
+                    "closed WAL segment has an unsigned tail {unmarked_from}..{} after its \
+                     final compaction marker",
+                    segment_bytes.len()
+                )));
+            }
+        } else {
+            validate_unsigned_marker_prefix(segment_bytes, header_len, segment_bytes.len())?;
+        }
+    }
+    Ok(unmarked_from)
+}
+
+/// Rebuild the unfinished HMAC window of an unsealed raw segment.
+///
+/// Every persisted marker is verified first. The live state then resumes after
+/// the last marker and replays every remaining frame byte, so a crash or
+/// restart cannot silently abandon a partially authenticated window.
+fn recover_compaction_state(
+    active_key: &[u8],
+    verification_keys: &[Vec<u8>],
+    segment_bytes: &[u8],
+) -> Result<crate::wal::compaction::CompactionState, WalError> {
+    let parsed = parse_segment_header(segment_bytes)?;
+    if parsed.is_compressed() || parsed.is_sealed() {
+        return Err(compaction_recovery_error(
+            "HMAC state reconstruction requires an unsealed raw WAL segment",
+        ));
+    }
+    let header_len = parsed.header_len();
+    let window_start = verify_existing_compaction_marker_windows(
+        segment_bytes,
+        header_len,
+        verification_keys,
+        true,
+    )?;
+    let mut state = crate::wal::compaction::CompactionState::new(active_key, window_start as u64);
+    let mut cursor = window_start;
+    while cursor < segment_bytes.len() {
+        let (decoded, end) = decode_exact_frame(segment_bytes, cursor, segment_bytes.len())?;
+        if decoded.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+            return Err(compaction_recovery_error(format!(
+                "internal recovery error: marker remained after last marker boundary at {cursor}"
+            )));
+        }
+        state.update(&segment_bytes[cursor..end]);
+        cursor = end;
+    }
+    Ok(state)
+}
+
+async fn emit_compaction_marker(
+    state: &mut WriterState,
+    compaction_state: &mut crate::wal::compaction::CompactionState,
+    key: &[u8],
+) -> Result<(), WalError> {
+    if compaction_state.frames() == 0 {
+        return Ok(());
+    }
+
+    // finalise_marker consumes the rolling MAC. Any error below is therefore a
+    // fatal writer transaction abort: callers must not receive an ACK and a
+    // restart reconstructs the exact unfinished window from durable frames.
+    let marker_payload = compaction_state.finalise_marker(key, state.offset);
+    let payload_bytes = serde_json::to_vec(&serde_json::json!({
+        "from_offset":      marker_payload.from_offset,
+        "to_offset":        marker_payload.to_offset,
+        "frame_count":      marker_payload.frame_count,
+        "hmac_hex":         marker_payload.hmac_hex,
+        "compaction_epoch": state.compaction_epoch,
+        "ts_ns":            current_ns(),
+    }))
+    .expect("compaction marker payload contains only infallible JSON values");
+    let marker_header = crate::wal::HeaderBuilder::new(
+        crate::wal::events::EVENT_TYPE_COMPACTION_MARKER,
+        &payload_bytes,
+    )
+    .flags(crate::wal::EventFlags::SYNTHETIC)
+    .build();
+    let marker_frame = encode_frame(&marker_header, &payload_bytes);
+    state.ensure_frame_fits(marker_frame.len())?;
+    #[cfg(test)]
+    inject_compaction_marker_write_failure(&state.path)?;
+    write_and_sync(state.active_file_mut()?, &marker_frame).await?;
+    if state.compression == CompressionPolicy::Zstd3 {
+        state.pending_frames.extend_from_slice(&marker_frame);
+    }
+    state.offset += marker_frame.len() as u64;
+    *compaction_state = crate::wal::compaction::CompactionState::new(key, state.offset);
+    Ok(())
+}
+
+async fn closed_segment_binding(
+    path: &Path,
+    expected_sequence: u64,
+) -> Result<ClosedSegmentBinding, WalError> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let parent = path.parent().ok_or_else(|| {
+            WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("closed WAL segment has no parent: {}", path.display()),
+            ))
+        })?;
+        let name = path.file_name().ok_or_else(|| {
+            WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("closed WAL segment has no leaf: {}", path.display()),
+            ))
+        })?;
+        let root =
+            crate::skills::store::open_bound_directory(parent, false, "closed WAL segment binding")
+                .map_err(|error| {
+                    WalError::Io(std::io::Error::other(format!(
+                        "open capability-bound parent for {}: {error:#}",
+                        path.display()
+                    )))
+                })?
+                .ok_or_else(|| {
+                    WalError::Io(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("closed WAL parent is missing: {}", parent.display()),
+                    ))
+                })?;
+        let bytes = crate::skills::store::read_regular_file_bounded(
+            &root.dir,
+            name,
+            &path,
+            crate::wal::scan::LEGACY_SAFE_MAX_SEGMENT_PHYSICAL_BYTES,
+        )
+        .map_err(|error| {
+            WalError::Io(std::io::Error::other(format!(
+                "read closed WAL segment binding {}: {error:#}",
+                path.display()
+            )))
+        })?;
+        let parsed = parse_segment_header(&bytes)?;
+        if parsed.segment_seq() != expected_sequence {
+            return Err(WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "closed WAL segment {} header sequence {} differs from writer sequence \
+                     {expected_sequence}",
+                    path.display(),
+                    parsed.segment_seq()
+                ),
+            )));
+        }
+        Ok(ClosedSegmentBinding {
+            segment_name: name
+                .to_str()
+                .ok_or_else(|| {
+                    WalError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("closed WAL segment name is not UTF-8: {}", path.display()),
+                    ))
+                })?
+                .to_owned(),
+            generation: parsed.generation(),
+            sequence: parsed.segment_seq(),
+            start_ts_ns: parsed.segment_start_ts_ns(),
+            node_id: parsed.node_id(),
+            physical_len: u64::try_from(bytes.len()).map_err(|_| {
+                WalError::Io(std::io::Error::other(
+                    "closed WAL segment length does not fit u64",
+                ))
+            })?,
+            sha256_hex: hex::encode(Sha256::digest(&bytes)),
+        })
+    })
+    .await
+    .map_err(|error| {
+        WalError::Io(std::io::Error::other(format!(
+            "join closed WAL segment binding: {error}"
+        )))
+    })?
+}
+
 /// Close the current segment durably and open the next one. Emits a
 /// SEGMENT_ROLLOVER WAL event (in the new segment, not the closing one,
 /// so a reader scanning forward sees the rollover at the head of the new
@@ -1166,20 +2341,129 @@ async fn rotate(
     state: &mut WriterState,
     reason: RotationReason,
     home: &Path,
+    compaction_state: &mut Option<crate::wal::compaction::CompactionState>,
+    hmac_key: Option<&[u8]>,
 ) -> Result<(), WalError> {
+    if let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key) {
+        emit_compaction_marker(state, compaction_state, key).await?;
+    }
+
+    // Final-sync the live raw segment before a zstd finalizer atomically
+    // replaces its pathname. Syncing `state.file` after that publication would
+    // target the superseded raw-file handle rather than the sealed segment and
+    // can fail on Windows. The atomic finalizer independently syncs both its
+    // private replacement file and the parent-directory commit.
+    state.active_file_mut()?.sync_all().await?;
+
     // Workstream F: finalize compressed segment before rotating.
     if state.compression == CompressionPolicy::Zstd3 && !state.pending_frames.is_empty() {
+        // Windows denies replacement through the capability-bound rename while
+        // the target append handle is still open. Keep the rewrite lock held,
+        // but close the fully-synced raw handle before publishing the sealed
+        // replacement.
+        drop(state.take_active_file()?);
         finalize_compressed_segment(state, home).await?;
     }
 
-    // Final sync before closing. `sync_data` was already called per frame;
-    // this is belt-and-suspenders for the last-frame metadata.
-    state.file.sync_all().await?;
-
     let closed_seq = state.seq;
     let closed_bytes = state.offset;
+    let predecessor = closed_segment_binding(&state.path, closed_seq).await?;
     let next_seq = state.seq + 1;
     let next_path = next_segment_path(&state.path, next_seq);
+    let now_ns = current_ns();
+    let new_header = new_segment_header_bytes(state.compression, next_seq, now_ns);
+    let parsed_new_header =
+        parse_segment_header(&new_header).expect("writer-generated segment header must parse");
+    let header_len = new_header.len();
+    let key = hmac_key.ok_or_else(|| {
+        compaction_recovery_error(
+            "rotating WAL writer cannot publish a successor without HMAC authority",
+        )
+    })?;
+    let opened_segment_name = next_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "opened WAL successor name is not UTF-8: {}",
+                    next_path.display()
+                ),
+            ))
+        })?
+        .to_owned();
+
+    // Build the complete authenticated successor prefix before publishing its
+    // canonical name. `open_segment` stages and fsyncs arbitrary initial
+    // bytes, then commits the directory entry atomically; a crash can
+    // therefore expose either no successor or header+link+marker, never an
+    // ambiguous header/link prefix that startup would have to repair.
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "link_domain": "neoth.wal.cross-segment.v1",
+        "link_version": 1,
+        "closed_segment_name": predecessor.segment_name,
+        "closed_generation": predecessor.generation,
+        "closed_seq": predecessor.sequence,
+        "closed_bytes": closed_bytes,
+        "closed_start_ts_ns": predecessor.start_ts_ns,
+        "closed_node_id": predecessor.node_id,
+        "closed_physical_bytes": predecessor.physical_len,
+        "closed_sha256_hex": predecessor.sha256_hex,
+        "opened_segment_name": opened_segment_name,
+        "opened_generation": parsed_new_header.generation(),
+        "opened_seq": next_seq,
+        "opened_start_ts_ns": parsed_new_header.segment_start_ts_ns(),
+        "opened_node_id": parsed_new_header.node_id(),
+        "reason": reason.as_str(),
+        "ts_ns": now_ns,
+    }))
+    .expect("segment rollover payload contains only infallible JSON values");
+    let rollover_header =
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_SEGMENT_ROLLOVER, &payload)
+            .flags(crate::wal::EventFlags::SYNTHETIC)
+            .build();
+    let link_frame = encode_frame(&rollover_header, &payload);
+    let link_end = header_len
+        .checked_add(link_frame.len())
+        .ok_or_else(|| std::io::Error::other("successor link offset overflows usize"))?;
+    let mut link_hmac = crate::wal::compaction::CompactionState::new(key, header_len as u64);
+    link_hmac.update(&link_frame);
+    let link_marker = link_hmac.finalise_marker(
+        key,
+        u64::try_from(link_end)
+            .map_err(|_| std::io::Error::other("successor link offset exceeds u64"))?,
+    );
+    let marker_payload = serde_json::to_vec(&serde_json::json!({
+        "from_offset":      link_marker.from_offset,
+        "to_offset":        link_marker.to_offset,
+        "frame_count":      link_marker.frame_count,
+        "hmac_hex":         link_marker.hmac_hex,
+        "compaction_epoch": 0,
+        "ts_ns":            now_ns,
+    }))
+    .expect("successor link marker contains only infallible JSON values");
+    let marker_header = crate::wal::HeaderBuilder::new(
+        crate::wal::events::EVENT_TYPE_COMPACTION_MARKER,
+        &marker_payload,
+    )
+    .flags(crate::wal::EventFlags::SYNTHETIC)
+    .build();
+    let marker_frame = encode_frame(&marker_header, &marker_payload);
+    let mut successor_prefix =
+        Vec::with_capacity(header_len + link_frame.len() + marker_frame.len());
+    successor_prefix.extend_from_slice(&new_header);
+    successor_prefix.extend_from_slice(&link_frame);
+    successor_prefix.extend_from_slice(&marker_frame);
+    if successor_prefix.len() > crate::wal::scan::LEGACY_SAFE_MAX_SEGMENT_PHYSICAL_BYTES {
+        return Err(WalError::Io(std::io::Error::other(format!(
+            "authenticated WAL successor prefix is {} bytes, above the {}-byte recovery ceiling",
+            successor_prefix.len(),
+            crate::wal::scan::LEGACY_SAFE_MAX_SEGMENT_PHYSICAL_BYTES
+        ))));
+    }
+    let successor_offset = u64::try_from(successor_prefix.len())
+        .map_err(|_| std::io::Error::other("successor prefix length exceeds u64"))?;
 
     info!(
         closed = %state.path.display(),
@@ -1190,71 +2474,77 @@ async fn rotate(
         "WAL segment rollover",
     );
 
-    let opened = open_segment(&next_path).await?;
+    let opened = open_segment(&next_path, successor_prefix).await?;
     let is_new = opened.is_new;
     // Declare the guard before the append handle: locals drop in reverse
     // declaration order, so every early-return path closes `new_file` first.
     let next_segment_lock = opened.segment_rewrite_lock;
-    let mut new_file = opened.file;
-    debug_assert!(is_new, "rotation target should always be a new file");
+    let new_file = opened.file;
+    if !is_new {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!(
+                "refuse WAL rotation because target segment already exists: {}",
+                next_path.display()
+            ),
+        )));
+    }
 
-    let now_ns = current_ns();
-    let header_len = match state.compression {
-        CompressionPolicy::None => {
-            let header = SegmentHeader::new(0, next_seq, 0, now_ns, [0u8; 16]);
-            new_file.write_all(&header.to_le_bytes()).await?;
-            SEGMENT_HEADER_LEN
-        }
-        CompressionPolicy::Zstd3 => {
-            // GOLD-PROG-12: new rotated segments use V3 header with epoch=0
-            // (fresh segment, no prior compaction).
-            let header = SegmentHeaderV3::new(
-                0,
-                next_seq,
-                0,
-                now_ns,
-                [0u8; 16],
-                SEGMENT_FLAG_COMPRESSED,
-                0,
-            );
-            new_file.write_all(&header.to_le_bytes()).await?;
-            SEGMENT_HEADER_V3_LEN
-        }
-    };
-    new_file.sync_data().await?;
+    #[cfg(windows)]
+    let new_file = File::from_std(super::win_native::duplicate_append_only_file(&new_file)?);
 
     // Close the old append handle before releasing its rewrite guard. The next
     // guard is already held, so no segment is ever active without exclusion.
-    state.file = new_file;
+    state.file = Some(new_file);
     state.segment_rewrite_lock = next_segment_lock;
     state.path = next_path;
     state.seq = next_seq;
     state.opened_at_ns = now_ns;
-    state.offset = header_len as u64;
+    state.offset = successor_offset;
     // GOLD-PROG-12: fresh segment always starts at epoch 0.
     state.compaction_epoch = 0;
-
-    // Audit-trail event in the new segment's first frame slot.
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "closed_seq": closed_seq,
-        "closed_bytes": closed_bytes,
-        "opened_seq": next_seq,
-        "reason": reason.as_str(),
-        "ts_ns": now_ns,
-    }))
-    .expect("segment rollover payload contains only infallible JSON values");
-    let rollover_header =
-        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_SEGMENT_ROLLOVER, &payload)
-            .flags(crate::wal::EventFlags::SYNTHETIC)
-            .build();
-    let frame = encode_frame(&rollover_header, &payload);
-    write_and_sync(&mut state.file, &frame).await?;
-    state.offset += frame.len() as u64;
+    state.segment_header = parsed_new_header;
+    state.pending_frames.clear();
+    if state.compression == CompressionPolicy::Zstd3 {
+        state.pending_frames.extend_from_slice(&link_frame);
+        state.pending_frames.extend_from_slice(&marker_frame);
+    }
+    *compaction_state = Some(crate::wal::compaction::CompactionState::new(
+        key,
+        state.offset,
+    ));
     Ok(())
 }
 
 fn current_ns() -> u64 {
     crate::time::now_unix_ns()
+}
+
+async fn read_existing_segment_bounded(
+    file: &mut File,
+    path: &Path,
+    max_bytes: usize,
+) -> std::io::Result<Vec<u8>> {
+    file.seek(std::io::SeekFrom::Start(0)).await?;
+    let read_ceiling = u64::try_from(max_bytes)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut reader = (&mut *file).take(read_ceiling);
+    let mut bytes = Vec::with_capacity(max_bytes.min(1024 * 1024));
+    reader.read_to_end(&mut bytes).await?;
+    drop(reader);
+    if bytes.len() > max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "existing WAL segment {} exceeds the {}-byte recovery limit",
+                path.display(),
+                max_bytes
+            ),
+        ));
+    }
+    file.seek(std::io::SeekFrom::End(0)).await?;
+    Ok(bytes)
 }
 
 async fn run_writer(
@@ -1265,8 +2555,16 @@ async fn run_writer(
     compression: CompressionPolicy,
     hmac_home: PathBuf,
     hmac_key_path: PathBuf,
+    startup: Option<WriterStartupSignal>,
 ) -> Result<(), WalError> {
-    let opened = open_segment_with_lock(&segment_path, initial_segment_lock).await?;
+    let seq = segment_seq_from_path(&segment_path);
+    let fresh_opened_at_ns = current_ns();
+    let fresh_header = new_segment_header_bytes(compression, seq, fresh_opened_at_ns);
+    let fresh_parsed_header =
+        parse_segment_header(&fresh_header).expect("writer-generated segment header must parse");
+    let fresh_header_len = fresh_header.len();
+    let opened =
+        open_segment_with_lock(&segment_path, initial_segment_lock, fresh_header.clone()).await?;
     let is_new = opened.is_new;
     if !is_new && matches!(segment_policy, SegmentPolicy::Fixed { .. }) {
         return Err(WalError::Io(std::io::Error::new(
@@ -1281,11 +2579,10 @@ async fn run_writer(
     // an initialization error must close `file` before unlocking the segment.
     let segment_rewrite_lock = opened.segment_rewrite_lock;
     let mut file = opened.file;
-    let seq = segment_seq_from_path(&segment_path);
 
-    // F-14: every new segment begins with a segment header at offset 0.
-    // v1 (no compression): 60-byte SegmentHeader.
-    // v2 (zstd_3): 61-byte SegmentHeaderV2 with SEGMENT_FLAG_COMPRESSED.
+    // F-14: every new segment is returned only after its complete private
+    // header and parent entry are durable. Zstd live bodies remain raw and
+    // unflagged until the atomic finalizer publishes COMPRESSED|SEALED.
     //
     // Pick #36 (Session 14): existing-segment path now scans the tail for
     // torn frames via `wal::recovery::scan_tail`. On torn-tail detection
@@ -1298,32 +2595,19 @@ async fn run_writer(
     // GOLD-PROG-12: track compaction epoch; initialized from on-disk header on
     // reopen, or 0 for a fresh segment.
     let mut initial_compaction_epoch: u32 = 0;
+    let mut recovered_segment_header = None;
+    let mut initial_pending_frames = Vec::new();
+    let mut initial_compaction_bytes = is_new.then_some(fresh_header);
+    let mut resume_sealed_segment = false;
 
     let (offset, opened_at_ns) = if is_new {
-        let ts_ns = current_ns();
-        let header_len = match compression {
-            CompressionPolicy::None => {
-                let header = SegmentHeader::new(0, seq, 0, ts_ns, [0u8; 16]);
-                file.write_all(&header.to_le_bytes()).await?;
-                SEGMENT_HEADER_LEN
-            }
-            CompressionPolicy::Zstd3 => {
-                // GOLD-PROG-12: new compressed segments always use V3 header
-                // with compaction_epoch=0 (no compaction has occurred yet).
-                let header =
-                    SegmentHeaderV3::new(0, seq, 0, ts_ns, [0u8; 16], SEGMENT_FLAG_COMPRESSED, 0);
-                file.write_all(&header.to_le_bytes()).await?;
-                SEGMENT_HEADER_V3_LEN
-            }
-        };
-        file.sync_data().await?;
         debug!(
             path = %segment_path.display(),
             seq,
             compression = ?compression,
-            "wrote segment header for new WAL segment"
+            "opened committed new WAL segment"
         );
-        (header_len as u64, ts_ns)
+        (fresh_header_len as u64, fresh_opened_at_ns)
     } else {
         let metadata_len = file.metadata().await?.len();
         if metadata_len < SEGMENT_HEADER_LEN as u64 {
@@ -1334,29 +2618,53 @@ async fn run_writer(
             );
         }
 
-        // Read the whole segment for tail-scanning. `tokio::fs::read` is
-        // a separate syscall from the append-mode `file` handle — they
-        // don't conflict. Failure to read is non-fatal: we fall back to
-        // the metadata-length resume point (the prior shape), matching
-        // the original behaviour.
-        let (resume_offset, resume_opened_at_ns) = match tokio::fs::read(&segment_path).await {
-            Ok(bytes) => {
-                // COR-22: recover the segment's real start timestamp from its
-                // header so the 24h age-rotation clock survives a daemon
-                // restart. Before this, opened_at_ns was reset to "now" on
-                // reopen, so a segment opened 25h ago would never age-rotate
-                // after a restart (only the size ceiling protected it).
-                // GOLD-PROG-12: also recover compaction_epoch from the header
-                // so the next finalize uses epoch+1, not 0 (crash-idempotency).
-                let recovered_opened_at_ns = match parse_segment_header(&bytes) {
-                    Ok(ParsedSegmentHeader::V1(h)) => h.segment_start_ts_ns,
-                    Ok(ParsedSegmentHeader::V2(h)) => h.segment_start_ts_ns,
-                    Ok(ParsedSegmentHeader::V3(h)) => {
-                        initial_compaction_epoch = h.compaction_epoch;
-                        h.segment_start_ts_ns
-                    }
-                    Err(_) => current_ns(),
-                };
+        // Reconstruct and tail-scan the existing segment before any append.
+        // The read is independently capped: metadata can change between the
+        // size check and this read, and an attacker-controlled sparse/large
+        // segment must not turn daemon startup into an unbounded allocation.
+        // Any read/validation failure is fatal because appending after an
+        // unverified tail would make the WAL chronology ambiguous.
+        let bytes = read_existing_segment_bounded(
+            &mut file,
+            &segment_path,
+            crate::wal::scan::HomeWalScanLimits::default().max_segment_physical_bytes,
+        )
+        .await?;
+        let (resume_offset, resume_opened_at_ns) = {
+            // COR-22: recover the segment's real start timestamp from its
+            // header so the 24h age-rotation clock survives a daemon
+            // restart. Before this, opened_at_ns was reset to "now" on
+            // reopen, so a segment opened 25h ago would never age-rotate
+            // after a restart (only the size ceiling protected it).
+            // GOLD-PROG-12: also recover compaction_epoch from the header
+            // so the next finalize uses epoch+1, not 0 (crash-idempotency).
+            let parsed = parse_segment_header(&bytes)?;
+            recovered_segment_header = Some(parsed);
+            let recovered_opened_at_ns = parsed.segment_start_ts_ns();
+            initial_compaction_epoch = parsed.compaction_epoch();
+            if parsed.is_compressed() && !parsed.is_sealed() {
+                return Err(WalError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "WAL segment {} uses the legacy ambiguous COMPRESSED-without-SEALED \
+                         header; refusing a destructive raw resume",
+                        segment_path.display()
+                    ),
+                )));
+            }
+            if parsed.is_sealed() {
+                if compression != CompressionPolicy::Zstd3 || !parsed.is_compressed() {
+                    return Err(WalError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "sealed WAL segment {} does not match the active zstd writer policy",
+                            segment_path.display()
+                        ),
+                    )));
+                }
+                resume_sealed_segment = true;
+                (metadata_len, recovered_opened_at_ns)
+            } else {
                 let resume_offset = match crate::wal::recovery::scan_tail(&bytes) {
                     crate::wal::recovery::ScanResult::Clean { through } => through,
                     crate::wal::recovery::ScanResult::TornAt {
@@ -1369,40 +2677,12 @@ async fn run_writer(
                         // to FILE_APPEND_DATA WITHOUT FILE_WRITE_DATA,
                         // which makes `set_len` fail with permission
                         // error on the existing append-mode handle.
-                        // Open a separate `write(true)` handle just
-                        // for the truncate, then drop it. The
-                        // original append-mode handle continues to
-                        // own subsequent writes.
-                        let truncate_result = tokio::fs::OpenOptions::new()
-                            .write(true)
-                            .open(&segment_path)
-                            .await;
-                        match truncate_result {
-                            Ok(write_handle) => {
-                                if let Err(e) = write_handle.set_len(good_through).await {
-                                    tracing::error!(
-                                        error = %e,
-                                        path = %segment_path.display(),
-                                        good_through,
-                                        "wal::recovery: set_len failed via write-handle; continuing without truncate"
-                                    );
-                                } else if let Err(e) = write_handle.sync_all().await {
-                                    tracing::warn!(
-                                        error = %e,
-                                        path = %segment_path.display(),
-                                        "wal::recovery: sync_all after set_len failed (best-effort)",
-                                    );
-                                }
-                                drop(write_handle);
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    error = %e,
-                                    path = %segment_path.display(),
-                                    "wal::recovery: cannot open write-handle for truncate; torn bytes will remain past good_through"
-                                );
-                            }
-                        }
+                        // The capability-opened append handle also carries
+                        // read/write rights. Truncate that exact kernel object;
+                        // a concurrent pathname swap cannot redirect recovery.
+                        file.set_len(good_through).await?;
+                        file.sync_all().await?;
+                        file.seek(std::io::SeekFrom::End(0)).await?;
                         tracing::warn!(
                             path = %segment_path.display(),
                             torn_at,
@@ -1419,22 +2699,33 @@ async fn run_writer(
                         good_through
                     }
                 };
+                if compression == CompressionPolicy::Zstd3 {
+                    let header_len = parsed.header_len();
+                    initial_pending_frames
+                        .extend_from_slice(&bytes[header_len..resume_offset as usize]);
+                }
+                initial_compaction_bytes = Some(bytes[..resume_offset as usize].to_vec());
                 (resume_offset, recovered_opened_at_ns)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    path = %segment_path.display(),
-                    "wal::recovery: read segment for scan failed; using metadata-len resume",
-                );
-                (metadata_len, current_ns())
             }
         };
         (resume_offset, resume_opened_at_ns)
     };
 
+    // The Windows control handle deliberately carries FILE_WRITE_DATA for
+    // same-object tail recovery. Drop that right before entering the append
+    // loop by deriving an append-only handle to the exact same kernel object.
+    #[cfg(windows)]
+    let file = {
+        let append_only = super::win_native::duplicate_append_only_file(&file)?;
+        // Shadowing alone keeps the control handle alive until the enclosing
+        // scope ends. Close it explicitly so zstd sealing later has exactly
+        // one target handle to close at its atomic replacement boundary.
+        drop(file);
+        File::from_std(append_only)
+    };
+
     let mut state = WriterState {
-        file,
+        file: Some(file),
         segment_rewrite_lock,
         path: segment_path,
         offset,
@@ -1442,9 +2733,84 @@ async fn run_writer(
         opened_at_ns,
         segment_policy,
         compression,
-        pending_frames: Vec::new(),
+        pending_frames: initial_pending_frames,
         compaction_epoch: initial_compaction_epoch,
+        segment_header: recovered_segment_header.unwrap_or(fresh_parsed_header),
     };
+
+    // ── Phase 33b SP-2 — HMAC compaction state ──────────────────────────────
+    // The key lives at `<instance-home>/wal/hmac.key`, generated on first
+    // boot. It is security-bearing state: loading or recovering it is a hard
+    // startup boundary, never a downgrade to unsigned compaction markers.
+    // Name-based, and safe only because `unique_standalone_segment_path`
+    // reserves the substring: no other surface may contain it.
+    let is_hmac_rotation_writer = state
+        .path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.contains(&format!("-{HMAC_ROTATION_SURFACE}-")));
+    let (hmac_key, hmac_verification_keys): (Option<Vec<u8>>, Vec<Vec<u8>>) =
+        if is_hmac_rotation_writer {
+            // The rotation command already holds the transaction lock while this
+            // one-shot writer persists 0xD9. It must neither recurse into recovery
+            // nor emit an old-key compaction marker after that boundary.
+            (None, Vec::new())
+        } else {
+            let active_key =
+                crate::cli::security::recover_hmac_key_rotation(&hmac_home, &hmac_key_path)
+                    .and_then(|_| crate::wal::compaction::load_or_init_key(&hmac_key_path))
+                    .map_err(|error| WalError::CompactionStateUnavailable {
+                        reason: format!(
+                            "{} (instance home: {}, key: {})",
+                            error,
+                            hmac_home.display(),
+                            hmac_key_path.display()
+                        ),
+                    })?;
+            let verification_keys =
+                crate::wal::scan::load_home_hmac_keys(&hmac_home).map_err(|error| {
+                    WalError::CompactionStateUnavailable {
+                        reason: format!(
+                            "load active and archived HMAC verification keys: {error:#} \
+                         (instance home: {})",
+                            hmac_home.display()
+                        ),
+                    }
+                })?;
+            if verification_keys.first().map(Vec::as_slice) != Some(active_key.as_slice()) {
+                return Err(compaction_recovery_error(format!(
+                    "capability-bound active HMAC key changed while initializing {}",
+                    state.path.display()
+                )));
+            }
+            (Some(active_key), verification_keys)
+        };
+    let mut compaction_state = match (hmac_key.as_deref(), initial_compaction_bytes.as_deref()) {
+        (Some(key), Some(segment_bytes)) => Some(recover_compaction_state(
+            key,
+            &hmac_verification_keys,
+            segment_bytes,
+        )?),
+        (Some(_), None) if resume_sealed_segment => None,
+        (Some(_), None) => {
+            return Err(compaction_recovery_error(format!(
+                "missing raw segment bytes while initializing HMAC state for {}",
+                state.path.display()
+            )));
+        }
+        (None, _) => None,
+    };
+
+    if resume_sealed_segment {
+        rotate(
+            &mut state,
+            RotationReason::SealedResume,
+            &hmac_home,
+            &mut compaction_state,
+            hmac_key.as_deref(),
+        )
+        .await?;
+    }
 
     debug!(path = %state.path.display(), offset = state.offset, "WAL writer opened segment");
 
@@ -1452,10 +2818,9 @@ async fn run_writer(
     // immediately after WriterState is alive, BEFORE the main rx-loop
     // accepts any caller-driven append. The frame becomes the first
     // new entry in the recovered segment so a forensic walker sees a
-    // clear marker for "the daemon recovered here". Best-effort:
-    // emission failure leaves the truncation intact (already
-    // durable via set_len + sync_all) and only loses the audit
-    // breadcrumb — the receive loop must keep running.
+    // clear marker for "the daemon recovered here". The audit is part of the
+    // recovery boundary: if it cannot be made durable, initialization fails
+    // before readiness rather than silently accepting evidence loss.
     if let Some(rec) = pending_recovery.take() {
         let payload = serde_json::json!({
             "segment_path": rec.segment_path.to_string_lossy(),
@@ -1473,49 +2838,35 @@ async fn run_writer(
         .flags(crate::wal::EventFlags::SYNTHETIC)
         .build();
         let frame = encode_frame(&header, &payload_bytes);
-        if let Err(e) = write_and_sync(&mut state.file, &frame).await {
-            tracing::warn!(
-                error = %e,
-                "wal::recovery: emit RECOVERY_TRUNCATED frame failed (truncation still durable)"
-            );
-        } else {
-            state.offset += frame.len() as u64;
+        write_and_sync(state.active_file_mut()?, &frame).await?;
+        if state.compression == CompressionPolicy::Zstd3 {
+            state.pending_frames.extend_from_slice(&frame);
+        }
+        state.offset += frame.len() as u64;
+        if let Some(compaction_state) = compaction_state.as_mut() {
+            compaction_state.update(&frame);
         }
     }
 
-    // ── Phase 33b SP-2 — HMAC compaction state ──────────────────────────────
-    // The key lives at `<instance-home>/wal/hmac.key`, generated on first
-    // boot. It is security-bearing state: loading or recovering it is a hard
-    // startup boundary, never a downgrade to unsigned compaction markers.
-    // Name-based, and safe only because `unique_standalone_segment_path`
-    // reserves the substring: no other surface may contain it.
-    let is_hmac_rotation_writer = state
-        .path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.contains(&format!("-{HMAC_ROTATION_SURFACE}-")));
-    let hmac_key: Option<Vec<u8>> = if is_hmac_rotation_writer {
-        // The rotation command already holds the transaction lock while this
-        // one-shot writer persists 0xD9. It must neither recurse into recovery
-        // nor emit an old-key compaction marker after that boundary.
-        None
-    } else {
-        Some(
-            crate::cli::security::recover_hmac_key_rotation(&hmac_home, &hmac_key_path)
-                .and_then(|_| crate::wal::compaction::load_or_init_key(&hmac_key_path))
-                .map_err(|error| WalError::CompactionStateUnavailable {
-                    reason: format!(
-                        "{} (instance home: {}, key: {})",
-                        error,
-                        hmac_home.display(),
-                        hmac_key_path.display()
-                    ),
-                })?,
-        )
-    };
-    let mut compaction_state = hmac_key
-        .as_ref()
-        .map(|k| crate::wal::compaction::CompactionState::new(k, state.offset));
+    // A raw segment reopened after an unclean stop may end below the ordinary
+    // threshold. Close that reconstructed window before readiness so the
+    // pre-restart tail cannot remain unauthenticated indefinitely.
+    if !is_new
+        && !resume_sealed_segment
+        && let (Some(compaction_state), Some(key)) =
+            (compaction_state.as_mut(), hmac_key.as_deref())
+    {
+        emit_compaction_marker(&mut state, compaction_state, key).await?;
+    }
+
+    if let Some(startup) = startup
+        && let Some(sender) = startup
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take()
+    {
+        let _ = sender.send(Ok(()));
+    }
 
     // Pick #40 (Session 14, Agent #1 phase 2 fsync-batching design):
     // batchable event types (STREAM_CHUNK, HOOK_*, LOCAL_INFERENCE_*)
@@ -1527,22 +2878,41 @@ async fn run_writer(
     let mut pending_unsynced = false;
 
     while let Some(req) = rx.recv().await {
-        // Pre-flight rotation: rotate BEFORE the write if either threshold
-        // is already exceeded, so the new frame lands cleanly at the head
-        // of the next segment instead of straddling the boundary.
-        if let Some(reason) = state.should_rotate(current_ns()) {
+        let frame = encode_frame(&req.header, &req.payload);
+        let frame_triggers_marker = compaction_state.as_ref().is_some_and(|state| {
+            state.frames().saturating_add(1) >= crate::wal::compaction::MAX_FRAMES_BETWEEN_MARKERS
+                || state.bytes().saturating_add(frame.len() as u64)
+                    >= crate::wal::compaction::MAX_BYTES_BETWEEN_MARKERS
+        });
+        let marker_reserve = if hmac_key.is_some() && (!state.is_fixed() || frame_triggers_marker) {
+            MAX_COMPACTION_MARKER_FRAME_BYTES
+        } else {
+            0
+        };
+        // Pre-flight rotation: account for the complete next frame rather than
+        // only the current offset, and reserve the mandatory HMAC marker before
+        // the operator frame is acknowledged. This keeps every valid segment
+        // within the bounded restart scanner's contract even when the next
+        // payload is close to MAX_PAYLOAD_BYTES.
+        if let Some(reason) = state.should_rotate(current_ns(), frame.len(), marker_reserve) {
             // Pick #40: flush any pending batchable writes BEFORE rotation
             // so the closing segment is fully durable + the new segment
             // starts clean.
             if pending_unsynced {
-                state.file.sync_data().await?;
+                state.active_file_mut()?.sync_data().await?;
                 pending_unsynced = false;
             }
-            rotate(&mut state, reason, &hmac_home).await?;
+            rotate(
+                &mut state,
+                reason,
+                &hmac_home,
+                &mut compaction_state,
+                hmac_key.as_deref(),
+            )
+            .await?;
         }
 
-        let frame = encode_frame(&req.header, &req.payload);
-        if let Err(error) = state.ensure_frame_fits(frame.len()) {
+        if let Err(error) = state.ensure_frame_and_marker_fit(frame.len(), marker_reserve) {
             let completion_error = std::io::Error::new(error.kind(), error.to_string());
             let _ = req.ack.send(Err(WalError::Io(error)));
             return Err(WalError::Io(completion_error));
@@ -1564,9 +2934,9 @@ async fn run_writer(
             // compression may change the later representation, never weaken
             // the acknowledgement contract.
             let r = if immediate {
-                write_and_sync(&mut state.file, &frame).await
+                write_and_sync(state.active_file_mut()?, &frame).await
             } else {
-                write_only(&mut state.file, &frame).await
+                write_only(state.active_file_mut()?, &frame).await
             };
             if r.is_ok() {
                 state.pending_frames.extend_from_slice(&frame);
@@ -1578,7 +2948,7 @@ async fn run_writer(
             // after `write_all`, which durably commits BOTH this frame
             // AND any preceding batchable frames that landed in the OS
             // page cache. So `pending_unsynced` is cleared by this op.
-            let r = write_and_sync(&mut state.file, &frame).await;
+            let r = write_and_sync(state.active_file_mut()?, &frame).await;
             if r.is_ok() {
                 pending_unsynced = false;
             }
@@ -1587,7 +2957,7 @@ async fn run_writer(
             // Batchable frame — skip the per-frame fsync. Mark
             // pending so the next immediate frame OR shutdown drain
             // can commit it.
-            let r = write_only(&mut state.file, &frame).await;
+            let r = write_only(state.active_file_mut()?, &frame).await;
             if r.is_ok() {
                 pending_unsynced = true;
             }
@@ -1607,37 +2977,21 @@ async fn run_writer(
                 if let (Some(state_c), Some(key)) = (compaction_state.as_mut(), hmac_key.as_ref()) {
                     state_c.update(&frame);
                     if state_c.should_emit() {
-                        let marker_payload = state_c.finalise_marker(key, state.offset);
-                        let payload_bytes = serde_json::to_vec(&serde_json::json!({
-                            "from_offset":      marker_payload.from_offset,
-                            "to_offset":        marker_payload.to_offset,
-                            "frame_count":      marker_payload.frame_count,
-                            "hmac_hex":         marker_payload.hmac_hex,
-                            // GOLD-PROG-12: informational epoch snapshot so forensic
-                            // tooling can correlate marker → header without re-reading.
-                            "compaction_epoch": state.compaction_epoch,
-                            "ts_ns":            current_ns(),
-                        }))
-                        .expect("compaction marker payload contains only infallible JSON values");
-                        let marker_header = crate::wal::HeaderBuilder::new(
-                            crate::wal::events::EVENT_TYPE_COMPACTION_MARKER,
-                            &payload_bytes,
-                        )
-                        .flags(crate::wal::EventFlags::SYNTHETIC)
-                        .build();
-                        let marker_frame = encode_frame(&marker_header, &payload_bytes);
-                        state.ensure_frame_fits(marker_frame.len())?;
-                        if let Err(e) = write_and_sync(&mut state.file, &marker_frame).await {
-                            if state.is_fixed() {
-                                return Err(WalError::Io(e));
-                            }
-                            tracing::warn!(error = %e, "compaction marker write failed");
-                        } else {
-                            state.offset += marker_frame.len() as u64;
-                            // Next window starts at the new tail.
-                            *state_c =
-                                crate::wal::compaction::CompactionState::new(key, state.offset);
+                        if let Err(marker_error) =
+                            emit_compaction_marker(&mut state, state_c, key).await
+                        {
+                            // The triggering operator frame may already be durable,
+                            // but its mandatory authenticity marker is not. Abort
+                            // the writer and explicitly reject this append. A
+                            // restart rebuilds the unfinished window from disk.
+                            let completion_reason = marker_error.to_string();
+                            let _ = req.ack.send(Err(marker_error));
+                            return Err(WalError::Io(std::io::Error::other(format!(
+                                "mandatory compaction marker transaction failed: \
+                                 {completion_reason}"
+                            ))));
                         }
+                        pending_unsynced = false;
                     }
                 }
 
@@ -1668,9 +3022,12 @@ async fn run_writer(
         }
     }
 
-    // Workstream F: finalize compressed segment on clean shutdown.
-    if state.compression == CompressionPolicy::Zstd3 && !state.pending_frames.is_empty() {
-        finalize_compressed_segment(&mut state, &hmac_home).await?;
+    if !state.is_fixed()
+        && let (Some(compaction_state), Some(key)) =
+            (compaction_state.as_mut(), hmac_key.as_deref())
+    {
+        emit_compaction_marker(&mut state, compaction_state, key).await?;
+        pending_unsynced = false;
     }
 
     // Pick #40: shutdown drain — if the last write was batchable,
@@ -1678,11 +3035,19 @@ async fn run_writer(
     // lands durably before the daemon exits. Caller's `drop(writer)`
     // already closed the channel above; this is the last chance to
     // flush before the writer-task returns.
-    if pending_unsynced && let Err(e) = state.file.sync_data().await {
+    if pending_unsynced && let Err(e) = state.active_file_mut()?.sync_data().await {
         if state.is_fixed() {
             return Err(WalError::Io(e));
         }
         warn!(error = %e, "shutdown-drain sync_data for batchable frames failed");
+    }
+
+    // Workstream F: only publish the compressed replacement after the closing
+    // HMAC marker and any batchable tail are durable and present in the exact
+    // frame buffer being sealed.
+    if state.compression == CompressionPolicy::Zstd3 && !state.pending_frames.is_empty() {
+        drop(state.take_active_file()?);
+        finalize_compressed_segment(&mut state, &hmac_home).await?;
     }
 
     debug!("WAL writer task: channel closed, exiting");
@@ -1710,13 +3075,11 @@ async fn run_writer(
 /// successful rename so in-memory state stays in sync with on-disk state.
 async fn finalize_compressed_segment(state: &mut WriterState, home: &Path) -> Result<(), WalError> {
     let compressed = compress_frames(&state.pending_frames)?;
-    let tmp_path = state.path.with_extension("wal.tmp");
 
-    // Re-read the original header to preserve generation/seq/first_event_id/
-    // segment_start_ts_ns/node_id from the live segment, and to recover the
-    // on-disk compaction_epoch (GOLD-PROG-12).
-    let original_bytes = tokio::fs::read(&state.path).await?;
-    let parsed = parse_segment_header(&original_bytes)?;
+    // Preserve the exact handle-derived identity. An ambient path re-read here
+    // could observe a substituted leaf rather than the segment protected by
+    // the writer's rewrite lock.
+    let parsed = state.segment_header;
     let (generation, segment_seq, first_event_id, segment_start_ts_ns, node_id, old_epoch) =
         match parsed {
             ParsedSegmentHeader::V1(h) => (
@@ -1758,7 +3121,7 @@ async fn finalize_compressed_segment(state: &mut WriterState, home: &Path) -> Re
         first_event_id,
         segment_start_ts_ns,
         node_id,
-        SEGMENT_FLAG_COMPRESSED,
+        SEGMENT_FLAG_COMPRESSED | SEGMENT_FLAG_SEALED,
         new_epoch,
     );
 
@@ -1794,27 +3157,57 @@ async fn finalize_compressed_segment(state: &mut WriterState, home: &Path) -> Re
         compressed
     };
 
-    // Write to tmp.
-    let mut tmp_opts = tokio::fs::OpenOptions::new();
-    tmp_opts.create(true).write(true).truncate(true);
-    #[cfg(unix)]
-    tmp_opts.mode(0o600);
-    let mut tmp_file = tmp_opts.open(&tmp_path).await?;
-    tmp_file.write_all(&v2_header.to_le_bytes()).await?;
-    tmp_file.write_all(&body).await?;
-    tmp_file.sync_all().await?;
-    drop(tmp_file);
-
-    // Atomic rename over original.
-    // GOLD-PROG-12 / Windows: if a stale .wal.tmp from a prior crashed finalize
-    // exists, Windows rename will fail (target must not exist). Remove it first
-    // (ENOENT is fine — the common case on Unix). This matches the HANDOFF_SESSION25
-    // §17 atomic-rename note.
-    #[cfg(windows)]
-    {
-        let _ = tokio::fs::remove_file(&state.path).await;
-    }
-    tokio::fs::rename(&tmp_path, &state.path).await?;
+    let mut published = Vec::with_capacity(SEGMENT_HEADER_V3_LEN + body.len());
+    published.extend_from_slice(&v2_header.to_le_bytes());
+    published.extend_from_slice(&body);
+    let publish_path = state.path.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), WalError> {
+        let parent = publish_path.parent().ok_or_else(|| {
+            WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "compressed WAL segment has no parent: {}",
+                    publish_path.display()
+                ),
+            ))
+        })?;
+        let name = publish_path.file_name().ok_or_else(|| {
+            WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "compressed WAL segment has no leaf: {}",
+                    publish_path.display()
+                ),
+            ))
+        })?;
+        let root =
+            crate::skills::store::open_bound_directory(parent, false, "compressed WAL parent")
+                .map_err(|error| {
+                    WalError::Io(std::io::Error::other(format!(
+                        "open capability-bound compressed WAL parent {}: {error:#}",
+                        parent.display()
+                    )))
+                })?
+                .ok_or_else(|| {
+                    WalError::Io(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("compressed WAL parent is missing: {}", parent.display()),
+                    ))
+                })?;
+        crate::skills::store::atomic_write_private_child(&root.dir, name, &publish_path, &published)
+            .map_err(|error| {
+                WalError::Io(std::io::Error::other(format!(
+                    "atomically publish sealed WAL segment {}: {error:#}",
+                    publish_path.display()
+                )))
+            })
+    })
+    .await
+    .map_err(|error| {
+        WalError::Io(std::io::Error::other(format!(
+            "join compressed WAL publication: {error}"
+        )))
+    })??;
 
     info!(
         path = %state.path.display(),
@@ -1833,6 +3226,7 @@ async fn finalize_compressed_segment(state: &mut WriterState, home: &Path) -> Re
     // has new_epoch in its header — on restart parse_segment_header
     // recovers new_epoch, so the invariant is maintained.
     state.compaction_epoch = new_epoch;
+    state.segment_header = ParsedSegmentHeader::V3(v2_header);
     Ok(())
 }
 
@@ -1876,6 +3270,254 @@ async fn write_only(file: &mut File, frame: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rotation_policy_refuses_segments_larger_than_recovery_can_reopen() {
+        let error = validate_rotation_policy(RotationPolicy {
+            max_bytes: RotationPolicy::DEFAULT_MAX_BYTES + 1,
+            max_age_ns: RotationPolicy::DEFAULT_MAX_AGE_NS,
+        })
+        .expect_err("unsupported oversized rotation policy must fail at spawn");
+        let WalError::Io(source) = error else {
+            panic!("expected rotation-policy validation to return an I/O error");
+        };
+        assert!(
+            source.to_string().contains("exceeds the supported"),
+            "{source}"
+        );
+        validate_rotation_policy(RotationPolicy {
+            max_bytes: RotationPolicy::DEFAULT_MAX_BYTES,
+            max_age_ns: RotationPolicy::DEFAULT_MAX_AGE_NS,
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn every_new_segment_prepare_failure_rolls_back_and_can_retry() {
+        for compression in [CompressionPolicy::None, CompressionPolicy::Zstd3] {
+            for failure in [
+                TestSegmentCreateFailure::PrivatePermissions,
+                TestSegmentCreateFailure::HeaderWrite,
+                TestSegmentCreateFailure::FileSync,
+            ] {
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("000001.wal");
+                let mut prefix = new_segment_header_bytes(compression, 1, current_ns());
+                prefix.extend_from_slice(b"complete-link-and-marker-prefix");
+                fail_segment_create_for_test(&path, failure);
+
+                let error = open_segment_capability_bound(&path, true, &prefix)
+                    .expect_err("injected pre-commit failure must abort creation");
+                let WalError::Io(source) = error else {
+                    panic!("expected injected I/O failure");
+                };
+                assert!(
+                    source
+                        .to_string()
+                        .contains("injected WAL segment create failure"),
+                    "{source}"
+                );
+                assert!(
+                    !path.exists(),
+                    "failed {failure:?} must not leave a poison leaf"
+                );
+                assert!(
+                    std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+                        !entry
+                            .unwrap()
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(".neoth-wal-publish-")
+                    }),
+                    "failed {failure:?} must remove its private publication stage"
+                );
+
+                let (file, is_new) =
+                    open_segment_capability_bound(&path, true, &prefix).expect("retry must create");
+                assert!(is_new);
+                drop(file);
+                assert_eq!(std::fs::read(&path).unwrap(), prefix);
+            }
+        }
+    }
+
+    #[test]
+    fn complete_raw_and_zstd_successor_prefixes_publish_atomically() {
+        for compression in [CompressionPolicy::None, CompressionPolicy::Zstd3] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("000002.wal");
+            let mut prefix = new_segment_header_bytes(compression, 2, current_ns());
+            prefix.extend_from_slice(b"authenticated-link-frame");
+            prefix.extend_from_slice(b"authenticated-link-marker");
+            let (prepared, release) = pause_segment_publication_for_test(&path);
+            let thread_path = path.clone();
+            let thread_prefix = prefix.clone();
+            let publish = std::thread::spawn(move || {
+                open_segment_capability_bound(&thread_path, true, &thread_prefix)
+            });
+
+            prepared
+                .recv_timeout(std::time::Duration::from_secs(15))
+                .expect("private successor prefix must reach its fsync boundary");
+            assert!(
+                !path.exists(),
+                "canonical successor must remain absent until its complete prefix commits"
+            );
+            let stage = std::fs::read_dir(dir.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|entry| {
+                    entry.file_name().is_some_and(|name| {
+                        name.to_string_lossy().starts_with(".neoth-wal-publish-")
+                    })
+                })
+                .expect("private successor stage must exist while publication is paused");
+            assert_eq!(
+                std::fs::read(stage).unwrap(),
+                prefix,
+                "private stage must already contain header, link and marker"
+            );
+
+            release.send(()).unwrap();
+            let (file, is_new) = publish.join().unwrap().unwrap();
+            assert!(is_new);
+            drop(file);
+            assert_eq!(std::fs::read(path).unwrap(), prefix);
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_rotation_creation_rolls_back_and_a_restart_can_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("000001.wal");
+        let second = dir.path().join("000002.wal");
+        let policy = RotationPolicy {
+            max_bytes: 1,
+            max_age_ns: RotationPolicy::DEFAULT_MAX_AGE_NS,
+        };
+        fail_segment_create_for_test(&second, TestSegmentCreateFailure::FileSync);
+        let (writer, join) = spawn_with_policy(first.clone(), policy).unwrap();
+        let error = writer
+            .append(header_for(1, 1), b"x".to_vec())
+            .await
+            .expect_err("rotation preparation failure must close the writer");
+        assert!(matches!(error, WalError::WriterClosed));
+        drop(writer);
+        join.await.unwrap();
+        assert!(!second.exists(), "failed rotation must remove its leaf");
+
+        let (writer, join) = spawn_with_policy(first, policy).unwrap();
+        writer
+            .append(header_for(1, 2), b"y".to_vec())
+            .await
+            .expect("restart must create the same next sequence");
+        drop(writer);
+        join.await.unwrap();
+        let second_bytes = std::fs::read(second).unwrap();
+        parse_segment_header(&second_bytes).unwrap();
+    }
+
+    #[test]
+    fn capability_bound_rotation_open_never_reuses_an_existing_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("000002.wal");
+        std::fs::write(&path, b"existing-target").unwrap();
+
+        let header = new_segment_header_bytes(CompressionPolicy::None, 2, current_ns());
+        let error = open_segment_capability_bound(&path, true, &header)
+            .expect_err("rotation must refuse an existing next segment");
+        assert_eq!(
+            match error {
+                WalError::Io(source) => source.kind(),
+                other => panic!("unexpected rotation-open error: {other}"),
+            },
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing-target");
+    }
+
+    #[test]
+    fn home_bound_writer_rejects_a_segment_outside_its_wal_namespace() {
+        let home = tempfile::tempdir().unwrap();
+        let outside = home.path().join("000001.wal");
+        let error = validate_home_segment_path(&outside, home.path())
+            .expect_err("home-bound writer must reject an outside segment");
+        assert!(
+            matches!(error, WalError::Io(ref source) if source.kind() == std::io::ErrorKind::InvalidInput)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capability_bound_segment_open_rejects_a_symlink_leaf() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside.bin");
+        let segment = dir.path().join("000001.wal");
+        std::fs::write(&outside, b"outside").unwrap();
+        symlink(&outside, &segment).unwrap();
+
+        let error = open_segment_capability_bound(&segment, false, &[])
+            .expect_err("a segment symlink must fail closed");
+        assert!(
+            matches!(error, WalError::Io(_)),
+            "unexpected no-follow error: {error}"
+        );
+        assert_eq!(std::fs::read(&outside).unwrap(), b"outside");
+    }
+
+    #[tokio::test]
+    async fn existing_segment_read_is_bounded_on_the_opened_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("000001.wal");
+        std::fs::write(&path, b"12345").unwrap();
+        let (file, is_new) = open_segment_capability_bound(&path, false, &[]).unwrap();
+        assert!(!is_new);
+        let mut file = File::from_std(file);
+
+        let error = read_existing_segment_bounded(&mut file, &path, 4)
+            .await
+            .expect_err("max+1 bytes must refuse recovery");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&path).unwrap(), b"12345");
+    }
+
+    #[tokio::test]
+    async fn ready_writer_join_surfaces_a_post_start_rotation_failure() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let first = wal.join("000001.wal");
+        let second = wal.join("000002.wal");
+        std::fs::write(&second, b"collision").unwrap();
+        let (writer, join, ready) = spawn_for_home_with_policy_ready(
+            first,
+            home.path().to_path_buf(),
+            RotationPolicy {
+                max_bytes: 1,
+                max_age_ns: RotationPolicy::DEFAULT_MAX_AGE_NS,
+            },
+        )
+        .unwrap();
+        ready.wait().await.unwrap();
+
+        let append_error = writer
+            .append(header_for(1, 1), b"x".to_vec())
+            .await
+            .expect_err("existing rotation target must fail the live writer");
+        assert!(matches!(append_error, WalError::WriterClosed));
+        drop(writer);
+        let runtime_error = join
+            .await
+            .expect("writer outcome supervisor panicked")
+            .expect_err("post-readiness rotation error must reach the daemon");
+        assert!(
+            runtime_error.contains("already exists"),
+            "unexpected surfaced writer error: {runtime_error}"
+        );
+        assert_eq!(std::fs::read(second).unwrap(), b"collision");
+    }
 
     /// PR4-014: the marker-skip is decided by a filename substring, so a future
     /// surface that merely CONTAINS it would silently lose tamper evidence.
@@ -1994,6 +3636,122 @@ mod tests {
         }
     }
 
+    fn batchable_header_for(payload_len: u32, event_id: u64) -> EventHeaderV2 {
+        let mut header = header_for(payload_len, event_id);
+        header.event_type = crate::wal::events::EVENT_TYPE_PROVIDER_STREAM_CHUNK;
+        header
+    }
+
+    fn spawn_test_writer_at_home(
+        segment: PathBuf,
+        home: &Path,
+        policy: RotationPolicy,
+        compression: CompressionPolicy,
+    ) -> Result<(WalWriterHandle, tokio::task::JoinHandle<()>), WalError> {
+        spawn_with_policy_and_compression_at_home(
+            segment,
+            SegmentPolicy::Rotating(policy),
+            compression,
+            home.to_path_buf(),
+            home.join("wal").join("hmac.key"),
+            None,
+            None,
+        )
+    }
+
+    fn read_and_verify_compaction_markers(
+        segment: &Path,
+        key: &[u8],
+    ) -> Vec<crate::wal::compaction::MarkerPayload> {
+        let bytes = std::fs::read(segment).expect("read WAL segment");
+        let mut markers = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+                markers.push(serde_json::from_slice(frame.payload)?);
+            }
+            Ok(())
+        })
+        .expect("walk WAL segment");
+        for marker in &markers {
+            crate::wal::compaction::verify_marker(segment, key, marker)
+                .expect("persisted compaction marker must verify");
+        }
+        markers
+    }
+
+    #[test]
+    fn compaction_marker_reserve_covers_the_largest_wire_payload() {
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "from_offset": u64::MAX,
+            "to_offset": u64::MAX,
+            "frame_count": u32::MAX,
+            "hmac_hex": "ff".repeat(32),
+            "compaction_epoch": u32::MAX,
+            "ts_ns": u64::MAX,
+        }))
+        .unwrap();
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_COMPACTION_MARKER,
+            &payload,
+        )
+        .flags(crate::wal::EventFlags::SYNTHETIC)
+        .build();
+        assert!(
+            encode_frame(&header, &payload).len() <= MAX_COMPACTION_MARKER_FRAME_BYTES,
+            "the admission reserve must cover every writer-generated marker"
+        );
+    }
+
+    #[tokio::test]
+    async fn near_ceiling_frame_shutdown_and_restart_keep_marker_space() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let first = wal.join("000001.wal");
+        let policy = RotationPolicy {
+            max_bytes: 1024,
+            max_age_ns: RotationPolicy::DEFAULT_MAX_AGE_NS,
+        };
+        let payload_len = policy.max_bytes as usize - SEGMENT_HEADER_LEN - 104 - 1;
+        let payload = vec![0xA5; payload_len];
+        let header = header_for(payload.len() as u32, 1);
+        let (writer, join) =
+            spawn_test_writer_at_home(first.clone(), home.path(), policy, CompressionPolicy::None)
+                .unwrap();
+        writer.append(header, payload).await.unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        let key = crate::wal::compaction::load_existing_key(&wal.join("hmac.key")).unwrap();
+        assert_eq!(
+            read_and_verify_compaction_markers(&first, &key).len(),
+            1,
+            "shutdown must close the near-ceiling operator-frame window"
+        );
+
+        let (writer, join) =
+            spawn_test_writer_at_home(first.clone(), home.path(), policy, CompressionPolicy::None)
+                .unwrap();
+        writer
+            .append(header_for(1, 2), b"x".to_vec())
+            .await
+            .expect("restart must rotate instead of bricking on marker space");
+        drop(writer);
+        join.await.unwrap();
+        assert!(
+            wal.join("000002.wal").is_file(),
+            "the first post-restart frame must rotate out of the closed near-ceiling segment"
+        );
+        let first_bytes = std::fs::read(&first).unwrap();
+        verify_existing_compaction_marker_windows(
+            &first_bytes,
+            parse_segment_header(&first_bytes).unwrap().header_len(),
+            &[key],
+            false,
+        )
+        .expect("the rotated predecessor must remain completely authenticated");
+    }
+
     #[tokio::test]
     async fn capture_writer_is_home_bound_non_rotating_and_hard_capped() {
         let home = tempdir().unwrap();
@@ -2082,6 +3840,21 @@ mod tests {
             format!("{error:#}").contains("direct child"),
             "unexpected path-binding error: {error:#}"
         );
+    }
+
+    #[test]
+    fn capture_writer_rejects_noncanonical_or_ads_like_leaf_names() {
+        let home = tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir(&wal_dir).unwrap();
+        for name in ["capture.wal", "000001.wal:stream", "bad-00001.wal"] {
+            let error = spawn_capture(wal_dir.join(name), home.path().to_path_buf(), 4 * 1024)
+                .expect_err("production capture writer must reject a noncanonical WAL leaf");
+            assert!(
+                matches!(error, WalError::Io(ref source) if source.kind() == std::io::ErrorKind::InvalidInput),
+                "unexpected rejection for {name}: {error}"
+            );
+        }
     }
 
     /// After F-14, every segment file begins with a 60-byte SegmentHeader.
@@ -2370,7 +4143,7 @@ mod tests {
         // than snapshotting/replacing underneath that handle.
         let active_seg = seg.clone();
         let refused = tokio::task::spawn_blocking(move || {
-            super::super::redact::scan_and_redact(&active_seg, |_| true)
+            super::super::redact::scan_and_redact(&active_seg, |payload| payload == b"x")
         })
         .await
         .expect("active-writer redaction probe task");
@@ -2391,9 +4164,14 @@ mod tests {
         );
         drop(after_shutdown);
 
-        let report = super::super::redact::scan_and_redact(&seg, |_| true)
-            .expect("redaction proceeds after writer shutdown");
-        assert_eq!(report.frames_redacted_count(), 1);
+        let error = super::super::redact::scan_and_redact(&seg, |payload| payload == b"x")
+            .expect_err("authenticated segment rewrite must remain transaction-gated");
+        assert!(
+            format!("{error:#}").contains("authenticated chain-structural frames")
+                && !format!("{error:#}").contains("cannot exclusively redact WAL segment"),
+            "post-shutdown refusal must come from the rewrite-integrity gate, proving the writer \
+             lock was released: {error:#}"
+        );
     }
 
     #[tokio::test]
@@ -2757,37 +4535,48 @@ mod tests {
             join.await.expect("join2");
         }
 
-        // 4. Re-decode the resulting segment: must contain header +
-        //    good_frame + RECOVERY_TRUNCATED + post_recovery, all
-        //    parseable, no torn bytes.
+        // 4. Re-decode the resulting segment. Caller frames, recovery audit,
+        //    and their mandatory HMAC-closing markers must all be parseable
+        //    with no torn bytes.
         let bytes = read(&seg).await.unwrap();
         assert!(bytes.len() >= SEGMENT_HEADER_LEN);
         // SegmentHeader still valid.
         SegmentHeader::from_le_bytes(bytes[..SEGMENT_HEADER_LEN].try_into().unwrap())
             .expect("SegmentHeader still parses after recovery");
 
-        // Walk frames.
         let mut cursor = SEGMENT_HEADER_LEN;
-        let f1 = decode_frame(&bytes[cursor..]).expect("good frame parses");
-        assert_eq!(f1.payload, b"intact-event");
-        cursor += f1.header.total_len as usize;
-
-        let f2 = decode_frame(&bytes[cursor..]).expect("RECOVERY_TRUNCATED frame parses");
+        let mut caller_payloads = Vec::new();
+        let mut recovery_frames = 0usize;
+        let mut compaction_markers = 0usize;
+        while cursor < bytes.len() {
+            let frame = decode_frame(&bytes[cursor..]).expect("recovered frame parses");
+            match frame.header.event_type {
+                crate::wal::events::EVENT_TYPE_RAW_TEXT => {
+                    caller_payloads.push(frame.payload.to_vec());
+                }
+                EVENT_TYPE_RECOVERY_TRUNCATED => {
+                    recovery_frames += 1;
+                    let payload_str = std::str::from_utf8(frame.payload).expect("payload utf8");
+                    assert!(payload_str.contains("torn_at"));
+                    assert!(payload_str.contains("good_through"));
+                    assert!(payload_str.contains("bytes_dropped"));
+                }
+                crate::wal::events::EVENT_TYPE_COMPACTION_MARKER => {
+                    compaction_markers += 1;
+                }
+                other => panic!("unexpected recovered WAL event type 0x{other:02X}"),
+            }
+            cursor += frame.header.total_len as usize;
+        }
         assert_eq!(
-            f2.header.event_type, EVENT_TYPE_RECOVERY_TRUNCATED,
-            "second frame must be the recovery audit marker; got 0x{:02x}",
-            f2.header.event_type,
+            caller_payloads,
+            [b"intact-event".to_vec(), b"post-recovery".to_vec()]
         );
-        // Sanity-check the payload JSON shape.
-        let payload_str = std::str::from_utf8(f2.payload).expect("payload utf8");
-        assert!(payload_str.contains("torn_at"));
-        assert!(payload_str.contains("good_through"));
-        assert!(payload_str.contains("bytes_dropped"));
-        cursor += f2.header.total_len as usize;
-
-        let f3 = decode_frame(&bytes[cursor..]).expect("post-recovery frame parses");
-        assert_eq!(f3.payload, b"post-recovery");
-        cursor += f3.header.total_len as usize;
+        assert_eq!(recovery_frames, 1);
+        assert_eq!(
+            compaction_markers, 3,
+            "initial shutdown, restart recovery, and final shutdown each close a window"
+        );
 
         // Whole file walked clean.
         assert_eq!(
@@ -3071,17 +4860,26 @@ mod tests {
         // Walk all frames — none must be RECOVERY_TRUNCATED.
         let bytes = read(&seg).await.unwrap();
         let mut cursor = SEGMENT_HEADER_LEN;
-        let mut frames_seen = 0usize;
+        let mut caller_frames = 0usize;
+        let mut compaction_markers = 0usize;
         while cursor < bytes.len() {
             let dec = decode_frame(&bytes[cursor..]).expect("frame parses");
             assert_ne!(
                 dec.header.event_type, EVENT_TYPE_RECOVERY_TRUNCATED,
                 "clean reopen must NOT emit RECOVERY_TRUNCATED; saw it at cursor={cursor}"
             );
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+                compaction_markers += 1;
+            } else {
+                caller_frames += 1;
+            }
             cursor += dec.header.total_len as usize;
-            frames_seen += 1;
         }
-        assert_eq!(frames_seen, 2, "expected the 2 caller-appended frames only");
+        assert_eq!(caller_frames, 2, "expected two caller-appended frames");
+        assert_eq!(
+            compaction_markers, 2,
+            "each clean shutdown must close its caller-frame window"
+        );
     }
 
     // ── V10-04 Pick #34 voll (2026-05-19): try_append_sync ───────────────
@@ -3249,6 +5047,213 @@ mod tests {
         assert_eq!(d2.payload, b"frame-two");
     }
 
+    #[tokio::test]
+    async fn zstd_threshold_marker_survives_sealed_replacement() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::Zstd3,
+        )
+        .expect("spawn zstd writer");
+
+        for event_id in 1..=u64::from(crate::wal::compaction::MAX_FRAMES_BETWEEN_MARKERS) {
+            writer
+                .append(batchable_header_for(1, event_id), vec![b'x'])
+                .await
+                .expect("append threshold frame");
+        }
+        drop(writer);
+        join.await.expect("join zstd writer");
+
+        let key = crate::wal::compaction::load_existing_key(&wal.join("hmac.key"))
+            .expect("load test HMAC key");
+        let markers = read_and_verify_compaction_markers(&segment, &key);
+        assert_eq!(
+            markers.len(),
+            1,
+            "threshold marker must remain in the atomically sealed zstd body"
+        );
+        assert_eq!(
+            markers[0].frame_count,
+            crate::wal::compaction::MAX_FRAMES_BETWEEN_MARKERS
+        );
+        let parsed = parse_segment_header(&std::fs::read(segment).unwrap()).unwrap();
+        assert!(parsed.is_compressed() && parsed.is_sealed());
+    }
+
+    #[tokio::test]
+    async fn zstd_rotation_and_shutdown_each_close_their_partial_hmac_window() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let first = wal.join("000001.wal");
+        let second = wal.join("000002.wal");
+        let first_payload = b"alpha".to_vec();
+        let first_header = batchable_header_for(first_payload.len() as u32, 1);
+        let first_frame_len = encode_frame(&first_header, &first_payload).len() as u64;
+        let policy = RotationPolicy {
+            max_bytes: SEGMENT_HEADER_V3_LEN as u64 + first_frame_len,
+            max_age_ns: RotationPolicy::DEFAULT_MAX_AGE_NS,
+        };
+        let (writer, join) =
+            spawn_test_writer_at_home(first.clone(), home.path(), policy, CompressionPolicy::Zstd3)
+                .expect("spawn rotating zstd writer");
+        writer
+            .append(first_header, first_payload)
+            .await
+            .expect("append first partial window");
+        writer
+            .append(batchable_header_for(5, 2), b"bravo".to_vec())
+            .await
+            .expect("rotate and append second partial window");
+        drop(writer);
+        join.await.expect("join rotating zstd writer");
+
+        let key = crate::wal::compaction::load_existing_key(&wal.join("hmac.key"))
+            .expect("load test HMAC key");
+        let first_markers = read_and_verify_compaction_markers(&first, &key);
+        let second_markers = read_and_verify_compaction_markers(&second, &key);
+        assert_eq!(
+            first_markers.len(),
+            1,
+            "rotation must close the predecessor's partial HMAC window"
+        );
+        assert_eq!(
+            second_markers.len(),
+            2,
+            "successor link and shutdown tail require separate HMAC windows"
+        );
+        assert_eq!(first_markers[0].frame_count, 1);
+        assert_eq!(second_markers[0].frame_count, 1);
+        assert_eq!(second_markers[1].frame_count, 1);
+        for segment in [&first, &second] {
+            let parsed = parse_segment_header(&std::fs::read(segment).unwrap()).unwrap();
+            assert!(parsed.is_compressed() && parsed.is_sealed());
+        }
+    }
+
+    #[tokio::test]
+    async fn raw_restart_reconstructs_and_seals_the_pre_restart_hmac_tail() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let mut raw = new_segment_header_bytes(CompressionPolicy::Zstd3, 1, current_ns());
+        raw.extend_from_slice(&encode_frame(&batchable_header_for(5, 1), b"alpha"));
+        raw.extend_from_slice(&encode_frame(&batchable_header_for(5, 2), b"bravo"));
+        std::fs::write(&segment, raw).unwrap();
+
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::Zstd3,
+        )
+        .expect("resume raw zstd segment");
+        drop(writer);
+        join.await.expect("join resumed zstd writer");
+
+        let key = crate::wal::compaction::load_existing_key(&wal.join("hmac.key"))
+            .expect("load test HMAC key");
+        let markers = read_and_verify_compaction_markers(&segment, &key);
+        assert_eq!(
+            markers.len(),
+            1,
+            "restart must close the reconstructed pre-restart window"
+        );
+        assert_eq!(markers[0].frame_count, 2);
+    }
+
+    #[tokio::test]
+    async fn mandatory_marker_failure_rejects_append_and_restart_recovers_window() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn writer");
+
+        let threshold = crate::wal::compaction::MAX_FRAMES_BETWEEN_MARKERS;
+        for event_id in 1..u64::from(threshold) {
+            writer
+                .append(batchable_header_for(1, event_id), vec![b'x'])
+                .await
+                .expect("append pre-threshold frame");
+        }
+        fail_compaction_marker_write_for_test(&segment);
+        let error = writer
+            .append(batchable_header_for(1, u64::from(threshold)), vec![b'x'])
+            .await
+            .expect_err("mandatory marker failure must reject the triggering append");
+        assert!(
+            error
+                .to_string()
+                .contains("injected compaction marker write failure"),
+            "unexpected append error: {error}"
+        );
+        drop(writer);
+        join.await.expect("failed writer task must not panic");
+
+        let key = crate::wal::compaction::load_existing_key(&wal.join("hmac.key"))
+            .expect("load test HMAC key");
+        assert!(
+            read_and_verify_compaction_markers(&segment, &key).is_empty(),
+            "failed marker transaction must not publish a partial marker"
+        );
+
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("restart writer after marker failure");
+        drop(writer);
+        join.await.expect("join recovered writer");
+        let markers = read_and_verify_compaction_markers(&segment, &key);
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].frame_count, threshold);
+    }
+
+    #[tokio::test]
+    async fn home_writer_completion_surfaces_shutdown_marker_failure() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let segment = unique_standalone_segment_path(&wal, "completion-test");
+        let (writer, completion) =
+            spawn_for_home_with_completion(segment.clone(), home.path().to_path_buf())
+                .expect("spawn completion-aware home writer");
+
+        writer
+            .append(batchable_header_for(1, 1), vec![b'x'])
+            .await
+            .expect("append pre-shutdown frame");
+        fail_compaction_marker_write_for_test(&segment);
+        drop(writer);
+
+        let error = completion
+            .wait()
+            .await
+            .expect_err("shutdown marker failure must reach the one-shot caller");
+        assert!(
+            error
+                .to_string()
+                .contains("injected compaction marker write failure"),
+            "unexpected completion error: {error}"
+        );
+    }
+
     /// Reader handles mixed v1+v2 directory (operator partway through migration).
     #[tokio::test]
     async fn mixed_v1_v2_segments_in_same_directory_both_parse() {
@@ -3319,23 +5324,16 @@ mod tests {
 
     // ── GOLD-PROG-12: compaction_epoch persistence across finalize + restart ──
 
-    /// Prove that:
-    /// (a) finalize_compressed_segment persists epoch+1 in the V3 header.
-    /// (b) A reopened writer reads the on-disk epoch correctly.
-    /// (c) The second finalize produces epoch=2, not a collision with epoch=1.
-    ///
-    /// This test validates the core crash-idempotency property: even if a
-    /// finalize was interrupted mid-rename (leaving epoch=N on disk), the next
-    /// finalize attempt produces epoch=N+1 — a different idempotency key, so
-    /// the dedup check correctly treats it as a new operation.
+    /// A sealed segment is immutable. Restart rotates to a fresh raw segment,
+    /// so the old compressed body is never mistaken for a torn live tail.
     #[tokio::test]
-    async fn compaction_epoch_increments_across_finalize_and_survives_restart() {
+    async fn sealed_compression_restart_preserves_old_and_new_frames() {
         use crate::wal::segment_header::{ParsedSegmentHeader, parse_segment_header};
 
         let dir = tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
+        let next = dir.path().join("000002.wal");
 
-        // First writer: open, append one frame, clean shutdown → finalize fires.
         {
             let (handle, join) = spawn_with_policy_and_compression(
                 seg.clone(),
@@ -3351,7 +5349,6 @@ mod tests {
             join.await.expect("join");
         }
 
-        // After clean shutdown: segment must be V3 with compaction_epoch=1.
         let bytes = tokio::fs::read(&seg).await.unwrap();
         let parsed = parse_segment_header(&bytes).expect("parse after first shutdown");
         assert!(
@@ -3363,10 +5360,8 @@ mod tests {
             1,
             "finalize must increment epoch to 1 on first clean compaction"
         );
+        assert!(parsed.is_sealed(), "finalized segment must be sealed");
 
-        // Second writer: reopen the SAME segment, append another frame, shut down.
-        // On reopen the writer must read epoch=1 from the header and assign epoch=2
-        // to the NEXT finalize — NOT collide with the prior epoch=1.
         {
             let (handle, join) = spawn_with_policy_and_compression(
                 seg.clone(),
@@ -3382,14 +5377,76 @@ mod tests {
             join.await.expect("join reopen");
         }
 
-        let bytes2 = tokio::fs::read(&seg).await.unwrap();
-        let parsed2 = parse_segment_header(&bytes2).expect("parse after second shutdown");
+        assert_eq!(
+            tokio::fs::read(&seg).await.unwrap(),
+            bytes,
+            "sealed predecessor must remain byte-for-byte immutable"
+        );
+        let bytes2 = tokio::fs::read(&next).await.unwrap();
+        let parsed2 = parse_segment_header(&bytes2).expect("parse successor");
         assert_eq!(
             parsed2.compaction_epoch(),
-            2,
-            "second finalize must increment epoch to 2, not re-use epoch 1"
+            1,
+            "fresh successor owns its own first compaction epoch"
         );
-        assert!(parsed2.is_compressed(), "segment must still be compressed");
+        assert!(parsed2.is_compressed() && parsed2.is_sealed());
+
+        let mut predecessor_payloads = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            predecessor_payloads.push(frame.payload.to_vec());
+            Ok(())
+        })
+        .unwrap();
+        assert!(
+            predecessor_payloads
+                .iter()
+                .any(|payload| payload == b"alpha")
+        );
+
+        let mut successor_payloads = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes2, |_, frame| {
+            successor_payloads.push(frame.payload.to_vec());
+            Ok(())
+        })
+        .unwrap();
+        assert!(successor_payloads.iter().any(|payload| payload == b"bravo"));
+    }
+
+    #[tokio::test]
+    async fn unsealed_compression_restart_rebuilds_pending_frames_before_seal() {
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let opened_at = current_ns();
+        let header = new_segment_header_bytes(CompressionPolicy::Zstd3, 1, opened_at);
+        let alpha = encode_frame(&header_for(5, 1), b"alpha");
+        let mut raw_live = header;
+        raw_live.extend_from_slice(&alpha);
+        std::fs::write(&seg, &raw_live).unwrap();
+
+        let (handle, join) = spawn_with_policy_and_compression(
+            seg.clone(),
+            RotationPolicy::default(),
+            CompressionPolicy::Zstd3,
+        )
+        .expect("resume raw live zstd staging segment");
+        handle
+            .append(header_for(5, 2), b"bravo".to_vec())
+            .await
+            .expect("append after raw restart");
+        drop(handle);
+        join.await.expect("join");
+
+        let sealed = tokio::fs::read(&seg).await.unwrap();
+        let parsed = parse_segment_header(&sealed).unwrap();
+        assert!(parsed.is_compressed() && parsed.is_sealed());
+        let mut payloads = Vec::new();
+        crate::wal::scan::for_each_frame(&sealed, |_, frame| {
+            payloads.push(frame.payload.to_vec());
+            Ok(())
+        })
+        .unwrap();
+        assert!(payloads.iter().any(|payload| payload == b"alpha"));
+        assert!(payloads.iter().any(|payload| payload == b"bravo"));
     }
 
     // ── D008-WINDOWS-WAL-01 — sync_data latency measurement ─────────────────

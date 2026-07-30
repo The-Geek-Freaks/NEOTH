@@ -18,6 +18,7 @@ use crate::wal::events::{
     EVENT_TYPE_AUTO_SKILL_EXTRACTED, EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_INCOGNITO_TURN,
     EVENT_TYPE_RAW_TEXT, EVENT_TYPE_SKILL_INJECT_SKIPPED,
 };
+#[cfg(test)]
 use crate::wal::spawn as wal_spawn;
 
 /// GOLD-WIRE-10b: fire a `ProviderResponded` domain event so the daemon's
@@ -69,7 +70,8 @@ pub struct ChatArgs {
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
-    /// Override the WAL segment path (mostly for tests).
+    /// Diagnostic/test WAL override. Must be a canonical direct child of the
+    /// selected config home's `wal` directory with a six-digit segment suffix.
     #[arg(long, value_name = "PATH")]
     pub wal_segment: Option<PathBuf>,
 
@@ -5907,7 +5909,9 @@ async fn run_chat_with_consent(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create WAL dir {}", parent.display()))?;
     }
-    let (writer, writer_join) = wal_spawn(segment_path.clone()).context("spawn WAL writer")?;
+    let (writer, writer_join) =
+        crate::wal::writer::spawn_for_home(segment_path.clone(), first_tour_home.clone())
+            .context("spawn home-bound WAL writer")?;
 
     // ── PWF-02: SessionStart MODE_CHECKPOINT (0x9A) ───────────────────────
     // Emit a session-start checkpoint immediately after the WAL writer
@@ -10618,6 +10622,12 @@ mod tests {
     const UNPRICED_TEST_PROVIDER_AUTONOMY: crate::permissions::AutonomyLevel =
         crate::permissions::AutonomyLevel::Full;
 
+    fn canonical_test_wal(home: &std::path::Path, namespace: &str) -> PathBuf {
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).expect("create canonical test WAL directory");
+        wal_dir.join(format!("{namespace}-000001.wal"))
+    }
+
     #[test]
     fn authenticated_stream_frames_preserve_provider_review_done_order() {
         let control_token = "0123456789abcdef0123456789abcdef";
@@ -12168,7 +12178,7 @@ modes:
     async fn one_shot_chat_rechecks_revoked_consent_before_dispatch() {
         let dir = tempdir().unwrap();
         let config_path = dir.path().join("freedom.yaml");
-        let segment = dir.path().join("chat-consent.wal");
+        let segment = canonical_test_wal(dir.path(), "chat-consent");
         let config = FreedomConfig {
             provider_kind: Some(ProviderKind::OpenaiApi),
             provider_model: Some("gpt-4o".into()),
@@ -12220,7 +12230,7 @@ modes:
         // no PROVIDER_REQUEST / PROVIDER_RESPONSE frame is written. The only
         // WAL frame for the turn is the RAW_TEXT (the recall question itself).
         let dir = tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
+        let seg = canonical_test_wal(dir.path(), "chat-recall");
         let config = FreedomConfig {
             language_primary: Some("en".into()),
             ..Default::default()
@@ -12232,7 +12242,7 @@ modes:
             model: None,
             system: None,
             edit: false,
-            config: None,
+            config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
             gui_consent_token_stdin: false,
@@ -12288,7 +12298,7 @@ modes:
     #[tokio::test]
     async fn chat_writes_request_and_response_frames() {
         let dir = tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
+        let seg = canonical_test_wal(dir.path(), "chat-roundtrip");
         crate::consent::grant(dir.path(), ProviderKind::ClaudeCli).unwrap();
 
         let config = FreedomConfig {
@@ -12466,7 +12476,7 @@ modes:
     #[tokio::test]
     async fn chat_emits_refusal_observed_on_hard_refusal_reply() {
         let dir = tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
+        let seg = canonical_test_wal(dir.path(), "chat-refusal");
         crate::consent::grant(dir.path(), ProviderKind::ClaudeCli).unwrap();
 
         let config = FreedomConfig {
@@ -12596,7 +12606,7 @@ modes:
         }
 
         let dir = tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
+        let seg = canonical_test_wal(dir.path(), "chat-local");
         let config = FreedomConfig {
             operator_id: Some("alice".into()),
             language_primary: None,
@@ -12649,7 +12659,7 @@ modes:
             model: None,
             system: None,
             edit: false,
-            config: None,
+            config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
             gui_consent_token_stdin: false,
@@ -12756,7 +12766,7 @@ modes:
         }
 
         let dir = tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
+        let seg = canonical_test_wal(dir.path(), "chat-stream");
         crate::consent::grant(dir.path(), ProviderKind::ClaudeCli).unwrap();
         let config = FreedomConfig {
             operator_id: Some("alice".into()),
@@ -12922,7 +12932,7 @@ modes:
         }
 
         let dir = tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
+        let seg = canonical_test_wal(dir.path(), "chat-error");
         crate::consent::grant(dir.path(), ProviderKind::ClaudeCli).unwrap();
         let config = FreedomConfig {
             operator_id: Some("alice".into()),
@@ -13079,7 +13089,7 @@ modes:
         }
 
         let dir = tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
+        let seg = canonical_test_wal(dir.path(), "chat-model");
         crate::consent::grant(dir.path(), ProviderKind::ClaudeCli).unwrap();
 
         let config = FreedomConfig {

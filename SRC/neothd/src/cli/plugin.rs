@@ -235,7 +235,7 @@ impl Default for CaptureWalLimits {
 #[serde(rename_all = "snake_case")]
 // The no-host build still serializes the stable capture-error vocabulary, but
 // only the feature-gated live host can construct most variants.
-#[cfg_attr(not(any(test, feature = "wasm-plugin-host")), allow(dead_code))]
+#[cfg_attr(not(feature = "wasm-plugin-host"), allow(dead_code))]
 enum CaptureWalErrorKind {
     InvalidPath,
     UnsafeFile,
@@ -2691,6 +2691,11 @@ mod tests {
     fn write_wasm(dir: &std::path::Path, bytes: &[u8]) {
         std::fs::write(dir.join("plugin.wasm"), bytes).unwrap();
     }
+    fn canonical_test_wal(home: &std::path::Path, namespace: &str) -> std::path::PathBuf {
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        wal_dir.join(format!("{namespace}-000001.wal"))
+    }
 
     /// A minimal-but-valid plugin.toml so the manifest parse succeeds in
     /// tests that exercise the rest of the path. Mirrors the shape used
@@ -2986,7 +2991,7 @@ version = \"0.1.0\"\n\
     async fn decode_wal_frames_reads_appended_plugin_frame() {
         use tempfile::tempdir;
         let dir = tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
+        let seg = canonical_test_wal(dir.path(), "plugin-hostcall");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let payload = hostcall_payload("snoop", 64);
@@ -3150,7 +3155,7 @@ version = \"0.1.0\"\n\
         use std::io::Write as _;
 
         let home = TempDir::new().unwrap();
-        let segment = home.path().join("torn.wal");
+        let segment = canonical_test_wal(home.path(), "plugin-torn");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let payload = hostcall_payload("snoop", 64);
@@ -3176,7 +3181,7 @@ version = \"0.1.0\"\n\
         use std::io::Write as _;
 
         let home = TempDir::new().unwrap();
-        let segment = home.path().join("exact-limit-torn.wal");
+        let segment = canonical_test_wal(home.path(), "plugin-limit-torn");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let payload = hostcall_payload("snoop", 64);
@@ -3210,7 +3215,7 @@ version = \"0.1.0\"\n\
         use std::io::Write as _;
 
         let home = TempDir::new().unwrap();
-        let segment = home.path().join("exact-limit-garbage.wal");
+        let segment = canonical_test_wal(home.path(), "plugin-limit-garbage");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let payload = hostcall_payload("snoop", 64);
@@ -3242,7 +3247,7 @@ version = \"0.1.0\"\n\
     #[tokio::test]
     async fn decode_wal_frames_reports_corrupt_complete_frame() {
         let home = TempDir::new().unwrap();
-        let segment = home.path().join("corrupt.wal");
+        let segment = canonical_test_wal(home.path(), "plugin-corrupt");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let payload = hostcall_payload("snoop", 64);
@@ -3262,7 +3267,7 @@ version = \"0.1.0\"\n\
     #[tokio::test]
     async fn decode_wal_frames_reports_corrupt_complete_segment_header() {
         let home = TempDir::new().unwrap();
-        let segment = home.path().join("corrupt-header.wal");
+        let segment = canonical_test_wal(home.path(), "plugin-corrupt-header");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let payload = hostcall_payload("snoop", 64);
@@ -3295,7 +3300,7 @@ version = \"0.1.0\"\n\
     #[tokio::test]
     async fn decode_wal_frames_enforces_frame_count_ceiling() {
         let home = TempDir::new().unwrap();
-        let segment = home.path().join("many.wal");
+        let segment = canonical_test_wal(home.path(), "plugin-many");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         for plugin in ["one", "two"] {

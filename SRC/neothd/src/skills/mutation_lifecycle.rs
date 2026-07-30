@@ -612,7 +612,7 @@ pub(crate) fn scan_skill_install_incarnation_index(
         BTreeMap::<String, BTreeMap<u64, SkillIncarnationOperation>>::new();
     crate::wal::scan::for_each_frame_at_home(
         home,
-        crate::wal::scan::HomeWalScanLimits::default(),
+        crate::wal::scan::supported_home_scan_limits(),
         |location, frame| {
             if frame.header.event_type != crate::wal::events::EVENT_TYPE_EXTENDED {
                 return Ok(());
@@ -975,7 +975,7 @@ fn scan_skill_mutation_audit(
     let mut observed = SkillMutationAuditScan::default();
     crate::wal::scan::for_each_frame_at_home(
         home,
-        crate::wal::scan::HomeWalScanLimits::default(),
+        crate::wal::scan::supported_home_scan_limits(),
         |location, frame| {
             if frame.header.event_type != crate::wal::events::EVENT_TYPE_EXTENDED {
                 return Ok(());
@@ -1970,9 +1970,11 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let wal_dir = home.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
-        let (writer, join) =
-            crate::wal::spawn_for_home(wal_dir.join("direct.wal"), home.path().to_path_buf())
-                .unwrap();
+        let (writer, join) = crate::wal::spawn_for_home(
+            wal_dir.join("skill-direct-test-000001.wal"),
+            home.path().to_path_buf(),
+        )
+        .unwrap();
         let mut transitions =
             super::super::registry::subscribe_runtime_authority_transitions_for_test();
         let generation = "c1".repeat(32);

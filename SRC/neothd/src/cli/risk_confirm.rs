@@ -170,8 +170,19 @@ async fn emit_risk_confirm_granted(
     }))
     .unwrap_or_else(|_| b"{}".to_vec());
 
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    if let Ok(Some(_pid)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+    let pidfile = home.join("neothd.pid");
+    let daemon_live = match crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+        Ok(pid) => pid.is_some(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                pidfile = %pidfile.display(),
+                "risk-confirm audit ownership is uncertain; refusing a local WAL writer"
+            );
+            return;
+        }
+    };
+    if daemon_live {
         if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
             home,
             EVENT_TYPE_RISK_CONFIRM_GRANTED,
@@ -183,20 +194,26 @@ async fn emit_risk_confirm_granted(
         }
         return;
     }
-    let segment = home.join("wal").join("000001.wal");
-    if let Some(parent) = segment.parent()
-        && std::fs::create_dir_all(parent).is_err()
-    {
+    let wal_dir = home.join("wal");
+    if let Err(e) = std::fs::create_dir_all(&wal_dir) {
+        tracing::warn!(
+            error = %e,
+            wal_dir = %wal_dir.display(),
+            "risk-confirm audit WAL directory unavailable (lease still applied)"
+        );
         return;
     }
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "risk-confirm");
     let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_RISK_CONFIRM_GRANTED, &payload).build();
-    match crate::wal::spawn(segment) {
-        Ok((writer, join)) => {
+    match crate::wal::writer::spawn_for_home_with_completion(segment, home.to_path_buf()) {
+        Ok((writer, completion)) => {
             if let Err(e) = writer.append(header, payload).await {
                 tracing::warn!(error = %e, "risk-confirm audit append failed (lease still applied)");
             }
             drop(writer);
-            let _ = join.await;
+            if let Err(e) = completion.wait().await {
+                tracing::warn!(error = %e, "risk-confirm audit writer finalization failed (lease still applied)");
+            }
         }
         Err(e) => {
             tracing::warn!(error = %e, "could not spawn one-shot WAL writer for risk-confirm audit")

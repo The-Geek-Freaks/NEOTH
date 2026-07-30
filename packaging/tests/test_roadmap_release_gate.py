@@ -14,7 +14,9 @@ from roadmap_release_gate import (  # noqa: E402
     RELEASE_GENERATED_ID,
     RoadmapReleaseGateError,
     open_items,
+    published_summary,
     require_release_ready,
+    roadmap_summary,
 )
 
 
@@ -25,6 +27,24 @@ RELEASE_ITEM = (
 
 
 class RoadmapReleaseGateTests(unittest.TestCase):
+    def test_summary_uses_the_same_release_generated_exception_as_the_gate(
+        self,
+    ) -> None:
+        summary = roadmap_summary(
+            RELEASE_ITEM
+            + "- [x] **GOLD-DONE-01** complete\n"
+            + "- [X] **GOLD-DONE-02** complete\n"
+            + "- [~] **GOLD-PARTIAL-01** partial\n"
+            + "- [ ] **GOLD-OPEN-01** pending\n"
+        )
+        self.assertEqual(summary.total, 5)
+        self.assertEqual(summary.complete, 2)
+        self.assertEqual(summary.open, 2)
+        self.assertEqual(summary.partial, 1)
+        self.assertEqual(summary.raw_blockers, 3)
+        self.assertEqual(summary.release_tag_blockers, 2)
+        self.assertEqual(summary.release_generated_items, 1)
+
     def test_complete_roadmap_passes_without_release_exception(self) -> None:
         require_release_ready(
             "- [x] **GOLD-DONE-01** complete\n",
@@ -149,6 +169,7 @@ class RoadmapReleaseGateTests(unittest.TestCase):
         self,
     ) -> None:
         text = (ROOT / "PLAN" / "ROAD_TO_1_0_GOLD.md").read_text(encoding="utf-8")
+        self.assertEqual(published_summary(text), roadmap_summary(text))
         items = open_items(text)
         release_items = [
             item for item in items if item.identifier == RELEASE_GENERATED_ID

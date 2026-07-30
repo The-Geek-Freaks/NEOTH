@@ -26,6 +26,9 @@ use rusqlite::Connection;
 ///     by Stage 5b `approval_gate` in daemon mode (no tty), resolved via
 ///     `neoth profile approve <id>` (apply + delete row) or
 ///     `decline <id>` (drop + emit 0xB7).
+/// v35 binds the first operator resolution decision (`approve`/`decline`) to
+///     the pending row before either path performs side effects. Retries may
+///     resume the same decision; the opposite decision fails closed.
 /// v11 adds a CHECK constraint on `idx_consolidated.day` (M-05, Session
 ///     24): the column held free-form TEXT pre-fix, and the warm→cold
 ///     SQL comparison in `consolidate::run_consolidation_pass` is a
@@ -79,7 +82,7 @@ use rusqlite::Connection;
 ///      the daemon remains the only process that owns either live transport.
 /// v34: fence live mesh state to one exact stable/auth/membership incarnation;
 ///      migrated v33 rows remain terminal `legacy_unbound` quarantine state.
-pub const SCHEMA_VERSION: i64 = 34;
+pub const SCHEMA_VERSION: i64 = 35;
 
 /// `<NEOTH_HOME>/views.db`, falling back to `~/.neoth/views.db`.
 ///
@@ -998,7 +1001,9 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             extraction_id   TEXT NOT NULL UNIQUE,
             delta_json      TEXT NOT NULL,
             claim_count     INTEGER NOT NULL,
-            created_at_unix INTEGER NOT NULL
+            created_at_unix INTEGER NOT NULL,
+            resolution_decision TEXT NOT NULL DEFAULT 'pending'
+                CHECK (resolution_decision IN ('pending', 'approve', 'decline'))
         );
         CREATE INDEX IF NOT EXISTS idx_profile_pending_created
             ON idx_profile_pending (created_at_unix ASC);

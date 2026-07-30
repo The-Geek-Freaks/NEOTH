@@ -3,6 +3,30 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+## Evidence ladder
+
+NEOTH tests every shipped capability and every advertised platform contract,
+not the Cartesian product of every provider, channel, architecture and Linux
+distribution. A source change invalidates only the evidence that depends on
+that source. The next broader gate runs once after the affected source set is
+frozen.
+
+| Boundary | Required evidence | Deliberately deferred |
+| --- | --- | --- |
+| Edit loop | File-scoped formatter/parser checks and the smallest affected unit or contract filter | Workspace linking, installers and cross-OS jobs |
+| Bounded commit | Affected-crate `cargo check`, focused behavior regressions, static wiring/packaging contracts and independent review | Release profile and distro matrix |
+| Source-frozen package/GUI wave | Strict Clippy and complete tests for the affected crates/features; GUI test binary linked once | Native installer matrix |
+| Workstream/protocol milestone | Full Linux workspace plus only the affected native OS/feature/transport jobs | Public artifacts |
+| Weekly/manual milestone | Complete three-OS CI; Security/CodeQL when authority, dependency, unsafe or release boundaries changed | Tag/release publication |
+| Unchanged release candidate | Full CI, Security and CodeQL on one exact SHA | Any further source edits |
+| Tagged artifact set | Build every release target once; package and test only those downloaded bytes | Any compile inside a clean-machine smoke job |
+
+`source-frozen` means that no file contributing to a package, protocol,
+generated asset or embedded release identity changes after its consolidated
+gate begins. A later documentation-only edit does not invalidate an unrelated
+binary result; a later source, build-script, lockfile, packaging or embedded
+knowledge change does.
+
 ## During feature and wiring work
 
 Every push to `main` runs `.github/workflows/preflight.yml`:
@@ -84,3 +108,28 @@ Those future distro jobs must consume the already-built artifact. They must not
 rebuild NEOTH or repeat the entire workspace test suite. Additional
 distributions will either be covered by the documented portable fallback or
 will not be advertised until a clean-machine receipt exists.
+
+## Closed acceptance receipts
+
+Every final artifact smoke job must emit one machine-verifiable JSON receipt
+containing the schema version, tag, commit SHA, artifact and installer
+SHA-256, platform/architecture/ABI or package class, previous/current version,
+executed journey IDs, code/self-knowledge identity, start/end state, result and
+timestamp. The release DAG must reject missing, duplicate, unknown or
+digest-mismatched receipts before signing or publication.
+
+The required receipt set includes:
+
+- portable GNU on the documented oldest supported glibc class;
+- headless musl inside pinned Alpine rather than only on an Ubuntu host;
+- DEB through `apt` on Debian/Ubuntu semantics;
+- RPM through `dnf` on Fedora/RHEL semantics;
+- Windows x64/ARM64 native installer, first-run/surface switching, real
+  `N -> N+1`, rollback and uninstall;
+- macOS Intel/Apple Silicon signed/notarized package, first-run/surface
+  switching, real `N -> N+1`, rollback and uninstall.
+
+The artifact producer, installer packager and smoke runner may be separate
+jobs, but the receipt must bind them to the same immutable bytes. A same-version
+reinstall is useful idempotency evidence and is not accepted as an upgrade or
+rollback proof.

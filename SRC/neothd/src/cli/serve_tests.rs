@@ -140,7 +140,7 @@ async fn on_session_start_block_is_audited_and_vetoes_startup() {
         b"name = \"stop\"\nstage = \"on_session_start\"\n[action]\nkind = \"block\"\nreason = \"maintenance\"\n",
     )
     .unwrap();
-    let seg_path = dir.path().join("blocked-start.wal");
+    let seg_path = dir.path().join("wal").join("blocked-start-000001.wal");
 
     let error = run_serve(ServeArgs {
         config: Some(cfg_path),

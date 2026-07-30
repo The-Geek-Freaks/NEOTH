@@ -26,8 +26,9 @@ use tracing::warn;
 
 // ── E-11 imports ───────────────────────────────────────────────────────────
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS,
-    GetLastError, HANDLE, HLOCAL, INVALID_HANDLE_VALUE, LocalFree,
+    CloseHandle, DuplicateHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS,
+    ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, GetLastError, HANDLE, HLOCAL, INVALID_HANDLE_VALUE,
+    LocalFree,
 };
 use windows_sys::Win32::Security::Authorization::{
     EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, GetSecurityInfo, NO_MULTIPLE_TRUSTEE,
@@ -51,8 +52,8 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
     FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
     FILE_GENERIC_WRITE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FileRenameInfoEx, FlushFileBuffers, GetFileInformationByHandle,
-    OPEN_EXISTING, READ_CONTROL, SetFileInformationByHandle, WRITE_DAC,
+    FILE_SHARE_WRITE, FILE_WRITE_DATA, FileRenameInfoEx, FlushFileBuffers,
+    GetFileInformationByHandle, OPEN_EXISTING, READ_CONTROL, SetFileInformationByHandle, WRITE_DAC,
 };
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -170,6 +171,75 @@ pub fn set_private_current_user_directory_handle_dacl<H: AsRawHandle + ?Sized>(
     let handle = checked_raw_handle(directory)?;
     let sid = current_process_token_sid()?;
     set_private_current_user_directory_handle_dacl_for_sid(handle, &sid)
+}
+
+/// Replace an already-open file handle's DACL with one protected TokenUser
+/// Full Control ACE and verify the exact same kernel object afterwards.
+///
+/// The handle must carry `WRITE_DAC | READ_CONTROL`. Unlike the path-based
+/// helper, a concurrent rename/reparse-point swap cannot redirect either the
+/// mutation or its proof.
+pub fn set_private_current_user_file_handle_dacl<H: AsRawHandle + ?Sized>(
+    file: &H,
+) -> io::Result<()> {
+    let handle = checked_raw_handle(file)?;
+    let sid = current_process_token_sid()?;
+    verify_handle_owner_for_sid(handle, &sid)?;
+    let acl = single_trustee_acl(sid.as_ptr() as *mut u16, TRUSTEE_IS_SID, NO_INHERITANCE)?;
+
+    // SAFETY: `handle` is the validated live file handle borrowed from the
+    // caller; `acl` remains allocated for the call; only the DACL is replaced.
+    let rc = unsafe {
+        SetSecurityInfo(
+            handle,
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            acl.0,
+            std::ptr::null_mut(),
+        )
+    };
+    map_win32(rc, "SetSecurityInfo")?;
+    verify_private_handle_for_sid(handle, &sid)
+}
+
+/// Derive an append-only writer from an already-validated read/write control
+/// handle without resolving the filesystem path a second time.
+///
+/// `DuplicateHandle` targets the same kernel file object but drops
+/// `FILE_WRITE_DATA`, leaving `FILE_APPEND_DATA` as the only data-write right.
+/// Windows therefore chooses EOF atomically for every `WriteFile`.
+pub fn duplicate_append_only_file<H: AsRawHandle + ?Sized>(file: &H) -> io::Result<File> {
+    let source = checked_raw_handle(file)?;
+    // SAFETY: `GetCurrentProcess` returns the documented pseudo-handle and
+    // performs no memory access.
+    let process = unsafe { GetCurrentProcess() };
+    let mut duplicate = INVALID_HANDLE_VALUE;
+    let desired_access = FILE_GENERIC_WRITE & !FILE_WRITE_DATA;
+    // SAFETY: both process handles and `source` are live, `duplicate` is valid
+    // output storage, and the returned handle is explicitly non-inheritable.
+    let ok = unsafe {
+        DuplicateHandle(
+            process,
+            source,
+            process,
+            &mut duplicate,
+            desired_access,
+            0,
+            0,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if duplicate.is_null() || duplicate == INVALID_HANDLE_VALUE {
+        return Err(io::Error::other(
+            "DuplicateHandle returned an invalid append-only WAL handle",
+        ));
+    }
+    // SAFETY: DuplicateHandle returned a new owned kernel handle on success.
+    Ok(unsafe { File::from_raw_handle(duplicate) })
 }
 
 fn set_private_current_user_directory_handle_dacl_for_sid(
@@ -1377,7 +1447,7 @@ pub async fn flush_file_buffers_async(file: File) -> io::Result<File> {
 mod tests {
     use super::*;
     use std::fs::{File, OpenOptions};
-    use std::io::Write;
+    use std::io::{Seek, SeekFrom, Write};
     use std::os::windows::ffi::OsStringExt;
     use std::os::windows::fs::OpenOptionsExt as _;
     use tempfile::tempdir;
@@ -1410,6 +1480,25 @@ mod tests {
     fn cap_std_directory_satisfies_handle_bound_dacl_api() {
         fn assert_as_raw_handle<T: AsRawHandle>() {}
         assert_as_raw_handle::<cap_std::fs::Dir>();
+    }
+
+    #[test]
+    fn duplicated_append_handle_ignores_the_shared_control_cursor() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("append-only.wal");
+        std::fs::write(&path, b"prefix").unwrap();
+        let mut control = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let mut append = duplicate_append_only_file(&control).unwrap();
+
+        control.seek(SeekFrom::Start(0)).unwrap();
+        append.write_all(b"-tail").unwrap();
+        append.sync_all().unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"prefix-tail");
     }
 
     // ── E-11: DACL set round-trip ──────────────────────────────────────────

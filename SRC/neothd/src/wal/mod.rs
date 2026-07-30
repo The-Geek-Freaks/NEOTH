@@ -61,7 +61,9 @@ pub mod writer;
 // regressions. Re-exports get added here as wired-up Day-by-Day.
 pub use builder::{HeaderBuilder, make_header};
 pub use types::EventFlags;
-pub use writer::{spawn, spawn_for_home};
+#[cfg(test)]
+pub use writer::spawn;
+pub use writer::spawn_for_home;
 
 /// Concern-1 fix (Session 24) — process-global HLC state.
 ///

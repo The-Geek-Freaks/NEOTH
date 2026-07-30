@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import re
 import sys
@@ -26,6 +27,16 @@ _GOLD_ID = re.compile(
 _FENCE_OPEN = re.compile(
     r"^(?P<indent> {0,3})(?P<marker>`{3,}|~{3,})(?P<info>.*)$"
 )
+_PUBLISHED_SUMMARY = re.compile(
+    r"<!-- ROADMAP-RELEASE-GATE-SUMMARY "
+    r"total=(?P<total>\d+) "
+    r"complete=(?P<complete>\d+) "
+    r"open=(?P<open>\d+) "
+    r"partial=(?P<partial>\d+) "
+    r"raw_blockers=(?P<raw_blockers>\d+) "
+    r"release_tag_blockers=(?P<release_tag_blockers>\d+) "
+    r"release_generated_items=(?P<release_generated_items>\d+) -->"
+)
 
 
 class RoadmapReleaseGateError(ValueError):
@@ -42,6 +53,17 @@ class RoadmapItem:
     @property
     def label(self) -> str:
         return self.identifier or self.body[:96]
+
+
+@dataclass(frozen=True)
+class RoadmapSummary:
+    total: int
+    complete: int
+    open: int
+    partial: int
+    raw_blockers: int
+    release_tag_blockers: int
+    release_generated_items: int
 
 
 def roadmap_items(text: str) -> list[RoadmapItem]:
@@ -107,6 +129,43 @@ def open_items(text: str) -> list[RoadmapItem]:
     return [item for item in roadmap_items(text) if item.state in {" ", "~"}]
 
 
+def roadmap_summary(text: str) -> RoadmapSummary:
+    """Return the exact release-gate counts used by CI and roadmap reporting."""
+
+    items = roadmap_items(text)
+    raw_blockers = [
+        item for item in items if item.state in {" ", "~"}
+    ]
+    release_generated = [
+        item for item in items if item.identifier == RELEASE_GENERATED_ID
+    ]
+    return RoadmapSummary(
+        total=len(items),
+        complete=sum(item.state in {"x", "X"} for item in items),
+        open=sum(item.state == " " for item in items),
+        partial=sum(item.state == "~" for item in items),
+        raw_blockers=len(raw_blockers),
+        release_tag_blockers=sum(
+            item.identifier != RELEASE_GENERATED_ID for item in raw_blockers
+        ),
+        release_generated_items=len(release_generated),
+    )
+
+
+def published_summary(text: str) -> RoadmapSummary:
+    """Read the single dashboard count marker maintained by the roadmap."""
+
+    matches = list(_PUBLISHED_SUMMARY.finditer(text))
+    if len(matches) != 1:
+        raise RoadmapReleaseGateError(
+            "roadmap must contain exactly one "
+            "ROADMAP-RELEASE-GATE-SUMMARY marker; "
+            f"found {len(matches)}"
+        )
+    values = {key: int(value) for key, value in matches[0].groupdict().items()}
+    return RoadmapSummary(**values)
+
+
 def require_release_ready(
     text: str,
     *,
@@ -162,6 +221,14 @@ def parser() -> argparse.ArgumentParser:
             "is created by the release workflow itself"
         ),
     )
+    result.add_argument(
+        "--summary-json",
+        action="store_true",
+        help=(
+            "print machine-readable checkbox and release-blocker counts without "
+            "requiring the roadmap to be complete"
+        ),
+    )
     return result
 
 
@@ -169,6 +236,9 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         text = args.roadmap.read_text(encoding="utf-8")
+        if args.summary_json:
+            print(json.dumps(roadmap_summary(text).__dict__, sort_keys=True))
+            return 0
         require_release_ready(
             text,
             allow_release_generated_artifacts=args.release_tag,

@@ -186,6 +186,15 @@ pub enum ExtendedSubtype {
     /// authority decision. While the instance WAL remains intact, this chain
     /// detects rollback of the mutable anchor plus deletion of newer records.
     SkillAuthorityDecision = 0x19,
+    /// R3-18 — mandatory operation/request/accepted-epoch-bound intent before
+    /// one exact updater HTTP, process, or verified-stage leaf. Payload is
+    /// metadata-only: URL query/body, argv/stdin, local paths, and error text
+    /// are hash-bound.
+    UpdaterLeafIntent = 0x1A,
+    /// R3-18 — mandatory terminal success/failure paired to
+    /// `UpdaterLeafIntent` by operation id, request id, accepted epoch, and
+    /// exact binding.
+    UpdaterLeafResult = 0x1B,
 }
 
 impl ExtendedSubtype {
@@ -217,6 +226,8 @@ impl ExtendedSubtype {
             ExtendedSubtype::SkillRemovalIntent => "skill_removal_intent",
             ExtendedSubtype::SkillRemovalResult => "skill_removal_result",
             ExtendedSubtype::SkillAuthorityDecision => "skill_authority_decision",
+            ExtendedSubtype::UpdaterLeafIntent => "updater_leaf_intent",
+            ExtendedSubtype::UpdaterLeafResult => "updater_leaf_result",
         }
     }
 
@@ -248,6 +259,8 @@ impl ExtendedSubtype {
             0x17 => Some(ExtendedSubtype::SkillRemovalIntent),
             0x18 => Some(ExtendedSubtype::SkillRemovalResult),
             0x19 => Some(ExtendedSubtype::SkillAuthorityDecision),
+            0x1A => Some(ExtendedSubtype::UpdaterLeafIntent),
+            0x1B => Some(ExtendedSubtype::UpdaterLeafResult),
             _ => None,
         }
     }
@@ -281,6 +294,8 @@ impl ExtendedSubtype {
             Self::SkillRemovalIntent,
             Self::SkillRemovalResult,
             Self::SkillAuthorityDecision,
+            Self::UpdaterLeafIntent,
+            Self::UpdaterLeafResult,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -2170,11 +2185,13 @@ pub const EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED: u8 = 0xC9;
 /// Tool band. Payload (JSON): `{provider, audio_bytes, output_chars, ts_unix}`.
 pub const EVENT_TYPE_STT_TRANSCRIBED: u8 = 0xCC;
 
-/// `0xCD TTS_SYNTHESIZED` — MM-03b. A CLOUD text-to-speech call completed: text
-/// left the device to Azure / ElevenLabs and audio came back. The input TEXT is
-/// never stored — only its xxh3-64 HASH + byte length — so this is durable
-/// evidence of cloud-media use without recording what was spoken. Tool band.
-/// Payload (JSON): `{provider, input_hash, input_bytes, audio_bytes, ts_unix}`.
+/// `0xCD TTS_SYNTHESIZED` — MM-03b. Typed metadata-only TTS lifecycle.
+/// External providers require an `intent` frame before text/reference audio can
+/// leave the device and a bound `success` or `failure` terminal afterwards;
+/// local engines emit the same lifecycle when an audit writer is available.
+/// Spoken text, credentials, and reference-audio paths are never stored.
+/// Payloads bind phase, invocation, provider, destination, request/input hashes,
+/// byte counts, and timestamp. Tool band.
 pub const EVENT_TYPE_TTS_SYNTHESIZED: u8 = 0xCD;
 
 /// `0xC1 MCP_TOOL_REJECTED` — operator's MCP client refused to invoke
@@ -3653,6 +3670,9 @@ mod tests {
             ExtendedSubtype::SkillRemovalIntent,
             ExtendedSubtype::SkillRemovalResult,
             ExtendedSubtype::SkillAuthorityDecision,
+            // R3-18
+            ExtendedSubtype::UpdaterLeafIntent,
+            ExtendedSubtype::UpdaterLeafResult,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

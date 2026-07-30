@@ -197,7 +197,7 @@ impl DreamEffectRail {
     }
 
     pub(crate) fn retire_runtime_and_wait(&self) {
-        self.reload_controller.retire_dream_runtime();
+        self.reload_controller.retire_generation_effect_runtime();
     }
 }
 

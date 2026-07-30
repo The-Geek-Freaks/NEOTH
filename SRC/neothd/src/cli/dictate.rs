@@ -35,15 +35,17 @@ pub async fn run_dictate(args: DictateArgs) -> Result<()> {
     let file = args.file.clone();
 
     // A standalone CLI process must not append to the daemon-owned active
-    // segment. Use an independent timestamp-named segment and pass its writer
+    // segment. Use an independent UUID-namespaced segment and pass its writer
     // into the canonical STT boundary. If opening it fails, local STT remains
     // usable; proof-hardline cloud STT rejects the missing sink before egress.
     let audit = {
-        let wal_dir = crate::config::FreedomConfig::default_wal_dir();
+        let wal_dir = neoth_home.join("wal");
         let opened = (|| -> anyhow::Result<_> {
             std::fs::create_dir_all(&wal_dir)?;
-            Ok(crate::wal::writer::spawn(
-                wal_dir.join(format!("{:020}.wal", crate::time::now_unix_ns())),
+            let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "dictate");
+            Ok(crate::wal::writer::spawn_for_home(
+                segment,
+                neoth_home.clone(),
             )?)
         })();
         match opened {

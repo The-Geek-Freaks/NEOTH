@@ -1138,6 +1138,81 @@ pub struct ProviderCallAuthorizer {
     allow_unproven_ceiling: bool,
 }
 
+/// Owns the completion boundary for a standalone provider-call audit writer.
+///
+/// Standalone CLI commands cannot borrow the daemon writer. They therefore
+/// create a private writer and must keep this owner alive until every provider
+/// wrapper using its authorizer has been dropped. [`Self::finish`] enforces
+/// that order and observes mandatory shutdown-marker/final-sync failures.
+#[must_use = "the one-shot provider audit owner must be finished after provider use"]
+pub struct ProviderCallOneShot {
+    authorizer: Option<ProviderCallAuthorizer>,
+    completion: Option<crate::wal::writer::WalWriterCompletion>,
+    finished: bool,
+}
+
+#[cfg(not(test))]
+const PROVIDER_ONE_SHOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+#[cfg(test)]
+const PROVIDER_ONE_SHOT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+
+impl ProviderCallOneShot {
+    async fn await_completion(completion: crate::wal::writer::WalWriterCompletion) -> Result<()> {
+        completion
+            .wait_bounded(PROVIDER_ONE_SHOT_TIMEOUT)
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "provider-call audit WAL finalization failed: {error}"
+                )))
+            })
+    }
+
+    /// Clone the authorizer into the provider wrapper while this owner retains
+    /// the completion task needed to prove finalization.
+    #[must_use]
+    pub fn authorizer(&self) -> ProviderCallAuthorizer {
+        self.authorizer
+            .as_ref()
+            .expect("one-shot authorizer is available until finish")
+            .clone()
+    }
+
+    /// Clone the authorizer with the exact interactive consent capability.
+    #[must_use]
+    pub(crate) fn authorizer_with_ephemeral_consent(
+        &self,
+        consent: crate::consent::EphemeralConsent,
+    ) -> ProviderCallAuthorizer {
+        self.authorizer().with_ephemeral_consent(consent)
+    }
+
+    /// Drop the complete provider owner graph, close the writer channel and
+    /// wait for the real writer outcome. The timeout prevents a leaked clone
+    /// from hanging a CLI forever; timing out is an explicit audit failure.
+    pub async fn finish<T>(mut self, provider_owner: T) -> Result<()> {
+        drop(provider_owner);
+        drop(self.authorizer.take());
+        let completion = self
+            .completion
+            .take()
+            .expect("one-shot completion is available until finish");
+        let result = Self::await_completion(completion).await;
+        self.finished = true;
+        result
+    }
+}
+
+impl Drop for ProviderCallOneShot {
+    fn drop(&mut self) {
+        if !self.finished {
+            tracing::error!(
+                "provider-call one-shot owner dropped without observing WAL finalization"
+            );
+        }
+    }
+}
+
 fn validate_spent_ephemeral_after_durable_miss(
     home: &Path,
     route: &crate::consent::ConsentRoute,
@@ -1240,48 +1315,67 @@ impl ProviderCallAuthorizer {
     /// Build an interactive authorizer with its own collision-resistant WAL
     /// segment. Standalone CLI commands cannot borrow the daemon writer, but
     /// they still must durably audit the estimate and permission decision.
-    pub fn interactive_one_shot(
+    pub async fn interactive_one_shot(
         policy: impl ProviderPolicyInput,
         configured_input_token_cap: u32,
-    ) -> Result<Self> {
-        let wal_dir = crate::config::FreedomConfig::default_wal_dir();
-        Self::interactive_one_shot_at(policy, &wal_dir, configured_input_token_cap)
+    ) -> Result<ProviderCallOneShot> {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        Self::interactive_one_shot_at_home(policy, &home, configured_input_token_cap).await
     }
 
     /// Explicit-home variant for commands such as `neoth doctor --home`.
     /// Audit state must live beside the configuration/data being diagnosed;
     /// silently writing the process-default WAL would split operator truth.
-    pub fn interactive_one_shot_at(
+    pub async fn interactive_one_shot_at_home(
         policy: impl ProviderPolicyInput,
-        wal_dir: &Path,
+        home: &Path,
         configured_input_token_cap: u32,
-    ) -> Result<Self> {
-        std::fs::create_dir_all(wal_dir).map_err(|error| {
+    ) -> Result<ProviderCallOneShot> {
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).map_err(|error| {
             anyhow::anyhow!(ProviderAuthorizationError(format!(
                 "create provider-call WAL directory {}: {error}",
                 wal_dir.display()
             )))
         })?;
-        let segment = crate::wal::writer::unique_standalone_segment_path(wal_dir, "provider-call");
-        let (writer, join) = crate::wal::writer::spawn(segment).map_err(|error| {
-            anyhow::anyhow!(ProviderAuthorizationError(format!(
-                "spawn provider-call WAL writer: {error}"
-            )))
-        })?;
-        // Each append awaits the writer's fsync acknowledgement. Detaching the
-        // task is safe: the authorizer owns the sending handle for its lifetime.
-        drop(join);
-        Ok(Self::interactive(
+        let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "provider-call");
+        let (writer, completion, ready) =
+            crate::wal::writer::spawn_for_home_ready_with_completion(segment, home.to_path_buf())
+                .map_err(|error| {
+                anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "spawn provider-call WAL writer: {error}"
+                )))
+            })?;
+        if let Err(startup) = ready.wait().await {
+            // Initial segment publication uses a blocking capability-bound
+            // child. Tokio cannot cancel a blocking job once it starts, so a
+            // readiness timeout followed by abort would return while that
+            // child could still publish an orphan segment. Wait for the real
+            // writer outcome instead; a future bounded implementation needs
+            // an owned killable helper, not a detached spawn_blocking task.
+            drop(writer);
+            let finalization = completion.wait().await;
+            return match finalization {
+                Ok(()) => Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "initialize provider-call WAL writer: {startup}"
+                )))),
+                Err(finalization) => Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "initialize provider-call WAL writer: {startup}; writer finalization: \
+                     {finalization}"
+                )))),
+            };
+        }
+        let authorizer = Self::interactive(
             policy.into_provider_policy(),
             Some(writer),
             configured_input_token_cap,
         )
-        .with_usage_home(
-            wal_dir
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .to_path_buf(),
-        ))
+        .with_usage_home(home.to_path_buf());
+        Ok(ProviderCallOneShot {
+            authorizer: Some(authorizer),
+            completion: Some(completion),
+            finished: false,
+        })
     }
 
     pub fn interactive(
@@ -2450,7 +2544,7 @@ mod tests {
         Vec<(u8, serde_json::Value)>,
     ) {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("scripted-retry.wal");
+        let segment = dir.path().join("scripted-retry-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let inner = ScriptedRetryProvider {
             reason,
@@ -2548,7 +2642,7 @@ mod tests {
     #[tokio::test]
     async fn cancellation_during_retry_backoff_does_not_mint_a_phantom_attempt() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("retry-backoff-cancel.wal");
+        let segment = dir.path().join("retry-backoff-cancel-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let inner = BackoffCancellationProvider {
             attempts: AtomicUsize::new(0),
@@ -2601,7 +2695,7 @@ mod tests {
     async fn consent_revoked_between_attempts_blocks_before_the_retry_wire() {
         let dir = tempfile::tempdir().unwrap();
         crate::consent::grant(dir.path(), crate::cli::init::ProviderKind::OpenaiApi).unwrap();
-        let segment = dir.path().join("retry-consent-revoked.wal");
+        let segment = dir.path().join("retry-consent-revoked-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let inner = ConsentRevokingRetryProvider {
             home: dir.path().to_path_buf(),
@@ -2649,15 +2743,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_one_shot_wal_dir_keeps_audit_beside_the_selected_home() {
+    async fn explicit_one_shot_home_keeps_audit_and_keys_beside_the_selected_home() {
         let home = tempfile::tempdir().unwrap();
         let wal_dir = home.path().join("wal");
-        let authorizer = ProviderCallAuthorizer::interactive_one_shot_at(
+        let one_shot = ProviderCallAuthorizer::interactive_one_shot_at_home(
             AutonomyLevel::Full,
-            &wal_dir,
+            home.path(),
             test_input_token_cap(),
         )
+        .await
         .unwrap();
+        let authorizer = one_shot.authorizer();
 
         authorizer
             .authorize_leaf(
@@ -2673,13 +2769,72 @@ mod tests {
             )
             .await
             .unwrap();
+        one_shot.finish(authorizer).await.unwrap();
 
         let segments = std::fs::read_dir(&wal_dir)
             .unwrap()
             .filter_map(Result::ok)
             .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "wal"))
-            .count();
-        assert_eq!(segments, 1);
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        assert_eq!(segments.len(), 1);
+        assert!(
+            wal_event_types(&segments[0])
+                .contains(&crate::wal::events::EVENT_TYPE_COMPACTION_MARKER),
+            "finish must wait for the mandatory shutdown HMAC marker"
+        );
+        assert!(
+            wal_dir.join("hmac.key").is_file(),
+            "the one-shot writer must bind integrity state to the selected home"
+        );
+    }
+
+    #[tokio::test]
+    async fn leaked_one_shot_authorizer_timeout_reaps_writer_and_releases_lock() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        let one_shot = ProviderCallAuthorizer::interactive_one_shot_at_home(
+            AutonomyLevel::Full,
+            home.path(),
+            test_input_token_cap(),
+        )
+        .await
+        .unwrap();
+        let provider_owner = one_shot.authorizer();
+        let leaked_authorizer = provider_owner.clone();
+        let segment = std::fs::read_dir(&wal_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| path.extension().is_some_and(|extension| extension == "wal"))
+            .expect("ready writer must publish its segment");
+
+        let started = std::time::Instant::now();
+        let error = one_shot
+            .finish(provider_owner)
+            .await
+            .expect_err("leaked authorizer clone must hit bounded finalization");
+        assert!(
+            error.to_string().contains("was aborted"),
+            "unexpected one-shot timeout: {error:#}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "cfg(test) timeout must remain bounded in milliseconds"
+        );
+
+        let lock_path = crate::wal::redact::segment_rewrite_lock_path(&segment);
+        let reacquired = crate::util::locked_file::try_lock_file_once(
+            &lock_path,
+            "provider one-shot timeout regression",
+        )
+        .unwrap();
+        assert!(
+            reacquired.is_some(),
+            "timeout must abort and reap the real writer before returning"
+        );
+        drop(reacquired);
+        drop(leaked_authorizer);
     }
 
     struct CountingProvider {
@@ -2845,7 +3000,7 @@ mod tests {
     #[tokio::test]
     async fn custom_paid_call_override_reaches_the_leaf_gate() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("custom-paid-call-denied.wal");
+        let segment = dir.path().join("custom-paid-call-denied-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let mut custom = crate::permissions::CustomAutonomyConfig::default();
         custom.overrides.insert(
@@ -3217,7 +3372,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_bound_standard_fail_closed_audits_then_blocks_before_dispatch() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("unbounded-standard-denied.wal");
+        let segment = dir.path().join("unbounded-standard-denied-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let inner = UnboundedCloudProvider {
             calls: AtomicUsize::new(0),
@@ -3262,7 +3417,7 @@ mod tests {
     #[tokio::test]
     async fn finite_token_cap_with_unknown_price_never_claims_a_eur_upper_bound() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("unknown-price-denied.wal");
+        let segment = dir.path().join("unknown-price-denied-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let inner = CountingProvider {
             name: "future_cloud",
@@ -3456,7 +3611,7 @@ mod tests {
     #[tokio::test]
     async fn copilot_without_live_billing_context_uses_unbounded_paid_action() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("copilot-unknown-billing.wal");
+        let segment = dir.path().join("copilot-unknown-billing-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let authorizer = ProviderCallAuthorizer::fail_closed(
             AutonomyLevel::Full,
@@ -3499,7 +3654,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_bound_standard_channel_approval_proceeds_and_is_audited() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("unbounded-standard-approved.wal");
+        let segment = dir.path().join("unbounded-standard-approved-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let inner = UnboundedCloudProvider {
             calls: AtomicUsize::new(0),
@@ -3544,7 +3699,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_bound_full_fail_closed_proceeds_and_is_audited() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("unbounded-full-granted.wal");
+        let segment = dir.path().join("unbounded-full-granted-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let inner = UnboundedCloudProvider {
             calls: AtomicUsize::new(0),
@@ -3588,7 +3743,7 @@ mod tests {
     #[tokio::test]
     async fn default_claude_full_is_not_structurally_disabled_or_given_a_fake_cap() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("claude-unbounded-full.wal");
+        let segment = dir.path().join("claude-unbounded-full-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let adapter = crate::providers::claude_cli::ClaudeCliAdapter::new_with_backend(
             "claude".into(),
@@ -3769,7 +3924,7 @@ mod tests {
     #[tokio::test]
     async fn cost_wal_failure_blocks_dispatch() {
         let tmp = tempfile::tempdir().unwrap();
-        let (writer, join) = crate::wal::spawn(tmp.path().join("cost.wal")).unwrap();
+        let (writer, join) = crate::wal::spawn(tmp.path().join("cost-000001.wal")).unwrap();
         let writer = writer.with_quota_guard(Arc::new(crate::wal::writer::QuotaGuard::new(
             tmp.path().to_path_buf(),
             0,
@@ -3805,7 +3960,7 @@ mod tests {
     #[tokio::test]
     async fn permission_grant_wal_failure_after_cost_frame_blocks_dispatch() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("permission-grant-failure.wal");
+        let segment = dir.path().join("permission-grant-failure-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment).unwrap();
         let inner = CountingProvider {
             name: "openai_api",
@@ -3903,7 +4058,7 @@ mod tests {
     #[tokio::test]
     async fn cancellation_after_durable_intent_before_ack_emits_exactly_one_terminal() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("cancel-during-intent-ack.wal");
+        let segment = dir.path().join("cancel-during-intent-ack-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let ack_gate =
             crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
@@ -3968,7 +4123,7 @@ mod tests {
     #[tokio::test]
     async fn incognito_complete_lifecycle_pairs_both_terminals_without_raw_content() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("complete-lifecycle.wal");
+        let segment = dir.path().join("complete-lifecycle-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let context = ProviderCallAuditContext {
             source: Some("test_source"),
@@ -4050,7 +4205,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let wal_dir = home.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
-        let segment = wal_dir.join("terminal-usage.wal");
+        let segment = wal_dir.join("terminal-usage-000001.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
         let authorizer = ProviderCallAuthorizer::fail_closed(
@@ -4117,7 +4272,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let wal_dir = dir.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
-        let segment = wal_dir.join("stream-lifecycle.wal");
+        let segment = wal_dir.join("stream-lifecycle-000001.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), dir.path().to_path_buf()).unwrap();
         let authorizer = ProviderCallAuthorizer::fail_closed(
@@ -4244,7 +4399,7 @@ mod tests {
         std::fs::create_dir_all(&wal_dir).unwrap();
         let usage_blocker = crate::daemon::usage_log::usage_dir(home.path());
         std::fs::write(&usage_blocker, b"not a directory").unwrap();
-        let segment = wal_dir.join("repair-usage.wal");
+        let segment = wal_dir.join("repair-usage-000001.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
         let provider = SensitiveSuccessProvider {
@@ -4291,10 +4446,12 @@ mod tests {
         let mut frames = Vec::new();
         while cursor < bytes.len() {
             let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
-            frames.push((
-                frame.header.event_type,
-                serde_json::from_slice(frame.payload).unwrap(),
-            ));
+            if frame.header.event_type != crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+                frames.push((
+                    frame.header.event_type,
+                    serde_json::from_slice(frame.payload).unwrap(),
+                ));
+            }
             let total = frame.header.total_len as usize;
             if total == 0 {
                 break;
@@ -4302,6 +4459,23 @@ mod tests {
             cursor = cursor.saturating_add(total);
         }
         frames
+    }
+
+    fn wal_event_types(segment: &std::path::Path) -> Vec<u8> {
+        let bytes = std::fs::read(segment).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut event_types = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            event_types.push(frame.header.event_type);
+            let total = frame.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        event_types
     }
 
     fn usage_events(home: &std::path::Path) -> Vec<crate::daemon::usage_log::UsageEvent> {
@@ -4422,7 +4596,7 @@ mod tests {
     #[tokio::test]
     async fn authorization_id_and_binding_match_cost_and_permission_frames() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("bound-authorizations.wal");
+        let segment = dir.path().join("bound-authorizations-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let authorizer = ProviderCallAuthorizer::fail_closed(
             AutonomyLevel::Full,
@@ -4477,7 +4651,7 @@ mod tests {
     #[tokio::test]
     async fn audited_streaming_flag_matches_the_actual_wire_mode() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("wire-streaming-mode.wal");
+        let segment = dir.path().join("wire-streaming-mode-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let authorizer = ProviderCallAuthorizer::fail_closed(
             AutonomyLevel::Full,
@@ -4533,7 +4707,7 @@ mod tests {
     #[tokio::test]
     async fn wal_and_paid_gate_use_each_leaf_output_ceiling() {
         let dir = tempfile::tempdir().unwrap();
-        let segment = dir.path().join("cost-ceilings.wal");
+        let segment = dir.path().join("cost-ceilings-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
         let inner = CountingProvider {
             name: "openai_api",
@@ -4596,8 +4770,8 @@ mod tests {
     #[tokio::test]
     async fn nested_authorization_wrappers_fail_closed_without_pseudo_leaf_audits() {
         let dir = tempfile::tempdir().unwrap();
-        let inner_segment = dir.path().join("inner-cost.wal");
-        let outer_segment = dir.path().join("outer-cost.wal");
+        let inner_segment = dir.path().join("inner-cost-000001.wal");
+        let outer_segment = dir.path().join("outer-cost-000001.wal");
         let (inner_writer, inner_join) = crate::wal::writer::spawn(inner_segment.clone()).unwrap();
         let (outer_writer, outer_join) = crate::wal::writer::spawn(outer_segment.clone()).unwrap();
         let leaf = Arc::new(CountingProvider {
@@ -4654,7 +4828,7 @@ mod tests {
     async fn standard_paid_gate_denies_large_ceiling_that_cold_meter_would_allow() {
         let dir = tempfile::tempdir().unwrap();
         let (writer, join) =
-            crate::wal::writer::spawn(dir.path().join("ceiling-gate.wal")).unwrap();
+            crate::wal::writer::spawn(dir.path().join("ceiling-gate-000001.wal")).unwrap();
         let inner = CountingProvider {
             name: "openai_api",
             calls: AtomicUsize::new(0),

@@ -38,9 +38,7 @@ use clap::Args;
 use tracing::info;
 
 use crate::cli::OutputFormat;
-use crate::providers::pty_session::{
-    PtySession, PtySize, PtySpawn, emit_wal_ended_sync, feature_compiled_in,
-};
+use crate::providers::pty_session::{PtySession, PtySize, PtySpawn, feature_compiled_in};
 
 /// Arguments for `neoth terminal`.
 #[derive(Args, Debug, Clone)]
@@ -276,15 +274,12 @@ fn atty_check() -> bool {
 }
 
 /// Sync one-shot WAL emit for PTY_SESSION_STARTED.
-/// Mirrors `emit_wal_ended_sync` pattern from `providers/pty_session.rs`
-/// exactly — opens a fresh single-segment writer and calls `try_append_sync`.
+/// Uses the same-home daemon audit route when present; otherwise opens a unique
+/// home-bound segment and blocks for the append acknowledgement plus the
+/// writer's complete finalization outcome.
 /// Best-effort: failure is logged via `tracing::warn!`, not propagated.
 fn emit_wal_started_sync(session_id: &str, command: &str) {
     use crate::wal::events::EVENT_TYPE_PTY_SESSION_STARTED;
-    let segment = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
-    if let Some(p) = segment.parent() {
-        let _ = std::fs::create_dir_all(p);
-    }
     let payload = match serde_json::to_vec(&serde_json::json!({
         "session_id": session_id,
         "command": command,
@@ -293,16 +288,106 @@ fn emit_wal_started_sync(session_id: &str, command: &str) {
         Ok(v) => v,
         Err(_) => return,
     };
-    let (writer, _join) = match crate::wal::writer::spawn(segment) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(error = %e, "terminal: WAL writer spawn failed for PTY_SESSION_STARTED");
+    emit_terminal_wal_sync(
+        EVENT_TYPE_PTY_SESSION_STARTED,
+        "pty-started",
+        payload,
+        "PTY_SESSION_STARTED",
+    );
+}
+
+fn emit_wal_ended_sync(session_id: &str, exit_code: Option<i32>) {
+    use crate::wal::events::EVENT_TYPE_PTY_SESSION_ENDED;
+    let payload = match serde_json::to_vec(&serde_json::json!({
+        "session_id": session_id,
+        "exit_code": exit_code,
+        "ts_unix": crate::time::now_unix_secs(),
+    })) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    emit_terminal_wal_sync(
+        EVENT_TYPE_PTY_SESSION_ENDED,
+        "pty-ended",
+        payload,
+        "PTY_SESSION_ENDED",
+    );
+}
+
+fn emit_terminal_wal_sync(event_type: u8, surface: &str, payload: Vec<u8>, event: &str) {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let pidfile = home.join("neothd.pid");
+    match crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+        Ok(Some(_)) => {
+            let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+                tracing::warn!(
+                    event,
+                    "terminal audit RPC unavailable outside a Tokio runtime"
+                );
+                return;
+            };
+            let result = tokio::task::block_in_place(|| {
+                runtime.block_on(crate::daemon::audit_rpc::try_post_audit_frame(
+                    &home, event_type, &payload,
+                ))
+            });
+            if let Err(e) = result {
+                tracing::warn!(
+                    error = %e,
+                    event,
+                    "terminal audit forward failed; local writer suppressed while daemon is live"
+                );
+            }
             return;
         }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                pidfile = %pidfile.display(),
+                event,
+                "terminal audit ownership is uncertain; refusing a local WAL writer"
+            );
+            return;
+        }
+    }
+
+    let wal_dir = home.join("wal");
+    if let Err(e) = std::fs::create_dir_all(&wal_dir) {
+        tracing::warn!(
+            error = %e,
+            wal_dir = %wal_dir.display(),
+            event,
+            "terminal WAL directory unavailable"
+        );
+        return;
+    }
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, surface);
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        tracing::warn!(
+            event,
+            "terminal WAL append unavailable outside a Tokio runtime"
+        );
+        return;
     };
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_PTY_SESSION_STARTED, &payload).build();
-    if let Err(e) = writer.try_append_sync(header, payload) {
-        tracing::warn!(error = %e, "terminal: PTY_SESSION_STARTED append failed (best-effort)");
+    let (writer, completion) =
+        match crate::wal::writer::spawn_for_home_with_completion(segment, home) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(error = %e, event, "terminal WAL writer spawn failed");
+                return;
+            }
+        };
+    let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+    let append_result =
+        tokio::task::block_in_place(|| runtime.block_on(writer.append(header, payload)));
+    drop(writer);
+    let completion_result = tokio::task::block_in_place(|| runtime.block_on(completion.wait()));
+    if let Err(e) = append_result {
+        tracing::warn!(error = %e, event, "terminal WAL append failed (best-effort)");
+    }
+    if let Err(e) = completion_result {
+        tracing::warn!(error = %e, event, "terminal WAL writer finalization failed (best-effort)");
     }
 }
 

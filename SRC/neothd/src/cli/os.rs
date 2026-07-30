@@ -7,8 +7,8 @@
 //! empty = deny-all) AND the autonomy level permits it (Strict denies, Standard
 //! + Elevated confirm ⇒ blocked here without a TTY, only Full auto-allows). The
 //! launch carries no arguments and uses no shell. The launch (or denial) is
-//! WAL-audited (`0xAC`/`0xAD`). Audit emit mirrors the HF-01 best-effort
-//! one-shot writer — skip if `neothd serve` owns the WAL, else append one frame.
+//! WAL-audited (`0xAC`/`0xAD`). Audit emit routes to a live same-home daemon;
+//! otherwise it drains a unique home-bound one-shot segment.
 
 use std::path::{Path, PathBuf};
 
@@ -17,7 +17,7 @@ use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::os_tools::{AuditSink, OsGateError, launch_os_app};
+use crate::os_tools::{AuditSink, AuditStatus, OsGateError, launch_os_app};
 #[cfg(feature = "os-clipboard")]
 use crate::os_tools::{read_os_clipboard, write_os_clipboard};
 
@@ -63,6 +63,62 @@ pub enum OsAction {
     },
 }
 
+type OneShotAuditWal = (
+    crate::wal::writer::WalWriterHandle,
+    crate::wal::writer::WalWriterCompletion,
+);
+
+fn open_one_shot_audit_wal(home: &Path, surface: &str) -> Result<OneShotAuditWal> {
+    let wal_dir = home.join("wal");
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create one-shot OS audit WAL dir {}", wal_dir.display()))?;
+    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, surface);
+    crate::wal::writer::spawn_for_home_with_completion(segment, home.to_path_buf())
+        .context("spawn home-bound one-shot OS audit WAL writer")
+}
+
+async fn finish_one_shot_audit(
+    completion: crate::wal::writer::WalWriterCompletion,
+    status: &AuditStatus,
+    required: bool,
+    action: &str,
+) -> Result<()> {
+    let finalization_failure = completion.wait().await.err().map(|error| error.to_string());
+    finish_tracked_audit(status, finalization_failure, required, action)
+}
+
+fn finish_tracked_audit(
+    status: &AuditStatus,
+    finalization_failure: Option<String>,
+    required: bool,
+    action: &str,
+) -> Result<()> {
+    let dispatch_failure = status.failure();
+    if required && (dispatch_failure.is_some() || finalization_failure.is_some()) {
+        anyhow::bail!(
+            "refusing to report {action} as complete: required one-shot audit failed \
+             (dispatch={}, finalization={})",
+            dispatch_failure.as_deref().unwrap_or("ok"),
+            finalization_failure.as_deref().unwrap_or("ok")
+        );
+    }
+    if let Some(error) = dispatch_failure {
+        tracing::warn!(
+            error = %error,
+            action,
+            "one-shot OS audit dispatch failed (non-required audit)"
+        );
+    }
+    if let Some(error) = finalization_failure {
+        tracing::warn!(
+            error = %error,
+            action,
+            "one-shot OS audit writer failed to finalize (non-required audit)"
+        );
+    }
+    Ok(())
+}
+
 pub async fn run_os(args: OsArgs) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml — run `neoth init` first if absent")?;
@@ -80,11 +136,10 @@ pub async fn run_os(args: OsArgs) -> Result<()> {
 async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Result<()> {
     let now = now_unix();
     let home = FreedomConfig::default_neoth_home();
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
-    );
+    let pidfile = home.join("neothd.pid");
+    let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon ownership via {}", pidfile.display()))?
+        .is_some();
     // AUDIT-RPC-01 #1: under a required-audit posture, refuse the launch if the
     // daemon owns the WAL but its audit-RPC listener is unreachable — a launch
     // must never happen un-audited.
@@ -98,33 +153,48 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
     // (AUDIT-RPC-01) rather than open a 2nd writer; the launch is gated either way.
     let result = {
         if daemon_live {
-            launch_os_app(
+            let audit_status = AuditStatus::default();
+            let result = launch_os_app(
                 program,
                 &cfg.tools.os,
                 &cfg.autonomy_policy(),
-                AuditSink::DaemonRpc(&home),
+                AuditSink::TrackedDaemonRpc {
+                    home: &home,
+                    status: &audit_status,
+                },
                 now,
             )
-            .await
+            .await;
+            finish_tracked_audit(
+                &audit_status,
+                None,
+                cfg.audit_rpc.required_for_oneshot_permission_events,
+                "OS launch",
+            )?;
+            result
         } else {
-            let segment = FreedomConfig::default_neoth_home()
-                .join("wal")
-                .join("000001.wal");
-            if let Some(parent) = segment.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            match crate::wal::spawn(segment) {
-                Ok((writer, join)) => {
+            match open_one_shot_audit_wal(&home, "os-launch") {
+                Ok((writer, completion)) => {
+                    let audit_status = AuditStatus::default();
                     let r = launch_os_app(
                         program,
                         &cfg.tools.os,
                         &cfg.autonomy_policy(),
-                        AuditSink::Writer(&writer),
+                        AuditSink::TrackedWriter {
+                            writer: &writer,
+                            status: &audit_status,
+                        },
                         now,
                     )
                     .await;
                     drop(writer);
-                    let _ = join.await;
+                    finish_one_shot_audit(
+                        completion,
+                        &audit_status,
+                        cfg.audit_rpc.required_for_oneshot_permission_events,
+                        "OS launch",
+                    )
+                    .await?;
                     r
                 }
                 Err(e) => {
@@ -192,11 +262,10 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
 async fn run_clipboard_get(cfg: &FreedomConfig, output: OutputFormat) -> Result<()> {
     let now = now_unix();
     let home = FreedomConfig::default_neoth_home();
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
-    );
+    let pidfile = home.join("neothd.pid");
+    let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon ownership via {}", pidfile.display()))?
+        .is_some();
     // A clipboard read is a permission event ⇒ refuse it un-audited if the
     // daemon owns the WAL but its audit-RPC listener is unreachable.
     crate::daemon::audit_rpc::enforce_required_audit(
@@ -206,29 +275,46 @@ async fn run_clipboard_get(cfg: &FreedomConfig, output: OutputFormat) -> Result<
     )?;
     let clip = &cfg.tools.os.clipboard;
     let result = if daemon_live {
-        read_os_clipboard(
+        let audit_status = AuditStatus::default();
+        let result = read_os_clipboard(
             clip,
             &cfg.autonomy_policy(),
-            AuditSink::DaemonRpc(&home),
+            AuditSink::TrackedDaemonRpc {
+                home: &home,
+                status: &audit_status,
+            },
             now,
         )
-        .await
+        .await;
+        finish_tracked_audit(
+            &audit_status,
+            None,
+            cfg.audit_rpc.required_for_oneshot_permission_events,
+            "clipboard read",
+        )?;
+        result
     } else {
-        let segment = home.join("wal").join("000001.wal");
-        if let Some(parent) = segment.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match crate::wal::spawn(segment) {
-            Ok((writer, join)) => {
+        match open_one_shot_audit_wal(&home, "os-clipboard-read") {
+            Ok((writer, completion)) => {
+                let audit_status = AuditStatus::default();
                 let r = read_os_clipboard(
                     clip,
                     &cfg.autonomy_policy(),
-                    AuditSink::Writer(&writer),
+                    AuditSink::TrackedWriter {
+                        writer: &writer,
+                        status: &audit_status,
+                    },
                     now,
                 )
                 .await;
                 drop(writer);
-                let _ = join.await;
+                finish_one_shot_audit(
+                    completion,
+                    &audit_status,
+                    cfg.audit_rpc.required_for_oneshot_permission_events,
+                    "clipboard read",
+                )
+                .await?;
                 r
             }
             Err(e) => {
@@ -288,11 +374,10 @@ async fn run_clipboard_set(
 
     let now = now_unix();
     let home = FreedomConfig::default_neoth_home();
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
-    );
+    let pidfile = home.join("neothd.pid");
+    let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon ownership via {}", pidfile.display()))?
+        .is_some();
     crate::daemon::audit_rpc::enforce_required_audit(
         cfg.audit_rpc.required_for_oneshot_permission_events,
         daemon_live,
@@ -300,31 +385,48 @@ async fn run_clipboard_set(
     )?;
     let clip = &cfg.tools.os.clipboard;
     let result = if daemon_live {
-        write_os_clipboard(
+        let audit_status = AuditStatus::default();
+        let result = write_os_clipboard(
             &content,
             clip,
             &cfg.autonomy_policy(),
-            AuditSink::DaemonRpc(&home),
+            AuditSink::TrackedDaemonRpc {
+                home: &home,
+                status: &audit_status,
+            },
             now,
         )
-        .await
+        .await;
+        finish_tracked_audit(
+            &audit_status,
+            None,
+            cfg.audit_rpc.required_for_oneshot_permission_events,
+            "clipboard write",
+        )?;
+        result
     } else {
-        let segment = home.join("wal").join("000001.wal");
-        if let Some(parent) = segment.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match crate::wal::spawn(segment) {
-            Ok((writer, join)) => {
+        match open_one_shot_audit_wal(&home, "os-clipboard-write") {
+            Ok((writer, completion)) => {
+                let audit_status = AuditStatus::default();
                 let r = write_os_clipboard(
                     &content,
                     clip,
                     &cfg.autonomy_policy(),
-                    AuditSink::Writer(&writer),
+                    AuditSink::TrackedWriter {
+                        writer: &writer,
+                        status: &audit_status,
+                    },
                     now,
                 )
                 .await;
                 drop(writer);
-                let _ = join.await;
+                finish_one_shot_audit(
+                    completion,
+                    &audit_status,
+                    cfg.audit_rpc.required_for_oneshot_permission_events,
+                    "clipboard write",
+                )
+                .await?;
                 r
             }
             Err(e) => {

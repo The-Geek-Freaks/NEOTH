@@ -57,7 +57,7 @@ per-surface controls and documented best-effort/log-only exceptions are in the
 | **Pipeline router** | Builds the enriched request: profile, recall, skills, tools, operator rules, channel context, and active task state. |
 | **Provider router** | Picks cloud/local providers by role, cost, latency, privacy, model capability, and circuit-breaker state. |
 | **Council** | Triggers multi-model dissent when risk, complexity, contradiction, or explicit policy warrants it. |
-| **WAL** | Durable source of truth for memory, provider calls, plugin actions, channel sends, recovery, and audit. |
+| **WAL** | Durable source of truth for memory and for the governed caller lifecycles that emit provider, plugin, channel, recovery, and audit events. Exact coverage and documented best-effort/log-only exceptions are listed in the threat model. |
 | **SQLite views** | Queryable projections over the WAL: episodes, importance, council, motor state, habits, profile, embeddings. |
 | **Babel-Index observer** | Async, content-free collapse scoring over the WAL stream: seven variables per rolling window, pre-registered failure labels, early warning before degradation ([babel-index.md](babel-index.md)). |
 | **Obsidian mirror** | Human-readable knowledge layer for decisions, notes, reflections, project memory, and operator inspection. |
@@ -68,10 +68,20 @@ per-surface controls and documented best-effort/log-only exceptions are in the
 
 The WAL is the durable event chain under NEOTH. Views can be rebuilt; the WAL is authoritative.
 
+Rotating namespaces publish each successor atomically with an authenticated
+cross-segment link and immediate HMAC marker. The link binds the canonical
+predecessor/successor identities and final predecessor lengths/digest; scanners
+validate the complete relevant chain before yielding frames to authority
+consumers. Marker-bearing or linked segments currently refuse physical payload
+redaction before mutation until the v1 signed, crash-recoverable rewrite
+transaction is complete. This preserves chain truth while logical forget
+remains available; it is not yet a complete physical-erasure implementation.
+
 Its typed event families record core activity including:
 
 - inbound and outbound messages
-- provider calls and destinations
+- governed provider-call intents, destinations, and results where the caller
+  lifecycle has mandatory WAL coverage
 - memory/profile changes
 - approval/decline events
 - plugin and skill activity
@@ -171,7 +181,11 @@ NEOTH can route by role:
 | Audio | Whisper path. |
 | Council | Multiple role-bound providers with budget and dissent handling. |
 
-Provider calls are audited by destination and circuit-breaker state.
+Governed provider callers bind the final provider/model request before
+authorization and record destination plus circuit-breaker state through their
+caller lifecycle. Coverage is not inferred from a transport adapter alone; the
+exact mandatory and best-effort paths are listed in the
+[threat model](security/threat-model.md).
 
 ## Coding architecture
 

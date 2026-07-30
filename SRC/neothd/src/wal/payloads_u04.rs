@@ -10,9 +10,113 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Current wire schema for recurring updater pass correlation.
+///
+/// Schema v1 is the historical payload without a pass identity. Serde defaults
+/// missing identity fields to that legacy shape so old WAL segments remain
+/// readable, but consumers must not guess a FIRED/RESULT pairing for them.
+pub const UPDATER_PASS_SCHEMA_VERSION: u16 = 2;
+
+const fn legacy_schema_version() -> u16 {
+    1
+}
+
+/// Concrete recurring lane that owns a pass. This is more precise than
+/// [`UpdaterTaskKind`]: probe/apply and probe/stage lanes intentionally share
+/// the historical task kind, but must never share an audit identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdaterPassLane {
+    NeothSelfProbe,
+    CliVersionProbe,
+    SkillPluginProbe,
+    CliAutoApply,
+    SelfStage,
+}
+
+impl UpdaterPassLane {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NeothSelfProbe => "neoth_self_probe",
+            Self::CliVersionProbe => "cli_version_probe",
+            Self::SkillPluginProbe => "skill_plugin_probe",
+            Self::CliAutoApply => "cli_auto_apply",
+            Self::SelfStage => "self_stage",
+        }
+    }
+
+    pub fn task_kind(self) -> UpdaterTaskKind {
+        match self {
+            Self::NeothSelfProbe | Self::SelfStage => UpdaterTaskKind::NeothSelf,
+            Self::CliVersionProbe | Self::CliAutoApply => UpdaterTaskKind::CliVersions,
+            Self::SkillPluginProbe => UpdaterTaskKind::SkillPlugin,
+        }
+    }
+}
+
+/// Shared FIRED/RESULT correlation fields.
+///
+/// The struct is flattened into both payloads so the stable wire keys remain
+/// top-level. A legacy payload deserializes as schema v1 with no identity and
+/// is therefore explicitly uncorrelatable rather than heuristically paired.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdaterPassIdentity {
+    #[serde(default = "legacy_schema_version")]
+    pub schema_version: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pass_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_epoch: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<UpdaterPassLane>,
+}
+
+impl UpdaterPassIdentity {
+    /// Construct a new schema-v2 identity before FIRED is appended. The exact
+    /// same value must then be copied into its terminal RESULT.
+    pub fn new(lane: UpdaterPassLane, accepted_epoch: u64) -> Self {
+        Self {
+            schema_version: UPDATER_PASS_SCHEMA_VERSION,
+            pass_id: Some(uuid::Uuid::now_v7().to_string()),
+            accepted_epoch: Some(accepted_epoch),
+            lane: Some(lane),
+        }
+    }
+
+    /// Historical/synthetic result with no durable FIRED correlation.
+    pub const fn legacy() -> Self {
+        Self {
+            schema_version: 1,
+            pass_id: None,
+            accepted_epoch: None,
+            lane: None,
+        }
+    }
+
+    /// Return the stable pass id only when every schema-v2 correlation field is
+    /// present and the id is a canonical UUID. Unknown future schemas are kept
+    /// readable but deliberately treated as indeterminate.
+    pub fn correlatable_pass_id(&self) -> Option<&str> {
+        if self.schema_version != UPDATER_PASS_SCHEMA_VERSION
+            || self.accepted_epoch.is_none()
+            || self.lane.is_none()
+        {
+            return None;
+        }
+        let pass_id = self.pass_id.as_deref()?;
+        let parsed = uuid::Uuid::parse_str(pass_id).ok()?;
+        (parsed.to_string() == pass_id).then_some(pass_id)
+    }
+
+    pub fn correlatable_pass_id_for(&self, task_kind: UpdaterTaskKind) -> Option<&str> {
+        let pass_id = self.correlatable_pass_id()?;
+        (self.lane?.task_kind() == task_kind).then_some(pass_id)
+    }
+}
+
 /// Which updater task fired. Pinned exhaustively — adding a new
 /// task class needs a payload-schema-version bump.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UpdaterTaskKind {
     /// U-01: `neothd` binary self-update check.
@@ -44,6 +148,13 @@ pub enum ComponentStatus {
     UpToDate,
     /// Component was upgraded. `new_version` populated.
     Upgraded,
+    /// A probe found a newer release, but no mutation was attempted.
+    /// `new_version` is the available release.
+    UpdateAvailable,
+    /// A verified update was downloaded and staged, but the installed
+    /// component is still at `prior_version` until the operator applies it.
+    /// `new_version` is the staged release.
+    Staged,
     /// Component check or upgrade failed. Recorded for the
     /// operator audit — failures don't halt other components.
     Failed,
@@ -60,6 +171,8 @@ impl ComponentStatus {
         match self {
             Self::UpToDate => "up_to_date",
             Self::Upgraded => "upgraded",
+            Self::UpdateAvailable => "update_available",
+            Self::Staged => "staged",
             Self::Failed => "failed",
             Self::SkippedByGate => "skipped_by_gate",
         }
@@ -68,7 +181,7 @@ impl ComponentStatus {
 
 /// One component's per-pass outcome. `prior_version` always
 /// populated (the check ran); `new_version` populated only when
-/// `status == Upgraded`.
+/// `status == Upgraded`, `status == UpdateAvailable`, or `status == Staged`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComponentOutcome {
     pub name: String,
@@ -108,6 +221,34 @@ impl ComponentOutcome {
         }
     }
 
+    pub fn staged(
+        name: impl Into<String>,
+        prior: impl Into<String>,
+        staged: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            prior_version: prior.into(),
+            new_version: Some(staged.into()),
+            status: ComponentStatus::Staged,
+            note: "verified artifact staged; operator apply is pending".to_string(),
+        }
+    }
+
+    pub fn update_available(
+        name: impl Into<String>,
+        current: impl Into<String>,
+        available: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            prior_version: current.into(),
+            new_version: Some(available.into()),
+            status: ComponentStatus::UpdateAvailable,
+            note: "newer release is available".to_string(),
+        }
+    }
+
     pub fn failed(
         name: impl Into<String>,
         prior: impl Into<String>,
@@ -140,6 +281,8 @@ impl ComponentOutcome {
 /// `0x44 UPDATER_TASK_FIRED` payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdaterTaskFiredPayload {
+    #[serde(flatten)]
+    pub identity: UpdaterPassIdentity,
     pub task_kind: UpdaterTaskKind,
     pub ts_unix: u64,
 }
@@ -147,6 +290,8 @@ pub struct UpdaterTaskFiredPayload {
 /// `0x45 UPDATER_TASK_RESULT` payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdaterTaskResultPayload {
+    #[serde(flatten)]
+    pub identity: UpdaterPassIdentity,
     pub task_kind: UpdaterTaskKind,
     pub ts_unix: u64,
     pub duration_ms: u32,
@@ -165,6 +310,20 @@ impl UpdaterTaskResultPayload {
         self.components
             .iter()
             .filter(|c| c.status == ComponentStatus::Failed)
+            .count()
+    }
+
+    pub fn staged_count(&self) -> usize {
+        self.components
+            .iter()
+            .filter(|c| c.status == ComponentStatus::Staged)
+            .count()
+    }
+
+    pub fn update_available_count(&self) -> usize {
+        self.components
+            .iter()
+            .filter(|c| c.status == ComponentStatus::UpdateAvailable)
             .count()
     }
 
@@ -187,15 +346,18 @@ impl UpdaterTaskResultPayload {
     /// decide between the green "everything current" line vs the
     /// detailed table.
     pub fn is_uneventful(&self) -> bool {
-        self.upgraded_count() == 0 && self.failed_count() == 0 && self.skipped_count() == 0
+        self.upgraded_count() == 0
+            && self.staged_count() == 0
+            && self.update_available_count() == 0
+            && self.failed_count() == 0
+            && self.skipped_count() == 0
     }
 }
 
-/// Operator-facing status renderer for `neoth updater status`.
-/// Pure-fn over a slice of recent UpdaterTaskResultPayload (the
-/// CLI side reads the WAL + filters by event_type then feeds the
-/// payloads in). Returns a plain-text table the CLI prints
-/// verbatim.
+/// Legacy result-only renderer retained for synthetic consumers and wire-form
+/// regression tests. Production `neoth updater status` uses the FIRED/RESULT
+/// state machine in `cli::updater`; result-only rendering cannot prove a pass
+/// completed.
 pub fn render_updater_status(results: &[UpdaterTaskResultPayload]) -> String {
     if results.is_empty() {
         return "neoth updater status — no updater pass on record yet.\n\
@@ -223,6 +385,8 @@ pub fn render_updater_status(results: &[UpdaterTaskResultPayload]) -> String {
             let symbol = match c.status {
                 ComponentStatus::UpToDate => "·",
                 ComponentStatus::Upgraded => "↑",
+                ComponentStatus::UpdateAvailable => "!",
+                ComponentStatus::Staged => "↓",
                 ComponentStatus::Failed => "✗",
                 ComponentStatus::SkippedByGate => "⊘",
             };
@@ -258,6 +422,7 @@ mod tests {
         components: Vec<ComponentOutcome>,
     ) -> UpdaterTaskResultPayload {
         UpdaterTaskResultPayload {
+            identity: UpdaterPassIdentity::legacy(),
             task_kind: kind,
             ts_unix: ts,
             duration_ms: 1234,
@@ -286,6 +451,11 @@ mod tests {
     fn component_status_as_str_pinned() {
         assert_eq!(ComponentStatus::UpToDate.as_str(), "up_to_date");
         assert_eq!(ComponentStatus::Upgraded.as_str(), "upgraded");
+        assert_eq!(
+            ComponentStatus::UpdateAvailable.as_str(),
+            "update_available"
+        );
+        assert_eq!(ComponentStatus::Staged.as_str(), "staged");
         assert_eq!(ComponentStatus::Failed.as_str(), "failed");
         assert_eq!(ComponentStatus::SkippedByGate.as_str(), "skipped_by_gate");
     }
@@ -313,6 +483,16 @@ mod tests {
         let c = ComponentOutcome::upgraded("claude-cli", "1.2.3", "1.3.0");
         assert_eq!(c.status, ComponentStatus::Upgraded);
         assert_eq!(c.new_version.as_deref(), Some("1.3.0"));
+    }
+
+    #[test]
+    fn available_and_staged_constructors_do_not_claim_installation() {
+        let available = ComponentOutcome::update_available("neoth", "1.0.0", "1.1.0");
+        assert_eq!(available.status, ComponentStatus::UpdateAvailable);
+        assert_eq!(available.new_version.as_deref(), Some("1.1.0"));
+        let staged = ComponentOutcome::staged("neoth", "1.0.0", "1.1.0");
+        assert_eq!(staged.status, ComponentStatus::Staged);
+        assert_eq!(staged.new_version.as_deref(), Some("1.1.0"));
     }
 
     #[test]
@@ -345,12 +525,16 @@ mod tests {
                 ComponentOutcome::up_to_date("a", "1.0"),
                 ComponentOutcome::up_to_date("b", "2.0"),
                 ComponentOutcome::upgraded("c", "1.0", "1.1"),
+                ComponentOutcome::update_available("c2", "1.0", "1.2"),
+                ComponentOutcome::staged("c3", "1.0", "1.2"),
                 ComponentOutcome::failed("d", "0.5", "network down"),
                 ComponentOutcome::skipped_by_gate("e", "1.0", "policy"),
             ],
         );
         assert_eq!(r.up_to_date_count(), 2);
         assert_eq!(r.upgraded_count(), 1);
+        assert_eq!(r.update_available_count(), 1);
+        assert_eq!(r.staged_count(), 1);
         assert_eq!(r.failed_count(), 1);
         assert_eq!(r.skipped_count(), 1);
         assert!(!r.is_uneventful());
@@ -448,17 +632,23 @@ mod tests {
     #[test]
     fn fired_payload_serialises_snake_case_audit_keys() {
         let p = UpdaterTaskFiredPayload {
+            identity: UpdaterPassIdentity::new(UpdaterPassLane::CliVersionProbe, 7),
             task_kind: UpdaterTaskKind::CliVersions,
             ts_unix: 1_700_000_000,
         };
         let json = serde_json::to_string(&p).unwrap();
         assert!(json.contains("\"task_kind\":\"cli_versions\""));
         assert!(json.contains("\"ts_unix\":1700000000"));
+        assert!(json.contains("\"schema_version\":2"));
+        assert!(json.contains("\"accepted_epoch\":7"));
+        assert!(json.contains("\"lane\":\"cli_version_probe\""));
+        assert!(json.contains("\"pass_id\":"));
     }
 
     #[test]
     fn result_payload_serialises_audit_keys() {
         let r = UpdaterTaskResultPayload {
+            identity: UpdaterPassIdentity::new(UpdaterPassLane::SkillPluginProbe, 7),
             task_kind: UpdaterTaskKind::SkillPlugin,
             ts_unix: 100,
             duration_ms: 250,
@@ -484,6 +674,7 @@ mod tests {
     #[test]
     fn result_payload_omits_empty_new_version_and_note() {
         let r = UpdaterTaskResultPayload {
+            identity: UpdaterPassIdentity::legacy(),
             task_kind: UpdaterTaskKind::NeothSelf,
             ts_unix: 0,
             duration_ms: 0,
@@ -508,5 +699,42 @@ mod tests {
         let json = serde_json::to_string(&r).unwrap();
         let back: UpdaterTaskResultPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn fired_and_result_share_the_exact_versioned_pass_identity() {
+        let identity = UpdaterPassIdentity::new(UpdaterPassLane::SelfStage, 42);
+        let fired = UpdaterTaskFiredPayload {
+            identity: identity.clone(),
+            task_kind: UpdaterTaskKind::NeothSelf,
+            ts_unix: 100,
+        };
+        let result = UpdaterTaskResultPayload {
+            identity: identity.clone(),
+            task_kind: UpdaterTaskKind::NeothSelf,
+            ts_unix: 101,
+            duration_ms: 1,
+            components: vec![],
+        };
+        let fired_json = serde_json::to_value(fired).unwrap();
+        let result_json = serde_json::to_value(result).unwrap();
+        for key in ["schema_version", "pass_id", "accepted_epoch", "lane"] {
+            assert_eq!(fired_json[key], result_json[key], "mismatched key {key}");
+        }
+        assert!(identity.correlatable_pass_id().is_some());
+    }
+
+    #[test]
+    fn legacy_payloads_decode_as_explicitly_uncorrelatable_schema_v1() {
+        let fired: UpdaterTaskFiredPayload =
+            serde_json::from_str(r#"{"task_kind":"cli_versions","ts_unix":1}"#).unwrap();
+        let result: UpdaterTaskResultPayload = serde_json::from_str(
+            r#"{"task_kind":"cli_versions","ts_unix":2,"duration_ms":3,"components":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(fired.identity, UpdaterPassIdentity::legacy());
+        assert_eq!(result.identity, UpdaterPassIdentity::legacy());
+        assert!(fired.identity.correlatable_pass_id().is_none());
+        assert!(result.identity.correlatable_pass_id().is_none());
     }
 }

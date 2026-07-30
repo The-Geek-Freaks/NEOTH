@@ -147,7 +147,7 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
     // appender from this process could interleave frame bytes (open_segment
     // is create+append, no exclusivity lock). This NEW command refuses
     // loudly instead of inheriting the dual-writer exposure.
-    let pidfile = crate::daemon::pidfile::default_pidfile();
+    let pidfile = neoth_home.join("neothd.pid");
     if let Ok(Some(pid)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
         anyhow::bail!(
             "neoth serve (pid {pid}) is running and owns the WAL segment — run \
@@ -157,7 +157,7 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
     }
 
     // Same plumbing trio as the chat path: fallback-chain provider, the
-    // operator's MCP server set, a WAL writer on the default segment.
+    // operator's MCP server set, and a home-bound standalone WAL writer.
     let provider = crate::providers::fallback_chain_from_config(&config, &neoth_home, None)
         .await
         .context("resolve provider chain")?;
@@ -170,7 +170,9 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create WAL dir {}", parent.display()))?;
     }
-    let (writer, writer_join) = crate::wal::spawn(segment_path).context("spawn WAL writer")?;
+    let (writer, writer_join) =
+        crate::wal::writer::spawn_for_home(segment_path, neoth_home.clone())
+            .context("spawn WAL writer")?;
     let provider_policy =
         crate::permissions::AutonomyPolicySnapshot::new(autonomy, &config.custom_autonomy);
     let provider_call_authorizer =

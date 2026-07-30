@@ -2138,7 +2138,9 @@ mod tests {
     async fn gossip_handler_emits_dropped_audit_for_malformed_frame() {
         use crate::cluster::wal_sync::GossipState;
         let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("000001.wal");
         let (writer, join) =
             crate::wal::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let writer = Arc::new(writer);
@@ -2178,7 +2180,9 @@ mod tests {
         use crate::cluster::wal_sync::GossipState;
 
         let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("000001.wal");
         let (writer, join) = crate::wal::spawn_for_home(seg, dir.path().to_path_buf()).unwrap();
         let writer = Arc::new(writer);
         let weak = Arc::downgrade(&writer);
@@ -2280,7 +2284,9 @@ mod tests {
     #[tokio::test]
     async fn emit_gossip_sent_writes_0xed_audit_frame() {
         let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("000001.wal");
         let (writer, join) =
             crate::wal::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let writer = Arc::new(writer);
