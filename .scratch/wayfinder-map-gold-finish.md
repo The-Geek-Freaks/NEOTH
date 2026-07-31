@@ -606,6 +606,39 @@ Sending ADOPT31 to v1.1 wholesale would ship v1.0 with a known hole in the
 danger-command gate and no MCP schema-swap detection. Those two in particular
 read as v1.0 under any rule that keeps the destination's promise.
 
+### T15 — Working the ten failure-mode items · in progress · `wayfinder:task`
+From T13/T14. Order chosen by how much of a live gap each closes.
+
+- **`ADOPT31-C8` — DONE** (`a23698f4`). Two Critical rules in the shipping
+  pre-dispatch gate: `secure_erase` (shred with a removing/zeroing flag, or
+  shred/wipe against a device) and `sql_destructive` (DROP DATABASE/SCHEMA/
+  TABLE, TRUNCATE TABLE), each with negative tests. `DELETE` without `WHERE`
+  deliberately omitted — regex cannot separate it from a parameterised DELETE
+  without firing on ordinary queries. 12/12, clippy clean.
+
+- **`ADOPT31-C4` — sized, not started.** HMAC fingerprinting of MCP tool
+  schemas needs four pieces: persist each server's advertised schema at install
+  time, fingerprint it, compare at call time, fail closed on mismatch.
+  `mcp/catalogue.rs` is a *prompt* catalogue with no schema persistence and no
+  hashing, so this is a new persistence layer plus dispatch integration plus a
+  config migration — a feature, not a patch. Worth doing: it is the rug-pull
+  vector on a live dispatch loop.
+
+- **`ADOPT31-C9` — BLOCKED, and the blocker is worth recording.** The item says
+  "align WAL audit field names with `AUDIT-COMPLIANCE-1.0` §4.1". That spec is
+  **not in this repository** — `docs/specs/AUDIT-COMPLIANCE-1.0.md` does not
+  exist; it is an external reference from the analysed third-party project. The
+  canonical field list reachable from here (`seq`, `timestamp`, `agent_id`,
+  `action`, `decision`, `previous_hash`, `hash`) comes from the analysis
+  summary in `PLAN/ADOPT_2026_07_31/C_governance.md:125`, not from the spec.
+  Writing a mapping comment from a second-hand list would be a guess wearing
+  the costume of an interop guarantee. Either obtain the spec, or rewrite the
+  item to reference the summary as its own source of truth.
+
+Remaining: `C1` (cross-turn injection tracking), `A6` (VAD minimum-duration
+guard — small, `media/vad/smoothed.rs`), `B10` (negative routing test), and the
+four `GOLD-LF` items `P1-01/02/04/05`.
+
 ### T4 — Which of the 233 pre-tag blockers are genuinely v1.0, and which are v1.1? · open · `wayfinder:grilling` · unblocked
 The roadmap counts 1,222 boxes with 233 pre-tag blockers. Some are hard release
 contracts (artifacts, installers, parity); others are refinements that a tagged
