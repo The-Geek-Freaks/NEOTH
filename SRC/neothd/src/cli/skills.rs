@@ -2047,6 +2047,12 @@ mod tests {
             home,
             crate::wal::scan::HomeWalScanLimits::default(),
             |_, dec| {
+                // Skip WAL chain-integrity frames: the authenticated rotation
+                // contract publishes a compaction marker, which is not part of
+                // any skill's audit trail.
+                if dec.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+                    return Ok(());
+                }
                 let payload = serde_json::from_slice::<serde_json::Value>(dec.payload).ok();
                 out.push(serde_json::json!({
                     "event_type": format!("0x{:02X}", dec.header.event_type),

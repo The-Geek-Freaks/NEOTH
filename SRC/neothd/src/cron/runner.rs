@@ -1742,14 +1742,22 @@ mod workstream_c_tests {
         format!("# Morning Brief\n\n{facts}")
     }
 
+    /// The cron events a segment holds, without WAL infrastructure frames.
+    ///
+    /// A segment also carries chain-integrity frames — the compaction marker
+    /// the authenticated rotation contract publishes. Those are not cron
+    /// outcomes, and asserting on the raw frame sequence makes every test here
+    /// a hostage of the WAL's internal layout.
     fn wal_json_events(path: &Path) -> Vec<(u8, serde_json::Value)> {
         let bytes = std::fs::read(path).expect("read WAL segment");
         let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
         let mut events = Vec::new();
         while !cursor.is_empty() {
             let frame = decode_frame(cursor).expect("decode WAL frame");
-            let payload = serde_json::from_slice(frame.payload).expect("JSON cron payload");
-            events.push((frame.header.event_type, payload));
+            if frame.header.event_type != crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+                let payload = serde_json::from_slice(frame.payload).expect("JSON cron payload");
+                events.push((frame.header.event_type, payload));
+            }
             cursor = &cursor[frame.header.total_len as usize..];
         }
         events
