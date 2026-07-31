@@ -3,6 +3,25 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-31
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Gate state as of session end (head `b46cbf91`).** CI: zero failures across
+> every completed job — the three Unix-only defects (`cap_std` trait,
+> `needless_borrow`, `needless_return`, each on a `#[cfg(unix)]` path a Windows
+> build never compiles) are closed, licence notices current, feature-flag
+> builds green. Security: `cargo-deny` and `cargo-audit` now report exactly one
+> advisory between them, `RUSTSEC-2026-0222` in wasmtime, tracked as wayfinder
+> **T6**. `RUSTSEC-2024-0384` is resolved: it was mirrored into `deny.toml`
+> where `cargo-deny` rejects it — `instant` reaches the graph only through the
+> optional `nostr-channel` feature, so `cargo-audit` (whole lockfile) sees it
+> and `cargo-deny` (feature-resolved) does not. The entry lives in
+> `.cargo/audit.toml` only, with the asymmetry documented beside it.
+>
+> T6 carries a completed diagnosis including a **verified negative result**:
+> the obvious fix — fetch `LICENSE` from the wasmtime repo root at the recorded
+> revision and hash it — does not reproduce the existing 0.123.9 digest
+> (12,208 recorded bytes vs 12,243 fetched, different leading whitespace).
+> Checking that before applying it to 0.123.13 is what kept a falsified licence
+> record out of the repository.
+>
 > **Gate round 3 — `cargo clippy slim core` is red again, and my fix was in the
 > head under test.** The needless-borrow fix landed in `4e629449`, the run was
 > triggered after it, and the same step still fails. Locally
