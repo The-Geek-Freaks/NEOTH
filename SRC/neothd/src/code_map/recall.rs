@@ -199,7 +199,7 @@ pub fn relevant_files_for_prompt(
         // GOLD-R3-13: containment is now part of the query, so an unrelated
         // persisted root can never reach aggregation, ranking or truncation —
         // and cannot consume a row budget the active repo needs.
-        let hits: Vec<SymbolHit> = super::persist::search_symbol(conn, ident, &active_root)?;
+        let hits: Vec<SymbolHit> = super::persist::search_symbol(conn, ident, active_root)?;
         for hit in hits {
             let key = (hit.root.clone(), hit.path.clone());
             let entry = by_path.entry(key).or_insert_with(|| RelevantFile {
