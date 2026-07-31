@@ -3,6 +3,23 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-31
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Gate round 3 — `cargo clippy slim core` is red again, and my fix was in the
+> head under test.** The needless-borrow fix landed in `4e629449`, the run was
+> triggered after it, and the same step still fails. Locally
+> `cargo clippy -p neoth --lib --bins --no-default-features` passes. The
+> remaining difference is the platform: CI runs that step on Linux, so this is
+> a second finding in the same class as the `cap_std` one — a lint firing on a
+> `#[cfg]` path a Windows build never compiles. Logs are withheld until the run
+> completes, so the site is not yet known and is deliberately not guessed at.
+> Next turn starts by reading them.
+>
+> Security: `RUSTSEC-2024-0384` (`instant`, unmaintained via nostr-sdk) is now
+> allowed in both `.cargo/audit.toml` and `deny.toml`. `RUSTSEC-2026-0222`
+> (`wasmtime`, real vulnerability in the plugin host) stays open as wayfinder
+> ticket **T6**: the upgrade works but moves two cranelift crates whose licence
+> snapshots are version-keyed on the upstream git revision, which cannot be
+> derived from the crates.io tarball. Reverted rather than forged.
+>
 > **Gate round 2 in flight (head `220de2df`).** The `cap_std` fix and the two
 > advisory upgrades are in the tree under test. Two jobs are already red before
 > the run finishes — `Exact distribution license notices` and
