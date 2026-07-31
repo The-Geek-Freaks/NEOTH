@@ -167,7 +167,10 @@ fn run_io_loop(session: &PtySession, timeout: Duration) -> Option<i32> {
 
 /// Headless read: capture all PTY output until EOF or timeout, then print.
 fn run_headless_loop(session: &PtySession, timeout: Duration) -> Option<i32> {
-    let bytes = session.read_until(timeout).unwrap_or_default();
+    let bytes = session
+        .read_until(timeout)
+        .map(|outcome| outcome.into_bytes())
+        .unwrap_or_default();
     // Write raw bytes to stdout — the PTY output may contain ANSI sequences
     // that the operator's pager / downstream tool expects verbatim.
     use std::io::Write;
@@ -194,7 +197,10 @@ fn run_interactive_loop(session: &PtySession, _timeout: Duration) -> Option<i32>
     loop {
         // ── slave → stdout ───────────────────────────────────────────────────
         // read_until with a short window drains whatever is currently buffered.
-        let out = session.read_until(poll_interval).unwrap_or_default();
+        let out = session
+            .read_until(poll_interval)
+            .map(|outcome| outcome.into_bytes())
+            .unwrap_or_default();
         if !out.is_empty() {
             let _ = stdout.write_all(&out);
             let _ = stdout.flush();
@@ -248,6 +254,7 @@ fn run_interactive_loop(session: &PtySession, _timeout: Duration) -> Option<i32>
             // Drain any remaining output.
             let tail = session
                 .read_until(Duration::from_millis(200))
+                .map(|outcome| outcome.into_bytes())
                 .unwrap_or_default();
             if !tail.is_empty() {
                 let _ = stdout.write_all(&tail);
@@ -473,6 +480,7 @@ mod tests {
         };
         let bytes = session
             .read_until(std::time::Duration::from_secs(5))
+            .map(|outcome| outcome.into_bytes())
             .unwrap_or_default();
         let text = String::from_utf8_lossy(&bytes);
         assert!(

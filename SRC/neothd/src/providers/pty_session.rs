@@ -40,6 +40,42 @@ use anyhow::{Result, anyhow};
 #[cfg(feature = "pty-subprocess")]
 const MAX_PTY_READ_BYTES: usize = 4 * 1024 * 1024;
 
+/// How a timed PTY read ended.
+///
+/// A bare `Vec<u8>` cannot say whether the child finished, the clock ran out,
+/// or the byte cap cut the output short — and a caller that then waits on the
+/// child can block forever on output nobody is draining. The distinction is
+/// the contract.
+#[derive(Debug)]
+pub enum PtyReadOutcome {
+    /// The child closed the PTY; the output is complete.
+    Eof(Vec<u8>),
+    /// The deadline elapsed first; the child was terminated.
+    TimedOut(Vec<u8>),
+    /// The byte cap was reached; the child was terminated.
+    LimitExceeded(Vec<u8>),
+}
+
+impl PtyReadOutcome {
+    /// The bytes captured, whatever the outcome.
+    pub fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Eof(bytes) | Self::TimedOut(bytes) | Self::LimitExceeded(bytes) => bytes,
+        }
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        match self {
+            Self::Eof(bytes) | Self::TimedOut(bytes) | Self::LimitExceeded(bytes) => bytes,
+        }
+    }
+
+    /// True when the output is a fragment, not the whole answer.
+    pub fn is_truncated(&self) -> bool {
+        !matches!(self, Self::Eof(_))
+    }
+}
+
 /// PTY dimensions. Defaults match a sensible wide terminal so
 /// `claude`'s ANSI reflow doesn't truncate lines on first paint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -213,10 +249,13 @@ mod real {
             Ok(())
         }
 
-        /// Read bytes from the PTY until the child exits or `until`
-        /// elapses. Returns whatever was captured so a timeout still
-        /// surfaces partial output (operator-debugging value).
-        pub fn read_until(&self, until: Duration) -> Result<Vec<u8>> {
+        /// Read bytes from the PTY until the child exits, `until` elapses, or
+        /// the byte cap is reached.
+        ///
+        /// The outcome is typed: a timeout or a cap is not a smaller answer,
+        /// and in both of those cases the child is terminated before
+        /// returning, so nothing is left writing into a PTY nobody drains.
+        pub fn read_until(&self, until: Duration) -> Result<PtyReadOutcome> {
             let mut reader = self
                 .master
                 .try_clone_reader()
@@ -224,13 +263,17 @@ mod real {
             let mut buf = Vec::with_capacity(8192);
             let start = std::time::Instant::now();
             let mut chunk = [0u8; 4096];
+            let mut ended_at_deadline = false;
+            let mut ended_at_cap = false;
             loop {
                 if start.elapsed() >= until {
+                    ended_at_deadline = true;
                     break;
                 }
                 // The deadline alone is not a bound: a child that writes fast
                 // enough fills memory before it expires.
                 if buf.len() >= MAX_PTY_READ_BYTES {
+                    ended_at_cap = true;
                     break;
                 }
                 match reader.read(&mut chunk) {
@@ -246,7 +289,21 @@ mod real {
                     Err(e) => return Err(anyhow!("pty read: {e}")),
                 }
             }
-            Ok(buf)
+            if ended_at_cap || ended_at_deadline {
+                // Terminate before returning: a child still writing into a PTY
+                // that nobody reads will block, and a later wait on it would
+                // block with it.
+                if let Err(error) = self.kill() {
+                    tracing::warn!(error = %error, "terminate PTY child after truncated read");
+                }
+            }
+            Ok(if ended_at_cap {
+                PtyReadOutcome::LimitExceeded(buf)
+            } else if ended_at_deadline {
+                PtyReadOutcome::TimedOut(buf)
+            } else {
+                PtyReadOutcome::Eof(buf)
+            })
         }
 
         /// Best-effort kill. Idempotent. Returns Ok even when the child
@@ -326,7 +383,7 @@ mod stub {
         pub fn write_bytes(&self, _bytes: &[u8]) -> Result<()> {
             Err(anyhow!("pty-subprocess feature off"))
         }
-        pub fn read_until(&self, _until: Duration) -> Result<Vec<u8>> {
+        pub fn read_until(&self, _until: Duration) -> Result<PtyReadOutcome> {
             Err(anyhow!("pty-subprocess feature off"))
         }
         pub fn kill(&self) -> Result<()> {
@@ -516,6 +573,7 @@ mod tests {
         };
         let bytes = session
             .read_until(Duration::from_secs(3))
+            .map(|outcome| outcome.into_bytes())
             .unwrap_or_default();
         let text = String::from_utf8_lossy(&bytes);
         assert!(
