@@ -140,10 +140,36 @@
   Schweigen: sie macht die Lücke unauffindbar. Genau diese Zeile hat das Item
   erzeugt.
 
-- **Trust-Ledger als per-Decision Append-Only-Timeline** `[CODEX]` `GOLD-LF-P1-05`
-  Quelle: PLAN/GREMIUM_EXECUTION_BACKLOG_2026-05-20.md#P3. trust.rs hat nur den
-  globalen AutonomyLevel; kein TrustEvent/TrustLedger. Integration: neues
-  `memory/trust_ledger.rs` + WAL-Event je Entscheidungsgrenze.
+- **Trust-Ledger — Substrat existiert, Restlücke ist Subjekt-Attribution** `[CODEX]` `GOLD-LF-P1-05`
+  **UMSKOPIERT (2026-08-01), nicht gebaut.** Das Item verlangt ein neues
+  `memory/trust_ledger.rs` plus „WAL-Event je Entscheidungsgrenze". Beide
+  Hälften sind bereits erfüllt bzw. würden duplizieren:
+
+  - **Das WAL-Event existiert.** Band `0xA0..=0xAF` „Permissions / autonomy
+    (R-23)": `0xA0 PERMISSION_GRANTED`, `0xA1 PERMISSION_DENIED`,
+    `0xA2 LEVEL_ELEVATED`, `0xA3 LEVEL_DEROGATED`, Leases `0xA5..0xA7`.
+    Gezählte Emit-Stellen: **38 granted, 29 denied**, 7/5 für Level-Wechsel.
+  - **Die Persistenz existiert.** Die WAL *ist* der append-only Ledger, und
+    zwar HMAC-verkettet — „tamper detection" und „deterministic inspection"
+    aus der Tracker-Zeile sind `neoth wal verify` / `wal show`. Ein zweiter
+    typisierter Store daneben wäre dieselbe Doppel-Aufzeichnungs-Falle, aus
+    der `SelfUpdateIntent` (P1-01) und `right_hemisphere.rs` (P1-02) gestrichen
+    wurden.
+
+  **Was wirklich fehlt — und nur das:** die Nutzlast ist laut Contract
+  `{action, level, reason?, ts}` (`wal/events.rs:1896`). **Kein Subjekt-Feld.**
+  Der Frame hält fest *was* auf *welcher Stufe* entschieden wurde, nicht *für
+  wen* — welcher Sub-Agent, welche Session, welcher Channel-Origin. Genau das
+  ist die „subject isolation" der Tracker-Zeile, und sie ist der einzige echte
+  Rest.
+
+  **Neuer Zuschnitt `GOLD-LF-P1-05a` — Subjekt-Attribution auf dem
+  Autonomie-Band:** `subject` in die Payload von 0xA0/0xA1 (und sinnvoll
+  0xA2/0xA3) aufnehmen, an den 67 Emit-Stellen durchreichen, Replay-Test der
+  beweist dass zwei Subjekte in derselben Session getrennt bleiben. Das ist
+  eine mechanische Änderung mit klarer Abnahme — kein neues Subsystem.
+  Vorsicht bei der Umsetzung: `subject` darf keine Freitext-Senke werden
+  (P1-03-Klasse), also typisiert statt String-Blob.
 
 ### Council / Recall / Inference
 
