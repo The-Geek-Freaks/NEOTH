@@ -1297,18 +1297,18 @@ fn enforce_freshness_file_count(count: i64, max_files: usize) -> Result<()> {
 /// repo with many roots stays grouped. Result rows carry the bare
 /// fields the CLI needs to render `file:line` jump targets — no
 /// `RepoFile` reconstruction.
-pub fn search_symbol(conn: &Connection, symbol_name: &str) -> Result<Vec<SymbolHit>> {
+pub fn search_symbol(conn: &Connection, symbol_name: &str, root: &str) -> Result<Vec<SymbolHit>> {
     let mut stmt = conn
         .prepare(
             "SELECT f.root, f.path, s.kind, s.line \
              FROM code_map_symbols s \
              JOIN code_map_files f ON f.id = s.file_id \
-             WHERE s.name = ?1 \
-             ORDER BY f.root ASC, f.path ASC, s.line ASC",
+             WHERE s.name = ?1 AND f.root = ?2 \
+             ORDER BY f.path ASC, s.line ASC",
         )
         .context("prepare symbol search SELECT")?;
     let rows: Vec<SymbolHit> = stmt
-        .query_map(rusqlite::params![symbol_name], |row| {
+        .query_map(rusqlite::params![symbol_name, root], |row| {
             Ok(SymbolHit {
                 root: row.get::<_, String>(0)?,
                 path: row.get::<_, String>(1)?,
@@ -1342,7 +1342,7 @@ pub fn search_symbol(conn: &Connection, symbol_name: &str) -> Result<Vec<SymbolH
 /// Result `SymbolHit` is the same struct as
 /// [`search_symbol`] — exact + fuzzy paths produce
 /// interchangeable hits so the CLI renderer doesn't branch.
-pub fn search_symbol_fuzzy(conn: &Connection, query: &str) -> Result<Vec<SymbolHit>> {
+pub fn search_symbol_fuzzy(conn: &Connection, query: &str, root: &str) -> Result<Vec<SymbolHit>> {
     let trimmed = query.trim();
     if trimmed.is_empty() {
         return Ok(Vec::new());
@@ -1360,13 +1360,13 @@ pub fn search_symbol_fuzzy(conn: &Connection, query: &str) -> Result<Vec<SymbolH
              FROM code_map_symbols_fts fts \
              JOIN code_map_symbols s ON s.id = fts.rowid \
              JOIN code_map_files f ON f.id = s.file_id \
-             WHERE code_map_symbols_fts MATCH ?1 \
-             ORDER BY bm25(code_map_symbols_fts), f.root, f.path, s.line \
+             WHERE code_map_symbols_fts MATCH ?1 AND f.root = ?2 \
+             ORDER BY bm25(code_map_symbols_fts), f.path, s.line \
              LIMIT 200",
         )
         .context("prepare fuzzy symbol search SELECT")?;
     let rows: Vec<SymbolHit> = stmt
-        .query_map(rusqlite::params![fts_query], |row| {
+        .query_map(rusqlite::params![fts_query, root], |row| {
             Ok(SymbolHit {
                 root: row.get::<_, String>(0)?,
                 path: row.get::<_, String>(1)?,
@@ -1990,7 +1990,7 @@ mod tests {
         assert_eq!(loaded.files[0].path, "src/other.rs");
 
         // The old symbol should have cascaded away too.
-        let hits = search_symbol(&conn, "main").unwrap();
+        let hits = search_symbol(&conn, "main", "/repo/a").unwrap();
         assert!(
             hits.is_empty(),
             "old root's symbols must cascade on re-persist; got {hits:?}"
@@ -2015,7 +2015,7 @@ mod tests {
     fn search_symbol_returns_matching_hits() {
         let (_dir, mut conn) = temp_db();
         let _ = persist_map(&mut conn, &sample_map("/repo/a")).unwrap();
-        let hits = search_symbol(&conn, "main").unwrap();
+        let hits = search_symbol(&conn, "main", "/repo/a").unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "src/main.rs");
         assert_eq!(hits[0].kind, "function");
@@ -2027,11 +2027,63 @@ mod tests {
     fn search_symbol_returns_empty_when_no_match() {
         let (_dir, mut conn) = temp_db();
         let _ = persist_map(&mut conn, &sample_map("/repo/a")).unwrap();
-        let hits = search_symbol(&conn, "nonexistent_fn").unwrap();
+        let hits = search_symbol(&conn, "nonexistent_fn", "/repo/a").unwrap();
         assert!(hits.is_empty());
     }
 
     // ── K-Repo-Map FTS5 fuzzy search ────────────────────────────────
+
+    /// GOLD-R3-13: containment runs BEFORE limiting.
+    ///
+    /// The fuzzy query caps at 200 rows. Without a root predicate in the WHERE
+    /// clause, a large unrelated indexed repository can fill those 200 slots and
+    /// hide every match in the repository the operator is standing in — the
+    /// exact failure the ticket names. Rank and truncate inside the root.
+    #[test]
+    fn a_large_foreign_repo_cannot_crowd_out_the_active_root() {
+        let (_dir, mut conn) = temp_db();
+
+        // A noisy foreign repo: far more matching symbols than the query cap.
+        let mut noisy_files = Vec::new();
+        for file in 0..40 {
+            let symbols = (0..20)
+                .map(|sym| Symbol {
+                    name: format!("extract_noise_{file}_{sym}"),
+                    kind: SymbolKind::Function,
+                    line: sym + 1,
+                })
+                .collect();
+            noisy_files.push(RepoFile {
+                path: format!("src/noise_{file}.rs"),
+                language: Language::Rust,
+                bytes: 100,
+                loc: 10,
+                sha256: String::new(),
+                mtime_ns: 0,
+                symbols,
+            });
+        }
+        persist_map(
+            &mut conn,
+            &RepoMap {
+                root: "/foreign/huge".into(),
+                files: noisy_files,
+                report: ScanReport::default(),
+            },
+        )
+        .unwrap();
+        persist_map(&mut conn, &fts_sample_map("/active/repo")).unwrap();
+
+        let hits = search_symbol_fuzzy(&conn, "extract*", "/active/repo").unwrap();
+        assert!(
+            !hits.is_empty(),
+            "the active repo's matches must survive a 800-symbol foreign repo"
+        );
+        assert!(
+            hits.iter().all(|h| h.root == "/active/repo"),
+            "no foreign root may appear in a contained search; got {hits:?}"
+        );
+    }
 
     fn fts_sample_map(root: &str) -> RepoMap {
         RepoMap {
@@ -2078,15 +2130,15 @@ mod tests {
     #[test]
     fn search_symbol_fuzzy_returns_empty_on_empty_query() {
         let (_dir, conn) = temp_db();
-        assert!(search_symbol_fuzzy(&conn, "").unwrap().is_empty());
-        assert!(search_symbol_fuzzy(&conn, "   ").unwrap().is_empty());
+        assert!(search_symbol_fuzzy(&conn, "", "/r").unwrap().is_empty());
+        assert!(search_symbol_fuzzy(&conn, "   ", "/r").unwrap().is_empty());
     }
 
     #[test]
     fn search_symbol_fuzzy_returns_empty_when_no_match() {
         let (_dir, mut conn) = temp_db();
         let _ = persist_map(&mut conn, &fts_sample_map("/r")).unwrap();
-        let hits = search_symbol_fuzzy(&conn, "totally_absent").unwrap();
+        let hits = search_symbol_fuzzy(&conn, "totally_absent", "/r").unwrap();
         assert!(hits.is_empty());
     }
 
@@ -2094,7 +2146,7 @@ mod tests {
     fn search_symbol_fuzzy_matches_prefix_with_star_suffix() {
         let (_dir, mut conn) = temp_db();
         let _ = persist_map(&mut conn, &fts_sample_map("/r")).unwrap();
-        let hits = search_symbol_fuzzy(&conn, "extract*").unwrap();
+        let hits = search_symbol_fuzzy(&conn, "extract*", "/r").unwrap();
         // Both `extract_symbols` and `extract_response` match the
         // prefix.
         assert_eq!(hits.len(), 2, "got {hits:?}");
@@ -2110,7 +2162,7 @@ mod tests {
         // bare query `symbols` matches the second token.
         let (_dir, mut conn) = temp_db();
         let _ = persist_map(&mut conn, &fts_sample_map("/r")).unwrap();
-        let hits = search_symbol_fuzzy(&conn, "symbols").unwrap();
+        let hits = search_symbol_fuzzy(&conn, "symbols", "/r").unwrap();
         assert!(
             hits.iter().any(|h| h.path == "src/extract.rs"),
             "tokenizer split must surface extract_symbols on 'symbols' query: {hits:?}"
@@ -2123,7 +2175,7 @@ mod tests {
         // BOTH `cluster` AND `heartbeat` tokens.
         let (_dir, mut conn) = temp_db();
         let _ = persist_map(&mut conn, &fts_sample_map("/r")).unwrap();
-        let hits = search_symbol_fuzzy(&conn, "cluster heartbeat").unwrap();
+        let hits = search_symbol_fuzzy(&conn, "cluster heartbeat", "/r").unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "src/cluster.rs");
     }

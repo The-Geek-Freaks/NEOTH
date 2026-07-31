@@ -603,7 +603,20 @@ fn run_search(name: String, output: OutputFormat) -> Result<()> {
     let db_path = crate::code_map::persist::default_path();
     let conn = crate::code_map::persist::open(&db_path)
         .with_context(|| format!("open code_map db at {}", db_path.display()))?;
-    let hits = crate::code_map::persist::search_symbol(&conn, &name)?;
+    // Containment before limiting (GOLD-R3-13): results are scoped to the
+    // repository the caller is standing in. Without it a large unrelated
+    // indexed repo can fill the result set and hide every local match — and
+    // falling back to another persisted root is the cross-repo leak
+    // `resolve_active_root` exists to close.
+    let cwd = std::env::current_dir().context("resolve current directory for symbol search")?;
+    let Some(root) = crate::code_map::recall::resolve_active_root(&conn, &cwd) else {
+        anyhow::bail!(
+            "no indexed repository contains {} — run `neoth code-map persist` from inside \
+             the repository you want to search",
+            cwd.display()
+        );
+    };
+    let hits = crate::code_map::persist::search_symbol(&conn, &name, &root)?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -1049,10 +1062,15 @@ mod tests {
     }
 
     #[test]
-    fn search_returns_ok_even_on_empty_db() {
+    fn search_refuses_when_no_indexed_repo_contains_the_cwd() {
         with_temp_home(|| {
-            run_search("nonexistent_symbol".into(), OutputFormat::Json)
-                .expect("search on empty db must Ok");
+            // GOLD-R3-13: with nothing indexed there is no active root, and
+            // falling back to some other persisted root is the cross-repo leak
+            // containment exists to close. Refusing with an actionable message
+            // beats silently searching a repository the operator is not in.
+            let error = run_search("nonexistent_symbol".into(), OutputFormat::Json)
+                .expect_err("no active repository must refuse, not guess");
+            assert!(error.to_string().contains("no indexed repository"));
         });
     }
 
@@ -1076,10 +1094,28 @@ mod tests {
             )
             .expect("persist must succeed");
 
-            // After persist, the symbols must be in the DB even when
-            // searched via the bare CLI helper.
-            run_search("alpha".into(), OutputFormat::Json)
-                .expect("search after persist must succeed");
+            // The symbols are in the DB under the repo's canonical root. The
+            // CLI resolves that root from the CWD; this test runs from the
+            // NEOTH checkout, so it asserts the storage contract directly
+            // rather than pretending to stand inside the fixture repo.
+            let db = crate::code_map::persist::default_path();
+            let conn = crate::code_map::persist::open(&db).unwrap();
+            let root = std::fs::canonicalize(repo.path())
+                .unwrap()
+                .display()
+                .to_string();
+            let hits = crate::code_map::persist::search_symbol(&conn, "alpha", &root).unwrap();
+            assert_eq!(
+                hits.len(),
+                1,
+                "persisted symbol must be findable in its root"
+            );
+            assert!(
+                crate::code_map::persist::search_symbol(&conn, "alpha", "/some/other/repo")
+                    .unwrap()
+                    .is_empty(),
+                "another root must not see this repo's symbols"
+            );
         });
     }
 

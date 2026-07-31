@@ -196,14 +196,11 @@ pub fn relevant_files_for_prompt(
         // identifier verbatim. A future enhancement could also try
         // `ident.to_lowercase()` for snake_case-only databases but
         // case-sensitive is correct for now.
-        let hits: Vec<SymbolHit> = super::persist::search_symbol(conn, ident)?;
+        // GOLD-R3-13: containment is now part of the query, so an unrelated
+        // persisted root can never reach aggregation, ranking or truncation —
+        // and cannot consume a row budget the active repo needs.
+        let hits: Vec<SymbolHit> = super::persist::search_symbol(conn, ident, &active_root)?;
         for hit in hits {
-            // GOLD-R3-13: contain to the active repository BEFORE aggregation,
-            // ranking and truncation — an unrelated persisted root must never
-            // consume the top-k and hide the active repo's matches.
-            if hit.root != active_root {
-                continue;
-            }
             let key = (hit.root.clone(), hit.path.clone());
             let entry = by_path.entry(key).or_insert_with(|| RelevantFile {
                 root: hit.root.clone(),
