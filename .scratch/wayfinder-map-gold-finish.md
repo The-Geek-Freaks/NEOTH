@@ -660,61 +660,69 @@ individual calls — it is **three**: (1) is the adoption wave v1.1? (2) are
 mobile/cluster/Buddy/channel-parity v1.1 surfaces? (3) which lost features were
 advertised? Everything else follows.
 
-**Proposal — NOT a decision. Awaiting the operator; nothing below is
-authorised.** Built with the `system-design-101` frame, using its Resilience
-and Delivery axes, because that is what separates "unfinished" from "narrower
-than the vision".
+**Proposal v2 — NOT a decision. Awaiting the operator; nothing below is
+authorised.** The first version was written from item text and was wrong twice
+(see T13, T14). This one is written from the per-lane code surveys.
 
-**The test.** An item is v1.0 if deferring it leaves a *failure mode
-unhandled* or makes *delivery impossible*. Adding a capability is neither,
-however desirable.
+**The test, unchanged.** An item is v1.0 if deferring it leaves a *failure mode
+unhandled* or makes *delivery impossible*. Adding a capability is neither.
 
-**Measured distribution of the 267 open items:** `GOLD-LF` 118, `ADOPT31` 65,
-`GOLD-R4` 46, `GOLD-NCT` 27, `GOLD-R3` 8, other 3.
+**What the surveys established** (T9–T14):
 
-**Delivery axis — without these there is nothing to tag (proposed v1.0):**
-`R4-01` (7, artifacts), `R4-02` (2, package managers/upgrade matrix), `R4-08`
-(clean-machine qualification), `R3-10` (release truth + exact-head gates),
-`GOLD-RELEASE`, `GOLD-DEP`.
+| Lane | Open | Reality in code |
+|---|---|---|
+| `GOLD-LF` | 118 | 0 of 54 checked are built; 25 partial, 29 absent |
+| `ADOPT31` | 65 | 0 built, 7 partial, 58 absent |
+| `GOLD-R4` | 46 | `R4-15`: CLI spine complete, parity surfaces unbuilt |
+| `GOLD-NCT` | 27 | no code at all — module and schema dirs absent |
+| `GOLD-R3` | 8 | `R3-13` substantially done; rest unverified |
 
-**Resilience axis — deferring leaves a failure mode open (proposed v1.0):**
-the `GOLD-R3` hardening lane (8) and `R4-15` (14, bounded envelopes — the lane
-this session has been closing).
+**Proposed v1.0 — delivery axis (13):** `R4-01` (7, artifacts), `R4-02` (2,
+package managers), `R4-08` (clean-machine), `R3-10` (release truth),
+`GOLD-RELEASE`, `GOLD-DEP`. Without these there is nothing to tag.
 
-**Breadth, not repair (proposed v1.1):** `ADOPT31` (65) is adoption from other
-projects by construction. `R4-06` Buddy, `R4-07` channel parity, `R4-12`
-mobile, `R4-13` cluster (13) are each a *new product surface*. `GOLD-LF` (118)
-defaults here: the destination forbids shipping an advertised feature that is
-partial, and the R3-10 audit found **no BLOCKER** across README, `docs/`, the
-config example and crate docs — so nothing missing is currently advertised.
+**Proposed v1.0 — resilience axis (~22):** the `GOLD-R3` lane (8) and `R4-15`
+(12, though three sub-items are already complete in code and one is likely
+mis-scoped), plus `R4-04/05/09/10/11/14` where each is a single item.
 
-**The exception inside LF.** 26 LF items touch consent, audit, WAL identity or
-credentials. They split by the same test — *new surface* (`LF-P1-15` WebChat,
-`LF-P2-25` Voice Call, `LF-P2-01` Dreaming) is v1.1; *a hole in a boundary
-that already ships* is v1.0. Three qualify on reading: paired INTENT/RESULT
-WAL records (`LF-P1-01`), universal WAL `session_id` (`LF-P2-08`),
-per-counterparty ingress consent (`LF-P2-22`). The other 23 need the same
-one-line judgement when next touched.
+**Proposed v1.0 — failure modes inside the "breadth" lanes (10).** This is the
+correction. Both lanes were sent to v1.1 wholesale in v1; ten items do not
+belong there:
 
-**The axis I cannot answer — this is the real question for you.** `WS-NCT`
-(27) declares itself "every card below is v1.0.0 Gold work". By the test above
-it reads as new capability (cognitive transport, typed cluster delegation),
-which would be v1.1. But that binding scope is a prior operator decision, and
-overriding it is exactly the silent reclassification the destination forbids.
-**Verdict per the skill: Underspecified** — one axis unanswered, so this
-proposal is not sound until you settle it.
+- From `GOLD-LF`: `P1-01` (INTENT/RESULT WAL pairs — shipped mutation paths
+  have no pre-mutation audit trace), `P1-02` (mirror-refusal stages 2–6 —
+  detection ships, termination does not), `P1-04` (HLC replay — the WAL replays
+  today on ±300 s wall clock), `P1-05` (TrustEvent at autonomy boundaries —
+  the gate ships, the audit trail has holes).
+- From `ADOPT31`: `C8` (`shred`/SQL-destructive missing from the shipping
+  danger-command gate), `C4` (no MCP tool-schema HMAC — rug-pull vector on the
+  live dispatch loop), `C1` (no cross-turn injection tracking), `A6` (VAD
+  cancels a turn on a sub-100 ms spike), `C9` (WAL audit field-name
+  misalignment), `B10` (no negative routing test).
 
-**Cost of the proposal, stated:** v1.0 becomes ~67 items (~70 with the three
-LF carry-overs), matching the 60-80 you estimated. The price is that v1.0 ships
-without cluster completion, mobile, full channel parity and a product-grade
-Buddy — a narrower product than the vision, defensible only because none of it
-is advertised today. If NCT stays v1.0 the count rises to ~94 and the tag moves
-out accordingly.
+`C8` and `C4` are the two I would argue hardest for: shipping v1.0 with a known
+hole in a safety gate that already runs is exactly what the destination
+forbids.
 
-**To decide it, three sentences suffice:** (1) ADOPT31 — v1.0 or v1.1?
-(2) R4-06/07/12/13 — v1.0 or v1.1? (3) LF — all v1.1, or v1.1 except the three
-boundary-completion items named above? Plus, if you disagree with leaving it
-alone: what happens to NCT.
+**Proposed v1.1:** the remaining `GOLD-LF` (114), the remaining `ADOPT31` (59),
+and `R4-06` Buddy, `R4-07` channel parity, `R4-12` mobile, `R4-13` cluster (13)
+— each a new product surface, none advertised today.
+
+**`WS-NCT` — still yours, now informed.** 27 items, zero code, and `NCT-02`
+alone specifies a canonical wire protocol with hard ceilings and golden vectors
+shared with an *independent implementation*. This is not a third added to the
+count; it decides whether v1.0 waits for a new inter-agent protocol.
+
+**Cost, stated.** Without NCT: **~45 v1.0 items**, of which several are already
+complete in code and need only ratification. With NCT: **~72**, and a protocol
+to design, implement twice and cross-validate. The price of the v1.1 column is
+a narrower product than the vision — defensible only because the R3-10 audit
+found nothing missing that is advertised.
+
+**Three sentences still decide it:** (1) ADOPT31 — v1.1 except the six named
+failure modes, or something else? (2) `R4-06/07/12/13` — v1.0 or v1.1?
+(3) `GOLD-LF` — v1.1 except the four named boundary closures? Plus: what
+happens to NCT.
 
 ### T5 — What is the smallest honest release artifact matrix? · open · `wayfinder:research` · blocked by T4
 `GOLD-R4-01a..f` enumerate Alpine, glibc floor, RPM, Windows, macOS
