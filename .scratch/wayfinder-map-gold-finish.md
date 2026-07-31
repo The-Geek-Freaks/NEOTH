@@ -18,6 +18,7 @@ ruled out of v1.0 — not that they were quietly reclassified.
 - Verification standard: a claim is worth what its test output is worth. Run the command, read the output, then say it. Never a source-string assertion where process behaviour is the thing under test — that class of gate already rubber-stamped one broken bound here.
 - A parallel Codex line edits this working tree. Stage exact paths, never `git add -A`.
 - Local build reality: MSVC gates under `SRC/_*.bat`, `CARGO_BUILD_JOBS=2`, `--test-threads=1`. Full-workspace runs are expensive; scope them.
+- **Unix paths are unverifiable locally.** This is a Windows workstation, so every `#[cfg(unix)]` block is never compiled here — not by `cargo check`, not by clippy, not with `--no-default-features`. Three separate defects reached `main` through that blind spot in one session (a `cap_std` trait mismatch, a `needless_borrow`, a `needless_return`). When a change touches a `cfg(unix)` block, the CI run is not confirmation of a local green — it is the only verification that exists. Trigger it and read the job log via `gh api repos/.../actions/jobs/<id>/logs`, which works while the overall run is still in progress.
 
 ## Decisions so far
 
