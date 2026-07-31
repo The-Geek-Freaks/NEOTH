@@ -74,6 +74,18 @@
 > audit (no BLOCKER; three overstated readiness claims corrected). CodeQL is
 > GitHub-managed with no workflow file and cannot be dispatched from the CLI.
 >
+> **Tracing-leak gate made real 2026-07-31 (GOLD-R4-15d slice):** the security
+> review flagged that the no-leak check matched the literal `raw = %` and
+> nothing else, so `body = %text` or `error!("{stdout}")` would have passed. It
+> now walks every tracing macro in the bounded transports and permits a
+> body-shaped value only when measured — `response_bytes = text.len()` is a
+> metric, `response = %text` is a leak. Scanning the tree found nine
+> body-shaped call sites; all nine bind `.len()` or `.chars().count()`, so the
+> invariant held — now verified, not assumed. Ships with its own negative test
+> (three leak shapes must panic, three measurement shapes must pass) because a
+> gate that never fires is decoration. Source gate 8/8. This is one sink of
+> `GOLD-R4-15d`, which stays open for the rest of the whole-product sentinel.
+>
 > **Doc-truth slice 2026-07-31 (GOLD-R3-10):** regenerating the CLI reference
 > caught a real defect, not drift. `neoth updater status` was documented as
 > verifying "the complete canonical WAL chain"; it correlates FIRED/RESULT
