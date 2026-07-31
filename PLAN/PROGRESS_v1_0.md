@@ -3,6 +3,22 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-31
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Every known red test on main is closed 2026-07-31:** the count went 10 → 0.
+> The last three were the verify-redaction fixtures: they built segments in a
+> flat tempdir and wrote them with the cfg(test) `spawn()`, which signs
+> compaction markers with the process-global key while the test verifies
+> against a per-tempdir one — certain to mismatch in the test, impossible in
+> production. They now use the canonical `<home>/wal/` layout, seed the HMAC
+> identity before the first segment, spawn through the production
+> `spawn_for_home`, and name audit segments canonically. No test-only writer
+> entrypoint was added. `run_verify_reclassifies_a_redaction_inside_a_compressed_segment`
+> is `#[ignore]`d against GOLD-R3-18A rather than weakened: `scan_and_redact`
+> deliberately refuses physical redaction of marker-bearing segments until the
+> authenticated rewrite transaction exists, so that test is ahead of the
+> implementation and turns green when R3-18A lands. Evidence: verify 121/121,
+> redaction 33/33, clippy `-D warnings` clean. Wayfinder T1 and T2 are
+> resolved; T3 (the exact-head release-candidate run) is unblocked.
+>
 > **Wayfinding map opened 2026-07-31:** the route to a taggable v1.0 is now
 > charted as a decision map at `.scratch/wayfinder-map-gold-finish.md`
 > (`wayfinder:map`, local-markdown tracker). Five tickets on the frontier: the

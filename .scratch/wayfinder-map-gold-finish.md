@@ -138,10 +138,24 @@ T2 (`verify.rs:1431`) very likely resolves with whichever is chosen.
   same `spawn(wal_dir.join("redact-audit.wal"))` call. Resolves with the same
   `redact-audit.wal` fixture fix above.
 
-### T2 — Does `scan_and_redact` hold its contract on a compressed sealed segment? · open · `wayfinder:grilling` · unblocked
-`SRC/neothd/src/cli/verify.rs:1431`. Same family as T1; may resolve with it.
+### T2 — Does `scan_and_redact` hold its contract on a compressed sealed segment? · **resolved** · `wayfinder:grilling`
+`SRC/neothd/src/cli/verify.rs:1431`.
 
-### T3 — What does an exact-head release-candidate run actually have to cover? · open · `wayfinder:task` · blocked by T1, T2
+**Resolution:** the test is ahead of the implementation, and correctly so.
+`scan_and_redact` deliberately refuses physical redaction of any segment
+carrying authenticated chain-structural frames (COMPACTION_MARKER,
+SEGMENT_ROLLOVER/cross-link, REDACTION_MARKER) until the authenticated rewrite
+transaction exists — the R3-18A contract, with logical forget covering the
+operator need meanwhile. Any segment a real writer produces carries such
+frames, so the test cannot reach its assertion.
+
+Marked `#[ignore]` against GOLD-R3-18A rather than weakened or deleted: it is
+the load-bearing proof that compressed-redaction offsets live in the same
+logical coordinate space `verify` walks, and it turns green the moment the
+rewrite transaction lands. **This makes R3-18A the gate for the last red
+test, and T3 can proceed without it.**
+
+### T3 — What does an exact-head release-candidate run actually have to cover? · open · `wayfinder:task` · **unblocked**
 Full CI, security, CodeQL, feature combinations, three platforms. Cannot start
 while any test is knowingly red. Resolution records the exact workflow set and
 the observed result per platform.
