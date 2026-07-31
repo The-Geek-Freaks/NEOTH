@@ -3,6 +3,18 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-31
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wayfinding map opened 2026-07-31:** the route to a taggable v1.0 is now
+> charted as a decision map at `.scratch/wayfinder-map-gold-finish.md`
+> (`wayfinder:map`, local-markdown tracker). Five tickets on the frontier: the
+> two remaining red verify fixtures (T1, T2), the exact-head
+> release-candidate run they block (T3), the operator split of the 233 pre-tag
+> blockers into v1.0 versus v1.1 (T4, HITL — scope is not the agent's call),
+> and the honest artifact matrix behind it (T5). GUI parity, R3-18A key
+> epochs, cluster, mobile and channel parity stay in the map's fog until T4
+> fixes what v1.0 means. Red tests on main are down from 10 to 2; all eight
+> closed were fixtures asserting on internal WAL segment layout that the
+> R3-18A hardening legitimately changed — production was right every time.
+>
 > **Local transport lifecycle fixes 2026-07-31 (counts unchanged; external
 > review response):** an external forensic review found the subprocess
 > checkpoint had bounded memory without bounding lifetime. Three real defects,
