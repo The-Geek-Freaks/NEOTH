@@ -545,6 +545,52 @@ async fn run_tools(servers: &McpServers, server_id: &str, output: &OutputFormat)
     })?;
     let mut client = McpClient::spawn(cfg).await?;
     let tools = list_tools_sanitized(&mut client).await?;
+
+    // ADOPT31-C4 — fingerprint every declared tool against its pin. This is the
+    // operator-facing surface, so a violation is REPORTED here rather than
+    // silently dropping the row: the operator asked what the server declares,
+    // and "it changed what it declares" is the most important possible answer.
+    //
+    // Pinning the post-sanitisation form is deliberate. The sanitiser rewrites
+    // `description` and nested schema descriptions but never `annotations` —
+    // and annotations are the auto-approval surface the rug-pull actually
+    // targets, so the facet that matters is bound exactly. The cost is that a
+    // future change to the sanitiser's own rules shifts these hashes and shows
+    // up as violations on upgrade; that is visible and recoverable, whereas
+    // pinning the raw form would have to re-derive what the sanitiser removed.
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let pin_report: Vec<(String, crate::security::mcp_guardian::PinVerdict)> =
+        match crate::security::mcp_guardian::McpGuardian::open(&home) {
+            Ok(mut guardian) => {
+                let now = crate::time::now_unix_i64();
+                let report: Vec<_> = tools
+                    .iter()
+                    .filter_map(|t| {
+                        guardian
+                            .check(server_id, &t.tool, now)
+                            .map(|v| (t.tool.name.clone(), v))
+                            .ok()
+                    })
+                    .collect();
+                if let Err(error) = guardian.flush() {
+                    tracing::warn!(error = %error, "could not persist MCP tool pins");
+                }
+                report
+            }
+            Err(error) => {
+                // Fail loud, not closed: this command only *lists*. Refusing to
+                // print would hide the server's declaration from the operator,
+                // which is the opposite of what they asked for.
+                tracing::warn!(error = %error, "MCP tool pin check unavailable");
+                Vec::new()
+            }
+        };
+    for (tool, verdict) in &pin_report {
+        if let crate::security::mcp_guardian::PinVerdict::Violation { detail } = verdict {
+            tracing::error!(server = %server_id, tool = %tool, "{detail}");
+        }
+    }
+
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(
