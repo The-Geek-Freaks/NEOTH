@@ -166,6 +166,54 @@ contracts (artifacts, installers, parity); others are refinements that a tagged
 v1.0 can live without. This ticket produces the split — and it is HITL, because
 scope is the operator's call, not the agent's.
 
+**Prepared analysis (2026-07-31) — decision input, not a decision.**
+
+Mechanical extraction of `- [ ] **<ID>` from the roadmap finds **267 open items
+carrying an id**; the dashboard comment reports `open=299` raw. The 32-item gap
+is items written without an id pattern. Counts below use the 267 that can be
+addressed individually.
+
+| Family | Open | What it is |
+| :-- | --: | :-- |
+| `GOLD-LF-*` | 118 | Lost-feature recovery — capability that existed in an earlier design and is not in the shipped binary |
+| `ADOPT31-*` | 65 | The 2026-07-31 eighteen-source adoption wave |
+| `GOLD-R4-*` | 46 | Release lane: artifacts, installers, onboarding, GUI parity, Buddy, cluster, mobile, channels |
+| `GOLD-NCT-*` | 27 | NIR/1 canonical schema, limits, golden vectors |
+| `GOLD-R3-*` | 8 | Hardening lane (WAL authority, skill authority, untrusted framing) |
+| other | 3 | `DEP`, `ADOPT`, `RELEASE` singletons |
+
+**The shape of the answer, judged on the `system-design-101` axes** — an item
+cannot be deferred if deferring it leaves a failure mode unhandled, a single
+point of failure unnamed, or a consent/audit boundary incomplete:
+
+- **`ADOPT31-*` (65) reads as V1.1-BREADTH almost in full.** Adopting a
+  capability from another project is by construction *more surface*, not a
+  broken promise. None of it makes a shipped feature work; deferring it leaves
+  no failure mode unhandled. This is the single largest lever on the number.
+- **`GOLD-R4-*` (46) splits hard.** `R4-01`/`R4-02` (artifacts, package
+  managers, upgrade matrix) are **V1.0-CONTRACT** — without them there is
+  nothing to tag. `R4-12` (mobile companion), `R4-13a..l` (cluster completion),
+  `R4-06` (Buddy product-grade), `R4-07` (channel parity) are **V1.1-BREADTH**:
+  each is a *new product surface*, not a repair.
+- **`GOLD-R3-*` (8) is mostly V1.0-HARD** — it is the hardening lane, and its
+  open items sit on audit, authority and untrusted-input boundaries.
+  `R3-18A` is the exception worth arguing: it also gates the last ignored test.
+- **`GOLD-LF-*` (118) is the real question and cannot be answered mechanically.**
+  The split is: *was the lost capability ever advertised?* An advertised
+  feature that is absent is V1.0-HARD by the destination's own wording ("no
+  advertised feature that is partial or unwired"). One that was only ever an
+  internal plan is V1.1. That per-item judgement is the operator's.
+- **`GOLD-NCT-*` (27)** hinges on whether NIR/1 is a v1.0 wire contract or a
+  v1.1 formalisation of something already working.
+
+**Honest verdict:** if `ADOPT31` and the four named `R4` product surfaces move
+to v1.1, the tag-blocking set drops from ~299 to roughly **60–80 items**, most
+of them release mechanics and the advertised subset of lost features. That is a
+defensible v1.0. The decision that actually moves the number is not 233
+individual calls — it is **three**: (1) is the adoption wave v1.1? (2) are
+mobile/cluster/Buddy/channel-parity v1.1 surfaces? (3) which lost features were
+advertised? Everything else follows.
+
 ### T5 — What is the smallest honest release artifact matrix? · open · `wayfinder:research` · blocked by T4
 `GOLD-R4-01a..f` enumerate Alpine, glibc floor, RPM, Windows, macOS
 qualification. Determine which are release-blocking for a first tag versus
