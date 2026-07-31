@@ -159,12 +159,18 @@ pub(crate) struct BoundedRead {
     pub(crate) truncated: bool,
 }
 
-/// Reads at most `max_bytes` from a subprocess pipe or PTY.
+/// Reads a subprocess pipe or PTY, retaining at most `max_bytes`.
 ///
 /// A governed subprocess is closer to home than a remote endpoint, but its
 /// output is still model-driven and a hung or hostile child can produce it
-/// faster than we consume it. Stopping at the cap keeps the diagnostic while
-/// refusing to hold an unbounded copy.
+/// faster than we consume it.
+///
+/// Retention stops at the cap; **reading does not**. Stopping outright would
+/// leave the pipe full, the child blocked on its next write, and any `wait()`
+/// on it blocked forever — trading a bounded-memory problem for an
+/// unbounded-lifetime one. The remainder is drained and dropped so the child
+/// can always finish and be reaped; `truncated` tells the caller the output it
+/// holds is incomplete and must not be treated as a whole answer.
 pub(crate) async fn read_bounded<R>(
     reader: &mut R,
     max_bytes: usize,
@@ -175,13 +181,23 @@ where
     use tokio::io::AsyncReadExt;
 
     let mut bytes = Vec::new();
-    let read = reader
-        .take(max_bytes as u64 + 1)
-        .read_to_end(&mut bytes)
-        .await?;
-    let truncated = read > max_bytes;
-    if truncated {
-        bytes.truncate(max_bytes);
+    let mut truncated = false;
+    let mut chunk = [0u8; 8192];
+    loop {
+        let read = reader.read(&mut chunk).await?;
+        if read == 0 {
+            break;
+        }
+        let room = max_bytes.saturating_sub(bytes.len());
+        if read > room {
+            bytes.extend_from_slice(&chunk[..room]);
+            truncated = true;
+            // Keep draining past the cap. The bytes are discarded, but the
+            // pipe keeps moving, so the child never blocks on a full pipe and
+            // `wait()` can still complete.
+            continue;
+        }
+        bytes.extend_from_slice(&chunk[..read]);
     }
     Ok(BoundedRead { bytes, truncated })
 }
@@ -281,6 +297,57 @@ mod tests {
         append_frame_segment(&mut buffer, &encoded[2..], "fixture", b"frame/v1", 8).unwrap();
 
         assert_eq!(frame_utf8(&buffer, "fixture", b"frame/v1").unwrap(), "🦀");
+    }
+
+    /// The regression this guards: stopping at the cap leaves a real pipe
+    /// full, so the child blocks on its next write and `wait()` never
+    /// returns. Retention has to stop while reading continues to EOF.
+    #[tokio::test]
+    async fn read_bounded_drains_past_the_cap_so_a_writer_never_blocks() {
+        use std::pin::Pin;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::task::{Context, Poll};
+
+        /// Yields `total` bytes 1 KiB at a time and counts what was consumed.
+        struct CountingReader {
+            remaining: usize,
+            consumed: Arc<AtomicUsize>,
+        }
+
+        impl tokio::io::AsyncRead for CountingReader {
+            fn poll_read(
+                mut self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+                buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                let take = self.remaining.min(buf.remaining()).min(1024);
+                if take == 0 {
+                    return Poll::Ready(Ok(()));
+                }
+                buf.put_slice(&vec![b'x'; take]);
+                self.remaining -= take;
+                self.consumed.fetch_add(take, Ordering::Relaxed);
+                Poll::Ready(Ok(()))
+            }
+        }
+
+        let total = 64 * 1024;
+        let cap = 4 * 1024;
+        let consumed = Arc::new(AtomicUsize::new(0));
+        let mut reader = CountingReader {
+            remaining: total,
+            consumed: Arc::clone(&consumed),
+        };
+
+        let read = read_bounded(&mut reader, cap).await.expect("drains to EOF");
+        assert_eq!(read.bytes.len(), cap, "retention stops at the cap");
+        assert!(read.truncated);
+        assert_eq!(
+            consumed.load(Ordering::Relaxed),
+            total,
+            "every byte must be consumed — an undrained pipe blocks the child"
+        );
     }
 
     #[tokio::test]

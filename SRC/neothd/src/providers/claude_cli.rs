@@ -555,11 +555,17 @@ impl ManagedClaudeChild {
             let read_stdout = async {
                 if let Some(stdout) = stdout.as_mut() {
                     let read = response_bounds::read_bounded(stdout, MAX_CLI_STDOUT_BYTES).await?;
+                    // Truncated stdout is not a smaller answer, it is a
+                    // different one: the JSON envelope is cut mid-structure.
+                    // Fail the call instead of parsing a fragment.
                     if read.truncated {
                         warn!(
                             cap_bytes = MAX_CLI_STDOUT_BYTES,
-                            "claude CLI stdout hit the read cap; output is incomplete"
+                            "claude CLI stdout hit the read cap; failing the call"
                         );
+                        return Err(std::io::Error::other(format!(
+                            "claude CLI stdout exceeded {MAX_CLI_STDOUT_BYTES} bytes"
+                        )));
                     }
                     stdout_bytes = read.bytes;
                 }
