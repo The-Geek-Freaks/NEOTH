@@ -19,6 +19,11 @@ pub const DEFAULT_SMOOTH_WINDOW: usize = 5;
 /// to enter "speaking" state. 0.60 = 3 of 5 frames.
 pub const DEFAULT_SPEECH_PROB: f32 = 0.60;
 
+/// Minimum contiguous speech before a fragment opens a turn. A shorter burst
+/// is transient noise — a door, a keypress — and must not cancel live playback
+/// on the barge-in path (ADOPT31-A6).
+pub const DEFAULT_MIN_FRAGMENT_MS: u32 = 100;
+
 /// Hangover in milliseconds. The detector stays "speaking" for at least this
 /// long after the last above-threshold frame, preventing mid-word dips.
 pub const DEFAULT_HANGOVER_MS: u32 = 750;
@@ -108,8 +113,13 @@ pub struct SmoothedVad {
     /// Accumulated silence ms since the last speech frame (counts up during
     /// non-speech; reset when a speech frame is detected).
     silence_ms: u32,
-    /// True once at least one speech frame has been seen since last reset.
+    /// True once a speech fragment has lasted at least `min_fragment_ms`.
     ever_seen_speech: bool,
+    /// Accumulated speech ms in the fragment currently being qualified. Reset
+    /// whenever the fragment breaks before reaching `min_fragment_ms`.
+    candidate_speech_ms: u32,
+    /// Minimum contiguous speech a fragment needs before it counts as speech.
+    min_fragment_ms: u32,
     /// The backend that supplies per-frame speech probabilities.
     backend: Box<dyn VadBackend>,
     /// Sample rate cached for frame-length calculation.
@@ -149,6 +159,8 @@ impl SmoothedVad {
             hangover_ms,
             silence_ms: 0,
             ever_seen_speech: false,
+            candidate_speech_ms: 0,
+            min_fragment_ms: DEFAULT_MIN_FRAGMENT_MS,
             backend,
             sample_rate_hz: 16_000, // overridden by first `process` call
         }
@@ -182,13 +194,26 @@ impl SmoothedVad {
             // speech pays a ~3-frame (60 ms) onset latency for it.
             let smoothed: f32 = self.window.iter().sum::<f32>() / self.window.len() as f32;
 
+            let frame_ms = (frame.len() as u32 * 1000) / sample_rate_hz.max(1);
             if smoothed >= self.speech_prob_threshold {
                 // Speech frame: reset silence counter.
                 self.silence_ms = 0;
-                self.ever_seen_speech = true;
+                // A fragment must last `min_fragment_ms` before it opens a
+                // turn. Without this a single spike — a door, a keyboard —
+                // sets `ever_seen_speech`, and the hangover then keeps the
+                // turn alive long after the noise is gone, cancelling live
+                // playback on the barge-in path.
+                if !self.ever_seen_speech {
+                    self.candidate_speech_ms = self.candidate_speech_ms.saturating_add(frame_ms);
+                    if self.candidate_speech_ms >= self.min_fragment_ms {
+                        self.ever_seen_speech = true;
+                    }
+                }
+            } else if !self.ever_seen_speech {
+                // The fragment broke before qualifying — start over.
+                self.candidate_speech_ms = 0;
             } else if self.ever_seen_speech {
                 // Below threshold but we've seen speech — count silence.
-                let frame_ms = (frame.len() as u32 * 1000) / sample_rate_hz.max(1);
                 self.silence_ms = self.silence_ms.saturating_add(frame_ms);
             }
         }
@@ -207,6 +232,7 @@ impl SmoothedVad {
         self.filled = 0;
         self.silence_ms = 0;
         self.ever_seen_speech = false;
+        self.candidate_speech_ms = 0;
     }
 
     // ── Internal ─────────────────────────────────────────────────────────────
@@ -273,6 +299,51 @@ mod tests {
         );
     }
 
+    /// ADOPT31-A6: a burst shorter than `min_fragment_ms` is noise. Before
+    /// this guard the first hot frame set `ever_seen_speech`, and the hangover
+    /// then held the turn open long after the sound was gone — on the
+    /// barge-in path that cancels live playback for a door closing.
+    #[test]
+    fn a_burst_shorter_than_the_minimum_fragment_does_not_open_a_turn() {
+        struct AlwaysSpeech;
+        impl VadBackend for AlwaysSpeech {
+            fn speech_prob(&mut self, _frame: &[f32], _sr: u32) -> f32 {
+                1.0
+            }
+        }
+        const SR: u32 = 16_000;
+        let frame = (SR as usize * FRAME_MS as usize) / 1000;
+        // Window of 1 so the smoothing mean cannot mask the guard under test.
+        let mut vad = SmoothedVad::new(1, 0.5, 300, Box::new(AlwaysSpeech));
+
+        // Two 20 ms frames = 40 ms, well under the 100 ms minimum.
+        let burst = vec![0.5f32; frame * 2];
+        assert_eq!(
+            vad.process(&burst, SR),
+            VadDecision::Silence,
+            "a 40 ms burst must not open a turn"
+        );
+    }
+
+    /// The guard must not swallow real speech: once a fragment reaches the
+    /// minimum, the turn opens exactly as before.
+    #[test]
+    fn speech_past_the_minimum_fragment_still_opens_a_turn() {
+        struct AlwaysSpeech;
+        impl VadBackend for AlwaysSpeech {
+            fn speech_prob(&mut self, _frame: &[f32], _sr: u32) -> f32 {
+                1.0
+            }
+        }
+        const SR: u32 = 16_000;
+        let frame = (SR as usize * FRAME_MS as usize) / 1000;
+        let mut vad = SmoothedVad::new(1, 0.5, 300, Box::new(AlwaysSpeech));
+
+        // Ten 20 ms frames = 200 ms, comfortably past the minimum.
+        let speech = vec![0.5f32; frame * 10];
+        assert_eq!(vad.process(&speech, SR), VadDecision::Speaking);
+    }
+
     #[test]
     fn hangover_keeps_speaking_during_short_dip() {
         let mut vad = SmoothedVad::default();
@@ -323,8 +394,12 @@ mod tests {
                 energy_threshold: DEFAULT_ENERGY_THRESHOLD,
             }),
         );
-        // 80 ms of speech (> 3 frames).
-        vad.process(&pcm(0.1, 80, SR), SR);
+        // 120 ms of speech. This was 80 ms until ADOPT31-A6 introduced the
+        // `min_fragment_ms` guard (100 ms): a burst below that is now treated
+        // as noise, so the figure was raised to keep this test about what it
+        // is named for — that the custom window/threshold/hangover are
+        // respected — rather than silently re-testing the new guard.
+        vad.process(&pcm(0.1, 120, SR), SR);
         assert!(vad.is_speaking());
         // 300 ms silence — exceeds 200 ms hangover.
         let decision = vad.process(&pcm(0.0, 300, SR), SR);
