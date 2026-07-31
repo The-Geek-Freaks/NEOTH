@@ -144,24 +144,30 @@ already-gated release workflow itself.
 | WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 15 | **14** | **1** |
 | WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **116** | **2** |
 | WS-NCT Cognitive Transport + selective Buzz coordination (2026-07-27) | 29 (`GOLD-NCT-00..27` + `GOLD-ADOPT-BUZZ-01`) | **28** | **1** |
+| WS-ADOPT31 18-source forensic adoption wave + Wayfinder/ADW/Evidence-Gated pipeline (2026-07-31) | 67 (`ADOPT31-*`; lanes A7/B12/C10/D7/E2/F4/G7/H2/**W2+I7+V5**/X2) | **65** | **2** |
 
 `GOLD-R4-13a..l` and `GOLD-R4-15a..l` are mandatory acceptance subcontracts
 inside their already-open parent rollups and therefore are not added a second
 time to the WS-R4 top-level total.
 
-**Current count semantics (machine-recomputed 2026-07-31):** the dashboard
-tracks broad/workstream rollups, whose current OPEN column sums to **165**
-(`1 + 6 + 14 + 116 + 28`). The release workflow uses a different and stricter
+**Current count semantics (machine-recomputed 2026-07-31, after WS-ADOPT31):** the
+dashboard tracks broad/workstream rollups, whose current OPEN column sums to **230**
+(`1 + 6 + 14 + 116 + 28 + 65`). The release workflow uses a different and stricter
 contract: `packaging/roadmap_release_gate.py` counts every Markdown task outside
 fenced code, including mandatory child contracts. Its current whole-file result
-from `python packaging/roadmap_release_gate.py --summary-json` is **1,222 total
-/ 988 done / 234 raw open / 0 partial**. A release tag therefore has **233
+from `uv run python packaging/roadmap_release_gate.py --summary-json` is **1,289 total
+/ 990 done / 299 raw open / 0 partial**. A release tag therefore has **298
 pre-tag blockers**, because only the single
 `GOLD-RELEASE-ARTIFACTS` task may remain open while that workflow creates its
-evidence. The values 165, 234 and 233 answer different questions and must not be
-substituted for one another in release-readiness claims.
+evidence. The values 230, 299 and 298 answer different questions and must not be
+substituted for one another in release-readiness claims. The whole 2026-07-31 delta
+(+67 total, +65 open, +2 done) is WS-ADOPT31: the 18-source adoption wave, plus the
+Wayfinder → ADW → Evidence-Gated pipeline added to Lane I in the same session. The two
+done items are `ADOPT31-I1` (bundled `adw_design` skill, gate-verified) and
+`ADOPT31-X1` (a stale-row correction executed in the same pass). No prior item changed
+state.
 
-<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1222 complete=988 open=234 partial=0 raw_blockers=234 release_tag_blockers=233 release_generated_items=1 -->
+<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1289 complete=990 open=299 partial=0 raw_blockers=299 release_tag_blockers=298 release_generated_items=1 -->
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
 
@@ -3006,7 +3012,7 @@ Verdict table from `REVIEWS/_gold_audit/research/repo_adopt_batch_a.md` and `rep
 | knowledge-work-plugins | ADOPT-NATIVE | 6 engineering skills (code-review, incident-response, system-design, tech-debt, testing-strategy, documentation) convert 1:1 to NEOTH skill.yaml; plugin infra layer skipped | Bundled skills in `assets/skills/` |
 | ai-engineering-from-scratch | GROUND-TRUTH-KNOWLEDGE | 503-lesson curriculum; Phase 14/16/17 agent patterns → one bundled skill; rest → Obsidian brain | One bundled skill `agent_engineering_patterns` |
 | compound-engineering-plugin | GROUND-TRUTH-KNOWLEDGE | TypeScript plugin infra; relevant patterns → Obsidian brain | Obsidian note only |
-| ECC (affaan-m) | EVALUATE-FIRST | Agent-gremium evaluation needed per operator instruction | Gremium evaluation before any adoption |
+| ECC (affaan-m) | **GROUND-TRUTH** (closed by GOLD-ADOPT-05; re-confirmed 2026-07-31 by WS-ADOPT31 agent F) | Cross-harness Claude-Code *config* ecosystem (67 agent `.md` + 281 skills targeting a coding harness) — format-incompatible with, and fully redundant against, NEOTH's Rust-native `sub_agents`/`skills`/`hooks`/`slash` subsystems | No adoption; reference only |
 | Anthropic-Cybersecurity-Skills | ADOPT-NATIVE | Security skill prompts map to NEOTH skill.yaml trigger_keywords + system_prompt | Bundled skills |
 | Scrapling | GROUND-TRUTH-ADOPT | Python runtime violates self-contained rule; native Rust scraper + stealth-fetch via headless chromium subprocess | `tools/web_extract.rs` + `tools/web_selector_cache.rs` with `scraper` crate |
 | stop-slop | EVALUATE-FIRST | Gremium evaluation needed | Gremium evaluation before adoption |
@@ -3738,6 +3744,474 @@ https://github.com/loadingalias/rscrypto
 - [x] **GOLD-ADAPT-AWE-CODE-01** Codex CLI sandbox tool-allowlist -> adapted into NEOTH LeaseScope/allowed_tools consent gate. SHIPPED: `invoke_with_audit` in `mcp/gate.rs` accepts a pre-authenticated `subject: Option<&str>` and an immutable autonomy-policy snapshot; on a `Confirm` decision it loads the LeaseStore and runs `Gate::for_policy(policy_snapshot).with_confirm(FailClosed).with_lease_snapshot(&store, subject, now_unix).check(&action, writer).await` — a covering `LeaseScope::McpTool("server_id:tool")` lease upgrades `Confirm → Allow` (emits 0xA0 PERMISSION_GRANTED) without TTY; absent/expired = fail-closed ConfirmRequired. Wired end-to-end: `dispatch_one` → `run_tool_loop_with_cap` → `run_mcp_dispatch_loop` (chat.rs, subject=None on CLI) → serve_pipeline.rs (subject=Some(inbound.sender_id) on channel path) + loop_engine/engine.rs (None). Integration tests: `mcp_tool_lease_absent_stays_confirm_blocked` + `mcp_tool_lease_present_passes_consent_gate_and_reaches_server_lookup` in `mcp/dispatch_loop.rs`.
 - [x] **GOLD-ADAPT-AWE-NANO-01** Nanocoder (local-first Ollama/LM-Studio agent) deep-read -> extract Ollama `/api/chat` streaming adapter contract -> verify/close MV-01 provider-chain gaps for local_qwen/local_ouro. *NEOTH:* providers. — ✅ SHIPPED (2026-06-29): (1) NEW native Ollama adapter `providers/ollama_api.rs` — `OllamaAdapter` impl `Provider` (complete via `/api/chat` `stream:false`; stream via `/api/chat` `stream:true` NDJSON line-parse), `ProviderKind::LocalOllama` wired end-to-end through `providers::from_config` (mod.rs:854), `config::inference::InferenceProvider::LocalOllama` (as_str/description/from_str/to_provider_kind), `cli/init` (types + steps_provider endpoint+model wizard arm + catalog), `consent.rs` (is_cloud=local/slug/label/kind_from_slug), `cli/providers.rs` ALL_PROVIDERS+drift-guard. 6 wiremock tests (complete/stream/stream-flag/500). (2) **MV-01 gap-closure (the real provider-chain fix):** added SSE `stream()` to `openai_api.rs` (was deferred — now drives LM-Studio/vLLM/Ollama-/v1) + `run_ouro_stream` per-token streaming to `ouro/adapter.rs::LocalOuroAdapter::stream` (mirrors local_qwen), so local_qwen/local_ouro/openai-compat all stream end-to-end. No deadcode (every new fn invoked by its Provider impl). 9449 lib tests pass; clippy -D warnings clean.
 - [x] **GOLD-ADAPT-AWE-AIDER-01** Aider repo-map (ctags-based ~2K-token call-graph summary) as a compact code-context builder for coding-buddy prompts (lighter than full graphify) on the 0x13 CODING_INTENT path. *NEOTH:* code_map context builder. M. **SHIPPED (loop):** `code_map/repo_map.rs` — `build_summary()` produces a token-budgeted (`DEFAULT_TOKEN_BUDGET`) `RepoMapSummary` of top symbols/files from the existing code_map data (no re-parse), lex-tie-break ordering; 15 tests green, clippy-clean. (Salvaged after a reconnect.) ⬇ **DOWNGRADED [x]→[~] (2026-06-21 verify-first):** ENGINE-ONLY — `build_summary`/`RepoMapSummary` have NO consumer (the `dispatch_loop.rs` hit is an unrelated `build_next_prompt_layers` name match). **Gap:** call `build_summary` in the coding-intent context builder so the repo-map summary actually enters the coding-buddy prompt. ✅ **RE-WIRED → [x] (2026-06-21):** `cli/code.rs::run_code` now calls `repo_map_context()` → loads the indexed `code_map` for cwd → `build_summary(map, DEFAULT_TOKEN_BUDGET)` → passes `RepoMapSummary.text` as the decomposer's `project_context` (was hardcoded `None`). Best-effort: unindexed repo / missing db → `None` → decomposer runs context-free (graceful, test `repo_map_context_none_for_unindexed_root`). Split into testable `repo_map_context_from(conn, root)`. lib 8742 compiles.
+
+## WS-ADOPT31 — 18-source forensic adoption wave (ADOPT31-NN, 2026-07-31)
+
+**Provenance.** Operator directive 2026-07-31: deep-read 18 named sources *at source level,
+not README level*, decide per source whether NEOTH adopts the feature, the whole thing, or
+nothing, and land the result here as tracked steps. Six sequential deep-read agents
+(A–F; **no Workflow, no parallel fan-out — that BSODs this host**), each grounded against a
+verified NEOTH capability brief. Full per-source reports:
+`PLAN/ADOPT_2026_07_31/{00_NEOTH_BRIEF,A_speech_to_speech,B_knowledge_to_skills,C_governance,C2_fermisense_and_sysdesign_rewrite,D_code_context,E_media_ocr_crawl,F_finance_design}.md`.
+All repos cloned shallow to `/tmp/adopt2026/` and read from source; every "NEOTH lacks X"
+below was produced by a ripgrep the agent ran and quoted.
+
+### Verdict table (18 sources)
+
+| Source | Licence | Verdict | Why |
+|---|---|---|---|
+| huggingface/speech-to-speech | Apache-2.0 | **ADOPT-NATIVE** | NEOTH has STT/TTS/VAD/speaker-ID as discrete dispatchers and **no loop between them**; barge-in absent. Port the orchestration, not the Python. |
+| virgiliojr94/book-to-skill | MIT | **ADOPT-NATIVE (prompts + scanner)** | Not a library — a SKILL.md the agent executes. Value = distillation prompt + injection scanner, not the Python. |
+| danielmiessler/Fabric | MIT | **GROUND-TRUTH** | 14 patterns port verbatim as bundled skills; the Go CLI is redundant with NEOTH's own. |
+| addyosmani/agent-skills | MIT | **ADOPT-NATIVE (eval + session-start)** | Pairwise negative routing eval + session-start catalog injection. |
+| microsoft/agent-governance-toolkit | MIT | **ADOPT-NATIVE (7 items)** | Genuine gaps: multi-turn injection, hash-chain audit, trust score, MCP rug-pull, credential vault, IFC lattice. |
+| garrytan/gstack | MIT | **ADOPT-NATIVE (2 items)** | Alex already runs it as a harness; only the pre-work sign-off gate and `/careful` block-patterns need to become native. |
+| fermisense.com article | © all rights reserved | **GROUND-TRUTH (7 items)** | Not governance — "intelligence ownership". Ideas/numbers are facts, freely usable. Text is not. |
+| tirth8205/code-review-graph | MIT | **ADOPT-NATIVE (residual delta only)** | CRG-01..05 already tracked above; only edge-confidence is genuinely new. |
+| zilliztech/claude-context | MIT | **ADOPT-NATIVE (1 item)** | AST chunking. The headline "Merkle DAG" is an optimisation over our sha256+mtime — not worth taking. |
+| bradautomates/claude-video | MIT | **ADOPT-NATIVE (4 items)** | Tuned ffmpeg constants + dedup heuristic; NEOTH's video path is audio-only today. |
+| pbakaus/impeccable | Apache-2.0 | **ADOPT-NATIVE (rules as lint)** | 59 deterministic detector rules; 54 are Slint-greppable. Engine is DOM-bound — take the rules, not the engine. |
+| andrewyng/aisuite | MIT | **SKIP** | `src/providers/` (45 files) is strictly superior on every axis. Zero normalisation gaps found. Residual: 3 endpoint aliases. |
+| affaan-m/ECC | MIT | **GROUND-TRUTH — already closed** | Independently re-confirmed: CC-harness config layer, format-incompatible with NEOTH's Rust-native subsystems. See GOLD-ADOPT-05. |
+| shanraisshan/claude-code-best-practice | MIT | **SKIP** | 63k★ but a configuration/marketing showcase; no code NEOTH can use. One design idea only (ADOPT31-C10). |
+| baidu/Unlimited-OCR | MIT (code) | **SKIP** | `infer.py:92` sets `CUDA_VISIBLE_DEVICES`; wheel is **sglang** = GPU serving stack. No CPU/Windows path, no ONNX export → **Rule 8 hard block**. Weight licence never verified. |
+| NanmiCoder/MediaCrawler | **NON-COMMERCIAL LEARNING LICENSE 1.1** | **HARD BLOCK** | Licence text verbatim: *"limited to learning and research purposes only, and may not be used for large-scale crawling"* + no commercial use without written consent. Plus Chinese-platform-ToS lineage = reputational liability on a public release. |
+| ByteByteGoHq/system-design-101 | CC BY-NC-ND 4.0 | **HARD BLOCK (artifact)** | ND bars adaptation, NC bars commercial use. Clean-room path exists — see ADOPT31-H2. |
+| paperswithbacktest/awesome-systematic-trading | **no licence file** | **HARD BLOCK** | No licence = no grant of rights (Berne default). Harder block than a restrictive licence. Stale since 2025-01. |
+| hello245m/free-stockdb | MIT (code only) | **SKIP** | Repo licence does not cover the market **data**; `sync_url.txt` is user-populated with no built-in source. Zero NEOTH finance consumer. |
+
+### Standing constraints for every item below
+
+- **Licence blocklist:** MediaCrawler, awesome-systematic-trading and system-design-101 must
+  never contribute a byte to the tree. Not as vendored code, not as paraphrase, not as
+  bundled content. Attribution obligations to satisfy on adoption: MIT notices for
+  Microsoft/tirth8205/zilliztech/bradautomates/virgiliojr94/danielmiessler/addyosmani,
+  Apache-2.0 **NOTICE** for huggingface/speech-to-speech and pbakaus/impeccable.
+- **Finance scope is closed.** NEOTH ships no market data, no backtesting, no trading. The
+  platform rule against personalised investment advice and trade execution stands; nothing
+  in this wave crosses it.
+- **WAL:** top-level opcodes are 255/255 exhausted. Every new event below uses the
+  Extended-Subtype band + the daemon allowlist + its exhaustive
+  `allowlist_contains_exactly_*` test.
+- Rules 1–10 of `PLAN/ADOPT_2026_07_31/00_NEOTH_BRIEF.md` gate every item: self-contained,
+  default-ON + runtime toggle, GUI parity, model-agnostic, consent+WAL, untrusted-content
+  defang, index-never-truth, Windows-first, no primitive ahead of its consumer, small files.
+
+### Lane A — realtime voice loop (speech-to-speech, Apache-2.0)
+
+Verified gap: `rg -i 'barge|cancel_generation|should_listen|cancel_scope' src/media src/channels`
+→ zero hits. The `full_duplex` matches in the tree are `channels/keet_bridge.rs` (unrelated).
+
+- [ ] **ADOPT31-A1** CancelScope generation counter — `AtomicU32` generation + `is_stale(gen)`
+  polled inside the TTS synthesis loop and the LLM stream. *This single primitive IS barge-in.*
+  ~60 lines, zero new deps. *NEOTH:* `media/conversation_scope.rs` (new). *Consumer:*
+  `media/tts_dispatch.rs` + `media/conversation_loop.rs` (A2). **S**
+- [ ] **ADOPT31-A2** Realtime conversation loop orchestrator — 6 `tokio::mpsc` stages
+  (capture → VAD → STT → LLM → TTS → playback) replacing upstream's Python threading.
+  *NEOTH:* `media/conversation_loop.rs` (new). *Depends:* A1, A3, A5. *Blocked on:* `cpal`
+  for Windows audio capture, consent gate in `permissions/` for always-on mic, WAL
+  `ExtendedSubtype::{MicOpen,TurnCancel}`, GUI toggle (Rule 3). **No Python sidecar.** **XL**
+- [ ] **ADOPT31-A3** Silero VAD backend behind NEOTH's existing `VadBackend` trait seam —
+  `ort` crate, weights supervised by `media/model_manager.rs`. The trait seam is already
+  correct; this is a backend, not a refactor. *NEOTH:* `media/vad/silero_backend.rs` (new).
+  *Consumer:* `media/vad/mod.rs`. **M**
+- [ ] **ADOPT31-A4** VAD tuning constants as `freedom.yaml` keys, not literals:
+  `thresh=0.6`, `min_silence_ms=64`, `min_speech_ms=384`, `speech_pad_ms=500`,
+  `speculative_reopen_ms=1000`, `unanswered_reopen_ms=7000`. *NEOTH:* `config/` + GUI voice
+  panel. *Consumer:* A3/A7. **S**
+- [ ] **ADOPT31-A5** Sentence-batching between LLM stream and TTS — batch 3 sentences before
+  synthesis; cuts first-audio latency without word-by-word synthesis lag. *NEOTH:*
+  `media/lm_output_processor.rs` (new). *Consumer:* A2. **M**
+- [ ] **ADOPT31-A6** Short-segment false-barge-in guard — active speech under 100 ms never
+  triggers cancellation. *NEOTH:* extend `media/vad/smoothed.rs`. *Consumer:* A1/A7. **S**
+- [ ] **ADOPT31-A7** Speculative turn tracker — soft-end / reopen / committed states so a
+  mid-sentence pause does not read as end-of-turn. *NEOTH:* `media/turn_tracker.rs` (new).
+  *Consumer:* A2. **M**
+
+### Lane B — document/book → skill, proactive (book-to-skill + Fabric + agent-skills, all MIT)
+
+Operator ask: *"neoth liest PDFs oder Obsidian-Dateien und verwandelt sie mit self-reflect
+automatisch in Skills — proaktiv."* Verified: `skills/auto_extract.rs` (659) and
+`skills/teacher.rs` (566) do **conversation** → skill. There is no document → skill path.
+Note: book-to-skill has **no** self-critique pass — the reflexion stage below is NEOTH-native,
+seeded by Fabric's `reflexion.json` / `self-refine.json`.
+
+- [ ] **ADOPT31-B1** `skills/doc_distill.rs` (new) — `distill_doc(Extraction) -> DistilledDoc`
+  over the existing `media/{pdf,docling,document}.rs` extractors, output through
+  `security/ingress_sanitizer.rs` (Rule 6). Ships as `/skill-from-doc <path>` printing the
+  distillation for operator review — no auto-install yet. *Consumer:* operator, immediately. **M**
+- [ ] **ADOPT31-B2** Chapter distillation prompt — Core Idea → Frameworks Introduced → Key
+  Concepts → Code Examples → Worked Example → Key Takeaways → Connects To. *NEOTH:*
+  `doc_distill.rs::CHAPTER_DISTILL_PROMPT_TMPL`. **S**
+- [ ] **ADOPT31-B3** Byte-range chapter access for documents over ~50k tokens — detect chapter
+  offsets, read ranges instead of whole-file. *NEOTH:* `doc_distill.rs::detect_chapter_offsets`. **S**
+- [ ] **ADOPT31-B4** Post-generation injection scanner — 7 patterns + symlink check, run on
+  every generated skill before it can be written. *NEOTH:* `skills/generated_scan.rs` (new).
+  *Consumer:* `skills/creator.rs` write path. **M** 🔒
+- [ ] **ADOPT31-B5** Self-critique / reflexion pass — one scored self-review call between
+  distillation and staging, rejecting below threshold. *NEOTH:* `doc_distill.rs`. **S**
+- [ ] **ADOPT31-B6** Pre-flight token/cost estimate shown before a long distillation starts.
+  *NEOTH:* `doc_distill.rs::preflight_estimate`. *Consumer:* proactive queue + GUI. **S**
+- [ ] **ADOPT31-B7** Consent-gated skill staging — route decision (new skill vs. memory vs.
+  wiki), `proactive/action_staging.rs::stage_proposal` for the skill route,
+  `memory/groundtruth` for the fact route, new Extended-Subtype WAL events for both. **M** 🔒
+- [ ] **ADOPT31-B8** Proactive document watcher — `daemon/doc_ingest_cron.rs` (new), watching
+  operator-configured paths and the Obsidian vault when one is configured. Keys:
+  `doc_ingest.{enabled,watch_paths[],max_per_day}`. **Default OFF** (Rule 2), GUI toggle
+  (Rule 3). *This is the operator's "pro-aktiv" ask.* **L**
+- [ ] **ADOPT31-B9** 14 Fabric patterns as bundled skills: `extract_wisdom`, `analyze_paper`,
+  `create_flash_cards`, `extract_patterns`, `analyze_claims`, `find_logical_fallacies`,
+  `label_and_rate`, `create_golden_rules`, `analyze_malware`, `analyze_threat_report`,
+  `explain_code`, `create_summary`, `extract_insights`, `create_conceptmap`. Ignore
+  Fabric's `extract_skills` — it is HR job-description parsing, useless here. *NEOTH:*
+  `skills/bundled.rs`. *Consumer:* `skills/router.rs`. **M**
+- [ ] **ADOPT31-B10** Pairwise negative routing test — assert each skill's phrase routes to
+  itself and to nothing else. *NEOTH:* `skills/test_harness.rs`. *Consumer:* CI gate. **M**
+- [ ] **ADOPT31-B11** Session-start active-skill catalog injection. *NEOTH:* `hooks/` SessionStart
+  handler. *Consumer:* every session. **S**
+- [ ] **ADOPT31-B12** *(v1.1)* Embedding dedup before routing, plus a PatchExistingSkill route
+  that appends to an existing skill instead of creating a near-duplicate; chapter-level
+  `DocProvenance` persisted alongside groundtruth. **L**
+
+### Lane C — governance hardening (agent-governance-toolkit + gstack, MIT)
+
+Every gap below verified by the agent's own ripgrep (zero hits for the named symbols).
+None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
+
+- [ ] **ADOPT31-C1** Multi-turn prompt-injection escalation tracking + canary-token leak
+  detection — cross-turn ring buffer, `MultiTurnEscalation`, `CanaryLeak`. Today
+  `security/ingress_sanitizer.rs` is single-message only. *NEOTH:*
+  `security/injection_tracker.rs` (new). **M** 🔒
+- [ ] **ADOPT31-C2** SHA-256 hash-chain tamper-evident audit log —
+  `AuditEntry{seq, prev_hash, hash}` + `verify_chain()`. *NEOTH:* augment
+  `permissions/audit.rs`. *Consumer:* `permissions/gate.rs::record_decision()` chains every
+  gate verdict. **M** 🔒
+- [ ] **ADOPT31-C3** Per-agent/peer trust score — 0–1000, five tiers, reward/penalty/decay.
+  *NEOTH:* `cluster/peer_trust.rs` (new). *Consumer:* `cluster/hyperswarm.rs` peer
+  accept/reject + `loop_engine/` delegation threshold. **M**
+- [ ] **ADOPT31-C4** MCP tool fingerprinting + rug-pull detection — HMAC schema hash captured
+  at registration, any post-registration schema delta blocks the call. *NEOTH:*
+  `security/mcp_guardian.rs` (new). *Consumer:* `permissions/gate.rs` MCP invocation path. **L** 🔒
+- [ ] **ADOPT31-C5** Pre-work multi-role sign-off gate — sequential role verdicts plus a
+  Decision Audit Trail written to WAL *before* high-impact dispatch. *NEOTH:*
+  `council/pre_action_gate.rs` (new). *Consumer:* `coding/dispatcher.rs` ahead of
+  SelfSourceEdit / ExecArbitrary / SelfBinaryReplace. **L** 🔒
+- [ ] **ADOPT31-C6** Credential placeholder vault — `{{cred:NAME}}` opaque references resolved
+  at call time from an AES-256-GCM store, so secrets never transit prompts or tool args.
+  *NEOTH:* `security/credential_vault.rs` (new). *Consumer:* channel tool-call injectors,
+  `permissions/lease.rs` MCP scope. **L** 🔒
+- [ ] **ADOPT31-C7** Information-flow-control label lattice — `source_labels[]` + `clearance`
+  on `ActionKind`, no-write-down check. Port as a plain Rust enum, **not** the Cedar dep.
+  *NEOTH:* `permissions/ifc.rs` (new). *Consumer:* `permissions/gate.rs` MCP + external-HTTP
+  provenance gate. **L** 🔒
+- [ ] **ADOPT31-C8** `security/risk_gate.rs` block-pattern gap-fill from gstack `/careful` —
+  verify SQL-destructive, `format`, `dd`, `shred` coverage. *Consumer:*
+  `risk_gate.rs::is_dangerous_command()`. **S** 🔒
+- [ ] **ADOPT31-C9** Align WAL audit event field names with the toolkit's AUDIT-COMPLIANCE-1.0
+  canonical schema — comment/naming alignment only, for external audit-tool interop. **S**
+- [ ] **ADOPT31-C10** Typed `WorkerContract` struct for inter-agent data contracts. *NEOTH:*
+  `coding/dispatcher.rs`. *Consumer:* `coding/task_executor.rs` return validation.
+  *(Design idea from claude-code-best-practice — the only thing that repo yields.)* **S**
+
+### Lane D — intelligence ownership (fermisense article; ideas are facts, text is not)
+
+The article reports a GRPO fine-tune of a 9B open model beating five frontier configs on one
+workflow — 87.3 % vs 76.9 % of achievable score at **$0.50 vs $34 per 1,000 decisions**,
+trained for ~$500 of GPU time. Its thesis is NEOTH's own. Verified: `rg -in 'fine.?tune'`
+over `src/` returns 4 hits, **all** model *names* (abliterated variants) — NEOTH has no
+training-data machinery at all. **NEOTH's job is to produce the dataset and the scorer, never
+to run training in-process** (Rules 1 and 8).
+
+- [ ] **ADOPT31-D1** Fine-tune dataset export — `neoth export training-set` emitting
+  OpenAI/ShareGPT-shaped JSONL from `daemon/usage_log.rs` events + `skills/teacher.rs`
+  corrections + `feedback/` accept/reject signals, redacted through `security/redact.rs`,
+  local-only. Turns correction machinery NEOTH already has into an asset the operator owns.
+  *NEOTH:* `daemon/train_export.rs` (new) + `cli/export.rs`. **M**
+- [ ] **ADOPT31-D2** Cost-per-decision rollup — extend `UsageRollup`/`aggregate` in
+  `daemon/usage_log.rs` with a workflow/task dimension. Today cost is answerable per
+  *provider*, not per *recurring task*. *Consumer:* `neoth usage`, GUI cost panel. **S**
+- [ ] **ADOPT31-D3** Prompt-tax metric — measure and surface the token overhead that skill,
+  memory, repo-context and council injection adds per call. *NEOTH:* `tokens/budget.rs` +
+  `providers/meter.rs`. **S**
+- [ ] **ADOPT31-D4** Weighted rubric with asymmetric error classes — each error class carries
+  an operator-set multiplier (the article's worked example: a missed violation costs 7× a
+  false alarm). *NEOTH:* extend `council/quality_score.rs` + `freedom.yaml` weights. **M**
+- [ ] **ADOPT31-D5** Workflow episode runner — replay recorded task episodes against the
+  current config with a fixed scorer, so a model/skill/config change is scored on the
+  operator's own workload before it ships. *NEOTH:* generalise `memory/eval_harness.rs` +
+  `eval/` corpus. *Consumer:* release gate, `neoth eval run`. **L**
+- [ ] **ADOPT31-D6** Specialist-candidate advisor — run the article's 9-point checklist against
+  the operator's own `usage_log` data and report which recurring workflow is worth
+  specialising, with its volume, cost and verifiability. *NEOTH:*
+  `analytics/specialist_advisor.rs` (new). *Consumer:* proactive surface. **M**
+- [ ] **ADOPT31-D7** Route-by-verifiability — encode volume × verifiability as an explicit
+  routing input (high-volume + verifiable → local specialist; verifiable + rare → frontier;
+  changing facts → retrieval; unverifiable → human). *NEOTH:* `models/selector.rs` +
+  `models/hemisphere_preset.rs`. **M**
+
+### Lane E — code context residuals (code-review-graph + claude-context, MIT)
+
+⚠ **Do not duplicate CRG-01..05.** They are already tracked with an authoritative disposition
+matrix earlier in this file (§ CRG). Diff-hunk→symbol mapping is **CRG-03**; `TestedBy` +
+test-gap detection is **CRG-04**; the impact-radius service is **CRG-02** (already
+NATIVE-SERVICE/WIRED-PARTIAL). This wave adds only the two genuinely new deltas below.
+
+- [ ] **ADOPT31-E1** Edge `confidence` / `confidence_tier` on `GraphEdge` — lets impact BFS
+  weight inferred edges below resolved ones. **Missed entirely by the CRG-01..05
+  disposition.** *NEOTH:* `code_map/graph.rs` + `code_map/persist.rs` (schema migration) +
+  `code_map/impact.rs` (BFS weight). Merge the migration with CRG-04's if both land together. **M**
+- [ ] **ADOPT31-E2** AST node-boundary chunking for code embedding — tree-sitter, ~2500-char
+  chunks with ~300 overlap, split on node boundaries instead of lines. NEOTH confirmed to
+  have zero AST-aware chunking. *NEOTH:* `code_map/chunk.rs` (new). *Consumer:*
+  `code_map/recall.rs` + `memory/embeddings.rs`, **after** CRG-01's decomposer wiring. **M**
+- Explicitly **not** stealing: claude-context's Merkle-DAG re-index (an optimisation over our
+  sha256+mtime_ns, not a new algorithm), and CRG's community detection / hub-bridge scoring
+  (Rule 9 — no consumer). The "276× token savings" figure is a self-measured `len//4`
+  approximation and must never be cited as a fixed multiplier in NEOTH docs.
+
+### Lane F — video frame intelligence (claude-video, MIT)
+
+⚠ Baseline correction: `media/video_frames.rs` defines `SamplingStrategy` types but **is not
+wired to any visual pipeline** — NEOTH's video path today is audio-extraction only. F1 is the
+first frame→vision path, not a gap-fill. Note that photo-OCR is already reachable today by
+routing images through `media/vision.rs` to a multimodal provider — the "no OCR engine" fact
+must not be over-stated as a blocking gap in future sessions.
+
+- [ ] **ADOPT31-F1** Scene-change frame sampling — `SamplingStrategy::SceneChange { threshold:
+  0.20, min_frames: 8 }` via ffmpeg `select='gt(scene,T)'` + `showinfo` pts_time parsing.
+  *NEOTH:* `media/video_frames.rs`. *Consumer:* `media/video_dispatch.rs`. **M**
+- [ ] **ADOPT31-F2** Perceptual frame dedup — 16×16 greyscale, mean-absolute-difference ≤ 2.0.
+  Pure stdlib, no image crate. *NEOTH:* `media/video_dispatch.rs::dedup_frames`. **S**
+- [ ] **ADOPT31-F3** `KEYFRAME_MIN = 4` fallback — fall back to uniform sampling when keyframes
+  are sparse. *NEOTH:* `media/video_frames.rs`. **S**
+- [ ] **ADOPT31-F4** yt-dlp installer + caption-first URL path — `installers/yt_dlp.rs` (new)
+  mirroring `installers/node.rs`, wizard-installed and version-pinned (Rule 1), egress
+  consent-gated, `ExtendedSubtype::VideoDownloadConsented`. *Consumer:* `VideoSource::Url`. **M**
+
+### Lane G — deterministic GUI design lint (impeccable, Apache-2.0)
+
+impeccable's value is that its 59 detector rules are **deterministic** — no LLM in the loop.
+Its engine is DOM-bound and cannot drive Slint, but 54 of the 59 rules are medium-independent
+and greppable against `.slint` source. Apache-2.0 requires a `NOTICE` entry on adoption.
+Existing NEOTH gotcha to preserve: the `animation-mode == 0` divide-by-zero guard already in
+`activity.slint:178` is the pattern every new animation must follow.
+
+- [ ] **ADOPT31-G1** Port the 59-rule taxonomy to `design-system/lint_rules.md` with a
+  per-rule portability column (Slint-greppable / screenshot-only / DOM-only→skip). **M**
+- [ ] **ADOPT31-G2** `SRC/_gui_lint.bat` (new) — token-drift gate: grep `.slint` for literal
+  colours, font names, font sizes and radii not routed through `Theme.*`. Wire into
+  `_gate_gui_check.bat`. *Highest value per hour in this lane; catches drift on the next GUI
+  PR.* **S**
+- [ ] **ADOPT31-G3** Split `design-system/README.md` into a real `PRODUCT.md` (surface map,
+  modes, target user) + `DESIGN.md` (Theme token export, type ramp, spacing scale), and make
+  loading both mandatory before any `.slint` work. **S**
+- [ ] **ADOPT31-G4** `design-system/AUDIT_CHECKLIST.md` — 5-dimension scorecard
+  (a11y / performance / theming / responsive / implementation integrity) adapted to Slint.
+  *Consumer:* code-reviewer agent on GUI PRs. **S**
+- [ ] **ADOPT31-G5** Motion antipattern checks in `_gui_lint.bat` — bounce/spring easing,
+  `animate` on layout properties, marquee, pulsing-dot. **S**
+- [ ] **ADOPT31-G6** `gui_copy_lint` bundled skill — marketing-buzzword, theatre-slop phrase
+  and em-dash-overuse detection applied to UI string literals. *NEOTH:* `skills/bundled.rs`. **S**
+- [ ] **ADOPT31-G7** *(v1.1)* Screenshot contrast pass — headless Slint render feeding a
+  contrast checker in CI. **L**
+
+### Lane H — residual / optional
+
+- [ ] **ADOPT31-H1** Add Cerebras / Fireworks / Nebius as OpenAI-compatible entries in
+  `providers/known_endpoints.rs`. Five lines each. This is the *entire* residue of aisuite. **S**
+- [ ] **ADOPT31-H2** *(optional, low priority)* System-design knowledge pack. system-design-101
+  itself stays blocked (CC BY-NC-ND). Two legitimate routes, in cost order: **(a)** survey
+  permissively-licensed corpora (MIT / Apache / CC-BY) and bundle one with attribution;
+  **(b)** clean-room authorship — their table of contents used only as a topic checklist,
+  every explanation written from primary sources (RFCs, vendor docs, original papers) by an
+  author who does not have their text open, original diagrams only, citing primary sources
+  and never ByteByteGo, and **no** ByteByteGo entry in `THIRD_PARTY_LICENSES` because nothing
+  of theirs ships. Sentence-by-sentence paraphrase of their prose is the one thing that would
+  actually be an ND-infringing derivative work — a "rewrite" is legally *worse* than starting
+  from zero. Weigh against `tools/deep_research.rs`, which already fetches current
+  authoritative material on demand instead of carrying a snapshot that goes stale. **L**
+
+### Lane I — Wayfinder → ADW Design → Evidence-Gated Coding Loop (2026-07-31)
+
+> **🔖 IMPLEMENTATION HANDOFF: `PLAN/HANDOFF_WAYFINDER_ADW_EGCL.md`** — self-contained
+> architecture, types, build order, and the traps. Read it before touching this lane.
+
+**Operator framing (2026-07-31):** *"Wayfinder → ADW Design → Evidence-Gated Coding Loop.
+Damit trenne ich Zielklärung, wiederholbares Prozessdesign und konkrete verifizierte
+Umsetzung sauber voneinander."* Three stages, deliberately separated — Wayfinder owns *what
+are we achieving and how will we know*, ADW Design owns *what repeatable process produces
+that*, the Evidence-Gated loop owns *execute it and prove each step*. Today all three are
+smeared across `coding/dispatcher.rs` (3281 lines) with no seam between them.
+
+**The load-bearing idea — the coverage check.** The three stages are one typed pipeline, not
+three documents, and one invariant joins them:
+
+```
+Wayfinder  → Goal{ intent, constraints, acceptance: Vec<AcceptanceCriterion> }
+                   each criterion names the EVIDENCE that will prove it
+                       │  COVERAGE CHECK: an AdwSpec may not run unless every
+                       │  AcceptanceCriterion maps to ≥1 node that emits that
+                       ▼  evidence kind. Unmapped ⇒ reject the run, not a warning.
+ADW Design → AdwSpec{ nodes(code|agent|human), on_pass/on_fail, isolation, budgets }
+                       ▼
+Evidence-  → AdwRun — every node transition writes an Evidence record to the WAL.
+Gated Loop   Complete ONLY when every required criterion has a Satisfied record.
+             "The agent said it's done" is not a state.
+```
+
+That check turns *"never claim done without proof"* from a discipline someone must remember
+into a **structural property of the runtime**. It is the reason to build all three stages
+rather than only the middle one. If only one thing from this lane ships, ship the coverage
+check.
+
+#### Stage 1 — Wayfinder handoff (goal clarification)
+
+> ⚠ **Wayfinder already exists — NEOTH must not rebuild it.** `~/.claude/skills/wayfinder/`
+> is an installed agent-side planning skill, and the Codex line opened a live map for this
+> repo at `.scratch/wayfinder-map-gold-finish.md` (`bc5de90b`, narrated in
+> `PLAN/PROGRESS_v1_0.md`). Model: one `wayfinder:map` artifact
+> (`## Destination` / `## Notes` / `## Decisions so far` / `## Not yet specified` /
+> `## Out of scope`) with child decision tickets labelled
+> `wayfinder:{research,prototype,grilling,task}`. It is **plan-don't-do** by design — its own
+> rule is that the urge to start building means you have reached the edge of the map and it is
+> time to hand off. **That handoff is the seam this stage implements.** A `/wayfinder` command
+> inside NEOTH would duplicate a working tool and split the planning surface in two.
+>
+> Also: that map's ticket **T4** ("which of the 233 pre-tag blockers are genuinely v1.0")
+> quotes figures that predate this session — the roadmap now counts **1,289 boxes / 298
+> pre-tag blockers**. T4 must be split against the current number.
+
+- [ ] **ADOPT31-W1** `adw/goal.rs` (new) — `Goal{id,intent,constraints,acceptance,non_goals,
+  open_questions}`, `AcceptanceCriterion{id,statement,evidence,required}`, and
+  `EvidenceKind::{TestPasses,CommandExits,FileContains,DiffTouches,HumanConfirms,
+  CouncilVerdict,Absent}`. Constructor **rejects an empty `acceptance`** — no goal without a
+  definition of done. Non-empty `open_questions` ⇒ the goal is `Draft`, not `Ready`. This is
+  the **handoff artifact from a cleared map**, not a rival planner. `intent` goes through
+  `defang_prompt_delimiters` before any prompt use. Reuses `coding/intent.rs` (506) +
+  `general_task_intent.rs` (461) for classification rather than re-deriving it. **S**
+- [ ] **ADOPT31-W2** `neoth goal from-map <path>` — ingest a wayfinder map into a `Goal`:
+  `## Destination` → `intent`, `## Out of scope` → `non_goals`, `## Not yet specified` →
+  `open_questions`, and a resolved `wayfinder:task` ticket → the acceptance criteria.
+  **Refuses to emit a `Ready` goal** while any criterion lacks a concrete `EvidenceKind`
+  ("it should feel faster" is not a criterion; "benchmark X drops below N ms" is). Ships with
+  a bundled skill teaching the *handoff discipline* — turning a resolved decision into a
+  falsifiable criterion — and explicitly **not** a second mapping tool.
+  *Consumer:* `cli/code.rs`, GUI goal panel. **M**
+
+#### Stage 2 — ADW Design (repeatable process design)
+
+Source: *"FORGET Loop Engineering. Agentic Engineering is about THIS"*
+(`youtube.com/watch?v=VQy50fuxI34`, 34:18), watched with the `watch` skill — full caption
+transcript plus ten 1024px diagram frames. Full analysis, verified NEOTH ground truth and
+engine design: `PLAN/ADOPT_2026_07_31/G_indydevdan_adw.md`. **Nothing is vendored** — a talk
+has no repo and no licence; the vocabulary is credited, the design is ours.
+
+Verified gap: `rg -n 'enum (NodeKind|StepKind|WorkflowNode|PipelineNode|StageKind)'` over
+`SRC/neothd/src` returns **zero hits**. NEOTH already *implements* one good AI Developer
+Workflow — hardcoded inside `coding/dispatcher.rs` (3281 lines). What it cannot do is let the
+operator declare a different one. `coding/worktree.rs` (987), the kanban store, the
+validation stages, `sub_agents/parallel.rs` and `ModelRole` all exist; the **topology is not
+data**, there is **no per-work-class routing**, and there are **no racing lanes**.
+
+- [x] **ADOPT31-I1** ✅ DONE (2026-07-31) — bundled skill `adw_design`
+  (`SRC/neothd/assets/skills/adw_design/skill.yaml` + `skills/bundled.rs` entry, alpha-sorted
+  between `advanced_skill_creator` and `agent_engineering_patterns`). Teaches the discipline:
+  every node typed **code / agent / human**; push work down the reliability ladder
+  (code > human > agent) before accepting an agent node; both `on_pass` and `on_fail`
+  mandatory; every loop bounded; one topology per work class; model **role** never model
+  name. Both bundled-skill tests are directory-driven (`bundled_count_matches_assets_directory`,
+  `qm_21_ported_superpowers_skills_all_parse_clean`) — verified, so no pinned id list needed
+  updating. ⚠ **Not yet gate-verified — run `_gate_neoth.bat` before committing.** **S**
+- [ ] **ADOPT31-I2** `AdwSpec` + graph executor — `adw/{mod,spec,exec}.rs` (new; the pipeline
+  spans coding + council + permissions, so it lives at `src/adw/`, not inside `coding/`).
+  `NodeKind::{Code(CodeOp),Agent(AgentSpec),Human(GateSpec)}`, `Node{on_pass,on_fail}` with
+  **both edges non-`Option`** (a node without a failure path must not compile),
+  `AdwSpec{work_class,isolation,lanes,max_iterations,max_spend,nodes}`. `Human` nodes reuse
+  `permissions::ActionKind` rather than inventing a second approval path; `AgentSpec.role`
+  is a `ModelRole`, never a model name (model-agnostic hard rule). First job: encode NEOTH's
+  **current** topology as the built-in `feature` spec and run the existing lane through the
+  executor with **identical behaviour** — this is the seam, no new capability. Also the
+  natural fix for `dispatcher.rs` being 4× over the 800-line house limit, and it finally
+  gives `recipes/schema.rs` (285, executor-less since it was written) an executor. **M**
+- [ ] **ADOPT31-I3** Work-class topologies + router — `coding/adw/builtin.rs` (new). Built-in
+  `chore` / `bug` / `feature` specs with genuinely different shapes (chore = one agent +
+  lint + review on the cheapest role; feature = the full current pipeline). Router is
+  **deterministic code** when the class is already known (kanban label, CLI flag) and only
+  escalates to `coding/classifier.rs` when it must be inferred. *Consumer:* `cli/code.rs`. **M**
+- [ ] **ADOPT31-I4** WAL node-transition audit — one `ExtendedSubtype::AdwNodeTransition`
+  carrying `{adw_id, run_id, node_id, verdict, iteration, spend}`, so a run is reconstructable
+  after the fact. Extended band + daemon allowlist + the exhaustive
+  `allowlist_contains_exactly_*` test (top-level opcodes 255/255 exhausted).
+  *Consumer:* `neoth code run --explain`, GUI run view. **S**
+- [ ] **ADOPT31-I5** Operator-authored specs — load from `~/.neoth/adw/<id>.yaml`, validated
+  at load and **rejected** on: unknown node id, missing `on_fail`, unreachable node, absent
+  `max_iterations`/`max_spend`. Any spec string reaching a prompt goes through
+  `defang_prompt_delimiters` like every other operator-supplied text. GUI panel for the spec
+  list + per-run node trace (Rule 3 parity). **M**
+- [ ] **ADOPT31-I6** Parallel lanes + racing — `lanes > 1` fans out over the existing
+  `coding/worktree.rs`; `race: true` takes the first lane passing validation and cancels the
+  rest. **Hard requirement:** cancellation must actually reclaim budget in
+  `providers/quota.rs`, else racing silently costs N× forever. Gate behind explicit spend
+  confirmation — N× spend for one result is defensible for an incident, never as a default. **L**
+- [ ] **ADOPT31-I7** *(v1.1)* `Isolation::Sandbox` — locally-supervised isolated environment
+  per lane, following the `media/docling.rs` owned-supervisor precedent. **Design doc first:**
+  process isolation, filesystem scoping and network policy are each a real decision. The
+  talk's cloud-sandbox end state does not transfer to a local-first single-operator daemon;
+  worktrees carry most of the value at v1.0. **L**
+
+#### Stage 3 — Evidence-Gated Coding Loop (verified execution)
+
+- [ ] **ADOPT31-V1** `adw/evidence.rs` (new) — `Evidence{criterion,node,kind,verdict,proof,at}`
+  with `Verdict::{Satisfied,Refuted,Inconclusive}`, plus the two gate functions:
+  `check_coverage(&Goal,&AdwSpec) -> Result<(),Vec<CriterionId>>` and
+  `is_complete(&Goal,&[Evidence]) -> bool`. `Node.emits: Vec<EvidenceKind>` is what
+  `check_coverage` reads. **Build after I2** — the check needs a spec to check against;
+  shipping it first would be a primitive ahead of its consumer. **M**
+- [ ] **ADOPT31-V2** Wire the gate: `check_coverage` **before** a run may start (unmapped
+  required criterion ⇒ refuse, naming the ids) and `is_complete` **before** a run may report
+  success. Requires a test that fabricates an "the agent says it's done" run with no evidence
+  and asserts it is refused. **This is the item that makes the whole lane worth building.** **M** 🔒
+- [ ] **ADOPT31-V3** WAL evidence ledger — `ExtendedSubtype::{AdwNodeTransition, AdwEvidence}`
+  carrying `{adw_id,run_id,node_id,verdict,iteration,spend}` and the evidence proof blob.
+  Extended band + daemon allowlist + the exhaustive `allowlist_contains_exactly_*` test
+  (top-level opcodes 255/255 exhausted). Mirror the existing
+  `PluginRemovalIntent(0x12)`/`PluginRemovalResult(0x13)` pair. **S**
+- [ ] **ADOPT31-V4** `neoth adw explain <run-id>` — reconstruct an entire run from the WAL
+  alone: node order, verdict per node, spend, and which acceptance criterion each piece of
+  evidence satisfied. *Consumer:* operator post-mortem, GUI run trace. **S**
+- [ ] **ADOPT31-V5** Council integration for `EvidenceKind::CouncilVerdict` — route the
+  criterion through `council/quality_score.rs` (961) with a `min_score` threshold, reusing
+  `council/factual_check.rs` (486) and `council/stop_verifier.rs` (398) rather than adding a
+  second scoring path. **M**
+
+**Definition of done for the whole lane** (all six must hold): (1) `neoth wayfinder` refuses
+to emit a `Goal` with an unfalsifiable criterion; (2) `check_coverage` rejects a spec that
+cannot prove a required criterion, with a test asserting the rejection; (3) a run cannot
+report success while a required criterion lacks `Satisfied` evidence, with a test that
+fabricates the claim and watches it be refused; (4) `neoth adw explain` reconstructs a run
+from the WAL alone; (5) GUI parity — goal view, spec list, run trace; (6) built-in `chore`
+and `feature` specs have visibly different topologies. **Item 3 is the one that matters.**
+
+**Explicitly rejected from this source** (recorded so it is not re-litigated): dropping
+engineering review once the system is "trusted" — for a daemon that can rewrite its own
+source, review is a safety boundary, and `coding/self_source_gate.rs` (1980) exists precisely
+because that gate must never become optional. Also rejected: cloud sandboxes as the end state,
+and racing as a default rather than an incident tool.
+
+### Tracker corrections produced by this wave
+
+- [x] **ADOPT31-X1** ✅ DONE (2026-07-31) — the WS-G verdict table row for ECC still said
+  `EVALUATE-FIRST | Gremium evaluation needed`, which was **stale**: GOLD-ADOPT-05
+  (line ~2967) had already closed that evaluation as **GROUND-TRUTH** after a deep read, and
+  WS-ADOPT31 agent F independently re-confirmed the same verdict from source. Row rewritten
+  to state the verdict, the reason (config-ecosystem, format-incompatible, redundant against
+  `sub_agents`/`skills`/`hooks`/`slash`) and "no adoption; reference only". **S**
+- [ ] **ADOPT31-X2** `PLAN/CRG_ADOPTION_2026_07_20.md` and the R3-16 disposition matrix must
+  gain a row for `ADOPT31-E1` (edge confidence/confidence_tier), which the original
+  CRG-01..05 disposition missed entirely. Verify while doing so that the CRG-02 row still
+  reads `NATIVE SERVICE + CLI/MCP WIRED / PRODUCT CONSUMERS PARTIAL` — that is the accurate
+  state (`code_map/impact.rs::impact_radius`, `mcp/codegraph_server.rs`); any doc that still
+  says "CRG-02..05 DEFERRED-v1.1" is stale and already rejected earlier in this file. **S**
 
 ## WS-V — GOLD Verification Findings (external review 2026-06-11, triaged)
 

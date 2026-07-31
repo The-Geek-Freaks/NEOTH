@@ -66,6 +66,14 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "advanced_skill_creator",
         include_str!("../../assets/skills/advanced_skill_creator/skill.yaml"),
     ),
+    // ADOPT31-I1 (2026-07-31) — AI Developer Workflow design discipline.
+    // Typed-node (code / agent / human) workflow design, derived from a
+    // source-level analysis of IndyDevDan's ADW talk; see
+    // `PLAN/ADOPT_2026_07_31/G_indydevdan_adw.md`.
+    (
+        "adw_design",
+        include_str!("../../assets/skills/adw_design/skill.yaml"),
+    ),
     (
         "agent_engineering_patterns",
         include_str!("../../assets/skills/agent_engineering_patterns/skill.yaml"),
