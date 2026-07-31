@@ -427,10 +427,33 @@ than the first three:**
   every other surface", and confirming that needs a schema comparison against
   the other surfaces, not a grep.
 
-Still to check: `-15d` (partly done — the tracing sink is now enforced, the
-rest of the whole-product sentinel is not), `-15h` GUI/Buddy parity, `-15i`
-channel parity, `-15j` provider-refusal parity, `-15l` installed clean-machine
-evidence.
+**Third pass — the parity surfaces are absent, not partial:**
+
+- **`R4-15h` GUI and Buddy parity — ABSENT.** `SRC/neothd-gui/` has 106
+  `credential`-shaped hits, and every one is the *settings* surface:
+  `credentials_path` (10), `credential_present` (10), `credentials_yaml` (5).
+  Zero hits pair `credential` with `copy`, `transfer`, `source` or
+  `destination`. There is no GUI transfer surface at all.
+- **`R4-15i` channel capability and subject parity — ABSENT.** Channel matches
+  for `credential` are about *send* credentials (gchat, nostr, webhook), never
+  a credential as transfer destination. Consistent with `-15b` shipping no
+  Channel destination class.
+
+Still to check: `-15d` (one sink of the sentinel is now enforced, the rest is
+not), `-15j` provider-refusal parity, `-15l` installed clean-machine evidence.
+
+**Lane picture after eight of twelve sub-items.** The CLI core is built —
+authority binding, single-use/TOCTOU, the durable state machine. What is
+missing is *reach*: five of seven resolver classes, the GUI surface, the
+Channel surface. So `R4-15` is neither nearly done nor untouched: it is a
+finished spine with the parity limbs unbuilt, and the parity work is
+substantial rather than cosmetic.
+
+**Why this matters for T4.** If `R4-15` is v1.0 in full, the parity surfaces
+are real remaining work. If v1.0 means the CLI data plane and parity follows in
+v1.1, the lane is close to closable. That is a scope call of exactly the kind
+T4 settles — and it is now backed by evidence per sub-item rather than by a
+checkbox count.
 
 **Pattern so far:** of six sub-items examined, three are complete in code, two
 are partial, one (`-15f`) is likely mis-scoped. That mix is the argument for
