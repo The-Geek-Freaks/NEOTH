@@ -74,6 +74,19 @@
 > audit (no BLOCKER; three overstated readiness claims corrected). CodeQL is
 > GitHub-managed with no workflow file and cannot be dispatched from the CLI.
 >
+> **Code-graph impact round 2026-07-31 — found a half-done fix of my own:** the
+> graph was 11 days stale and confidently wrong (it listed `complete_raw` as
+> untested, which this session had covered across eight adapters). Rebuilt it
+> full at `b32773ee`; risk dropped 0.85 -> 0.55 and the review priorities
+> changed to `keep_newest_bytes`, `bytes`, `into_bytes` — this session's own
+> additions. That surfaced a real defect: all five call sites discarded the new
+> `PtyReadOutcome` via `into_bytes()`, so `bytes()` and `is_truncated()` had no
+> consumer and the headless path printed a truncated capture as if it were
+> whole — precisely what the type was introduced to prevent. The headless read
+> now matches on the outcome and warns with the captured byte count; the
+> remaining sites are poll loops where a partial read is expected. Lesson
+> recorded: a stale graph does not fail loudly, it answers wrongly.
+>
 > **SC-01 widened 2026-07-31 (R4-15d follow-through):** the WAL secret-field
 > scan forbade `bearer_token`/`access_token`/`refresh_token` but not the bare
 > `token` — the exact name a channel gateway uses. Added that plus
