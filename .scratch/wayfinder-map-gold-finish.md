@@ -27,7 +27,7 @@ ruled out of v1.0 — not that they were quietly reclassified.
 
 ## Tickets
 
-### T1 — Must a redaction's own audit segment verify like any other? · open · `wayfinder:grilling` · unblocked · claimed
+### T1 — Must a redaction's own audit segment verify like any other? · **resolved (a)** · `wayfinder:grilling`
 `SRC/neothd/src/cli/verify.rs:1299`.
 
 **Narrowed by investigation.** The exemption is not broken: the final
@@ -52,6 +52,91 @@ The decision, not yet made:
 
 Resolving means picking (a) or (b) with a reason, not making the assert pass.
 T2 (`verify.rs:1431`) very likely resolves with whichever is chosen.
+
+**Resolution:** **(a) — test fixture gap, not a production gap. No change to
+`run_verify`; the writer side needs a home-bound spawn in the test.**
+
+**Evidence per question:**
+
+1. **Writer identity** — Production: `run_physical_redaction`
+   (`cli/memory.rs:1301`) calls
+   `crate::wal::writer::spawn_for_home_with_completion(audit_segment, home)`.
+   That function (`writer.rs:997`) uses
+   `hmac_key_path = home.join("wal").join("hmac.key")` and passes
+   `skip_compaction_markers: false` — the full authenticated writer contract,
+   identical to any data segment. Tests: both `redact-audit.wal`
+   (`verify.rs:1283`, `1446`) and `attacker-audit.wal` (`verify.rs:1102`)
+   are created via the test-only `pub fn spawn()` (`writer.rs:926`), which
+   calls `spawn_with_policy_and_compression` (`writer.rs:1322-1339`) and
+   hard-codes `crate::wal::compaction::default_key_path()` — the process-global
+   `~/.neoth/wal/hmac.key`, not the per-test tempdir key.
+
+2. **HMAC identity** — The writer emits COMPACTION_MARKERs (`skip_compaction_markers: false`).
+   In production the markers are signed with `home/wal/hmac.key`. In the test
+   the same markers are signed with the global `~/.neoth/wal/hmac.key`. The test
+   loads `wal_dir.join("hmac.key")` (`verify.rs:1181`) — a freshly generated
+   per-test key that does not match the global one. HMAC mismatch is therefore
+   certain in the test; impossible in production.
+
+3. **`run_verify` segment classification** — `list_segments` (`verify.rs:395-411`)
+   collects every `*.wal` file in the directory with no name filter.
+   `extract_markers_with_offsets_from` (`verify.rs:556-585`) looks only for
+   `EVENT_TYPE_COMPACTION_MARKER` (0xF0). A segment carrying only 0xF3
+   REDACTION_MARKER frames would produce zero markers and zero failures — it
+   would verify clean. The problem is specifically that the audit segments in the
+   test DO carry COMPACTION_MARKERs (from `spawn()`) signed with the wrong key.
+   No name-based class distinction exists today or is needed.
+
+4. **Other consumers** — `for_each_frame_at_home` (`wal/scan.rs:364`) enforces
+   `canonical_segment_name` (`scan.rs:282`): a name must match
+   `(<namespace>-)?NNNNNN.wal` with exactly six decimal digits.
+   `attacker-audit.wal` and `redact-audit.wal` fail this check (sequence part
+   "audit" is not digits) and would cause the scanner to bail with an error —
+   they can only exist in test tempdirs. The production audit segment is
+   named via `unique_standalone_segment_path(wal_dir, "memory-redact")`
+   (`memory.rs:1262`) which generates `memory-redact-<uuid7>-000001.wal` — a
+   canonical name that recall, compaction, and doctor all process normally. No
+   consumer applies a special-class exemption to audit segments.
+
+5. **Security** — Option (b) would require `run_verify` to skip or soften HMAC
+   checking for files matching a name pattern such as `*-audit.wal`. An attacker
+   with WAL write access (the same prerequisite as segment tampering) could name
+   a forged or tampered segment to match that pattern and have it bypass integrity
+   verification entirely. Option (a) closes this: every `*.wal` file is checked
+   uniformly; the name grants no exemption.
+
+**Changes required:**
+
+- **Production (`cli/memory.rs`, `wal/writer.rs`):** None. The production writer
+  path already uses `spawn_for_home_with_completion` with the correct home-bound
+  HMAC key. `run_verify` would accept those markers.
+
+- **Test fixture — `redact-audit.wal` (`verify.rs:1283`, `verify.rs:1446`):**
+  The test calls `crate::wal::writer::spawn(wal_dir.join("redact-audit.wal"))`.
+  This must be replaced by a writer that derives its HMAC key from the test's
+  own key path (`wal_dir.join("hmac.key")`). Cleanest path: add a
+  `#[cfg(test)]` function in `writer.rs` —
+  `pub fn spawn_with_hmac_key_path(segment: PathBuf, hmac_key_path: PathBuf)`
+  — that calls `spawn_with_policy_and_compression_at_home` with the explicit
+  key path and `skip_compaction_markers: false`. Alternatively, restructure the
+  test tempdir to a proper `home/wal/` layout so `spawn_for_home` can be used
+  directly (requires adjusting `wal_dir`, `key_path`, and `VerifyArgs`).
+
+- **Test fixture — `attacker-audit.wal` (`verify.rs:1074`
+  `write_signed_redaction_frame`, called at `verify.rs:1102`, `1265`):**
+  The attacker helper also uses `spawn()` (global key). Since the assertion at
+  `verify.rs:1276` is `is_err()`, the test accidentally passes — but for a
+  wrong reason (HMAC mismatch in the attacker's own compaction marker, not
+  because the attacker's 0xF3 was rejected). The semantically correct model: a
+  realistic attacker writing a raw 0xF3 frame would not own a
+  properly-HMAC-keyed writer at all. Fix: spawn with `skip_compaction_markers:
+  true` (needs a test-only `spawn_no_markers` variant), or write the frame
+  bytes manually without a compaction writer, so the segment contains only the
+  0xF3 frame and no compaction markers.
+
+- **T2 (`verify.rs:1431`):** Identical root cause — line `1446` repeats the
+  same `spawn(wal_dir.join("redact-audit.wal"))` call. Resolves with the same
+  `redact-audit.wal` fixture fix above.
 
 ### T2 — Does `scan_and_redact` hold its contract on a compressed sealed segment? · open · `wayfinder:grilling` · unblocked
 `SRC/neothd/src/cli/verify.rs:1431`. Same family as T1; may resolve with it.
