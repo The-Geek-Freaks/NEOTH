@@ -409,10 +409,33 @@ whether the code exists. Verified against `cli/credential_transfer.rs`:
   in v1.0 scope this is real work; if copy is the whole v1.0 surface, the item
   is mis-scoped rather than incomplete.
 
-Still to check: `-15b` resolvers, `-15d` (partly done — the tracing sink is
-enforced, the rest of the sentinel is not), `-15g` CLI receipt parity, `-15h`
-GUI/Buddy parity, `-15i` channel parity, `-15j` provider-refusal parity,
-`-15l` installed clean-machine evidence.
+**Second pass — two items are genuinely partial, which is a different answer
+than the first three:**
+
+- **`R4-15b` complete resolvers — PARTIAL.** The item lists NEOTH store, OS
+  credential stores, browser/password-manager exports, arbitrary file/path,
+  explicitly selected clipboard input, local file/vault, and every capable
+  Channel destination. Present: file/path (`copy --source/--destination`) and
+  an OS keychain path (`cli/credential.rs:246` `KeychainMigrationEntry`,
+  `:328` `MigrationDirection::ToKeychain`). Absent: clipboard input, browser /
+  password-manager export ingestion, and Channel destinations. So roughly two
+  of seven resolver classes ship.
+- **`R4-15g` CLI private input and receipt parity — PARTIAL.** The input half
+  holds: `copy` takes `--source <path>`, a *reference*, never a value, so no
+  secret crosses argv or the environment. The receipt half is unverified — the
+  item demands "the same operation/progress/terminal receipt schema used by
+  every other surface", and confirming that needs a schema comparison against
+  the other surfaces, not a grep.
+
+Still to check: `-15d` (partly done — the tracing sink is now enforced, the
+rest of the whole-product sentinel is not), `-15h` GUI/Buddy parity, `-15i`
+channel parity, `-15j` provider-refusal parity, `-15l` installed clean-machine
+evidence.
+
+**Pattern so far:** of six sub-items examined, three are complete in code, two
+are partial, one (`-15f`) is likely mis-scoped. That mix is the argument for
+finishing this verification before any pre-tag count is quoted — the lane is
+neither "done" nor "267 items of work".
 
 Closing any of these needs a ratifier, not just this reading: "the code is
 present" is not the same as "the item's full contract is met, wired and

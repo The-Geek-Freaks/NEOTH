@@ -74,6 +74,20 @@
 > audit (no BLOCKER; three overstated readiness claims corrected). CodeQL is
 > GitHub-managed with no workflow file and cannot be dispatched from the CLI.
 >
+> **R4-15 lane verified item by item 2026-07-31 (wayfinder T10/T11):** an open
+> checkbox in this lane turns out to say nothing about whether the code exists —
+> `GOLD-R3-13` carries 23 in-code markers and greps cleanly, while every
+> `R4-15` sub-item carries zero, because that lane never adopted the
+> convention. Verified against `cli/credential_transfer.rs` instead: `-15a`
+> (authority-key binding), `-15c` (single-use/TOCTOU) and `-15e` (the exact
+> typed Planned/Executing/Delivered/Indeterminate state machine) are present;
+> `-15b` (two of seven resolver classes) and `-15g` (input half yes, receipt
+> parity unverified) are partial; `-15f` looks mis-scoped, since the shipped
+> surface is copy and preserves the source by contract. Evidence recorded, no
+> boxes ticked: code being present is not the contract being met, wired and
+> tested. Consequence for planning: quoting a pre-tag count from the checkbox
+> total overstates the remaining work by an unknown amount.
+>
 > **Code-graph impact round 2026-07-31 — found a half-done fix of my own:** the
 > graph was 11 days stale and confidently wrong (it listed `complete_raw` as
 > untested, which this session had covered across eight adapters). Rebuilt it
