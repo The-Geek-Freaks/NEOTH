@@ -27,11 +27,31 @@ ruled out of v1.0 — not that they were quietly reclassified.
 
 ## Tickets
 
-### T1 — Why does a signed 0xF3 exemption not reclassify a tampered window? · open · `wayfinder:grilling` · unblocked
-`SRC/neothd/src/cli/verify.rs:1299`. The redaction step now succeeds, but the
-operator-signed exemption does not flip the verdict to PASS. Decide whether the
-fixture models the signing path wrongly or `run_verify` has a real gap in
-exemption trust.
+### T1 — Must a redaction's own audit segment verify like any other? · open · `wayfinder:grilling` · unblocked · claimed
+`SRC/neothd/src/cli/verify.rs:1299`.
+
+**Narrowed by investigation.** The exemption is not broken: the final
+`run_verify` reports `authorised_redaction_count: 1` and
+`operator_authorised_redactions: 1`, and the failure for the redacted segment
+`000001.wal` is gone. The signed 0xF3 does reclassify the window it covers.
+
+What remains failing are two *other* segments, both written by the test's own
+run: `attacker-audit.wal` and `redact-audit.wal`. Each reports an HMAC
+mismatch over its whole window. So `run_verify` now walks every segment in the
+home, including the audit trails that the redaction path itself produces, and
+those trails do not carry markers it accepts.
+
+The decision, not yet made:
+- **(a)** Redaction-audit segments are ordinary WAL segments and must publish
+  markers `run_verify` accepts — then the writing path has a real gap, and this
+  is a production fix, not a fixture fix.
+- **(b)** They are a distinct artifact class, deliberately outside the marker
+  contract — then `run_verify` needs to say so explicitly rather than reporting
+  them as tampered, and the fixture's expectation is right but its assertion
+  is aimed at the wrong scope.
+
+Resolving means picking (a) or (b) with a reason, not making the assert pass.
+T2 (`verify.rs:1431`) very likely resolves with whichever is chosen.
 
 ### T2 — Does `scan_and_redact` hold its contract on a compressed sealed segment? · open · `wayfinder:grilling` · unblocked
 `SRC/neothd/src/cli/verify.rs:1431`. Same family as T1; may resolve with it.
