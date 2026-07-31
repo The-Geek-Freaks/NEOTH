@@ -61,10 +61,62 @@ fn assert_no_unbounded_response_reads(name: &str, source: &str) {
             "{name}: Response{call} {what} an attacker-controlled body with no size cap"
         );
     }
-    assert!(
-        !production.contains("raw = %"),
-        "{name}: provider-controlled bytes must never reach a tracing field"
-    );
+    assert_no_body_in_tracing(name, production);
+}
+
+/// No tracing field may carry provider-controlled bytes.
+///
+/// The earlier check looked for the literal `raw = %`, which catches exactly
+/// one field name and nothing else — `body = %text` or `debug!("{stdout}")`
+/// would have sailed through. This inspects every tracing macro instead and
+/// allows a body-shaped value only when it is measured rather than printed:
+/// `response_bytes = text.len()` is a metric, `response = %text` is a leak.
+fn assert_no_body_in_tracing(name: &str, production: &str) {
+    const MACROS: [&str; 5] = ["trace!", "debug!", "info!", "warn!", "error!"];
+    const BODY_WORDS: [&str; 12] = [
+        "body", "text", "payload", "raw", "line", "frame", "content", "response", "stdout",
+        "stderr", "delta", "prompt",
+    ];
+
+    for (offset, _) in production.match_indices('!') {
+        let start = production[..offset + 1]
+            .rfind(char::is_whitespace)
+            .unwrap_or(0);
+        let head = &production[start..offset + 1];
+        if !MACROS.iter().any(|m| head.trim_start().ends_with(m)) {
+            continue;
+        }
+        let Some(open) = production[offset..].find('(') else {
+            continue;
+        };
+        let call_start = offset + open;
+        let end = (call_start..production.len().min(call_start + 600))
+            .find(|i| production.as_bytes()[*i] == b';')
+            .unwrap_or(production.len().min(call_start + 600));
+        let call = &production[call_start..end];
+
+        for word in BODY_WORDS {
+            // `field = <expr>` where the expr mentions a body-shaped binding.
+            for (idx, _) in call.match_indices(word) {
+                let tail = &call[idx + word.len()..];
+                let measured = tail.starts_with(".len()")
+                    || tail.starts_with(".count()")
+                    || tail.starts_with(".chars()")
+                    || tail.starts_with(".is_empty()")
+                    || tail.starts_with("_bytes")
+                    || tail.starts_with("_chars")
+                    || tail.starts_with("_len");
+                let before = &call[..idx];
+                let printed =
+                    before.ends_with("%") || before.ends_with("{") || before.ends_with("= ");
+                assert!(
+                    !(printed && !measured),
+                    "{name}: tracing call binds provider-controlled `{word}` without measuring it                      — log a length or a digest, never the bytes: {}",
+                    call.split_whitespace().collect::<Vec<_>>().join(" ")
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -289,4 +341,28 @@ fn subprocess_transports_stay_bounded() {
         !mas.contains("read_line(&mut buf)"),
         "recursive_mas_adapter.rs: read_line has no ceiling and the timeout          cannot interrupt a blocking read"
     );
+}
+
+/// The tracing check must fail on a real leak, not just pass on clean code.
+///
+/// A gate that never fires is decoration. These fixtures are the shapes the
+/// previous `raw = %` heuristic let through.
+#[test]
+fn tracing_check_rejects_a_leak_and_accepts_a_measurement() {
+    for leak in [
+        r#"warn!(adapter = name, body = %body, "provider error");"#,
+        r#"debug!(response = %text, "completed");"#,
+        r#"error!(adapter = name, stdout = %stdout, "cli failed");"#,
+    ] {
+        let caught = std::panic::catch_unwind(|| assert_no_body_in_tracing("fixture", leak));
+        assert!(caught.is_err(), "gate must reject: {leak}");
+    }
+
+    for clean in [
+        r#"debug!(adapter = name, response_bytes = text.len(), "completed");"#,
+        r#"info!(session = name, response_chars = response.chars().count(), "done");"#,
+        r#"warn!(cap_bytes = MAX_CLI_STDERR_BYTES, "stderr hit the read cap");"#,
+    ] {
+        assert_no_body_in_tracing("fixture", clean);
+    }
 }
