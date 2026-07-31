@@ -188,9 +188,22 @@ repository for the matching release.
    `packaging/generate_rust_notices.py --write` and land lock + snapshots +
    notices in one commit.
 
-Fabricating the text — even with a correct-looking Apache-2.0 boilerplate —
-would falsify a licence record for a revision nobody checked. That is why the
-bump is reverted rather than forced, twice now.
+3. **The obvious fetch is wrong — verified, not assumed.** Fetching
+   `LICENSE` from the repository root at the recorded 0.123.9 revision and
+   hashing it does **not** reproduce that entry's `sha256`. The recorded text
+   is 12,208 bytes and starts `Apache License
+` with leading spaces on the
+   version line; the repo-root file is 12,243 bytes and starts with a blank
+   line before a centred `Apache License`. So the generator either reads a
+   different path (likely `cranelift/assembler-x64/LICENSE` per `path_in_vcs`,
+   or a licence carried elsewhere in the tree) or normalises before hashing.
+   Whoever picks this up should read `packaging/generate_rust_notices.py`'s
+   own fetch-and-hash path and reuse it verbatim rather than reimplementing it.
+
+Fabricating the text — even with correct-looking Apache-2.0 boilerplate —
+would falsify a licence record for a revision nobody checked. The check above
+is exactly why: the plausible approach produced the wrong digest. The bump
+stays reverted until the generator's real method is followed.
 
 ### T3 — What does an exact-head release-candidate run actually have to cover? · open · `wayfinder:task` · **unblocked**
 Full CI, security, CodeQL, feature combinations, three platforms. Cannot start
