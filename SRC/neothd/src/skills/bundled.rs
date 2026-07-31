@@ -1105,6 +1105,111 @@ mod tests {
         }
     }
 
+    /// ADOPT31-B10: every bundled trigger must route to its own skill when
+    /// competing against **all** the others, not just its pack-mates.
+    ///
+    /// The per-pack tests each build a small skill set, so a phrase can only
+    /// lose to a sibling. A skill added later, in a different pack, can quietly
+    /// capture an older skill's phrase and no pack test would ever see it.
+    /// This routes every trigger against the full bundled catalogue.
+    #[test]
+    fn every_bundled_trigger_routes_to_its_own_skill_against_the_whole_catalogue() {
+        use crate::skills::router::route;
+        use crate::skills::schema::Skill;
+
+        let all: Vec<Skill> = BUNDLED_SKILLS
+            .iter()
+            .filter_map(|(id, body)| {
+                let manifest: SkillManifest = serde_yaml::from_str(body)
+                    .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
+                manifest.enabled.then(|| Skill {
+                    manifest,
+                    path: std::path::PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+                    content_hash: String::new(),
+                })
+            })
+            .collect();
+        assert!(
+            all.len() > 20,
+            "expected a populated catalogue, got {}",
+            all.len()
+        );
+
+        // Collisions that exist today, recorded so this gate is useful now
+        // instead of after a curation pass. Each pair is a genuine overlap the
+        // per-pack tests could never see, because the winner lives in a
+        // different pack. Shrinking this list is trigger curation; the gate's
+        // job is to stop it from GROWING.
+        const KNOWN_COLLISIONS: &[(&str, &str, &str)] = &[
+            ("create a presentation", "ppt_master", "git_pr_create"),
+            ("draw a flowchart", "drawio_diagram", "diagram_mermaid"),
+            ("is this correct", "verifier", "doubt_driven_development"),
+            (
+                "ready to ship",
+                "ship_review",
+                "finishing_a_development_branch",
+            ),
+            (
+                "simplify this",
+                "improve_codebase_architecture",
+                "code_simplification",
+            ),
+            (
+                "skill authoring",
+                "writing_skills",
+                "advanced_skill_creator",
+            ),
+            ("what calls", "zoom_out", "graphify"),
+            ("what depends on", "zoom_out", "graphify"),
+            ("write a skill", "writing_skills", "advanced_skill_creator"),
+            (
+                "write a yara rule for",
+                "cybersec_malware_analysis",
+                "cybersec_detection_engineering",
+            ),
+        ];
+
+        let mut fresh: Vec<String> = Vec::new();
+        for skill in &all {
+            let owner = skill.manifest.id.clone();
+            for trigger in &skill.manifest.trigger_keywords {
+                // Single-word triggers are intentionally broad and shared; the
+                // contract is about the distinctive multi-word phrases.
+                if trigger.split_whitespace().count() < 2 {
+                    continue;
+                }
+                let winner = match route(trigger, &all) {
+                    Some(hit) => hit.skill.id().to_owned(),
+                    None => String::new(),
+                };
+                if winner == owner {
+                    continue;
+                }
+                let known = KNOWN_COLLISIONS.iter().any(|(phrase, belongs, routed)| {
+                    *phrase == trigger.as_str() && *belongs == owner && *routed == winner
+                });
+                if !known {
+                    fresh.push(format!(
+                        "`{trigger}` belongs to `{owner}` but routed to `{}`",
+                        if winner.is_empty() {
+                            "nothing"
+                        } else {
+                            &winner
+                        }
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            fresh.is_empty(),
+            "new cross-skill trigger capture ({} case(s)) — a phrase now \
+             activates a different skill than the one that declares it:\n  {}",
+            fresh.len(),
+            fresh.join("\n  ")
+        );
+    }
+
     #[test]
     fn engineering_pack_is_bundled_enabled_and_routes() {
         // GOLD-ADOPT-01 — the ported engineering skill pack must be (a) all
