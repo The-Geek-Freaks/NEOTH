@@ -205,6 +205,33 @@ would falsify a licence record for a revision nobody checked. The check above
 is exactly why: the plausible approach produced the wrong digest. The bump
 stays reverted until the generator's real method is followed.
 
+**Resolution of the open question (2026-07-31, verified not assumed).** The
+generator does not read a different path — it **normalises before hashing**.
+`normalize_notice_text` (`packaging/generate_rust_notices.py:184`) converts
+CRLF/CR to LF, `rstrip()`s every line, `strip()`s the whole text and appends
+exactly one trailing newline.
+
+Gegenprobe against the known-good 0.123.9 entry: fetching repository-root
+`LICENSE` at `c59270b1…` and hashing it raw does **not** match, exactly as
+recorded here. Passing that same text through `normalize_notice_text` first
+**does** match, byte for byte — 12,243 B raw → 12,208 B normalised, which is
+precisely the recorded length. `path_in_vcs`
+(`cranelift/assembler-x64`) carries no `LICENSE` of its own (404); the
+repository root is the source.
+
+So the remaining work is mechanical:
+1. `cargo update -p wasmtime`; read the new cranelift versions from the lock.
+2. Fetch `LICENSE` from `bytecodealliance/wasmtime` at
+   `f65ae51bc2527490a5cd8fde805ea9754b81be1f`, run it through
+   `normalize_notice_text`, hash the result.
+3. Take `revision`/`path_in_vcs` from each crate's `.cargo_vcs_info.json` in
+   the registry src dir, and `crate_sha256` from the lockfile entry.
+4. Write both entries, run `packaging/generate_rust_notices.py --write`, land
+   lock + snapshots + notices in one commit, then re-run cargo-deny/audit.
+
+Ticket stays open only because steps 1-4 have not been executed; the unknown
+that blocked it is closed.
+
 ### T3 — What does an exact-head release-candidate run actually have to cover? · **resolved** · `wayfinder:task`
 
 **Resolution (2026-07-31, head `b46cbf91`).** The run is fahrbar and its
