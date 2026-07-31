@@ -302,7 +302,7 @@ pub async fn write_os_file<P: PolicyArgument>(
     // recorded we do not write, because the alternative is a file on disk that
     // no audit trail explains.
     let resolved_display = resolved.display().to_string();
-    let id = next_intent_id(b"os-file-write", &resolved_display, now_unix);
+    let id = crate::wal::events::next_intent_id(b"os-file-write", &resolved_display, now_unix);
     if !emit_write_intent(sink, &id, &resolved_display, contents, now_unix)
         .await
         .permits_effect()
@@ -388,7 +388,7 @@ pub async fn launch_os_app<P: PolicyArgument>(
     // started while its success frame was still in flight used to leave no
     // record at all; the intent is what makes that window visible.
     let resolved_display = resolved.display().to_string();
-    let id = next_intent_id(b"os-app-launch", &resolved_display, now_unix);
+    let id = crate::wal::events::next_intent_id(b"os-app-launch", &resolved_display, now_unix);
     if !emit_launch_intent(sink, &id, &resolved_display, now_unix)
         .await
         .permits_effect()
@@ -634,49 +634,6 @@ async fn emit_launch_denied(sink: AuditSink<'_>, program: &str, reason: &str, ts
     dispatch_frame(sink, EVENT_TYPE_OS_APP_LAUNCH_DENIED, payload).await;
 }
 
-/// GOLD-LF-P1-01. Domain-separated digest binding an intent frame to the exact
-/// bytes the effect will carry, without putting those bytes in the WAL.
-///
-/// This deliberately does NOT use `security::redact::bounded_audit_digest_bytes`:
-/// that helper caps its input because it hashes provider-controlled error text
-/// of unknown size. Here the payload is already fully in memory and already
-/// bounded by `max_write_bytes`, so hashing all of it is constant-memory and a
-/// strictly stronger binding — a capped digest would collide on any two writes
-/// sharing a prefix.
-fn effect_digest(domain: &[u8], bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let mut digest = Sha256::new();
-    digest.update(b"neoth/effect-intent/v1\0");
-    digest.update((domain.len() as u64).to_be_bytes());
-    digest.update(domain);
-    digest.update((bytes.len() as u64).to_be_bytes());
-    digest.update(bytes);
-    format!("{:x}", digest.finalize())
-}
-
-/// GOLD-LF-P1-01. A per-effect identifier binding one intent frame to its
-/// result frame.
-///
-/// The counter is what makes this unique. Hashing (path, timestamp) alone
-/// would collide for two writes to the same path within the same second — and
-/// those are exactly the repeated-write cases where a reader most needs to
-/// tell one attempt from the next.
-fn next_intent_id(domain: &[u8], target: &str, ts_unix: i64) -> String {
-    use sha2::{Digest, Sha256};
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    let mut digest = Sha256::new();
-    digest.update(b"neoth/intent-id/v1\0");
-    digest.update((domain.len() as u64).to_be_bytes());
-    digest.update(domain);
-    digest.update(target.as_bytes());
-    digest.update(ts_unix.to_be_bytes());
-    digest.update(seq.to_be_bytes());
-    digest.update(std::process::id().to_be_bytes());
-    format!("{:x}", digest.finalize())[..32].to_string()
-}
-
 /// GOLD-LF-P1-01. What happened to a mandatory intent frame.
 ///
 /// The three-way split exists because "the frame did not land" has two
@@ -786,7 +743,7 @@ async fn emit_write_intent(
         "intent_id": intent_id,
         "path": path,
         "bytes": contents.len(),
-        "contents_sha256": effect_digest(b"os-file-write", contents),
+        "contents_sha256": crate::wal::events::effect_digest(b"os-file-write", contents),
         "ts_unix": ts_unix,
     }))
     .unwrap_or_else(|_| b"{}".to_vec());
@@ -1819,7 +1776,7 @@ mod tests {
         assert!(frames[intent_at].2.get("contents").is_none());
         assert_eq!(
             frames[intent_at].2["contents_sha256"],
-            serde_json::Value::String(effect_digest(b"os-file-write", b"payload"))
+            serde_json::Value::String(crate::wal::events::effect_digest(b"os-file-write", b"payload"))
         );
     }
 
@@ -1888,8 +1845,8 @@ mod tests {
         // Hashing (path, timestamp) alone would collide here — and repeated
         // writes to one path are exactly where a reader must tell the attempts
         // apart.
-        let a = next_intent_id(b"os-file-write", "/tmp/same.txt", 1_700_000_000);
-        let b = next_intent_id(b"os-file-write", "/tmp/same.txt", 1_700_000_000);
+        let a = crate::wal::events::next_intent_id(b"os-file-write", "/tmp/same.txt", 1_700_000_000);
+        let b = crate::wal::events::next_intent_id(b"os-file-write", "/tmp/same.txt", 1_700_000_000);
         assert_ne!(a, b, "intent ids must be unique per effect, not per second");
     }
 

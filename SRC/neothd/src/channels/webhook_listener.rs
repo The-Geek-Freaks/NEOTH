@@ -1546,6 +1546,35 @@ async fn deliver_outbox_record(
                 return DeliveryOutcome::PersistenceRetry;
             }
 
+            // GOLD-LF-P1-01a — durable intent BEFORE the message leaves. This
+            // sits after the attempt-state persist so a retry cannot lose the
+            // attempt, and before the transport so no send can outrun its own
+            // audit trail. No writer configured = auditing off, not a failure.
+            let egress_intent = match governance.wal_writer.as_ref() {
+                Some(writer) => {
+                    match send_gate::emit_egress_intent(
+                        writer,
+                        record.channel.as_str(),
+                        &record.recipient_id,
+                        &record.body,
+                        now,
+                    )
+                    .await
+                    {
+                        Some(id) => Some(id),
+                        None => {
+                            warn!(
+                                channel = record.channel.as_str(),
+                                "webhook outbox: refusing send, pre-egress audit intent \
+                                 could not be recorded"
+                            );
+                            return DeliveryOutcome::PersistenceRetry;
+                        }
+                    }
+                }
+                None => None,
+            };
+
             let disposition = match record.channel {
                 OutboxChannel::Meta => {
                     let credentials = cfg
@@ -1588,6 +1617,26 @@ async fn deliver_outbox_record(
                     }
                 }
             };
+
+            // GOLD-LF-P1-01a — pair the intent to what the transport actually
+            // did, before any state bookkeeping can fail and hide it.
+            if let (Some(writer), Some(intent_id)) =
+                (governance.wal_writer.as_ref(), egress_intent.as_ref())
+            {
+                let (outcome, provider_message_id) = match &disposition {
+                    TransportDisposition::Delivered(id) => ("delivered", id.as_deref()),
+                    TransportDisposition::Retry { .. } => ("retry", None),
+                    _ => ("failed", None),
+                };
+                send_gate::emit_egress_result(
+                    writer,
+                    intent_id,
+                    outcome,
+                    provider_message_id,
+                    now,
+                )
+                .await;
+            }
 
             match disposition {
                 TransportDisposition::Delivered(provider_message_id) => {

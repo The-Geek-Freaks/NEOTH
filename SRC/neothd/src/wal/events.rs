@@ -238,6 +238,49 @@ pub enum ExtendedSubtype {
     // record of the same edge, not a new one.
 }
 
+/// GOLD-LF-P1-01. Domain-separated digest binding an intent frame to the exact
+/// bytes its effect will carry, without putting those bytes in the WAL.
+///
+/// Deliberately NOT `security::redact::bounded_audit_digest_bytes`: that helper
+/// caps its input because it hashes provider-controlled text of unknown size.
+/// An intent's payload is already in memory and already bounded by the caller's
+/// own size gate, so hashing all of it is constant-memory and a strictly
+/// stronger binding — a capped digest collides on any two effects sharing a
+/// prefix.
+pub(crate) fn effect_digest(domain: &[u8], bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    digest.update(b"neoth/effect-intent/v1 ");
+    digest.update((domain.len() as u64).to_be_bytes());
+    digest.update(domain);
+    digest.update((bytes.len() as u64).to_be_bytes());
+    digest.update(bytes);
+    format!("{:x}", digest.finalize())
+}
+
+/// GOLD-LF-P1-01. A per-effect identifier binding one intent frame to its
+/// result frame.
+///
+/// The counter is what makes this unique. Hashing (target, timestamp) alone
+/// would collide for two effects on the same target within one second — and
+/// those repeats are exactly where a reader most needs to tell one attempt
+/// from the next.
+pub(crate) fn next_intent_id(domain: &[u8], target: &str, ts_unix: i64) -> String {
+    use sha2::{Digest, Sha256};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let mut digest = Sha256::new();
+    digest.update(b"neoth/intent-id/v1 ");
+    digest.update((domain.len() as u64).to_be_bytes());
+    digest.update(domain);
+    digest.update(target.as_bytes());
+    digest.update(ts_unix.to_be_bytes());
+    digest.update(seq.to_be_bytes());
+    digest.update(std::process::id().to_be_bytes());
+    format!("{:x}", digest.finalize())[..32].to_string()
+}
+
 impl ExtendedSubtype {
     /// Snake_case name for `neoth wal show` display + name↔code round-trips.
     pub const fn name(self) -> &'static str {

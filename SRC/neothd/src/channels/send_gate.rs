@@ -140,6 +140,153 @@ pub fn channel_egress_failed_payload(
     .unwrap_or_default()
 }
 
+/// GOLD-LF-P1-01a. Record a durable intent BEFORE the message leaves the
+/// machine, returning the id its result must be paired to.
+///
+/// `CHANNEL_SEND` is appended only after `send_text` returns, and the rollback
+/// snapshot on that path is explicitly best-effort — so until now a message
+/// could reach a third party with nothing in the WAL to show for it. Egress is
+/// irreversible in a way a file write is not: you cannot un-send.
+///
+/// Returns `None` when the frame did not reach the WAL. Callers MUST NOT send
+/// in that case; `webhook_listener` already gates channel sends on
+/// `WalWriterHandle::is_alive()` for exactly this reason, so failing closed
+/// here continues an existing house rule rather than inventing one.
+pub async fn emit_egress_intent(
+    writer: &crate::wal::writer::WalWriterHandle,
+    channel: &str,
+    recipient: &str,
+    message: &str,
+    ts_unix: u64,
+) -> Option<String> {
+    let intent_id = crate::wal::events::next_intent_id(
+        b"channel-egress",
+        &format!("{channel}:{recipient}"),
+        ts_unix as i64,
+    );
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "intent_id": intent_id,
+        "channel": channel,
+        "to_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(recipient.as_bytes())),
+        "message_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(message.as_bytes())),
+        "message_bytes": message.len(),
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_default();
+    let header = crate::wal::HeaderBuilder::new(0x00, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8)
+        .build();
+    match writer.append(header, payload).await {
+        Ok(_) => Some(intent_id),
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                channel,
+                "mandatory pre-egress audit intent could not be recorded; send refused"
+            );
+            None
+        }
+    }
+}
+
+/// GOLD-LF-P1-01a. Terminal outcome for one [`emit_egress_intent`]. An intent
+/// with no result is a send whose fate the operator cannot determine — which
+/// is the point: that state is now visible instead of absent.
+pub async fn emit_egress_result(
+    writer: &crate::wal::writer::WalWriterHandle,
+    intent_id: &str,
+    outcome: &str,
+    provider_message_id: Option<&str>,
+    ts_unix: u64,
+) {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "intent_id": intent_id,
+        "outcome": outcome,
+        "provider_message_id": provider_message_id,
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_default();
+    let header = crate::wal::HeaderBuilder::new(0x00, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8)
+        .build();
+    if let Err(error) = writer.append(header, payload).await {
+        tracing::warn!(error = %error, "WAL append CHANNEL_EGRESS_RESULT failed after egress");
+    }
+}
+
+#[cfg(test)]
+mod intent_tests {
+    use super::*;
+    use crate::wal::events::ExtendedSubtype;
+    use crate::wal::frame::decode_frame;
+    use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+    use crate::wal::spawn as wal_spawn;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn egress_intent_binds_the_message_by_hash_and_pairs_its_result() {
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+
+        let id = emit_egress_intent(&writer, "telegram", "chat-42", "hallo", 1_700_000_000)
+            .await
+            .expect("intent must be recorded on a live writer");
+        emit_egress_result(&writer, &id, "delivered", Some("msg-7"), 1_700_000_000).await;
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = tokio::fs::read(&seg).await.unwrap();
+        let mut frames = Vec::new();
+        let mut cursor = SEGMENT_HEADER_LEN;
+        while cursor < bytes.len() {
+            let Ok(frame) = decode_frame(&bytes[cursor..]) else {
+                break;
+            };
+            frames.push((
+                frame.header.event_subtype,
+                serde_json::from_slice::<serde_json::Value>(frame.payload)
+                    .unwrap_or(serde_json::Value::Null),
+            ));
+            cursor += frame.header.total_len as usize;
+        }
+
+        let intent = frames
+            .iter()
+            .find(|(s, _)| *s == ExtendedSubtype::ChannelEgressIntent as u8)
+            .expect("intent frame");
+        let result = frames
+            .iter()
+            .find(|(s, _)| *s == ExtendedSubtype::ChannelEgressResult as u8)
+            .expect("result frame");
+
+        assert_eq!(intent.1["intent_id"], result.1["intent_id"]);
+        assert_eq!(result.1["outcome"], "delivered");
+        // Neither the recipient nor the body may appear in the clear.
+        let intent_text = intent.1.to_string();
+        assert!(!intent_text.contains("chat-42"), "recipient must be hashed");
+        assert!(!intent_text.contains("hallo"), "body must be hashed");
+        assert_eq!(intent.1["message_bytes"], 5);
+    }
+
+    #[tokio::test]
+    async fn a_dead_writer_yields_no_intent_so_the_caller_must_refuse_the_send() {
+        // The callers turn this `None` into a refusal. Proving it here keeps
+        // the contract testable without standing up a live channel.
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = wal_spawn(seg).unwrap();
+        join.abort();
+        let _ = join.await;
+
+        let id = emit_egress_intent(&writer, "telegram", "chat-42", "hallo", 1_700_000_000).await;
+        assert!(
+            id.is_none(),
+            "an unrecordable intent must not yield an id to send under"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

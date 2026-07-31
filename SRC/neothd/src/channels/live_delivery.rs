@@ -276,8 +276,33 @@ impl LiveDelivery {
         writer: &WalWriterHandle,
         text: &str,
     ) -> std::result::Result<MessageId, ChannelError> {
+        // GOLD-LF-P1-01a — durable intent BEFORE the message leaves. Fail
+        // closed: an unrecorded egress is exactly what this pair exists to
+        // prevent, and unlike a file write a send cannot be undone.
+        let Some(intent_id) = crate::channels::send_gate::emit_egress_intent(
+            writer,
+            self.kind.as_str(),
+            &self.chat_id,
+            text,
+            crate::time::now_unix_secs(),
+        )
+        .await
+        else {
+            return Err(ChannelError::Transport(
+                "mandatory pre-egress audit intent could not be recorded".to_string(),
+            ));
+        };
+
         match self.channel.send_text(&self.chat_id, text).await {
             Ok(id) => {
+                crate::channels::send_gate::emit_egress_result(
+                    writer,
+                    &intent_id,
+                    "delivered",
+                    Some(&id.0),
+                    crate::time::now_unix_secs(),
+                )
+                .await;
                 let payload = crate::channels::send_gate::channel_egress_payload(
                     self.kind.as_str(),
                     &self.chat_id,
@@ -304,6 +329,14 @@ impl LiveDelivery {
                     ChannelError::RateLimited { .. } => "rate_limited",
                     ChannelError::Auth(_) => "auth",
                 };
+                crate::channels::send_gate::emit_egress_result(
+                    writer,
+                    &intent_id,
+                    error_kind,
+                    None,
+                    crate::time::now_unix_secs(),
+                )
+                .await;
                 let payload = crate::channels::send_gate::channel_egress_failed_payload(
                     self.kind.as_str(),
                     &self.chat_id,
