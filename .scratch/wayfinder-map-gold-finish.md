@@ -281,6 +281,42 @@ silently discarding operator-facing security documentation.
 Found while closing the R3-10 doc-truth slice, which also caught a real defect:
 `updater status` claimed to verify the WAL chain and does not.
 
+### T8 — Should the Claude CLI child inherit ambient API keys? · open · `wayfinder:grilling` · unblocked
+Found by a three-way parallel sink audit for `GOLD-R4-15d`.
+
+`spawn_claude` does the right shape — `env_clear()` then a whitelisted rebuild
+via `scrub_outbound_env_with` (`providers/claude_cli.rs:928`). But the strip
+list covers `NEOTH_*` (except `NEOTH_LOG`), CI markers, `CLAUDECODE*` and
+`TMUX*`. It does **not** strip `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or any
+other credential in the daemon's own environment, so every `claude` child
+inherits them. On Linux that is readable at `/proc/<pid>/environ` by anything
+with access for as long as the child runs.
+
+**Why this is not a one-line fix.** `spawn_claude_with_extra_env` is only ever
+called with `MAX_THINKING_TOKENS` (`claude_cli.rs:1133`, `:1302`) — NEOTH never
+injects an Anthropic key itself. So for an operator who runs the Claude CLI on
+an API key rather than OAuth, that ambient inheritance **is** the mechanism
+that makes it work. Stripping it would break their setup.
+
+The options:
+- **(a)** Strip credential-shaped variables and inject the configured key
+  explicitly via `extra_env` when one is set. Controlled and documented; costs
+  a config read on the spawn path.
+- **(b)** Strip them outright. Cleanest boundary; breaks API-key CLI operators
+  loudly (auth failure, not silent corruption).
+- **(c)** Leave it and document the inheritance as an accepted property of the
+  subprocess path.
+
+(a) is the only one that both closes the exposure and keeps the working setup,
+so it is the proposal — but it changes spawn behaviour for real operators, and
+that is a decision, not a repair.
+
+**Also found, filed here so it is not lost:** WAL RAW_TEXT (0x01) writes the
+operator's prompt bytes verbatim (`cli/chat.rs:6301`) and WAL at-rest
+encryption exists but is opt-in (`wal/writer.rs:3178`). Both are by design and
+documented; the audit's suggestion was to make encryption default-on with
+auto-provisioned key. That is a separate decision of the same class.
+
 ### T4 — Which of the 233 pre-tag blockers are genuinely v1.0, and which are v1.1? · open · `wayfinder:grilling` · unblocked
 The roadmap counts 1,222 boxes with 233 pre-tag blockers. Some are hard release
 contracts (artifacts, installers, parity); others are refinements that a tagged

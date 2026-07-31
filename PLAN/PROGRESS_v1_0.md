@@ -74,6 +74,22 @@
 > audit (no BLOCKER; three overstated readiness claims corrected). CodeQL is
 > GitHub-managed with no workflow file and cannot be dispatched from the CLI.
 >
+> **R4-15d sink audit 2026-07-31 (three parallel read-only agents):** audited
+> the WAL/SQLite, process/diagnostic and memory/GUI sinks against the
+> no-leak-sentinel contract. Verified safe with evidence: the credential-import
+> WAL payload (typed redacted wrapper, no public constructor), transfer
+> receipts (digests only, with a test asserting the sentinel is absent),
+> `SecretString` Debug/Display, elicitation values (field names only), MCP tool
+> results (sanitised at the boundary), and GUI settings (presence booleans, never
+> read back). One real exposure found and filed as wayfinder T8: `spawn_claude`
+> clears and rebuilds the child environment but its strip list omits
+> credential-shaped variables, so every `claude` child inherits an ambient
+> `ANTHROPIC_API_KEY` — readable at `/proc/<pid>/environ` on Linux. It is not a
+> one-line fix: NEOTH never injects that key itself, so the inheritance is what
+> makes an API-key CLI setup work at all. Also recorded: RAW_TEXT persists
+> operator prompts verbatim and WAL encryption is opt-in — both by design,
+> both listed so the boundary is stated rather than assumed.
+>
 > **Tracing-leak gate made real 2026-07-31 (GOLD-R4-15d slice):** the security
 > review flagged that the no-leak check matched the literal `raw = %` and
 > nothing else, so `body = %text` or `error!("{stdout}")` would have passed. It
