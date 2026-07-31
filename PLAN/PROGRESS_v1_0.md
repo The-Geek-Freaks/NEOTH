@@ -3,6 +3,18 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-31
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Subprocess transports checkpoint 2026-07-31 (counts unchanged;
+> `GOLD-R4-15k1` remains open pending a release-candidate run):** Claude CLI
+> stdout/stderr, its `stream-json` line framing and its retained visible-text
+> copy, the tmux pane snapshot, the PTY timed read and the feature-gated
+> RecursiveMAS sidecar line are bounded now, on shared
+> `response_bounds::{read_bounded, read_bounded_line}`. Visible deltas still
+> reach callers unchanged — only the retained classification copy stops
+> growing. The source gate covers these transports too, so its `PENDING`
+> ratchet is empty and gone. Evidence: response bounds **5/5**, claude_cli
+> **69/69**, tmux_session **14/14**, recursive_mas **11/11**, source gate
+> **7/7**, `--features recursive-mas` check clean, clippy `-D warnings` clean.
+>
 > **Single-shot JSON transports checkpoint 2026-07-31 (counts unchanged;
 > `GOLD-R4-15k1` remains open):** Anthropic, Gemini, Cohere, Azure OpenAI,
 > AWS Bedrock and the Copilot token exchange adopted the shared bounded

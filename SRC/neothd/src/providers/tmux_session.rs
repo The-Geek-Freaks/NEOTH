@@ -55,6 +55,26 @@ pub const DEFAULT_SESSION_PREFIX: &str = "neoth-cc";
 /// "start n lines back from current".
 pub const DEFAULT_CAPTURE_HISTORY_LINES: i32 = 1000;
 
+/// Byte ceiling for one `capture-pane` snapshot. The history limit above
+/// bounds lines, not width: 1000 lines of a wedged pane emitting a single
+/// enormous line is still unbounded. 4 MiB is far above any real terminal
+/// snapshot and keeps the newest bytes, where the prompt and reply are.
+const MAX_CAPTURE_BYTES: usize = 4 * 1024 * 1024;
+/// How much tmux stderr an operator-facing error may quote.
+const MAX_QUOTED_STDERR_CHARS: usize = 400;
+
+/// Keep only the newest `max_bytes` of a captured pane.
+///
+/// A pane snapshot is bounded by line count, not by bytes; the tail is where
+/// the prompt and the reply are, so an over-long capture drops its head.
+fn keep_newest_bytes(mut captured: Vec<u8>, max_bytes: usize) -> Vec<u8> {
+    if captured.len() > max_bytes {
+        let cut = captured.len() - max_bytes;
+        captured.drain(..cut);
+    }
+    captured
+}
+
 /// One live tmux session NEOTH owns. Holding the value keeps the
 /// session alive; dropping it issues a best-effort `kill-session`.
 ///
@@ -278,14 +298,23 @@ impl TmuxSession {
             .await
             .context("spawn `tmux capture-pane`")?;
         if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!(
                 "tmux capture-pane (session={}) exited with {:?}: {}",
                 self.name,
                 output.status.code(),
-                String::from_utf8_lossy(&output.stderr).trim(),
+                stderr
+                    .trim()
+                    .chars()
+                    .take(MAX_QUOTED_STDERR_CHARS)
+                    .collect::<String>(),
             );
         }
-        String::from_utf8(output.stdout).context("tmux capture-pane stdout not valid UTF-8")
+        // A pane is bounded by line count, not by bytes: a single line can be
+        // arbitrarily wide and a wedged pane can hold megabytes of it. Keep the
+        // newest bytes, which is where the prompt and the reply live.
+        let captured = keep_newest_bytes(output.stdout, MAX_CAPTURE_BYTES);
+        Ok(String::from_utf8_lossy(&captured).into_owned())
     }
 
     /// Poll `capture_pane` until the output stops changing for
@@ -425,6 +454,14 @@ mod tests {
     // The runtime tests below skip themselves when tmux is not on PATH
     // (Windows CI, minimal CI images). Validation + name-policy tests
     // run everywhere.
+
+    #[test]
+    fn capture_keeps_the_newest_bytes_under_the_cap() {
+        assert_eq!(keep_newest_bytes(b"abcdef".to_vec(), 6), b"abcdef");
+        // The head is what scrolled away; the reply lives at the tail.
+        assert_eq!(keep_newest_bytes(b"abcdef".to_vec(), 4), b"cdef");
+        assert_eq!(keep_newest_bytes(Vec::new(), 4), Vec::<u8>::new());
+    }
 
     #[test]
     fn validate_session_name_accepts_clean_names() {

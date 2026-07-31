@@ -34,7 +34,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_util::stream::StreamExt;
 use serde::Deserialize;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
@@ -47,11 +47,42 @@ use tracing::{debug, info, warn};
 /// fresh session. Default cap matches bridge.py (10).
 const COMPACTION_MARKER: &str = "Memory was condensed";
 
+use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin, Retryability};
 use super::{
     ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
     ProviderRequestControls, Request,
 };
+
+/// The `claude` CLI is a governed local subprocess, but its stdout carries
+/// model-driven output and a hung child can produce it faster than we consume
+/// it. These caps bound what a single call may hold.
+const MAX_CLI_STDOUT_BYTES: usize = response_bounds::MAX_SUCCESS_JSON_BODY_BYTES;
+const MAX_CLI_STDERR_BYTES: usize = 64 * 1024;
+const MAX_CLI_STREAM_LINE_BYTES: usize = response_bounds::MAX_SSE_FRAME_BYTES;
+/// Visible text is emitted as chunks as it arrives; this ceiling applies only
+/// to the copy retained for termination/refusal classification, which never
+/// needs a whole long-form answer.
+const MAX_RETAINED_VISIBLE_BYTES: usize = response_bounds::MAX_SSE_FRAME_BYTES;
+/// How much subprocess stderr an operator-facing error may quote.
+const MAX_QUOTED_STDERR_CHARS: usize = 400;
+const CLI_STREAM_EVIDENCE_DOMAIN: &[u8] = b"claude-cli-stream-line/v1";
+
+/// Quote a bounded prefix of subprocess stderr for an operator-facing error.
+///
+/// The pipe is already capped at [`MAX_CLI_STDERR_BYTES`]; this keeps the
+/// message itself readable instead of pasting a whole failed run into a log
+/// line.
+fn quoted_stderr(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let trimmed = text.trim();
+    let quoted: String = trimmed.chars().take(MAX_QUOTED_STDERR_CHARS).collect();
+    if quoted.len() < trimmed.len() {
+        format!("{quoted}… (truncated)")
+    } else {
+        quoted
+    }
+}
 
 const DEFAULT_THINKING_TOKEN_BUDGET: u32 = 10_000;
 
@@ -523,13 +554,27 @@ impl ManagedClaudeChild {
                 .expect("managed Claude child is present until reaped");
             let read_stdout = async {
                 if let Some(stdout) = stdout.as_mut() {
-                    stdout.read_to_end(&mut stdout_bytes).await?;
+                    let read = response_bounds::read_bounded(stdout, MAX_CLI_STDOUT_BYTES).await?;
+                    if read.truncated {
+                        warn!(
+                            cap_bytes = MAX_CLI_STDOUT_BYTES,
+                            "claude CLI stdout hit the read cap; output is incomplete"
+                        );
+                    }
+                    stdout_bytes = read.bytes;
                 }
                 Ok::<(), std::io::Error>(())
             };
             let read_stderr = async {
                 if let Some(stderr) = stderr.as_mut() {
-                    stderr.read_to_end(&mut stderr_bytes).await?;
+                    let read = response_bounds::read_bounded(stderr, MAX_CLI_STDERR_BYTES).await?;
+                    if read.truncated {
+                        warn!(
+                            cap_bytes = MAX_CLI_STDERR_BYTES,
+                            "claude CLI stderr hit the read cap"
+                        );
+                    }
+                    stderr_bytes = read.bytes;
                 }
                 Ok::<(), std::io::Error>(())
             };
@@ -1107,8 +1152,7 @@ impl Provider for ClaudeCliAdapter {
             let stdout = child
                 .take_stdout()
                 .context("claude CLI stdout pipe missing for stream")?;
-            let reader = BufReader::new(stdout);
-            let mut lines = reader.lines();
+            let mut reader = BufReader::new(stdout);
 
             // Build the stream as an async-iter over NDJSON events. Each line
             // is one Anthropic SSE event reformatted as JSON. We extract
@@ -1119,15 +1163,30 @@ impl Provider for ClaudeCliAdapter {
                 let mut stop_reason: Option<String> = None;
                 let mut visible_text = String::new();
 
-                while let Some(line) = lines.next_line().await.transpose() {
-                    let line = line.context("read claude stdout line")?;
+                while let Some(line) = response_bounds::read_bounded_line(
+                    &mut reader,
+                    "claude_cli",
+                    CLI_STREAM_EVIDENCE_DOMAIN,
+                    MAX_CLI_STREAM_LINE_BYTES,
+                )
+                .await?
+                {
+                    let line = response_bounds::frame_utf8(
+                        &line,
+                        "claude_cli",
+                        CLI_STREAM_EVIDENCE_DOMAIN,
+                    )?;
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
                     }
                     match parse_stream_event(trimmed) {
                         StreamEvent::TextDelta(text) => {
-                            visible_text.push_str(&text);
+                            // The delta itself always reaches the caller; only
+                            // the retained classification copy stops growing.
+                            if visible_text.len() + text.len() <= MAX_RETAINED_VISIBLE_BYTES {
+                                visible_text.push_str(&text);
+                            }
                             yield CompletionChunk {
                                 delta: text,
                                 done: false,
@@ -1169,11 +1228,10 @@ impl Provider for ClaudeCliAdapter {
                     .await
                     .context("await claude CLI after stream")?;
                 if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
                     Err(anyhow::anyhow!(
                         "claude CLI exited with {:?} during stream: {}",
                         output.status.code(),
-                        stderr.trim()
+                        quoted_stderr(&output.stderr)
                     ))?;
                 }
                 // Final done-chunk with usage populated from the message_delta /
@@ -1268,11 +1326,10 @@ async fn complete_uncached(
         .context("await claude CLI completion")?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!(
             "claude CLI exited with {:?}: {}",
             output.status.code(),
-            stderr.trim()
+            quoted_stderr(&output.stderr)
         );
     }
 

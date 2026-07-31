@@ -5,11 +5,11 @@
 //! unbounded `.json()`/`.text()` read, a raw-body log line, or a skip-and-
 //! synthesize-success frame path.
 //!
-//! `PENDING` is the ratchet: every adapter still listed there is known to be
-//! unbounded, and the gate fails the moment one of them starts using the
-//! shared readers without being promoted to a real assertion block here. That
-//! is what keeps the roadmap item honest — it cannot close while `PENDING` is
-//! non-empty, and it cannot be closed by accident either.
+//! Every external byte stream a provider reads is covered here: the HTTP
+//! transports, the local subprocess pipes, the tmux pane snapshot, the PTY
+//! read and the sidecar line reader. A new adapter that reads bytes without a
+//! cap is not caught by this file automatically — add it, and keep this list
+//! the same shape as the transport inventory in `PLAN/ROAD_TO_1_0_GOLD.md`.
 
 const RESPONSE_BOUNDS: &str = include_str!("../src/providers/response_bounds.rs");
 const OPENAI: &str = include_str!("../src/providers/openai_api.rs");
@@ -20,18 +20,10 @@ const COHERE: &str = include_str!("../src/providers/cohere_api.rs");
 const AZURE: &str = include_str!("../src/providers/azure_openai.rs");
 const BEDROCK: &str = include_str!("../src/providers/aws_bedrock.rs");
 const COPILOT: &str = include_str!("../src/providers/copilot.rs");
-
-/// Adapters that have NOT yet adopted the shared bounded readers.
-const PENDING: &[(&str, &str)] = &[
-    (
-        "claude_cli.rs",
-        include_str!("../src/providers/claude_cli.rs"),
-    ),
-    (
-        "recursive_mas.rs",
-        include_str!("../src/providers/recursive_mas.rs"),
-    ),
-];
+const CLAUDE_CLI: &str = include_str!("../src/providers/claude_cli.rs");
+const TMUX_SESSION: &str = include_str!("../src/providers/tmux_session.rs");
+const PTY_SESSION: &str = include_str!("../src/providers/pty_session.rs");
+const RECURSIVE_MAS: &str = include_str!("../src/providers/recursive_mas_adapter.rs");
 
 /// Everything before the file's `#[cfg(test)] mod tests` block. Fixtures may
 /// legitimately hand-roll a response; production code may not.
@@ -238,20 +230,50 @@ fn copilot_token_exchange_stays_bounded() {
     assert!(production.contains("copilot-token-success-body/v1"));
 }
 
-/// Ratchet: adopting an adapter must also promote it out of `PENDING` and into
-/// a real assertion block above, in the same change.
+/// Local subprocess transports are not HTTP, but the same class of bug lives
+/// there: an unbounded read of output a model drives.
 #[test]
-fn pending_adapters_list_is_accurate() {
+fn subprocess_transports_stay_bounded() {
+    let cli = production(CLAUDE_CLI);
     assert!(
-        !PENDING.is_empty(),
-        "GOLD-R4-15k1 is closed only when every listed transport is bounded; \
-         if this list is empty, close the roadmap item and delete this test"
+        !cli.contains("read_to_end(&mut stdout_bytes)")
+            && !cli.contains("read_to_end(&mut stderr_bytes)"),
+        "claude_cli.rs: subprocess pipes must be read under a cap"
     );
-    for (name, source) in PENDING {
-        assert!(
-            !source.contains("response_bounds::"),
-            "{name} now uses the shared bounded readers but is still listed as pending: \
-             remove it from PENDING and add explicit assertions for it in this gate"
-        );
-    }
+    assert!(cli.contains("response_bounds::read_bounded("));
+    assert!(cli.contains("response_bounds::read_bounded_line("));
+    assert!(
+        !cli.contains("lines.next_line()"),
+        "claude_cli.rs: tokio Lines has no per-line ceiling"
+    );
+    assert!(cli.contains("const MAX_CLI_STDOUT_BYTES:"));
+    assert!(cli.contains("const MAX_CLI_STDERR_BYTES: usize = 64 * 1024;"));
+    assert!(cli.contains("const MAX_CLI_STREAM_LINE_BYTES:"));
+    assert!(cli.contains("const MAX_RETAINED_VISIBLE_BYTES:"));
+    assert_eq!(
+        cli.matches("quoted_stderr(&output.stderr)").count(),
+        2,
+        "both exit paths must quote a bounded prefix, never the whole pipe"
+    );
+
+    let tmux = production(TMUX_SESSION);
+    assert!(tmux.contains("const MAX_CAPTURE_BYTES:"));
+    assert!(
+        tmux.contains("keep_newest_bytes(output.stdout, MAX_CAPTURE_BYTES)"),
+        "tmux_session.rs: a pane snapshot is bounded by lines, not by bytes"
+    );
+
+    let pty = production(PTY_SESSION);
+    assert!(pty.contains("const MAX_PTY_READ_BYTES:"));
+    assert!(
+        pty.contains("if buf.len() >= MAX_PTY_READ_BYTES"),
+        "pty_session.rs: the read deadline is not a byte bound"
+    );
+
+    let mas = production(RECURSIVE_MAS);
+    assert!(mas.contains("const MAX_SIDECAR_LINE_BYTES:"));
+    assert!(
+        !mas.contains("read_line(&mut buf)"),
+        "recursive_mas_adapter.rs: read_line has no ceiling and the timeout          cannot interrupt a blocking read"
+    );
 }

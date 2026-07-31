@@ -2293,6 +2293,30 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
       `-D warnings` clean. Still open: Claude CLI stdout/`stream-json`,
       Tmux `capture-pane`, PTY reads and the feature-gated RecursiveMAS
       sidecar line reader.
+
+      **Subprocess transports checkpoint 2026-07-31 (box remains OPEN pending
+      a release-candidate run):** the last listed byte streams are bounded.
+      `claude_cli` reads stdout under 8 MiB and stderr under 64 KiB instead of
+      `read_to_end`, frames `stream-json` through a 1 MiB-capped line reader
+      instead of `tokio`'s ceiling-free `Lines`, caps the retained
+      visible/refusal copy at 1 MiB while every delta still reaches the caller
+      unchanged, and quotes at most 400 characters of stderr in its two exit
+      errors. `tmux_session::capture_pane` keeps the newest 4 MiB of a pane
+      whose history limit only ever bounded lines. The PTY `read_until`
+      deadline gained a 4 MiB companion bound, because a fast child fills
+      memory before a timer expires. The feature-gated RecursiveMAS sidecar
+      replaces `read_line` — which the 120 s timeout cannot interrupt — with a
+      1 MiB-capped `read_until`. Shared
+      `response_bounds::{read_bounded, read_bounded_line}` back all of it, and
+      the source gate now pins the subprocess transports too, so its `PENDING`
+      ratchet is gone: every stream in this box's inventory has an assertion.
+      Evidence: response bounds **5/5**, claude_cli **69/69**, tmux_session
+      **14/14**, recursive_mas **11/11**, source gate **7/7**,
+      `--features recursive-mas` check clean, clippy `-D warnings` clean.
+      Unrelated pre-existing WAL-fixture failures (`physical_redaction*`,
+      `tick_on_empty_wal_dir_is_ok_none`) were each reproduced with this work
+      stashed and are tracked separately. Closing this box still needs the
+      release-candidate workspace/CI pass.
   - [ ] **GOLD-R4-15l Installed clean-machine evidence:** exercise file-to-file,
     OS-vault-to-NEOTH-vault and password-store/file-to-named-Channel journeys
     through equivalent CLI, GUI/Buddy and authenticated Channel commands on

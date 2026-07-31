@@ -35,6 +35,11 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 
+/// Byte ceiling for one timed PTY read. The deadline bounds how long we wait,
+/// not how much a fast child can hand us inside it.
+#[cfg(feature = "pty-subprocess")]
+const MAX_PTY_READ_BYTES: usize = 4 * 1024 * 1024;
+
 /// PTY dimensions. Defaults match a sensible wide terminal so
 /// `claude`'s ANSI reflow doesn't truncate lines on first paint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,9 +228,17 @@ mod real {
                 if start.elapsed() >= until {
                     break;
                 }
+                // The deadline alone is not a bound: a child that writes fast
+                // enough fills memory before it expires.
+                if buf.len() >= MAX_PTY_READ_BYTES {
+                    break;
+                }
                 match reader.read(&mut chunk) {
                     Ok(0) => break,
-                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                    Ok(n) => {
+                        let room = MAX_PTY_READ_BYTES - buf.len();
+                        buf.extend_from_slice(&chunk[..n.min(room)]);
+                    }
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(20));

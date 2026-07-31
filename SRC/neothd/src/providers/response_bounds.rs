@@ -153,6 +153,81 @@ pub(crate) async fn decode_json<T: DeserializeOwned>(
     })
 }
 
+/// A capped read from a local byte source plus whether the cap cut it short.
+pub(crate) struct BoundedRead {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) truncated: bool,
+}
+
+/// Reads at most `max_bytes` from a subprocess pipe or PTY.
+///
+/// A governed subprocess is closer to home than a remote endpoint, but its
+/// output is still model-driven and a hung or hostile child can produce it
+/// faster than we consume it. Stopping at the cap keeps the diagnostic while
+/// refusing to hold an unbounded copy.
+pub(crate) async fn read_bounded<R>(
+    reader: &mut R,
+    max_bytes: usize,
+) -> std::io::Result<BoundedRead>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+
+    let mut bytes = Vec::new();
+    let read = reader
+        .take(max_bytes as u64 + 1)
+        .read_to_end(&mut bytes)
+        .await?;
+    let truncated = read > max_bytes;
+    if truncated {
+        bytes.truncate(max_bytes);
+    }
+    Ok(BoundedRead { bytes, truncated })
+}
+
+/// Reads one newline-terminated line, refusing to grow past `max_bytes`.
+///
+/// `tokio`'s `Lines` has no ceiling: a child that never emits `\n` makes it
+/// allocate until the process dies. Returns `Ok(None)` at EOF with nothing
+/// buffered; a final line without its newline is returned like any other.
+pub(crate) async fn read_bounded_line<R>(
+    reader: &mut R,
+    adapter_name: &'static str,
+    evidence_domain: &'static [u8],
+    max_bytes: usize,
+) -> Result<Option<Vec<u8>>>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    use tokio::io::AsyncBufReadExt;
+
+    let mut line = Vec::new();
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Ok((!line.is_empty()).then_some(line));
+        }
+        let (segment, consumed, complete) = match available.iter().position(|byte| *byte == b'\n') {
+            Some(newline) => (&available[..newline], newline + 1, true),
+            None => (available, available.len(), false),
+        };
+        if segment.len() > max_bytes.saturating_sub(line.len()) {
+            let evidence = frame_evidence(evidence_domain, &[&line, segment], true);
+            reader.consume(consumed);
+            anyhow::bail!("{adapter_name}: output line exceeded {max_bytes} bytes ({evidence})");
+        }
+        line.extend_from_slice(segment);
+        reader.consume(consumed);
+        if complete {
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            return Ok(Some(line));
+        }
+    }
+}
+
 pub(crate) fn append_frame_segment(
     buffer: &mut Vec<u8>,
     segment: &[u8],
@@ -206,6 +281,53 @@ mod tests {
         append_frame_segment(&mut buffer, &encoded[2..], "fixture", b"frame/v1", 8).unwrap();
 
         assert_eq!(frame_utf8(&buffer, "fixture", b"frame/v1").unwrap(), "🦀");
+    }
+
+    #[tokio::test]
+    async fn read_bounded_keeps_the_cap_and_reports_truncation() {
+        let mut exact = &b"12345"[..];
+        let read = read_bounded(&mut exact, 5).await.expect("exact limit");
+        assert_eq!(read.bytes, b"12345");
+        assert!(!read.truncated);
+
+        let mut over = &b"123456"[..];
+        let read = read_bounded(&mut over, 5).await.expect("one byte over");
+        assert_eq!(read.bytes, b"12345");
+        assert!(read.truncated);
+    }
+
+    #[tokio::test]
+    async fn bounded_lines_split_on_newline_and_reject_an_endless_one() {
+        use tokio::io::BufReader;
+
+        let mut reader = BufReader::new(&b"first\r\nsecond"[..]);
+        let first = read_bounded_line(&mut reader, "fixture", b"line/v1", 64)
+            .await
+            .expect("first line")
+            .expect("some");
+        assert_eq!(first, b"first");
+        // A final line without its newline is still delivered.
+        let second = read_bounded_line(&mut reader, "fixture", b"line/v1", 64)
+            .await
+            .expect("residual line")
+            .expect("some");
+        assert_eq!(second, b"second");
+        assert!(
+            read_bounded_line(&mut reader, "fixture", b"line/v1", 64)
+                .await
+                .expect("eof")
+                .is_none()
+        );
+
+        let secret = b"secret-line-content";
+        let endless = [secret.as_slice(), &[b'x'; 64]].concat();
+        let message = read_bounded_line(&mut endless.as_slice(), "fixture", b"line/v1", 16)
+            .await
+            .expect_err("a line with no newline must hit the cap")
+            .to_string();
+        assert!(message.contains("output line exceeded"));
+        assert!(message.contains("frame_sha256="));
+        assert!(!message.contains("secret-line-content"));
     }
 
     #[test]

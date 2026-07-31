@@ -22,7 +22,7 @@
 //! so enabling the flag or acknowledging a different instance cannot silently
 //! execute third-party code.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,9 @@ use crate::providers::{
 
 /// Local ML inference is slow — generous per-completion ceiling.
 const SIDECAR_TIMEOUT: Duration = Duration::from_secs(120);
+/// Byte ceiling for one sidecar response line. The timeout cannot interrupt a
+/// blocking read, so the read itself has to stop.
+const MAX_SIDECAR_LINE_BYTES: usize = 1024 * 1024;
 
 /// Consent marker file name under `~/.neoth/`. Re-exported from the
 /// always-compiled `recursive_mas` gate module so the CLI write path and this
@@ -202,15 +205,21 @@ impl Provider for RecursiveMasAdapter {
                 .write_all(line.as_bytes())
                 .context("write to sidecar stdin")?;
             io.stdin.flush().context("flush sidecar stdin")?;
-            let mut buf = String::new();
-            let n = io
-                .stdout
-                .read_line(&mut buf)
+            // `read_line` has no ceiling: a sidecar that never emits a
+            // newline allocates until the process dies, and the timeout below
+            // cannot interrupt a blocking read.
+            let mut buf = Vec::new();
+            let n = (&mut io.stdout)
+                .take(MAX_SIDECAR_LINE_BYTES as u64 + 1)
+                .read_until(b'\n', &mut buf)
                 .context("read sidecar stdout")?;
             if n == 0 {
                 anyhow::bail!("sidecar closed stdout (process died?)");
             }
-            Ok(buf)
+            if n > MAX_SIDECAR_LINE_BYTES {
+                anyhow::bail!("sidecar response line exceeded {MAX_SIDECAR_LINE_BYTES} bytes");
+            }
+            String::from_utf8(buf).context("sidecar stdout line is not valid UTF-8")
         });
         let reply = match tokio::time::timeout(SIDECAR_TIMEOUT, io).await {
             Ok(joined) => joined.context("sidecar I/O task panicked")??,
