@@ -170,11 +170,27 @@ That `revision` is provenance which cannot be derived from the crates.io
 tarball — it has to be resolved against the bytecodealliance/wasmtime
 repository for the matching release.
 
-Resolution path: find the upstream commit for those crate versions, fetch the
-licence files at that revision, record their digests, re-run
-`packaging/generate_rust_notices.py --write`, and land the bump with the
-snapshots in the same commit. Fabricating the entries would falsify a licence
-record, which is why the bump was reverted rather than forced.
+**Resolution path, now fully diagnosed (2026-07-31):**
+
+1. The `revision` is *not* a research problem. Every crates.io tarball ships
+   `.cargo_vcs_info.json`, and the existing 0.123.9 snapshot's revision
+   `c59270b1…` is exactly that file's `git.sha1`. For 0.123.13 the value is
+   `f65ae51bc2527490a5cd8fde805ea9754b81be1f`, and `path_in_vcs` comes from the
+   same file. Both are already on disk under
+   `~/.cargo/registry/src/index.crates.io-*/cranelift-assembler-x64-0.123.13/`
+   after a `cargo update -p wasmtime`.
+2. The `files[].text` is the part that needs the network. Verified by
+   inspection: neither 0.123.9 nor 0.123.13 ships a `LICENSE` file in the
+   tarball, yet the snapshot carries its full text — so the generator reads it
+   from `bytecodealliance/wasmtime` at that revision, not from the package.
+   Fetch `LICENSE` (and any sibling the 0.123.9 entry lists) from the repo at
+   `f65ae51b…`, hash the exact bytes, write both entries, then re-run
+   `packaging/generate_rust_notices.py --write` and land lock + snapshots +
+   notices in one commit.
+
+Fabricating the text — even with a correct-looking Apache-2.0 boilerplate —
+would falsify a licence record for a revision nobody checked. That is why the
+bump is reverted rather than forced, twice now.
 
 ### T3 — What does an exact-head release-candidate run actually have to cover? · open · `wayfinder:task` · **unblocked**
 Full CI, security, CodeQL, feature combinations, three platforms. Cannot start
