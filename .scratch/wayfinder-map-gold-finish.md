@@ -365,6 +365,30 @@ This is a task, not a decision — it is v1.0 under any T4 split, because a
 recall that hides the active repository's matches behind an unrelated one is a
 failure mode, not a missing feature.
 
+### T10 — Marker search is not a progress signal · **answered** · `wayfinder:research`
+Ran after T9 showed R3-13 was largely done. Question: are more open items
+already complete in code?
+
+**Method does not generalise.** `GOLD-R3-13` carries 23 in-code markers, so a
+grep answered it cleanly. `GOLD-R4-15a` through `-15l` carry **zero** markers
+between them — not because the work is missing, but because that lane never
+adopted the convention. A spot check proves it: `R4-15a` (authenticated
+explicit-intent authority) is implemented —
+`cli/credential_transfer.rs:55` (`TRANSFER_AUTHORITY_KEY_NAME`), `:477`
+(`read_bound_transfer_authority_key`), `:487` (private-file verification),
+`:490` (change-under-binding detection) — and `R4-15c`'s single-use/TOCTOU
+vocabulary (`consumed`, `nonce`) appears 24 times in the same file.
+
+**So the honest statement is:** an open checkbox in this roadmap means "nobody
+has closed it", not "the work is absent". Two different lanes track completion
+two different ways, and only one of them is greppable.
+
+**What that costs.** Deciding T4 by counting open boxes overstates the
+remaining work by an unknown amount. The proposal under T4 is built on family
+membership, not on per-item verification, and that is the right granularity for
+a scope decision — but the final pre-tag count should be taken after the v1.0
+set is verified item by item, not from the checkbox total.
+
 ### T4 — Which of the 233 pre-tag blockers are genuinely v1.0, and which are v1.1? · open · `wayfinder:grilling` · unblocked
 The roadmap counts 1,222 boxes with 233 pre-tag blockers. Some are hard release
 contracts (artifacts, installers, parity); others are refinements that a tagged
