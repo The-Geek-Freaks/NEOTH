@@ -258,9 +258,15 @@ fn subprocess_transports_stay_bounded() {
 
     let tmux = production(TMUX_SESSION);
     assert!(tmux.contains("const MAX_CAPTURE_BYTES:"));
+    // `Command::output()` collects the whole body before returning, so a
+    // post-hoc trim bounds nothing. The capture has to be streamed.
     assert!(
-        tmux.contains("keep_newest_bytes(output.stdout, MAX_CAPTURE_BYTES)"),
-        "tmux_session.rs: a pane snapshot is bounded by lines, not by bytes"
+        !tmux.contains(".output()"),
+        "tmux_session.rs: capture-pane must stream into a bounded window, not          collect first and trim after"
+    );
+    assert!(
+        tmux.contains("captured.len() > MAX_CAPTURE_BYTES * 2"),
+        "tmux_session.rs: the read loop must fold back to the tail window"
     );
 
     let pty = production(PTY_SESSION);
@@ -272,6 +278,13 @@ fn subprocess_transports_stay_bounded() {
 
     let mas = production(RECURSIVE_MAS);
     assert!(mas.contains("const MAX_SIDECAR_LINE_BYTES:"));
+    // Bounding the read is not enough: the unread remainder of an oversize
+    // line would be served as the NEXT request's answer.
+    assert_eq!(
+        mas.matches("self.kill_sidecar()").count(),
+        2,
+        "recursive_mas_adapter.rs: both the framing-failure and the          unparseable-reply path must reset the child"
+    );
     assert!(
         !mas.contains("read_line(&mut buf)"),
         "recursive_mas_adapter.rs: read_line has no ceiling and the timeout          cannot interrupt a blocking read"

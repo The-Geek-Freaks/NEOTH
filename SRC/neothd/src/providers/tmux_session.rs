@@ -282,8 +282,13 @@ impl TmuxSession {
     /// Caller is responsible for parsing / detecting the prompt
     /// stabilisation — capture is a snapshot, not a wait.
     pub async fn capture_pane(&self, history_lines: i32) -> Result<String> {
+        use tokio::io::AsyncReadExt;
+
         let start = format!("-{history_lines}");
-        let output = self
+        // `Command::output()` collects the whole of stdout before returning, so
+        // trimming afterwards bounds nothing: a wedged pane is already in
+        // memory by then. Spawn instead and read into a fixed tail window.
+        let mut child = self
             .tmux_cmd()
             .arg("capture-pane")
             .arg("-p")
@@ -294,15 +299,44 @@ impl TmuxSession {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .output()
-            .await
+            .spawn()
             .context("spawn `tmux capture-pane`")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+
+        let mut stdout = child.stdout.take().context("tmux capture-pane stdout")?;
+        let mut stderr = child.stderr.take().context("tmux capture-pane stderr")?;
+        let mut captured: Vec<u8> = Vec::new();
+        let mut stderr_bytes = Vec::new();
+        let read_stdout = async {
+            let mut chunk = [0u8; 8192];
+            loop {
+                let read = stdout.read(&mut chunk).await?;
+                if read == 0 {
+                    break;
+                }
+                captured.extend_from_slice(&chunk[..read]);
+                // Hold at most twice the window, then fold back to it. Trimming
+                // per chunk would memmove on every read; this keeps the peak
+                // bounded without that cost.
+                if captured.len() > MAX_CAPTURE_BYTES * 2 {
+                    let cut = captured.len() - MAX_CAPTURE_BYTES;
+                    captured.drain(..cut);
+                }
+            }
+            Ok::<(), std::io::Error>(())
+        };
+        let read_stderr = async {
+            stderr.read_to_end(&mut stderr_bytes).await?;
+            Ok::<(), std::io::Error>(())
+        };
+        let (status, (), ()) = tokio::try_join!(child.wait(), read_stdout, read_stderr)
+            .context("read `tmux capture-pane`")?;
+
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr_bytes);
             anyhow::bail!(
                 "tmux capture-pane (session={}) exited with {:?}: {}",
                 self.name,
-                output.status.code(),
+                status.code(),
                 stderr
                     .trim()
                     .chars()
@@ -310,10 +344,8 @@ impl TmuxSession {
                     .collect::<String>(),
             );
         }
-        // A pane is bounded by line count, not by bytes: a single line can be
-        // arbitrarily wide and a wedged pane can hold megabytes of it. Keep the
-        // newest bytes, which is where the prompt and the reply live.
-        let captured = keep_newest_bytes(output.stdout, MAX_CAPTURE_BYTES);
+        // The tail is where the prompt and the reply are.
+        let captured = keep_newest_bytes(captured, MAX_CAPTURE_BYTES);
         Ok(String::from_utf8_lossy(&captured).into_owned())
     }
 

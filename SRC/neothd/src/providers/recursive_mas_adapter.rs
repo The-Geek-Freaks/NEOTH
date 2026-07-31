@@ -139,6 +139,19 @@ impl RecursiveMasAdapter {
     }
 }
 
+impl RecursiveMasAdapter {
+    /// Terminate and reap the sidecar after a protocol failure.
+    ///
+    /// The adapter is dead afterwards; the council falls back to the standard
+    /// hemispheres. That is strictly better than answering request N+1 with
+    /// leftover bytes from request N.
+    fn kill_sidecar(&self) {
+        let mut child = self.child.lock().unwrap_or_else(PoisonError::into_inner);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
 /// Build the one-line JSON request the sidecar consumes.
 fn encode_request(req: &Request, style: &str, rounds: u8) -> String {
     let mut line = serde_json::json!({
@@ -222,7 +235,20 @@ impl Provider for RecursiveMasAdapter {
             String::from_utf8(buf).context("sidecar stdout line is not valid UTF-8")
         });
         let reply = match tokio::time::timeout(SIDECAR_TIMEOUT, io).await {
-            Ok(joined) => joined.context("sidecar I/O task panicked")??,
+            Ok(joined) => match joined.context("sidecar I/O task panicked")? {
+                Ok(reply) => reply,
+                Err(framing) => {
+                    // The stream is a single long-lived pipe with no request
+                    // ids. After an oversize or invalid line, the unread
+                    // remainder of THIS response is still queued, and the next
+                    // request would read that suffix as its own answer. Kill
+                    // the child so the desynchronised stream cannot be reused.
+                    self.kill_sidecar();
+                    return Err(framing.context(
+                        "sidecar framing failure — child killed to prevent a                          desynchronised stream serving the next request",
+                    ));
+                }
+            },
             Err(_elapsed) => {
                 // Error-hunt wave s4: the blocking thread is still stuck
                 // in read_line HOLDING the io lock — spawn_blocking
@@ -242,7 +268,15 @@ impl Provider for RecursiveMasAdapter {
             }
         };
 
-        let text = parse_response_line(&reply)?;
+        // A reply that does not parse leaves the protocol in the same doubt as
+        // an oversize one: reset rather than guess.
+        let text = match parse_response_line(&reply) {
+            Ok(text) => text,
+            Err(malformed) => {
+                self.kill_sidecar();
+                return Err(malformed.context("sidecar reply unparseable — child killed"));
+            }
+        };
         Ok(Completion {
             termination: Default::default(),
             text,

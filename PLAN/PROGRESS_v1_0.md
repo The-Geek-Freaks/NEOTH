@@ -3,6 +3,27 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-31
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Local transport lifecycle fixes 2026-07-31 (counts unchanged; external
+> review response):** an external forensic review found the subprocess
+> checkpoint had bounded memory without bounding lifetime. Three real defects,
+> all mine, now fixed. `read_bounded` stopped reading at the cap, which leaves
+> a real pipe full, the child blocked on its next write and `child.wait()`
+> waiting forever — it now drains to EOF and discards the remainder, and a
+> truncated Claude CLI stdout fails the call instead of parsing a cut JSON
+> envelope. `tmux capture_pane` used `Command::output()`, which collects the
+> whole body before the 4 MiB trim could apply — it now spawns and streams
+> into a bounded tail window. The RecursiveMAS sidecar left the unread
+> remainder of an oversize line in a pipe with no request ids, so the next
+> request could read it as its own answer — every framing failure and every
+> unparseable reply now kills and reaps the child. The source gate that
+> rubber-stamped the broken tmux bound (it only grepped for the trim call) now
+> rejects `.output()` outright. Evidence: response bounds 6/6 including a
+> reader that counts consumed bytes, claude_cli 69/69, tmux 114/114, source
+> gate 7/7, `--features recursive-mas` check clean, clippy `-D warnings`
+> clean. Still open from that review: the PTY timed read needs a typed
+> outcome with kill/reap, and the Claude JSON parse error still quotes 400
+> raw stdout characters.
+>
 > **Subprocess transports checkpoint 2026-07-31 (counts unchanged;
 > `GOLD-R4-15k1` remains open pending a release-candidate run):** Claude CLI
 > stdout/stderr, its `stream-json` line framing and its retained visible-text
