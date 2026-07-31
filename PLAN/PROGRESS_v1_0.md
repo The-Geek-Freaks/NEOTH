@@ -74,6 +74,14 @@
 > audit (no BLOCKER; three overstated readiness claims corrected). CodeQL is
 > GitHub-managed with no workflow file and cannot be dispatched from the CLI.
 >
+> **ADOPT31-A6 closed 2026-07-31 — second failure-mode item:** the shipping VAD
+> opened a speech turn on the first above-threshold frame and the hangover held
+> it open for hundreds of ms, so a 20 ms transient cancelled live playback on
+> the barge-in path. A fragment now needs 100 ms of contiguous speech before it
+> opens a turn. One existing test asserted speaking after 80 ms and was raised
+> to 120 ms with the reason inline — it is named for parameter respect and
+> should not quietly become a test of the new guard. vad 14/14, clippy clean.
+>
 > **ADOPT31-C8 closed 2026-07-31 — first of the ten failure-mode items:** the
 > pre-dispatch danger gate that inspects every tool call covered `dd` and
 > `mkfs` but not secure erase or destructive SQL, so `shred -u secrets.env` and

@@ -635,9 +635,19 @@ From T13/T14. Order chosen by how much of a live gap each closes.
   the costume of an interop guarantee. Either obtain the spec, or rewrite the
   item to reference the summary as its own source of truth.
 
-Remaining: `C1` (cross-turn injection tracking), `A6` (VAD minimum-duration
-guard — small, `media/vad/smoothed.rs`), `B10` (negative routing test), and the
-four `GOLD-LF` items `P1-01/02/04/05`.
+- **`ADOPT31-A6` — DONE** (`9fb89f05`). The shipping VAD opened a turn on the
+  first above-threshold frame, and the hangover then held it open for hundreds
+  of ms — a 20 ms transient was enough, which cancels live playback on the
+  barge-in path. A fragment now needs 100 ms of contiguous speech; breaking
+  earlier resets the candidate counter. One existing test
+  (`custom_parameters_respected`) fed 80 ms and asserted speaking; raised to
+  120 ms with the reason inline, because that test is named for parameter
+  respect and should not silently become a test of the new guard. 14/14.
+
+Remaining: `C1` (cross-turn injection tracking), `B10` (negative routing test),
+and the four `GOLD-LF` items `P1-01/02/04/05`. Two of the ten are done, one
+(`C4`) is sized as a feature, one (`C9`) is blocked on a spec that is not in
+this repository.
 
 ### T4 — Which of the 233 pre-tag blockers are genuinely v1.0, and which are v1.1? · open · `wayfinder:grilling` · unblocked
 The roadmap counts 1,222 boxes with 233 pre-tag blockers. Some are hard release
