@@ -1239,9 +1239,16 @@ mod tests {
                 .write(true)
                 .open(&seg)
                 .unwrap();
-            let h1 =
-                crate::wal::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, b"alpha".as_slice()).build();
-            crate::wal::redact::redact_frame_in_place(&mut f, from, &h1).unwrap();
+            // Redaction refuses byte-identically unless the supplied header
+            // matches the frame actually on disk — rebuilding one here would
+            // only be testing that refusal. Read the real header back.
+            let on_disk = {
+                let bytes = std::fs::read(&seg).unwrap();
+                crate::wal::frame::decode_frame(&bytes[from as usize..])
+                    .expect("decode the frame being redacted")
+                    .header
+            };
+            crate::wal::redact::redact_frame_in_place(&mut f, from, &on_disk).unwrap();
             f.sync_all().unwrap();
         }
         assert!(
