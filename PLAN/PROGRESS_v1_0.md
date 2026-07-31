@@ -74,6 +74,15 @@
 > audit (no BLOCKER; three overstated readiness claims corrected). CodeQL is
 > GitHub-managed with no workflow file and cannot be dispatched from the CLI.
 >
+> **SC-01 widened 2026-07-31 (R4-15d follow-through):** the WAL secret-field
+> scan forbade `bearer_token`/`access_token`/`refresh_token` but not the bare
+> `token` — the exact name a channel gateway uses. Added that plus
+> `auth_token`, `session_token`, `credential`, `credentials`, `passphrase`,
+> `signing_key`, `master_key`. Nothing in `src/wal/` matches, so the invariant
+> held; `identity_token` stays untouched because the scan compares whole names
+> and that field is an OS file identity, not a credential. Ships with a test
+> pairing parser against list (four must-catch shapes, four near-misses), 3/3.
+>
 > **R4-15d sink audit 2026-07-31 (three parallel read-only agents):** audited
 > the WAL/SQLite, process/diagnostic and memory/GUI sinks against the
 > no-leak-sentinel contract. Verified safe with evidence: the credential-import
