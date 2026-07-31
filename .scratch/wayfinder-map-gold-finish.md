@@ -389,6 +389,35 @@ membership, not on per-item verification, and that is the right granularity for
 a scope decision — but the final pre-tag count should be taken after the v1.0
 set is verified item by item, not from the checkbox total.
 
+### T11 — Per-item verification of the R4-15 lane · open (started) · `wayfinder:task` · unblocked
+Started after T10 showed that open checkboxes in this lane say nothing about
+whether the code exists. Verified against `cli/credential_transfer.rs`:
+
+- **`R4-15a` authenticated explicit-intent authority — PRESENT.** `:55`
+  `TRANSFER_AUTHORITY_KEY_NAME`, `:477` `read_bound_transfer_authority_key`,
+  `:487` private-file verification, `:490` detects the key changing while bound.
+- **`R4-15c` single-use binding / TOCTOU — PRESENT.** `consumed`/`nonce`
+  vocabulary appears 24 times in the file.
+- **`R4-15e` durable replay/crash reconciliation — PRESENT.** The exact typed
+  state machine the item asks for: `Planned` `:134`, `Executing` `:137`,
+  `Delivered` `:140`, `Indeterminate` `:147` with a typed
+  `JournalIndeterminateReason` `:165` (including
+  `PreviouslyDeliveredDestinationMissing`).
+- **`R4-15f` correct move ordering — LIKELY ABSENT.** No `source_deleted`
+  state, no move/delete-source path. Consistent with the shipped surface being
+  `neoth credential copy`, which preserves the source by contract. If move is
+  in v1.0 scope this is real work; if copy is the whole v1.0 surface, the item
+  is mis-scoped rather than incomplete.
+
+Still to check: `-15b` resolvers, `-15d` (partly done — the tracing sink is
+enforced, the rest of the sentinel is not), `-15g` CLI receipt parity, `-15h`
+GUI/Buddy parity, `-15i` channel parity, `-15j` provider-refusal parity,
+`-15l` installed clean-machine evidence.
+
+Closing any of these needs a ratifier, not just this reading: "the code is
+present" is not the same as "the item's full contract is met, wired and
+tested". This ticket produces the evidence; it does not tick the boxes.
+
 ### T4 — Which of the 233 pre-tag blockers are genuinely v1.0, and which are v1.1? · open · `wayfinder:grilling` · unblocked
 The roadmap counts 1,222 boxes with 233 pre-tag blockers. Some are hard release
 contracts (artifacts, installers, parity); others are refinements that a tagged
