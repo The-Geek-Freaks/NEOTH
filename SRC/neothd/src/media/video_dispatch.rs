@@ -81,7 +81,67 @@ pub async fn dispatch_video_analysis(
     let frame_count = frames.len();
     let req = MultimodalRequest::new(prompt, frames, max_tokens).map_err(|e| e.to_string())?;
 
-    let answer = synth.synthesize(&req).await?;
+    // GOLD-LF-P1-01b — durable intent BEFORE the frames leave the device.
+    // `0xC9` lands only after `synthesize` returns, so a crash mid-upload left
+    // the operator's imagery at a third party with nothing recorded. The frame
+    // bytes are hash-bound, never carried.
+    let intent_id = if let Some(w) = writer {
+        let id = crate::wal::events::next_intent_id(
+            b"media-call",
+            synth.provider().as_str(),
+            crate::time::now_unix_secs() as i64,
+        );
+        let frame_digest = crate::wal::events::effect_digest(
+            b"media-frames",
+            &req.frames
+                .iter()
+                .flat_map(|f| f.pixels.iter().copied())
+                .collect::<Vec<u8>>(),
+        );
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "intent_id": id,
+            "provider": synth.provider().as_str(),
+            "frame_count": frame_count,
+            "frames_sha256": frame_digest,
+            "prompt_chars": prompt.chars().count(),
+            "max_tokens": max_tokens,
+            "ts_unix": crate::time::now_unix_secs(),
+        }))
+        .unwrap_or_default();
+        let header = crate::wal::HeaderBuilder::new(0x00, &payload)
+            .event_subtype(crate::wal::events::ExtendedSubtype::MediaCallIntent as u8)
+            .build();
+        if let Err(e) = w.append(header, payload).await {
+            // `enforce_cloud_media_audit` above already refuses an unauditable
+            // cloud upload under proof-hardline; this is the same posture for
+            // the case where the writer exists but rejects the frame.
+            return Err(format!(
+                "mandatory pre-upload media intent could not be recorded: {e}"
+            ));
+        }
+        Some(id)
+    } else {
+        None
+    };
+
+    let answer = synth.synthesize(&req).await;
+
+    if let (Some(w), Some(id)) = (writer, intent_id.as_ref()) {
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "intent_id": id,
+            "outcome": if answer.is_ok() { "answered" } else { "failed" },
+            "ts_unix": crate::time::now_unix_secs(),
+        }))
+        .unwrap_or_default();
+        let header = crate::wal::HeaderBuilder::new(0x00, &payload)
+            .event_subtype(crate::wal::events::ExtendedSubtype::MediaCallResult as u8)
+            .build();
+        if let Err(e) = w.append(header, payload).await {
+            tracing::warn!(error = %e, "WAL append MEDIA_CALL_RESULT failed after the upload");
+        }
+    }
+
+    let answer = answer?;
 
     if let Some(w) = writer {
         emit_synthesized(
@@ -248,6 +308,84 @@ mod tests {
         drop(writer);
         let _ = join.await;
         assert_eq!(count_0xc9(&seg), 1, "exactly one 0xC9 audit frame");
+    }
+
+    #[tokio::test]
+    async fn media_intent_is_durable_before_the_frames_leave_the_device() {
+        // GOLD-LF-P1-01b. 0xC9 lands only after `synthesize` returns, so
+        // without this pair a crash mid-upload left the operator's imagery at
+        // a third party with nothing recorded.
+        use crate::wal::events::ExtendedSubtype;
+        use crate::wal::frame::decode_frame;
+        use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+
+        let decoder = MockDecoder {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let synth = MockSynth {
+            provider: MultimodalProvider::AnthropicClaude,
+            answer: "ok".into(),
+            seen_frames: std::sync::Mutex::new(0),
+        };
+        let (writer, join, dir) = test_writer();
+        let seg = dir.path().join("vd.wal");
+
+        dispatch_video_analysis(
+            &decoder,
+            &synth,
+            &asset(),
+            &[0, 500],
+            FrameFormat::Jpeg,
+            "what happens?",
+            256,
+            Some(&writer),
+            &frames_on(),
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        let _ = join.await;
+
+        let bytes = std::fs::read(&seg).unwrap();
+        let mut seen: Vec<(u8, u8, serde_json::Value)> = Vec::new();
+        let mut cursor = SEGMENT_HEADER_LEN;
+        while cursor < bytes.len() {
+            let Ok(frame) = decode_frame(&bytes[cursor..]) else {
+                break;
+            };
+            seen.push((
+                frame.header.event_type,
+                frame.header.event_subtype,
+                serde_json::from_slice(frame.payload).unwrap_or(serde_json::Value::Null),
+            ));
+            cursor += frame.header.total_len as usize;
+        }
+
+        let intent_at = seen
+            .iter()
+            .position(|(t, s, _)| *t == 0x00 && *s == ExtendedSubtype::MediaCallIntent as u8)
+            .expect("a MediaCallIntent must precede the upload");
+        let result_at = seen
+            .iter()
+            .position(|(t, s, _)| *t == 0x00 && *s == ExtendedSubtype::MediaCallResult as u8)
+            .expect("a MediaCallResult must pair the intent");
+        let synth_at = seen
+            .iter()
+            .position(|(t, _, _)| *t == crate::wal::events::EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED)
+            .expect("the existing 0xC9 frame must still be emitted");
+
+        assert!(
+            intent_at < result_at && intent_at < synth_at,
+            "intent must precede both its result and 0xC9, got \
+             intent={intent_at} result={result_at} synthesized={synth_at}"
+        );
+        assert_eq!(seen[intent_at].2["intent_id"], seen[result_at].2["intent_id"]);
+        assert_eq!(seen[result_at].2["outcome"], "answered");
+        assert_eq!(seen[intent_at].2["frame_count"], 2);
+        // The prompt and the imagery are bound, never carried.
+        let intent_text = seen[intent_at].2.to_string();
+        assert!(!intent_text.contains("what happens?"));
+        assert!(seen[intent_at].2["frames_sha256"].is_string());
     }
 
     #[tokio::test]
