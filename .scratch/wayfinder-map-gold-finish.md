@@ -526,6 +526,47 @@ The scope decision stays the operator's. It is now informed: the honest
 question is not "should NCT be v1.0?" but "should v1.0 wait for a new
 inter-agent protocol with an independent implementation?"
 
+### T13 — Is the lost-feature lane built? · **answered** · `wayfinder:research`
+Surveyed 54 of 118 open `GOLD-LF-*` items (all 22 P1, 20 P2 spanning every
+subsystem, 12 Plan-001/002/003).
+
+| | BUILT | PARTIAL | ABSENT |
+|---|---|---|---|
+| 54 checked | **0** | **25** | **29** |
+
+**Zero built.** Where code exists it is a primitive without its wiring or its
+test contract — `Hlc` exists but WAL replay still orders by wall clock
+(`wal/hlc.rs:9`); `ChannelAccountId` exists but the registry comment says it
+"remains on the legacy single-account layout" (`channels/registry.rs:899`);
+20 of 31 required channel descriptors ship (`registry.rs:303`). The absent
+half is whole optional surfaces with no trace at all (WebChat, Voice Call,
+CloakBrowser, BGE-M3, Ralph, Omniparser).
+
+### This corrects the T4 proposal above
+
+I named three LF items as v1.0 carry-overs by reading item text. The survey,
+reading code, names four — and two of mine were not among them:
+
+1. **`LF-P1-01` INTENT/RESULT WAL pairs** — confirmed. All five OS-effect
+   intent types are absent while file writes, channel egress, media calls and
+   self-updates already execute. Shipped mutation paths have no pre-mutation
+   audit trace.
+2. **`LF-P1-04` HLC WAL replay** — new. The WAL ships and replays today using
+   ±300 s wall-clock ordering; the `Hlc` struct is built but unintegrated.
+   Multi-node skew is a silent failure mode on a shipped path.
+3. **`LF-P1-05` per-decision TrustLedger** — new. Autonomy decisions already
+   fire; no `TrustEvent` is emitted at the boundary, so the trust audit trail
+   has holes on a shipped gate.
+4. **`LF-P1-02` mirror-refusal stages 2–6** — new. Schicht-0 detection ships
+   (`refusal_detect.rs`); without the later stages a detected induction attempt
+   reaches no bounded-termination or recovery path.
+
+`LF-P2-08` (universal WAL `session_id`) and `LF-P2-22` (per-counterparty
+ingress consent), which I had listed, are PARTIAL rather than failure-mode
+closures — `session_id` is present in ~8 payload types, just not as a header
+field. Keeping them on the v1.0 list would have been my error, not the
+roadmap's.
+
 ### T4 — Which of the 233 pre-tag blockers are genuinely v1.0, and which are v1.1? · open · `wayfinder:grilling` · unblocked
 The roadmap counts 1,222 boxes with 233 pre-tag blockers. Some are hard release
 contracts (artifacts, installers, parity); others are refinements that a tagged
