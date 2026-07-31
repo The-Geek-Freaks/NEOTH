@@ -74,6 +74,18 @@
 > audit (no BLOCKER; three overstated readiness claims corrected). CodeQL is
 > GitHub-managed with no workflow file and cannot be dispatched from the CLI.
 >
+> **ADOPT31-B10 closed 2026-08-01 — third failure-mode item, and it found ten
+> real collisions:** the existing routing tests each build a per-pack skill set,
+> so a trigger can only lose to a sibling; a skill added later in another pack
+> can capture an older skill's phrase invisibly. Routing every multi-word
+> bundled trigger against the whole catalogue surfaced ten such captures —
+> `create a presentation` reaches `git_pr_create`, `what calls` reaches
+> `graphify` instead of `zoom_out`, `write a skill` reaches
+> `advanced_skill_creator` instead of `writing_skills`. Recorded as a baseline
+> rather than fixed: resolving them is trigger curation across many manifests
+> and some overlaps may be intentional. The gate stops the list from growing.
+> 1/1, clippy clean.
+>
 > **ADOPT31-A6 closed 2026-07-31 — second failure-mode item:** the shipping VAD
 > opened a speech turn on the first above-threshold frame and the hangover held
 > it open for hundreds of ms, so a 20 ms transient cancelled live playback on

@@ -644,10 +644,20 @@ From T13/T14. Order chosen by how much of a live gap each closes.
   120 ms with the reason inline, because that test is named for parameter
   respect and should not silently become a test of the new guard. 14/14.
 
-Remaining: `C1` (cross-turn injection tracking), `B10` (negative routing test),
-and the four `GOLD-LF` items `P1-01/02/04/05`. Two of the ten are done, one
-(`C4`) is sized as a feature, one (`C9`) is blocked on a spec that is not in
-this repository.
+- **`ADOPT31-B10` — DONE** (`1f22d2a6`), and it found ten live collisions. The
+  per-pack tests let a trigger lose only to a sibling; routing every multi-word
+  trigger against the whole catalogue showed `create a presentation` reaching
+  `git_pr_create`, `what calls` reaching `graphify` instead of `zoom_out`,
+  `write a skill` reaching `advanced_skill_creator` instead of
+  `writing_skills`, and seven more. Baselined rather than fixed — resolution is
+  trigger curation across many manifests and some overlaps may be deliberate —
+  so the gate now stops the list from growing.
+
+Remaining: `C1` (cross-turn injection tracking) and the four `GOLD-LF` items
+`P1-01/02/04/05`. Three of the ten are done, one (`C4`) is sized as a feature,
+one (`C9`) is blocked on a spec that is not in this repository. `P1-01`
+(INTENT/RESULT WAL pairs) is the heaviest of what is left: five new event types
+wired at every mutation edge.
 
 ### T4 — Which of the 233 pre-tag blockers are genuinely v1.0, and which are v1.1? · open · `wayfinder:grilling` · unblocked
 The roadmap counts 1,222 boxes with 233 pre-tag blockers. Some are hard release
