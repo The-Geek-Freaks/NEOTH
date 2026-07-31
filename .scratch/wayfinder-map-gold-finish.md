@@ -205,7 +205,28 @@ would falsify a licence record for a revision nobody checked. The check above
 is exactly why: the plausible approach produced the wrong digest. The bump
 stays reverted until the generator's real method is followed.
 
-### T3 — What does an exact-head release-candidate run actually have to cover? · open · `wayfinder:task` · **unblocked**
+### T3 — What does an exact-head release-candidate run actually have to cover? · **resolved** · `wayfinder:task`
+
+**Resolution (2026-07-31, head `b46cbf91`).** The run is fahrbar and its
+verdict is legible:
+
+- **CI: zero failures.** Linux quality, macOS/Windows tests, Ubuntu beta,
+  gold-smoke, every feature-flag build, licence notices, WASM ABI, Keet
+  standalone — all green.
+- **Security: two failing jobs, one cause.** `cargo-audit` and `cargo-deny`
+  both stop on `RUSTSEC-2026-0222` (wasmtime). Everything else in that
+  workflow passes: trivy, pnpm audit, CodeQL/JavaScript, trusted-main.
+- **CodeQL/Rust cannot be dispatched from the CLI** — it is GitHub-managed
+  with no workflow file in the repo, so it runs on its own trigger. Making it
+  dispatchable is a repo-settings change, not a code change.
+
+What the run has to cover is therefore settled: CI as configured is
+sufficient and currently clean; Security is one advisory away from clean; the
+only structural gap is CodeQL dispatchability.
+
+Three rounds of fixes were needed to get here, and all three findings were
+invisible to any local gate on this machine — see the Unix-path note under
+Notes. That is the standing reason this ticket exists.
 Full CI, security, CodeQL, feature combinations, three platforms. Cannot start
 while any test is knowingly red. Resolution records the exact workflow set and
 the observed result per platform.
