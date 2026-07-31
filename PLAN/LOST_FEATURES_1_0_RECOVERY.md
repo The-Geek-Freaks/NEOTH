@@ -27,13 +27,45 @@
 
 ### Sicherheit / Audit / WAL
 
-- **ADR-009 INTENT/RESULT-WAL-Paare — 5 Effektklassen nie gebaut** `[CODEX]` `GOLD-LF-P1-01`
-  Quelle: PLAN/ADR/009-intent-result-wal-audit-pairing.md. Versprochen:
-  OsFileWriteIntent, ChannelEgressIntent, MediaCallIntent, SelfUpdateIntent,
-  OsAppLaunchIntent als INTENT/RESULT-Paare. Beweis der Abwesenheit: 0 Treffer
-  in wal/events.rs; GR-079 fixte nur die Band-Kollision, nie die Events.
-  Integration: `wal/events.rs` ExtendedSubtype + Emit-Sites (File-Write,
-  Channel-Egress, Media-Cloud, Self-Update, App-Launch).
+- **ADR-009 INTENT/RESULT-WAL-Paare — 2 von 4 gebaut** `[CODEX]` `GOLD-LF-P1-01`
+  **TEILWEISE GESCHLOSSEN (`e20f6b56`).** Die Item-Beschreibung war in drei
+  Punkten falsch; korrigiert nach Code-Lesung:
+
+  1. **Quelle existiert nicht.** `PLAN/ADR/009-intent-result-wal-audit-pairing.md`
+     ist nicht im Repo, `PLAN/ADR/` gibt es gar nicht. Gleiche Klasse wie
+     `ADOPT31-C9` (`AUDIT-COMPLIANCE-1.0`). Vertrag = dieser Eintrag selbst.
+  2. **Es sind 4 Effektklassen, nicht 5.** `SelfUpdateIntent` ist redundant:
+     R3-18 `UpdaterLeafIntent`/`Result` (0x1A/0x1B) binden bereits jeden
+     Updater-HTTP-, Prozess- und Verified-Stage-Leaf an einen durablen
+     Prä-Effekt-Intent (`updater/authority.rs`, `updater/reconcile.rs`).
+  3. **„0 Treffer" beschrieb die Lücke falsch.** Alle vier Klassen hatten
+     *Outcome*-Frames; was fehlte, war die *Prä-Mutations*-Spur. Beim
+     Channel heißt eine Funktion sogar `PRE_MUTATION_SNAPSHOT`, obwohl
+     `send_text` davor läuft und der Snapshot ausdrücklich best-effort ist
+     (`channels/mod.rs:618`).
+
+  **Gebaut:** `OsFileWriteIntent/Result` (0x1C/0x1D), `OsAppLaunchIntent/Result`
+  (0x1E/0x1F), emittiert zwischen Autonomie-Gate und Effekt in
+  `os_tools/gate.rs`, fail-closed bei autoritativer Senke, Inhalte
+  hash-gebunden. 27/27 Tests grün, inkl. Negativtest (Datei darf bei
+  nicht-schreibbarem Intent NICHT entstehen).
+
+  **Offen — je ein eigenes Item:**
+  - `GOLD-LF-P1-01a` **ChannelEgressIntent/Result** (0x20/0x21 sind bereits
+    registriert). Integration ist nicht ein Choke-Point: `send_gate.rs` ist ein
+    Payload-Builder, die drei Call-Sites `channels/live_delivery.rs:281`,
+    `channels/telegram.rs:763`, `channels/webhook_listener.rs:1304` bauen und
+    appenden je selbst; dazu `channels/mod.rs:526` (Chunk-Fan-out) und
+    `send_text_with_snapshot_using`. Sicherheitsrelevanteste der beiden, weil
+    Egress an Dritte geht.
+  - `GOLD-LF-P1-01b` **MediaCallIntent/Result** (0x22/0x23 registriert).
+    `src/media/*.rs` emittiert heute **null** WAL-Frames — Cloud-STT/TTS ist
+    komplett unauditiert, hier fehlt also nicht nur der Intent, sondern jede
+    Spur.
+
+  Beide brauchen KEINEN Eintrag in `ALLOWED_CLIENT_EXTENDED_SUBTYPES` — sie
+  halten einen In-Process-`WalWriterHandle`; die Allowlist zu weiten wäre eine
+  unnötige Vergrößerung der Client-Angriffsfläche.
 - **Mirror-Refusal Stages 2–6** `[CODEX]` `GOLD-LF-P1-02`
   Quelle: PLAN/SPEC_mirror_refusal.md. Nur Schicht-0-Detection shipped
   (security/refusal_detect.rs:1, wal/events.rs:447 "v0.1.x ships the Schicht-0
