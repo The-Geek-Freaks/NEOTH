@@ -797,7 +797,14 @@ Inspect the memory-routing weights. Each row records a `(topic_hash, hemisphere_
 
 ## `neoth credential`
 
-Manage local credentials and secret-bearing files. `list` shows which credential keys are set (NAMES only, never values); `import --file <path>` merges a credentials.yaml-shaped file in (set fields overwrite; absent fields untouched); `copy` transfers one exact local file through NEOTH's typed secret data plane. Secret values never appear in terminal output
+Manage credentials and explicit local secret files. `list` and `import` never print secret values; `copy --source <path> --destination <path>` uses a prompt-free, single-use, verified local data plane
+
+### `neoth credential copy`
+
+Copy one exact local secret-bearing file to a new private destination
+
+- `--source <SOURCE>` — Exact local source file. Secret bytes are read from the file, never from argv
+- `--destination <DESTINATION>` — Exact new local destination file
 
 ### `neoth credential import`
 
@@ -809,13 +816,6 @@ Merge a credentials.yaml-shaped file into `~/.neoth/credentials.yaml`. Set field
 ### `neoth credential list`
 
 List which credential keys are currently set. Prints KEY NAMES ONLY — never the secret values
-
-### `neoth credential copy`
-
-Copy one exact local secret-bearing file to a new private destination without putting its payload in a prompt, command-line argument, replay record, journal, or terminal report. The source is preserved, the destination parent must already exist, and an existing destination is never overwritten. The authenticated private journal reconciles interrupted transfers without treating an unrelated same-content file as successful delivery. NEOTH opens its state root from an explicit existing parent, rejects linked/reparse-point state and key paths, hardens journal/replay/key directories to the current OS user, and read-verifies each journal transition before reporting success. Transfer authority lives in the dedicated capability-bound `~/.neoth/secret-transfers/authority.key`; it is independent of `wal/hmac.key`, so WAL-key rotation does not invalidate an interrupted transfer. Permit expiry is checked against a fresh clock sample at durable consumption, and issue, journal creation, execution, failure and delivery retain their own timestamps. Unix publication relies on the enforced owner-private directory and does not claim isolation from a hostile process already running as the same UID. Windows flushes and live-verifies the exact private file object and records namespace durability as `unsupported`; clean-machine power-loss durability of the directory entry remains open release evidence because this implementation has no portable Windows directory-fsync equivalent
-
-- `--source <PATH>` — Exact local source file; only the path enters argv
-- `--destination <PATH>` — Exact new local destination file; the destination must not already exist
 
 ### `neoth credential migrate`
 
@@ -2971,7 +2971,7 @@ Classify `<text>` against the refusal detector. Prints the classification + conf
 
 ### `neoth refusal disable`
 
-R-06: disable a specific truthful context reframing. Atomically rewrites `freedom.yaml::refusal_recovery.disabled_reframings`. Use for deployments where the authenticated `operator_authority` context prepend is not appropriate
+R-06: disable a specific truthful context reframing. Atomically rewrites `freedom.yaml::refusal_recovery.disabled_reframings`. Use for deployments where the `operator_authority` context prepend is not appropriate
 
 - `<ID>` — Reframing id (snake_case): `operator_authority`
 
@@ -2993,7 +2993,7 @@ Print the static pattern dictionaries the classifier uses, in table or JSON form
 
 ### `neoth refusal reframings`
 
-R-06: list the 6 LOWKEY reframings with their description, applicable causes, and per-id enabled/disabled status from `freedom.yaml::refusal_recovery.disabled_reframings`
+R-06: list the truthful context reframings with their description, applicable causes, and per-id enabled/disabled status from `freedom.yaml::refusal_recovery.disabled_reframings`
 
 ### `neoth refusal test`
 
@@ -3616,9 +3616,7 @@ Check or apply updates for NEOTH-managed CLIs (claude-cli, antigravity-cli, code
 
 ## `neoth updater`
 
-U-01..U-04 updater status + compatibility check entry. `status` verifies the
-complete canonical WAL chain and correlates receipt-bound FIRED/RESULT frames;
-`check` delegates to the live `neoth update --check` component probe
+U-01..U-04 updater status + compatibility check entry. `status` correlates versioned FIRED/RESULT pairs across the complete rotating daemon WAL and renders one latest state per task; it reports what the WAL records, and does not verify the chain's authentication. `check` delegates to the live `neoth update --check` component probe
 
 ### `neoth updater check`
 
@@ -3626,9 +3624,7 @@ Run the canonical component update check (`neoth update --check`)
 
 ### `neoth updater status`
 
-Print the latest correlated updater state per concrete lane and task class.
-Missing, corrupt, or unverifiable canonical audit evidence fails closed as
-`UPDATER_AUDIT_UNAVAILABLE`; it is never rendered as an empty healthy state.
+Verify and print the latest correlated updater state per concrete lane and task class
 
 - `--config <PATH>` — Instance freedom.yaml. Its parent is the authoritative home, using the same rule as `neoth serve --config`
 - `--wal-chain-base <PATH>` — First segment of the complete rotating namespace to scan. Must be a canonical direct child of the selected instance home's `wal` directory. Unlike `--wal-segment`, rotations are followed
@@ -3650,7 +3646,7 @@ QM-9 Phase 1: render the persisted usage log as a human-readable or JSON rollup.
 Verify HMAC compaction markers across the WAL. Phase 33b SP-2. Reads every segment, recomputes the tag over each window, and reports any mismatches
 
 - `--wal-dir <DIR>` — Override the WAL directory (mostly for tests)
-- `--key <PATH>` — Override the HMAC key path
+- `--key <PATH>` — Override the existing HMAC key path. Verification is read-only and never initializes a missing key
 - `--segment <PATH>` — Verify only this specific segment file
 - `--since-rotation` — SC-09 — verify only segments at/after the last HMAC-key rotation (`0xD9 HMAC_KEY_ROTATED`, written by `neoth keys rotate` and `neoth security rewrap-hmac-key`). Markers in earlier segments were signed with a key that has since been replaced; skipping them avoids spurious failures after a key recovery. With no rotation recorded, verifies the full history (with a note)
 
@@ -3664,7 +3660,7 @@ KF-03 — export a tamper-evidence `.neoth-proof` bundle covering every frame in
 
 - `--window <WINDOW>` — Window: a duration back from now (`24h`, `7d`, `30m`, `3600`) or a UTC RFC3339 range (`2026-05-01T00:00:00Z..2026-05-02T00:00:00Z`)
 - `--out <PATH>` — Output path. Default: `~/.neoth/exports/neoth-<unix>.neoth-proof`
-- `--verify-chain` — Re-verify each included compaction marker's HMAC against the local key at export time (sets `chain_verified`). Off by default so an operator without the key can still export the metadata bundle
+- `--verify-chain` — Re-verify each included compaction marker's HMAC against the selected WAL directory's existing key at export time (sets `chain_verified`). Verification never creates a replacement key. Off by default so an operator without the key can still export the metadata bundle with unverified marker evidence
 - `--wal-dir <DIR>` — WAL directory override (tests / inspecting a backup)
 - `--sign` — KF-03 — ed25519-sign the bundle with the operator's auto-managed signing key (`~/.neoth/wal/signing.key`, generated on first use, no prompt). Embeds the signature + public key so a third party can run `neoth wal verify-proof`. Off by default (an unsigned metadata bundle still carries the SHA-256 self-integrity digest)
 

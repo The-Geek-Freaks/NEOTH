@@ -587,9 +587,11 @@ pub enum Commands {
     /// `--allow-no-auth` is explicitly passed.
     Webhook(webhook::WebhookArgs),
 
-    /// U-01..U-04 updater status + compatibility check entry. `status` renders
-    /// recent `UpdaterTaskResultPayload` WAL frames; `check` delegates to the
-    /// live `neoth update --check` component probe.
+    /// U-01..U-04 updater status + compatibility check entry. `status`
+    /// correlates versioned FIRED/RESULT pairs across the complete rotating
+    /// daemon WAL and renders one latest state per task; it reports what the
+    /// WAL records, and does not verify the chain's authentication. `check`
+    /// delegates to the live `neoth update --check` component probe.
     Updater(updater::UpdaterArgs),
 
     /// W-05b — package-manager fallback chain runner. `--dry-run`
