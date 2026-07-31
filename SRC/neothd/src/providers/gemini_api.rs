@@ -14,11 +14,27 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
+use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin};
 use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
 
+/// `generativelanguage.googleapis.com` is an untrusted byte source even on
+/// 2xx. These caps bound allocation before any parse; error envelopes keep
+/// digest evidence only, which also removes the need to string-scrub a key
+/// the endpoint may have echoed in an encoding the scrubber would miss.
+const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+const MAX_SUCCESS_BODY_BYTES: usize = response_bounds::MAX_SUCCESS_JSON_BODY_BYTES;
+const ERROR_BODY_EVIDENCE_DOMAIN: &[u8] = b"gemini-http-error-body/v1";
+const SUCCESS_BODY_EVIDENCE_DOMAIN: &[u8] = b"gemini-success-body/v1";
+
+/// Official Gemini REST base. The only public constructor pins it; `build`
+/// exists so bounds/wire fixtures can point the same production code path at a
+/// local mock, the way `anthropic_api` and `openai_api` already do.
+const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
+
 pub struct GeminiAdapter {
+    base_url: String,
     api_key: SecretString,
     default_model: String,
     http: reqwest::Client,
@@ -26,8 +42,14 @@ pub struct GeminiAdapter {
 
 impl GeminiAdapter {
     pub fn new(api_key: SecretString, default_model: String) -> Result<Self> {
+        Self::build(DEFAULT_BASE_URL.to_string(), api_key, default_model)
+    }
+
+    fn build(base_url: String, api_key: SecretString, default_model: String) -> Result<Self> {
+        let base_url = base_url.trim_end_matches('/').to_string();
         let http = crate::providers::http_client::build_client_no_redirect()?;
         Ok(Self {
+            base_url,
             api_key,
             default_model,
             http,
@@ -100,9 +122,7 @@ impl Provider for GeminiAdapter {
             // mTLS-terminating proxies (a tighter trust boundary). Switch
             // to the header — the model still goes in the path because
             // Gemini's URL routing keys off it.
-            let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-            );
+            let url = format!("{}/models/{model}:generateContent", self.base_url);
 
             let response = self
                 .http
@@ -120,31 +140,34 @@ impl Provider for GeminiAdapter {
                 // openai_api.rs for the symmetric handling.
                 if status.as_u16() == 429 {
                     let retry_after = parse_retry_after(response.headers());
-                    let body = response.text().await.unwrap_or_default();
-                    let scrubbed = body.replace(self.api_key.expose(), "[REDACTED]");
+                    let evidence = response_bounds::error_body_evidence(
+                        response,
+                        ERROR_BODY_EVIDENCE_DOMAIN,
+                        MAX_ERROR_BODY_BYTES,
+                    )
+                    .await;
                     return Err(anyhow::Error::new(QuotaError {
                         provider: "gemini_api",
                         retry_after,
-                        body: scrubbed.trim().to_string(),
+                        body: evidence,
                     }));
                 }
-                let body = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "<unreadable body>".into());
-                // Strip API key from URL if it leaks into the error string.
-                let scrubbed = body.replace(self.api_key.expose(), "[REDACTED]");
-                anyhow::bail!(
-                    "gemini_api returned HTTP {}: {}",
-                    status.as_u16(),
-                    scrubbed.trim()
-                );
+                let evidence = response_bounds::error_body_evidence(
+                    response,
+                    ERROR_BODY_EVIDENCE_DOMAIN,
+                    MAX_ERROR_BODY_BYTES,
+                )
+                .await;
+                anyhow::bail!("gemini_api returned HTTP {} ({evidence})", status.as_u16());
             }
 
-            let parsed: GeminiResponse = response
-                .json()
-                .await
-                .context("parse gemini response JSON")?;
+            let parsed: GeminiResponse = response_bounds::decode_json(
+                response,
+                "gemini_api",
+                SUCCESS_BODY_EVIDENCE_DOMAIN,
+                MAX_SUCCESS_BODY_BYTES,
+            )
+            .await?;
 
             let latency = started.elapsed();
             completion_from_response(parsed, model, latency)
@@ -556,6 +579,178 @@ mod tests {
                 .termination
                 .native_details
                 .contains_key("candidate_safety_ratings")
+        );
+    }
+
+    // ── Response envelope bounds (GOLD-R4-15k1) ──────────────────────────────
+
+    use wiremock::matchers::{method, path_regex};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn build_adapter_against(base_url: &str) -> GeminiAdapter {
+        // Bounds fixtures deliberately fail provider calls and the breaker
+        // registry is process-global per adapter identity, so without this
+        // reset the fifth deliberate failure would open the breaker and later
+        // tests would observe that instead of their own fixture.
+        crate::providers::circuit_breaker::reset_for_test("gemini_api");
+        GeminiAdapter::build(
+            base_url.to_string(),
+            SecretString::from("gemini-mock-key"),
+            "gemini-mock".to_string(),
+        )
+        .expect("adapter constructs against mock URL")
+    }
+
+    async fn mount_generate(mock: &MockServer, status: u16, body: impl Into<Vec<u8>>) {
+        Mock::given(method("POST"))
+            .and(path_regex(r"^/models/.*:generateContent$"))
+            .respond_with(
+                ResponseTemplate::new(status).set_body_raw(body.into(), "application/json"),
+            )
+            .mount(mock)
+            .await;
+    }
+
+    async fn complete_error_against(mock: &MockServer) -> String {
+        build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("bounded fixture must fail")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn mock_200_completes_through_the_bounded_reader() {
+        let mock = MockServer::start().await;
+        mount_generate(
+            &mock,
+            200,
+            serde_json::json!({
+                "candidates": [{
+                    "content": {"role": "model", "parts": [{"text": "hello from gemini"}]},
+                    "finishReason": "STOP"
+                }],
+                "usageMetadata": {"promptTokenCount": 6, "candidatesTokenCount": 2}
+            })
+            .to_string(),
+        )
+        .await;
+
+        let completion = build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "say hi".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("200 must succeed");
+        assert_eq!(completion.text, "hello from gemini");
+        assert_eq!(completion.input_tokens, Some(6));
+        assert_eq!(completion.output_tokens, Some(2));
+        assert_eq!(
+            completion.termination.finish_reason.as_deref(),
+            Some("STOP")
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_success_body_fails_before_json_allocation() {
+        let secret = "gemini-never-persist-oversized-success";
+        let body = format!(
+            r#"{{"candidates":[{{"content":{{"parts":[{{"text":"{secret}{}"}}]}}}}]}}"#,
+            "x".repeat(MAX_SUCCESS_BODY_BYTES)
+        );
+        let mock = MockServer::start().await;
+        mount_generate(&mock, 200, body).await;
+
+        let message = complete_error_against(&mock).await;
+        assert!(message.contains("successful response body exceeded"));
+        assert!(message.contains("body_sha256="));
+        assert!(message.contains("truncated=true"));
+        assert!(!message.contains(secret));
+        assert!(!message.contains(&"x".repeat(128)));
+    }
+
+    #[tokio::test]
+    async fn malformed_success_body_reports_only_digest_evidence() {
+        let secret = "gemini-never-persist-malformed-success";
+        let mock = MockServer::start().await;
+        mount_generate(&mock, 200, format!(r#"{{"candidates":"{secret}""#)).await;
+
+        let message = complete_error_against(&mock).await;
+        assert!(message.contains("malformed successful JSON response"));
+        assert!(message.contains("body_sha256="));
+        assert!(!message.contains(secret));
+    }
+
+    #[tokio::test]
+    async fn oversized_http_error_body_reports_status_and_digest_only() {
+        let secret = "gemini-never-persist-http-error";
+        let mock = MockServer::start().await;
+        mount_generate(
+            &mock,
+            500,
+            format!("{secret}{}", "x".repeat(MAX_ERROR_BODY_BYTES * 2)),
+        )
+        .await;
+
+        let message = complete_error_against(&mock).await;
+        assert!(message.contains("HTTP 500"), "got: {message}");
+        assert!(message.contains("body_sha256="));
+        assert!(message.contains("truncated=true"));
+        assert!(!message.contains(secret));
+        assert!(!message.contains(&"x".repeat(128)));
+    }
+
+    /// The endpoint may echo the API key into its own error envelope. The
+    /// digest keeps that out of the retained quota evidence without relying on
+    /// a substring scrub that any encoding would defeat.
+    #[tokio::test]
+    async fn quota_body_keeps_typed_retry_after_without_raw_bytes_or_key() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex(r"^/models/.*:generateContent$"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "11")
+                    .set_body_raw(
+                        r#"{"error":{"message":"quota exceeded for gemini-mock-key"}}"#,
+                        "application/json",
+                    ),
+            )
+            .mount(&mock)
+            .await;
+
+        let error = build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("429 must surface as QuotaError");
+        let quota = error
+            .downcast_ref::<QuotaError>()
+            .expect("429 remains a typed QuotaError");
+        assert_eq!(quota.provider, "gemini_api");
+        assert_eq!(quota.retry_after, Some(std::time::Duration::from_secs(11)));
+        assert!(quota.body.starts_with("body_sha256="));
+        assert!(quota.body.ends_with(" truncated=false"));
+        assert!(!quota.body.contains("gemini-mock-key"));
+        assert!(!quota.body.contains("quota exceeded"));
+    }
+
+    #[tokio::test]
+    async fn public_constructor_pins_the_official_endpoint() {
+        let adapter = GeminiAdapter::new(
+            SecretString::from("gemini-mock-key"),
+            "gemini-mock".to_string(),
+        )
+        .expect("official constructor");
+        assert_eq!(
+            adapter.base_url,
+            "https://generativelanguage.googleapis.com/v1beta"
         );
     }
 }

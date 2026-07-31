@@ -42,6 +42,14 @@ use super::openai_api::OpenAiAdapter;
 use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
 
+/// The token endpoint answers with a small JSON envelope; chat itself runs
+/// through the already-bounded OpenAI-compatible transport. 64 KiB is far
+/// above any legitimate token response and keeps a hostile or misrouted
+/// endpoint from being read into memory unbounded.
+const MAX_TOKEN_BODY_BYTES: usize = 64 * 1024;
+const TOKEN_ERROR_EVIDENCE_DOMAIN: &[u8] = b"copilot-token-error-body/v1";
+const TOKEN_SUCCESS_EVIDENCE_DOMAIN: &[u8] = b"copilot-token-success-body/v1";
+
 /// Cached short-lived Copilot session token + the instant at which it expires
 /// (already reduced by a 60-second safety buffer).
 #[derive(Debug)]
@@ -67,10 +75,17 @@ pub struct CopilotAdapter {
     model: String,
     /// Short-lived token cache. `None` on first call → always fetches.
     token_cache: Arc<Mutex<Option<CopilotTokenCache>>>,
+    /// Token-exchange endpoint. The public constructor pins the official URL;
+    /// `build` exists so bounds fixtures exercise this exact code path against
+    /// a local mock, the way the other adapters already do.
+    token_endpoint: String,
     /// Shared HTTP client — same pool for both the token endpoint and the
     /// Copilot completions endpoint.
     http: reqwest::Client,
 }
+
+/// Official GitHub Copilot token-exchange endpoint.
+const TOKEN_ENDPOINT: &str = "https://api.github.com/copilot_internal/v2/token";
 
 impl CopilotAdapter {
     /// Construct a new adapter.
@@ -79,11 +94,16 @@ impl CopilotAdapter {
     /// `model` — model id to send to the Copilot completions endpoint
     ///           (defaults to `gpt-4o`; operator can override via `provider_model`).
     pub fn new(pat: SecretString, model: String) -> Result<Self> {
+        Self::build(TOKEN_ENDPOINT.to_string(), pat, model)
+    }
+
+    fn build(token_endpoint: String, pat: SecretString, model: String) -> Result<Self> {
         let http = crate::providers::http_client::build_client_no_redirect()?;
         Ok(Self {
             pat,
             model,
             token_cache: Arc::new(Mutex::new(None)),
+            token_endpoint,
             http,
         })
     }
@@ -112,7 +132,7 @@ impl CopilotAdapter {
 
         // Cache miss or stale — fetch a fresh token.
         debug!("copilot_api: fetching new session token from github");
-        let url = "https://api.github.com/copilot_internal/v2/token";
+        let url = self.token_endpoint.as_str();
         let response = self
             .http
             .get(url)
@@ -124,20 +144,27 @@ impl CopilotAdapter {
 
         let status = response.status();
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
+            let evidence = super::response_bounds::error_body_evidence(
+                response,
+                TOKEN_ERROR_EVIDENCE_DOMAIN,
+                MAX_TOKEN_BODY_BYTES,
+            )
+            .await;
             anyhow::bail!(
-                "copilot_api token endpoint returned HTTP {}: {}. \
+                "copilot_api token endpoint returned HTTP {} ({evidence}). \
                  Ensure your GitHub PAT has the `copilot` scope and your \
                  account has an active GitHub Copilot subscription.",
-                status.as_u16(),
-                body.trim()
+                status.as_u16()
             );
         }
 
-        let token_resp: CopilotTokenResponse = response
-            .json()
-            .await
-            .context("parse copilot token response JSON")?;
+        let token_resp: CopilotTokenResponse = super::response_bounds::decode_json(
+            response,
+            "copilot_api",
+            TOKEN_SUCCESS_EVIDENCE_DOMAIN,
+            MAX_TOKEN_BODY_BYTES,
+        )
+        .await?;
 
         // Parse `expires_at` (ISO 8601) → `Instant`.
         let expires_at = parse_expires_at(&token_resp.expires_at).unwrap_or_else(|| {
@@ -373,5 +400,113 @@ mod tests {
             consent::kind_from_slug("copilot_api"),
             Some(ProviderKind::GitHubCopilot)
         );
+    }
+
+    // ── Token-exchange envelope bounds (GOLD-R4-15k1) ────────────────────────
+
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn build_adapter_against(token_endpoint: &str) -> CopilotAdapter {
+        CopilotAdapter::build(
+            token_endpoint.to_string(),
+            SecretString::from("ghp-mock-pat"),
+            "gpt-4o".to_string(),
+        )
+        .expect("adapter constructs against mock token endpoint")
+    }
+
+    async fn mount_token(mock: &MockServer, status: u16, body: impl Into<Vec<u8>>) {
+        Mock::given(method("GET"))
+            .and(path("/copilot_internal/v2/token"))
+            .respond_with(
+                ResponseTemplate::new(status).set_body_raw(body.into(), "application/json"),
+            )
+            .mount(mock)
+            .await;
+    }
+
+    fn token_url(mock: &MockServer) -> String {
+        format!("{}/copilot_internal/v2/token", mock.uri())
+    }
+
+    #[tokio::test]
+    async fn public_constructor_pins_the_official_token_endpoint() {
+        let adapter = CopilotAdapter::new(SecretString::from("ghp-mock-pat"), "gpt-4o".to_string())
+            .expect("official constructor");
+        assert_eq!(
+            adapter.token_endpoint,
+            "https://api.github.com/copilot_internal/v2/token"
+        );
+    }
+
+    #[tokio::test]
+    async fn token_refresh_succeeds_through_the_bounded_reader() {
+        let mock = MockServer::start().await;
+        mount_token(
+            &mock,
+            200,
+            serde_json::json!({"token": "tid=mock;exp=1", "expires_at": "2999-01-01T00:00:00Z"})
+                .to_string(),
+        )
+        .await;
+
+        let token = build_adapter_against(&token_url(&mock))
+            .fetch_or_refresh_token()
+            .await
+            .expect("token refresh must succeed");
+        assert_eq!(token.expose(), "tid=mock;exp=1");
+    }
+
+    #[tokio::test]
+    async fn oversized_token_body_fails_before_json_allocation() {
+        let secret = "copilot-never-persist-oversized-token";
+        let mock = MockServer::start().await;
+        mount_token(
+            &mock,
+            200,
+            format!(
+                r#"{{"token":"{secret}{}"}}"#,
+                "x".repeat(MAX_TOKEN_BODY_BYTES)
+            ),
+        )
+        .await;
+
+        let message = build_adapter_against(&token_url(&mock))
+            .fetch_or_refresh_token()
+            .await
+            .expect_err("oversized token body must fail before JSON parsing")
+            .to_string();
+        assert!(message.contains("successful response body exceeded"));
+        assert!(message.contains("body_sha256="));
+        assert!(!message.contains(secret));
+        assert!(!message.contains(&"x".repeat(128)));
+    }
+
+    #[tokio::test]
+    async fn token_error_body_reports_status_and_digest_only() {
+        let secret = "copilot-never-persist-token-error";
+        let mock = MockServer::start().await;
+        mount_token(
+            &mock,
+            403,
+            format!("{secret}{}", "x".repeat(MAX_TOKEN_BODY_BYTES * 2)),
+        )
+        .await;
+
+        let message = build_adapter_against(&token_url(&mock))
+            .fetch_or_refresh_token()
+            .await
+            .expect_err("403 must fail")
+            .to_string();
+        assert!(message.contains("HTTP 403"), "got: {message}");
+        assert!(message.contains("body_sha256="));
+        assert!(message.contains("truncated=true"));
+        assert!(
+            message.contains("`copilot` scope"),
+            "keeps the operator fix"
+        );
+        assert!(!message.contains(secret));
+        assert!(!message.contains(&"x".repeat(128)));
     }
 }

@@ -28,9 +28,19 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
+use super::response_bounds;
 use super::termination::ProviderTermination;
 use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
+
+/// The Cohere endpoint is an untrusted byte source even on 2xx. These caps
+/// bound allocation before any parse; error envelopes keep digest evidence
+/// only, which also removes the substring key-scrub the endpoint could defeat
+/// with any other encoding.
+const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+const MAX_SUCCESS_BODY_BYTES: usize = response_bounds::MAX_SUCCESS_JSON_BODY_BYTES;
+const ERROR_BODY_EVIDENCE_DOMAIN: &[u8] = b"cohere-http-error-body/v1";
+const SUCCESS_BODY_EVIDENCE_DOMAIN: &[u8] = b"cohere-success-body/v1";
 
 /// Output-token cap sent as `max_tokens` (Cohere makes it optional, but a
 /// cap bounds runaway output + cost). 4096 covers a chat reply.
@@ -148,33 +158,34 @@ impl Provider for CohereAdapter {
             if !status.is_success() {
                 if status.as_u16() == 429 {
                     let retry_after = parse_retry_after(response.headers());
-                    let body = response
-                        .text()
-                        .await
-                        .unwrap_or_default()
-                        .replace(self.api_key.expose(), "[REDACTED]");
+                    let evidence = response_bounds::error_body_evidence(
+                        response,
+                        ERROR_BODY_EVIDENCE_DOMAIN,
+                        MAX_ERROR_BODY_BYTES,
+                    )
+                    .await;
                     return Err(anyhow::Error::new(QuotaError {
                         provider: "cohere_api",
                         retry_after,
-                        body: body.trim().to_string(),
+                        body: evidence,
                     }));
                 }
-                let body = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "<unreadable body>".into())
-                    .replace(self.api_key.expose(), "[REDACTED]");
-                anyhow::bail!(
-                    "cohere_api returned HTTP {}: {}",
-                    status.as_u16(),
-                    body.trim()
-                );
+                let evidence = response_bounds::error_body_evidence(
+                    response,
+                    ERROR_BODY_EVIDENCE_DOMAIN,
+                    MAX_ERROR_BODY_BYTES,
+                )
+                .await;
+                anyhow::bail!("cohere_api returned HTTP {} ({evidence})", status.as_u16());
             }
 
-            let parsed: CohereResponse = response
-                .json()
-                .await
-                .context("parse cohere_api response JSON")?;
+            let parsed: CohereResponse = response_bounds::decode_json(
+                response,
+                "cohere_api",
+                SUCCESS_BODY_EVIDENCE_DOMAIN,
+                MAX_SUCCESS_BODY_BYTES,
+            )
+            .await?;
             let termination = cohere_termination(parsed.finish_reason.clone())?;
 
             // Concatenate every text block (Anthropic-like content[] array).
@@ -354,6 +365,9 @@ mod tests {
     }
 
     fn build_adapter_against(server_uri: &str) -> CohereAdapter {
+        // Bounds fixtures deliberately fail provider calls and the breaker
+        // registry is process-global per adapter identity.
+        crate::providers::circuit_breaker::reset_for_test("cohere_api");
         CohereAdapter::build(
             server_uri.to_string(),
             SecretString::from("co-mock-key"),
@@ -548,5 +562,109 @@ mod tests {
             .await
             .expect_err("ERROR finish reason must fail");
         assert!(error.to_string().contains("finish_reason `ERROR`"));
+    }
+
+    // ── Response envelope bounds (GOLD-R4-15k1) ──────────────────────────────
+
+    async fn mount_chat(mock: &MockServer, status: u16, body: impl Into<Vec<u8>>) {
+        Mock::given(method("POST"))
+            .and(path("/chat"))
+            .respond_with(
+                ResponseTemplate::new(status).set_body_raw(body.into(), "application/json"),
+            )
+            .mount(mock)
+            .await;
+    }
+
+    async fn complete_error_against(mock: &MockServer) -> String {
+        build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("bounded fixture must fail")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn oversized_success_body_fails_before_json_allocation() {
+        let secret = "cohere-never-persist-oversized-success";
+        let body = format!(
+            r#"{{"message":{{"content":[{{"type":"text","text":"{secret}{}"}}]}}}}"#,
+            "x".repeat(MAX_SUCCESS_BODY_BYTES)
+        );
+        let mock = MockServer::start().await;
+        mount_chat(&mock, 200, body).await;
+
+        let message = complete_error_against(&mock).await;
+        assert!(message.contains("successful response body exceeded"));
+        assert!(message.contains("body_sha256="));
+        assert!(message.contains("truncated=true"));
+        assert!(!message.contains(secret));
+        assert!(!message.contains(&"x".repeat(128)));
+    }
+
+    #[tokio::test]
+    async fn malformed_success_body_reports_only_digest_evidence() {
+        let secret = "cohere-never-persist-malformed-success";
+        let mock = MockServer::start().await;
+        mount_chat(&mock, 200, format!(r#"{{"message":"{secret}""#)).await;
+
+        let message = complete_error_against(&mock).await;
+        assert!(message.contains("malformed successful JSON response"));
+        assert!(message.contains("body_sha256="));
+        assert!(!message.contains(secret));
+    }
+
+    #[tokio::test]
+    async fn oversized_http_error_body_reports_status_and_digest_only() {
+        let secret = "cohere-never-persist-http-error";
+        let mock = MockServer::start().await;
+        mount_chat(
+            &mock,
+            500,
+            format!("{secret}{}", "x".repeat(MAX_ERROR_BODY_BYTES * 2)),
+        )
+        .await;
+
+        let message = complete_error_against(&mock).await;
+        assert!(message.contains("HTTP 500"), "got: {message}");
+        assert!(message.contains("body_sha256="));
+        assert!(message.contains("truncated=true"));
+        assert!(!message.contains(secret));
+        assert!(!message.contains(&"x".repeat(128)));
+    }
+
+    #[tokio::test]
+    async fn quota_body_retains_digest_evidence_only() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "5")
+                    .set_body_raw(
+                        r#"{"message":"co-mock-key over quota"}"#,
+                        "application/json",
+                    ),
+            )
+            .mount(&mock)
+            .await;
+
+        let error = build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("429 must surface as QuotaError");
+        let quota = error
+            .downcast_ref::<QuotaError>()
+            .expect("429 remains a typed QuotaError");
+        assert_eq!(quota.retry_after, Some(std::time::Duration::from_secs(5)));
+        assert!(quota.body.starts_with("body_sha256="));
+        assert!(!quota.body.contains("co-mock-key"));
+        assert!(!quota.body.contains("over quota"));
     }
 }

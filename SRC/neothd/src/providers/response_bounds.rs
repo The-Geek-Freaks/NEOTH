@@ -66,6 +66,31 @@ pub(crate) async fn error_body_evidence(
     evidence_domain: &'static [u8],
     max_bytes: usize,
 ) -> String {
+    error_body_with_evidence(response, evidence_domain, max_bytes)
+        .await
+        .evidence
+}
+
+/// A capped error body plus its digest.
+///
+/// The body field is named for its only sanctioned use: classifying the
+/// envelope (a policy refusal, a typed vendor error code). It is never what an
+/// error message prints — callers surface `evidence`.
+///
+/// If the body was truncated at the cap, a marker beyond the cap is simply not
+/// seen and the caller falls through to its generic branch. That is deliberate:
+/// the size bound outranks classification fidelity.
+#[must_use]
+pub(crate) struct BoundedErrorBody {
+    pub(crate) classification_text: String,
+    pub(crate) evidence: String,
+}
+
+pub(crate) async fn error_body_with_evidence(
+    response: reqwest::Response,
+    evidence_domain: &'static [u8],
+    max_bytes: usize,
+) -> BoundedErrorBody {
     let mut body = Vec::with_capacity(max_bytes.min(8 * 1024));
     let mut truncated = false;
     let mut chunks = response.bytes_stream();
@@ -82,7 +107,12 @@ pub(crate) async fn error_body_evidence(
         }
         body.extend_from_slice(&chunk);
     }
-    byte_evidence(evidence_domain, &[&body], truncated)
+    let evidence = byte_evidence(evidence_domain, &[&body], truncated);
+    BoundedErrorBody {
+        classification_text: String::from_utf8(body)
+            .unwrap_or_else(|invalid| String::from_utf8_lossy(invalid.as_bytes()).into_owned()),
+        evidence,
+    }
 }
 
 pub(crate) async fn decode_json<T: DeserializeOwned>(

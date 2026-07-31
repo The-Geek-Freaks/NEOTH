@@ -129,9 +129,21 @@ by a synthetic "done" chunk that reports a complete generation. Real delta
 text, `done_reason`, prompt/eval token counts and the loopback-versus-remote
 identity split are unchanged.
 
-These limits currently describe the OpenAI-compatible family and native Ollama
-only. The v1.0 Gold gate remains open until every other native provider
-transport has equivalent bounded ingestion.
+Anthropic, Gemini, Cohere, Azure OpenAI and AWS Bedrock use the same shared
+readers on their single-shot JSON transports: 8 MiB successful bodies, 64 KiB
+error bodies, and errors that report a status plus digest evidence instead of
+the envelope. Where an adapter has to classify the error — an Azure policy
+refusal, a Bedrock `__type` — it classifies under the cap and still reports
+only the classification and the digest. The Copilot token exchange is bounded
+at 64 KiB; Copilot chat runs through the OpenAI-compatible transport.
+
+Retained quota evidence (`Retry-After` bookkeeping) is now a digest for every
+one of those adapters. That replaces the previous substring scrub of the API
+key, which only removed the key in the exact encoding the endpoint happened to
+echo.
+
+The v1.0 Gold gate remains open until the Claude CLI, Tmux and sidecar
+subprocess transports have equivalent bounded readers.
 
 For Ollama, only normalized loopback endpoints (`localhost`, `127.0.0.0/8`, or
 `[::1]`) identify as `local_ollama`. LAN, public and Ollama Cloud endpoints

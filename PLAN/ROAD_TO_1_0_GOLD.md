@@ -2263,6 +2263,36 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
       were verified to reproduce on clean `076bda02` and are tracked
       separately. Still open: Anthropic, Gemini, Cohere, Azure, Bedrock,
       Copilot-token refresh, Claude CLI, Tmux and RecursiveMAS.
+
+      **Single-shot JSON transports checkpoint 2026-07-31 (box remains
+      OPEN):** Anthropic Messages, Gemini `generateContent`, Cohere Chat,
+      Azure OpenAI and AWS Bedrock Converse now decode successful bodies
+      through the shared 8 MiB reader and read every non-2xx body under a
+      64 KiB cap. The GitHub Copilot token exchange is bounded at 64 KiB on
+      both its success and error paths; Copilot chat already delegates to the
+      bounded OpenAI-compatible transport. Retained quota evidence is a
+      domain-separated digest on every one of those adapters, replacing the
+      previous `.replace(api_key, "[REDACTED]")` substring scrub that only
+      removed the key in the exact encoding the endpoint chose to echo.
+      Adapters that must classify an error envelope — Azure policy refusals,
+      Bedrock `__type` — now classify under the cap and report guidance plus
+      digest; the `Raw body: {trimmed}` echo is gone from every branch.
+      Typed outcomes are unchanged: `QuotaError`/`Retry-After`, Anthropic
+      `stop_reason`/`stop_details`, Gemini `promptFeedback`/`finishReason`
+      and safety ratings, Cohere finish-reason rejection, Azure
+      `RefusalOrigin::{ProviderMessage,FinishReason,PromptFilter}`, Bedrock
+      guardrail refusals, token counts and model/deployment identity.
+      Gemini and Copilot gained a private endpoint seam so bounds fixtures
+      drive the real production path; the public constructors still pin the
+      official URLs and a test asserts it. New no-bypass gate
+      `tests/provider_response_bounds_source_gate.rs` pins the adopted
+      transports and carries the ratchet list of the remaining ones.
+      Focused evidence: cohere **17/17**, azure **42/42**, bedrock **34/34**,
+      copilot **15/15**, anthropic **43/43**, gemini **37/37**, ollama
+      **71/71**, openai **113/113**, source gate **7/7**, clippy
+      `-D warnings` clean. Still open: Claude CLI stdout/`stream-json`,
+      Tmux `capture-pane`, PTY reads and the feature-gated RecursiveMAS
+      sidecar line reader.
   - [ ] **GOLD-R4-15l Installed clean-machine evidence:** exercise file-to-file,
     OS-vault-to-NEOTH-vault and password-store/file-to-named-Channel journeys
     through equivalent CLI, GUI/Buddy and authenticated Channel commands on

@@ -3,6 +3,26 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-31
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Single-shot JSON transports checkpoint 2026-07-31 (counts unchanged;
+> `GOLD-R4-15k1` remains open):** Anthropic, Gemini, Cohere, Azure OpenAI,
+> AWS Bedrock and the Copilot token exchange adopted the shared bounded
+> readers — 8 MiB successful bodies, 64 KiB error bodies, digest-only
+> diagnostics. Retained quota evidence is now a digest instead of a substring
+> scrub of the endpoint's own error text, and the `Raw body:` echo is gone
+> from every Azure and Bedrock classification branch (they classify under the
+> cap and report guidance plus digest). Typed quota, refusal, safety-rating,
+> finish-reason, token-count and deployment-identity outcomes are unchanged.
+> Gemini and Copilot gained a private endpoint seam so the bounds fixtures
+> exercise the real production path while the public constructors still pin
+> the official URLs. A new no-bypass gate,
+> `tests/provider_response_bounds_source_gate.rs`, pins every adopted
+> transport and ratchets the remaining list. Evidence: cohere **17/17**,
+> azure **42/42**, bedrock **34/34**, copilot **15/15**, anthropic **43/43**,
+> gemini **37/37**, ollama **71/71**, openai **113/113**, source gate
+> **7/7**, clippy `-D warnings` clean. Remaining adopters: Claude CLI
+> stdout/`stream-json`, Tmux `capture-pane`, PTY reads and the feature-gated
+> RecursiveMAS sidecar.
+>
 > **Native Ollama envelope checkpoint 2026-07-31 (counts unchanged;
 > `GOLD-R4-15k1` remains open):** the native `/api/chat` adapter adopted the
 > shared bounded readers: 8 MiB successful JSON, 64 KiB non-2xx complete and

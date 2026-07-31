@@ -38,8 +38,18 @@ use tracing::debug;
 use super::aws_credentials::{AwsCredentials, ResolvedCredentials, env_var_getter, resolve_chain};
 use super::aws_sigv4::sign;
 use super::quota::{QuotaError, parse_retry_after};
+use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin};
+
 use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
+
+/// The Bedrock runtime is an untrusted byte source even on 2xx. These caps
+/// bound allocation before any parse; the error envelope is classified under
+/// the cap and reported as guidance plus digest evidence.
+const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+const MAX_SUCCESS_BODY_BYTES: usize = response_bounds::MAX_SUCCESS_JSON_BODY_BYTES;
+const ERROR_BODY_EVIDENCE_DOMAIN: &[u8] = b"aws-bedrock-http-error-body/v1";
+const SUCCESS_BODY_EVIDENCE_DOMAIN: &[u8] = b"aws-bedrock-success-body/v1";
 
 /// AWS service name used in the SigV4 credential scope. **Not**
 /// `bedrock-runtime` — the runtime data plane signs under `bedrock`.
@@ -275,24 +285,42 @@ impl Provider for AwsBedrockAdapter {
                 // quota tracker like every other adapter.
                 if status.as_u16() == 429 {
                     let retry_after = parse_retry_after(response.headers());
-                    let body_text = response.text().await.unwrap_or_default();
+                    let evidence = response_bounds::error_body_evidence(
+                        response,
+                        ERROR_BODY_EVIDENCE_DOMAIN,
+                        MAX_ERROR_BODY_BYTES,
+                    )
+                    .await;
                     return Err(anyhow::Error::new(QuotaError {
                         provider: "aws_bedrock",
                         retry_after,
-                        body: body_text.trim().to_string(),
+                        body: evidence,
                     }));
                 }
-                let body_text = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "<unreadable body>".into());
-                return Err(map_bedrock_error(status, &body_text, &self.region));
+                // Read under a cap and keep the text only to classify the
+                // typed Bedrock failure; the operator sees the classification
+                // plus digest evidence, never the envelope bytes.
+                let bounded = response_bounds::error_body_with_evidence(
+                    response,
+                    ERROR_BODY_EVIDENCE_DOMAIN,
+                    MAX_ERROR_BODY_BYTES,
+                )
+                .await;
+                return Err(map_bedrock_error(
+                    status,
+                    &bounded.classification_text,
+                    &self.region,
+                    &bounded.evidence,
+                ));
             }
 
-            let parsed: ConverseResponse = response
-                .json()
-                .await
-                .with_context(|| "parse aws_bedrock Converse response JSON".to_string())?;
+            let parsed: ConverseResponse = response_bounds::decode_json(
+                response,
+                "aws_bedrock",
+                SUCCESS_BODY_EVIDENCE_DOMAIN,
+                MAX_SUCCESS_BODY_BYTES,
+            )
+            .await?;
 
             let termination = bedrock_termination(parsed.stop_reason.clone());
             let text = parsed
@@ -358,9 +386,18 @@ fn bedrock_termination(stop_reason: Option<String>) -> ProviderTermination {
 /// Map a non-success Bedrock response into a tighter, actionable
 /// error message rather than the raw JSON. Surfaces region + status
 /// hints that the operator can act on.
-fn map_bedrock_error(status: reqwest::StatusCode, body: &str, region: &str) -> anyhow::Error {
-    let trimmed = body.trim();
-    let lower = trimmed.to_ascii_lowercase();
+/// Classifies a bounded error body into operator guidance.
+///
+/// `body` is used only for classification; `evidence` is the digest that ships
+/// instead of the bytes. A Bedrock error envelope is service-authored and can
+/// echo request material, so the raw body never reaches the message.
+fn map_bedrock_error(
+    status: reqwest::StatusCode,
+    body: &str,
+    region: &str,
+    evidence: &str,
+) -> anyhow::Error {
+    let lower = body.trim().to_ascii_lowercase();
     let code = status.as_u16();
 
     // Bedrock returns `__type` or `message` fields in the body for most
@@ -376,7 +413,7 @@ fn map_bedrock_error(status: reqwest::StatusCode, body: &str, region: &str) -> a
             "aws_bedrock HTTP {code}: model id not found in region `{region}`. \
              Bedrock model availability is per-region — confirm the model is \
              enabled in your AWS account for this region (Bedrock console → \
-             Model access). Raw body: {trimmed}"
+             Model access). ({evidence})"
         )
     } else if lower.contains("expiredtokenexception")
         || lower.contains("invalidclienttokenid")
@@ -385,7 +422,7 @@ fn map_bedrock_error(status: reqwest::StatusCode, body: &str, region: &str) -> a
         anyhow::anyhow!(
             "aws_bedrock HTTP {code}: temporary credentials expired or invalid. \
              Refresh AWS_SESSION_TOKEN or re-run your SSO/identity-center session. \
-             Raw body: {trimmed}"
+             ({evidence})"
         )
     } else if code == 403
         && (lower.contains("invalidsignature")
@@ -395,23 +432,23 @@ fn map_bedrock_error(status: reqwest::StatusCode, body: &str, region: &str) -> a
         anyhow::anyhow!(
             "aws_bedrock HTTP 403: SigV4 signature rejected. Most common cause: \
              credentials are bound to a different region than `{region}`, or the \
-             local system clock is more than 5 minutes off UTC. Raw body: {trimmed}"
+             local system clock is more than 5 minutes off UTC. ({evidence})"
         )
     } else if code == 403 {
         anyhow::anyhow!(
             "aws_bedrock HTTP 403: credentials rejected. Check that the IAM \
              principal has `bedrock:InvokeModel` permission for the configured \
-             model in region `{region}`. Raw body: {trimmed}"
+             model in region `{region}`. ({evidence})"
         )
     } else if code == 400 && lower.contains("validationexception") {
         anyhow::anyhow!(
             "aws_bedrock HTTP 400 ValidationException: request body shape \
              rejected by Converse API. This usually means the model id does \
              not support the Converse API (Bedrock's older `InvokeModel` is \
-             not used by NEOTH). Raw body: {trimmed}"
+             not used by NEOTH). ({evidence})"
         )
     } else {
-        anyhow::anyhow!("aws_bedrock returned HTTP {code}: {trimmed}")
+        anyhow::anyhow!("aws_bedrock returned HTTP {code} ({evidence})")
     }
 }
 
@@ -838,6 +875,7 @@ mod tests {
             reqwest::StatusCode::BAD_REQUEST,
             "{\"__type\":\"ResourceNotFoundException\",\"message\":\"unknown model\"}",
             "us-east-1",
+            "body_sha256=fixture truncated=false",
         );
         let s = err.to_string();
         assert!(s.contains("model id not found"));
@@ -850,6 +888,7 @@ mod tests {
             reqwest::StatusCode::FORBIDDEN,
             "{\"__type\":\"InvalidSignatureException\"}",
             "eu-central-1",
+            "body_sha256=fixture truncated=false",
         );
         let s = err.to_string();
         assert!(s.contains("SigV4 signature rejected"));
@@ -862,6 +901,7 @@ mod tests {
             reqwest::StatusCode::FORBIDDEN,
             "{\"__type\":\"ExpiredTokenException\"}",
             "us-east-1",
+            "body_sha256=fixture truncated=false",
         );
         let s = err.to_string();
         assert!(s.contains("expired or invalid"));
@@ -873,6 +913,7 @@ mod tests {
             reqwest::StatusCode::BAD_REQUEST,
             "{\"__type\":\"ValidationException\",\"message\":\"bad shape\"}",
             "us-east-1",
+            "body_sha256=fixture truncated=false",
         );
         let s = err.to_string();
         assert!(s.contains("ValidationException"));
@@ -885,6 +926,7 @@ mod tests {
             reqwest::StatusCode::INTERNAL_SERVER_ERROR,
             "internal server error",
             "us-east-1",
+            "body_sha256=fixture truncated=false",
         );
         assert!(err.to_string().contains("HTTP 500"));
     }
@@ -910,6 +952,48 @@ mod tests {
                 assert_eq!(refusal.origin, RefusalOrigin::FinishReason);
                 assert_eq!(refusal.reason, reason);
             }
+        }
+    }
+
+    /// Every classification branch must report guidance plus digest evidence.
+    /// A Bedrock envelope is service-authored and has echoed request material,
+    /// so no branch may print the body.
+    #[test]
+    fn error_classification_never_echoes_the_envelope() {
+        let secret = "bedrock-never-persist-error-body";
+        let evidence = "body_sha256=deadbeef truncated=true";
+        for (status, body) in [
+            (
+                reqwest::StatusCode::BAD_REQUEST,
+                format!("{{\"__type\":\"ResourceNotFoundException\",\"message\":\"{secret}\"}}"),
+            ),
+            (
+                reqwest::StatusCode::FORBIDDEN,
+                format!("{{\"__type\":\"ExpiredTokenException\",\"message\":\"{secret}\"}}"),
+            ),
+            (
+                reqwest::StatusCode::FORBIDDEN,
+                format!("{{\"__type\":\"InvalidSignatureException\",\"message\":\"{secret}\"}}"),
+            ),
+            (reqwest::StatusCode::FORBIDDEN, secret.to_string()),
+            (
+                reqwest::StatusCode::BAD_REQUEST,
+                format!("{{\"__type\":\"ValidationException\",\"message\":\"{secret}\"}}"),
+            ),
+            (
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                secret.to_string(),
+            ),
+        ] {
+            let rendered = map_bedrock_error(status, &body, "us-east-1", evidence).to_string();
+            assert!(
+                rendered.contains("body_sha256=deadbeef"),
+                "every branch carries digest evidence; got: {rendered}"
+            );
+            assert!(
+                !rendered.contains(secret),
+                "no branch may echo the envelope; got: {rendered}"
+            );
         }
     }
 }

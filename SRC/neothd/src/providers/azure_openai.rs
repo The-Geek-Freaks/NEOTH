@@ -37,9 +37,19 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
+use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin};
 use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
+
+/// An Azure OpenAI resource is an untrusted byte source even on 2xx. These
+/// caps bound allocation before any parse. The error body is still classified
+/// (policy envelope, typed failure) but never printed: only the classification
+/// and digest evidence reach an operator.
+const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+const MAX_SUCCESS_BODY_BYTES: usize = response_bounds::MAX_SUCCESS_JSON_BODY_BYTES;
+const ERROR_BODY_EVIDENCE_DOMAIN: &[u8] = b"azure-openai-http-error-body/v1";
+const SUCCESS_BODY_EVIDENCE_DOMAIN: &[u8] = b"azure-openai-success-body/v1";
 
 /// Latest GA api-version as of 2026-05-18. Operators wanting newer
 /// (`2025-04-01-preview`) override via `freedom.yaml::provider_api_version`
@@ -238,21 +248,34 @@ impl Provider for AzureOpenAiAdapter {
             if !status.is_success() {
                 if status.as_u16() == 429 {
                     let retry_after = parse_retry_after(response.headers());
-                    let body_text = response
-                        .text()
-                        .await
-                        .unwrap_or_default()
-                        .replace(self.api_key.expose(), "[REDACTED]");
+                    let evidence = response_bounds::error_body_evidence(
+                        response,
+                        ERROR_BODY_EVIDENCE_DOMAIN,
+                        MAX_ERROR_BODY_BYTES,
+                    )
+                    .await;
                     return Err(anyhow::Error::new(QuotaError {
                         provider: "azure_openai",
                         retry_after,
-                        body: body_text.trim().to_string(),
+                        body: evidence,
                     }));
                 }
-                let body_text = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "<unreadable body>".into())
+                // The body is read under a cap and kept only to classify the
+                // envelope (policy refusal, typed Azure failure). What reaches
+                // an operator is the classification plus digest evidence.
+                let bounded = response_bounds::error_body_with_evidence(
+                    response,
+                    ERROR_BODY_EVIDENCE_DOMAIN,
+                    MAX_ERROR_BODY_BYTES,
+                )
+                .await;
+                // A recognised policy envelope becomes visible refusal text, so
+                // this one classified string still gets the key scrub the
+                // OpenAI-compatible leaf applies. The scrub is not the bound —
+                // the cap and the digest are — it only keeps our own key out of
+                // text an endpoint can make visible.
+                let body_text = bounded
+                    .classification_text
                     .replace(self.api_key.expose(), "[REDACTED]");
                 if let Some((reason, message)) = parse_azure_policy_error(&body_text) {
                     return Ok(Completion {
@@ -272,13 +295,21 @@ impl Provider for AzureOpenAiAdapter {
                         cache_read_tokens: None,
                     });
                 }
-                return Err(map_azure_error(status, &body_text, &deployment));
+                return Err(map_azure_error(
+                    status,
+                    &body_text,
+                    &deployment,
+                    &bounded.evidence,
+                ));
             }
 
-            let parsed: ChatResponse = response
-                .json()
-                .await
-                .with_context(|| "parse azure_openai response JSON".to_string())?;
+            let parsed: ChatResponse = response_bounds::decode_json(
+                response,
+                "azure_openai",
+                SUCCESS_BODY_EVIDENCE_DOMAIN,
+                MAX_SUCCESS_BODY_BYTES,
+            )
+            .await?;
 
             let choice = parsed.choices.into_iter().next().ok_or_else(|| {
                 anyhow::anyhow!(
@@ -409,33 +440,43 @@ fn normalise_endpoint(raw: String) -> String {
 }
 
 /// Map non-success Azure responses to actionable error messages.
-fn map_azure_error(status: reqwest::StatusCode, body: &str, deployment: &str) -> anyhow::Error {
-    let trimmed = body.trim();
-    let lower = trimmed.to_ascii_lowercase();
+/// Classifies a bounded error body into operator guidance.
+///
+/// `body` is read under a cap and used only for classification; `evidence` is
+/// the digest that ships instead of the bytes. An Azure error envelope is
+/// gateway-authored and has echoed request material, so the raw body never
+/// reaches the message.
+fn map_azure_error(
+    status: reqwest::StatusCode,
+    body: &str,
+    deployment: &str,
+    evidence: &str,
+) -> anyhow::Error {
+    let lower = body.trim().to_ascii_lowercase();
     let code = status.as_u16();
     if code == 401 || lower.contains("unauthorized") || lower.contains("invalid api key") {
         anyhow::anyhow!(
             "azure_openai HTTP {code}: api-key rejected. Confirm the key matches the resource \
-             at the configured endpoint, and that the key hasn't been rotated. Raw body: {trimmed}"
+             at the configured endpoint, and that the key hasn't been rotated. ({evidence})"
         )
     } else if code == 404 && lower.contains("deployment") {
         anyhow::anyhow!(
             "azure_openai HTTP 404: deployment `{deployment}` not found at the configured endpoint. \
              Check the deployment name against the Azure portal → OpenAI resource → Deployments. \
-             Raw body: {trimmed}"
+             ({evidence})"
         )
     } else if code == 400 && (lower.contains("api-version") || lower.contains("apiversion")) {
         anyhow::anyhow!(
             "azure_openai HTTP 400: api-version rejected. Set `provider_api_version` in freedom.yaml \
-             (current default: 2024-10-21; preview: 2025-04-01-preview). Raw body: {trimmed}"
+             (current default: 2024-10-21; preview: 2025-04-01-preview). ({evidence})"
         )
     } else if code == 400 && lower.contains("content_filter") {
         anyhow::anyhow!(
             "azure_openai HTTP 400: content filter triggered. Azure applies its own content \
-             policy on top of the underlying model. Raw body: {trimmed}"
+             policy on top of the underlying model. ({evidence})"
         )
     } else {
-        anyhow::anyhow!("azure_openai returned HTTP {code}: {trimmed}")
+        anyhow::anyhow!("azure_openai returned HTTP {code} ({evidence})")
     }
 }
 
@@ -725,6 +766,7 @@ mod tests {
             reqwest::StatusCode::UNAUTHORIZED,
             "{\"error\":{\"code\":\"401\",\"message\":\"Invalid API key\"}}",
             "gpt-5-prod",
+            "body_sha256=fixture truncated=false",
         );
         let s = err.to_string();
         assert!(s.contains("api-key rejected"));
@@ -736,6 +778,7 @@ mod tests {
             reqwest::StatusCode::NOT_FOUND,
             "{\"error\":{\"message\":\"The API deployment for this resource does not exist.\"}}",
             "gpt-5-prod",
+            "body_sha256=fixture truncated=false",
         );
         let s = err.to_string();
         assert!(s.contains("deployment"));
@@ -749,6 +792,7 @@ mod tests {
             reqwest::StatusCode::BAD_REQUEST,
             "{\"error\":{\"message\":\"api-version 2020-01-01 is not supported\"}}",
             "gpt-5-prod",
+            "body_sha256=fixture truncated=false",
         );
         let s = err.to_string();
         assert!(s.contains("api-version"));
@@ -761,6 +805,7 @@ mod tests {
             reqwest::StatusCode::BAD_REQUEST,
             "{\"error\":{\"innererror\":{\"code\":\"content_filter\"}}}",
             "gpt-5-prod",
+            "body_sha256=fixture truncated=false",
         );
         let s = err.to_string();
         assert!(s.contains("content filter"));
@@ -772,6 +817,7 @@ mod tests {
             reqwest::StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
             "gpt-5-prod",
+            "body_sha256=fixture truncated=false",
         );
         assert!(err.to_string().contains("HTTP 500"));
     }
@@ -831,5 +877,170 @@ mod tests {
         assert_eq!(reason, "content_filter");
         assert_eq!(message.as_deref(), Some("Prompt blocked."));
         assert!(parse_azure_policy_error(r#"{"error":{"code":"BadRequest"}}"#).is_none());
+    }
+
+    // ── Response envelope bounds (GOLD-R4-15k1) ──────────────────────────────
+
+    use wiremock::matchers::{method, path_regex};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn build_adapter_against(endpoint: &str) -> AzureOpenAiAdapter {
+        // Bounds fixtures deliberately fail provider calls and the breaker
+        // registry is process-global per adapter identity.
+        crate::providers::circuit_breaker::reset_for_test("azure_openai");
+        AzureOpenAiAdapter::new(
+            endpoint.to_string(),
+            SecretString::from("azure-mock-key"),
+            "gpt-mock",
+            None,
+        )
+        .expect("adapter constructs against mock endpoint")
+    }
+
+    async fn mount_completions(mock: &MockServer, status: u16, body: impl Into<Vec<u8>>) {
+        Mock::given(method("POST"))
+            .and(path_regex(r"^/openai/deployments/.*/chat/completions$"))
+            .respond_with(
+                ResponseTemplate::new(status).set_body_raw(body.into(), "application/json"),
+            )
+            .mount(mock)
+            .await;
+    }
+
+    async fn complete_error_against(mock: &MockServer) -> String {
+        build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("bounded fixture must fail")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn oversized_success_body_fails_before_json_allocation() {
+        let secret = "azure-never-persist-oversized-success";
+        let body = format!(
+            r#"{{"choices":[{{"message":{{"role":"assistant","content":"{secret}{}"}}}}]}}"#,
+            "x".repeat(MAX_SUCCESS_BODY_BYTES)
+        );
+        let mock = MockServer::start().await;
+        mount_completions(&mock, 200, body).await;
+
+        let message = complete_error_against(&mock).await;
+        assert!(message.contains("successful response body exceeded"));
+        assert!(message.contains("body_sha256="));
+        assert!(message.contains("truncated=true"));
+        assert!(!message.contains(secret));
+        assert!(!message.contains(&"x".repeat(128)));
+    }
+
+    /// The classification still works on a bounded body — an oversized 400
+    /// policy envelope must not silently become a generic failure — while the
+    /// bytes themselves never reach the operator-facing message.
+    #[tokio::test]
+    async fn error_classification_survives_bounding_without_echoing_the_body() {
+        let secret = "azure-never-persist-http-error";
+        let mock = MockServer::start().await;
+        mount_completions(
+            &mock,
+            404,
+            format!(
+                r#"{{"error":{{"message":"The API deployment for this resource does not exist. {secret}{}"}}}}"#,
+                "x".repeat(MAX_ERROR_BODY_BYTES * 2)
+            ),
+        )
+        .await;
+
+        let message = complete_error_against(&mock).await;
+        assert!(message.contains("HTTP 404"), "got: {message}");
+        assert!(message.contains("gpt-mock"), "keeps the deployment name");
+        assert!(message.contains("Azure portal"), "keeps operator guidance");
+        assert!(message.contains("body_sha256="));
+        assert!(message.contains("truncated=true"));
+        assert!(!message.contains(secret));
+        assert!(!message.contains(&"x".repeat(128)));
+    }
+
+    #[tokio::test]
+    async fn http_policy_refusal_stays_a_typed_completion_on_a_bounded_body() {
+        let mock = MockServer::start().await;
+        mount_completions(
+            &mock,
+            400,
+            r#"{"error":{"code":"content_filter","message":"Prompt blocked."}}"#,
+        )
+        .await;
+
+        let completion = build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("a policy envelope is an authoritative response, not a transport failure");
+        let refusal = completion
+            .termination
+            .refusal
+            .expect("policy envelope must stay a typed refusal");
+        assert_eq!(refusal.origin, RefusalOrigin::PromptFilter);
+        assert_eq!(refusal.reason, "content_filter");
+        assert_eq!(completion.text, "Prompt blocked.");
+    }
+
+    /// A policy message becomes visible text, so an endpoint echoing our own
+    /// key back inside it must not put that key in the completion.
+    #[tokio::test]
+    async fn policy_refusal_text_never_carries_our_own_key() {
+        let mock = MockServer::start().await;
+        mount_completions(
+            &mock,
+            400,
+            r#"{"error":{"code":"content_filter","message":"blocked for key azure-mock-key"}}"#,
+        )
+        .await;
+
+        let completion = build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("policy envelope stays an authoritative response");
+        assert!(!completion.text.contains("azure-mock-key"));
+        assert!(completion.text.contains("[REDACTED]"));
+    }
+
+    #[tokio::test]
+    async fn quota_body_retains_digest_evidence_only() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex(r"^/openai/deployments/.*/chat/completions$"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "13")
+                    .set_body_raw(
+                        r#"{"error":{"message":"azure-mock-key exceeded quota"}}"#,
+                        "application/json",
+                    ),
+            )
+            .mount(&mock)
+            .await;
+
+        let error = build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("429 must surface as QuotaError");
+        let quota = error
+            .downcast_ref::<QuotaError>()
+            .expect("429 remains a typed QuotaError");
+        assert_eq!(quota.retry_after, Some(std::time::Duration::from_secs(13)));
+        assert!(quota.body.starts_with("body_sha256="));
+        assert!(!quota.body.contains("azure-mock-key"));
+        assert!(!quota.body.contains("exceeded quota"));
     }
 }

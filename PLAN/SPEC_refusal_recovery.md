@@ -70,10 +70,12 @@ Native Ollama `/api/chat` now shares the same primitives with NDJSON framing in
 place of SSE: an 8 MiB successful JSON envelope, a 1 MiB line/EOF-residual cap,
 64 KiB error bodies reduced to status plus digest, and fail-closed malformed or
 invalid-UTF-8 frames that can no longer be skipped ahead of a synthetic
-successful terminator. These are current OpenAI-compatible and Ollama
-limits, not yet a universal provider claim: `GOLD-R4-15k1` remains open until
-every remaining native HTTP, CLI, Tmux and sidecar provider envelope adopts an
-equivalent bounded reader.
+successful terminator. Anthropic, Gemini, Cohere, Azure OpenAI, AWS Bedrock and
+the Copilot token exchange read their single-shot envelopes through the same
+readers, and their retained quota evidence is a digest rather than a scrubbed
+copy of the endpoint's error text. Every native retained refusal signal in the
+table below is unchanged by that work. `GOLD-R4-15k1` remains open until the
+CLI, Tmux and sidecar provider envelopes adopt an equivalent bounded reader.
 
 The following native signals are retained before deterministic text fallback:
 

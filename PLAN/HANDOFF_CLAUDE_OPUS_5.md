@@ -282,17 +282,35 @@ adopted”, but leave `GOLD-R4-15k1` open.
 
 Trace and adopt every real response surface:
 
-- Anthropic Messages JSON and error bodies;
-- Gemini JSON and error bodies;
-- Cohere JSON and error bodies;
-- Azure OpenAI JSON and error bodies;
-- AWS Bedrock JSON and error bodies;
-- Copilot token-refresh JSON/error body (Copilot chat already delegates to the
-  OpenAI transport);
+- ~~Anthropic Messages JSON and error bodies~~ — **done 2026-07-31**;
+- ~~Gemini JSON and error bodies~~ — **done 2026-07-31**;
+- ~~Cohere JSON and error bodies~~ — **done 2026-07-31**;
+- ~~Azure OpenAI JSON and error bodies~~ — **done 2026-07-31** (classifies
+  under the cap, `Raw body:` echo removed);
+- ~~AWS Bedrock JSON and error bodies~~ — **done 2026-07-31** (same);
+- ~~Copilot token-refresh JSON/error body~~ — **done 2026-07-31** (Copilot chat
+  already delegates to the OpenAI transport);
 - Claude CLI non-stream stdout/stderr, `stream-json` records, and cumulatively
-  retained visible/refusal text;
-- Tmux captured stdout/stderr;
-- feature-gated RecursiveMAS line input.
+  retained visible/refusal text — **open**; inventory: unbounded
+  `read_to_end` into `stdout_bytes`/`stderr_bytes`, unbounded
+  `BufReader::lines()` per record, unbounded cumulative `visible_text`, and
+  raw stderr embedded in two `anyhow::bail!` messages;
+- Tmux captured stdout/stderr — **open**; `capture_pane` is bounded by line
+  count only, and tmux stderr lands raw in an error; PTY `read_until` is
+  time-bounded but byte-unbounded;
+- feature-gated RecursiveMAS line input — **open**; unbounded `read_line` from
+  the sidecar, then `serde_json::from_str` on it.
+
+Decorators were traced and confirmed to delegate rather than re-parse:
+`fallback.rs`, `compactor.rs`, `abliterated.rs` and `token_cap.rs` all forward
+to the leaf adapter and never touch response bytes. `meter.rs`,
+`singleflight.rs`, `circuit_breaker*.rs`, `effort_override.rs` and
+`model_roles.rs` are not Provider decorators at all.
+
+The no-bypass search now has a permanent home:
+`SRC/neothd/tests/provider_response_bounds_source_gate.rs` pins every adopted
+transport and keeps a `PENDING` ratchet of the rest. Closing this box means
+that list is empty and the gate's own guard test is deleted.
 
 Local Qwen/Ouro inference is in-process and does not need a remote HTTP response
 envelope. Decorators must be proven to delegate through a bounded leaf rather

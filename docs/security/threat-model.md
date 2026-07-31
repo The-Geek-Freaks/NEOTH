@@ -103,10 +103,16 @@ cover malformed, oversized and truncated transport data. Native Ollama
 NDJSON framing with a 1 MiB line/EOF-residual cap, 64 KiB error bodies reduced
 to status plus digest, and fail-closed handling of malformed or invalid-UTF-8
 frames so a dropped frame cannot be followed by a synthetic successful
-terminator. This is still a family-specific boundary, not a universal claim:
-`GOLD-R4-15k1` remains a release blocker until every remaining native HTTP
-adapter, Copilot-token refresh, Claude CLI/Tmux and sidecar transports adopt
-equivalent bounded readers.
+terminator. Anthropic, Gemini, Cohere, Azure OpenAI, AWS Bedrock and the
+Copilot token exchange read their single-shot JSON envelopes through the same
+primitives: 8 MiB successful bodies, 64 KiB error bodies, digest-only
+diagnostics, and typed quota evidence that is a digest rather than a scrubbed
+copy of the endpoint's own error text. Adapters that classify an error envelope
+(Azure policy refusals, Bedrock `__type`) do so under the cap and still report
+only the classification plus the digest. This is still a per-transport
+boundary, not a universal claim: `GOLD-R4-15k1` remains a release blocker until
+Claude CLI/Tmux subprocess output and the sidecar transports adopt equivalent
+bounded readers.
 After
 v0.2.1 (GR-04), every `Provider::complete` call is wrapped in
 `circuit_breaker::run_with_breaker(name, ...)` so a sustained
