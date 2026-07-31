@@ -57,13 +57,43 @@
   Nach-Audit bereits gesendeter Operator-Notizen; ein Intent dort würde eine
   Prä-Mutations-Spur behaupten, die es nie gab.
 
-- **Mirror-Refusal Stages 2–6** `[CODEX]` `GOLD-LF-P1-02`
-  Quelle: PLAN/SPEC_mirror_refusal.md. Nur Schicht-0-Detection shipped
-  (security/refusal_detect.rs:1, wal/events.rs:447 "v0.1.x ships the Schicht-0
-  only"; chat.rs:10082 nennt Stages 2–6 explizit ausstehend). Integration:
-  Schicht-0-Output als Stage-2-Input; neue `security/right_hemisphere.rs` +
-  `callosum.rs`, Wiring in refusal_recovery.rs (dort steht wörtlich "no
-  hemisphere switching here (that's R-04)").
+- **Mirror-Refusal Stages 2–6 — STALE ITEM, Design abgelöst** `[CODEX]` `GOLD-LF-P1-02`
+  **GESCHLOSSEN ohne Code (2026-08-01), verifiziertes Negativergebnis.** Die
+  behauptete Abwesenheit stimmt nicht; die Fähigkeiten existieren, nur unter
+  der ablösenden Architektur statt unter den Namen der Mirror-Spec.
+
+  **Die Spec sagt es selbst.** `PLAN/SPEC_mirror_refusal.md` trägt im Titel
+  „NEOTH **v1.1**", ihr Status-Feld markiert Stages 2–6 als `DEFERRED`, und ihr
+  Scope-Block (R-3 Gremium 2026-05-16) verweist ausdrücklich weiter:
+  *„Automated retry orchestration, per-hemisphere detection, cause
+  classification, LOWKEY reframings … live in `SPEC_refusal_recovery.md`, which
+  **supersedes this SPEC** for those items."*
+
+  **Die vier angeblich fehlenden Stufen, je mit Beleg:**
+
+  | Item-Behauptung | Realität |
+  |---|---|
+  | Right-hemisphere structural analysis | `security/refusal_cause.rs` (13 KB) — Ursachen-Klassifikation |
+  | Corpus-Callosum synthesis | `security/refusal_reframings.rs` (13 KB) — LOWKEY-Katalog |
+  | Left-hemisphere relay | `cli/chat.rs:4911` R-04-Wire ersetzt `response_text` bei Erfolg |
+  | Persistent-refusal guard (EC-4) | `refusal_recovery.rs:680` `emit_persistent_audit` → `0x1A REFUSAL_PERSISTENT` (`wal/events.rs:673`), Test `multi_attempt_emits_persistent_audit_after_all_attempts_fail` |
+
+  Dazu ungenannt und ebenfalls gebaut: D23-Hard-Block-Floor
+  (`refusal_abliterated.rs`, 29 KB) VOR jeder Recovery, Abliterated-Fallback,
+  Teacher-Eskalation, `0x19 REFUSAL_REROUTED`-Audit je Versuch.
+  `refusal_recovery.rs` ist 56 KB.
+
+  **Wie der Fehler entstand:** `refusal_recovery.rs:11` sagt „no hemisphere
+  switching here (that's R-04 …)". Das ist eine **Modulgrenze** — „R-04 liegt
+  woanders" —, gelesen wurde es als „R-04 fehlt". `cli/chat.rs:4911` trägt
+  genau diesen R-04-Marker und ist voll verdrahtet.
+
+  **Warum hier NICHT gebaut wird:** `security/right_hemisphere.rs` +
+  `callosum.rs` anzulegen erzeugte eine zweite, parallele
+  Refusal-Recovery-Architektur neben der bereits ausgelieferten — dieselbe
+  Doppel-Aufzeichnungs-Falle, aus der `SelfUpdateIntent` in P1-01 gestrichen
+  wurde. Ein Item, das eine abgelöste Spec nachbaut, ist keine offene Arbeit.
+
 - **Tool-/Provider-Output-Redaction vor abgeleiteten dauerhaften Senken** `[CODEX]` `GOLD-LF-P1-03`
   Quelle: PLAN/SMALLCODE_AUDIT_2026-05-21.md §5#4, gegen aktuellen Source
   nachgeprüft 2026-07-18. Der ursprüngliche Wortlaut war falsch: weder eine
