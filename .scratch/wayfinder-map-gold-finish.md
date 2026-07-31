@@ -335,6 +335,62 @@ individual calls — it is **three**: (1) is the adoption wave v1.1? (2) are
 mobile/cluster/Buddy/channel-parity v1.1 surfaces? (3) which lost features were
 advertised? Everything else follows.
 
+**Proposal — NOT a decision. Awaiting the operator; nothing below is
+authorised.** Built with the `system-design-101` frame, using its Resilience
+and Delivery axes, because that is what separates "unfinished" from "narrower
+than the vision".
+
+**The test.** An item is v1.0 if deferring it leaves a *failure mode
+unhandled* or makes *delivery impossible*. Adding a capability is neither,
+however desirable.
+
+**Measured distribution of the 267 open items:** `GOLD-LF` 118, `ADOPT31` 65,
+`GOLD-R4` 46, `GOLD-NCT` 27, `GOLD-R3` 8, other 3.
+
+**Delivery axis — without these there is nothing to tag (proposed v1.0):**
+`R4-01` (7, artifacts), `R4-02` (2, package managers/upgrade matrix), `R4-08`
+(clean-machine qualification), `R3-10` (release truth + exact-head gates),
+`GOLD-RELEASE`, `GOLD-DEP`.
+
+**Resilience axis — deferring leaves a failure mode open (proposed v1.0):**
+the `GOLD-R3` hardening lane (8) and `R4-15` (14, bounded envelopes — the lane
+this session has been closing).
+
+**Breadth, not repair (proposed v1.1):** `ADOPT31` (65) is adoption from other
+projects by construction. `R4-06` Buddy, `R4-07` channel parity, `R4-12`
+mobile, `R4-13` cluster (13) are each a *new product surface*. `GOLD-LF` (118)
+defaults here: the destination forbids shipping an advertised feature that is
+partial, and the R3-10 audit found **no BLOCKER** across README, `docs/`, the
+config example and crate docs — so nothing missing is currently advertised.
+
+**The exception inside LF.** 26 LF items touch consent, audit, WAL identity or
+credentials. They split by the same test — *new surface* (`LF-P1-15` WebChat,
+`LF-P2-25` Voice Call, `LF-P2-01` Dreaming) is v1.1; *a hole in a boundary
+that already ships* is v1.0. Three qualify on reading: paired INTENT/RESULT
+WAL records (`LF-P1-01`), universal WAL `session_id` (`LF-P2-08`),
+per-counterparty ingress consent (`LF-P2-22`). The other 23 need the same
+one-line judgement when next touched.
+
+**The axis I cannot answer — this is the real question for you.** `WS-NCT`
+(27) declares itself "every card below is v1.0.0 Gold work". By the test above
+it reads as new capability (cognitive transport, typed cluster delegation),
+which would be v1.1. But that binding scope is a prior operator decision, and
+overriding it is exactly the silent reclassification the destination forbids.
+**Verdict per the skill: Underspecified** — one axis unanswered, so this
+proposal is not sound until you settle it.
+
+**Cost of the proposal, stated:** v1.0 becomes ~67 items (~70 with the three
+LF carry-overs), matching the 60-80 you estimated. The price is that v1.0 ships
+without cluster completion, mobile, full channel parity and a product-grade
+Buddy — a narrower product than the vision, defensible only because none of it
+is advertised today. If NCT stays v1.0 the count rises to ~94 and the tag moves
+out accordingly.
+
+**To decide it, three sentences suffice:** (1) ADOPT31 — v1.0 or v1.1?
+(2) R4-06/07/12/13 — v1.0 or v1.1? (3) LF — all v1.1, or v1.1 except the three
+boundary-completion items named above? Plus, if you disagree with leaving it
+alone: what happens to NCT.
+
 ### T5 — What is the smallest honest release artifact matrix? · open · `wayfinder:research` · blocked by T4
 `GOLD-R4-01a..f` enumerate Alpine, glibc floor, RPM, Windows, macOS
 qualification. Determine which are release-blocking for a first tag versus
