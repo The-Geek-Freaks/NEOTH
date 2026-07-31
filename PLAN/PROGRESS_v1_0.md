@@ -74,6 +74,25 @@
 > audit (no BLOCKER; three overstated readiness claims corrected). CodeQL is
 > GitHub-managed with no workflow file and cannot be dispatched from the CLI.
 >
+> **ADOPT31-C8 closed 2026-07-31 — first of the ten failure-mode items:** the
+> pre-dispatch danger gate that inspects every tool call covered `dd` and
+> `mkfs` but not secure erase or destructive SQL, so `shred -u secrets.env` and
+> `DROP DATABASE production` reached dispatch unflagged on a shipping path. Two
+> Critical rules added (`secure_erase`, `sql_destructive`), each with negative
+> tests — `shred --help`, `man shred`, SELECT, CREATE/ALTER TABLE and
+> `echo 'dropped the ball'` must stay clean, because a gate that cries wolf
+> gets turned off. DELETE-without-WHERE deliberately omitted: regex cannot
+> separate it from a parameterised DELETE without false positives.
+> dangerous_command 12/12, clippy clean.
+>
+> **Lane surveys 2026-07-31 (wayfinder T13/T14):** `GOLD-LF` — 54 of 118
+> checked, 0 built, 25 partial, 29 absent. `ADOPT31` — 65 checked, 0 built, 7
+> partial, 58 absent. `WS-NCT` — no code at all. Both surveys corrected the T4
+> proposal, which had been written from item text: ten items across the two
+> "breadth" lanes close failure modes on shipping paths and do not belong in
+> v1.1 (LF `P1-01/02/04/05`; ADOPT31 `C8/C4/C1/A6/C9/B10`). Revised scope
+> estimate: ~45 v1.0 items without NCT, ~72 with.
+>
 > **R4-15 lane fully surveyed 2026-07-31 (wayfinder T11):** eleven of twelve
 > sub-items checked against code. Present: `-15a` authority binding, `-15c`
 > single-use/TOCTOU, `-15e` the typed durable state machine. Mostly present:
