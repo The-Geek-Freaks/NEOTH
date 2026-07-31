@@ -228,7 +228,7 @@ fn try_lock_segment_rewrite_once(lock_path: &Path) -> Result<Option<std::fs::Fil
         if error.kind() == std::io::ErrorKind::WouldBlock {
             return Ok(None);
         }
-        return Err(error).with_context(|| format!("flock {}", lock_path.display()));
+        Err(error).with_context(|| format!("flock {}", lock_path.display()))
     }
     #[cfg(windows)]
     {
