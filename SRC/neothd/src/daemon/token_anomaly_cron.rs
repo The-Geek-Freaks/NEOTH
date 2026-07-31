@@ -484,7 +484,10 @@ mod tests {
     #[tokio::test]
     async fn tick_on_empty_wal_dir_is_ok_none() {
         let dir = tempfile::tempdir().unwrap();
-        let seg = tempfile::tempdir().unwrap().path().join("w.wal");
+        // Bind the segment's TempDir: dropping it inline deletes the parent
+        // before the writer opens it, and the writer refuses a missing parent.
+        let seg_dir = tempfile::tempdir().unwrap();
+        let seg = seg_dir.path().join("w.wal");
         let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
         let out = run_token_anomaly_tick(dir.path(), &cfg(), &writer)
             .await

@@ -2306,6 +2306,19 @@ mod tests {
         assert_eq!(read_pinned(7), 0, "unrelated row untouched");
     }
 
+    /// Give a fixture home the WAL identity a real one always has.
+    ///
+    /// Production never has segments without an HMAC key: the authority
+    /// refuses to mint a new identity next to existing segments, which is the
+    /// anti-tamper guarantee. A fixture that writes segments by hand has to
+    /// establish the identity first, exactly like the real writer would.
+    fn seed_wal_identity(home: &std::path::Path) -> std::path::PathBuf {
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        std::fs::write(wal_dir.join("hmac.key"), [7u8; 32]).unwrap();
+        wal_dir
+    }
+
     #[tokio::test]
     async fn physical_redaction_returns_zero_when_wal_dir_absent() {
         // Fresh install: WAL dir hasn't been created yet. Redaction
@@ -2348,8 +2361,7 @@ mod tests {
         // `~/.neoth/wal/`. The scanner must ignore them (no extension
         // mismatch errors crash the run).
         let dir = tempdir().unwrap();
-        let wal_dir = dir.path().join("wal");
-        std::fs::create_dir_all(&wal_dir).unwrap();
+        let wal_dir = seed_wal_identity(dir.path());
         std::fs::write(wal_dir.join("notes.txt"), b"not a wal").unwrap();
         std::fs::write(wal_dir.join("000001.wal.bak"), b"backup").unwrap();
         let summary = run_physical_redaction(dir.path(), "topic", 1701)
@@ -2395,8 +2407,7 @@ mod tests {
         use crate::wal::{HeaderBuilder, frame::encode_frame};
 
         let dir = tempdir().unwrap();
-        let wal_dir = dir.path().join("wal");
-        std::fs::create_dir_all(&wal_dir).unwrap();
+        let wal_dir = seed_wal_identity(dir.path());
         let seg_path = wal_dir.join("000001.wal");
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&SegmentHeader::new(1, 1, 0, 0, [0u8; 16]).to_le_bytes());
@@ -2486,8 +2497,7 @@ mod tests {
         use crate::wal::{HeaderBuilder, frame::encode_frame};
 
         let dir = tempdir().unwrap();
-        let wal_dir = dir.path().join("wal");
-        std::fs::create_dir_all(&wal_dir).unwrap();
+        let wal_dir = seed_wal_identity(dir.path());
         let seg_path = wal_dir.join("clean.wal");
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&SegmentHeader::new(1, 1, 0, 0, [0u8; 16]).to_le_bytes());
