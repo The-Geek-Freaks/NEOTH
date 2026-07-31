@@ -89,6 +89,15 @@ pub const ALLOWED_CLIENT_EXTENDED_SUBTYPES: &[u8] = &[
     ExtendedSubtype::SkillRemovalIntent as u8,
     ExtendedSubtype::SkillRemovalResult as u8,
     ExtendedSubtype::SkillAuthorityDecision as u8,
+    // GOLD-LF-P1-01. Only the two OS-effect pairs are listed: `os_tools::gate`
+    // is the one caller that reaches the WAL over this RPC route (via
+    // `AuditSink::DaemonRpc`). Channel egress and media calls hold an
+    // in-process `WalWriterHandle`, so admitting their subtypes here would
+    // widen the client-accepted surface without a caller that needs it.
+    ExtendedSubtype::OsFileWriteIntent as u8,
+    ExtendedSubtype::OsFileWriteResult as u8,
+    ExtendedSubtype::OsAppLaunchIntent as u8,
+    ExtendedSubtype::OsAppLaunchResult as u8,
 ];
 
 /// Max inbound request size (headers + body). Audit payloads are small.

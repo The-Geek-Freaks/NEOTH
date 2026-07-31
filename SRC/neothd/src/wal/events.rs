@@ -195,6 +195,47 @@ pub enum ExtendedSubtype {
     /// `UpdaterLeafIntent` by operation id, request id, accepted epoch, and
     /// exact binding.
     UpdaterLeafResult = 0x1B,
+    /// GOLD-LF-P1-01 — durable pre-mutation intent before an allowed OS file
+    /// write. The existing `0xAA OS_FILE_WRITE` lands only *after*
+    /// `write_file_atomic` returns, so a crash between the autonomy gate's
+    /// `Allow` and the rename left the file on disk with no audit trace at
+    /// all. Payload is metadata-only: the path is recorded, the contents are
+    /// hash-bound.
+    OsFileWriteIntent = 0x1C,
+    /// GOLD-LF-P1-01 — terminal outcome paired to `OsFileWriteIntent` by
+    /// intent id. An intent with no result is an interrupted write.
+    OsFileWriteResult = 0x1D,
+    /// GOLD-LF-P1-01 — durable pre-mutation intent before an allowed app
+    /// launch. `0xAC OS_APP_LAUNCH` lands only after a successful spawn, so a
+    /// process that started but whose audit never landed was invisible.
+    OsAppLaunchIntent = 0x1E,
+    /// GOLD-LF-P1-01 — terminal outcome paired to `OsAppLaunchIntent` by
+    /// intent id, carrying the launched PID on success.
+    OsAppLaunchResult = 0x1F,
+    /// GOLD-LF-P1-01 — durable pre-mutation intent before outbound channel
+    /// egress. `0x67 CHANNEL_SEND` is appended *after* `send_text` returns and
+    /// the rollback snapshot is explicitly best-effort, so a message could
+    /// reach a third party with nothing in the WAL. Payload is metadata-only:
+    /// platform and chat id are recorded, the message body is hash-bound.
+    ChannelEgressIntent = 0x20,
+    /// GOLD-LF-P1-01 — terminal outcome paired to `ChannelEgressIntent` by
+    /// intent id. An intent with no result means the operator cannot know
+    /// whether the message left the machine.
+    ChannelEgressResult = 0x21,
+    /// GOLD-LF-P1-01 — durable pre-mutation intent before a media call that
+    /// leaves the machine (cloud STT/TTS). These paths emitted no WAL frame of
+    /// any kind, so audio egress was entirely unaudited. Payload is
+    /// metadata-only: provider and operation are recorded, the media bytes are
+    /// hash-bound.
+    MediaCallIntent = 0x22,
+    /// GOLD-LF-P1-01 — terminal outcome paired to `MediaCallIntent` by intent
+    /// id.
+    MediaCallResult = 0x23,
+    // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
+    // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
+    // every updater HTTP, process, and verified-stage leaf to a durable
+    // pre-effect intent. A second self-update intent would be a duplicate
+    // record of the same edge, not a new one.
 }
 
 impl ExtendedSubtype {
@@ -228,6 +269,14 @@ impl ExtendedSubtype {
             ExtendedSubtype::SkillAuthorityDecision => "skill_authority_decision",
             ExtendedSubtype::UpdaterLeafIntent => "updater_leaf_intent",
             ExtendedSubtype::UpdaterLeafResult => "updater_leaf_result",
+            ExtendedSubtype::OsFileWriteIntent => "os_file_write_intent",
+            ExtendedSubtype::OsFileWriteResult => "os_file_write_result",
+            ExtendedSubtype::OsAppLaunchIntent => "os_app_launch_intent",
+            ExtendedSubtype::OsAppLaunchResult => "os_app_launch_result",
+            ExtendedSubtype::ChannelEgressIntent => "channel_egress_intent",
+            ExtendedSubtype::ChannelEgressResult => "channel_egress_result",
+            ExtendedSubtype::MediaCallIntent => "media_call_intent",
+            ExtendedSubtype::MediaCallResult => "media_call_result",
         }
     }
 
@@ -261,6 +310,14 @@ impl ExtendedSubtype {
             0x19 => Some(ExtendedSubtype::SkillAuthorityDecision),
             0x1A => Some(ExtendedSubtype::UpdaterLeafIntent),
             0x1B => Some(ExtendedSubtype::UpdaterLeafResult),
+            0x1C => Some(ExtendedSubtype::OsFileWriteIntent),
+            0x1D => Some(ExtendedSubtype::OsFileWriteResult),
+            0x1E => Some(ExtendedSubtype::OsAppLaunchIntent),
+            0x1F => Some(ExtendedSubtype::OsAppLaunchResult),
+            0x20 => Some(ExtendedSubtype::ChannelEgressIntent),
+            0x21 => Some(ExtendedSubtype::ChannelEgressResult),
+            0x22 => Some(ExtendedSubtype::MediaCallIntent),
+            0x23 => Some(ExtendedSubtype::MediaCallResult),
             _ => None,
         }
     }
@@ -296,6 +353,14 @@ impl ExtendedSubtype {
             Self::SkillAuthorityDecision,
             Self::UpdaterLeafIntent,
             Self::UpdaterLeafResult,
+            Self::OsFileWriteIntent,
+            Self::OsFileWriteResult,
+            Self::OsAppLaunchIntent,
+            Self::OsAppLaunchResult,
+            Self::ChannelEgressIntent,
+            Self::ChannelEgressResult,
+            Self::MediaCallIntent,
+            Self::MediaCallResult,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))

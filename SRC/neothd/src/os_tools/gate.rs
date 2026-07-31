@@ -295,24 +295,36 @@ pub async fn write_os_file<P: PolicyArgument>(
         }
     }
 
-    // Layer 3 — atomic write + audit. `existed` records whether we overwrote.
+    // Layer 3 — GOLD-LF-P1-01: durable intent BEFORE the effect. Everything
+    // above this line only ever refused a write; from here on a write can
+    // actually happen, so this is the last point at which the WAL can still
+    // learn what we were about to do. Fail closed: if the intent cannot be
+    // recorded we do not write, because the alternative is a file on disk that
+    // no audit trail explains.
+    let resolved_display = resolved.display().to_string();
+    let id = next_intent_id(b"os-file-write", &resolved_display, now_unix);
+    if !emit_write_intent(sink, &id, &resolved_display, contents, now_unix)
+        .await
+        .permits_effect()
+    {
+        let reason = "mandatory pre-write audit intent could not be recorded".to_string();
+        emit_write_denied(sink, &resolved_display, &reason, now_unix).await;
+        return Err(OsGateError::Denied(reason));
+    }
+
+    // Layer 4 — atomic write + audit. `existed` records whether we overwrote.
     let existed = resolved.exists();
     match write_file_atomic(&resolved, contents) {
         Ok(()) => {
-            emit_write(
-                sink,
-                &resolved.display().to_string(),
-                contents.len(),
-                existed,
-                now_unix,
-            )
-            .await;
+            emit_write_result(sink, &id, "written", None, now_unix).await;
+            emit_write(sink, &resolved_display, contents.len(), existed, now_unix).await;
             Ok(resolved)
         }
         Err(e) => {
+            emit_write_result(sink, &id, "failed", Some(&e.to_string()), now_unix).await;
             emit_write_denied(
                 sink,
-                &resolved.display().to_string(),
+                &resolved_display,
                 &format!("write-failed: {e}"),
                 now_unix,
             )
@@ -372,16 +384,32 @@ pub async fn launch_os_app<P: PolicyArgument>(
         }
     }
 
-    // Layer 3 — spawn + audit.
+    // Layer 3 — GOLD-LF-P1-01: durable intent BEFORE the spawn. A process that
+    // started while its success frame was still in flight used to leave no
+    // record at all; the intent is what makes that window visible.
+    let resolved_display = resolved.display().to_string();
+    let id = next_intent_id(b"os-app-launch", &resolved_display, now_unix);
+    if !emit_launch_intent(sink, &id, &resolved_display, now_unix)
+        .await
+        .permits_effect()
+    {
+        let reason = "mandatory pre-launch audit intent could not be recorded".to_string();
+        emit_launch_denied(sink, &resolved_display, &reason, now_unix).await;
+        return Err(OsGateError::Denied(reason));
+    }
+
+    // Layer 4 — spawn + audit.
     match launch_program(&resolved) {
         Ok(pid) => {
-            emit_launch(sink, &resolved.display().to_string(), pid, now_unix).await;
+            emit_launch_result(sink, &id, "launched", Some(pid), None, now_unix).await;
+            emit_launch(sink, &resolved_display, pid, now_unix).await;
             Ok((resolved, pid))
         }
         Err(e) => {
+            emit_launch_result(sink, &id, "failed", None, Some(&e.to_string()), now_unix).await;
             emit_launch_denied(
                 sink,
-                &resolved.display().to_string(),
+                &resolved_display,
                 &format!("launch-failed: {e}"),
                 now_unix,
             )
@@ -604,6 +632,242 @@ async fn emit_launch_denied(sink: AuditSink<'_>, program: &str, reason: &str, ts
     }))
     .unwrap_or_else(|_| b"{}".to_vec());
     dispatch_frame(sink, EVENT_TYPE_OS_APP_LAUNCH_DENIED, payload).await;
+}
+
+/// GOLD-LF-P1-01. Domain-separated digest binding an intent frame to the exact
+/// bytes the effect will carry, without putting those bytes in the WAL.
+///
+/// This deliberately does NOT use `security::redact::bounded_audit_digest_bytes`:
+/// that helper caps its input because it hashes provider-controlled error text
+/// of unknown size. Here the payload is already fully in memory and already
+/// bounded by `max_write_bytes`, so hashing all of it is constant-memory and a
+/// strictly stronger binding — a capped digest would collide on any two writes
+/// sharing a prefix.
+fn effect_digest(domain: &[u8], bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    digest.update(b"neoth/effect-intent/v1\0");
+    digest.update((domain.len() as u64).to_be_bytes());
+    digest.update(domain);
+    digest.update((bytes.len() as u64).to_be_bytes());
+    digest.update(bytes);
+    format!("{:x}", digest.finalize())
+}
+
+/// GOLD-LF-P1-01. A per-effect identifier binding one intent frame to its
+/// result frame.
+///
+/// The counter is what makes this unique. Hashing (path, timestamp) alone
+/// would collide for two writes to the same path within the same second — and
+/// those are exactly the repeated-write cases where a reader most needs to
+/// tell one attempt from the next.
+fn next_intent_id(domain: &[u8], target: &str, ts_unix: i64) -> String {
+    use sha2::{Digest, Sha256};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let mut digest = Sha256::new();
+    digest.update(b"neoth/intent-id/v1\0");
+    digest.update((domain.len() as u64).to_be_bytes());
+    digest.update(domain);
+    digest.update(target.as_bytes());
+    digest.update(ts_unix.to_be_bytes());
+    digest.update(seq.to_be_bytes());
+    digest.update(std::process::id().to_be_bytes());
+    format!("{:x}", digest.finalize())[..32].to_string()
+}
+
+/// GOLD-LF-P1-01. What happened to a mandatory intent frame.
+///
+/// The three-way split exists because "the frame did not land" has two
+/// materially different causes, and collapsing them would either break working
+/// installations or quietly weaken the guarantee.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntentOutcome {
+    /// The frame is durable in a WAL this process owns, or auditing is
+    /// deliberately disabled (`AuditSink::None`). Safe to perform the effect.
+    Recorded,
+    /// The sink is the audit-RPC forward and no daemon was reachable.
+    /// AUDIT-RPC-01 ratified that an unreachable forwarder must NOT fail the
+    /// action, so this still permits the effect — but it is a real hole in the
+    /// pre-mutation trail, not a success, and it is named as such.
+    ForwardUnavailable,
+    /// An authoritative sink rejected the append. The effect must not happen:
+    /// this is the case where proceeding would leave a mutation that no audit
+    /// trail explains.
+    Failed,
+}
+
+impl IntentOutcome {
+    /// AUDIT-RPC-01 keeps the best-effort forward permissive; only an
+    /// authoritative sink failure blocks.
+    fn permits_effect(self) -> bool {
+        !matches!(self, IntentOutcome::Failed)
+    }
+}
+
+/// GOLD-LF-P1-01. Like [`dispatch_frame`], but for an EXTENDED `(0x00,
+/// subtype)` pair, and it *reports* what happened instead of swallowing the
+/// error, so a caller can refuse a mutation whose intent could not be recorded.
+async fn dispatch_extended_frame(
+    sink: AuditSink<'_>,
+    subtype: crate::wal::events::ExtendedSubtype,
+    payload: Vec<u8>,
+) -> IntentOutcome {
+    let code = subtype as u8;
+    match sink {
+        AuditSink::None => IntentOutcome::Recorded,
+        AuditSink::Writer(w) => {
+            let header = crate::wal::HeaderBuilder::new(0x00, &payload)
+                .event_subtype(code)
+                .build();
+            match w.append(header, payload).await {
+                Ok(_) => IntentOutcome::Recorded,
+                Err(_) => IntentOutcome::Failed,
+            }
+        }
+        AuditSink::TrackedWriter { writer, status } => {
+            let header = crate::wal::HeaderBuilder::new(0x00, &payload)
+                .event_subtype(code)
+                .build();
+            match writer.append(header, payload).await {
+                Ok(_) => IntentOutcome::Recorded,
+                Err(error) => {
+                    status.record(&error);
+                    IntentOutcome::Failed
+                }
+            }
+        }
+        AuditSink::DaemonRpc(home) => {
+            match crate::daemon::audit_rpc::try_post_audit_frame_with_subtype(
+                home, 0x00, code, &payload,
+            )
+            .await
+            {
+                Ok(()) => IntentOutcome::Recorded,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        subtype = code,
+                        "pre-mutation audit intent could not be forwarded; \
+                         effect proceeds unaudited per AUDIT-RPC-01"
+                    );
+                    IntentOutcome::ForwardUnavailable
+                }
+            }
+        }
+        AuditSink::TrackedDaemonRpc { home, status } => {
+            match crate::daemon::audit_rpc::try_post_audit_frame_with_subtype(
+                home, 0x00, code, &payload,
+            )
+            .await
+            {
+                Ok(()) => IntentOutcome::Recorded,
+                Err(error) => {
+                    status.record_message(error.to_string());
+                    IntentOutcome::ForwardUnavailable
+                }
+            }
+        }
+    }
+}
+
+/// GOLD-LF-P1-01 — durable record of a write we are *about* to perform. The
+/// contents never enter the WAL; they are bound by digest so the result frame
+/// (and a later forensic read of the file) can be tied to this exact intent.
+async fn emit_write_intent(
+    sink: AuditSink<'_>,
+    intent_id: &str,
+    path: &str,
+    contents: &[u8],
+    ts_unix: i64,
+) -> IntentOutcome {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "intent_id": intent_id,
+        "path": path,
+        "bytes": contents.len(),
+        "contents_sha256": effect_digest(b"os-file-write", contents),
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec());
+    dispatch_extended_frame(
+        sink,
+        crate::wal::events::ExtendedSubtype::OsFileWriteIntent,
+        payload,
+    )
+    .await
+}
+
+/// GOLD-LF-P1-01 — terminal outcome for one [`emit_write_intent`]. An intent
+/// with no matching result is exactly the crash window this pair exists to
+/// make visible.
+async fn emit_write_result(
+    sink: AuditSink<'_>,
+    intent_id: &str,
+    outcome: &str,
+    detail: Option<&str>,
+    ts_unix: i64,
+) {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "intent_id": intent_id,
+        "outcome": outcome,
+        "detail": detail,
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec());
+    let _ = dispatch_extended_frame(
+        sink,
+        crate::wal::events::ExtendedSubtype::OsFileWriteResult,
+        payload,
+    )
+    .await;
+}
+
+/// GOLD-LF-P1-01 — durable record of a launch we are *about* to perform.
+async fn emit_launch_intent(
+    sink: AuditSink<'_>,
+    intent_id: &str,
+    program: &str,
+    ts_unix: i64,
+) -> IntentOutcome {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "intent_id": intent_id,
+        "program": program,
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec());
+    dispatch_extended_frame(
+        sink,
+        crate::wal::events::ExtendedSubtype::OsAppLaunchIntent,
+        payload,
+    )
+    .await
+}
+
+/// GOLD-LF-P1-01 — terminal outcome for one [`emit_launch_intent`], carrying
+/// the PID so a forensic reader can tie the intent to a real process.
+async fn emit_launch_result(
+    sink: AuditSink<'_>,
+    intent_id: &str,
+    outcome: &str,
+    pid: Option<u32>,
+    detail: Option<&str>,
+    ts_unix: i64,
+) {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "intent_id": intent_id,
+        "outcome": outcome,
+        "pid": pid,
+        "detail": detail,
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec());
+    let _ = dispatch_extended_frame(
+        sink,
+        crate::wal::events::ExtendedSubtype::OsAppLaunchResult,
+        payload,
+    )
+    .await;
 }
 
 async fn emit_write(sink: AuditSink<'_>, path: &str, bytes: usize, existed: bool, ts_unix: i64) {
@@ -1142,8 +1406,6 @@ mod tests {
 
     #[tokio::test]
     async fn launch_emits_success_frame_via_writer() {
-        use crate::wal::frame::decode_frame;
-        use crate::wal::segment_header::SEGMENT_HEADER_LEN;
         use crate::wal::spawn as wal_spawn;
 
         let Some(exe) = real_arg_free_exe() else {
@@ -1165,11 +1427,36 @@ mod tests {
         drop(writer);
         join.await.unwrap();
 
-        let bytes = tokio::fs::read(&seg).await.unwrap();
-        let frame = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
-        assert_eq!(frame.header.event_type, EVENT_TYPE_OS_APP_LAUNCH);
-        let v: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
-        assert!(v["pid"].as_u64().unwrap() > 0);
+        // GOLD-LF-P1-01 moved the launch audit from "one frame" to an
+        // intent/result pair around the spawn, so the success frame is no
+        // longer first in the segment — locate it instead of assuming.
+        let frames = decode_segment(&seg).await;
+        let launch_at = frames
+            .iter()
+            .position(|(t, _, _)| *t == EVENT_TYPE_OS_APP_LAUNCH)
+            .expect("the OS_APP_LAUNCH success frame must exist");
+        assert!(frames[launch_at].2["pid"].as_u64().unwrap() > 0);
+
+        let intent_at = frames
+            .iter()
+            .position(|(t, s, _)| {
+                *t == 0x00 && *s == crate::wal::events::ExtendedSubtype::OsAppLaunchIntent as u8
+            })
+            .expect("a real spawn must be preceded by a durable intent");
+        assert!(
+            intent_at < launch_at,
+            "the intent must be durable before the process starts"
+        );
+        assert_eq!(
+            frames[intent_at].2["intent_id"],
+            frames
+                .iter()
+                .find(|(t, s, _)| {
+                    *t == 0x00 && *s == crate::wal::events::ExtendedSubtype::OsAppLaunchResult as u8
+                })
+                .expect("the intent must be paired by a result")
+                .2["intent_id"]
+        );
     }
 
     // ── PC-01 clipboard gate (feature `os-clipboard`) ────────────────────────
@@ -1453,5 +1740,199 @@ mod tests {
                 "expected >=3 clipboard frames, got {clip_frames}"
             );
         }
+    }
+
+    // ---- GOLD-LF-P1-01: INTENT/RESULT pre-mutation pairs -------------------
+
+    /// Decode every frame in a finalized segment as
+    /// `(event_type, event_subtype, payload_json)`.
+    async fn decode_segment(seg: &std::path::Path) -> Vec<(u8, u8, serde_json::Value)> {
+        use crate::wal::frame::decode_frame;
+        use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+
+        let bytes = tokio::fs::read(seg).await.unwrap();
+        let mut out = Vec::new();
+        let mut cursor = SEGMENT_HEADER_LEN;
+        while cursor < bytes.len() {
+            let Ok(frame) = decode_frame(&bytes[cursor..]) else {
+                break;
+            };
+            let json = serde_json::from_slice(frame.payload).unwrap_or(serde_json::Value::Null);
+            out.push((frame.header.event_type, frame.header.event_subtype, json));
+            cursor += frame.header.total_len as usize;
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn write_records_a_durable_intent_before_the_effect_and_pairs_the_result() {
+        use crate::wal::events::ExtendedSubtype;
+        use crate::wal::spawn as wal_spawn;
+
+        let dir = tempdir().unwrap();
+        let cfg = cfg_for(dir.path());
+        let target = dir.path().join("audited.txt");
+
+        let segdir = tempdir().unwrap();
+        let seg = segdir.path().join("000001.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        write_os_file(
+            &target,
+            b"payload",
+            &cfg,
+            AutonomyLevel::Full,
+            AuditSink::Writer(&writer),
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        let frames = decode_segment(&seg).await;
+        let intent_at = frames
+            .iter()
+            .position(|(t, s, _)| *t == 0x00 && *s == ExtendedSubtype::OsFileWriteIntent as u8)
+            .expect("an OsFileWriteIntent frame must exist");
+        let result_at = frames
+            .iter()
+            .position(|(t, s, _)| *t == 0x00 && *s == ExtendedSubtype::OsFileWriteResult as u8)
+            .expect("an OsFileWriteResult frame must exist");
+        let effect_at = frames
+            .iter()
+            .position(|(t, _, _)| *t == EVENT_TYPE_OS_FILE_WRITE)
+            .expect("the existing OS_FILE_WRITE frame must still be emitted");
+
+        // The whole point of P1-01: the intent is durable BEFORE the effect.
+        assert!(
+            intent_at < result_at && intent_at < effect_at,
+            "intent must precede both its result and the effect frame, got \
+             intent={intent_at} result={result_at} effect={effect_at}"
+        );
+        assert_eq!(
+            frames[intent_at].2["intent_id"], frames[result_at].2["intent_id"],
+            "result must be paired to its intent by intent_id"
+        );
+        assert_eq!(frames[result_at].2["outcome"], "written");
+        // Contents are hash-bound, never carried verbatim.
+        assert_eq!(frames[intent_at].2["bytes"], 7);
+        assert!(frames[intent_at].2.get("contents").is_none());
+        assert_eq!(
+            frames[intent_at].2["contents_sha256"],
+            serde_json::Value::String(effect_digest(b"os-file-write", b"payload"))
+        );
+    }
+
+    #[tokio::test]
+    async fn write_is_refused_when_an_authoritative_sink_cannot_record_the_intent() {
+        use crate::wal::spawn as wal_spawn;
+
+        let dir = tempdir().unwrap();
+        let cfg = cfg_for(dir.path());
+        let target = dir.path().join("must-not-exist.txt");
+
+        let segdir = tempdir().unwrap();
+        let seg = segdir.path().join("000001.wal");
+        let (writer, join) = wal_spawn(seg).unwrap();
+        // Kill the writer task so the handle is alive but every append fails.
+        join.abort();
+        let _ = join.await;
+
+        let err = write_os_file(
+            &target,
+            b"payload",
+            &cfg,
+            AutonomyLevel::Full,
+            AuditSink::Writer(&writer),
+            1_700_000_000,
+        )
+        .await
+        .expect_err("a write whose mandatory intent cannot be recorded must be refused");
+
+        assert!(
+            matches!(err, OsGateError::Denied(ref m) if m.contains("pre-write audit intent")),
+            "expected a pre-write-intent refusal, got {err:?}"
+        );
+        // Fail-closed means fail-closed: nothing may reach the disk.
+        assert!(
+            !target.exists(),
+            "the file must not exist when its intent could not be recorded"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_audit_forward_still_permits_the_write() {
+        // AUDIT-RPC-01 ratified that an unreachable forwarder must not fail the
+        // action. P1-01 must not silently revoke that: the hole is reported as
+        // `ForwardUnavailable`, not converted into a refusal.
+        let dir = tempdir().unwrap();
+        let cfg = cfg_for(dir.path());
+        let target = dir.path().join("forwarded.txt");
+        let home = tempdir().unwrap(); // no sidecar ⇒ forward unavailable
+
+        write_os_file(
+            &target,
+            b"payload",
+            &cfg,
+            AutonomyLevel::Full,
+            AuditSink::DaemonRpc(home.path()),
+            1_700_000_000,
+        )
+        .await
+        .expect("an unreachable audit forward must not fail the write");
+        assert!(target.exists());
+    }
+
+    #[test]
+    fn intent_ids_differ_for_two_effects_on_one_path_in_the_same_second() {
+        // Hashing (path, timestamp) alone would collide here — and repeated
+        // writes to one path are exactly where a reader must tell the attempts
+        // apart.
+        let a = next_intent_id(b"os-file-write", "/tmp/same.txt", 1_700_000_000);
+        let b = next_intent_id(b"os-file-write", "/tmp/same.txt", 1_700_000_000);
+        assert_ne!(a, b, "intent ids must be unique per effect, not per second");
+    }
+
+    #[tokio::test]
+    async fn a_refused_launch_leaves_no_orphan_intent() {
+        // An intent means "an effect is about to happen". A launch refused at
+        // the allowlist never reaches the spawn, so emitting an intent for it
+        // would make every refusal look like an interrupted launch to a
+        // forensic reader.
+        use crate::wal::events::ExtendedSubtype;
+        use crate::wal::spawn as wal_spawn;
+
+        let dir = tempdir().unwrap();
+        let cfg = cfg_for(dir.path()); // no allowed_exec_paths ⇒ refused
+        let program = dir.path().join("nope.exe");
+
+        let segdir = tempdir().unwrap();
+        let seg = segdir.path().join("000001.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let outcome = launch_os_app(
+            &program,
+            &cfg,
+            AutonomyLevel::Full,
+            AuditSink::Writer(&writer),
+            1_700_000_000,
+        )
+        .await;
+        drop(writer);
+        join.await.unwrap();
+        assert!(outcome.is_err(), "an empty exec allowlist must refuse");
+
+        let frames = decode_segment(&seg).await;
+        assert!(
+            !frames
+                .iter()
+                .any(|(t, s, _)| *t == 0x00 && *s == ExtendedSubtype::OsAppLaunchIntent as u8),
+            "a refusal must not emit a pre-mutation intent"
+        );
+        assert!(
+            frames
+                .iter()
+                .any(|(t, _, _)| *t == EVENT_TYPE_OS_APP_LAUNCH_DENIED),
+            "the refusal itself must still be audited"
+        );
     }
 }
