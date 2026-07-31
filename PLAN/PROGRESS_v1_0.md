@@ -3,6 +3,24 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-31
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **First honest exact-head gate run 2026-07-31 — and it found what local
+> gates structurally cannot.** With the red tests closed, CI and Security were
+> triggered at the exact head. Both failed. Nearly every CI job (Linux quality,
+> macOS tests, Ubuntu beta, gold-smoke, three feature-flag builds) failed on one
+> root cause: three private-mode checks imported
+> `std::os::unix::fs::PermissionsExt` but called `.mode()` on permissions from a
+> `cap_std` handle. Those are `#[cfg(unix)]` blocks — a Windows build never
+> compiles them, so no local gate could have caught it. Fixed at the three sites
+> rustc named. Security flagged four RUSTSEC entries, two of them real
+> vulnerabilities rather than maintenance status: `nostr` 0.44.5→0.44.6 (remote
+> DoS via an unvalidated NIP-04 `?iv=` length — a reachable path, NEOTH ships
+> that channel) and `event-listener` 5.4.1→5.4.2 (`!Send` tags crossing thread
+> boundaries). Both patched by upgrade, not by an ignore entry. Also landed:
+> GOLD-R3-13 containment (symbol search was globally `LIMIT 200` across roots,
+> so a large foreign repo could hide every local match) and the GOLD-R3-10 doc
+> audit (no BLOCKER; three overstated readiness claims corrected). CodeQL is
+> GitHub-managed with no workflow file and cannot be dispatched from the CLI.
+>
 > **Every known red test on main is closed 2026-07-31:** the count went 10 → 0.
 > The last three were the verify-redaction fixtures: they built segments in a
 > flat tempdir and wrote them with the cfg(test) `spawn()`, which signs
