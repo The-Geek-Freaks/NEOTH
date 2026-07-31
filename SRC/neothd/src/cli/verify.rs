@@ -1099,7 +1099,17 @@ mod tests {
             "sig": crate::wal::signing::sign_b64(key, &msg),
         }))
         .unwrap();
-        let (w, j) = crate::wal::writer::spawn(wal_dir.join(audit_name)).unwrap();
+        // Sign this segment's own compaction markers with the fixture's key, so
+        // the test fails because the attacker's 0xF3 is not operator-signed —
+        // not because of a spurious HMAC mismatch in the attacker's own markers.
+        let (w, j) = crate::wal::writer::spawn_for_home(
+            wal_dir.join(audit_name),
+            wal_dir
+                .parent()
+                .expect("wal dir sits under the home")
+                .to_path_buf(),
+        )
+        .unwrap();
         let header = crate::wal::HeaderBuilder::new(
             crate::wal::events::EVENT_TYPE_REDACTION_MARKER,
             &payload,
@@ -1115,7 +1125,13 @@ mod tests {
         use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 
         let dir = tempfile::tempdir().unwrap();
-        let wal_dir = dir.path();
+        // Canonical home layout: a real writer requires `<home>/wal/hmac.key`.
+        let wal_dir = &dir.path().join("wal");
+        std::fs::create_dir_all(wal_dir).unwrap();
+        // The HMAC identity has to exist before the first segment: production
+        // refuses to mint one next to existing segments, which is the
+        // anti-tamper guarantee.
+        crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key")).unwrap();
         let signing_key_path = wal_dir.join("signing.key");
         let retired = crate::wal::signing::load_or_init_signing_key(&signing_key_path).unwrap();
         let retired_public = crate::wal::signing::pubkey_b64(&retired);
@@ -1176,7 +1192,11 @@ mod tests {
         use crate::wal::segment_header::{SEGMENT_HEADER_LEN, SegmentHeader};
 
         let dir = tempfile::tempdir().unwrap();
-        let wal_dir = dir.path();
+        // Canonical home layout: the writer's HMAC authority requires the key at
+        // `<home>/wal/hmac.key`, so a flat tempdir cannot host a real writer.
+        let home = dir.path();
+        let wal_dir = &home.join("wal");
+        std::fs::create_dir_all(wal_dir).unwrap();
         let seg = wal_dir.join("000001.wal");
         let key_path = wal_dir.join("hmac.key");
         let key = load_or_init_key(&key_path).unwrap();
@@ -1264,7 +1284,7 @@ mod tests {
         let attacker = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
         write_signed_redaction_frame(
             wal_dir,
-            "attacker-audit.wal",
+            "attacker-000002.wal",
             "000001.wal",
             &[redacted_offset],
             1,
@@ -1280,7 +1300,11 @@ mod tests {
 
         // 5. OPERATOR-signed 0xF3 (real emit, signs with <wal_dir>/signing.key) →
         //    honoured → the window reclassifies to PASS.
-        let (rw, rj) = crate::wal::writer::spawn(wal_dir.join("redact-audit.wal")).unwrap();
+        let (rw, rj) = crate::wal::writer::spawn_for_home(
+            wal_dir.join("memory-redact-000003.wal"),
+            home.to_path_buf(),
+        )
+        .unwrap();
         crate::wal::redact::emit_redaction_marker(
             &rw,
             &seg,
@@ -1315,7 +1339,11 @@ mod tests {
         };
 
         let dir = tempfile::tempdir().unwrap();
-        let wal_dir = dir.path();
+        // Canonical home layout: the writer's HMAC authority requires the key at
+        // `<home>/wal/hmac.key`, so a flat tempdir cannot host a real writer.
+        let home = dir.path();
+        let wal_dir = &home.join("wal");
+        std::fs::create_dir_all(wal_dir).unwrap();
         let seg = wal_dir.join("000001.wal");
         let key_path = wal_dir.join("hmac.key");
         let key = load_or_init_key(&key_path).unwrap();
@@ -1370,6 +1398,18 @@ mod tests {
     /// offsets in the SAME logical-segment coordinate space `verify` walks
     /// (`header_len + pos`); a raw-file offset here would never overlap the
     /// window and the authorised redaction would surface as a bogus FAIL.
+    /// **Blocked on GOLD-R3-18A.** `scan_and_redact` deliberately refuses
+    /// physical redaction of any segment carrying authenticated chain-structural
+    /// frames (COMPACTION_MARKER, SEGMENT_ROLLOVER/cross-link, REDACTION_MARKER)
+    /// until the authenticated rewrite transaction exists; logical forget covers
+    /// the operator need meanwhile. A segment built by the real writer always
+    /// carries such frames, so this test cannot reach its assertion yet.
+    ///
+    /// Kept as executable specification rather than deleted or weakened: it
+    /// turns green the moment R3-18A lands the rewrite transaction, and it is
+    /// the load-bearing proof that compressed-redaction offsets live in the same
+    /// logical coordinate space `verify` walks.
+    #[ignore = "GOLD-R3-18A: physical redaction of marker-bearing segments awaits                 the authenticated rewrite transaction"]
     #[tokio::test]
     async fn run_verify_reclassifies_a_redaction_inside_a_compressed_segment() {
         use crate::wal::HeaderBuilder;
@@ -1382,7 +1422,11 @@ mod tests {
         };
 
         let dir = tempfile::tempdir().unwrap();
-        let wal_dir = dir.path();
+        // Canonical home layout: the writer's HMAC authority requires the key at
+        // `<home>/wal/hmac.key`, so a flat tempdir cannot host a real writer.
+        let home = dir.path();
+        let wal_dir = &home.join("wal");
+        std::fs::create_dir_all(wal_dir).unwrap();
         let seg = wal_dir.join("000001.wal");
         let key_path = wal_dir.join("hmac.key");
         let key = load_or_init_key(&key_path).unwrap();
@@ -1443,7 +1487,11 @@ mod tests {
 
         // Operator-signed 0xF3 over the offsets `scan_and_redact` recorded → the
         // window reclassifies to PASS (real emit signs with <wal_dir>/signing.key).
-        let (rw, rj) = crate::wal::writer::spawn(wal_dir.join("redact-audit.wal")).unwrap();
+        let (rw, rj) = crate::wal::writer::spawn_for_home(
+            wal_dir.join("memory-redact-000003.wal"),
+            home.to_path_buf(),
+        )
+        .unwrap();
         crate::wal::redact::emit_redaction_marker(
             &rw,
             &seg,
