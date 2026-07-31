@@ -329,6 +329,27 @@ encryption exists but is opt-in (`wal/writer.rs:3178`). Both are by design and
 documented; the audit's suggestion was to make encryption default-on with
 auto-provisioned key. That is a separate decision of the same class.
 
+### T9 — Which R3-13 consumers still lack repo containment? · open · `wayfinder:task` · unblocked
+Inventory taken 2026-07-31 so the next session does not re-derive it. `GOLD-R3-13`
+requires containment-before-limiting in "CLI, GUI, self-improve and Graphify
+consumers"; the box is open but the work is largely done.
+
+**Already carrying it** (23 `GOLD-R3-13` markers): `cli/chat.rs:8565,8651`
+(active-root resolution and recall scoping), `cli/code.rs:130,140`,
+`cli/code_map.rs:606,661,689,693,1067` (containment before limiting, active-root
+index generation, opt-in staleness), `code_map/persist.rs:89,258,1090`
+(`code_map_roots` table, v2→v3 monotonic `index_generation`).
+
+**Not verified**: `cli/code_intel.rs` (one `canonicalize`, no containment
+marker), `self_improve.rs` (two `canonicalize`, no marker), the GUI consumer,
+and the Graphify path. Each needs the same question answered: does it rank and
+truncate *inside* the canonical active root, or can an unrelated indexed
+repository consume the global top-k?
+
+This is a task, not a decision — it is v1.0 under any T4 split, because a
+recall that hides the active repository's matches behind an unrelated one is a
+failure mode, not a missing feature.
+
 ### T4 — Which of the 233 pre-tag blockers are genuinely v1.0, and which are v1.1? · open · `wayfinder:grilling` · unblocked
 The roadmap counts 1,222 boxes with 233 pre-tag blockers. Some are hard release
 contracts (artifacts, installers, parity); others are refinements that a tagged
