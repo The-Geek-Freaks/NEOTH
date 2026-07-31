@@ -110,7 +110,7 @@ fn assert_no_body_in_tracing(name: &str, production: &str) {
                 let printed =
                     before.ends_with("%") || before.ends_with("{") || before.ends_with("= ");
                 assert!(
-                    !(printed && !measured),
+                    !printed || measured,
                     "{name}: tracing call binds provider-controlled `{word}` without measuring it                      — log a length or a digest, never the bytes: {}",
                     call.split_whitespace().collect::<Vec<_>>().join(" ")
                 );

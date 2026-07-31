@@ -38,7 +38,9 @@ use clap::Args;
 use tracing::info;
 
 use crate::cli::OutputFormat;
-use crate::providers::pty_session::{PtySession, PtySize, PtySpawn, feature_compiled_in};
+use crate::providers::pty_session::{
+    PtyReadOutcome, PtySession, PtySize, PtySpawn, feature_compiled_in,
+};
 
 /// Arguments for `neoth terminal`.
 #[derive(Args, Debug, Clone)]
@@ -167,10 +169,28 @@ fn run_io_loop(session: &PtySession, timeout: Duration) -> Option<i32> {
 
 /// Headless read: capture all PTY output until EOF or timeout, then print.
 fn run_headless_loop(session: &PtySession, timeout: Duration) -> Option<i32> {
-    let bytes = session
-        .read_until(timeout)
-        .map(|outcome| outcome.into_bytes())
-        .unwrap_or_default();
+    // The outcome is typed for a reason: printing a truncated capture as if it
+    // were the whole thing is the defect the type exists to prevent. The child
+    // has already been terminated by `read_until` in both cutting cases; the
+    // operator still has to be told the output is a fragment.
+    let bytes = match session.read_until(timeout) {
+        Ok(outcome) => {
+            match &outcome {
+                PtyReadOutcome::TimedOut(partial) => tracing::warn!(
+                    captured_bytes = partial.len(),
+                    timeout_secs = timeout.as_secs(),
+                    "PTY capture timed out; output below is incomplete and the child was terminated"
+                ),
+                PtyReadOutcome::LimitExceeded(partial) => tracing::warn!(
+                    captured_bytes = partial.len(),
+                    "PTY capture hit the byte cap; output below is incomplete and the child was terminated"
+                ),
+                PtyReadOutcome::Eof(_) => {}
+            }
+            outcome.into_bytes()
+        }
+        Err(_) => Vec::new(),
+    };
     // Write raw bytes to stdout — the PTY output may contain ANSI sequences
     // that the operator's pager / downstream tool expects verbatim.
     use std::io::Write;
