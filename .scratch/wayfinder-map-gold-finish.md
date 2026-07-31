@@ -323,6 +323,13 @@ acceptable on the subprocess path. Wrapping only the final `Vec` in
 `Zeroizing` would shorten one copy and leave the three upstream `String`s
 untouched, which is why it is listed rather than half-fixed.
 
+**GUI WAL-inspector clipboard — cleared, was UNCLEAR.** The memory/GUI audit
+flagged that "⎘ copy JSON" copies `get_wal_detail_json()` and could therefore
+put a verbatim RAW_TEXT prompt on the clipboard. Checked: the copied object is
+built at `neothd-gui/src/panel_logic.rs:3434` from a frame summary carrying
+`event_id`, `ts_ns`, `opcode`, `event_name`, `payload_len` and `importance` —
+the payload *length*, not the payload. No frame body reaches the clipboard.
+
 **Also found, filed here so it is not lost:** WAL RAW_TEXT (0x01) writes the
 operator's prompt bytes verbatim (`cli/chat.rs:6301`) and WAL at-rest
 encryption exists but is opt-in (`wal/writer.rs:3178`). Both are by design and
