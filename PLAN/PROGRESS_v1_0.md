@@ -74,6 +74,21 @@
 > audit (no BLOCKER; three overstated readiness claims corrected). CodeQL is
 > GitHub-managed with no workflow file and cannot be dispatched from the CLI.
 >
+> **R4-15 lane fully surveyed 2026-07-31 (wayfinder T11):** eleven of twelve
+> sub-items checked against code. Present: `-15a` authority binding, `-15c`
+> single-use/TOCTOU, `-15e` the typed durable state machine. Mostly present:
+> `-15j` (sovereignty directive across four modules, shared audited recovery
+> coordinator wired at `chat.rs:4912`; the typed operation context's contents
+> need reading, not grepping). Partial: `-15b` two of seven resolver classes,
+> `-15d` one enforced sink of the sentinel, `-15g` input half only. Absent
+> because the surface was never built: `-15h` GUI transfer, `-15i` Channel
+> destination. Likely mis-scoped: `-15f` move ordering, while the shipped
+> surface is copy and preserves the source by contract. Genuinely open release
+> work: `-15l` clean-machine journeys on three installed platforms. The shape
+> is a complete CLI data plane with no parity surfaces and release evidence
+> outstanding — none of the twelve is "nothing done", none is "just needs
+> ticking".
+>
 > **R4-15 lane verified item by item 2026-07-31 (wayfinder T10/T11):** an open
 > checkbox in this lane turns out to say nothing about whether the code exists —
 > `GOLD-R3-13` carries 23 in-code markers and greps cleanly, while every

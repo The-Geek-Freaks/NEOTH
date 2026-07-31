@@ -439,8 +439,42 @@ than the first three:**
   a credential as transfer destination. Consistent with `-15b` shipping no
   Channel destination class.
 
-Still to check: `-15d` (one sink of the sentinel is now enforced, the rest is
-not), `-15j` provider-refusal parity, `-15l` installed clean-machine evidence.
+**Fourth pass — the lane is now fully surveyed:**
+
+- **`R4-15d` whole-product no-leak sentinel — PARTIAL.** The provider-tracing
+  sink is enforced by `tests/provider_response_bounds_source_gate.rs` (with its
+  own negative test), and SC-01's forbidden-name list was widened. The other
+  sinks the item names — SQLite/FTS, recall, hindsight, GUI widget state,
+  clipboard, crash diagnostics — were audited (see T8's parallel audit) but are
+  not enforced by a runtime sentinel.
+- **`R4-15j` provider-refusal parity — MOSTLY PRESENT.** The compiled
+  sovereignty directive exists across `cli/chat.rs`, `cli/code.rs`,
+  `cli/profile.rs`, `cli/refusal.rs`, and the shared audited recovery
+  coordinator is wired: `security::refusal_recovery::try_recover` at
+  `chat.rs:4912`, with `observe_completion_refusal` `:4848` and a typed
+  `RecoveryAttemptBudget` `:4686`. Unverified by grep: whether the separate
+  typed operation context carries *only* verified ownership/administration/
+  scope facts — that needs reading the context type, not a search.
+- **`R4-15l` installed clean-machine evidence — GENUINELY OPEN.** Requires
+  file-to-file, OS-vault-to-NEOTH-vault and password-store-to-Channel journeys
+  on installed Windows, macOS and Linux artifacts, including crash, restart and
+  safe-uninstall cases. Not runnable from this workstation; it is release
+  infrastructure, not code.
+
+### Lane verdict (11 of 12 sub-items surveyed)
+
+| State | Sub-items |
+|---|---|
+| Present in code | `-15a`, `-15c`, `-15e` |
+| Mostly present, one clause unverified | `-15j` |
+| Partial | `-15b` (2 of 7 resolvers), `-15d` (1 sink), `-15g` (input yes, receipt parity unverified) |
+| Absent — surface not built | `-15h` GUI, `-15i` Channel |
+| Likely mis-scoped | `-15f` (move, while the shipped surface is copy) |
+| Genuinely open release work | `-15l` |
+
+The shape is consistent: **a complete CLI data plane, no parity surfaces, and
+release evidence outstanding.** Not one of these twelve is "nothing done", and
+not one is "just needs ticking".
 
 **Lane picture after eight of twelve sub-items.** The CLI core is built —
 authority binding, single-use/TOCTOU, the durable state machine. What is
