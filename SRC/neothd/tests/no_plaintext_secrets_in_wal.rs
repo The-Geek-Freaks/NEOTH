@@ -29,6 +29,17 @@ const SECRET_FIELD_NAMES: &[&str] = &[
     "refresh_token",
     "private_key",
     "client_secret",
+    // A bare `token` is the shape an audit found unguarded: the list held
+    // `bearer_token`/`access_token`/`refresh_token` but not the plain name a
+    // channel gateway actually uses for its credential.
+    "token",
+    "auth_token",
+    "session_token",
+    "credential",
+    "credentials",
+    "passphrase",
+    "signing_key",
+    "master_key",
 ];
 
 /// `wal/<file>:<field>` exceptions. Empty by design.
@@ -123,6 +134,40 @@ fn allowlist_entries_are_well_formed() {
         assert!(
             file.ends_with(".rs") && !field.is_empty(),
             "SC-01: malformed allowlist entry (expected `file.rs:field`): {entry}"
+        );
+    }
+}
+
+/// The forbidden list is only worth its coverage, so prove the parser pairs
+/// with it. An audit found `token` missing while `bearer_token` was present —
+/// exactly the name a channel gateway uses for its credential.
+#[test]
+fn field_parser_and_forbidden_list_catch_the_shapes_they_claim() {
+    // Field lines the parser must recognise, with the name it must extract.
+    for (line, expected) in [
+        ("    pub token: String,", "token"),
+        ("    token: SecretString,", "token"),
+        ("    pub api_key: String,", "api_key"),
+        ("    pub credentials: Vec<String>,", "credentials"),
+    ] {
+        assert_eq!(field_name(line), Some(expected), "parser missed: {line}");
+        assert!(
+            SECRET_FIELD_NAMES.contains(&expected),
+            "`{expected}` parses as a field but is not forbidden"
+        );
+    }
+
+    // Shapes that must NOT be treated as forbidden fields.
+    for line in [
+        "    pub identity_token: String,", // a file identity, not a credential
+        "    pub token_count: u32,",
+        "    fn token(&self) -> &str {",
+        "    // token handling is documented above",
+    ] {
+        let parsed = field_name(line);
+        assert!(
+            parsed.is_none_or(|name| !SECRET_FIELD_NAMES.contains(&name)),
+            "false positive on: {line}"
         );
     }
 }
