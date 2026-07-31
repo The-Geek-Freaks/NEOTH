@@ -112,11 +112,34 @@
   unsichere ausführbare Patches werden vor Persistenz und Apply verweigert.
   Regressionsevidenz: 34/34 `lf_p1_03_`, 142/142 Sanitizer-Familie sowie je 1/1
   Operator-Source-, Dream-Cloud- und CLI-Doc-Contract.
-- **WAL-Replay-Fenster: HLC-Ordering statt naivem ±300s-Wall-Clock** `[CODEX]` `GOLD-LF-P1-04`
-  Quelle: PLAN/CLAUDE_v07_review.md §11. cluster/wal_sync.rs:800
-  `FOREIGN_EVENT_MAX_CLOCK_SKEW_SECS=300` ist Wall-Clock; wal::hlc::Hlc existiert,
-  wird aber nur für Display genutzt. Research: HLC-Merge-Semantik für
-  EventHeaderV2 (node_id+ts_ns) ohne Bruch bestehender WAL-Consumer.
+- **WAL-Replay-Fenster: HLC-Ordering — PRÄMISSE FALSCH, geschlossen** `[CODEX]` `GOLD-LF-P1-04`
+  **GESCHLOSSEN (2026-08-01), verifiziertes Negativergebnis.** Das Item stellt
+  ±300s-Wall-Clock und HLC als Alternativen für dieselbe Aufgabe dar. Sie
+  lösen verschiedene Aufgaben, und die eigentliche Ordnung ist längst gebaut:
+
+  1. **±300s ordnet gar nichts.** `cluster/wal_sync.rs:815` prüft `received_at`,
+     und der Kommentar an der Stelle sagt ausdrücklich, dass dieser Wert immer
+     lokal via `now_unix_i64()` entsteht und *„a peer cannot inject this
+     value"*. Es ist eine Plausibilitätsprüfung gegen die **eigene** Uhr, kein
+     Ordnungsmechanismus.
+  2. **Kausale Ordnung existiert — als VectorClock, nicht HLC.** `GossipFrame`
+     führt eine `VectorClock` (`cluster/gossip_wire.rs:240`), und der
+     Frontier-Merge ist echt und getestet:
+     `accepted_gossip_frame_advances_local_clock_past_peer_causal_frontier`
+     prüft, dass die lokale Uhr nach dem Merge **strikt hinter** der
+     Peer-Frontier liegt, nicht bloß gleich. Test läuft grün.
+  3. **HLC wäre ein Rückschritt.** Vector Clocks geben *exakte* Kausalität,
+     HLC nur eine Näherung. Den einen durch den anderen zu ersetzen verlöre
+     Garantien.
+
+  **Echter Nebenbefund, gefixt:** `wal/mod.rs` behauptete im Contract-Absatz
+  „the gossip-receive path (which calls `hlc_tick_receive`)". Diesen Aufrufer
+  gibt es nicht — `hlc_tick_receive` wird **nirgends** aufgerufen. Die
+  Falschaussage ist entfernt und durch den tatsächlichen Mechanismus ersetzt.
+  Doku, die eine nicht existierende Aufrufstelle benennt, ist schlimmer als
+  Schweigen: sie macht die Lücke unauffindbar. Genau diese Zeile hat das Item
+  erzeugt.
+
 - **Trust-Ledger als per-Decision Append-Only-Timeline** `[CODEX]` `GOLD-LF-P1-05`
   Quelle: PLAN/GREMIUM_EXECUTION_BACKLOG_2026-05-20.md#P3. trust.rs hat nur den
   globalen AutonomyLevel; kein TrustEvent/TrustLedger. Integration: neues

@@ -78,10 +78,20 @@ pub use writer::spawn_for_home;
 ///
 /// **Contract:** every call site that wants an HLC-stamped header
 /// must reach for this global through
-/// [`builder::HeaderBuilder::build`] (which calls
-/// `hlc_tick_local(&mut guard, now_ns)` internally), or through
-/// the gossip-receive path (which calls `hlc_tick_receive`). Direct
+/// [`builder::HeaderBuilder::build`], which calls
+/// `hlc_tick_local(&mut guard, now_ns)` internally. Direct
 /// `Hlc::new(now_ns, 0)` is reserved for tests + the EPOCH sentinel.
+///
+/// This previously also named "the gossip-receive path (which calls
+/// `hlc_tick_receive`)". No such call site exists — `hlc_tick_receive` has
+/// never been called. Cross-node causality is carried by the gossip
+/// `VectorClock` frontier merge instead (`cluster/wal_sync.rs`, proven by
+/// `accepted_gossip_frame_advances_local_clock_past_peer_causal_frontier`),
+/// which gives exact causality where an HLC gives only an approximation.
+/// The claim is removed rather than implemented: documentation that names a
+/// call site which does not exist is worse than silence, because it makes the
+/// gap unsearchable. `hlc_tick_receive` is kept for a future multi-writer WAL
+/// merge, which is the case it was actually written for.
 ///
 /// **Mutex choice:** `std::sync::Mutex::new` is `const` since 1.63
 /// for `Mutex<Hlc>` because `Hlc` is plain-old-data. No `OnceLock`
