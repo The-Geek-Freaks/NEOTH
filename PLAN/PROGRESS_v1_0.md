@@ -74,6 +74,16 @@
 > audit (no BLOCKER; three overstated readiness claims corrected). CodeQL is
 > GitHub-managed with no workflow file and cannot be dispatched from the CLI.
 >
+> **Doc-truth slice 2026-07-31 (GOLD-R3-10):** regenerating the CLI reference
+> caught a real defect, not drift. `neoth updater status` was documented as
+> verifying "the complete canonical WAL chain"; it correlates FIRED/RESULT
+> pairs and renders one state per task, with no chain authentication on that
+> path at all. Both the clap help and the generated page now say what the code
+> does. The same regeneration exposed a process defect filed as wayfinder T7:
+> `docs/cli-commands.md` is generated, yet carries ~1,300 hand-written
+> characters of `credential copy` security documentation that every
+> regeneration silently discards.
+>
 > **Security gate is clean 2026-07-31 (wayfinder T6):** `RUSTSEC-2026-0222`
 > (wasmtime stores can mix up type indices between engines) is closed by
 > bumping the WASM plugin host 36.0.9 -> 36.0.13. The blocker was the
