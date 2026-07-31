@@ -78,6 +78,18 @@ fn rules() -> &'static [Rule] {
             re: r"(?i)\bmkfs(?:\.[a-z0-9]+)?\s+/dev/",
         },
         Rule {
+            id: "secure_erase",
+            severity: Severity::Critical,
+            reason: "secure-erasing data (shred -u/-z, wipe /dev/…) — overwrites the bytes so recovery is impossible, unlike an ordinary delete",
+            re: r"(?i)\bshred\b[^\n]*?(?:\s-[a-z]*[uz][a-z]*\b|--remove\b|--zero\b)|(?i)\bshred\b[^\n]*?\s/dev/|(?i)\bwipe\b[^\n]*?\s/dev/",
+        },
+        Rule {
+            id: "sql_destructive",
+            severity: Severity::Critical,
+            reason: "destructive SQL (DROP DATABASE/TABLE, TRUNCATE) — removes stored rows or whole schemas irreversibly",
+            re: r"(?i)\bdrop\s+(?:database|schema|table)\b|(?i)\btruncate\s+table\b",
+        },
+        Rule {
             id: "fork_bomb",
             severity: Severity::Critical,
             reason: "fork bomb — exhausts process table and freezes the host",
@@ -291,6 +303,61 @@ mod tests {
         assert!(ids("git push --force origin main").contains(&"git_force_push"));
         // --force-with-lease is the safe form — NOT flagged.
         assert!(ids("git push --force-with-lease origin main").is_empty());
+    }
+
+    /// ADOPT31-C8: the gate covered `dd` and `mkfs` but not secure-erase or
+    /// destructive SQL, so `shred -u` and `DROP DATABASE` reached dispatch
+    /// unflagged on a path that already runs for every tool call.
+    #[test]
+    fn flags_secure_erase_and_destructive_sql() {
+        for cmd in [
+            "shred -u secrets.env",
+            "shred -zn 3 /var/log/audit.log",
+            "shred --remove --zero notes.txt",
+            "shred -n 1 /dev/sda",
+            "wipe -q /dev/nvme0n1",
+        ] {
+            assert!(
+                ids(cmd).contains(&"secure_erase"),
+                "not flagged as secure erase: {cmd}"
+            );
+        }
+
+        for cmd in [
+            "psql -c 'DROP DATABASE production'",
+            "mysql -e \"drop table users\"",
+            "sqlite3 app.db 'TRUNCATE TABLE sessions'",
+            "DROP SCHEMA public",
+        ] {
+            assert!(
+                ids(cmd).contains(&"sql_destructive"),
+                "not flagged as destructive SQL: {cmd}"
+            );
+        }
+    }
+
+    /// The rules must not swallow ordinary work — a gate that cries wolf is
+    /// turned off, and then it protects nothing.
+    #[test]
+    fn secure_erase_and_sql_rules_leave_ordinary_commands_alone() {
+        for cmd in [
+            // `shred` without a removing/zeroing flag and without a device is
+            // an in-place overwrite the operator asked for by name.
+            "shred --help",
+            "man shred",
+            "grep -r 'shred' src/",
+            // Reads and non-destructive DDL.
+            "psql -c 'SELECT * FROM users'",
+            "sqlite3 app.db 'CREATE TABLE t (id INTEGER)'",
+            "psql -c 'ALTER TABLE users ADD COLUMN email TEXT'",
+            "echo 'dropped the ball'",
+        ] {
+            let found = ids(cmd);
+            assert!(
+                !found.contains(&"secure_erase") && !found.contains(&"sql_destructive"),
+                "false positive on: {cmd} -> {found:?}"
+            );
+        }
     }
 
     #[test]
