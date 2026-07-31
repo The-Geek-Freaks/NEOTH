@@ -567,6 +567,45 @@ closures — `session_id` is present in ~8 payload types, just not as a header
 field. Keeping them on the v1.0 list would have been my error, not the
 roadmap's.
 
+### T14 — Is the ADOPT31 wave built? · **answered** · `wayfinder:research`
+All 65 open items checked: **0 BUILT, 7 PARTIAL, 58 ABSENT.** Every new module
+the lane names is missing (`adw/`, `coding/adw/builtin.rs`, `adw/goal.rs`,
+`adw/evidence.rs`, `daemon/doc_ingest_cron.rs`, `skills/doc_distill.rs`); all
+14 Fabric skills are absent from `assets/skills/` (182 skills there, none under
+those names); the whole I/V/W cluster — the ADW pipeline, 15 items — has no
+`adw` directory anywhere. The 7 partials share one shape: the *seam* ships and
+the content does not (`VadBackend` trait at `media/vad/smoothed.rs:33`,
+`security/risk_gate.rs`, `UsageRollup` at `daemon/usage_log.rs:132`,
+`known_endpoints.rs:168`).
+
+### This corrects the T4 proposal a second time, and more seriously
+
+My rule was "adopting a capability from another project is by construction more
+surface, not a broken promise" — so ADOPT31 went to v1.1 wholesale. **Six items
+break that rule**: they close a live gap on a shipping path rather than adding
+anything.
+
+- **`ADOPT31-C8`** — `security/risk_gate.rs` / `dangerous_command.rs` is the
+  pre-dispatch safety gate for every tool call. `dd` and `mkfs` patterns are
+  covered; `shred` and SQL-destructive patterns are not. That is a hole in a
+  gate that already runs.
+- **`ADOPT31-C4`** — no HMAC fingerprinting of MCP tool schemas, so the
+  shipping dispatch loop cannot detect a server swapping its schema between
+  install and call. That is the rug-pull vector, live.
+- **`ADOPT31-C1`** — multi-turn prompt-injection escalation is untracked; an
+  attack that ramps gradually across turns meets no cross-turn detection on the
+  shipping conversation handler.
+- **`ADOPT31-A6`** — the shipping VAD has no minimum-duration guard, so a
+  sub-100 ms energy spike falsely cancels an active speech turn.
+- **`ADOPT31-C9`** — WAL audit field-name misalignment on the shipping WAL
+  path; breaks external audit-tool interop until fixed.
+- **`ADOPT31-B10`** — no pairwise negative routing test, so a skill
+  cross-routing regression would go undetected on the shipping router.
+
+Sending ADOPT31 to v1.1 wholesale would ship v1.0 with a known hole in the
+danger-command gate and no MCP schema-swap detection. Those two in particular
+read as v1.0 under any rule that keeps the destination's promise.
+
 ### T4 — Which of the 233 pre-tag blockers are genuinely v1.0, and which are v1.1? · open · `wayfinder:grilling` · unblocked
 The roadmap counts 1,222 boxes with 233 pre-tag blockers. Some are hard release
 contracts (artifacts, installers, parity); others are refinements that a tagged
