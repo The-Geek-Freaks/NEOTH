@@ -329,7 +329,7 @@ encryption exists but is opt-in (`wal/writer.rs:3178`). Both are by design and
 documented; the audit's suggestion was to make encryption default-on with
 auto-provisioned key. That is a separate decision of the same class.
 
-### T9 — Which R3-13 consumers still lack repo containment? · open · `wayfinder:task` · unblocked
+### T9 — Which R3-13 consumers still lack repo containment? · **answered, needs ratification** · `wayfinder:task`
 Inventory taken 2026-07-31 so the next session does not re-derive it. `GOLD-R3-13`
 requires containment-before-limiting in "CLI, GUI, self-improve and Graphify
 consumers"; the box is open but the work is largely done.
@@ -340,11 +340,26 @@ consumers"; the box is open but the work is largely done.
 index generation, opt-in staleness), `code_map/persist.rs:89,258,1090`
 (`code_map_roots` table, v2→v3 monotonic `index_generation`).
 
-**Not verified**: `cli/code_intel.rs` (one `canonicalize`, no containment
-marker), `self_improve.rs` (two `canonicalize`, no marker), the GUI consumer,
-and the Graphify path. Each needs the same question answered: does it rank and
-truncate *inside* the canonical active root, or can an unrelated indexed
-repository consume the global top-k?
+**Checked 2026-07-31 — none of the four is actually a consumer:**
+
+- `cli/code_intel.rs` — takes an explicit `args.repo`, canonicalises it, and
+  enumerates that repo's tracked files (`:48`, `:51`). There is no global index
+  to over-consume, so the failure mode cannot occur here.
+- `self_improve.rs` — zero `code_map` references. Its two `canonicalize` calls
+  resolve the installed-skills root (`:478-483`), unrelated to code-map recall.
+- `SRC/neothd-gui/` — no `code_map`/`CodeMap` reference anywhere.
+- Graphify path — `daemon/backup.rs` mentions `code_map.db` only as a file in
+  the backup set (`:76`, `:83`), not as a recall consumer.
+
+So the real recall consumers are `chat.rs`, `code.rs` and `code_map.rs`, and
+all three already contain before limiting. **R3-13 may be substantively
+complete**; what is left is a wording question on the item, which names
+consumers that do not exist.
+
+**One thing this does not settle.** "The GUI has no code-map reference" can
+mean *not a consumer* or *the surface is missing*. That is a GUI-parity
+question (`GOLD-R4-05`), not an R3-13 containment question — recorded here so
+whoever closes R3-13 does not silently absorb it.
 
 This is a task, not a decision — it is v1.0 under any T4 split, because a
 recall that hides the active repository's matches behind an unrelated one is a
