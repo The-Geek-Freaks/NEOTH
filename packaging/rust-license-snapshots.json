@@ -307,7 +307,7 @@
       "repository": "https://github.com/slint-ui/slint",
       "revision": "443908daeed77db500781670448d3688e4be0b9a"
     },
-    "cranelift-assembler-x64\u00000.123.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "cranelift-assembler-x64\u00000.123.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -317,9 +317,9 @@
       ],
       "path_in_vcs": "cranelift/assembler-x64",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
-    "cranelift-assembler-x64-meta\u00000.123.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "cranelift-assembler-x64-meta\u00000.123.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -329,7 +329,7 @@
       ],
       "path_in_vcs": "cranelift/assembler-x64/meta",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
     "cranelift-bitset\u00000.123.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
