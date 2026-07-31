@@ -22,4 +22,5 @@ ignore = [
     "RUSTSEC-2026-0206", # rustybuzz unmaintained — latest Slint/usvg graph; no safe upgrade, see deny.toml
     "RUSTSEC-2026-0194", # quick-xml <0.41 quadratic attr-check DoS — build-time only via wayland-scanner; see deny.toml
     "RUSTSEC-2026-0195", # quick-xml <0.41 NsReader memory DoS — same build-time-only chain; runtime copies are 0.41
+    "RUSTSEC-2024-0384", # instant unmaintained — transitive via nostr-sdk; no vuln, no upgrade without a nostr stack bump
 ]
