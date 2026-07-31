@@ -3,6 +3,23 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-31
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Gate round 2 in flight (head `220de2df`).** The `cap_std` fix and the two
+> advisory upgrades are in the tree under test. Two jobs are already red before
+> the run finishes — `Exact distribution license notices` and
+> `Linux quality / Rust 1.91` — but GitHub withholds job logs until the whole
+> run completes, so the causes are not yet readable. `Linux quality` failing
+> again after the trait fix means either a second Unix-only defect behind the
+> first, or a different step in the same job; that is the next thing to read.
+> Preflight and Code Quality are green on every head since.
+>
+> Wayfinder T4 now carries a prepared scope analysis: 267 id-carrying open
+> items grouped by family and judged on the system-design-101 axes. The
+> operative finding is that the tag-blocking set is governed by three
+> decisions, not 233 — whether the ADOPT31 wave is v1.1, whether
+> mobile/cluster/Buddy/channel-parity are v1.1 surfaces, and which lost
+> features were ever advertised. If the first two defer, the set drops to
+> roughly 60-80 items. The decision stays with the operator; T4 stays open.
+>
 > **First honest exact-head gate run 2026-07-31 — and it found what local
 > gates structurally cannot.** With the red tests closed, CI and Security were
 > triggered at the exact head. Both failed. Nearly every CI job (Linux quality,
