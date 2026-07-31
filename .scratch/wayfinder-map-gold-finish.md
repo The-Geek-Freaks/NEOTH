@@ -155,6 +155,26 @@ logical coordinate space `verify` walks, and it turns green the moment the
 rewrite transaction lands. **This makes R3-18A the gate for the last red
 test, and T3 can proceed without it.**
 
+### T6 — Refresh the licence snapshots so the wasmtime advisory can land · open · `wayfinder:task` · unblocked
+`cargo audit` reports **RUSTSEC-2026-0222** in `wasmtime` (stores can mix up
+type indices between engines) — a real vulnerability in the WASM plugin host,
+not a maintenance notice. `cargo update -p wasmtime` clears it and the host
+compiles clean afterwards.
+
+The blocker is downstream: the bump moves `cranelift-assembler-x64` and
+`-meta` from 0.123.9 to 0.123.13, and `packaging/rust-license-snapshots.json`
+is version-keyed. Each entry carries `repository`, `path_in_vcs`, `revision`
+(the exact upstream git commit) and per-file SHA-256 of the licence texts.
+That `revision` is provenance which cannot be derived from the crates.io
+tarball — it has to be resolved against the bytecodealliance/wasmtime
+repository for the matching release.
+
+Resolution path: find the upstream commit for those crate versions, fetch the
+licence files at that revision, record their digests, re-run
+`packaging/generate_rust_notices.py --write`, and land the bump with the
+snapshots in the same commit. Fabricating the entries would falsify a licence
+record, which is why the bump was reverted rather than forced.
+
 ### T3 — What does an exact-head release-candidate run actually have to cover? · open · `wayfinder:task` · **unblocked**
 Full CI, security, CodeQL, feature combinations, three platforms. Cannot start
 while any test is knowingly red. Resolution records the exact workflow set and
