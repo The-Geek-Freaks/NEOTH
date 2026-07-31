@@ -156,7 +156,7 @@ logical coordinate space `verify` walks, and it turns green the moment the
 rewrite transaction lands. **This makes R3-18A the gate for the last red
 test, and T3 can proceed without it.**
 
-### T6 — Refresh the licence snapshots so the wasmtime advisory can land · open · `wayfinder:task` · unblocked
+### T6 — Refresh the licence snapshots so the wasmtime advisory can land · **resolved** · `wayfinder:task`
 `cargo audit` reports **RUSTSEC-2026-0222** in `wasmtime` (stores can mix up
 type indices between engines) — a real vulnerability in the WASM plugin host,
 not a maintenance notice. `cargo update -p wasmtime` clears it and the host
@@ -231,6 +231,11 @@ So the remaining work is mechanical:
 
 Ticket stays open only because steps 1-4 have not been executed; the unknown
 that blocked it is closed.
+
+**Done (2026-07-31).** wasmtime 36.0.9 -> 36.0.13, cranelift 0.123.9 ->
+0.123.13, both snapshot entries rewritten, notices regenerated. `cargo audit`
+and `cargo deny check advisories` are clean (`advisories ok`), and the WASM
+plugin host builds with 145/145 tests green.
 
 ### T3 — What does an exact-head release-candidate run actually have to cover? · **resolved** · `wayfinder:task`
 

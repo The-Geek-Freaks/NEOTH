@@ -74,6 +74,20 @@
 > audit (no BLOCKER; three overstated readiness claims corrected). CodeQL is
 > GitHub-managed with no workflow file and cannot be dispatched from the CLI.
 >
+> **Security gate is clean 2026-07-31 (wayfinder T6):** `RUSTSEC-2026-0222`
+> (wasmtime stores can mix up type indices between engines) is closed by
+> bumping the WASM plugin host 36.0.9 -> 36.0.13. The blocker was the
+> version-keyed licence snapshot, whose recorded SHA-256 no digest of the
+> fetched text reproduced. Cause: `generate_rust_notices.py` normalises before
+> hashing (CRLF->LF, rstrip per line, strip, one trailing newline). Verified
+> against the known-good 0.123.9 entry rather than assumed — raw hash does not
+> match, normalised hash matches byte for byte. Both entries now take revision
+> and `path_in_vcs` from the crates' own `.cargo_vcs_info.json`. Evidence:
+> `cargo audit` and `cargo deny check advisories` clean, wasm-plugin-host
+> 145/145. With T3 already recording CI as fully green, the only structural
+> gap left in the release gate is that CodeQL/Rust is GitHub-managed and not
+> CLI-dispatchable.
+>
 > **Every known red test on main is closed 2026-07-31:** the count went 10 → 0.
 > The last three were the verify-redaction fixtures: they built segments in a
 > flat tempdir and wrote them with the cfg(test) `spawn()`, which signs
