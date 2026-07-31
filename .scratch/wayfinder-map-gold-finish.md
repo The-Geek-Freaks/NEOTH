@@ -311,6 +311,18 @@ The options:
 so it is the proposal — but it changes spawn behaviour for real operators, and
 that is a decision, not a repair.
 
+**Third finding, same decision surface.** `daemon/self_map_task.rs` exposes the
+provider key out of `SecretString` into a plain `Option<String>` that is
+threaded through three signatures (`:80`, `:114`, `:186`) before becoming a
+`Vec<(String, String)>` for `.envs()` at `:461`. Nothing zeroizes those copies.
+The module doc already states the intent ("exposed from SecretString by the
+caller; consumed into a subprocess env var, never persisted here"), so this is
+a known trade, not an oversight — but it is the same question as the ambient
+inheritance above: how much of the key's lifetime outside `SecretString` is
+acceptable on the subprocess path. Wrapping only the final `Vec` in
+`Zeroizing` would shorten one copy and leave the three upstream `String`s
+untouched, which is why it is listed rather than half-fixed.
+
 **Also found, filed here so it is not lost:** WAL RAW_TEXT (0x01) writes the
 operator's prompt bytes verbatim (`cli/chat.rs:6301`) and WAL at-rest
 encryption exists but is opt-in (`wal/writer.rs:3178`). Both are by design and
