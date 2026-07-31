@@ -498,6 +498,34 @@ Closing any of these needs a ratifier, not just this reading: "the code is
 present" is not the same as "the item's full contract is met, wired and
 tested". This ticket produces the evidence; it does not tick the boxes.
 
+### T12 — Is WS-NCT built at all? · **answered: no** · `wayfinder:research`
+The one axis T4's proposal left open was `WS-NCT` (27 items), which declares
+itself "every card below is v1.0.0 Gold work" while reading as new capability.
+Verified rather than argued:
+
+- `SRC/neothd/src/cognitive_transport/` — **does not exist**. `NCT-02` names it
+  explicitly (`cognitive_transport/{mod,types,nir,limits}.rs`).
+- `SRC/neothd/schemas/nct/` — **does not exist**. Same item requires versioned
+  schemas there.
+- `lib.rs` has zero references to `cognitive_transport` or `nir`.
+- Zero `GOLD-NCT` markers anywhere in `src/`.
+
+**This is the exact inverse of `R4-15`.** That lane is a finished spine with
+unbuilt limbs; this one has no spine. `NCT-02` alone demands a canonical wire
+schema with byte/nesting/count ceilings, typed untrusted blocks, and golden
+vectors shared with *an independent implementation* — that is not a
+refinement, it is a protocol.
+
+**What this settles for T4.** The proposal's stated cost was "~67 v1.0 items,
+or ~94 if NCT stays v1.0". That understated it: those 27 are not 27 partially
+done items, they are 27 items of greenfield protocol work including a second
+implementation for cross-checking. Keeping NCT in v1.0 does not add a third to
+the count — it changes what kind of release v1.0 is.
+
+The scope decision stays the operator's. It is now informed: the honest
+question is not "should NCT be v1.0?" but "should v1.0 wait for a new
+inter-agent protocol with an independent implementation?"
+
 ### T4 — Which of the 233 pre-tag blockers are genuinely v1.0, and which are v1.1? · open · `wayfinder:grilling` · unblocked
 The roadmap counts 1,222 boxes with 233 pre-tag blockers. Some are hard release
 contracts (artifacts, installers, parity); others are refinements that a tagged
