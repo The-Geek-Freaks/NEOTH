@@ -1893,9 +1893,24 @@ pub const EVENT_TYPE_MEMORY_PIPELINE_SCORECARD_TICK: u8 = 0x9F;
 // ---- 0xA0..=0xAF  Permissions / autonomy (R-23) ---------------------------
 
 /// Permission decision returned `Allow` (after a possible Confirm round-trip).
-/// Phase 28b AU-5. Payload: `{action, level, reason?, ts}`.
+/// Phase 28b AU-5.
+///
+/// Payload (built at `permissions::gate::audit`, the single emitter):
+/// `{level, action, authorization_id?, request_binding_sha256?, decision,
+///   reason?, subject?, lease_id?, confirmation_source?, ts_ns}`.
+///
+/// This comment previously read `{action, level, reason?, ts}` and omitted six
+/// fields — including `subject`, which is what makes the band answer "who was
+/// this decided for". That omission is not cosmetic: it generated
+/// `GOLD-LF-P1-05` ("no TrustEvent/TrustLedger") and then a follow-up item
+/// asking for subject attribution that has shipped since SL-01a-b. Both were
+/// written from this comment rather than from `gate.rs`. Keep it in sync with
+/// the emitter — `permissions::audit::AuditEntry` is the reader and parses
+/// these exact names.
 pub const EVENT_TYPE_PERMISSION_GRANTED: u8 = 0xA0;
-/// Permission decision returned `Deny`. Payload: `{action, level, reason, ts}`.
+/// Permission decision returned `Deny` — also emitted for `Confirm`, which is
+/// a refusal until the operator answers. Same payload shape as
+/// [`EVENT_TYPE_PERMISSION_GRANTED`], with `reason` always present.
 pub const EVENT_TYPE_PERMISSION_DENIED: u8 = 0xA1;
 /// Operator changed the autonomy level upward via `neoth autonomy --set ...`.
 /// Payload: `{from_level, to_level, source, ts}`.

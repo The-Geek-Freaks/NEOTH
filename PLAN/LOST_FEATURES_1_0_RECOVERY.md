@@ -140,36 +140,35 @@
   Schweigen: sie macht die Lücke unauffindbar. Genau diese Zeile hat das Item
   erzeugt.
 
-- **Trust-Ledger — Substrat existiert, Restlücke ist Subjekt-Attribution** `[CODEX]` `GOLD-LF-P1-05`
-  **UMSKOPIERT (2026-08-01), nicht gebaut.** Das Item verlangt ein neues
-  `memory/trust_ledger.rs` plus „WAL-Event je Entscheidungsgrenze". Beide
-  Hälften sind bereits erfüllt bzw. würden duplizieren:
+- **Trust-Ledger — VOLLSTÄNDIG GEBAUT, Item war falsch** `[CODEX]` `GOLD-LF-P1-05`
+  **GESCHLOSSEN (2026-08-01), verifiziertes Negativergebnis.** Alles, was das
+  Item verlangt, existiert:
 
-  - **Das WAL-Event existiert.** Band `0xA0..=0xAF` „Permissions / autonomy
-    (R-23)": `0xA0 PERMISSION_GRANTED`, `0xA1 PERMISSION_DENIED`,
-    `0xA2 LEVEL_ELEVATED`, `0xA3 LEVEL_DEROGATED`, Leases `0xA5..0xA7`.
-    Gezählte Emit-Stellen: **38 granted, 29 denied**, 7/5 für Level-Wechsel.
-  - **Die Persistenz existiert.** Die WAL *ist* der append-only Ledger, und
-    zwar HMAC-verkettet — „tamper detection" und „deterministic inspection"
-    aus der Tracker-Zeile sind `neoth wal verify` / `wal show`. Ein zweiter
-    typisierter Store daneben wäre dieselbe Doppel-Aufzeichnungs-Falle, aus
-    der `SelfUpdateIntent` (P1-01) und `right_hemisphere.rs` (P1-02) gestrichen
-    wurden.
+  | Anforderung | Realität |
+  |---|---|
+  | „WAL-Event je Entscheidungsgrenze" | Band `0xA0..=0xAF`; 38 granted- / 29 denied-Emit-Stellen |
+  | Append-only Persistenz + tamper detection | Die WAL selbst, HMAC-verkettet |
+  | „deterministic inspection" | `neoth permissions audit` (`permissions/audit.rs`) |
+  | „subject isolation" | `"subject"` in der Payload (`permissions/gate.rs:600`), gelesen als `AuditEntry.subject` (`audit.rs:277`), Marker SL-01a-b |
+  | Einzelner Emitter (kein 67-Stellen-Problem) | `permissions::gate::audit` ist Choke-Point |
 
-  **Was wirklich fehlt — und nur das:** die Nutzlast ist laut Contract
-  `{action, level, reason?, ts}` (`wal/events.rs:1896`). **Kein Subjekt-Feld.**
-  Der Frame hält fest *was* auf *welcher Stufe* entschieden wurde, nicht *für
-  wen* — welcher Sub-Agent, welche Session, welcher Channel-Origin. Genau das
-  ist die „subject isolation" der Tracker-Zeile, und sie ist der einzige echte
-  Rest.
+  Der Emitter-Doc sagt es wörtlich: *„chain: 'subject S was allowed action A at
+  T because of lease L'"*.
 
-  **Neuer Zuschnitt `GOLD-LF-P1-05a` — Subjekt-Attribution auf dem
-  Autonomie-Band:** `subject` in die Payload von 0xA0/0xA1 (und sinnvoll
-  0xA2/0xA3) aufnehmen, an den 67 Emit-Stellen durchreichen, Replay-Test der
-  beweist dass zwei Subjekte in derselben Session getrennt bleiben. Das ist
-  eine mechanische Änderung mit klarer Abnahme — kein neues Subsystem.
-  Vorsicht bei der Umsetzung: `subject` darf keine Freitext-Senke werden
-  (P1-03-Klasse), also typisiert statt String-Blob.
+  **Ursache des Items — und meiner eigenen Fehlkorrektur:** der Doc-Kommentar
+  an `EVENT_TYPE_PERMISSION_GRANTED` beschrieb die Payload als
+  `{action, level, reason?, ts}` und verschwieg **sechs** Felder, darunter
+  `subject`. Aus dieser Zeile entstand erst das Item („kein TrustEvent") und
+  dann — in derselben Session, in der ich diese Fehlerklasse bei anderen
+  Items dokumentierte — mein eigener Folge-Zuschnitt `P1-05a`
+  („Subjekt-Attribution fehlt"). **`P1-05a` ist hiermit zurückgezogen; es
+  beschrieb ausgelieferten Code.** Ich hatte den Kommentar gelesen statt
+  `gate.rs`.
+
+  Der Kommentar ist jetzt auf die zehn tatsächlichen Felder korrigiert und
+  verweist auf Emitter und Leser. Gleiche Fehlerklasse wie die
+  `hlc_tick_receive`-Zeile in P1-04: **veraltete Doku erzeugt Phantom-Arbeit**,
+  und zwar zuverlässig genug, um zweimal in einer Session zu treffen.
 
 ### Council / Recall / Inference
 
