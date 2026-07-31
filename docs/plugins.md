@@ -234,7 +234,7 @@ neoth plugin ledger my_plugin
 Install and discovery do not activate code. `enable` records the approved
 permission plus canonical manifest and WASM digests. Any later manifest,
 permission, or binary change requires explicit re-consent and a daemon restart;
-disable/revocation takes effect fail-closed on live reload.
+disable/revocation takes effect fail-closed on the next daemon restart. Revoking a plugin in a *running* daemon is not yet implemented — that is tracked as GOLD-R3-17.
 
 ## Security expectations
 

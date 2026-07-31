@@ -25,6 +25,15 @@ NEOTH exposes the same buddy through multiple surfaces. Channels are not second-
 | **Email** | Local inbox triage and quarantine. | Source-build `imap_fetch` feature; IMAP over TLS with app-password or XOAUTH2. No SMTP/send path. |
 | **Calendar** | List or create schedule items with approval. | CalDAV collection over authenticated WebDAV. |
 
+> **Untrusted-audience readiness.** Six adapters — IRC/Twitch, iMessage
+> (BlueBubbles), Mattermost, Google Chat, Matrix and Nostr — fail closed on
+> their named inbound identity policy but still need the common
+> operator/sender/conversation gate before they are suitable for an untrusted
+> audience. Twitch additionally authenticates only the bot transport. Setup for
+> these five (IRC/Twitch, Mattermost, Nostr, Google Chat, iMessage) is CLI-only
+> today via `neoth channel add <name>`; they have no dedicated setup section
+> below. See the [release notes](release-notes-v1.0.md) for the open items.
+
 Every channel should pass through:
 
 - identity mapping
