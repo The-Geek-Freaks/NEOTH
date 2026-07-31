@@ -149,19 +149,19 @@ already-gated release workflow itself.
 inside their already-open parent rollups and therefore are not added a second
 time to the WS-R4 top-level total.
 
-**Current count semantics (machine-recomputed 2026-07-30):** the dashboard
+**Current count semantics (machine-recomputed 2026-07-31):** the dashboard
 tracks broad/workstream rollups, whose current OPEN column sums to **165**
 (`1 + 6 + 14 + 116 + 28`). The release workflow uses a different and stricter
 contract: `packaging/roadmap_release_gate.py` counts every Markdown task outside
 fenced code, including mandatory child contracts. Its current whole-file result
-from `python packaging/roadmap_release_gate.py --summary-json` is **1,221 total
-/ 988 done / 233 raw open / 0 partial**. A release tag therefore has **232
+from `python packaging/roadmap_release_gate.py --summary-json` is **1,222 total
+/ 988 done / 234 raw open / 0 partial**. A release tag therefore has **233
 pre-tag blockers**, because only the single
 `GOLD-RELEASE-ARTIFACTS` task may remain open while that workflow creates its
-evidence. The values 165, 233 and 232 answer different questions and must not be
+evidence. The values 165, 234 and 233 answer different questions and must not be
 substituted for one another in release-readiness claims.
 
-<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1221 complete=988 open=233 partial=0 raw_blockers=233 release_tag_blockers=232 release_generated_items=1 -->
+<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1222 complete=988 open=234 partial=0 raw_blockers=234 release_tag_blockers=233 release_generated_items=1 -->
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
 
@@ -2206,14 +2206,37 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
     NEOTH policy block. Docs, starter config, onboarding and prompt contracts
     say the same thing and never promise that NEOTH can override a vendor's
     remote policy.
-    - [ ] **GOLD-R4-15k1 Bounded successful provider envelopes:** cap and
-      incrementally parse every provider's successful JSON response and each
-      SSE residual/frame before allocation can grow without bound. Oversize or
-      newline-free frames must fail with bounded, secret-safe digest evidence;
-      focused fixtures must cover huge `choices[].error`, refusal and malformed
-      2xx bodies plus endless newline-free streams. Ordinary provider-authored
-      completion/refusal text remains visible output and is not reclassified as
-      transport diagnostics.
+    - [ ] **GOLD-R4-15k1 Bounded provider envelopes:** incrementally read and
+      cap every provider's successful JSON response before parsing, every
+      adjacent HTTP error body, every SSE/NDJSON residual or frame, cumulative
+      retained stream metadata and local CLI/Tmux stdout/stderr before
+      allocation can grow without bound. Oversize or newline-free frames must
+      fail with bounded, secret-safe digest evidence; focused fixtures must
+      cover huge `choices[].error`, refusal and malformed 2xx bodies plus
+      endless newline-free streams. Ordinary provider-authored
+      completion/refusal text remains visible output and is not reclassified
+      as transport diagnostics.
+
+      **OpenAI-compatible checkpoint 2026-07-31 (box remains OPEN):** the real
+      OpenAI/OpenRouter/DeepSeek/Kimi/Qwen/custom Chat-Completions leaf now
+      reads successful JSON into an 8 MiB bounded byte buffer before serde,
+      parses SSE as raw bytes with a 1 MiB line/residual and joined-event-data
+      cap, accepts UTF-8 code points split across transport chunks and standard
+      multi-`data:` events, caps cumulatively retained streaming and non-stream
+      refusal metadata at 1 MiB, drops raw transport-error sources and emits
+      only domain-separated digest evidence for oversize, invalid UTF-8,
+      malformed or truncated input. Typed QuotaError,
+      Retry-After, OpenRouter observation and ordinary visible refusal output
+      remain unchanged. Existing OpenAI-compatible error bodies stay capped at
+      64 KiB. Shared primitives live in
+      `providers/response_bounds.rs`; the box cannot close until Ollama,
+      Anthropic, Gemini, Cohere, Bedrock, Azure, Copilot-token, Claude CLI and
+      Tmux transports adopt equivalent bounded readers and adversarial tests.
+      Current focused evidence: response bounds **3/3**, OpenAI-compatible
+      **53/53**, redaction **53/53**, quota **22/22**, termination **4/4**,
+      refusal recovery **26/26**, abliterated fallback **11/11**, turn journal
+      **13/13**, ROAD release gate **11/11** and lost-feature integrity
+      **19/19**, with Cargo check and Clippy `-D warnings` clean.
   - [ ] **GOLD-R4-15l Installed clean-machine evidence:** exercise file-to-file,
     OS-vault-to-NEOTH-vault and password-store/file-to-named-Channel journeys
     through equivalent CLI, GUI/Buddy and authenticated Channel commands on

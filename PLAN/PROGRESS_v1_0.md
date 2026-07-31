@@ -1,7 +1,31 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-07-28
+**Created:** 2026-05-24  **Last updated:** 2026-07-31
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
+>
+> **Bounded provider-envelope checkpoint 2026-07-31 (counts unchanged;
+> `GOLD-R4-15k1` remains open):** the production
+> OpenAI/OpenRouter/DeepSeek/Kimi/Qwen/custom Chat-Completions path now reads
+> successful JSON incrementally into an 8 MiB hard-capped byte envelope before
+> deserialisation. SSE framing is byte-oriented with a 1 MiB line/residual and
+> joined-event-data cap, so split UTF-8 code points and standard multi-`data:`
+> events work without permitting newline-free or multi-field growth. Retained
+> refusal metadata has its own 1 MiB cumulative budget across streaming,
+> `message.refusal` and `content[].refusal`; every oversize, invalid-UTF-8,
+> malformed or truncated-transport outcome exposes only domain-separated digest
+> evidence. Typed QuotaError,
+> Retry-After, OpenRouter observation and ordinary visible provider refusal
+> output remain intact. Shared primitives live in
+> `providers/response_bounds.rs`; focused evidence is response-bounds **3/3**,
+> OpenAI-compatible **53/53**, redaction **53/53**, quota **22/22**,
+> termination **4/4**, refusal recovery **26/26**, abliterated fallback
+> **11/11** and turn journal **13/13**, with Cargo check, Clippy
+> `-D warnings`, ROAD release gate **11/11** and lost-feature integrity
+> **19/19** green. `GOLD-R4-15k1` cannot close until Ollama, Anthropic,
+> Gemini, Cohere, Bedrock, Azure, Copilot-token, Claude CLI/Tmux and
+> RecursiveMAS adopt equivalent bounded readers and no-bypass tests. Current
+> machine truth remains **1,222 total / 988 complete / 234 raw open / 233
+> pre-tag blockers**.
 >
 > **Mutation-WAL integrity checkpoint 2026-07-28 (counts unchanged; R3-17
 > remains open):** CLI/GUI install, replace, create and remove plus proactive

@@ -7,8 +7,8 @@
 //! `openai_api_custom`: it cannot inherit the reviewed official price table.
 //!
 //! Streaming: `stream()` sends `stream: true` and reads the response body as
-//! Server-Sent Events (SSE), parsing each `data: {...}` line as an OpenAI
-//! streaming chunk and mapping it to `CompletionChunk`. Works with any
+//! Server-Sent Events (SSE), joining every event's `data:` fields before
+//! parsing the OpenAI streaming chunk and mapping it to `CompletionChunk`. Works with any
 //! OpenAI-compat endpoint including Ollama's `/v1/chat/completions` path.
 
 use std::time::Instant;
@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
+use super::response_bounds;
 use super::termination::{ObservedUpstreamEvidence, ProviderTermination, RefusalOrigin};
 use super::{
     ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
@@ -29,6 +30,13 @@ use crate::config::inference::OpenAiCompatibleProfile;
 use crate::secret::SecretString;
 
 const MAX_PROVIDER_ERROR_BODY_BYTES: usize = 64 * 1024;
+const MAX_PROVIDER_SUCCESS_BODY_BYTES: usize = response_bounds::MAX_SUCCESS_JSON_BODY_BYTES;
+const MAX_PROVIDER_SSE_FRAME_BYTES: usize = response_bounds::MAX_SSE_FRAME_BYTES;
+const MAX_PROVIDER_REFUSAL_MESSAGE_BYTES: usize = response_bounds::MAX_SSE_FRAME_BYTES;
+const SUCCESS_BODY_EVIDENCE_DOMAIN: &[u8] = b"openai-compatible-success-body/v1";
+const SSE_FRAME_EVIDENCE_DOMAIN: &[u8] = b"openai-compatible-sse-frame/v1";
+const SSE_TRANSPORT_EVIDENCE_DOMAIN: &[u8] = b"openai-compatible-sse-transport/v1";
+const REFUSAL_EVIDENCE_DOMAIN: &[u8] = b"openai-compatible-refusal/v1";
 
 struct BoundedProviderErrorBody {
     text: String,
@@ -522,10 +530,13 @@ impl Provider for OpenAiAdapter {
                 );
             }
 
-            let parsed: ChatResponse = response
-                .json()
-                .await
-                .with_context(|| format!("parse {} response JSON", self.name))?;
+            let parsed: ChatResponse = response_bounds::decode_json(
+                response,
+                self.name,
+                SUCCESS_BODY_EVIDENCE_DOMAIN,
+                MAX_PROVIDER_SUCCESS_BODY_BYTES,
+            )
+            .await?;
             let ChatResponse {
                 choices,
                 usage,
@@ -573,10 +584,14 @@ impl Provider for OpenAiAdapter {
             }
             let ChatChoiceMessage { content, refusal } = choice.message;
             let parsed_content = content
-                .map(ChatChoiceContent::into_text_and_refusal)
+                .map(|content| content.into_text_and_refusal(self.name))
+                .transpose()?
                 .unwrap_or_default();
             let direct_refusal_present = refusal.is_some();
-            let direct_refusal_message = refusal.filter(|value| !value.trim().is_empty());
+            let direct_refusal_message = refusal
+                .filter(|value| !value.trim().is_empty())
+                .map(|message| bound_refusal_message(message, self.name))
+                .transpose()?;
             let (refusal_present, refusal_message, refusal_reason) = if direct_refusal_present {
                 (true, direct_refusal_message, "message.refusal")
             } else {
@@ -672,8 +687,8 @@ impl Provider for OpenAiAdapter {
     }
 
     /// SSE streaming completion. Sends `stream: true` and parses the response
-    /// body as Server-Sent Events. Each `data: {...}` line is decoded as an
-    /// `OpenAI streaming chunk`; `data: [DONE]` terminates the stream.
+    /// body as Server-Sent Events. Each event's `data:` fields are joined and
+    /// decoded as an OpenAI streaming chunk; `data: [DONE]` terminates the stream.
     ///
     /// Works with any OpenAI-compat endpoint that honours `stream: true`,
     /// including Ollama's `/v1/chat/completions` path and LM Studio.
@@ -771,10 +786,13 @@ impl Provider for OpenAiAdapter {
             let name = self.name;
             let observe_openrouter = self.openrouter_metadata;
             let byte_stream = response.bytes_stream();
-            // Buffer partial lines across byte chunks (SSE lines may be split
-            // across reqwest byte chunks on slow connections).
+            // Buffer partial lines and the current event separately. SSE
+            // permits multiple `data:` fields in one event; they are joined
+            // with newlines and decoded only when the blank separator arrives.
             let inner: ChunkStream = Box::pin(async_stream::try_stream! {
-                let mut buf = String::new();
+                let mut line_buf = Vec::new();
+                let mut event_data = Vec::new();
+                let mut event_has_data = false;
                 let mut input_tokens: Option<u32> = None;
                 let mut output_tokens: Option<u32> = None;
                 let mut termination = ProviderTermination::default();
@@ -783,105 +801,157 @@ impl Provider for OpenAiAdapter {
 
                 tokio::pin!(byte_stream);
                 while let Some(chunk_result) = byte_stream.next().await {
-                    let bytes = chunk_result
-                        .with_context(|| format!("{name}: SSE byte read error"))?;
-                    let text = std::str::from_utf8(&bytes)
-                        .with_context(|| format!("{name}: SSE chunk not valid UTF-8"))?;
-                    buf.push_str(text);
+                    let bytes = match chunk_result {
+                        Ok(bytes) => bytes,
+                        Err(_) => {
+                            let evidence = response_bounds::stream_evidence(
+                                SSE_TRANSPORT_EVIDENCE_DOMAIN,
+                                &[event_data.as_slice(), line_buf.as_slice()],
+                                true,
+                            );
+                            Err(anyhow::anyhow!(
+                                "{name}: SSE transport read failed ({evidence})"
+                            ))?
+                        }
+                    };
+                    let mut cursor = 0usize;
 
-                    // Process all complete lines (\n-terminated SSE lines).
-                    while let Some(newline_pos) = buf.find('\n') {
-                        let line = buf[..newline_pos].trim_end_matches('\r').to_string();
-                        buf.drain(..=newline_pos);
+                    // Process every complete line directly from the byte
+                    // chunk. UTF-8 is decoded only after a full line exists,
+                    // because a code point may be split across transport
+                    // chunks.
+                    while let Some(relative_newline) =
+                        bytes[cursor..].iter().position(|byte| *byte == b'\n')
+                    {
+                        let newline_pos = cursor + relative_newline;
+                        response_bounds::append_frame_segment(
+                            &mut line_buf,
+                            &bytes[cursor..newline_pos],
+                            name,
+                            SSE_FRAME_EVIDENCE_DOMAIN,
+                            MAX_PROVIDER_SSE_FRAME_BYTES,
+                        )?;
+                        if line_buf.last() == Some(&b'\r') {
+                            line_buf.pop();
+                        }
+                        let line = response_bounds::frame_utf8(
+                            &line_buf,
+                            name,
+                            SSE_FRAME_EVIDENCE_DOMAIN,
+                        )?
+                        .to_owned();
+                        line_buf.clear();
+                        cursor = newline_pos + 1;
 
-                        if line.is_empty() || line.starts_with(':') {
-                            // SSE comment or blank separator — skip.
+                        if line.is_empty() {
+                            if !event_has_data {
+                                continue;
+                            }
+                            let event = decode_sse_event(
+                                &event_data,
+                                name,
+                                &mut termination,
+                                observe_openrouter,
+                                &mut observed_upstream,
+                            )?;
+                            event_data.clear();
+                            event_has_data = false;
+                            match event {
+                                DecodedSseEvent::Done => {
+                                    termination.observed_upstream = observed_upstream;
+                                    yield CompletionChunk {
+                                        delta: String::new(),
+                                        done: true,
+                                        identity: Default::default(),
+                                        termination,
+                                        input_tokens,
+                                        output_tokens,
+                                        cache_creation_tokens: None,
+                                        cache_read_tokens: None,
+                                    };
+                                    return;
+                                }
+                                DecodedSseEvent::Chunk(decoded) => {
+                                    if let Some(chunk) = apply_decoded_sse_chunk(
+                                        decoded,
+                                        &mut input_tokens,
+                                        &mut output_tokens,
+                                        &mut saw_authoritative_terminal,
+                                    ) {
+                                        yield chunk;
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        if line.starts_with(':') {
                             continue;
                         }
                         let Some(data) = sse_data(&line) else {
                             continue;
                         };
-                        if data == "[DONE]" {
-                            // Emit the final done-chunk with token counts.
-                            termination.observed_upstream = observed_upstream;
-                            yield CompletionChunk {
-                                delta: String::new(),
-                                done: true,
-                                identity: Default::default(),
-                                termination,
-                                input_tokens,
-                                output_tokens,
-                                cache_creation_tokens: None,
-                                cache_read_tokens: None,
-                            };
-                            return;
-                        }
-                        // Decode every JSON frame. A malformed frame or a
-                        // non-policy error envelope is a stream error, never
-                        // an empty successful completion.
-                        let decoded = decode_sse_chunk(
+                        append_sse_data_field(
+                            &mut event_data,
+                            event_has_data,
                             data,
                             name,
-                            &mut termination,
-                            observe_openrouter,
-                            &mut observed_upstream,
                         )?;
-                        saw_authoritative_terminal |= decoded.authoritative_terminal;
-                        // Capture token counts from any usage block the endpoint
-                        // injects (Ollama compat includes them on the last data
-                        // line, OpenAI includes them only with stream_options).
-                        if let Some(u) = decoded.usage {
-                            input_tokens = Some(u.prompt_tokens);
-                            output_tokens = Some(u.completion_tokens);
-                        }
-                        if !decoded.delta.is_empty() {
-                            yield CompletionChunk {
-                                delta: decoded.delta,
-                                done: false,
-                                identity: Default::default(),
-                                termination: Default::default(),
-                                input_tokens: None,
-                                output_tokens: None,
-                                cache_creation_tokens: None,
-                                cache_read_tokens: None,
-                            };
-                        }
+                        event_has_data = true;
+                    }
+                    response_bounds::append_frame_segment(
+                        &mut line_buf,
+                        &bytes[cursor..],
+                        name,
+                        SSE_FRAME_EVIDENCE_DOMAIN,
+                        MAX_PROVIDER_SSE_FRAME_BYTES,
+                    )?;
+                }
+
+                // EOF dispatches the final event even when the endpoint omitted
+                // the last newline or blank separator.
+                if !line_buf.is_empty() {
+                    if line_buf.last() == Some(&b'\r') {
+                        line_buf.pop();
+                    }
+                    let tail = response_bounds::frame_utf8(
+                        &line_buf,
+                        name,
+                        SSE_FRAME_EVIDENCE_DOMAIN,
+                    )?
+                    .to_owned();
+                    if !tail.is_empty()
+                        && !tail.starts_with(':')
+                        && let Some(data) = sse_data(&tail)
+                    {
+                        append_sse_data_field(
+                            &mut event_data,
+                            event_has_data,
+                            data,
+                            name,
+                        )?;
+                        event_has_data = true;
                     }
                 }
-                // EOF residual: parse a final `data:` line the endpoint ended
-                // WITHOUT a trailing newline (the line-loop never consumed it), so
-                // a newline-less last delta or usage block isn't dropped before the
-                // terminator. A newline-less terminal frame must still authorize
-                // successful EOF completion.
-                let tail = buf.trim();
-                if let Some(data) = sse_data(tail) {
-                    let data = data.trim();
-                    if data == "[DONE]" {
-                        saw_authoritative_terminal = true;
-                    } else if !data.is_empty() {
-                        let decoded = decode_sse_chunk(
-                            data,
-                            name,
-                            &mut termination,
-                            observe_openrouter,
-                            &mut observed_upstream,
-                        )?;
-                        saw_authoritative_terminal |= decoded.authoritative_terminal;
-                        if let Some(u) = decoded.usage {
-                            input_tokens = Some(u.prompt_tokens);
-                            output_tokens = Some(u.completion_tokens);
+                if event_has_data {
+                    match decode_sse_event(
+                        &event_data,
+                        name,
+                        &mut termination,
+                        observe_openrouter,
+                        &mut observed_upstream,
+                    )? {
+                        DecodedSseEvent::Done => {
+                            saw_authoritative_terminal = true;
                         }
-                        if !decoded.delta.is_empty() {
-                            yield CompletionChunk {
-                                delta: decoded.delta,
-                                done: false,
-                                identity: Default::default(),
-                                termination: Default::default(),
-                                input_tokens: None,
-                                output_tokens: None,
-                                cache_creation_tokens: None,
-                                cache_read_tokens: None,
-                            };
+                        DecodedSseEvent::Chunk(decoded) => {
+                            if let Some(chunk) = apply_decoded_sse_chunk(
+                                decoded,
+                                &mut input_tokens,
+                                &mut output_tokens,
+                                &mut saw_authoritative_terminal,
+                            ) {
+                                yield chunk;
+                            }
                         }
                     }
                 }
@@ -986,8 +1056,8 @@ struct ParsedChatChoiceContent {
 }
 
 impl ChatChoiceContent {
-    fn into_text_and_refusal(self) -> ParsedChatChoiceContent {
-        match self {
+    fn into_text_and_refusal(self, adapter_name: &str) -> Result<ParsedChatChoiceContent> {
+        Ok(match self {
             Self::Text(text) => ParsedChatChoiceContent {
                 text: (!text.is_empty()).then_some(text),
                 ..Default::default()
@@ -1008,7 +1078,11 @@ impl ChatChoiceContent {
                             if let Some(fragment) =
                                 part.refusal.or(part.text).filter(|value| !value.is_empty())
                             {
-                                refusal_message.push_str(&fragment);
+                                append_bounded_refusal(
+                                    &mut refusal_message,
+                                    &fragment,
+                                    adapter_name,
+                                )?;
                             }
                         }
                         _ => {}
@@ -1020,7 +1094,7 @@ impl ChatChoiceContent {
                     refusal_message: (!refusal_message.is_empty()).then_some(refusal_message),
                 }
             }
-        }
+        })
     }
 }
 
@@ -1042,8 +1116,9 @@ struct ChatUsage {
 
 // ── SSE streaming wire types ────────────────────────────────────────────────
 //
-// OpenAI streaming format: each `data:` line is a JSON object with a
-// `choices[].delta.content` field.  The final line is `data: [DONE]`.
+// OpenAI streaming format: each SSE event contains one or more `data:` fields
+// whose joined value is a JSON object with a `choices[].delta.content` field.
+// The final event is `data: [DONE]`.
 // Usage is only present when the endpoint opts in (stream_options or
 // Ollama's own done-chunk injection); it is always optional here.
 
@@ -1069,6 +1144,79 @@ fn sse_data(line: &str) -> Option<&str> {
         .map(|data| data.strip_prefix(' ').unwrap_or(data))
 }
 
+fn append_sse_data_field(
+    event_data: &mut Vec<u8>,
+    event_has_data: bool,
+    data: &str,
+    adapter_name: &'static str,
+) -> Result<()> {
+    if event_has_data {
+        response_bounds::append_frame_segment(
+            event_data,
+            b"\n",
+            adapter_name,
+            SSE_FRAME_EVIDENCE_DOMAIN,
+            MAX_PROVIDER_SSE_FRAME_BYTES,
+        )?;
+    }
+    response_bounds::append_frame_segment(
+        event_data,
+        data.as_bytes(),
+        adapter_name,
+        SSE_FRAME_EVIDENCE_DOMAIN,
+        MAX_PROVIDER_SSE_FRAME_BYTES,
+    )
+}
+
+enum DecodedSseEvent {
+    Done,
+    Chunk(DecodedSseChunk),
+}
+
+fn decode_sse_event(
+    event_data: &[u8],
+    adapter_name: &'static str,
+    termination: &mut ProviderTermination,
+    observe_openrouter: bool,
+    observed_upstream: &mut Option<ObservedUpstreamEvidence>,
+) -> Result<DecodedSseEvent> {
+    let data = response_bounds::frame_utf8(event_data, adapter_name, SSE_FRAME_EVIDENCE_DOMAIN)?;
+    if data.trim() == "[DONE]" {
+        return Ok(DecodedSseEvent::Done);
+    }
+    decode_sse_chunk(
+        data,
+        adapter_name,
+        termination,
+        observe_openrouter,
+        observed_upstream,
+    )
+    .map(DecodedSseEvent::Chunk)
+}
+
+fn apply_decoded_sse_chunk(
+    decoded: DecodedSseChunk,
+    input_tokens: &mut Option<u32>,
+    output_tokens: &mut Option<u32>,
+    saw_authoritative_terminal: &mut bool,
+) -> Option<CompletionChunk> {
+    *saw_authoritative_terminal |= decoded.authoritative_terminal;
+    if let Some(usage) = decoded.usage {
+        *input_tokens = Some(usage.prompt_tokens);
+        *output_tokens = Some(usage.completion_tokens);
+    }
+    (!decoded.delta.is_empty()).then_some(CompletionChunk {
+        delta: decoded.delta,
+        done: false,
+        identity: Default::default(),
+        termination: Default::default(),
+        input_tokens: None,
+        output_tokens: None,
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
+    })
+}
+
 fn decode_sse_chunk(
     data: &str,
     adapter_name: &str,
@@ -1076,8 +1224,15 @@ fn decode_sse_chunk(
     observe_openrouter: bool,
     observed_upstream: &mut Option<ObservedUpstreamEvidence>,
 ) -> Result<DecodedSseChunk> {
-    let parsed: SseChunk = serde_json::from_str(data)
-        .with_context(|| format!("{adapter_name}: malformed SSE data frame"))?;
+    let parsed: SseChunk = serde_json::from_str(data).map_err(|error| {
+        let evidence =
+            response_bounds::frame_evidence(SSE_FRAME_EVIDENCE_DOMAIN, &[data.as_bytes()], false);
+        anyhow::anyhow!(
+            "{adapter_name}: malformed SSE data frame at line {} column {} ({evidence})",
+            error.line(),
+            error.column()
+        )
+    })?;
     let SseChunk {
         choices,
         usage,
@@ -1137,7 +1292,7 @@ fn decode_sse_chunk(
             .as_ref()
             .and_then(parse_openai_compatible_policy_error_value)
             .is_some();
-    let delta = choice.into_delta(termination);
+    let delta = choice.into_delta(termination, adapter_name)?;
     Ok(DecodedSseChunk {
         usage,
         delta,
@@ -1162,7 +1317,11 @@ struct SseChoice {
 }
 
 impl SseChoice {
-    fn into_delta(self, termination: &mut ProviderTermination) -> String {
+    fn into_delta(
+        self,
+        termination: &mut ProviderTermination,
+        adapter_name: &str,
+    ) -> Result<String> {
         let Self {
             delta,
             finish_reason,
@@ -1182,21 +1341,29 @@ impl SseChoice {
                         && existing.reason == "message.refusal" =>
                 {
                     if let Some(fragment) = refusal_fragment.as_ref() {
-                        existing
-                            .message
-                            .get_or_insert_with(String::new)
-                            .push_str(fragment);
+                        append_bounded_refusal(
+                            existing.message.get_or_insert_with(String::new),
+                            fragment,
+                            adapter_name,
+                        )?;
                     }
                     if finish_reason.is_some() {
                         termination.finish_reason = finish_reason.clone();
                     }
                 }
                 _ => {
+                    let message = if let Some(fragment) = refusal_fragment.as_ref() {
+                        let mut message = String::new();
+                        append_bounded_refusal(&mut message, fragment, adapter_name)?;
+                        Some(message)
+                    } else {
+                        None
+                    };
                     *termination = ProviderTermination::refused(
                         finish_reason.clone(),
                         RefusalOrigin::ProviderMessage,
                         "message.refusal",
-                        refusal_fragment.clone(),
+                        message,
                     );
                 }
             }
@@ -1235,12 +1402,38 @@ impl SseChoice {
             *termination = ProviderTermination::finished(finish_reason);
         }
 
-        content
+        Ok(content
             .filter(|text| !text.is_empty())
             .or(refusal_fragment)
             .or_else(|| policy_error.and_then(|(_, message)| message))
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
+}
+
+fn bound_refusal_message(message: String, adapter_name: &str) -> Result<String> {
+    let mut bounded = String::with_capacity(message.len().min(MAX_PROVIDER_REFUSAL_MESSAGE_BYTES));
+    append_bounded_refusal(&mut bounded, &message, adapter_name)?;
+    Ok(bounded)
+}
+
+fn append_bounded_refusal(
+    accumulated: &mut String,
+    fragment: &str,
+    adapter_name: &str,
+) -> Result<()> {
+    if fragment.len() > MAX_PROVIDER_REFUSAL_MESSAGE_BYTES.saturating_sub(accumulated.len()) {
+        let evidence = response_bounds::stream_evidence(
+            REFUSAL_EVIDENCE_DOMAIN,
+            &[accumulated.as_bytes(), fragment.as_bytes()],
+            true,
+        );
+        anyhow::bail!(
+            "{adapter_name}: retained refusal metadata exceeded \
+             {MAX_PROVIDER_REFUSAL_MESSAGE_BYTES} bytes ({evidence})"
+        );
+    }
+    accumulated.push_str(fragment);
+    Ok(())
 }
 
 #[derive(Default, Deserialize)]
@@ -1885,6 +2078,121 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mock_nonstream_refusal_metadata_accepts_exact_limit_for_both_wire_shapes() {
+        let secret = "visible-refusal-boundary";
+        let exact = format!(
+            "{secret}{}",
+            "r".repeat(MAX_PROVIDER_REFUSAL_MESSAGE_BYTES - secret.len())
+        );
+
+        for shape in ["message", "content_parts"] {
+            let message = match shape {
+                "message" => serde_json::json!({
+                    "role": "assistant",
+                    "content": null,
+                    "refusal": exact.clone()
+                }),
+                "content_parts" => {
+                    let split = exact.len() / 2;
+                    serde_json::json!({
+                        "role": "assistant",
+                        "content": [
+                            {"type": "refusal", "refusal": &exact[..split]},
+                            {"type": "refusal", "refusal": &exact[split..]}
+                        ]
+                    })
+                }
+                _ => unreachable!(),
+            };
+            let mock = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/chat/completions"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "model": "gpt-4o-mock",
+                    "choices": [{
+                        "message": message,
+                        "finish_reason": "stop"
+                    }]
+                })))
+                .mount(&mock)
+                .await;
+
+            let completion = build_adapter_against(&mock.uri())
+                .complete(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+                .await
+                .expect("the exact refusal metadata limit must be accepted");
+            assert_eq!(completion.text.len(), MAX_PROVIDER_REFUSAL_MESSAGE_BYTES);
+            let retained = completion
+                .termination
+                .refusal
+                .and_then(|refusal| refusal.message)
+                .expect("bounded refusal remains typed");
+            assert_eq!(retained.len(), MAX_PROVIDER_REFUSAL_MESSAGE_BYTES);
+            assert!(retained.starts_with(secret));
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_nonstream_refusal_metadata_rejects_one_byte_over_without_echo() {
+        let secret = "sk-never-persist-nonstream-refusal-overflow";
+
+        for shape in ["message", "content_parts"] {
+            let message = match shape {
+                "message" => {
+                    let overflow = format!(
+                        "{secret}{}",
+                        "r".repeat(MAX_PROVIDER_REFUSAL_MESSAGE_BYTES + 1 - secret.len())
+                    );
+                    serde_json::json!({
+                        "role": "assistant",
+                        "content": null,
+                        "refusal": overflow
+                    })
+                }
+                "content_parts" => {
+                    let first = "r".repeat(MAX_PROVIDER_REFUSAL_MESSAGE_BYTES + 1 - secret.len());
+                    serde_json::json!({
+                        "role": "assistant",
+                        "content": [
+                            {"type": "refusal", "refusal": first},
+                            {"type": "refusal", "refusal": secret}
+                        ]
+                    })
+                }
+                _ => unreachable!(),
+            };
+            let mock = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/chat/completions"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "model": "gpt-4o-mock",
+                    "choices": [{
+                        "message": message,
+                        "finish_reason": "stop"
+                    }]
+                })))
+                .mount(&mock)
+                .await;
+
+            let error = build_adapter_against(&mock.uri())
+                .complete(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+                .await
+                .expect_err("one byte over the retained-refusal limit must fail");
+            let rendered = error.to_string();
+            assert!(rendered.contains("retained refusal metadata exceeded"));
+            assert!(rendered.contains("stream_sha256="));
+            assert!(rendered.contains("truncated=true"));
+            assert!(!rendered.contains(secret));
+        }
+    }
+
+    #[tokio::test]
     async fn mock_200_content_filter_without_text_is_retained() {
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
@@ -2172,6 +2480,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mock_oversized_200_policy_and_refusal_bodies_fail_before_json_allocation() {
+        let secret = "sk-never-persist-oversized-success-body";
+        for shape in ["choice_error", "message_refusal"] {
+            let oversized = format!(
+                "{secret}{}",
+                "x".repeat(MAX_PROVIDER_SUCCESS_BODY_BYTES + 1)
+            );
+            let body = match shape {
+                "choice_error" => serde_json::json!({
+                    "choices": [{
+                        "message": {"role": "assistant", "content": null},
+                        "finish_reason": "error",
+                        "error": {
+                            "code": "content_filter",
+                            "message": "blocked",
+                            "debug_echo": oversized
+                        }
+                    }]
+                }),
+                "message_refusal" => serde_json::json!({
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": null,
+                            "refusal": oversized
+                        },
+                        "finish_reason": "stop"
+                    }]
+                }),
+                _ => unreachable!(),
+            }
+            .to_string();
+            let mock = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/chat/completions"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+                .mount(&mock)
+                .await;
+
+            let error = build_adapter_against(&mock.uri())
+                .complete(Request {
+                    prompt: "fixture".into(),
+                    ..Default::default()
+                })
+                .await
+                .expect_err("oversized successful body must fail before JSON parsing");
+            let message = error.to_string();
+            assert!(message.contains("successful response body exceeded"));
+            assert!(message.contains("body_sha256="));
+            assert!(message.contains("truncated=true"));
+            assert!(!message.contains(secret));
+            assert!(!message.contains(&"x".repeat(128)));
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_malformed_200_body_reports_only_digest_evidence() {
+        let secret = "sk-never-persist-malformed-success-body";
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(format!(r#"{{"secret":"{secret}""#), "application/json"),
+            )
+            .mount(&mock)
+            .await;
+
+        let error = build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("malformed successful body must fail");
+        let message = error.to_string();
+        assert!(message.contains("malformed successful JSON response"));
+        assert!(message.contains("body_sha256="));
+        assert!(!message.contains(secret));
+    }
+
+    #[tokio::test]
     async fn mock_stream_429_preserves_retry_after_without_raw_body() {
         let secret = "sk-never-persist-stream-quota-body";
         let mock = MockServer::start().await;
@@ -2231,6 +2621,42 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("HTTP 500"));
         assert!(message.contains("body_sha256="));
+        assert!(message.contains("truncated=true"));
+        assert!(!message.contains(secret));
+        assert!(!message.contains(&"x".repeat(128)));
+    }
+
+    #[tokio::test]
+    async fn mock_newline_free_sse_frame_is_bounded_and_secret_safe() {
+        use futures_util::StreamExt;
+
+        let secret = "sk-never-persist-newline-free-sse";
+        let body = format!(
+            "data: {secret}{}",
+            "x".repeat(MAX_PROVIDER_SSE_FRAME_BYTES + 1)
+        );
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&mock)
+            .await;
+
+        let mut stream = build_adapter_against(&mock.uri())
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("HTTP stream starts before the first frame is decoded");
+        let error = stream
+            .next()
+            .await
+            .expect("oversized frame yields an error item")
+            .expect_err("newline-free oversized frame must fail");
+        let message = error.to_string();
+        assert!(message.contains("streaming frame exceeded"));
+        assert!(message.contains("frame_sha256="));
         assert!(message.contains("truncated=true"));
         assert!(!message.contains(secret));
         assert!(!message.contains(&"x".repeat(128)));
@@ -2459,6 +2885,82 @@ mod tests {
         // Accumulated text must equal "Hello world".
         let accumulated: String = content_chunks.iter().map(|c| c.delta.as_str()).collect();
         assert_eq!(accumulated, "Hello world");
+    }
+
+    #[tokio::test]
+    async fn mock_sse_joins_multiple_data_fields_before_decoding_event() {
+        use futures_util::StreamExt;
+
+        let sse_body = concat!(
+            "data: {\"choices\":[\n",
+            "data: {\"delta\":{\"content\":\"joined\"},\"finish_reason\":null}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&mock)
+            .await;
+
+        let mut stream = build_adapter_against(&mock.uri())
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("multi-line SSE stream starts");
+        let delta = stream
+            .next()
+            .await
+            .expect("joined event delta")
+            .expect("joined event decodes");
+        assert_eq!(delta.delta, "joined");
+        assert!(!delta.done);
+        let done = stream
+            .next()
+            .await
+            .expect("terminal event")
+            .expect("terminal event decodes");
+        assert!(done.done);
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn mock_sse_multiline_event_is_cumulatively_bounded_without_echo() {
+        use futures_util::StreamExt;
+
+        let secret = "sk-never-persist-multiline-sse-overflow";
+        let first = "x".repeat(MAX_PROVIDER_SSE_FRAME_BYTES / 2);
+        let second = format!(
+            "{secret}{}",
+            "y".repeat(MAX_PROVIDER_SSE_FRAME_BYTES / 2 - secret.len())
+        );
+        let sse_body = format!("data: {first}\ndata: {second}\n\n");
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&mock)
+            .await;
+
+        let mut stream = build_adapter_against(&mock.uri())
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("HTTP stream starts before the event is decoded");
+        let error = stream
+            .next()
+            .await
+            .expect("oversized multi-line event yields an error item")
+            .expect_err("inserted SSE newline must put the event one byte over its cap");
+        let rendered = error.to_string();
+        assert!(rendered.contains("streaming frame exceeded"));
+        assert!(rendered.contains("frame_sha256="));
+        assert!(rendered.contains("truncated=true"));
+        assert!(!rendered.contains(secret));
     }
 
     #[tokio::test]
@@ -2747,6 +3249,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mock_many_small_refusal_frames_cannot_grow_termination_without_bound() {
+        use futures_util::StreamExt;
+
+        let secret = "sk-never-persist-refusal-overflow";
+        let fragment_bytes: usize = 64 * 1024;
+        let fragment = format!(
+            "{secret}{}",
+            "r".repeat(fragment_bytes.saturating_sub(secret.len()))
+        );
+        let mut sse_body = String::new();
+        for _ in 0..17 {
+            let frame = serde_json::json!({
+                "choices": [{
+                    "delta": {"refusal": fragment.clone()},
+                    "finish_reason": null
+                }]
+            });
+            sse_body.push_str("data: ");
+            sse_body.push_str(&frame.to_string());
+            sse_body.push_str("\n\n");
+        }
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&mock)
+            .await;
+
+        let mut stream = build_adapter_against(&mock.uri())
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("bounded refusal stream starts");
+        let mut successful_fragments = 0usize;
+        let error = loop {
+            match stream.next().await.expect("overflow must produce an item") {
+                Ok(chunk) => {
+                    assert!(!chunk.done);
+                    successful_fragments += 1;
+                }
+                Err(error) => break error,
+            }
+        };
+
+        assert_eq!(successful_fragments, 16);
+        let message = error.to_string();
+        assert!(message.contains("retained refusal metadata exceeded"));
+        assert!(message.contains("stream_sha256="));
+        assert!(message.contains("truncated=true"));
+        assert!(!message.contains(secret));
+    }
+
+    #[tokio::test]
     async fn mock_sse_blank_native_refusal_is_authoritative() {
         use futures_util::StreamExt;
 
@@ -2877,6 +3435,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mock_malformed_sse_frame_reports_only_digest_evidence() {
+        use futures_util::StreamExt;
+
+        let secret = "sk-never-persist-malformed-sse";
+        let body = format!("data: {{\"secret\":\"{secret}\"\n\n");
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&mock)
+            .await;
+
+        let mut stream = build_adapter_against(&mock.uri())
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("malformed SSE response starts");
+        let error = stream
+            .next()
+            .await
+            .expect("malformed frame yields an error item")
+            .expect_err("malformed frame must fail");
+        let message = error.to_string();
+        assert!(message.contains("malformed SSE data frame"));
+        assert!(message.contains("frame_sha256="));
+        assert!(!message.contains(secret));
+    }
+
+    #[tokio::test]
+    async fn truncated_sse_transport_error_drops_source_and_body_details() {
+        use futures_util::StreamExt;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let secret = "sk-never-persist-truncated-sse-transport";
+        let partial_body = format!("data: {{\"secret\":\"{secret}\"");
+        let advertised_len = partial_body.len() + 128;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind raw HTTP fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept request");
+            let mut request = [0_u8; 4096];
+            let _ = socket.read(&mut request).await.expect("read request");
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                 Content-Length: {advertised_len}\r\nConnection: close\r\n\r\n{partial_body}"
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write truncated response");
+            socket.shutdown().await.expect("close truncated response");
+        });
+
+        let mut stream = build_adapter_against(&format!("http://{address}"))
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("HTTP handshake succeeds before the truncated body is read");
+        let error = stream
+            .next()
+            .await
+            .expect("truncated transport yields an error item")
+            .expect_err("truncated SSE body must fail closed");
+        server.await.expect("raw HTTP fixture completes");
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("SSE transport read failed"));
+        assert!(rendered.contains("stream_sha256="));
+        assert!(rendered.contains("truncated=true"));
+        assert!(!rendered.contains(secret));
+        assert!(!rendered.contains("error decoding response body"));
+    }
+
+    #[tokio::test]
     async fn mock_sse_top_level_non_policy_error_fails_after_partial_content() {
         use futures_util::StreamExt;
 
@@ -2927,7 +3565,12 @@ mod tests {
         }))
         .expect("content-filter choice");
         let mut termination = ProviderTermination::default();
-        assert!(finish_filter.into_delta(&mut termination).is_empty());
+        assert!(
+            finish_filter
+                .into_delta(&mut termination, "fixture")
+                .unwrap()
+                .is_empty()
+        );
         let refusal = termination.refusal.expect("finish filter retained");
         assert_eq!(refusal.origin, RefusalOrigin::FinishReason);
         assert_eq!(refusal.reason, "content_filter");
@@ -2944,7 +3587,9 @@ mod tests {
         .expect("embedded policy error choice");
         let mut termination = ProviderTermination::default();
         assert_eq!(
-            embedded_error.into_delta(&mut termination),
+            embedded_error
+                .into_delta(&mut termination, "fixture")
+                .unwrap(),
             "The provider blocked this request under its content policy."
         );
         let refusal = termination

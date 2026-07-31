@@ -113,6 +113,16 @@ official endpoint. OpenRouter keeps bounded observed upstream provider/model
 evidence separately from the authorized router leaf; that evidence never
 rewrites cost or consent authorization.
 
+The shared OpenAI-compatible Chat-Completions transport accepts at most an
+8 MiB successful JSON envelope, a 1 MiB SSE line/residual or joined event-data
+payload, and 1 MiB of cumulatively retained streaming or non-stream refusal
+metadata. It reads transport chunks as bytes, so UTF-8 characters may straddle
+chunks, and joins standard multi-`data:` events before decoding. Malformed,
+invalid, oversized or truncated envelopes fail with digest-only diagnostics.
+These limits currently describe the OpenAI-compatible family only. The v1.0
+Gold gate remains open until every other native provider transport has
+equivalent bounded ingestion.
+
 For Ollama, only normalized loopback endpoints (`localhost`, `127.0.0.0/8`, or
 `[::1]`) identify as `local_ollama`. LAN, public and Ollama Cloud endpoints
 identify as `ollama_remote` and cross the same paid-provider authorization

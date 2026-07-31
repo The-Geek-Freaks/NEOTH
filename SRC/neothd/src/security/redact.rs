@@ -116,6 +116,49 @@ pub(crate) fn bounded_audit_digest_with_truncation(
     }
 }
 
+/// Hash raw provider-controlled bytes without decoding or allocating them.
+/// Only the first [`MAX_AUDIT_FORMAT_BYTES`] bytes are consumed; the observed
+/// byte count and truncation state are framed into the final digest.
+pub(crate) fn bounded_audit_digest_bytes(
+    domain: &'static [u8],
+    slices: &[&[u8]],
+    input_truncated: bool,
+) -> BoundedAuditDigest {
+    let mut digest = Sha256::new();
+    digest.update(b"neoth/bounded-audit-bytes/v1\0");
+    digest.update(
+        u64::try_from(domain.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    digest.update(domain);
+
+    let mut kept_bytes = 0usize;
+    let mut observed_bytes = 0u64;
+    for slice in slices {
+        observed_bytes =
+            observed_bytes.saturating_add(u64::try_from(slice.len()).unwrap_or(u64::MAX));
+        let remaining = MAX_AUDIT_FORMAT_BYTES.saturating_sub(kept_bytes);
+        if remaining == 0 {
+            continue;
+        }
+        let take = remaining.min(slice.len());
+        digest.update(&slice[..take]);
+        kept_bytes += take;
+    }
+
+    let truncated =
+        input_truncated || observed_bytes > u64::try_from(kept_bytes).unwrap_or(u64::MAX);
+    digest.update(b"\0observed-bytes\0");
+    digest.update(observed_bytes.to_be_bytes());
+    digest.update([u8::from(truncated)]);
+    BoundedAuditDigest {
+        sha256: hex::encode(digest.finalize()),
+        truncated,
+        formatted_bytes: observed_bytes,
+    }
+}
+
 /// One secret-shape pattern. The name is stable wire form for the
 /// `[REDACTED:<name>]` token so audit consumers can grep for
 /// specific kinds of leak.
@@ -750,6 +793,31 @@ mod tests {
             evidence.formatted_bytes
                 >= u64::try_from(MAX_AUDIT_FORMAT_BYTES).expect("cap fits u64")
         );
+    }
+
+    #[test]
+    fn bounded_audit_byte_digest_is_chunk_invariant_and_domain_separated() {
+        let joined = bounded_audit_digest_bytes(b"body/v1", &[b"alpha-beta"], false);
+        let split = bounded_audit_digest_bytes(b"body/v1", &[b"alpha-", b"beta"], false);
+        let other_domain = bounded_audit_digest_bytes(b"frame/v1", &[b"alpha-beta"], false);
+
+        assert_eq!(joined.sha256, split.sha256);
+        assert_ne!(joined.sha256, other_domain.sha256);
+        assert!(!joined.truncated);
+        assert_eq!(joined.formatted_bytes, 10);
+    }
+
+    #[test]
+    fn bounded_audit_byte_digest_marks_oversized_input() {
+        let bytes = vec![b'x'; MAX_AUDIT_FORMAT_BYTES + 1];
+        let evidence = bounded_audit_digest_bytes(b"oversized/v1", &[&bytes], false);
+
+        assert!(evidence.truncated);
+        assert_eq!(
+            evidence.formatted_bytes,
+            (MAX_AUDIT_FORMAT_BYTES + 1) as u64
+        );
+        assert_eq!(evidence.sha256.len(), 64);
     }
 
     #[test]

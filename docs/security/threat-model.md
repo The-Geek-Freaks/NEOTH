@@ -1,6 +1,6 @@
 # NEOTH Threat Model
 
-**Last updated:** 2026-07-29 (provider lifecycle, model-download, TTS, updater, and channel correction)
+**Last updated:** 2026-07-31 (provider lifecycle, bounded OpenAI-compatible envelopes, model-download, TTS, updater, and channel correction)
 **Audience:** operators running NEOTH on a personal machine,
 security reviewers, and anyone reasoning about what NEOTH can and
 cannot do over the network or with local files.
@@ -93,6 +93,16 @@ than plaintext. Public fetches remain SSRF-guarded and redirect-disabled.
 Each cloud provider lives in its own adapter under `providers/*.rs`. HTTP
 adapters use `providers/http_client.rs`, which honours `NEOTH_HTTP_PROXY` for
 Hysteria egress; the Claude CLI bridge is a governed subprocess path instead.
+The OpenAI-compatible family additionally bounds successful JSON envelopes at
+8 MiB, individual SSE lines/residuals and joined event-data payloads at 1 MiB,
+and retained streaming or non-stream refusal metadata at 1 MiB. It validates
+UTF-8 only after bounded byte assembly, joins standard multi-`data:` events and
+drops provider-controlled transport-error sources. Digest-only diagnostics
+cover malformed, oversized and truncated transport data. This is a current
+family-specific boundary, not a universal claim: `GOLD-R4-15k1`
+remains a release blocker until Ollama, every native HTTP adapter,
+Copilot-token refresh, Claude CLI/Tmux and sidecar transports adopt equivalent
+bounded readers.
 After
 v0.2.1 (GR-04), every `Provider::complete` call is wrapped in
 `circuit_breaker::run_with_breaker(name, ...)` so a sustained
@@ -111,8 +121,9 @@ Per-provider naming for breaker correlation:
 | Local Qwen (in-process) | `local_qwen` |
 | Local Ouro (in-process) | `local_ouro` |
 
-The providers with native streaming (`claude_cli`, `local_qwen`, and
-`local_ouro`) route through `circuit_breaker_stream::run_stream_with_breaker`.
+The providers with native streaming (`openai_api`, `ollama_api`, `claude_cli`,
+`local_qwen`, and `local_ouro`) route through
+`circuit_breaker_stream::run_stream_with_breaker`.
 Its owned RAII permit spans lazy stream iteration: a terminal `done` chunk
 records success, while construction errors, error chunks, exhaustion without
 `done`, and premature consumer drop record failure. An open breaker fails

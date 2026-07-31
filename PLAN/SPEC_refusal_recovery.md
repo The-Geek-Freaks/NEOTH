@@ -1,7 +1,7 @@
 # SPEC: Refusal Recovery — Native Provider Outcomes + Truthful Retry Pipeline
 
 **Version:** 1.3
-**Last-Updated:** 2026-07-30
+**Last-Updated:** 2026-07-31
 **Implementation-Status:** PARTIAL RUNTIME — text detection, cause
 classification, native outcomes for the listed adapters, exact-leaf retry,
 fresh retry authorization, WAL reroute/persistent events and CLI/Channel
@@ -47,7 +47,7 @@ Provider policy remains provider policy. When an operator-authored NEOTH rule
 matches, recovery stops immediately and preserves that exact local reason.
 A fully local secret transfer never enters this pipeline.
 
-### Runtime checkpoint (2026-07-30)
+### Runtime checkpoint (2026-07-31)
 
 The shared `ProviderTermination` envelope now reaches non-streaming and
 streaming CLI/Channel post-reply processing instead of being collapsed into
@@ -57,6 +57,20 @@ refusal/filter facts through `[DONE]`, EOF and recognized policy-blocked
 handshakes. A live CLI stream whose deltas/provider boundary already crossed
 stdout is attributed but never invisibly retried or replaced; a buffered stream
 may recover before release.
+
+The OpenAI-compatible transport now incrementally reads successful JSON into
+an 8 MiB hard-capped byte envelope before deserialisation. SSE input is framed
+from raw bytes with a 1 MiB line/residual and joined-event-data ceiling, and
+cumulatively retained streaming plus non-stream refusal metadata has a separate
+1 MiB ceiling. This permits UTF-8 code points split across transport chunks and
+standard multi-`data:` events without permitting newline-free, multi-field or
+many-small-frame allocation growth. Oversize, invalid-UTF-8, malformed and
+truncated-transport outcomes expose only domain-separated digest evidence.
+These are current OpenAI-compatible
+limits, not yet a universal provider claim: `GOLD-R4-15k1` remains open until
+every native HTTP, CLI, Tmux and sidecar provider envelope adopts an equivalent
+bounded reader.
+
 The following native signals are retained before deterministic text fallback:
 
 | Adapter | Retained native outcome |
