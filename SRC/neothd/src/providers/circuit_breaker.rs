@@ -130,6 +130,18 @@ pub fn acquire_for(provider_id: &str) -> Result<OwnedPermit, BreakerError> {
     }
 }
 
+/// Test-only: clear the process-global breaker for `provider_id`.
+///
+/// The registry is global and keyed by adapter identity, so an adapter test
+/// that deliberately fails a call leaves the breaker open for every later test
+/// using the same identity. Resetting at adapter construction keeps each case
+/// hermetic instead of depending on alphabetical test order.
+#[cfg(test)]
+pub(crate) fn reset_for_test(provider_id: &str) {
+    let breaker = GLOBAL.breaker_for(provider_id);
+    *breaker.lock() = Inner::fresh();
+}
+
 /// GR-04 helper: wrap an async provider call so it observes the
 /// breaker without each provider needing to re-implement the
 /// `acquire_for` + `record_success`/`record_failure` boilerplate.

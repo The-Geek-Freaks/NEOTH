@@ -3,6 +3,25 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-31
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Native Ollama envelope checkpoint 2026-07-31 (counts unchanged;
+> `GOLD-R4-15k1` remains open):** the native `/api/chat` adapter adopted the
+> shared bounded readers: 8 MiB successful JSON, 64 KiB non-2xx complete and
+> stream-handshake bodies reduced to status plus digest, and byte-oriented
+> NDJSON framing with a 1 MiB line and EOF-residual ceiling. Malformed and
+> invalid-UTF-8 frames now fail closed with digest-only evidence instead of a
+> raw warning plus skip, so the synthetic EOF terminator can no longer report a
+> complete generation after output was silently dropped. Delta text,
+> `done_reason`, token counts, termination, loopback-vs-remote identity,
+> redirect refusal and consent behaviour are unchanged. Evidence: Ollama
+> **71/71** (oversized/malformed 2xx, oversized 500 on both paths,
+> newline-free >1 MiB frame, malformed line, malformed EOF residual, invalid
+> UTF-8, and a raw HTTP/1.1 chunked fixture splitting a four-byte code point
+> across transfer chunks), response bounds **3/3**, OpenAI-compatible
+> **108/108**, circuit breaker **28/28**, quota **58/58**, termination
+> **10/10**, refusal **166/166**, release **84/84**, Clippy `-D warnings`
+> clean. Remaining adopters: Anthropic, Gemini, Cohere, Azure, Bedrock,
+> Copilot-token refresh, Claude CLI/Tmux and RecursiveMAS.
+>
 > **Bounded provider-envelope checkpoint 2026-07-31 (counts unchanged;
 > `GOLD-R4-15k1` remains open):** the production
 > OpenAI/OpenRouter/DeepSeek/Kimi/Qwen/custom Chat-Completions path now reads

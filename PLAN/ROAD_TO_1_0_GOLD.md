@@ -2237,6 +2237,32 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
       refusal recovery **26/26**, abliterated fallback **11/11**, turn journal
       **13/13**, ROAD release gate **11/11** and lost-feature integrity
       **19/19**, with Cargo check and Clippy `-D warnings` clean.
+
+      **Native Ollama checkpoint 2026-07-31 (box remains OPEN):** the native
+      `/api/chat` leaf now decodes successful JSON through the shared 8 MiB
+      bounded reader, caps non-2xx complete and stream-handshake bodies at
+      64 KiB and surfaces only status plus digest evidence, and frames NDJSON
+      from raw bytes with a 1 MiB per-line and EOF-residual ceiling so UTF-8
+      code points may straddle transport chunks while a newline-free frame
+      fails closed. A malformed or invalid-UTF-8 frame is now a digest-only
+      stream error instead of a raw `warn!` plus skip, and the synthetic EOF
+      terminator can no longer follow a dropped frame and report a generation
+      that never completed. Delta text, `done_reason`, `prompt_eval_count`,
+      `eval_count`, `ProviderTermination`, loopback-vs-remote identity,
+      redirect refusal and remote-consent behaviour are unchanged. Test-only
+      `circuit_breaker::reset_for_test` makes each adapter test hermetic
+      against the process-global breaker instead of depending on file order.
+      Focused evidence: Ollama **71/71** (including oversized 2xx, malformed
+      2xx, oversized 500 for complete and stream, newline-free >1 MiB frame,
+      malformed line, malformed EOF residual, invalid UTF-8 and a raw
+      HTTP/1.1 chunked fixture that splits a four-byte code point across two
+      transfer chunks), response bounds **3/3**, OpenAI-compatible **108/108**,
+      circuit breaker **28/28**, quota **58/58**, termination **10/10**,
+      refusal **166/166**, release **84/84**, with Clippy `-D warnings` clean.
+      Pre-existing unrelated `physical_redaction` WAL-HMAC fixture failures
+      were verified to reproduce on clean `076bda02` and are tracked
+      separately. Still open: Anthropic, Gemini, Cohere, Azure, Bedrock,
+      Copilot-token refresh, Claude CLI, Tmux and RecursiveMAS.
   - [ ] **GOLD-R4-15l Installed clean-machine evidence:** exercise file-to-file,
     OS-vault-to-NEOTH-vault and password-store/file-to-named-Channel journeys
     through equivalent CLI, GUI/Buddy and authenticated Channel commands on

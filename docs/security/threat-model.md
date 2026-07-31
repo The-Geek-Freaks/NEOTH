@@ -1,6 +1,6 @@
 # NEOTH Threat Model
 
-**Last updated:** 2026-07-31 (provider lifecycle, bounded OpenAI-compatible envelopes, model-download, TTS, updater, and channel correction)
+**Last updated:** 2026-07-31 (provider lifecycle, bounded OpenAI-compatible and native Ollama envelopes, model-download, TTS, updater, and channel correction)
 **Audience:** operators running NEOTH on a personal machine,
 security reviewers, and anyone reasoning about what NEOTH can and
 cannot do over the network or with local files.
@@ -98,11 +98,15 @@ The OpenAI-compatible family additionally bounds successful JSON envelopes at
 and retained streaming or non-stream refusal metadata at 1 MiB. It validates
 UTF-8 only after bounded byte assembly, joins standard multi-`data:` events and
 drops provider-controlled transport-error sources. Digest-only diagnostics
-cover malformed, oversized and truncated transport data. This is a current
-family-specific boundary, not a universal claim: `GOLD-R4-15k1`
-remains a release blocker until Ollama, every native HTTP adapter,
-Copilot-token refresh, Claude CLI/Tmux and sidecar transports adopt equivalent
-bounded readers.
+cover malformed, oversized and truncated transport data. Native Ollama
+`/api/chat` shares those primitives: 8 MiB successful JSON, byte-oriented
+NDJSON framing with a 1 MiB line/EOF-residual cap, 64 KiB error bodies reduced
+to status plus digest, and fail-closed handling of malformed or invalid-UTF-8
+frames so a dropped frame cannot be followed by a synthetic successful
+terminator. This is still a family-specific boundary, not a universal claim:
+`GOLD-R4-15k1` remains a release blocker until every remaining native HTTP
+adapter, Copilot-token refresh, Claude CLI/Tmux and sidecar transports adopt
+equivalent bounded readers.
 After
 v0.2.1 (GR-04), every `Provider::complete` call is wrapped in
 `circuit_breaker::run_with_breaker(name, ...)` so a sustained

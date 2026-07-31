@@ -119,9 +119,19 @@ payload, and 1 MiB of cumulatively retained streaming or non-stream refusal
 metadata. It reads transport chunks as bytes, so UTF-8 characters may straddle
 chunks, and joins standard multi-`data:` events before decoding. Malformed,
 invalid, oversized or truncated envelopes fail with digest-only diagnostics.
-These limits currently describe the OpenAI-compatible family only. The v1.0
-Gold gate remains open until every other native provider transport has
-equivalent bounded ingestion.
+
+The native Ollama `/api/chat` transport uses the same shared primitives: an
+8 MiB successful JSON envelope, byte-oriented NDJSON framing with a 1 MiB
+line/EOF-residual cap, and 64 KiB HTTP error bodies reported as status plus
+digest only. A malformed or invalid-UTF-8 NDJSON frame now fails the stream
+instead of being logged raw and skipped, so a lost frame can never be followed
+by a synthetic "done" chunk that reports a complete generation. Real delta
+text, `done_reason`, prompt/eval token counts and the loopback-versus-remote
+identity split are unchanged.
+
+These limits currently describe the OpenAI-compatible family and native Ollama
+only. The v1.0 Gold gate remains open until every other native provider
+transport has equivalent bounded ingestion.
 
 For Ollama, only normalized loopback endpoints (`localhost`, `127.0.0.0/8`, or
 `[::1]`) identify as `local_ollama`. LAN, public and Ollama Cloud endpoints

@@ -66,10 +66,14 @@ cumulatively retained streaming plus non-stream refusal metadata has a separate
 standard multi-`data:` events without permitting newline-free, multi-field or
 many-small-frame allocation growth. Oversize, invalid-UTF-8, malformed and
 truncated-transport outcomes expose only domain-separated digest evidence.
-These are current OpenAI-compatible
+Native Ollama `/api/chat` now shares the same primitives with NDJSON framing in
+place of SSE: an 8 MiB successful JSON envelope, a 1 MiB line/EOF-residual cap,
+64 KiB error bodies reduced to status plus digest, and fail-closed malformed or
+invalid-UTF-8 frames that can no longer be skipped ahead of a synthetic
+successful terminator. These are current OpenAI-compatible and Ollama
 limits, not yet a universal provider claim: `GOLD-R4-15k1` remains open until
-every native HTTP, CLI, Tmux and sidecar provider envelope adopts an equivalent
-bounded reader.
+every remaining native HTTP, CLI, Tmux and sidecar provider envelope adopts an
+equivalent bounded reader.
 
 The following native signals are retained before deterministic text fallback:
 

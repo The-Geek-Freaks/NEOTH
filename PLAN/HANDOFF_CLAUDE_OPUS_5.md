@@ -230,9 +230,16 @@ pre-tag blockers=233
 
 Do not mark `GOLD-R4-15k1` complete yet.
 
-## 6. Immediate next loop: native Ollama response envelopes
+## 6. Native Ollama response envelopes — LANDED 2026-07-31
 
-Next owned implementation target:
+Status: implemented, tested and pushed on top of `076bda02`. All nine required
+fixtures below exist and pass, including the raw HTTP/1.1 chunked fixture.
+`GOLD-R4-15k1` stays open; the next owned target is the Anthropic Messages
+transport, then Gemini, Cohere, Azure, Bedrock, Copilot-token refresh, Claude
+CLI, Tmux and RecursiveMAS. The original specification is kept verbatim below
+as the contract the next adapters must match.
+
+Implementation target:
 
 `SRC/neothd/src/providers/ollama_api.rs`
 

@@ -26,6 +26,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use super::response_bounds;
 use super::termination::ProviderTermination;
 use super::{
     ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
@@ -36,6 +37,17 @@ use super::{
 pub const DEFAULT_BASE_URL: &str = "http://localhost:11434";
 /// Default model when the operator hasn't set one.
 pub const DEFAULT_MODEL: &str = "llama3.2";
+
+/// An Ollama endpoint is an untrusted byte source even on loopback: the daemon
+/// proxies model-controlled output and a remote endpoint is fully hostile.
+/// These caps bound allocation before any parse.
+const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+const MAX_SUCCESS_BODY_BYTES: usize = response_bounds::MAX_SUCCESS_JSON_BODY_BYTES;
+const MAX_NDJSON_FRAME_BYTES: usize = response_bounds::MAX_SSE_FRAME_BYTES;
+const ERROR_BODY_EVIDENCE_DOMAIN: &[u8] = b"ollama-http-error-body/v1";
+const SUCCESS_BODY_EVIDENCE_DOMAIN: &[u8] = b"ollama-success-body/v1";
+const NDJSON_FRAME_EVIDENCE_DOMAIN: &[u8] = b"ollama-ndjson-frame/v1";
+const NDJSON_TRANSPORT_EVIDENCE_DOMAIN: &[u8] = b"ollama-ndjson-transport/v1";
 /// Hard generation cap sent as Ollama's `options.num_predict`. This makes a
 /// remote Ollama endpoint cost-authorizable instead of relying on its server
 /// default, which may be unlimited/model-dependent.
@@ -140,21 +152,25 @@ impl Provider for OllamaAdapter {
 
             let status = response.status();
             if !status.is_success() {
-                let body_text = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "<unreadable body>".into());
+                let evidence = response_bounds::error_body_evidence(
+                    response,
+                    ERROR_BODY_EVIDENCE_DOMAIN,
+                    MAX_ERROR_BODY_BYTES,
+                )
+                .await;
                 anyhow::bail!(
-                    "{provider_name} returned HTTP {}: {}",
-                    status.as_u16(),
-                    body_text.trim()
+                    "{provider_name} returned HTTP {} ({evidence})",
+                    status.as_u16()
                 );
             }
 
-            let parsed: OllamaChatResponse = response
-                .json()
-                .await
-                .with_context(|| format!("parse {provider_name} /api/chat response JSON"))?;
+            let parsed: OllamaChatResponse = response_bounds::decode_json(
+                response,
+                provider_name,
+                SUCCESS_BODY_EVIDENCE_DOMAIN,
+                MAX_SUCCESS_BODY_BYTES,
+            )
+            .await?;
 
             let termination = ProviderTermination::finished(parsed.done_reason.clone());
             let text = parsed.message.content;
@@ -210,14 +226,15 @@ impl Provider for OllamaAdapter {
 
             let status = response.status();
             if !status.is_success() {
-                let body_text = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "<unreadable body>".into());
+                let evidence = response_bounds::error_body_evidence(
+                    response,
+                    ERROR_BODY_EVIDENCE_DOMAIN,
+                    MAX_ERROR_BODY_BYTES,
+                )
+                .await;
                 anyhow::bail!(
-                    "{provider_name} stream returned HTTP {}: {}",
-                    status.as_u16(),
-                    body_text.trim()
+                    "{provider_name} stream returned HTTP {} ({evidence})",
+                    status.as_u16()
                 );
             }
 
@@ -225,39 +242,49 @@ impl Provider for OllamaAdapter {
             let byte_stream = response.bytes_stream();
 
             let inner: ChunkStream = Box::pin(async_stream::try_stream! {
-                let mut buf = String::new();
+                // Raw bytes, not a String: a UTF-8 code point may be split
+                // across transport chunks, and an unterminated line must hit a
+                // hard cap instead of growing until the process dies.
+                let mut line_buf: Vec<u8> = Vec::new();
                 let mut input_tokens: Option<u32> = None;
                 let mut output_tokens: Option<u32> = None;
                 let mut finish_reason: Option<String> = None;
 
                 tokio::pin!(byte_stream);
                 while let Some(chunk_result) = byte_stream.next().await {
-                    let bytes = chunk_result
-                        .with_context(|| format!("{provider_name}: NDJSON byte read error"))?;
-                    let text = std::str::from_utf8(&bytes)
-                        .with_context(|| format!("{provider_name}: NDJSON chunk not valid UTF-8"))?;
-                    buf.push_str(text);
+                    let bytes = match chunk_result {
+                        Ok(bytes) => bytes,
+                        Err(_) => {
+                            let evidence = response_bounds::stream_evidence(
+                                NDJSON_TRANSPORT_EVIDENCE_DOMAIN,
+                                &[line_buf.as_slice()],
+                                true,
+                            );
+                            Err(anyhow::anyhow!(
+                                "{provider_name}: NDJSON transport read failed ({evidence})"
+                            ))?
+                        }
+                    };
+                    let mut cursor = 0usize;
 
                     // Each Ollama response line is a complete JSON object.
-                    while let Some(newline_pos) = buf.find('\n') {
-                        let line = buf[..newline_pos].trim_end_matches('\r').trim().to_string();
-                        buf.drain(..=newline_pos);
+                    while let Some(relative_newline) =
+                        bytes[cursor..].iter().position(|byte| *byte == b'\n')
+                    {
+                        let newline_pos = cursor + relative_newline;
+                        response_bounds::append_frame_segment(
+                            &mut line_buf,
+                            &bytes[cursor..newline_pos],
+                            provider_name,
+                            NDJSON_FRAME_EVIDENCE_DOMAIN,
+                            MAX_NDJSON_FRAME_BYTES,
+                        )?;
+                        cursor = newline_pos + 1;
 
-                        if line.is_empty() {
+                        let decoded = decode_ndjson_frame(&line_buf, provider_name)?;
+                        line_buf.clear();
+                        let Some(chunk) = decoded else {
                             continue;
-                        }
-
-                        let chunk: OllamaChatChunk = match serde_json::from_str(&line) {
-                            Ok(c) => c,
-                            Err(e) => {
-                                tracing::warn!(
-                                    adapter = provider_name,
-                                    error = %e,
-                                    raw = %line,
-                                    "NDJSON chunk parse error; skipping"
-                                );
-                                continue;
-                            }
                         };
 
                         if chunk.done {
@@ -291,38 +318,38 @@ impl Provider for OllamaAdapter {
                             };
                         }
                     }
+                    response_bounds::append_frame_segment(
+                        &mut line_buf,
+                        &bytes[cursor..],
+                        provider_name,
+                        NDJSON_FRAME_EVIDENCE_DOMAIN,
+                        MAX_NDJSON_FRAME_BYTES,
+                    )?;
                 }
 
                 // EOF residual: a server may end the FINAL JSON line without a
                 // trailing newline, so the line-loop above never consumed it.
                 // Parse whatever is left before synthesising the terminator so a
                 // newline-less done line (token counts) or content delta is not
-                // dropped.
-                let tail = buf.trim();
-                if !tail.is_empty() {
-                    if let Ok(chunk) = serde_json::from_str::<OllamaChatChunk>(tail) {
-                        if chunk.done {
-                            input_tokens = chunk.prompt_eval_count;
-                            output_tokens = chunk.eval_count;
-                            finish_reason = chunk.done_reason;
-                        } else if !chunk.message.content.is_empty() {
-                            yield CompletionChunk {
-                                delta: chunk.message.content,
-                                done: false,
-                                termination: Default::default(),
-                                identity: Default::default(),
-                                input_tokens: None,
-                                output_tokens: None,
-                                cache_creation_tokens: None,
-                                cache_read_tokens: None,
-                            };
-                        }
-                    } else {
-                        tracing::warn!(
-                            adapter = provider_name,
-                            raw = %tail,
-                            "NDJSON EOF-residual parse error; dropping tail"
-                        );
+                // dropped. A malformed residual fails closed here: skipping it
+                // and then emitting the terminator below would report a
+                // successful, complete generation that never happened.
+                if let Some(chunk) = decode_ndjson_frame(&line_buf, provider_name)? {
+                    if chunk.done {
+                        input_tokens = chunk.prompt_eval_count;
+                        output_tokens = chunk.eval_count;
+                        finish_reason = chunk.done_reason;
+                    } else if !chunk.message.content.is_empty() {
+                        yield CompletionChunk {
+                            delta: chunk.message.content,
+                            done: false,
+                            termination: Default::default(),
+                            identity: Default::default(),
+                            input_tokens: None,
+                            output_tokens: None,
+                            cache_creation_tokens: None,
+                            cache_read_tokens: None,
+                        };
                     }
                 }
 
@@ -416,6 +443,34 @@ struct OllamaResponseMessage {
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
+/// Decodes one bounded NDJSON frame.
+///
+/// UTF-8 is validated only here, once a complete line exists, so a code point
+/// split across transport chunks stays valid while invalid UTF-8 fails closed.
+/// A blank frame is `None`; a malformed frame is an error, never a skip: the
+/// stream would otherwise drop real output and still terminate as if the
+/// generation had completed successfully. Errors carry digest evidence only —
+/// the frame body is model/gateway controlled.
+fn decode_ndjson_frame(
+    frame: &[u8],
+    adapter_name: &'static str,
+) -> Result<Option<OllamaChatChunk>> {
+    let text = response_bounds::frame_utf8(frame, adapter_name, NDJSON_FRAME_EVIDENCE_DOMAIN)?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_str(trimmed).map(Some).map_err(|error| {
+        let evidence =
+            response_bounds::frame_evidence(NDJSON_FRAME_EVIDENCE_DOMAIN, &[frame], false);
+        anyhow::anyhow!(
+            "{adapter_name}: malformed NDJSON frame at line {} column {} ({evidence})",
+            error.line(),
+            error.column()
+        )
+    })
+}
+
 fn build_request(
     model: &str,
     req: &Request,
@@ -482,6 +537,14 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn build_adapter_against(base_url: &str) -> OllamaAdapter {
+        // Bounds tests deliberately fail provider calls, and the breaker
+        // registry is process-global per adapter identity. Without this reset
+        // the fifth deliberate failure opens the breaker and every later test
+        // in this file observes that instead of its own fixture. Both
+        // identities are reset because the constructor, not the caller, decides
+        // which one this base URL resolves to.
+        crate::providers::circuit_breaker::reset_for_test("local_ollama");
+        crate::providers::circuit_breaker::reset_for_test("ollama_remote");
         OllamaAdapter::new(base_url.to_string(), "llama3.2-mock".to_string())
             .expect("adapter constructs against mock URL")
     }
@@ -863,5 +926,361 @@ mod tests {
             .expect("sampling overrides still produce options");
         assert_eq!(opts.temperature, Some(0.5));
         assert_eq!(opts.num_predict, None);
+    }
+
+    // ── Response envelope bounds (GOLD-R4-15k1) ──────────────────────────────
+
+    async fn mount_ndjson(mock: &MockServer, body: impl Into<Vec<u8>>) {
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(body.into(), "application/x-ndjson"),
+            )
+            .mount(mock)
+            .await;
+    }
+
+    /// Drains a stream into (deltas, done-chunk count, first error).
+    async fn drain(mut stream: ChunkStream) -> (String, usize, Option<String>) {
+        let mut deltas = String::new();
+        let mut done = 0usize;
+        let mut error = None;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(chunk) => {
+                    deltas.push_str(&chunk.delta);
+                    if chunk.done {
+                        done += 1;
+                    }
+                }
+                Err(err) => {
+                    error = Some(err.to_string());
+                    break;
+                }
+            }
+        }
+        (deltas, done, error)
+    }
+
+    #[tokio::test]
+    async fn oversized_success_body_fails_before_json_allocation() {
+        let secret = "ollama-never-persist-oversized-success";
+        let body = format!(
+            r#"{{"message":{{"role":"assistant","content":"{secret}{}"}},"done":true}}"#,
+            "x".repeat(MAX_SUCCESS_BODY_BYTES)
+        );
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&mock)
+            .await;
+
+        let message = build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("oversized successful body must fail before JSON parsing")
+            .to_string();
+        assert!(message.contains("successful response body exceeded"));
+        assert!(message.contains("body_sha256="));
+        assert!(message.contains("truncated=true"));
+        assert!(!message.contains(secret));
+        assert!(!message.contains(&"x".repeat(128)));
+    }
+
+    #[tokio::test]
+    async fn malformed_success_body_reports_only_digest_evidence() {
+        let secret = "ollama-never-persist-malformed-success";
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(format!(r#"{{"secret":"{secret}""#), "application/json"),
+            )
+            .mount(&mock)
+            .await;
+
+        let message = build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("malformed successful body must fail")
+            .to_string();
+        assert!(message.contains("malformed successful JSON response"));
+        assert!(message.contains("body_sha256="));
+        assert!(!message.contains(secret));
+    }
+
+    #[tokio::test]
+    async fn oversized_http_error_bodies_report_status_and_digest_only() {
+        let secret = "ollama-never-persist-http-error";
+        let body = format!("{secret}{}", "x".repeat(MAX_ERROR_BODY_BYTES * 2));
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(500).set_body_raw(body, "text/plain"))
+            .mount(&mock)
+            .await;
+        let adapter = build_adapter_against(&mock.uri());
+
+        let complete_error = adapter
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("HTTP 500 must surface as Err")
+            .to_string();
+        let stream_error = match adapter
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(_) => panic!("stream handshake 500 must fail before yielding chunks"),
+            Err(error) => error.to_string(),
+        };
+
+        for message in [complete_error, stream_error] {
+            assert!(message.contains("HTTP 500"), "got: {message}");
+            assert!(message.contains("body_sha256="));
+            assert!(message.contains("truncated=true"));
+            assert!(!message.contains(secret));
+            assert!(!message.contains(&"x".repeat(128)));
+        }
+    }
+
+    #[tokio::test]
+    async fn newline_free_ndjson_frame_is_bounded_and_secret_safe() {
+        let secret = "ollama-never-persist-newline-free-frame";
+        let body = format!(
+            r#"{{"content":"{secret}{}"#,
+            "x".repeat(MAX_NDJSON_FRAME_BYTES)
+        );
+        let mock = MockServer::start().await;
+        mount_ndjson(&mock, body).await;
+
+        let stream = build_adapter_against(&mock.uri())
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("HTTP stream starts before the first frame is decoded");
+        let (deltas, done, error) = drain(stream).await;
+        let message = error.expect("newline-free oversized frame must fail");
+        assert!(message.contains("streaming frame exceeded"));
+        assert!(message.contains("frame_sha256="));
+        assert!(message.contains("truncated=true"));
+        assert!(!message.contains(secret));
+        assert!(!message.contains(&"x".repeat(128)));
+        assert!(deltas.is_empty());
+        assert_eq!(
+            done, 0,
+            "an over-limit frame must not synthesize a done chunk"
+        );
+    }
+
+    /// A malformed line used to be logged raw and skipped, after which the
+    /// stream still emitted a done terminator — reporting a complete generation
+    /// that silently lost output.
+    #[tokio::test]
+    async fn malformed_ndjson_line_fails_closed_without_synthetic_done() {
+        let secret = "ollama-never-persist-malformed-frame";
+        let body = format!(
+            concat!(
+                "{{\"message\":{{\"role\":\"assistant\",\"content\":\"Hi\"}},\"done\":false}}\n",
+                "{{\"message\":\"{}\"\n",
+                "{{\"message\":{{\"role\":\"assistant\",\"content\":\"\"}},\"done\":true,\"eval_count\":9}}\n"
+            ),
+            secret
+        );
+        let mock = MockServer::start().await;
+        mount_ndjson(&mock, body).await;
+
+        let stream = build_adapter_against(&mock.uri())
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("stream must start");
+        let (deltas, done, error) = drain(stream).await;
+        let message = error.expect("malformed NDJSON line must fail closed");
+        assert!(message.contains("malformed NDJSON frame"), "got: {message}");
+        assert!(message.contains("frame_sha256="));
+        assert!(!message.contains(secret));
+        assert_eq!(deltas, "Hi", "output before the malformed frame is real");
+        assert_eq!(
+            done, 0,
+            "a skipped frame must never look like a clean finish"
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_eof_residual_fails_closed_without_synthetic_done() {
+        let secret = "ollama-never-persist-malformed-residual";
+        let body = format!(
+            "{}{{\"message\":\"{secret}\"",
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"done\":false}\n"
+        );
+        let mock = MockServer::start().await;
+        mount_ndjson(&mock, body).await;
+
+        let stream = build_adapter_against(&mock.uri())
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("stream must start");
+        let (deltas, done, error) = drain(stream).await;
+        let message = error.expect("malformed EOF residual must fail closed");
+        assert!(message.contains("malformed NDJSON frame"), "got: {message}");
+        assert!(!message.contains(secret));
+        assert_eq!(deltas, "Hi");
+        assert_eq!(
+            done, 0,
+            "a truncated tail must not be reported as a finished generation"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_utf8_ndjson_line_reports_only_digest_evidence() {
+        let mut body =
+            b"{\"message\":{\"role\":\"assistant\",\"content\":\"ollama-never-persist-utf8-"
+                .to_vec();
+        body.extend_from_slice(&[0xff, 0xfe]);
+        body.extend_from_slice(b"\"},\"done\":false}\n");
+        let mock = MockServer::start().await;
+        mount_ndjson(&mock, body).await;
+
+        let stream = build_adapter_against(&mock.uri())
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("stream must start");
+        let (deltas, done, error) = drain(stream).await;
+        let message = error.expect("invalid UTF-8 frame must fail closed");
+        assert!(message.contains("not valid UTF-8"), "got: {message}");
+        assert!(message.contains("frame_sha256="));
+        assert!(!message.contains("ollama-never-persist-utf8-"));
+        assert!(deltas.is_empty());
+        assert_eq!(done, 0);
+    }
+
+    /// A local HTTP/1.1 server answering one request with a
+    /// `Transfer-Encoding: chunked` body split at caller-chosen byte offsets.
+    /// A mock server that writes one whole body cannot reproduce a code point
+    /// split across transfer chunks, which is exactly the case byte-oriented
+    /// framing exists for.
+    async fn serve_chunked_ndjson(parts: Vec<Vec<u8>>) -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind chunked fixture");
+        let base = format!("http://{}", listener.local_addr().expect("fixture address"));
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept fixture request");
+            let mut request = Vec::new();
+            let mut byte = [0u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                if socket.read(&mut byte).await.expect("read request head") == 0 {
+                    return;
+                }
+                request.push(byte[0]);
+            }
+            let head = String::from_utf8_lossy(&request).to_ascii_lowercase();
+            let content_length = head
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            let mut request_body = vec![0u8; content_length];
+            socket
+                .read_exact(&mut request_body)
+                .await
+                .expect("read request body");
+
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\
+                      Transfer-Encoding: chunked\r\n\r\n",
+                )
+                .await
+                .expect("write response head");
+            for part in parts {
+                socket
+                    .write_all(format!("{:x}\r\n", part.len()).as_bytes())
+                    .await
+                    .expect("write chunk size");
+                socket.write_all(&part).await.expect("write chunk body");
+                socket.write_all(b"\r\n").await.expect("write chunk end");
+                socket.flush().await.expect("flush chunk");
+            }
+            socket
+                .write_all(b"0\r\n\r\n")
+                .await
+                .expect("write terminal chunk");
+            socket.flush().await.expect("flush response");
+        });
+        (base, handle)
+    }
+
+    #[tokio::test]
+    async fn chunked_transport_reassembles_codepoint_split_across_chunks() {
+        let content_line = concat!(
+            "{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":\"ok 🦀 done\"},",
+            "\"done\":false}\n"
+        );
+        let done_line = concat!(
+            "{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,",
+            "\"done_reason\":\"stop\",\"prompt_eval_count\":11,\"eval_count\":2}\n"
+        );
+        // Two bytes into the four-byte code point: neither half is valid UTF-8.
+        let split = content_line.find('🦀').expect("code point present") + 2;
+        let raw = content_line.as_bytes();
+        assert!(std::str::from_utf8(&raw[..split]).is_err());
+
+        let (base, server) = serve_chunked_ndjson(vec![
+            raw[..split].to_vec(),
+            raw[split..].to_vec(),
+            done_line.as_bytes().to_vec(),
+        ])
+        .await;
+
+        let mut stream = build_adapter_against(&base)
+            .stream(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("chunked stream must start");
+        let mut deltas = String::new();
+        let mut done_chunk = None;
+        while let Some(item) = stream.next().await {
+            let chunk = item.expect("chunked transport must not error");
+            deltas.push_str(&chunk.delta);
+            if chunk.done {
+                done_chunk = Some(chunk);
+            }
+        }
+        server.await.expect("fixture server completes");
+
+        assert_eq!(deltas, "ok 🦀 done");
+        let done = done_chunk.expect("done chunk");
+        assert_eq!(done.input_tokens, Some(11));
+        assert_eq!(done.output_tokens, Some(2));
+        assert_eq!(done.termination.finish_reason.as_deref(), Some("stop"));
     }
 }

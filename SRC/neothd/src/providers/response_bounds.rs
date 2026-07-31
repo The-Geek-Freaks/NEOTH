@@ -4,6 +4,11 @@
 //! after returning HTTP 2xx. These helpers cap allocation before JSON parsing
 //! and before an unterminated streaming frame can grow without bound. Errors
 //! retain only domain-separated digest evidence, never response bytes.
+//!
+//! Dropping the `reqwest` error source on a failed read is deliberate, not an
+//! oversight: the chain is provider-controlled and has echoed request URLs and
+//! headers. Adapters adopting these helpers must not add the source back for
+//! nicer diagnostics.
 
 use anyhow::Result;
 use futures_util::StreamExt;
@@ -48,6 +53,36 @@ fn evidence(
         "{label}_sha256={} truncated={}",
         evidence.sha256, evidence.truncated
     )
+}
+
+/// Reads a non-2xx provider body under a hard cap and keeps only
+/// domain-separated digest evidence.
+///
+/// Error envelopes are gateway-controlled, may echo request secrets, and are
+/// the one body an adapter reads on a path where nothing downstream needs the
+/// bytes. Callers surface the status plus this digest.
+pub(crate) async fn error_body_evidence(
+    response: reqwest::Response,
+    evidence_domain: &'static [u8],
+    max_bytes: usize,
+) -> String {
+    let mut body = Vec::with_capacity(max_bytes.min(8 * 1024));
+    let mut truncated = false;
+    let mut chunks = response.bytes_stream();
+    while let Some(next) = chunks.next().await {
+        let Ok(chunk) = next else {
+            truncated = true;
+            break;
+        };
+        let remaining = max_bytes.saturating_sub(body.len());
+        if chunk.len() > remaining {
+            body.extend_from_slice(&chunk[..remaining]);
+            truncated = true;
+            break;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    byte_evidence(evidence_domain, &[&body], truncated)
 }
 
 pub(crate) async fn decode_json<T: DeserializeOwned>(
