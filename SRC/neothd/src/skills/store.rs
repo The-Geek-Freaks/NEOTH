@@ -916,7 +916,7 @@ pub(crate) fn create_private_regular_file_child_create_new(
     };
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt as _;
+        use cap_std::fs::PermissionsExt as _;
         anyhow::ensure!(
             file.metadata()
                 .context("inspect direct private destination mode")?

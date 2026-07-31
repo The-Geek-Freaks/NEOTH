@@ -53,7 +53,7 @@ fn validate_private_key_file(file: &cap_std::fs::File, display_path: &Path) -> R
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt as _;
+        use cap_std::fs::PermissionsExt as _;
         anyhow::ensure!(
             metadata.permissions().mode() & 0o077 == 0,
             "provider-subject key is accessible by group or other users: {}",

@@ -1685,7 +1685,7 @@ fn verify_private_local_file(
 ) -> Result<()> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt as _;
+        use cap_std::fs::PermissionsExt as _;
         let mode = file
             .metadata()
             .with_context(|| format!("inspect private {label} {}", display_path.display()))?
