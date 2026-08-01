@@ -3947,9 +3947,22 @@ None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
     nicht liefert.
   - Gleiche Klasse wie `P1-04` (HLC statt VectorClock): das Item beschreibt ein **schwächeres**
     Primitiv als das gebaute. **M** 🔒
-- [ ] **ADOPT31-C3** Per-agent/peer trust score — 0–1000, five tiers, reward/penalty/decay.
-  *NEOTH:* `cluster/peer_trust.rs` (new). *Consumer:* `cluster/hyperswarm.rs` peer
-  accept/reject + `loop_engine/` delegation threshold. **M**
+- [?] **ADOPT31-C3** Per-agent/peer trust score — **ENTSCHEIDUNG NÖTIG, nicht bauen ohne sie.**
+  Verifiziert 2026-08-01: `cluster/peer_trust.rs` existiert nicht, die Lücke ist real. Aber
+  das Item ist kein fehlendes Teil, sondern ein **Wechsel des Vertrauensmodells**:
+  - **Heute:** `cluster_task_gate(is_paired, decision, lease_active)` (`hyperswarm.rs:1442`)
+    plus `registry::is_paired`. Vertrauen ist **operator-gewährt** — ein Peer ist gepaart oder
+    nicht, und das entscheidet ausschließlich Alex.
+  - **C3:** ein 0–1000-Score mit Reward/Penalty/Decay, der `peer accept/reject` speist.
+    Damit **erarbeitet** sich ein Peer seine Rechte durch Verhalten.
+  - **Warum das nicht nebenbei geht:** ein erarbeitbarer Score ist manipulierbar. Ein Peer,
+    der sich lange unauffällig verhält, steigt in eine Stufe, die der Operator nie explizit
+    gewährt hat — genau die Trust-Creep-Klasse, gegen die `SmartApprove` an anderer Stelle
+    ausdrücklich nach *declared effect* statt nach Name entscheidet.
+  - **Fragen an Alex:** (1) Soll Peer-Vertrauen überhaupt erarbeitbar sein, oder bleibt es
+    operator-gewährt? (2) Falls erarbeitbar: darf der Score `is_paired` **überschreiben**
+    oder nur *innerhalb* gepaarter Peers abstufen? Letzteres wäre additiv und ungefährlich.
+  **M**
 - [x] **ADOPT31-C4** MCP tool fingerprinting + rug-pull detection — **GEBAUT + DURCHGESETZT.**
   `security/mcp_guardian.rs`: HMAC-Pin unter der Instanz-WAL-Identität über Servername,
   Toolname, Description, kanonisiertes Input-Schema **und Annotations**. Trust-on-first-use;
