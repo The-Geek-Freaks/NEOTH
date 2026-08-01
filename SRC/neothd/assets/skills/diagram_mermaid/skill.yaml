@@ -22,16 +22,18 @@ tags:
 trigger_keywords:
   - "mermaid diagram"
   - "render as mermaid"
-  - "draw a flowchart"
-  - "flowchart of"
-  - "sequence diagram"
-  - "class diagram"
-  - "er diagram"
-  - "entity relationship diagram"
-  - "state diagram for"
-  - "make a diagram of"
-  - "visualize this as a diagram"
-  - "diagram this architecture"
+  - "markdown mermaid diagram"
+  - "mermaid code block"
+  - "mermaid flowchart"
+  - "flowchart in mermaid"
+  - "mermaid sequence diagram"
+  - "mermaid class diagram"
+  - "mermaid er diagram"
+  - "mermaid entity relationship diagram"
+  - "mermaid state diagram"
+  - "make a mermaid diagram of"
+  - "visualize this as mermaid"
+  - "diagram this architecture in mermaid"
 
 system_prompt: |
   Mermaid diagram generation (auto-installed). Produce exactly ONE Mermaid code

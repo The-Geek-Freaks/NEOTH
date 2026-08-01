@@ -29,8 +29,6 @@ trigger_keywords:
   - "perf regression"
   - "slow"
   - "throwing"
-  - "regression"
-  - "broken"
   - "hard bug"
   - "intermittent"
   - "flaky"

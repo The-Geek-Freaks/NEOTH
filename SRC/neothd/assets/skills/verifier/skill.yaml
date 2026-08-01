@@ -27,7 +27,8 @@ trigger_keywords:
   - "validate this"
   - "check all"
   - "prüfe alles"
-  - "is this correct"
+  - "verify this with evidence"
+  - "prove this claim"
   - "stimmt das"
 
 system_prompt: |

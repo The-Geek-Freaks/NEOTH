@@ -19,13 +19,15 @@ tags:
   - ported
 
 trigger_keywords:
-  - "new skill"
-  - "write a skill"
-  - "skill schreiben"
-  - "skill authoring"
-  - "skill manifest"
-  - "trigger_keywords"
-  - "system_prompt:"
+  - "test a new skill"
+  - "test-drive a skill"
+  - "skill testgetrieben schreiben"
+  - "red green skill authoring"
+  - "validate skill manifest"
+  - "validate trigger_keywords"
+  - "test skill system_prompt"
+  - "skill baseline scenario"
+  - "skill creation log"
 
 system_prompt: |
   Skill authoring discipline (auto-installed). When you write a new

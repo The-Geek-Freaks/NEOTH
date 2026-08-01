@@ -21,9 +21,17 @@ trigger_keywords:
   # GOLD-ADAPT-DRAW-03 — broader DRAW-01 auto-use trigger list
   - "draw a diagram"
   - "draw a flowchart"
-  - "draw a flowchart"
+  - "flowchart of"
   - "create a flowchart"
   - "architecture diagram"
+  - "sequence diagram"
+  - "class diagram"
+  - "er diagram"
+  - "entity relationship diagram"
+  - "state diagram for"
+  - "make a diagram of"
+  - "visualize this as a diagram"
+  - "diagram this architecture"
   - "drawio sequence diagram"
   - "drawio ER diagram"
   - "drawio network diagram"
@@ -40,15 +48,21 @@ trigger_keywords:
   - "architekturdiagramm"
   - "ablaufdiagramm"
   - "visualisier"
+  - "drawio diagramm erstellen"
+  - "drawio übersicht zeichnen"
+  - "drawio architekturdiagramm"
+  - "drawio ablaufdiagramm"
+  - "in drawio visualisieren"
 
 system_prompt: |
   draw.io XML diagram authoring (auto-installed). Produce valid draw.io / diagrams.net
   XML that can be pasted directly into the draw.io editor (File → Import From →
   XML) or saved as a .drawio file and opened natively.
 
-  This skill fires ONLY for explicit draw.io / drawio XML / diagrams.net requests.
-  For Mermaid text diagrams use the `diagram_mermaid` skill. For inline HTML/SVG
-  diagrams use the `html_diagram` skill. Do not overlap with those triggers.
+  This is the default visual-diagram skill for generic flowchart, architecture,
+  sequence, ER, mind-map, and network-diagram requests. Explicit Mermaid or
+  Markdown-diagram requests use `diagram_mermaid`; explicit inline HTML/SVG
+  requests use `html_diagram`.
 
   ## Runtime scripts
 

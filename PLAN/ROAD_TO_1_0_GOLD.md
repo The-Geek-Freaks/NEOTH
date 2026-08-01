@@ -3900,13 +3900,17 @@ seeded by Fabric's `reflexion.json` / `self-refine.json`.
   Fabric's `extract_skills` — it is HR job-description parsing, useless here. *NEOTH:*
   `skills/bundled.rs`. *Consumer:* `skills/router.rs`. **M**
 - [ ] **ADOPT31-B10** Pairwise negative routing and consumer parity — **FORENSIC
-  CORRECTION 2026-08-01: NICHT GESCHLOSSEN.** Der bisherige Test in
-  `skills/bundled.rs` akzeptierte zehn echte Fehlroutings über `KNOWN_COLLISIONS`, ließ
-  Einwort-Trigger aus, prüfte nur 99 default-aktive statt aller 182 Bundles und deckte
-  Mode-, Embedding-, Custom-Skill-, Chat-/Channel-/CLI-/GUI-Parität nicht ab. Zusätzlich
-  matcht der produktive Router Mehrwortphrasen als unbegrenzte Substrings (`create a PR`
-  fängt `create a presentation`), Stage 2 darf eindeutige Literaltreffer überschreiben,
-  Modes wählen global vor dem Parent und `/skill-id` ist keine autoritative Auswahl.
+  CORRECTION 2026-08-01: NICHT GESCHLOSSEN.** Die erste belastbare Teillieferung hat
+  `KNOWN_COLLISIONS` entfernt, prüft sämtliche rohen Aliase und den Vertrag über 182
+  Bundles/99 Default-Aktive, kuratiert alle normalisierten Cross-Owner-Kollisionen auf
+  null und ersetzt unbegrenztes ASCII-Substring-Matching durch tokenbegrenztes
+  Unicode-Matching. Regressionen pinnen unter anderem `create a PR` gegen
+  `create a presentation`, `feature idea` gegen `feature ideas` sowie exakte Trigger mit
+  Satzzeichen (`fact-check`, `node.js`, `/ship`, `max++`). **B10 bleibt trotzdem offen:**
+  Stage 2 darf eindeutige Literaltreffer weiterhin überschreiben, Modes wählen global
+  vor dem Parent, `/skill-id` ist keine autoritative Auswahl und Mode-, Embedding-,
+  Custom-Skill-, Chat-/Channel-/CLI-/GUI-Parität besitzen noch keinen gemeinsamen
+  resolvergebundenen Vertrag.
   **Abnahme:** null Cross-Owner-Kollisionen ohne Allowlist über 182/182; tokenbegrenztes
   Unicode-Matching; explizite Auswahl gewinnt nach Authority-Validierung; Parent vor Mode;
   Embedding nur bei `NoMatch`; echte Ties werden als typisierter Konflikt sichtbar statt

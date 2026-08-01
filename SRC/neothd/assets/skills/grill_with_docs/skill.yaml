@@ -19,9 +19,9 @@ tags:
   - ported
 
 trigger_keywords:
-  - "grill"
+  - "grill against docs"
   - "grill with docs"
-  - "stress-test"
+  - "stress test against docs"
   - "spec drift"
   - "adr check"
   - "before commit"

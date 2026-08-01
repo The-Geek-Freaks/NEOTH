@@ -931,11 +931,9 @@ mod tests {
 
     #[test]
     fn every_bundled_skill_has_nonempty_body() {
-        assert!(
-            BUNDLED_SKILLS
-                .iter()
-                .any(|(id, _)| *id == "academic_research")
-        );
+        assert!(BUNDLED_SKILLS
+            .iter()
+            .any(|(id, _)| *id == "academic_research"));
         for (id, body) in BUNDLED_SKILLS {
             assert!(
                 !body.trim().is_empty(),
@@ -1105,109 +1103,262 @@ mod tests {
         }
     }
 
-    /// ADOPT31-B10: every bundled trigger must route to its own skill when
-    /// competing against **all** the others, not just its pack-mates.
-    ///
-    /// The per-pack tests each build a small skill set, so a phrase can only
-    /// lose to a sibling. A skill added later, in a different pack, can quietly
-    /// capture an older skill's phrase and no pack test would ever see it.
-    /// This routes every trigger against the full bundled catalogue.
-    #[test]
-    fn every_bundled_trigger_routes_to_its_own_skill_against_the_whole_catalogue() {
-        use crate::skills::router::route;
+    const EXPECTED_BUNDLED_SKILL_COUNT: usize = 182;
+    const EXPECTED_DEFAULT_ENABLED_SKILL_COUNT: usize = 99;
+
+    /// Collapse case, punctuation, underscores, and repeated whitespace so
+    /// spelling aliases such as `stress-test` and `stress test` have one owner.
+    fn normalize_trigger_alias(trigger: &str) -> String {
+        let mut normalized = String::with_capacity(trigger.len());
+        let mut separator_pending = false;
+
+        for character in trigger.trim().chars() {
+            for lowercase in character.to_lowercase() {
+                if lowercase.is_alphanumeric() {
+                    if separator_pending && !normalized.is_empty() {
+                        normalized.push(' ');
+                    }
+                    normalized.push(lowercase);
+                    separator_pending = false;
+                } else {
+                    separator_pending = true;
+                }
+            }
+        }
+
+        normalized
+    }
+
+    fn bundled_skill_matrix(force_enabled: bool) -> Vec<crate::skills::schema::Skill> {
         use crate::skills::schema::Skill;
 
-        let all: Vec<Skill> = BUNDLED_SKILLS
+        BUNDLED_SKILLS
             .iter()
-            .filter_map(|(id, body)| {
-                let manifest: SkillManifest = serde_yaml::from_str(body)
+            .map(|(id, body)| {
+                let mut manifest: SkillManifest = serde_yaml::from_str(body)
                     .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
-                manifest.enabled.then(|| Skill {
+                if force_enabled {
+                    manifest.enabled = true;
+                }
+                Skill {
                     manifest,
                     path: std::path::PathBuf::from(format!("/bundled/{id}/skill.yaml")),
                     content_hash: String::new(),
-                })
+                }
             })
-            .collect();
-        assert!(
-            all.len() > 20,
-            "expected a populated catalogue, got {}",
-            all.len()
-        );
+            .collect()
+    }
 
-        // Collisions that exist today, recorded so this gate is useful now
-        // instead of after a curation pass. Each pair is a genuine overlap the
-        // per-pack tests could never see, because the winner lives in a
-        // different pack. Shrinking this list is trigger curation; the gate's
-        // job is to stop it from GROWING.
-        const KNOWN_COLLISIONS: &[(&str, &str, &str)] = &[
-            ("create a presentation", "ppt_master", "git_pr_create"),
-            ("draw a flowchart", "drawio_diagram", "diagram_mermaid"),
-            ("is this correct", "verifier", "doubt_driven_development"),
-            (
-                "ready to ship",
-                "ship_review",
-                "finishing_a_development_branch",
-            ),
-            (
-                "simplify this",
-                "improve_codebase_architecture",
-                "code_simplification",
-            ),
-            (
-                "skill authoring",
-                "writing_skills",
-                "advanced_skill_creator",
-            ),
-            ("what calls", "zoom_out", "graphify"),
-            ("what depends on", "zoom_out", "graphify"),
-            ("write a skill", "writing_skills", "advanced_skill_creator"),
-            (
-                "write a yara rule for",
-                "cybersec_malware_analysis",
-                "cybersec_detection_engineering",
-            ),
-        ];
+    fn assert_default_trigger_ownership(
+        matrix_name: &str,
+        skills: &[crate::skills::schema::Skill],
+    ) {
+        use crate::skills::router::route;
 
-        let mut fresh: Vec<String> = Vec::new();
-        for skill in &all {
-            let owner = skill.manifest.id.clone();
+        let mut failures = Vec::new();
+        for skill in skills.iter().filter(|skill| skill.manifest.enabled) {
+            let owner = skill.manifest.id.as_str();
             for trigger in &skill.manifest.trigger_keywords {
-                // Single-word triggers are intentionally broad and shared; the
-                // contract is about the distinctive multi-word phrases.
-                if trigger.split_whitespace().count() < 2 {
-                    continue;
-                }
-                let winner = match route(trigger, &all) {
-                    Some(hit) => hit.skill.id().to_owned(),
-                    None => String::new(),
-                };
-                if winner == owner {
-                    continue;
-                }
-                let known = KNOWN_COLLISIONS.iter().any(|(phrase, belongs, routed)| {
-                    *phrase == trigger.as_str() && *belongs == owner && *routed == winner
-                });
-                if !known {
-                    fresh.push(format!(
-                        "`{trigger}` belongs to `{owner}` but routed to `{}`",
-                        if winner.is_empty() {
-                            "nothing"
-                        } else {
-                            &winner
-                        }
+                let winner = route(trigger, skills)
+                    .map(|hit| hit.skill.id())
+                    .unwrap_or("nothing");
+                if winner != owner {
+                    failures.push(format!(
+                        "`{trigger}` belongs to `{owner}` but routed to `{winner}`"
                     ));
                 }
             }
         }
 
         assert!(
-            fresh.is_empty(),
-            "new cross-skill trigger capture ({} case(s)) — a phrase now \
-             activates a different skill than the one that declares it:\n  {}",
-            fresh.len(),
-            fresh.join("\n  ")
+            failures.is_empty(),
+            "{matrix_name} has {} trigger ownership failure(s):\n  {}",
+            failures.len(),
+            failures.join("\n  ")
         );
+    }
+
+    /// ADOPT31-B10: every bundled manifest participates in a global ownership
+    /// table. Same-owner punctuation aliases count once; no normalized phrase
+    /// may be claimed by two different skills, enabled or disabled.
+    #[test]
+    fn all_bundled_triggers_have_one_normalized_owner() {
+        assert_eq!(
+            BUNDLED_SKILLS.len(),
+            EXPECTED_BUNDLED_SKILL_COUNT,
+            "the v1 built-in catalogue contract changed"
+        );
+
+        let mut owners: std::collections::HashMap<String, (String, String)> =
+            std::collections::HashMap::new();
+        for (id, body) in BUNDLED_SKILLS {
+            let manifest: SkillManifest = serde_yaml::from_str(body)
+                .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
+            for trigger in &manifest.trigger_keywords {
+                let normalized = normalize_trigger_alias(trigger);
+                assert!(
+                    !normalized.is_empty(),
+                    "`{id}` declares an empty trigger after normalization: {trigger:?}"
+                );
+                if let Some((existing_owner, existing_trigger)) = owners.get(&normalized) {
+                    assert_eq!(
+                        existing_owner.as_str(),
+                        *id,
+                        "normalized trigger collision: {trigger:?} from `{id}` and \
+                         {existing_trigger:?} from `{existing_owner}` both own `{normalized}`"
+                    );
+                } else {
+                    owners.insert(normalized, ((*id).to_owned(), trigger.clone()));
+                }
+            }
+        }
+    }
+
+    /// Trigger curation must preserve the adoption contracts that made these
+    /// skills reachable in the first place. The catalogue-wide routing tests
+    /// below replay every one of these raw forms against its real competitors.
+    #[test]
+    fn curated_trigger_owners_preserve_adoption_contracts() {
+        let required = [
+            ("drawio_diagram", "draw a flowchart"),
+            ("drawio_diagram", "flowchart of"),
+            ("drawio_diagram", "architecture diagram"),
+            ("drawio_diagram", "draw an architecture diagram"),
+            ("drawio_diagram", "sequence diagram"),
+            ("drawio_diagram", "class diagram"),
+            ("drawio_diagram", "er diagram"),
+            ("drawio_diagram", "entity relationship diagram"),
+            ("drawio_diagram", "state diagram for"),
+            ("drawio_diagram", "make a diagram of"),
+            ("drawio_diagram", "visualize this as a diagram"),
+            ("drawio_diagram", "diagram this architecture"),
+            ("diagram_mermaid", "markdown mermaid diagram"),
+            ("diagram_mermaid", "mermaid flowchart"),
+            ("diagram_mermaid", "mermaid sequence diagram"),
+            ("advanced_skill_creator", "create a skill"),
+            ("advanced_skill_creator", "new skill"),
+            ("advanced_skill_creator", "write a skill"),
+            ("advanced_skill_creator", "skill schreiben"),
+            ("advanced_skill_creator", "skill authoring"),
+            ("advanced_skill_creator", "skill manifest"),
+            ("advanced_skill_creator", "trigger_keywords"),
+            ("advanced_skill_creator", "system_prompt:"),
+            ("writing_skills", "test-drive a skill"),
+            ("writing_skills", "validate skill manifest"),
+            ("writing_skills", "red green skill authoring"),
+            ("doubt_driven_development", "is this correct"),
+            ("verifier", "verify this with evidence"),
+            ("verifier", "prove this claim"),
+            ("grill_me", "stress test"),
+            ("grill_me", "stress-test"),
+            ("grill_me", "grill"),
+            ("grill_with_docs", "grill against docs"),
+            ("grill_with_docs", "stress test against docs"),
+        ];
+
+        for (owner, raw_trigger) in required {
+            let (_, body) = BUNDLED_SKILLS
+                .iter()
+                .find(|(id, _)| *id == owner)
+                .unwrap_or_else(|| panic!("curated owner `{owner}` is not bundled"));
+            let manifest: SkillManifest = serde_yaml::from_str(body)
+                .unwrap_or_else(|e| panic!("`{owner}` failed to parse: {e}"));
+            assert!(
+                manifest
+                    .trigger_keywords
+                    .iter()
+                    .any(|trigger| trigger == raw_trigger),
+                "`{owner}` lost required raw trigger {raw_trigger:?}"
+            );
+        }
+    }
+
+    /// Default installs expose exactly the 99 default-enabled bundles. Every
+    /// declared single- or multi-word trigger must route back to its owner.
+    #[test]
+    fn default_bundled_catalogue_routes_every_owned_trigger() {
+        let skills = bundled_skill_matrix(false);
+        let enabled = skills.iter().filter(|skill| skill.manifest.enabled).count();
+        assert_eq!(skills.len(), EXPECTED_BUNDLED_SKILL_COUNT);
+        assert_eq!(enabled, EXPECTED_DEFAULT_ENABLED_SKILL_COUNT);
+        assert_default_trigger_ownership("default-99 catalogue", &skills);
+    }
+
+    /// Full-auto deliberately enables the complete 182-skill catalogue. Every
+    /// multiword trigger clears the production confidence floor and must route
+    /// to its one declared owner.
+    #[test]
+    fn full_auto_bundled_catalogue_routes_every_multiword_trigger() {
+        use crate::skills::router::{route_with_min_weight, FULL_AUTO_MIN_WEIGHT};
+
+        let skills = bundled_skill_matrix(true);
+        assert_eq!(skills.len(), EXPECTED_BUNDLED_SKILL_COUNT);
+        assert_eq!(
+            skills.iter().filter(|skill| skill.manifest.enabled).count(),
+            EXPECTED_BUNDLED_SKILL_COUNT
+        );
+
+        let mut failures = Vec::new();
+        for skill in &skills {
+            let owner = skill.manifest.id.as_str();
+            for trigger in &skill.manifest.trigger_keywords {
+                if trigger.split_whitespace().count().max(1) < FULL_AUTO_MIN_WEIGHT {
+                    continue;
+                }
+
+                let winner = route_with_min_weight(trigger, &skills, FULL_AUTO_MIN_WEIGHT, &[])
+                    .map(|hit| hit.skill.id())
+                    .unwrap_or("nothing");
+                if winner != owner {
+                    failures.push(format!(
+                        "`{trigger}` belongs to `{owner}` but routed to `{winner}`"
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "full-auto-182 catalogue has {} multiword ownership failure(s):\n  {}",
+            failures.len(),
+            failures.join("\n  ")
+        );
+    }
+
+    /// A single-word trigger intentionally sits below the full-auto confidence
+    /// floor. It may therefore be suppressed; if another same-owner signal
+    /// makes it route, the result must still be deterministic and may never be
+    /// captured by a different skill.
+    #[test]
+    fn full_auto_singleword_triggers_are_suppressed_or_owned_deterministically() {
+        use crate::skills::router::{route_with_min_weight, FULL_AUTO_MIN_WEIGHT};
+
+        let skills = bundled_skill_matrix(true);
+        assert_eq!(skills.len(), EXPECTED_BUNDLED_SKILL_COUNT);
+
+        for skill in &skills {
+            let owner = skill.manifest.id.as_str();
+            for trigger in &skill.manifest.trigger_keywords {
+                if trigger.split_whitespace().count().max(1) >= FULL_AUTO_MIN_WEIGHT {
+                    continue;
+                }
+
+                let first = route_with_min_weight(trigger, &skills, FULL_AUTO_MIN_WEIGHT, &[])
+                    .map(|hit| hit.skill.id());
+                let second = route_with_min_weight(trigger, &skills, FULL_AUTO_MIN_WEIGHT, &[])
+                    .map(|hit| hit.skill.id());
+                assert_eq!(
+                    first, second,
+                    "full-auto routing is non-deterministic for {trigger:?} from `{owner}`"
+                );
+                if let Some(winner) = first {
+                    assert_eq!(
+                        winner, owner,
+                        "full-auto single-word trigger {trigger:?} from `{owner}` was captured by `{winner}`"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -229,7 +229,8 @@ pub fn route_with_min_weight<'a, S: RuntimeSkillView>(
     min_weight: usize,
     active_files: &[String],
 ) -> Option<RouteMatch<'a>> {
-    let haystack = lowercase_tokens(message);
+    let lower_message = message.to_lowercase();
+    let haystack = lowercase_tokens(&lower_message);
     if haystack.is_empty() {
         return None;
     }
@@ -251,7 +252,7 @@ pub fn route_with_min_weight<'a, S: RuntimeSkillView>(
             if kw_norm.is_empty() {
                 continue;
             }
-            if keyword_matches(&kw_norm, &haystack, message) && !hits.contains(&kw_norm) {
+            if keyword_matches(&kw_norm, &haystack, &lower_message) && !hits.contains(&kw_norm) {
                 weight += keyword_weight(&kw_norm);
                 hits.push(kw_norm);
             }
@@ -454,17 +455,32 @@ fn lowercase_tokens(s: &str) -> Vec<String> {
         .collect()
 }
 
-/// A keyword matches if its lowercased form appears as a whole word inside
-/// the lowercased message OR — for keywords that contain non-alphanumeric
-/// characters (spaces, hyphens, dots) — as an exact substring of the full
-/// lowercased message. Hyphenated triggers like `fact-check` or `node.js`
-/// would never tokenise to a single token, so they need substring matching.
-fn keyword_matches(needle: &str, tokens: &[String], full_message: &str) -> bool {
-    if needle.chars().any(|c| !c.is_alphanumeric()) {
-        full_message.to_lowercase().contains(needle)
-    } else {
-        tokens.iter().any(|t| t == needle)
+/// A trigger matches at Unicode-alphanumeric boundaries. Single-word triggers
+/// use the already-tokenised message. Phrases and punctuation-bearing triggers
+/// retain their exact spelling, but may not end inside a longer token: this
+/// keeps `fact-check`, `node.js`, `/ship`, and `max++` precise while rejecting
+/// prefix captures such as `create a PR` inside `create a presentation` or
+/// `feature idea` inside `feature ideas`.
+fn keyword_matches(needle: &str, tokens: &[String], lower_message: &str) -> bool {
+    if needle.is_empty() {
+        return false;
     }
+    if needle.chars().all(char::is_alphanumeric) {
+        return tokens.iter().any(|token| token == needle);
+    }
+
+    lower_message.match_indices(needle).any(|(start, matched)| {
+        let end = start + matched.len();
+        let left_boundary = lower_message[..start]
+            .chars()
+            .next_back()
+            .map_or(true, |c| !c.is_alphanumeric());
+        let right_boundary = lower_message[end..]
+            .chars()
+            .next()
+            .map_or(true, |c| !c.is_alphanumeric());
+        left_boundary && right_boundary
+    })
 }
 
 #[cfg(test)]
@@ -701,11 +717,7 @@ mod tests {
     }
 
     #[test]
-    fn hyphenated_keyword_matches_via_substring() {
-        // `fact-check` would never tokenise to one token because the
-        // splitter treats `-` as a separator. Pin that the router uses
-        // substring matching for any keyword carrying non-alphanumeric
-        // characters.
+    fn hyphenated_keyword_matches_at_boundaries() {
         let skills = vec![skill("fc", &["fact-check"], true)];
         let m = route("Fact-check these claims please", &skills).unwrap();
         assert_eq!(m.skill.id(), "fc");
@@ -713,11 +725,47 @@ mod tests {
     }
 
     #[test]
-    fn dotted_keyword_matches_via_substring() {
-        // Same rule applies to dotted triggers (`node.js`, `v1.0`, etc.).
+    fn dotted_keyword_matches_at_boundaries() {
         let skills = vec![skill("nodejs", &["node.js"], true)];
         let m = route("Got a node.js bug to chase", &skills).unwrap();
         assert_eq!(m.skill.id(), "nodejs");
+    }
+
+    #[test]
+    fn multiword_trigger_does_not_match_token_prefixes() {
+        let skills = vec![
+            skill("git_pr_create", &["create a PR"], true),
+            skill("ppt_master", &["create a presentation"], true),
+        ];
+        let m = route("create a presentation", &skills).unwrap();
+        assert_eq!(m.skill.id(), "ppt_master");
+        assert_eq!(m.matched_keywords, vec!["create a presentation"]);
+
+        let skills = vec![
+            skill("brainstorming", &["feature idea"], true),
+            skill(
+                "pm-brainstorm-ideas-existing",
+                &["generating new feature ideas"],
+                true,
+            ),
+        ];
+        let m = route("generating new feature ideas", &skills).unwrap();
+        assert_eq!(m.skill.id(), "pm-brainstorm-ideas-existing");
+        assert_eq!(m.matched_keywords, vec!["generating new feature ideas"]);
+    }
+
+    #[test]
+    fn punctuation_bearing_trigger_keeps_its_punctuation() {
+        let skills = vec![skill("max_plus_plus", &["max++"], true)];
+        assert!(route("set max retries", &skills).is_none());
+        assert_eq!(
+            route("use max++", &skills).unwrap().skill.id(),
+            "max_plus_plus"
+        );
+
+        let skills = vec![skill("ship_review", &["/ship"], true)];
+        assert!(route("ship this", &skills).is_none());
+        assert_eq!(route("/ship", &skills).unwrap().skill.id(), "ship_review");
     }
 
     // ── Phase 33e AP-1: anti-pattern gate (G.12 Level-Confusion) ────────────
@@ -1229,16 +1277,12 @@ mod tests {
             dim: 4,
             rules: vec![("weather", 0)],
         };
-        assert!(
-            route_stage2_embedding("", &skills, &provider)
-                .await
-                .is_none()
-        );
-        assert!(
-            route_stage2_embedding("   ", &skills, &provider)
-                .await
-                .is_none()
-        );
+        assert!(route_stage2_embedding("", &skills, &provider)
+            .await
+            .is_none());
+        assert!(route_stage2_embedding("   ", &skills, &provider)
+            .await
+            .is_none());
     }
 
     #[tokio::test]
