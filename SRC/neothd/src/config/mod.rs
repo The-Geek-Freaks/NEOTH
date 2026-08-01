@@ -574,6 +574,7 @@ pub use features::{
     DEFAULT_LIVE_EDIT_MIN_INTERVAL_MS, DEFAULT_LIVE_MAX_EDITS_PER_MESSAGE, DreamingConfig,
     EcologyConfig, EmailConfig, FallbackConfig, GoalConfig, HintsConfig, HookChainConfig,
     LiveDeliveryConfig, LoopConfig, MediaConfig, OmiConfig, OmiIngestMode, TransferConfig,
+    VadTuning,
 };
 pub use memory::{MemoryConfig, VectorBackend, VectorIndexConfig};
 pub use ops::{

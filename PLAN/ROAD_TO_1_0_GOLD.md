@@ -3815,16 +3815,27 @@ Verified gap: `rg -i 'barge|cancel_generation|should_listen|cancel_scope' src/me
   `ort` crate, weights supervised by `media/model_manager.rs`. The trait seam is already
   correct; this is a backend, not a refactor. *NEOTH:* `media/vad/silero_backend.rs` (new).
   *Consumer:* `media/vad/mod.rs`. **M**
-- [~] **ADOPT31-A4** VAD tuning constants as `freedom.yaml` keys — **TEILWEISE
-  GEGENSTANDSLOS (geprüft 2026-08-01).** Zwei der sechs genannten Schlüssel,
-  `speculative_reopen_ms` und `unanswered_reopen_ms`, gehören zum Turn-Tracker **A7**, der
-  nicht gebaut ist. Sie jetzt als Config-Keys anzulegen wäre ein Primitiv ohne Konsument.
-  Die real existierenden Konstanten sind zudem andere als die im Item genannten:
-  `DEFAULT_ENERGY_THRESHOLD`, `DEFAULT_SMOOTH_WINDOW`, `DEFAULT_SPEECH_PROB`,
-  `DEFAULT_MIN_FRAGMENT_MS`, `DEFAULT_HANGOVER_MS` (`media/vad/smoothed.rs`).
-  **Neuer Zuschnitt:** diese fünf konfigurierbar machen; die zwei A7-Schlüssel wandern in
-  A7. Beachten: das Item verlangt zusätzlich ein GUI-Voice-Panel — das ist der größere Teil
-  und macht aus **S** eher **M**. **M**
+- [x] **ADOPT31-A4** VAD tuning constants as `freedom.yaml` keys — **GEBAUT (2026-08-01)**,
+  nach Korrektur des Item-Zuschnitts. `media.vad` mit fünf Schlüsseln
+  (`energy_threshold`, `smooth_window`, `speech_prob`, `min_fragment_ms`, `hangover_ms`),
+  verdrahtet über `SmoothedVad::from_tuning` an der einzigen Konstruktionsstelle
+  (`media/dictation.rs`), die vorher `default()` benutzte — die Konstanten waren also
+  faktisch gar nicht einstellbar.
+  - **Zwei der sechs genannten Schlüssel bewusst NICHT angelegt:** `speculative_reopen_ms`
+    und `unanswered_reopen_ms` gehören zum Turn-Tracker **A7**, der nicht existiert. Ein
+    Config-Key ohne Konsument ist ein Versprechen, das der Code nicht halten kann; sie
+    wandern zu A7.
+  - **Validierung statt stillem Klemmen** (`VadTuning::validate`): `smooth_window = 0` würde
+    im Fenster-Mittel durch null teilen, `speech_prob` außerhalb `0.0..=1.0` deaktiviert das
+    Gate in die eine oder andere Richtung, `NaN` besteht eine naive `>= 0.0`-Prüfung. Alle
+    drei sind Konfigurationsfehler und dürfen sich nicht als „VAD verhält sich komisch"
+    tarnen.
+  - **Kompatibilität:** ein `freedom.yaml` ohne `media.vad` verhält sich exakt wie vorher,
+    Teilblöcke füllen nur die ausgelassenen Schlüssel (je ein Test).
+  - `MediaConfig` verliert `Eq` (f32 ist nicht `Eq`, NaN bricht Reflexivität) — nichts
+    brauchte es, `PartialEq` bleibt. Begründung steht am Derive.
+  - **Offen bleibt das GUI-Voice-Panel** aus dem Item; deshalb war die ursprüngliche
+    Schätzung **S** zu klein. 6 Tests, `media` 449/449, clippy 0. **M**
 - [ ] **ADOPT31-A5** Sentence-batching between LLM stream and TTS — batch 3 sentences before
   synthesis; cuts first-audio latency without word-by-word synthesis lag. *NEOTH:*
   `media/lm_output_processor.rs` (new). *Consumer:* A2. **M**

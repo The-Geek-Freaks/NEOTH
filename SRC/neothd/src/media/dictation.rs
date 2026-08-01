@@ -79,6 +79,9 @@ pub enum DictationError {
     /// VAD rejected the entire utterance (all silence, no speech detected).
     #[error("utterance was all silence — nothing to transcribe")]
     AllSilence,
+    /// ADOPT31-A4 — `media.vad` holds a value the VAD cannot act on.
+    #[error("invalid VAD configuration: {0}")]
+    Config(String),
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -211,7 +214,14 @@ async fn transcribe_utterance_inner(
 
     // ── Gate 2: VAD pre-filter ───────────────────────────────────────────────
     if config.vad_enabled {
-        let mut vad = SmoothedVad::default();
+        // ADOPT31-A4 — honour `media.vad` instead of the compile-time defaults.
+        // Validated here rather than clamped: a VAD that quietly ignores its own
+        // configuration is worse than one that refuses to run.
+        config
+            .vad
+            .validate()
+            .map_err(|e| DictationError::Config(format!("{e:#}")))?;
+        let mut vad = SmoothedVad::from_tuning(&config.vad);
         let decision = vad.process(pcm, sample_rate_hz);
         if decision == VadDecision::Silence {
             info!("dictation: VAD says silence — skipping STT call");
@@ -373,6 +383,9 @@ mod tests {
             // the VAD gate passed — that is what we are testing.
             Err(DictationError::NotEnabled) => {
                 panic!("dictation_enabled = true but got NotEnabled");
+            }
+            Err(DictationError::Config(detail)) => {
+                panic!("the default VAD tuning must validate: {detail}");
             }
             Err(DictationError::Transcription(_)) | Ok(_) => {
                 // Expected: VAD passed, STT attempted (model may not be cached).

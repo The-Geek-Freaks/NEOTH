@@ -745,11 +745,99 @@ impl OmiConfig {
 
 /// MM-01b/02b/03b — cloud media opt-ins. ALL default OFF (`false`). Each flag,
 /// when `true`, means the operator has accepted that THIS media type leaves the
+/// ADOPT31-A4 — operator-tunable VAD parameters.
+///
+/// Deliberately does NOT carry `speculative_reopen_ms` / `unanswered_reopen_ms`
+/// from the original item: those belong to the A7 turn tracker, which is not
+/// built. A config key with no consumer is a promise the code cannot keep.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct VadTuning {
+    /// RMS amplitude at or above which a frame is a speech candidate.
+    #[serde(default = "default_vad_energy_threshold")]
+    pub energy_threshold: f32,
+    /// Number of 20-ms frames in the look-back window.
+    #[serde(default = "default_vad_smooth_window")]
+    pub smooth_window: usize,
+    /// Fraction of window frames that must be speech before the window counts
+    /// as speech.
+    #[serde(default = "default_vad_speech_prob")]
+    pub speech_prob: f32,
+    /// Minimum contiguous speech before a fragment opens a turn. Guards against
+    /// a short transient cancelling playback.
+    #[serde(default = "default_vad_min_fragment_ms")]
+    pub min_fragment_ms: u32,
+    /// Silence tolerated before the turn is declared over.
+    #[serde(default = "default_vad_hangover_ms")]
+    pub hangover_ms: u32,
+}
+
+fn default_vad_energy_threshold() -> f32 {
+    crate::media::vad::DEFAULT_ENERGY_THRESHOLD
+}
+fn default_vad_smooth_window() -> usize {
+    crate::media::vad::DEFAULT_SMOOTH_WINDOW
+}
+fn default_vad_speech_prob() -> f32 {
+    crate::media::vad::DEFAULT_SPEECH_PROB
+}
+fn default_vad_min_fragment_ms() -> u32 {
+    crate::media::vad::DEFAULT_MIN_FRAGMENT_MS
+}
+fn default_vad_hangover_ms() -> u32 {
+    crate::media::vad::DEFAULT_HANGOVER_MS
+}
+
+impl Default for VadTuning {
+    fn default() -> Self {
+        Self {
+            energy_threshold: default_vad_energy_threshold(),
+            smooth_window: default_vad_smooth_window(),
+            speech_prob: default_vad_speech_prob(),
+            min_fragment_ms: default_vad_min_fragment_ms(),
+            hangover_ms: default_vad_hangover_ms(),
+        }
+    }
+}
+
+impl VadTuning {
+    /// Reject values the VAD cannot act on, naming the key and the bound.
+    ///
+    /// `smooth_window == 0` would divide by zero in the window average;
+    /// `speech_prob` outside `0.0..=1.0` can never be satisfied (or is always
+    /// satisfied), which silently disables the gate in one direction or the
+    /// other. Both are configuration mistakes that must not present as a VAD
+    /// that simply behaves oddly.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.smooth_window >= 1,
+            "media.vad.smooth_window must be at least 1 frame (got {})",
+            self.smooth_window
+        );
+        anyhow::ensure!(
+            (0.0..=1.0).contains(&self.speech_prob),
+            "media.vad.speech_prob is a fraction in 0.0..=1.0 (got {})",
+            self.speech_prob
+        );
+        anyhow::ensure!(
+            self.energy_threshold >= 0.0 && self.energy_threshold.is_finite(),
+            "media.vad.energy_threshold must be a finite, non-negative RMS amplitude (got {})",
+            self.energy_threshold
+        );
+        Ok(())
+    }
+}
+
 /// device for a cloud provider. Audio/image/video are more sensitive than text.
 // `Copy` dropped in B20: MediaConfig now embeds `stt: MediaSttConfig` which owns
 // String fields (provider model/language/region), so the struct can no longer be
 // bit-copied. It is passed by reference or `.clone()`d everywhere already.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+//
+// ADOPT31-A4: `Eq` dropped because `vad: VadTuning` carries `f32` thresholds and
+// float equality is not reflexive (NaN). Nothing needed `Eq` — no `HashSet` or
+// map key over `MediaConfig` exists — and `PartialEq` still serves every
+// comparison in the tree. Keeping `Eq` would have meant storing the thresholds
+// as scaled integers purely to satisfy a bound nobody uses.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct MediaConfig {
     /// Cloud speech-to-text (OpenAI Whisper / Azure Speech). On = your AUDIO
@@ -821,6 +909,16 @@ pub struct MediaConfig {
     /// implementation; no feature flag advertises an unavailable neural model.
     #[serde(default)]
     pub vad_enabled: bool,
+    /// ADOPT31-A4 — VAD tuning, previously compile-time literals.
+    ///
+    /// Omitted keys keep the shipped defaults, so an existing `freedom.yaml`
+    /// behaves exactly as before. Values are validated at load
+    /// ([`VadTuning::validate`]) rather than clamped silently: a nonsense
+    /// threshold is an operator mistake worth surfacing, and a VAD that
+    /// quietly ignores its own configuration is worse than one that refuses
+    /// to start.
+    #[serde(default)]
+    pub vad: VadTuning,
     /// GOLD-ADOPT-25 — opt-in dictation input mode.
     ///
     /// When `true`, `neoth dictate <file>` decodes the operator-selected audio,
@@ -867,6 +965,7 @@ impl Default for MediaConfig {
             docling_enabled: false,
             // GOLD-ADAPT-HANDY-02 — VAD gate: off by default; operator opt-in.
             vad_enabled: false,
+            vad: VadTuning::default(),
             // GOLD-ADOPT-25 — dictation: off by default; mic capture is opt-in.
             dictation_enabled: false,
             // B20 — default to local candle Whisper; no cloud egress.
@@ -1067,4 +1166,73 @@ pub struct HookChainConfig {
     /// to allow.
     #[serde(default)]
     pub fail_fast: bool,
+}
+
+#[cfg(test)]
+mod vad_tuning_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_match_the_shipped_constants_and_validate() {
+        let t = VadTuning::default();
+        assert_eq!(t.energy_threshold, crate::media::vad::DEFAULT_ENERGY_THRESHOLD);
+        assert_eq!(t.smooth_window, crate::media::vad::DEFAULT_SMOOTH_WINDOW);
+        assert_eq!(t.speech_prob, crate::media::vad::DEFAULT_SPEECH_PROB);
+        assert_eq!(t.min_fragment_ms, crate::media::vad::DEFAULT_MIN_FRAGMENT_MS);
+        assert_eq!(t.hangover_ms, crate::media::vad::DEFAULT_HANGOVER_MS);
+        t.validate().expect("shipped defaults must be valid");
+    }
+
+    #[test]
+    fn an_absent_media_vad_block_keeps_the_old_behaviour() {
+        // The whole compatibility promise: an existing freedom.yaml that never
+        // heard of `media.vad` must behave exactly as before.
+        let cfg: MediaConfig = serde_yaml::from_str("vad_enabled: true").unwrap();
+        assert_eq!(cfg.vad, VadTuning::default());
+    }
+
+    #[test]
+    fn a_partial_block_fills_only_the_omitted_keys() {
+        let cfg: MediaConfig =
+            serde_yaml::from_str("vad:
+  hangover_ms: 1200
+").unwrap();
+        assert_eq!(cfg.vad.hangover_ms, 1200);
+        assert_eq!(cfg.vad.smooth_window, crate::media::vad::DEFAULT_SMOOTH_WINDOW);
+    }
+
+    #[test]
+    fn a_zero_window_is_refused_rather_than_clamped() {
+        // smooth_window = 0 would divide by zero in the window average. Failing
+        // loud beats a VAD that silently substitutes a value the operator did
+        // not choose.
+        let t = VadTuning {
+            smooth_window: 0,
+            ..VadTuning::default()
+        };
+        let error = t.validate().unwrap_err();
+        assert!(format!("{error:#}").contains("smooth_window"), "{error:#}");
+    }
+
+    #[test]
+    fn a_probability_outside_zero_to_one_is_refused() {
+        for bad in [-0.1_f32, 1.5] {
+            let t = VadTuning {
+                speech_prob: bad,
+                ..VadTuning::default()
+            };
+            assert!(t.validate().is_err(), "speech_prob {bad} must be refused");
+        }
+    }
+
+    #[test]
+    fn a_nan_threshold_is_refused() {
+        // NaN passes a naive `>= 0.0` check by being false on every comparison,
+        // so it needs the explicit finite test.
+        let t = VadTuning {
+            energy_threshold: f32::NAN,
+            ..VadTuning::default()
+        };
+        assert!(t.validate().is_err());
+    }
 }

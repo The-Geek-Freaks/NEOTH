@@ -138,6 +138,24 @@ impl Default for SmoothedVad {
 }
 
 impl SmoothedVad {
+    /// ADOPT31-A4 — build from the operator's `media.vad` settings.
+    ///
+    /// Callers must have validated the tuning ([`crate::config::VadTuning::validate`]);
+    /// this applies it verbatim rather than re-clamping, so a value that
+    /// reaches here is one the operator asked for.
+    pub fn from_tuning(tuning: &crate::config::VadTuning) -> Self {
+        let mut vad = Self::new(
+            tuning.smooth_window,
+            tuning.speech_prob,
+            tuning.hangover_ms,
+            Box::new(EnergyBackend {
+                energy_threshold: tuning.energy_threshold,
+            }),
+        );
+        vad.min_fragment_ms = tuning.min_fragment_ms;
+        vad
+    }
+
     /// Construct with explicit parameters.
     ///
     /// `smooth_window` — number of 20-ms frames in the look-back window.

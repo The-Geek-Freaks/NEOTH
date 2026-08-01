@@ -37,6 +37,12 @@
 //! required. Alternative probability sources can be injected through the
 //! internal `VadBackend` trait without exposing an inert backend publicly.
 
+// ADOPT31-A4 — the defaults are the documented fallback for `media.vad`, so
+// `config` needs them by name rather than duplicating the literals.
+pub use smoothed::{
+    DEFAULT_ENERGY_THRESHOLD, DEFAULT_HANGOVER_MS, DEFAULT_MIN_FRAGMENT_MS, DEFAULT_SMOOTH_WINDOW,
+    DEFAULT_SPEECH_PROB,
+};
 pub use smoothed::SmoothedVad;
 pub use smoothed::VadDecision;
 
