@@ -27,7 +27,9 @@ pub mod egress;
 pub mod email_sanitizer;
 pub mod email_threat;
 pub mod ingress_sanitizer;
+pub mod injection_tracker;
 pub mod jailbreak_retry;
+pub mod mcp_guardian;
 pub mod operator_sovereignty;
 /// GOLD-ADAPT-GOOSE-01 — OSV (api.osv.dev) supply-chain malware gate run before
 /// `npm install -g` of any CLI toolchain package. Blocks confirmed `MAL-*`
@@ -38,8 +40,6 @@ pub(crate) mod provider_subject;
 pub mod redact;
 pub mod refusal_abliterated;
 pub mod refusal_cause;
-pub mod injection_tracker;
-pub mod mcp_guardian;
 pub mod refusal_detect;
 pub mod refusal_hard_block;
 pub mod refusal_recovery;

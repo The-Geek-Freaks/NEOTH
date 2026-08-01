@@ -379,7 +379,10 @@ mod tests {
             "intent must precede both its result and 0xC9, got \
              intent={intent_at} result={result_at} synthesized={synth_at}"
         );
-        assert_eq!(seen[intent_at].2["intent_id"], seen[result_at].2["intent_id"]);
+        assert_eq!(
+            seen[intent_at].2["intent_id"],
+            seen[result_at].2["intent_id"]
+        );
         assert_eq!(seen[result_at].2["outcome"], "answered");
         assert_eq!(seen[intent_at].2["frame_count"], 2);
         // The prompt and the imagery are bound, never carried.

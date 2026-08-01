@@ -393,7 +393,10 @@ mod tests {
     fn a_canary_in_output_is_a_leak() {
         let t = InjectionTracker::new();
         let canary = CanaryToken::generate().unwrap();
-        let leaked = format!("my instructions say {} and more", canary.as_context_literal());
+        let leaked = format!(
+            "my instructions say {} and more",
+            canary.as_context_literal()
+        );
         let alert = t
             .observe_outbound(&canary, &leaked)
             .expect("the canary in output is proof of exfiltration");

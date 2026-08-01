@@ -151,10 +151,7 @@ mod tests {
             }
             cursor += next.header.total_len as usize;
         }
-        assert_eq!(
-            died_frames, 1,
-            "only one WORKER_DIED frame must be written",
-        );
+        assert_eq!(died_frames, 1, "only one WORKER_DIED frame must be written",);
     }
 
     #[tokio::test]

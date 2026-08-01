@@ -495,7 +495,10 @@ impl McpServerConfig {
                 let found = store
                     .get(&crate::config::keychain::store_key(name))
                     .with_context(|| {
-                        format!("MCP server `{}`: read secret `{name}` for env `{k}`", self.id)
+                        format!(
+                            "MCP server `{}`: read secret `{name}` for env `{k}`",
+                            self.id
+                        )
                     })?;
                 // Errors name the KEY, never the value — an operator debugging a
                 // typo must not get the secret echoed back at them.
@@ -1188,7 +1191,10 @@ mod tests {
         let cfg = server_with_env(&[("GITHUB_TOKEN", "from_secret:typo_name")]);
         let error = cfg.resolve_env_with_store(Some(&store)).unwrap_err();
         let detail = format!("{error:#}");
-        assert!(detail.contains("typo_name") && detail.contains("GITHUB_TOKEN"), "{detail}");
+        assert!(
+            detail.contains("typo_name") && detail.contains("GITHUB_TOKEN"),
+            "{detail}"
+        );
         // The whole point: a debugging operator must not get another secret
         // echoed back at them by a lookup failure.
         assert!(
@@ -1208,10 +1214,7 @@ mod tests {
     fn plain_values_and_from_env_are_untouched_by_the_new_path() {
         // SAFETY: single-threaded test; the variable is unique to this test.
         unsafe { std::env::set_var("NEOTH_C6A_PROBE", "from-process-env") };
-        let cfg = server_with_env(&[
-            ("LITERAL", "kept-as-is"),
-            ("NEOTH_C6A_PROBE", "from_env"),
-        ]);
+        let cfg = server_with_env(&[("LITERAL", "kept-as-is"), ("NEOTH_C6A_PROBE", "from_env")]);
         // No store passed and none needed: nothing uses `from_secret:`.
         let env = cfg.resolve_env_with_store(None).unwrap();
         assert_eq!(env.get("LITERAL").unwrap(), "kept-as-is");

@@ -1553,8 +1553,7 @@ async fn listener_serves_more_than_one_connection() {
     let home = tempdir().unwrap();
     let seg_dir = tempdir().unwrap();
     let seg = canonical_test_wal(seg_dir.path(), "audit-two-connections");
-    let (writer, wal_join) =
-        crate::wal::spawn_for_home(seg, seg_dir.path().to_path_buf()).unwrap();
+    let (writer, wal_join) = crate::wal::spawn_for_home(seg, seg_dir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
         token: "tok".into(),
         writer: writer.clone(),

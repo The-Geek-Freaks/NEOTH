@@ -1628,14 +1628,8 @@ async fn deliver_outbox_record(
                     TransportDisposition::Retry { .. } => ("retry", None),
                     _ => ("failed", None),
                 };
-                send_gate::emit_egress_result(
-                    writer,
-                    intent_id,
-                    outcome,
-                    provider_message_id,
-                    now,
-                )
-                .await;
+                send_gate::emit_egress_result(writer, intent_id, outcome, provider_message_id, now)
+                    .await;
             }
 
             match disposition {

@@ -2702,10 +2702,7 @@ mod tests {
     /// spreading an off-by-one across every fixture.
     fn content_frames(frames: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
         // `decode_wal_frames` renders the type as `0x` + uppercase hex.
-        let marker = format!(
-            "0x{:02X}",
-            crate::wal::events::EVENT_TYPE_COMPACTION_MARKER
-        );
+        let marker = format!("0x{:02X}", crate::wal::events::EVENT_TYPE_COMPACTION_MARKER);
         frames
             .into_iter()
             .filter(|f| f["event_type"] != serde_json::Value::String(marker.clone()))

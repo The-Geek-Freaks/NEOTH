@@ -129,9 +129,15 @@ fn contains_word(haystack: &str, needle: &str) -> bool {
         let start = from + found;
         let end = start + needle.len();
         let left_ok = !needle_starts_word
-            || haystack[..start].chars().next_back().is_none_or(|c| !is_word_char(c));
+            || haystack[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !is_word_char(c));
         let right_ok = !needle_ends_word
-            || haystack[end..].chars().next().is_none_or(|c| !is_word_char(c));
+            || haystack[end..]
+                .chars()
+                .next()
+                .is_none_or(|c| !is_word_char(c));
         if left_ok && right_ok {
             return true;
         }

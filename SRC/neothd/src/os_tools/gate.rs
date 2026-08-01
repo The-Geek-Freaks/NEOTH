@@ -1776,7 +1776,10 @@ mod tests {
         assert!(frames[intent_at].2.get("contents").is_none());
         assert_eq!(
             frames[intent_at].2["contents_sha256"],
-            serde_json::Value::String(crate::wal::events::effect_digest(b"os-file-write", b"payload"))
+            serde_json::Value::String(crate::wal::events::effect_digest(
+                b"os-file-write",
+                b"payload"
+            ))
         );
     }
 
@@ -1845,8 +1848,10 @@ mod tests {
         // Hashing (path, timestamp) alone would collide here — and repeated
         // writes to one path are exactly where a reader must tell the attempts
         // apart.
-        let a = crate::wal::events::next_intent_id(b"os-file-write", "/tmp/same.txt", 1_700_000_000);
-        let b = crate::wal::events::next_intent_id(b"os-file-write", "/tmp/same.txt", 1_700_000_000);
+        let a =
+            crate::wal::events::next_intent_id(b"os-file-write", "/tmp/same.txt", 1_700_000_000);
+        let b =
+            crate::wal::events::next_intent_id(b"os-file-write", "/tmp/same.txt", 1_700_000_000);
         assert_ne!(a, b, "intent ids must be unique per effect, not per second");
     }
 
