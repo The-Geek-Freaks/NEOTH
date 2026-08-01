@@ -1217,8 +1217,7 @@ mod tests {
 
         let detail = format!("{error:#}");
         assert!(
-            detail.contains("journal-less backup generation")
-                && detail.contains("morning-news"),
+            detail.contains("journal-less backup generation") && detail.contains("morning-news"),
             "the refusal must name what it found and for which skill: {detail}"
         );
 
@@ -1236,7 +1235,10 @@ mod tests {
             std::fs::read(backup.join("skill.yaml")).unwrap(),
             b"old generation"
         );
-        assert!(stage.exists(), "the staged partial must survive the refusal too");
+        assert!(
+            stage.exists(),
+            "the staged partial must survive the refusal too"
+        );
     }
 
     #[test]
