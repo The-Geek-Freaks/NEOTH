@@ -1142,8 +1142,16 @@ mod tests {
         let mut granted_count = 0;
         while cursor < bytes.len() {
             let f = decode_frame(&bytes[cursor..]).expect("frame parse");
-            assert_eq!(f.header.event_type, EVENT_TYPE_PERMISSION_GRANTED);
             cursor += f.header.total_len as usize;
+            // TESTDEBT-WAL-01: a home-bound writer appends its own `0x15`
+            // compaction marker on drain. That is WAL bookkeeping, not a
+            // permission decision — skip it rather than let it masquerade as
+            // an unexpected verdict. Every other frame must still be GRANTED,
+            // so a stray decision frame is caught exactly as before.
+            if f.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+                continue;
+            }
+            assert_eq!(f.header.event_type, EVENT_TYPE_PERMISSION_GRANTED);
             granted_count += 1;
         }
         assert_eq!(

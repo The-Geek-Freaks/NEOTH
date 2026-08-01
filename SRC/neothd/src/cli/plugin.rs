@@ -2691,6 +2691,27 @@ mod tests {
     fn write_wasm(dir: &std::path::Path, bytes: &[u8]) {
         std::fs::write(dir.join("plugin.wasm"), bytes).unwrap();
     }
+    /// TESTDEBT-WAL-01 — drop the WAL's own bookkeeping frames.
+    ///
+    /// A writer spawned through `spawn_for_home` acquires HMAC authority and
+    /// appends a `0x15 EVENT_TYPE_COMPACTION_MARKER` when it drains, so a
+    /// segment always carries one more frame than the test wrote. Assertions
+    /// about what a *capture* contains mean content frames; the marker is
+    /// internal bookkeeping and belongs to the WAL, not to the plugin under
+    /// test. Filtering here keeps that knowledge in one place instead of
+    /// spreading an off-by-one across every fixture.
+    fn content_frames(frames: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+        // `decode_wal_frames` renders the type as `0x` + uppercase hex.
+        let marker = format!(
+            "0x{:02X}",
+            crate::wal::events::EVENT_TYPE_COMPACTION_MARKER
+        );
+        frames
+            .into_iter()
+            .filter(|f| f["event_type"] != serde_json::Value::String(marker.clone()))
+            .collect()
+    }
+
     fn canonical_test_wal(home: &std::path::Path, namespace: &str) -> std::path::PathBuf {
         let wal_dir = home.join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
@@ -3000,7 +3021,7 @@ version = \"0.1.0\"\n\
         drop(writer);
         let _ = join.await;
 
-        let frames = decode_wal_frames(&seg, dir.path()).unwrap();
+        let frames = content_frames(decode_wal_frames(&seg, dir.path()).unwrap());
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0]["event_type"], "0xC4");
         assert_eq!(frames[0]["payload"]["plugin"], "snoop");
@@ -3171,7 +3192,7 @@ version = \"0.1.0\"\n\
             .write_all(b"NEOT")
             .unwrap();
 
-        let frames = decode_wal_frames(&segment, home.path()).unwrap();
+        let frames = content_frames(decode_wal_frames(&segment, home.path()).unwrap());
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0]["event_type"], "0xC4");
     }
@@ -3203,11 +3224,17 @@ version = \"0.1.0\"\n\
             CaptureWalLimits {
                 max_physical_bytes: 4_096,
                 max_logical_frame_bytes: 4_096,
-                max_frames: 1,
+                // TESTDEBT-WAL-01: `spawn_for_home` acquires HMAC authority and
+                // therefore appends a `0x15` compaction marker, so the scenario
+                // this test describes — one complete frame plus a torn tail —
+                // is physically two complete frames. Raising the cap keeps the
+                // limit semantics under test; lowering the frame count would
+                // change the scenario instead.
+                max_frames: 2,
             },
         )
         .expect("exactly one complete frame plus a plausible torn tail is allowed");
-        assert_eq!(frames.len(), 1);
+        assert_eq!(content_frames(frames).len(), 1);
     }
 
     #[tokio::test]
@@ -3237,7 +3264,10 @@ version = \"0.1.0\"\n\
             CaptureWalLimits {
                 max_physical_bytes: 4_096,
                 max_logical_frame_bytes: 4_096,
-                max_frames: 1,
+                // TESTDEBT-WAL-01: see above — the compaction marker makes this
+                // scenario two complete frames, so the cap must be 2 for the
+                // trailing garbage to still be *after* the limit.
+                max_frames: 2,
             },
         )
         .expect_err("garbage after the exact frame limit is corruption, not a torn frame");

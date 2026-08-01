@@ -137,11 +137,22 @@ mod tests {
         );
         let v: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
         assert_eq!(v["worker"], "test_worker");
-        // Exactly one frame (the dedup held): no second WORKER_DIED after it.
-        let next =
-            &bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN + f.header.total_len as usize..];
-        assert!(
-            crate::wal::frame::decode_frame(next).is_err(),
+        // Exactly one WORKER_DIED (the dedup held). TESTDEBT-WAL-01: the
+        // segment may still carry the writer's own `0x15` compaction marker,
+        // so assert on the absence of a SECOND WORKER_DIED rather than on the
+        // absence of any further frame — the original form would pass for the
+        // wrong reason the moment WAL bookkeeping changes again.
+        let mut cursor =
+            crate::wal::segment_header::SEGMENT_HEADER_LEN + f.header.total_len as usize;
+        let mut died_frames = 1;
+        while let Ok(next) = crate::wal::frame::decode_frame(&bytes[cursor..]) {
+            if next.header.event_type == crate::wal::events::EVENT_TYPE_WORKER_DIED {
+                died_frames += 1;
+            }
+            cursor += next.header.total_len as usize;
+        }
+        assert_eq!(
+            died_frames, 1,
             "only one WORKER_DIED frame must be written",
         );
     }
