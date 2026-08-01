@@ -3932,10 +3932,21 @@ None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
   Scope-Frage) und die 7 `daemon::audit_rpc`-Pipe-Isolationsfehler (fester Pipe-Nonce +
   prozessglobaler IPC-Cooldown). **M**
 
-- [ ] **ADOPT31-C2** SHA-256 hash-chain tamper-evident audit log —
-  `AuditEntry{seq, prev_hash, hash}` + `verify_chain()`. *NEOTH:* augment
-  `permissions/audit.rs`. *Consumer:* `permissions/gate.rs::record_decision()` chains every
-  gate verdict. **M** 🔒
+- [x] **ADOPT31-C2** SHA-256 hash-chain tamper-evident audit log — **GESCHLOSSEN als Phantom
+  (2026-08-01), und zwar mit der Antwort wörtlich im Code.** Das Item verlangt genau die
+  Konstruktion, die diese Codebase bewusst verworfen hat. `wal/compaction.rs` trägt dazu
+  einen eigenen Abschnitt: *„## Why HMAC, not plain hash — A plain hash is forgeable: an
+  attacker who edits the WAL can also rewrite the trailing marker. HMAC requires a key the
+  attacker doesn't have."*
+  - **Was existiert:** `0x15 COMPACTION_MARKER` mit HMAC-SHA256 **über jeden Frame seit dem
+    vorherigen Marker**, verifiziert durch `neoth verify`. Das Permissions-Band `0xA0..0xAF`
+    liegt in derselben WAL, ist also bereits abgedeckt — es braucht keine zweite Kette.
+  - **Warum C2 ein Rückschritt wäre:** eine `prev_hash`-Kette ohne Schlüssel kann ein
+    Angreifer, der das Log ohnehin umschreibt, vollständig neu berechnen. Sie neben die
+    geschlüsselte Variante zu setzen, addiert Aufwand und suggeriert Sicherheit, die sie
+    nicht liefert.
+  - Gleiche Klasse wie `P1-04` (HLC statt VectorClock): das Item beschreibt ein **schwächeres**
+    Primitiv als das gebaute. **M** 🔒
 - [ ] **ADOPT31-C3** Per-agent/peer trust score — 0–1000, five tiers, reward/penalty/decay.
   *NEOTH:* `cluster/peer_trust.rs` (new). *Consumer:* `cluster/hyperswarm.rs` peer
   accept/reject + `loop_engine/` delegation threshold. **M**
