@@ -8,7 +8,7 @@ use anyhow::{Context, Result, ensure};
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_BROKEN_PIPE, ERROR_INSUFFICIENT_BUFFER, ERROR_IO_PENDING, ERROR_PIPE_BUSY,
-    ERROR_SUCCESS, GENERIC_ALL, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE,
+    ERROR_SUCCESS, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE,
     INVALID_HANDLE_VALUE, LocalFree,
 };
 use windows_sys::Win32::Security::Authorization::{
@@ -22,7 +22,9 @@ use windows_sys::Win32::Security::{
     SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR_CONTROL, TOKEN_QUERY, TOKEN_USER,
     TokenUser,
 };
-use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_OVERLAPPED, OPEN_EXISTING};
+use windows_sys::Win32::Storage::FileSystem::{
+    FILE_ALL_ACCESS, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
+};
 use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, GetCurrentThread, OpenProcess, OpenProcessToken, OpenThreadToken,
     PROCESS_QUERY_LIMITED_INFORMATION,
@@ -298,9 +300,23 @@ fn verify_named_pipe_current_user_dacl(handle: HANDLE) -> Result<()> {
     // SAFETY: the complete, potentially unaligned fixed ACE prefix lies inside
     // the validated ACE extent. The variable SID is bounded separately below.
     let allowed = unsafe { ace.cast::<ACCESS_ALLOWED_ACE>().read_unaligned() };
+    // The SDDL below writes `GA` (GENERIC_ALL), but the kernel applies the
+    // object's generic mapping when the descriptor lands on the pipe, so what
+    // `GetSecurityInfo` reads back is always the mapped FILE_ALL_ACCESS —
+    // `GENERIC_ALL` never appears in a read-back ACE. Comparing against the
+    // pre-mapping constant could therefore never succeed on any Windows host:
+    // every bind failed, which on the audit path is silent (`AuditSink::
+    // DaemonRpc` is best-effort by AUDIT-RPC-01), so one-shot CLI audit frames
+    // were being dropped on Windows without a word.
+    //
+    // This is exactly as strict as the original intent: FILE_ALL_ACCESS is the
+    // mapped form of GENERIC_ALL for a file/pipe object, so the assertion still
+    // demands one explicit full-control ACE and nothing weaker.
+    const MAPPED_FULL_CONTROL: u32 = FILE_ALL_ACCESS;
     ensure!(
-        allowed.Mask == GENERIC_ALL,
-        "audit-RPC named-pipe allow ACE mask is {:#010x}; expected GENERIC_ALL",
+        allowed.Mask == MAPPED_FULL_CONTROL,
+        "audit-RPC named-pipe allow ACE mask is {:#010x}; expected the mapped form of \
+         GENERIC_ALL ({MAPPED_FULL_CONTROL:#010x})",
         allowed.Mask
     );
     let sid_offset = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
