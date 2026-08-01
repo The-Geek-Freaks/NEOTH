@@ -474,11 +474,11 @@ fn keyword_matches(needle: &str, tokens: &[String], lower_message: &str) -> bool
         let left_boundary = lower_message[..start]
             .chars()
             .next_back()
-            .map_or(true, |c| !c.is_alphanumeric());
+            .is_none_or(|c| !c.is_alphanumeric());
         let right_boundary = lower_message[end..]
             .chars()
             .next()
-            .map_or(true, |c| !c.is_alphanumeric());
+            .is_none_or(|c| !c.is_alphanumeric());
         left_boundary && right_boundary
     })
 }
