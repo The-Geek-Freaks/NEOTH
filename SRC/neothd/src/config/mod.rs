@@ -2231,6 +2231,10 @@ impl FreedomConfig {
     }
 
     fn validate_public_sections(&self) -> Result<()> {
+        self.media
+            .vad
+            .validate()
+            .context("invalid media.vad config")?;
         self.dreaming
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid dream config: {error}"))?;

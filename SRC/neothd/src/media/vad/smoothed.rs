@@ -15,6 +15,13 @@ pub const DEFAULT_ENERGY_THRESHOLD: f32 = 0.01;
 /// Rejects single-tap spikes while remaining responsive to real speech onsets.
 pub const DEFAULT_SMOOTH_WINDOW: usize = 5;
 
+/// Hard ceiling for the smoothing look-back: 500 × 20 ms = 10 seconds.
+///
+/// A smoothing window is an onset-noise filter, not a transcript buffer. Ten
+/// seconds is already far beyond an interactive speech onset while bounding the
+/// allocation controlled by `freedom.yaml` to 2 KiB of `f32` samples.
+pub const MAX_SMOOTH_WINDOW: usize = 500;
+
 /// Fraction of recent frames that must be speech candidates for the detector
 /// to enter "speaking" state. 0.60 = 3 of 5 frames.
 pub const DEFAULT_SPEECH_PROB: f32 = 0.60;
@@ -168,7 +175,12 @@ impl SmoothedVad {
         hangover_ms: u32,
         backend: Box<dyn VadBackend>,
     ) -> Self {
-        let window_size = smooth_window.max(1);
+        assert!(
+            (1..=MAX_SMOOTH_WINDOW).contains(&smooth_window),
+            "smooth_window must be in 1..={MAX_SMOOTH_WINDOW}"
+        );
+        assert!(hangover_ms >= 1, "hangover_ms must be at least 1");
+        let window_size = smooth_window;
         Self {
             window: vec![0.0; window_size],
             head: 0,
@@ -422,6 +434,19 @@ mod tests {
         // 300 ms silence — exceeds 200 ms hangover.
         let decision = vad.process(&pcm(0.0, 300, SR), SR);
         assert_eq!(decision, VadDecision::Silence);
+    }
+
+    #[test]
+    fn minimum_valid_hangover_preserves_the_current_speech_frame() {
+        let mut vad = SmoothedVad::new(
+            1,
+            0.5,
+            1,
+            Box::new(EnergyBackend {
+                energy_threshold: DEFAULT_ENERGY_THRESHOLD,
+            }),
+        );
+        assert_eq!(vad.process(&pcm(0.1, 100, SR), SR), VadDecision::Speaking);
     }
 
     #[test]

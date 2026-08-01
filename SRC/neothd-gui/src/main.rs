@@ -1976,6 +1976,28 @@ fn main() -> Result<()> {
                 false,
             ));
             window.set_cfg_vad_enabled(read_nested_bool_in_freedom(fp, "media.vad_enabled", false));
+            match read_vad_tuning_in_freedom(fp) {
+                Ok(tuning) => {
+                    window.set_cfg_vad_energy_threshold(tuning.energy_threshold.to_string().into());
+                    window.set_cfg_vad_smooth_window(tuning.smooth_window.to_string().into());
+                    window.set_cfg_vad_speech_prob(tuning.speech_prob.to_string().into());
+                    window.set_cfg_vad_min_fragment_ms(tuning.min_fragment_ms.to_string().into());
+                    window.set_cfg_vad_hangover_ms(tuning.hangover_ms.to_string().into());
+                }
+                Err(error) => {
+                    let defaults = neothd::config::VadTuning::default();
+                    window
+                        .set_cfg_vad_energy_threshold(defaults.energy_threshold.to_string().into());
+                    window.set_cfg_vad_smooth_window(defaults.smooth_window.to_string().into());
+                    window.set_cfg_vad_speech_prob(defaults.speech_prob.to_string().into());
+                    window.set_cfg_vad_min_fragment_ms(defaults.min_fragment_ms.to_string().into());
+                    window.set_cfg_vad_hangover_ms(defaults.hangover_ms.to_string().into());
+                    window.set_cfg_vad_tuning_status(
+                        format!("Current VAD tuning is invalid: {error}").into(),
+                    );
+                    window.set_cfg_vad_tuning_error(true);
+                }
+            }
             window.set_cfg_dictation_enabled(read_nested_bool_in_freedom(
                 fp,
                 "media.dictation_enabled",
@@ -11978,6 +12000,106 @@ fn main() -> Result<()> {
             "Cloud vision"
         );
         wire_nested_bool!(on_cfg_vad_enabled_changed, "media.vad_enabled", "VAD");
+        {
+            let nd = neoth_dir.clone();
+            let weak = window.as_weak();
+            window.on_cfg_vad_tuning_apply(
+                move |energy, smooth_window, speech_prob, min_fragment_ms, hangover_ms| {
+                    let energy = energy.to_string();
+                    let smooth_window = smooth_window.to_string();
+                    let speech_prob = speech_prob.to_string();
+                    let min_fragment_ms = min_fragment_ms.to_string();
+                    let hangover_ms = hangover_ms.to_string();
+                    let tuning = match parse_vad_tuning_fields(
+                        &energy,
+                        &smooth_window,
+                        &speech_prob,
+                        &min_fragment_ms,
+                        &hangover_ms,
+                    ) {
+                        Ok(tuning) => tuning,
+                        Err(error) => {
+                            let message = error.to_string();
+                            if let Some(window) = weak.upgrade() {
+                                window.set_cfg_vad_tuning_error(true);
+                                window.set_cfg_vad_tuning_status(message.clone().into());
+                                buddy(&window, GuiActivity::SettingsError);
+                            }
+                            push_toast(&weak, "warn", "VAD tuning invalid", &message);
+                            return;
+                        }
+                    };
+
+                    if let Some(window) = weak.upgrade() {
+                        window.set_cfg_vad_tuning_saving(true);
+                        window.set_cfg_vad_tuning_error(false);
+                        window.set_cfg_vad_tuning_status("Saving validated snapshot…".into());
+                    }
+                    let nd = nd.clone();
+                    let weak = weak.clone();
+                    std::thread::spawn(move || {
+                        let fp = nd.join("freedom.yaml");
+                        let reload = nd.join(".reload-requested");
+                        let result = set_vad_tuning_in_freedom(&fp, &tuning).and_then(|_| {
+                            std::fs::write(&reload, b"reload\n").with_context(|| {
+                                format!(
+                                    "VAD tuning was saved, but daemon reload request {} failed",
+                                    reload.display()
+                                )
+                            })
+                        });
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(window) = weak.upgrade() {
+                                window.set_cfg_vad_tuning_saving(false);
+                                match result {
+                                    Ok(()) => {
+                                        window.set_cfg_vad_energy_threshold(
+                                            tuning.energy_threshold.to_string().into(),
+                                        );
+                                        window.set_cfg_vad_smooth_window(
+                                            tuning.smooth_window.to_string().into(),
+                                        );
+                                        window.set_cfg_vad_speech_prob(
+                                            tuning.speech_prob.to_string().into(),
+                                        );
+                                        window.set_cfg_vad_min_fragment_ms(
+                                            tuning.min_fragment_ms.to_string().into(),
+                                        );
+                                        window.set_cfg_vad_hangover_ms(
+                                            tuning.hangover_ms.to_string().into(),
+                                        );
+                                        window.set_cfg_vad_tuning_status(
+                                            "Saved — daemon reload requested".into(),
+                                        );
+                                        window.set_cfg_vad_tuning_error(false);
+                                        buddy(&window, GuiActivity::SettingsApplied);
+                                        push_toast(
+                                            &weak,
+                                            "success",
+                                            "VAD tuning",
+                                            "saved as one validated snapshot — daemon reloading",
+                                        );
+                                    }
+                                    Err(error) => {
+                                        let message = error.to_string();
+                                        window.set_cfg_vad_tuning_error(true);
+                                        window.set_cfg_vad_tuning_status(message.clone().into());
+                                        buddy(&window, GuiActivity::SettingsError);
+                                        push_toast(
+                                            &weak,
+                                            "warn",
+                                            "VAD tuning write failed",
+                                            &message,
+                                        );
+                                    }
+                                }
+                            }
+                        })
+                        .ok();
+                    });
+                },
+            );
+        }
         wire_nested_bool!(
             on_cfg_dictation_enabled_changed,
             "media.dictation_enabled",
@@ -15159,6 +15281,85 @@ fn set_nested_in_freedom(path: &Path, dotted_key: &str, value: serde_yaml::Value
     let serialised = serde_yaml::to_string(&root)
         .with_context(|| format!("serialise freedom.yaml after setting {dotted_key}"))?;
     write_mode_0600(path, serialised.as_bytes())
+}
+
+/// Parse the GUI's five-field VAD draft as one typed snapshot.
+///
+/// Text fields deliberately stay unparsed while the operator is typing. The
+/// Apply action calls this once, so an intermediate `0.` or empty field can
+/// never partially overwrite the live configuration.
+fn parse_vad_tuning_fields(
+    energy_threshold: &str,
+    smooth_window: &str,
+    speech_prob: &str,
+    min_fragment_ms: &str,
+    hangover_ms: &str,
+) -> Result<neothd::config::VadTuning> {
+    let tuning = neothd::config::VadTuning {
+        energy_threshold: energy_threshold
+            .trim()
+            .parse::<f32>()
+            .with_context(|| "energy threshold must be a finite number")?,
+        smooth_window: smooth_window
+            .trim()
+            .parse::<usize>()
+            .with_context(|| "smoothing window must be a positive whole number")?,
+        speech_prob: speech_prob
+            .trim()
+            .parse::<f32>()
+            .with_context(|| "speech probability must be a number from 0 to 1")?,
+        min_fragment_ms: min_fragment_ms.trim().parse::<u32>().with_context(
+            || "minimum fragment must be a non-negative whole number of milliseconds",
+        )?,
+        hangover_ms: hangover_ms
+            .trim()
+            .parse::<u32>()
+            .with_context(|| "hangover must be a non-negative whole number of milliseconds")?,
+    };
+    tuning.validate()?;
+    Ok(tuning)
+}
+
+/// Load `media.vad` with the same per-field defaults and validation as the
+/// daemon. Malformed values are surfaced to the GUI instead of being displayed
+/// as apparently valid defaults.
+fn read_vad_tuning_in_freedom(path: &Path) -> Result<neothd::config::VadTuning> {
+    if !path.exists() {
+        return Ok(neothd::config::VadTuning::default());
+    }
+    let body = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if body.trim().is_empty() {
+        return Ok(neothd::config::VadTuning::default());
+    }
+    let root: serde_yaml::Value =
+        serde_yaml::from_str(&body).with_context(|| format!("parse {}", path.display()))?;
+    let root = root
+        .as_mapping()
+        .context("freedom.yaml is not a YAML mapping")?;
+    let Some(media) = root.get(serde_yaml::Value::from("media")) else {
+        return Ok(neothd::config::VadTuning::default());
+    };
+    let media = media
+        .as_mapping()
+        .context("freedom.yaml media must be a YAML mapping")?;
+    let Some(value) = media.get(serde_yaml::Value::from("vad")).cloned() else {
+        return Ok(neothd::config::VadTuning::default());
+    };
+    let tuning: neothd::config::VadTuning = serde_yaml::from_value(value)
+        .with_context(|| format!("parse media.vad in {}", path.display()))?;
+    tuning.validate()?;
+    Ok(tuning)
+}
+
+/// Persist the complete VAD tuning block with one read/modify/atomic-write.
+/// This prevents the daemon from observing a mixed old/new five-field state.
+fn set_vad_tuning_in_freedom(path: &Path, tuning: &neothd::config::VadTuning) -> Result<()> {
+    tuning.validate()?;
+    let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    neothd::config::FreedomConfig::update_at(path, |config| {
+        config.media.vad = tuning.clone();
+        Ok(())
+    })
 }
 
 /// Post-success hook for `make_coalescing_writer`, run on the UI event loop
@@ -26055,6 +26256,120 @@ mod tests {
             serde_yaml::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert!(custom["inference"]["openai_compat_profile"].is_null());
         assert!(custom["inference"]["default_slot"]["openai_compat_profile"].is_null());
+    }
+
+    #[test]
+    fn vad_tuning_gui_parser_accepts_complete_snapshot_and_rejects_partial_or_unsafe_input() {
+        let parsed = parse_vad_tuning_fields("0.025", "7", "0.75", "140", "900").unwrap();
+        assert_eq!(parsed.energy_threshold, 0.025);
+        assert_eq!(parsed.smooth_window, 7);
+        assert_eq!(parsed.speech_prob, 0.75);
+        assert_eq!(parsed.min_fragment_ms, 140);
+        assert_eq!(parsed.hangover_ms, 900);
+
+        assert!(parse_vad_tuning_fields("", "7", "0.75", "140", "900").is_err());
+        assert!(parse_vad_tuning_fields("0.025", "0", "0.75", "140", "900").is_err());
+        assert!(parse_vad_tuning_fields("0.025", "7", "1.1", "140", "900").is_err());
+        assert!(parse_vad_tuning_fields("NaN", "7", "0.75", "140", "900").is_err());
+        assert!(parse_vad_tuning_fields("0.025", "7", "0.75", "140", "0").is_err());
+    }
+
+    #[test]
+    fn vad_tuning_writer_commits_all_fields_together_and_preserves_neighbors() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "operator_id: alex\nmedia:\n  vad_enabled: true\n  cloud_stt_enabled: false\n",
+        )
+        .unwrap();
+        let tuning = parse_vad_tuning_fields("0.02", "9", "0.7", "160", "1100").unwrap();
+
+        set_vad_tuning_in_freedom(&path, &tuning).unwrap();
+
+        let root: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(root["operator_id"].as_str(), Some("alex"));
+        assert_eq!(root["media"]["vad_enabled"].as_bool(), Some(true));
+        assert_eq!(root["media"]["cloud_stt_enabled"].as_bool(), Some(false));
+        assert_eq!(
+            root["media"]["vad"]["energy_threshold"].as_f64(),
+            Some(0.02)
+        );
+        assert_eq!(root["media"]["vad"]["smooth_window"].as_u64(), Some(9));
+        assert_eq!(root["media"]["vad"]["speech_prob"].as_f64(), Some(0.7));
+        assert_eq!(root["media"]["vad"]["min_fragment_ms"].as_u64(), Some(160));
+        assert_eq!(root["media"]["vad"]["hangover_ms"].as_u64(), Some(1100));
+        assert_eq!(read_vad_tuning_in_freedom(&path).unwrap(), tuning);
+    }
+
+    #[test]
+    fn vad_tuning_writer_interoperates_with_canonical_concurrent_updates() {
+        let dir = TempDir::new().unwrap();
+        let path = std::sync::Arc::new(dir.path().join("freedom.yaml"));
+        std::fs::write(path.as_ref(), "{}\n").unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let tuning = parse_vad_tuning_fields("0.03", "11", "0.8", "180", "1250").unwrap();
+
+        let vad_path = path.clone();
+        let vad_barrier = barrier.clone();
+        let vad_tuning = tuning.clone();
+        let vad_write = std::thread::spawn(move || {
+            vad_barrier.wait();
+            set_vad_tuning_in_freedom(vad_path.as_ref(), &vad_tuning)
+        });
+        let neighbor_path = path.clone();
+        let neighbor_write = std::thread::spawn(move || {
+            barrier.wait();
+            neothd::config::FreedomConfig::update_at(neighbor_path.as_ref(), |config| {
+                config.user_tz = Some("Europe/Berlin".to_string());
+                Ok(())
+            })
+        });
+
+        vad_write.join().unwrap().unwrap();
+        neighbor_write.join().unwrap().unwrap();
+        let loaded = neothd::config::FreedomConfig::load_from_path(path.as_ref()).unwrap();
+        assert_eq!(loaded.media.vad, tuning);
+        assert_eq!(loaded.user_tz.as_deref(), Some("Europe/Berlin"));
+    }
+
+    #[test]
+    fn vad_tuning_writer_refuses_invalid_snapshot_without_touching_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        let original = b"operator_id: alex\nmedia:\n  vad_enabled: true\n";
+        std::fs::write(&path, original).unwrap();
+        let invalid = neothd::config::VadTuning {
+            smooth_window: 0,
+            ..neothd::config::VadTuning::default()
+        };
+
+        assert!(set_vad_tuning_in_freedom(&path, &invalid).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn vad_tuning_reader_applies_missing_field_defaults_but_surfaces_bad_values() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(&path, "media:\n  vad:\n    hangover_ms: 1200\n").unwrap();
+
+        let loaded = read_vad_tuning_in_freedom(&path).unwrap();
+        assert_eq!(loaded.hangover_ms, 1200);
+        assert_eq!(
+            loaded.energy_threshold,
+            neothd::config::VadTuning::default().energy_threshold
+        );
+
+        std::fs::write(&path, "media:\n  vad:\n    smooth_window: 0\n").unwrap();
+        assert!(read_vad_tuning_in_freedom(&path).is_err());
+
+        std::fs::write(&path, "not-a-mapping\n").unwrap();
+        assert!(read_vad_tuning_in_freedom(&path).is_err());
+
+        std::fs::write(&path, "media: not-a-mapping\n").unwrap();
+        assert!(read_vad_tuning_in_freedom(&path).is_err());
     }
 
     fn test_skill_manifest(id: &str, description: &str) -> neothd::skills::schema::SkillManifest {

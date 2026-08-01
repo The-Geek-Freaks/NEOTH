@@ -814,6 +814,12 @@ impl VadTuning {
             self.smooth_window
         );
         anyhow::ensure!(
+            self.smooth_window <= crate::media::vad::MAX_SMOOTH_WINDOW,
+            "media.vad.smooth_window must be at most {} frames (10 seconds; got {})",
+            crate::media::vad::MAX_SMOOTH_WINDOW,
+            self.smooth_window
+        );
+        anyhow::ensure!(
             (0.0..=1.0).contains(&self.speech_prob),
             "media.vad.speech_prob is a fraction in 0.0..=1.0 (got {})",
             self.speech_prob
@@ -822,6 +828,11 @@ impl VadTuning {
             self.energy_threshold >= 0.0 && self.energy_threshold.is_finite(),
             "media.vad.energy_threshold must be a finite, non-negative RMS amplitude (got {})",
             self.energy_threshold
+        );
+        anyhow::ensure!(
+            self.hangover_ms >= 1,
+            "media.vad.hangover_ms must be at least 1 ms (got {})",
+            self.hangover_ms
         );
         Ok(())
     }
@@ -1175,10 +1186,16 @@ mod vad_tuning_tests {
     #[test]
     fn defaults_match_the_shipped_constants_and_validate() {
         let t = VadTuning::default();
-        assert_eq!(t.energy_threshold, crate::media::vad::DEFAULT_ENERGY_THRESHOLD);
+        assert_eq!(
+            t.energy_threshold,
+            crate::media::vad::DEFAULT_ENERGY_THRESHOLD
+        );
         assert_eq!(t.smooth_window, crate::media::vad::DEFAULT_SMOOTH_WINDOW);
         assert_eq!(t.speech_prob, crate::media::vad::DEFAULT_SPEECH_PROB);
-        assert_eq!(t.min_fragment_ms, crate::media::vad::DEFAULT_MIN_FRAGMENT_MS);
+        assert_eq!(
+            t.min_fragment_ms,
+            crate::media::vad::DEFAULT_MIN_FRAGMENT_MS
+        );
         assert_eq!(t.hangover_ms, crate::media::vad::DEFAULT_HANGOVER_MS);
         t.validate().expect("shipped defaults must be valid");
     }
@@ -1193,12 +1210,17 @@ mod vad_tuning_tests {
 
     #[test]
     fn a_partial_block_fills_only_the_omitted_keys() {
-        let cfg: MediaConfig =
-            serde_yaml::from_str("vad:
+        let cfg: MediaConfig = serde_yaml::from_str(
+            "vad:
   hangover_ms: 1200
-").unwrap();
+",
+        )
+        .unwrap();
         assert_eq!(cfg.vad.hangover_ms, 1200);
-        assert_eq!(cfg.vad.smooth_window, crate::media::vad::DEFAULT_SMOOTH_WINDOW);
+        assert_eq!(
+            cfg.vad.smooth_window,
+            crate::media::vad::DEFAULT_SMOOTH_WINDOW
+        );
     }
 
     #[test]
@@ -1212,6 +1234,24 @@ mod vad_tuning_tests {
         };
         let error = t.validate().unwrap_err();
         assert!(format!("{error:#}").contains("smooth_window"), "{error:#}");
+    }
+
+    #[test]
+    fn smoothing_window_accepts_the_safe_ceiling_and_refuses_one_more_frame() {
+        VadTuning {
+            smooth_window: crate::media::vad::MAX_SMOOTH_WINDOW,
+            ..VadTuning::default()
+        }
+        .validate()
+        .expect("the documented ten-second ceiling must remain usable");
+
+        let error = VadTuning {
+            smooth_window: crate::media::vad::MAX_SMOOTH_WINDOW + 1,
+            ..VadTuning::default()
+        }
+        .validate()
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("at most 500 frames"));
     }
 
     #[test]
@@ -1234,5 +1274,15 @@ mod vad_tuning_tests {
             ..VadTuning::default()
         };
         assert!(t.validate().is_err());
+    }
+
+    #[test]
+    fn a_zero_hangover_is_refused_before_it_can_turn_speech_into_silence() {
+        let t = VadTuning {
+            hangover_ms: 0,
+            ..VadTuning::default()
+        };
+        let error = t.validate().unwrap_err();
+        assert!(format!("{error:#}").contains("hangover_ms"));
     }
 }

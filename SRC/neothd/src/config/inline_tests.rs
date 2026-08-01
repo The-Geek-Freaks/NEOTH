@@ -1790,6 +1790,28 @@ mod tests {
             serde_yaml::from_str(&back).expect("round-trips");
         assert_eq!(re, parsed);
     }
+
+    #[test]
+    fn initial_load_refuses_vad_window_above_the_allocation_ceiling() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(dir.path(), "media:\n  vad:\n    smooth_window: 501\n");
+
+        let error = FreedomConfig::load_from_path(&path).unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("invalid media.vad config"), "{error}");
+        assert!(error.contains("at most 500 frames"), "{error}");
+    }
+
+    #[test]
+    fn initial_load_refuses_zero_vad_hangover() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(dir.path(), "media:\n  vad:\n    hangover_ms: 0\n");
+
+        let error = FreedomConfig::load_from_path(&path).unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("invalid media.vad config"), "{error}");
+        assert!(error.contains("hangover_ms"), "{error}");
+    }
 }
 
 #[cfg(test)]

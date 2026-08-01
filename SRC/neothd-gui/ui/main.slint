@@ -800,6 +800,14 @@ export component MainWindow inherits Window {
     in-out property <bool>   cfg-cloud-vision-enabled: false;
     in-out property <bool>   cfg-vad-enabled: false;
     in-out property <bool>   cfg-dictation-enabled: false;
+    in-out property <string> cfg-vad-energy-threshold: "0.01";
+    in-out property <string> cfg-vad-smooth-window: "5";
+    in-out property <string> cfg-vad-speech-prob: "0.6";
+    in-out property <string> cfg-vad-min-fragment-ms: "100";
+    in-out property <string> cfg-vad-hangover-ms: "750";
+    in-out property <bool>   cfg-vad-tuning-saving: false;
+    in-out property <bool>   cfg-vad-tuning-error: false;
+    in-out property <string> cfg-vad-tuning-status: "";
     in-out property <bool>   cfg-proactive-idle-only: false;
     // DES-09 G37 — proactive quiet hours (UTC).
     in-out property <bool>   cfg-quiet-hours-enabled: false;
@@ -830,6 +838,7 @@ export component MainWindow inherits Window {
     callback cfg-cloud-vision-enabled-changed(bool);
     callback cfg-vad-enabled-changed(bool);
     callback cfg-dictation-enabled-changed(bool);
+    callback cfg-vad-tuning-apply(string, string, string, string, string);
     callback cfg-proactive-idle-only-changed(bool);
     callback cfg-quiet-hours-changed(bool, string, string);
     callback cfg-memory-name-sessions-changed(bool);
@@ -3686,6 +3695,14 @@ export component MainWindow inherits Window {
                     cfg-cloud-vision-enabled <=> root.cfg-cloud-vision-enabled;
                     cfg-vad-enabled <=> root.cfg-vad-enabled;
                     cfg-dictation-enabled <=> root.cfg-dictation-enabled;
+                    cfg-vad-energy-threshold <=> root.cfg-vad-energy-threshold;
+                    cfg-vad-smooth-window <=> root.cfg-vad-smooth-window;
+                    cfg-vad-speech-prob <=> root.cfg-vad-speech-prob;
+                    cfg-vad-min-fragment-ms <=> root.cfg-vad-min-fragment-ms;
+                    cfg-vad-hangover-ms <=> root.cfg-vad-hangover-ms;
+                    cfg-vad-tuning-saving <=> root.cfg-vad-tuning-saving;
+                    cfg-vad-tuning-error <=> root.cfg-vad-tuning-error;
+                    cfg-vad-tuning-status <=> root.cfg-vad-tuning-status;
                     cfg-proactive-idle-only <=> root.cfg-proactive-idle-only;
                     cfg-quiet-hours-enabled <=> root.cfg-quiet-hours-enabled;
                     cfg-quiet-hours-start <=> root.cfg-quiet-hours-start;
@@ -3697,6 +3714,9 @@ export component MainWindow inherits Window {
                     cfg-cloud-vision-enabled-changed(v) => { root.cfg-cloud-vision-enabled-changed(v); }
                     cfg-vad-enabled-changed(v) => { root.cfg-vad-enabled-changed(v); }
                     cfg-dictation-enabled-changed(v) => { root.cfg-dictation-enabled-changed(v); }
+                    cfg-vad-tuning-apply(energy, smooth, probability, fragment, hangover) => {
+                        root.cfg-vad-tuning-apply(energy, smooth, probability, fragment, hangover);
+                    }
                     cfg-proactive-idle-only-changed(v) => { root.cfg-proactive-idle-only-changed(v); }
                     // DES-09 Welle C — memory
                     cfg-memory-name-sessions <=> root.cfg-memory-name-sessions;

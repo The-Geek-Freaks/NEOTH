@@ -1205,6 +1205,44 @@ mod tests {
     }
 
     #[test]
+    fn try_reload_refuses_oversized_vad_window_without_swapping_generation() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let initial = fresh_config();
+        write_yaml(&yaml_path, "media:\n  vad:\n    smooth_window: 501\n");
+        let ctrl = ReloadController::new(initial, yaml_path);
+        let generation = ctrl.subscribe_generation();
+
+        let error = ctrl.try_reload().unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("invalid media.vad config"), "{error}");
+        assert_eq!(
+            ctrl.latest().media.vad.smooth_window,
+            crate::media::vad::DEFAULT_SMOOTH_WINDOW
+        );
+        assert_eq!(*generation.borrow(), 0);
+    }
+
+    #[test]
+    fn try_reload_refuses_zero_vad_hangover_without_swapping_generation() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let initial = fresh_config();
+        write_yaml(&yaml_path, "media:\n  vad:\n    hangover_ms: 0\n");
+        let ctrl = ReloadController::new(initial, yaml_path);
+        let generation = ctrl.subscribe_generation();
+
+        let error = ctrl.try_reload().unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("hangover_ms"), "{error}");
+        assert_eq!(
+            ctrl.latest().media.vad.hangover_ms,
+            crate::media::vad::DEFAULT_HANGOVER_MS
+        );
+        assert_eq!(*generation.borrow(), 0);
+    }
+
+    #[test]
     fn credentials_only_ssh_change_is_restart_bound_not_unchanged() {
         let dir = tempdir().unwrap();
         let yaml_path = dir.path().join("freedom.yaml");

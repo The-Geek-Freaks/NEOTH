@@ -394,6 +394,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn vad_gate_honors_operator_energy_threshold_at_the_production_constructor() {
+        let mut cfg = config_with(true, true);
+        cfg.vad.energy_threshold = 0.5;
+        let home = tempfile::tempdir().unwrap();
+
+        let result = transcribe_utterance(
+            &pcm_speech(500),
+            16_000,
+            &cfg,
+            &crate::config::UpdaterConfig::default(),
+            home.path(),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(DictationError::AllSilence)),
+            "the production dictation VAD must use media.vad.energy_threshold"
+        );
+    }
+
+    #[tokio::test]
     async fn vad_bypass_when_vad_disabled() {
         // When vad_enabled = false, even silence PCM must reach STT (no gate).
         // Result will be Transcription error (model not cached) not AllSilence.

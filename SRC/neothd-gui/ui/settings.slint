@@ -1148,6 +1148,17 @@ export component SettingsView inherits Rectangle {
     in-out property <bool> cfg-cloud-vision-enabled: false;
     in-out property <bool> cfg-vad-enabled: false;
     in-out property <bool> cfg-dictation-enabled: false;
+    // ADOPT31-A4 — editable VAD tuning is a single draft/apply transaction.
+    // Keeping these as strings lets the operator finish typing a decimal before
+    // Rust validates the complete five-field snapshot.
+    in-out property <string> cfg-vad-energy-threshold: "0.01";
+    in-out property <string> cfg-vad-smooth-window: "5";
+    in-out property <string> cfg-vad-speech-prob: "0.6";
+    in-out property <string> cfg-vad-min-fragment-ms: "100";
+    in-out property <string> cfg-vad-hangover-ms: "750";
+    in-out property <bool> cfg-vad-tuning-saving: false;
+    in-out property <bool> cfg-vad-tuning-error: false;
+    in-out property <string> cfg-vad-tuning-status: "";
     in-out property <bool> cfg-proactive-idle-only: false;
     // DES-09 G37 — proactive.quiet_hours_utc editor state.
     in-out property <bool> cfg-quiet-hours-enabled: false;
@@ -1159,6 +1170,7 @@ export component SettingsView inherits Rectangle {
     callback cfg-cloud-vision-enabled-changed(bool);
     callback cfg-vad-enabled-changed(bool);
     callback cfg-dictation-enabled-changed(bool);
+    callback cfg-vad-tuning-apply(string, string, string, string, string);
     callback cfg-proactive-idle-only-changed(bool);
     // (enabled, start-hour, end-hour) — Rust validates + writes the
     // proactive.quiet_hours_utc [u8;2] (or null when disabled).
@@ -3706,6 +3718,125 @@ export component SettingsView inherits Rectangle {
                             toggled(v) => {
                                 root.cfg-vad-enabled = v;
                                 root.cfg-vad-enabled-changed(v);
+                            }
+                        }
+                        Rectangle { height: 1px; background: Theme.border-subtle; }
+                        Text {
+                            text: "VAD TUNING";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.text-secondary;
+                        }
+                        Text {
+                            text: "Tune the local speech gate as one validated snapshot. Changes apply after Save and daemon reload.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            Text {
+                                width: 190px;
+                                text: "Energy threshold (RMS)";
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                            }
+                            NeothLineEdit {
+                                horizontal-stretch: 1;
+                                placeholder-text: "0.01";
+                                text <=> root.cfg-vad-energy-threshold;
+                                enabled: !root.cfg-vad-tuning-saving;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            Text {
+                                width: 190px;
+                                text: "Smoothing window (frames)";
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                            }
+                            NeothLineEdit {
+                                horizontal-stretch: 1;
+                                placeholder-text: "5";
+                                text <=> root.cfg-vad-smooth-window;
+                                enabled: !root.cfg-vad-tuning-saving;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            Text {
+                                width: 190px;
+                                text: "Speech probability (0–1)";
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                            }
+                            NeothLineEdit {
+                                horizontal-stretch: 1;
+                                placeholder-text: "0.6";
+                                text <=> root.cfg-vad-speech-prob;
+                                enabled: !root.cfg-vad-tuning-saving;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            Text {
+                                width: 190px;
+                                text: "Minimum fragment (ms)";
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                            }
+                            NeothLineEdit {
+                                horizontal-stretch: 1;
+                                placeholder-text: "100";
+                                text <=> root.cfg-vad-min-fragment-ms;
+                                enabled: !root.cfg-vad-tuning-saving;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            Text {
+                                width: 190px;
+                                text: "Silence hangover (ms)";
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                            }
+                            NeothLineEdit {
+                                horizontal-stretch: 1;
+                                placeholder-text: "750";
+                                text <=> root.cfg-vad-hangover-ms;
+                                enabled: !root.cfg-vad-tuning-saving;
+                            }
+                        }
+                        HorizontalLayout {
+                            alignment: end;
+                            spacing: Theme.space-tight;
+                            if root.cfg-vad-tuning-status != "": Text {
+                                horizontal-stretch: 1;
+                                text: root.cfg-vad-tuning-status;
+                                color: root.cfg-vad-tuning-error ? Theme.accent-pink
+                                    : root.cfg-vad-tuning-saving ? Theme.accent-amber
+                                    : Theme.accent-green;
+                                font-size: Theme.font-size-caption;
+                                wrap: word-wrap;
+                                vertical-alignment: center;
+                            }
+                            NeothButton {
+                                label: root.cfg-vad-tuning-saving ? "Saving…" : "Save VAD tuning";
+                                primary: true;
+                                enabled: !root.cfg-vad-tuning-saving;
+                                clicked => {
+                                    root.cfg-vad-tuning-apply(
+                                        root.cfg-vad-energy-threshold,
+                                        root.cfg-vad-smooth-window,
+                                        root.cfg-vad-speech-prob,
+                                        root.cfg-vad-min-fragment-ms,
+                                        root.cfg-vad-hangover-ms,
+                                    );
+                                }
                             }
                         }
                         NeothCheckBox {
