@@ -48,7 +48,7 @@
 
 import { Theme } from "theme.slint";
 import { Buddy } from "buddy.slint";
-import { Led, NeothButton, NeothLineEdit } from "components.slint";
+import { Led, NeothButton, NeothLineEdit, NeothComboBox } from "components.slint";
 
 export component MiniOverlay inherits Window {
     // ── Window chrome ────────────────────────────────────────────────
@@ -76,6 +76,11 @@ export component MiniOverlay inherits Window {
     /// True while the overlay's chat request is in preflight or streaming.
     /// Replaces Send with an operator-controlled Stop action on both surfaces.
     in property <bool> send-in-flight: false;
+    /// ADOPT31-B10 — operator-visible Skill labels. Rust owns canonical IDs.
+    in property <[string]> skill-options: [];
+    in-out property <int> selected-skill-index: 0;
+    /// Dedicated Skill route result, separate from `status-text`.
+    in property <string> skill-route-status: "";
 
     // ── Compact mode ─────────────────────────────────────────────────
     /// When true the overlay renders as a 64 px pill.
@@ -95,6 +100,8 @@ export component MiniOverlay inherits Window {
     callback hide-clicked();
     /// Operator sent a message from the overlay composer.
     callback send-clicked(string);
+    /// Operator changed the shared explicit Skill selection.
+    callback skill-selected(int);
     /// Operator stopped the active overlay chat request.
     callback stop-stream-clicked();
     /// Pointer-down on the title strip — Rust starts an OS-native
@@ -683,7 +690,7 @@ export component MiniOverlay inherits Window {
 
             // ── Section 6: Composer — one-line input + send button ────────
             composer := Rectangle {
-                height: root.compact ? 0px : 52px;
+                height: root.compact ? 0px : 104px;
                 clip: true;
                 background: Theme.bg-sunken;
                 border-radius: Theme.radius-card;
@@ -697,35 +704,73 @@ export component MiniOverlay inherits Window {
                     y: 0; height: 1px;
                     background: Theme.border-subtle;
                 }
-                HorizontalLayout {
-                    padding: 8px; spacing: 6px; alignment: center;
-                    NeothLineEdit {
-                        horizontal-stretch: 1;
-                        text <=> root.overlay-input;
-                        placeholder-text: "message NEOTH…";
-                        enabled: !root.compact && !root.send-in-flight;
-                        accepted(t) => {
-                            if t != "" && !root.send-in-flight {
-                                root.send-clicked(t);
-                            }
+                VerticalLayout {
+                    padding: 6px;
+                    spacing: 4px;
+
+                    // Skill route stays distinct from the generic overlay
+                    // status bar above. Status elides first on narrow windows.
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: center;
+
+                        Text {
+                            text: "Skill";
+                            color: Theme.text-tertiary;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            vertical-alignment: center;
+                        }
+                        NeothComboBox {
+                            width: 190px;
+                            model: root.skill-options;
+                            current-index <=> root.selected-skill-index;
+                            enabled: root.skill-options.length > 0 && !root.send-in-flight;
+                            selected(i) => { root.skill-selected(i); }
+                        }
+                        Text {
+                            text: root.skill-route-status;
+                            visible: root.skill-route-status != "";
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                            color: Theme.text-tertiary;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            vertical-alignment: center;
                         }
                     }
-                    if !root.compact && !root.send-in-flight: NeothButton {
-                        label: "→";
-                        primary: true;
-                        size: "sm";
-                        enabled: root.overlay-input != "" && !root.compact;
-                        clicked => {
-                            if root.overlay-input != "" {
-                                root.send-clicked(root.overlay-input);
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: center;
+                        NeothLineEdit {
+                            horizontal-stretch: 1;
+                            text <=> root.overlay-input;
+                            placeholder-text: "message NEOTH…";
+                            enabled: !root.compact && !root.send-in-flight;
+                            accepted(t) => {
+                                if t != "" && !root.send-in-flight {
+                                    root.send-clicked(t);
+                                }
                             }
                         }
-                    }
-                    if !root.compact && root.send-in-flight: NeothButton {
-                        label: "Stop";
-                        danger: true;
-                        size: "sm";
-                        clicked => { root.stop-stream-clicked(); }
+                        if !root.compact && !root.send-in-flight: NeothButton {
+                            label: "→";
+                            primary: true;
+                            size: "sm";
+                            enabled: root.overlay-input != "" && !root.compact;
+                            clicked => {
+                                if root.overlay-input != "" {
+                                    root.send-clicked(root.overlay-input);
+                                }
+                            }
+                        }
+                        if !root.compact && root.send-in-flight: NeothButton {
+                            label: "Stop";
+                            danger: true;
+                            size: "sm";
+                            clicked => { root.stop-stream-clicked(); }
+                        }
                     }
                 }
             }

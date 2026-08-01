@@ -356,6 +356,7 @@ One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply. Both re
 
 - `<MESSAGE>` — Message to send. If omitted, NEOTH reads from stdin until EOF
 - `--model <MODEL>` — Override the configured model for this single call
+- `--skill <SKILL_ID>` — Explicit authority-validated Skill for this turn. This selection wins over automatic routing and any `/skill-id` embedded in the message
 - `--system <TEXT>` — Inject a one-shot system prompt for this call
 - `--attach <PATH>` — Attach files to this turn. Each file runs through bounded admission and the media extraction pipeline; extracted data stays separate from the operator message as canonical untrusted context. Repeatable
 - `--edit` — GOLD-ADOPT-24 — compose the prompt in `$VISUAL`/`$EDITOR` instead of passing it inline. Any inline message/`--message` seeds the editor as prefill. Aborts if the editor is left empty
@@ -2517,6 +2518,7 @@ GOLD-ADAPT-OH-08 — list reflection observations from the Intelligence view (`~
 Print staged proposals
 
 - `--status <STATUS>` — Filter: `pending` / `approved` / `rejected` / `all`
+- `--history` — Show terminal proactive delivery attempts from the private inbox, including retained rotated history, newest first
 
 ### `neoth proactive reject`
 
@@ -3339,7 +3341,7 @@ Verify an archive snapshot without materializing it or opening NEOTH_HOME
 Run the daemon. Reads ~/.neoth/freedom.yaml, opens the WAL, awaits SIGTERM / Ctrl+C, drains cleanly on shutdown
 
 - `--config <PATH>` — Override the path to freedom.yaml. Defaults to ~/.neoth/freedom.yaml
-- `--wal-segment <PATH>` — Override the WAL segment path. It must be a canonical direct child of the selected config home's `wal` directory with a six-digit segment suffix. Defaults to `<config-home>/wal/000001.wal`
+- `--wal-segment <PATH>` — Override the WAL chain-base path. It must be the canonical sequence-1 direct child (`000001.wal`) of the selected config home's `wal` directory. Defaults to `<config-home>/wal/000001.wal`
 - `--allow-clock-rollback` — Override the clock-rollback guard. Use only when restoring from a backup or recovering from a VM snapshot rewind — operator promises the timestamps in the WAL are intentional. Phase 33c BS-5
 
 ## `neoth skills`
@@ -3349,6 +3351,7 @@ List installed skills + probe the router with a test message
 _Aliases:_ `neoth skill`
 
 - `--list` — Print the table of installed skills
+- `--check-routing` — Validate catalogue-wide parent/mode alias ownership and emit every cross-owner collision. Exits non-zero when the hot-reload gate would reject the current catalogue
 - `--test <MESSAGE>` — Run the router against an arbitrary message and report the match
 - `--run-tests <SKILL_ID>` — Run the RED/GREEN scenario suite for a skill. Loads `~/.neoth/skills/<id>/tests/*.yaml`, runs each scenario twice (without and with the skill's system prompt), reports pass/fail. Requires a working provider in `freedom.yaml`. Phase 33+ (obra/ superpowers Item #3 port)
 - `--install <PATH>` — QM-11 install a skill from a local directory containing `skill.yaml`. Validates the manifest BEFORE copying; refuses to replace an existing install unless `--force` is set

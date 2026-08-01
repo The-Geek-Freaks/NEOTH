@@ -261,6 +261,7 @@ async fn run_one(
     let make_args = || crate::cli::chat::ChatArgs {
         attach: Vec::new(),
         message: Some(rendered.prompt.clone()),
+        skill: None,
         model: rendered.settings.model.clone(),
         system: rendered.system.clone(),
         edit: false,

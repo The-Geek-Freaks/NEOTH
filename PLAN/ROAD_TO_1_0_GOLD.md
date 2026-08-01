@@ -165,7 +165,7 @@ honesty states and still block release; notably A6 has a tested VAD primitive bu
 Playback-Cancel consumer until A2/A7 exist. `ADOPT31-C3` uses the canonical open state
 instead of the invalid historical `[?]`, so the release gate can parse every task again.
 
-<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1291 complete=995 open=294 partial=2 raw_blockers=296 release_tag_blockers=295 release_generated_items=1 -->
+<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1292 complete=997 open=293 partial=2 raw_blockers=295 release_tag_blockers=294 release_generated_items=1 -->
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
 
@@ -3900,26 +3900,35 @@ seeded by Fabric's `reflexion.json` / `self-refine.json`.
   `explain_code`, `create_summary`, `extract_insights`, `create_conceptmap`. Ignore
   Fabric's `extract_skills` — it is HR job-description parsing, useless here. *NEOTH:*
   `skills/bundled.rs`. *Consumer:* `skills/router.rs`. **M**
-- [ ] **ADOPT31-B10** Pairwise negative routing and consumer parity — **FORENSIC
-  CORRECTION 2026-08-01: NICHT GESCHLOSSEN.** Die erste belastbare Teillieferung hat
-  `KNOWN_COLLISIONS` entfernt, prüft sämtliche rohen Aliase und den Vertrag über 182
-  Bundles/99 Default-Aktive, kuratiert alle normalisierten Cross-Owner-Kollisionen auf
-  null und ersetzt unbegrenztes ASCII-Substring-Matching durch tokenbegrenztes
-  Unicode-Matching. Regressionen pinnen unter anderem `create a PR` gegen
-  `create a presentation`, `feature idea` gegen `feature ideas` sowie exakte Trigger mit
-  Satzzeichen (`fact-check`, `node.js`, `/ship`, `max++`). **B10 bleibt trotzdem offen:**
-  Stage 2 darf eindeutige Literaltreffer weiterhin überschreiben, Modes wählen global
-  vor dem Parent, `/skill-id` ist keine autoritative Auswahl und Mode-, Embedding-,
-  Custom-Skill-, Chat-/Channel-/CLI-/GUI-Parität besitzen noch keinen gemeinsamen
-  resolvergebundenen Vertrag.
-  **Abnahme:** null Cross-Owner-Kollisionen ohne Allowlist über 182/182; tokenbegrenztes
-  Unicode-Matching; explizite Auswahl gewinnt nach Authority-Validierung; Parent vor Mode;
-  Embedding nur bei `NoMatch`; echte Ties werden als typisierter Konflikt sichtbar statt
-  alphabetisch gewählt; ein gemeinsamer Resolver und identischer Route-Report für Chat,
-  Channel, CLI und GUI; Custom-Owner-Policy mit validiertem Hot Reload; Install-/Enable-
-  Preflight, CLI-Konfliktprobe und GUI/Buddy-Picker vollständig verdrahtet. *NEOTH:*
-  `skills/router.rs`, `skills/bundled.rs`, `skills/mode_registry.rs`. *Consumer:* Runtime,
-  CLI, GUI/Buddy und CI gate. **L**
+- [x] **ADOPT31-B10** Pairwise negative routing and consumer parity — **VOLLSTÄNDIG
+  GESCHLOSSEN 2026-08-01.** Ein publizierter `SkillSnapshot` bindet Skill-Inventar,
+  Konfiguration und Authority-Epochen. Der gemeinsame Resolver bildet genau einmal die
+  zulässige Kandidatenmenge aus Authority, Enabled-State, Visibility, `paths:`-Scope und
+  Surface-Capability und erzwingt danach die Präzedenz **explizite Auswahl → Parent-Literal
+  → ausgewählter Parent-Mode → globaler Mode → Literal → nur bei `NoMatch` Embedding**.
+  Ein eindeutiger Literaltreffer kann nicht mehr von Stage 2 überschrieben werden;
+  Embedding sieht dieselbe path-/authority-gefilterte Menge. Ergebnisse sind typisiert als
+  `Match`, `NoMatch`, `Conflict` oder `Rejected`; echte Ties werden nicht alphabetisch
+  kaschiert. Der Route-Report einschließlich Config-/Authority-Epochen und Execution-Binding
+  ist snapshot-owned und identisch in Runtime, Chat, Channels, CLI-Probe, GUI und Buddy.
+  Chat transportiert ihn token-/request-gebunden im authentifizierten Stream-v3-Frame;
+  Channels schreiben denselben Report vor Interpretation oder Provider-Leaf dauerhaft ins
+  WAL. CLI bietet `--skill` und `skills --check-routing`; GUI und Buddy verwenden denselben
+  kanonischen Picker, behalten Auswahl über Reorder und setzen entfernte IDs sichtbar zurück.
+  Der Katalogvertrag deckt 182/182 Bundles (99 default-aktiv) ohne Allowlist ab; Unicode-
+  Tokenisierung, Satzzeichen-Trigger und Cross-Owner Parent-/Mode-Aliase teilen eine
+  Normalisierung. Install/Create/Replace sowie Uninstall/Enable/Disable/Revoke validieren den
+  exakten bzw. konservativ überdeckenden Post-Mutationskatalog **unter demselben Package-Lock
+  vor Journal, Config-CAS, Authority- oder Dateisystem-Commit**. Bundled-Fallbacks hinter
+  inaktiven/revokten Same-ID-Overrides werden mitgeprüft; generische Active-Authority-
+  Publisher existieren nur noch unter `cfg(test)`. **Verifiziert:** Resolver 12/12,
+  Ownership 2/2, Router 54/54, Bundled 22/22, CLI-Skills 26/26, gezielte Registry-/Installer-/
+  Chat-/Channel-/WAL-Regressions grün, Source-Contract 17/17, strict Core-Clippy
+  `-D warnings`, Workspace-Rustfmt und GUI-All-Features-Check grün; unabhängiges
+  Abschlussreview 0 Findings. Exact-Head-Plattform-CI bleibt ein separates Release-Gate.
+  *NEOTH:* `skills/resolver.rs`, `skills/route_ownership.rs`, `skills/registry.rs`,
+  `skills/installer.rs`, `skills/authority.rs`. *Consumer:* Runtime, CLI, GUI/Buddy,
+  Channels und CI gate. **L**
 - [ ] **ADOPT31-B11** Session-start active-skill catalog injection. *NEOTH:* `hooks/` SessionStart
   handler. *Consumer:* every session. **S**
 - [ ] **ADOPT31-B12** *(v1.1)* Embedding dedup before routing, plus a PatchExistingSkill route
@@ -4024,13 +4033,21 @@ None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
   `classify_tool_verdicts`): ein Tool, das seine Effekt-Deklaration nach der Registrierung
   ändert, verliert die Auto-Zustimmung und fällt auf den normalen Confirm zurück — entzogen
   wird der **Bypass**, nicht das Tool. Unverifizierbarer Pin-Store (kein HMAC-Key, malformt)
-  entzieht ebenfalls den Bypass, statt blind zu vertrauen. **TOFU-Persistenz ist ebenfalls
-  fail-closed:** ein First-Use-Pin wird erst nach erfolgreichem vollständigem Store-Flush zu
-  einem SmartApprove-Grant; jeder Flush-Fehler entzieht alle Auto-Approval-Grants der Session
-  und lässt das Tool über den normalen Confirm-/Lease-Pfad erreichbar. Zusätzlich in `cli/mcp.rs`
-  (`neoth mcp tools`) gemeldet. `home` wird als Feld durchgereicht (Session-24-`_at(base)`-
-  Konvention), damit Tests ohne Env-Mutation laufen. Tests: guardian 9/9; gezieltes
-  smart_approve-Modul 24/24 inklusive real erzwungenem Atomic-Flush-Fehler; clippy 0. **L** 🔒
+  entzieht ebenfalls den Bypass, statt blind zu vertrauen. **TOFU-Persistenz ist
+  transaktional und fail-closed:** Prozess-Mutex plus home-gebundener Cross-Process-Lock,
+  Re-read unter Lock, konfliktfreier Merge fremder Pins, Ablehnung geänderter/entfernter
+  Opening-Snapshot-Records und gleicher Tool-Keys mit abweichendem Fingerprint, privater
+  Atomic-Replace, Parent-`fsync` sowie exaktes und semantisches Readback vor Baseline-
+  Fortschreibung. Unix hält nofollow Parent-/Leaf-Handles und prüft Owner/Modes sowie die
+  Ancestor-Kette; Windows hält jede lokale Pfadkomponente ohne Delete-Share, lehnt
+  UNC/Device/Reparse-Komponenten ab und prüft Owner/DACL. Ein First-Use-Pin wird erst nach
+  dieser Transaktion zum Grant; jeder Fehler entzieht alle Auto-Approval-Grants der Session
+  und lässt das Tool über den normalen Confirm-/Lease-Pfad erreichbar. Zusätzlich in
+  `cli/mcp.rs` (`neoth mcp tools`) gemeldet. `home` wird als Feld durchgereicht
+  (Session-24-`_at(base)`-Konvention), damit Tests ohne Env-Mutation laufen. Tests: Guardian
+  15/15 einschließlich echter Mehrprozess-Merge-/Konflikt- und Lock-Exklusionsfälle;
+  SmartApprove 24/24 inklusive real erzwungenem Atomic-/Lock-Flush-Fehler; strict Clippy und
+  unabhängiger Security-Review grün. **L** 🔒
 - [~] **ADOPT31-C5** Pre-work multi-role sign-off gate — **NEU GESCHNITTEN (2026-08-01);
   zwei Drittel existieren, das fehlende Drittel ist Verdrahtung, nicht Neubau.**
   1. **Die „Decision Audit Trail vor Dispatch"-Hälfte existiert.** `SelfSourceEdit`

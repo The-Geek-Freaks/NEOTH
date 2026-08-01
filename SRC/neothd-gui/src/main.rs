@@ -79,6 +79,7 @@ struct PendingGuiChatConsent {
     request_id: chat_stream_phase::ChatStreamRequestId,
     surface: chat_stream_phase::ChatStreamSurface,
     body: String,
+    explicit_skill_id: Option<String>,
     preflight: gui_action::VerifiedConsentChatPreflight,
 }
 
@@ -1289,6 +1290,66 @@ fn main() -> Result<()> {
     // are safe to call from UI-thread callbacks at any time.
     // DO NOT call `overlay.run()` — only `window.run()` drives the loop.
     let overlay = MiniOverlay::new()?;
+
+    let initial_skill_picker = SKILL_PICKER_STATE
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Skill picker state is unavailable"))?
+        .refresh(vec!["Automatic".to_string()])
+        .0;
+    set_main_skill_picker(&window, &initial_skill_picker);
+    set_buddy_skill_picker(&overlay, &initial_skill_picker);
+    window.set_chat_skill_route_status("Skill: Automatic".into());
+    overlay.set_skill_route_status("Skill: Automatic".into());
+    {
+        let window_weak = window.as_weak();
+        let overlay_weak = overlay.as_weak();
+        window.on_chat_skill_selected(move |index| match select_skill_picker_index(index) {
+            Ok(snapshot) => {
+                let status = snapshot.selected_id.as_ref().map_or_else(
+                    || "Skill: Automatic".to_string(),
+                    |id| format!("Skill: {id} · selected"),
+                );
+                if let Some(window) = window_weak.upgrade() {
+                    set_main_skill_picker(&window, &snapshot);
+                    window.set_chat_skill_route_status(status.clone().into());
+                }
+                if let Some(overlay) = overlay_weak.upgrade() {
+                    set_buddy_skill_picker(&overlay, &snapshot);
+                    overlay.set_skill_route_status(status.into());
+                }
+            }
+            Err(error) => {
+                if let Some(window) = window_weak.upgrade() {
+                    window.set_status_line(error.into());
+                }
+            }
+        });
+    }
+    {
+        let window_weak = window.as_weak();
+        let overlay_weak = overlay.as_weak();
+        overlay.on_skill_selected(move |index| match select_skill_picker_index(index) {
+            Ok(snapshot) => {
+                let status = snapshot.selected_id.as_ref().map_or_else(
+                    || "Skill: Automatic".to_string(),
+                    |id| format!("Skill: {id} · selected"),
+                );
+                if let Some(window) = window_weak.upgrade() {
+                    set_main_skill_picker(&window, &snapshot);
+                    window.set_chat_skill_route_status(status.clone().into());
+                }
+                if let Some(overlay) = overlay_weak.upgrade() {
+                    set_buddy_skill_picker(&overlay, &snapshot);
+                    overlay.set_skill_route_status(status.into());
+                }
+            }
+            Err(error) => {
+                if let Some(overlay) = overlay_weak.upgrade() {
+                    overlay.set_skill_route_status(error.into());
+                }
+            }
+        });
+    }
 
     // B23 fix — read tweaks.toml once so the theme block and the B23 tweaks
     // block below share a single parse (no double I/O).
@@ -2736,6 +2797,13 @@ fn main() -> Result<()> {
             let Some(w) = weak_chat_preflight.upgrade() else {
                 return;
             };
+            let explicit_skill_id = match selected_skill_id_for_request() {
+                Ok(selection) => selection,
+                Err(error) => {
+                    w.set_status_line(format!("{error}; message was not sent.").into());
+                    return;
+                }
+            };
             if w.get_chat_history_active()
                 && !auto_flag.load(std::sync::atomic::Ordering::Acquire)
             {
@@ -2857,6 +2925,7 @@ fn main() -> Result<()> {
                             w.invoke_chat_send_approved(
                                 request.request_id.as_wire().into(),
                                 body.into(),
+                                explicit_skill_id.unwrap_or_default().into(),
                             );
                         }
                         Ok(preflight) => {
@@ -2896,6 +2965,7 @@ fn main() -> Result<()> {
                                 request_id: request.request_id,
                                 surface: ChatStreamSurface::Main,
                                 body,
+                                explicit_skill_id,
                                 preflight,
                             });
                             w.set_chat_consent_prompt_request_id(
@@ -3040,6 +3110,7 @@ fn main() -> Result<()> {
                 let request_id = pending_send.request_id;
                 let surface = pending_send.surface;
                 let body = pending_send.body;
+                let explicit_skill_id = pending_send.explicit_skill_id;
                 let result = decide_chat_consent_verified(pending_send.preflight, &decision);
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(w) = weak.upgrade() else {
@@ -3182,11 +3253,13 @@ fn main() -> Result<()> {
                                 ChatStreamSurface::Main => w.invoke_chat_send_approved(
                                     request_id.as_wire().into(),
                                     body.into(),
+                                    explicit_skill_id.unwrap_or_default().into(),
                                 ),
                                 ChatStreamSurface::Buddy => {
                                     w.invoke_buddy_chat_send_approved(
                                         request_id.as_wire().into(),
                                         body.into(),
+                                        explicit_skill_id.unwrap_or_default().into(),
                                     )
                                 }
                             }
@@ -3237,12 +3310,14 @@ fn main() -> Result<()> {
     let main_chat_consent_token_for_send = main_chat_consent_token.clone();
     let chat_consent_flow_for_send = chat_consent_flow_active.clone();
     let chat_worker_barrier_for_send = chat_worker_barrier.clone();
-    window.on_chat_send_approved(move |request_id_wire, text| {
+    window.on_chat_send_approved(move |request_id_wire, text, explicit_skill_id_wire| {
         let Some(request_id) = ChatStreamRequestId::parse_wire(request_id_wire.as_str()) else {
             chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
             return;
         };
         let body = text.trim().to_string();
+        let explicit_skill_id = (!explicit_skill_id_wire.is_empty())
+            .then(|| explicit_skill_id_wire.to_string());
         if body.is_empty() {
             if let Ok(mut controller) = chat_stream_for_send.lock() {
                 controller.settle(request_id, false);
@@ -3460,8 +3535,10 @@ fn main() -> Result<()> {
             );
             return;
         }
+        w.set_chat_skill_route_status("Resolving Skill…".into());
         let overlay_weak_for_request = overlay_weak_for_chat_send.clone();
         if let Some(overlay) = overlay_weak_for_request.upgrade() {
+            overlay.set_skill_route_status("Resolving Skill…".into());
             project_companion_chat_stream(&overlay, ChatStreamPhase::Waiting, None);
             sync_companion_recent_lines_from_canonical(&w, &overlay);
         }
@@ -3561,9 +3638,8 @@ fn main() -> Result<()> {
                 // Terminate clap's flag scan so a message starting with
                 // '-' (e.g. "-h", "--foo") is treated as the positional
                 // prompt, not parsed as a flag (WS-BUG P1).
-                cmd.arg("--")
-                    .arg(body.as_str())
-                    .stdout(std::process::Stdio::piped())
+                append_chat_prompt_args(&mut cmd, explicit_skill_id.as_deref(), body.as_str());
+                cmd.stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped());
                 let mut child = OwnedChatChild::spawn(request_id, &mut cmd).map_err(|e| {
                         format!(
@@ -3695,6 +3771,7 @@ fn main() -> Result<()> {
                 let mut buf = [0u8; 512];
                 let mut control_frame_gate = IncrementalControlFrameGate::default();
                 let mut delivered_notice_ids = std::collections::HashSet::new();
+                let mut route_report_delivered = false;
                 let read_error = loop {
                     match stdout.read(&mut buf) {
                         Ok(0) => break None, // EOF
@@ -3720,9 +3797,10 @@ fn main() -> Result<()> {
                                 continue;
                             };
                             control_frame_gate.observe_decoded_buffer(decoded);
-                            let parsed = parse_chat_stream_protocol_incremental(
+                            let parsed = parse_chat_stream_protocol_incremental_with_route_state(
                                 decoded,
                                 Some(stream_control_token.as_str()),
+                                route_report_delivered,
                             );
                             if !parsed.protocol_valid {
                                 break Some(std::io::Error::other(
@@ -3739,14 +3817,42 @@ fn main() -> Result<()> {
                                 ));
                             }
                             let new_notices = parsed.notices.to_vec();
-                            if let Err(error) = compact_completed_notice_frames(
+                            let new_route_report = parsed.route_report.clone();
+                            if let Err(error) = compact_completed_control_frames(
                                 &mut acc,
-                                &parsed.completed_notice_ranges,
+                                &parsed.completed_control_ranges,
                             ) {
                                 break Some(std::io::Error::other(error));
                             }
                             delivered_notice_ids
                                 .extend(new_notices.iter().map(|notice| notice.id.clone()));
+                            if let Some(report) = new_route_report {
+                                route_report_delivered = true;
+                                let status = format_skill_route_status(&report);
+                                let weak_route = weak_worker.clone();
+                                let overlay_route = overlay_weak_worker.clone();
+                                let stream_route = stream.clone();
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    let is_current = stream_route
+                                        .lock()
+                                        .ok()
+                                        .and_then(|controller| controller.current_request())
+                                        .is_some_and(|current| {
+                                            current.request_id == request_id
+                                                && current.surface == ChatStreamSurface::Main
+                                                && !current.cancel_requested
+                                        });
+                                    if !is_current {
+                                        return;
+                                    }
+                                    if let Some(window) = weak_route.upgrade() {
+                                        window.set_chat_skill_route_status(status.clone().into());
+                                    }
+                                    if let Some(overlay) = overlay_route.upgrade() {
+                                        overlay.set_skill_route_status(status.into());
+                                    }
+                                });
+                            }
                             if !new_notices.is_empty() {
                                 let weak_notice = weak_worker.clone();
                                 let overlay_notice = overlay_weak_worker.clone();
@@ -3868,9 +3974,10 @@ fn main() -> Result<()> {
                     String::from_utf8(std::mem::take(&mut *acc))
                         .map_err(|_| "chat stream emitted invalid UTF-8".to_string())?,
                 );
-                let parsed = parse_chat_stream_protocol(
+                let parsed = parse_chat_stream_protocol_with_route_state(
                     raw.as_str(),
                     Some(stream_control_token.as_str()),
+                    route_report_delivered,
                 );
                 if !parsed.protocol_valid {
                     return Err(with_chat_diagnostic(
@@ -4111,11 +4218,21 @@ fn main() -> Result<()> {
                     if succeeded {
                         refresh_chat_session_history(w.as_weak());
                     }
+                    let unresolved_route_status = terminal_skill_route_status(
+                        w.get_chat_skill_route_status().as_str(),
+                        terminal_phase,
+                    );
+                    if let Some(status) = unresolved_route_status {
+                        w.set_chat_skill_route_status(status.into());
+                    }
                     // Buddy reflects the outcome: a win lights it green, a
                     // failure shows the error face. It holds that state until
                     // the next message resets it to "thinking".
                     buddy(&w, GuiActivity::from(terminal_phase));
                     if let Some(overlay) = overlay_for_loop.upgrade() {
+                        if let Some(status) = unresolved_route_status {
+                            overlay.set_skill_route_status(status.into());
+                        }
                         let visible_text = live_chat_request_text(&w, request_id);
                         project_companion_chat_stream(
                             &overlay,
@@ -4869,6 +4986,7 @@ fn main() -> Result<()> {
         }
     });
     let weak_panels_init = window.as_weak();
+    let overlay_weak_panels_init = overlay.as_weak();
     let omi_startup_revision = OMI_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
     let omi_startup_draft_revision = OMI_DRAFT_REVISION.load(std::sync::atomic::Ordering::Acquire);
     std::thread::spawn(move || {
@@ -4940,7 +5058,8 @@ fn main() -> Result<()> {
                 apply_profile_presets(&w, profile_presets);
                 apply_hemispheres(&w, hemis);
                 apply_provider_ids(&w, provider_ids);
-                let _ = apply_skills(&w, skills);
+                let overlay = overlay_weak_panels_init.upgrade();
+                let _ = apply_skills(&w, overlay.as_ref(), skills);
                 apply_plugins(&w, plugins);
                 apply_memory(&w, memory);
                 apply_channels(&w, channels);
@@ -9773,8 +9892,10 @@ fn main() -> Result<()> {
     // off the UI thread, then re-fetches + applies the list so the new state
     // shows + reports a status line.
     let weak_skill_toggle = window.as_weak();
+    let overlay_weak_skill_toggle = overlay.as_weak();
     window.on_skill_toggle(move |id, enabled| {
         let weak = weak_skill_toggle.clone();
+        let overlay_weak = overlay_weak_skill_toggle.clone();
         let id = id.to_string();
         let Some(lease) = acquire_skill_authority_action() else {
             if let Some(w) = weak.upgrade() {
@@ -9821,7 +9942,8 @@ fn main() -> Result<()> {
                 let _lease = lease;
                 if let Some(w) = weak.upgrade() {
                     w.set_skill_authority_operation_in_flight(false);
-                    let refresh = apply_skills(&w, skills);
+                    let overlay = overlay_weak.upgrade();
+                    let refresh = apply_skills(&w, overlay.as_ref(), skills);
                     let verb = if enabled { "enabled" } else { "disabled" };
                     if outcome.is_err() || refresh.is_err() {
                         render_skill_index(&w);
@@ -9848,8 +9970,10 @@ fn main() -> Result<()> {
     });
 
     let weak_skill_revoke = window.as_weak();
+    let overlay_weak_skill_revoke = overlay.as_weak();
     window.on_skill_revoke(move |id| {
         let weak = weak_skill_revoke.clone();
+        let overlay_weak = overlay_weak_skill_revoke.clone();
         let id = id.to_string();
         let Some(lease) = acquire_skill_authority_action() else {
             if let Some(w) = weak.upgrade() {
@@ -9900,7 +10024,8 @@ fn main() -> Result<()> {
                 let _lease = lease;
                 if let Some(w) = weak.upgrade() {
                     w.set_skill_authority_operation_in_flight(false);
-                    let refresh = apply_skills(&w, skills);
+                    let overlay = overlay_weak.upgrade();
+                    let refresh = apply_skills(&w, overlay.as_ref(), skills);
                     if outcome.is_err() || refresh.is_err() {
                         render_skill_index(&w);
                     }
@@ -9964,8 +10089,10 @@ fn main() -> Result<()> {
     // (push_toast internally schedules on the event loop), then refreshes the list.
     {
         let weak_si = window.as_weak();
+        let overlay_weak_si = overlay.as_weak();
         window.on_skill_install(move || {
             let weak = weak_si.clone();
+            let overlay_weak = overlay_weak_si.clone();
             std::thread::spawn(move || {
                 let picked = rfd::FileDialog::new()
                     .set_title("Select skill directory (must contain skill.yaml)")
@@ -10044,7 +10171,8 @@ fn main() -> Result<()> {
                 }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
-                        let refresh = apply_skills(&w, skills);
+                        let overlay = overlay_weak.upgrade();
+                        let refresh = apply_skills(&w, overlay.as_ref(), skills);
                         let status = match (result, refresh) {
                             (Ok(installed), Ok(())) => {
                                 let verb = if installed.replaced_existing {
@@ -10089,8 +10217,10 @@ fn main() -> Result<()> {
     // Shells `neoth skills --uninstall <id>` → toast + refresh.
     {
         let weak_su = window.as_weak();
+        let overlay_weak_su = overlay.as_weak();
         window.on_skill_uninstall(move |id| {
             let weak = weak_su.clone();
+            let overlay_weak = overlay_weak_su.clone();
             let id = id.to_string();
             std::thread::spawn(move || {
                 // The callback is gated again against the verified inventory:
@@ -10201,7 +10331,8 @@ fn main() -> Result<()> {
                 }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
-                        let refresh = apply_skills(&w, skills);
+                        let overlay = overlay_weak.upgrade();
+                        let refresh = apply_skills(&w, overlay.as_ref(), skills);
                         let status = match (outcome, refresh) {
                             (Ok(verified), Ok(())) if verified.removed => {
                                 match verified.warning_detail() {
@@ -10251,8 +10382,10 @@ fn main() -> Result<()> {
     // → toast + refresh.
     {
         let weak_sc = window.as_weak();
+        let overlay_weak_sc = overlay.as_weak();
         window.on_skill_create(move |id, desc, keywords, prompt| {
             let weak = weak_sc.clone();
+            let overlay_weak = overlay_weak_sc.clone();
             let id = id.to_string();
             let desc = desc.to_string();
             let keywords = keywords.to_string();
@@ -10384,7 +10517,8 @@ fn main() -> Result<()> {
                 }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
-                        let refresh = apply_skills(&w, skills);
+                        let overlay = overlay_weak.upgrade();
+                        let refresh = apply_skills(&w, overlay.as_ref(), skills);
                         let status = match (result, refresh) {
                             (Ok(created), Ok(())) => {
                                 let verb = if created.replaced_existing {
@@ -11384,7 +11518,7 @@ fn main() -> Result<()> {
         });
     });
 
-    // PF-01-GUI — operator flipped the Skills auto-route toggle. Mutate
+    // PF-01-GUI — operator flipped the semantic Skill fallback toggle. Mutate
     // `skills.always_embed_route` losslessly + drop the reload sentinel, same
     // dispatch path as the cluster mDNS toggle.
     let weak_skills_route = window.as_weak();
@@ -11406,12 +11540,13 @@ fn main() -> Result<()> {
                     );
                     let verb = if enabled { "on" } else { "off" };
                     w.set_status_line(
-                        format!("Skill auto-routing {verb}. Daemon reloading within 2s.").into(),
+                        format!("Semantic Skill fallback {verb}. Daemon reloading within 2s.")
+                            .into(),
                     );
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "skills: always_embed_route toggle failed");
-                    w.set_status_line(format!("Skill auto-route toggle failed: {e}").into());
+                    w.set_status_line(format!("Skill fallback toggle failed: {e}").into());
                 }
             }
         }
@@ -12844,6 +12979,9 @@ fn main() -> Result<()> {
                 ov2.set_buddy_mood(win2.get_buddy_mood());
                 ov2.set_status_text(win2.get_buddy_caption());
                 ov2.set_daemon_state(win2.get_daemon_state());
+                ov2.set_skill_options(win2.get_chat_skill_options());
+                ov2.set_selected_skill_index(win2.get_chat_selected_skill_index());
+                ov2.set_skill_route_status(win2.get_chat_skill_route_status());
                 let active = stream_for_minimize
                     .lock()
                     .ok()
@@ -13032,6 +13170,13 @@ fn main() -> Result<()> {
                 let Some(win) = window_weak.upgrade() else {
                     return;
                 };
+                let explicit_skill_id = match selected_skill_id_for_request() {
+                    Ok(selection) => selection,
+                    Err(error) => {
+                        ov.set_skill_route_status(error.into());
+                        return;
+                    }
+                };
                 if win.get_chat_send_in_flight()
                     || flow_active
                         .compare_exchange(
@@ -13113,6 +13258,7 @@ fn main() -> Result<()> {
                                 win.invoke_buddy_chat_send_approved(
                                     request.request_id.as_wire().into(),
                                     body.into(),
+                                    explicit_skill_id.unwrap_or_default().into(),
                                 );
                             }
                             Ok(preflight) => {
@@ -13143,6 +13289,7 @@ fn main() -> Result<()> {
                                     request_id: request.request_id,
                                     surface: ChatStreamSurface::Buddy,
                                     body,
+                                    explicit_skill_id,
                                     preflight,
                                 });
                                 win.set_chat_consent_prompt_request_id(
@@ -13186,7 +13333,8 @@ fn main() -> Result<()> {
             let child_slot = chat_child.clone();
             let signal_clock = chat_signal_clock.clone();
             let worker_barrier = chat_worker_barrier.clone();
-            window.on_buddy_chat_send_approved(move |request_id_wire, text| {
+            window.on_buddy_chat_send_approved(
+                move |request_id_wire, text, explicit_skill_id_wire| {
                 let Some(request_id) =
                     ChatStreamRequestId::parse_wire(request_id_wire.as_str())
                 else {
@@ -13194,6 +13342,8 @@ fn main() -> Result<()> {
                     return;
                 };
                 let body = text.trim().to_string();
+                let explicit_skill_id = (!explicit_skill_id_wire.is_empty())
+                    .then(|| explicit_skill_id_wire.to_string());
                 if body.is_empty() {
                     if let Ok(mut controller) = stream.lock() {
                         controller.settle(request_id, false);
@@ -13331,6 +13481,8 @@ fn main() -> Result<()> {
                     );
                     return;
                 }
+                win.set_chat_skill_route_status("Resolving Skill…".into());
+                ov.set_skill_route_status("Resolving Skill…".into());
                 buddy(&win, GuiActivity::ChatWaiting);
                 project_companion_chat_stream(&ov, ChatStreamPhase::Waiting, None);
                 sync_companion_recent_lines_from_canonical(&win, &ov);
@@ -13377,7 +13529,11 @@ fn main() -> Result<()> {
                             stream_control_token.as_str(),
                             consent_token.as_ref(),
                         )?;
-                        cmd.arg("--").arg(body.as_str());
+                        append_chat_prompt_args(
+                            &mut cmd,
+                            explicit_skill_id.as_deref(),
+                            body.as_str(),
+                        );
                         cmd.stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped());
                         let mut child = OwnedChatChild::spawn(request_id, &mut cmd)
@@ -13526,6 +13682,7 @@ fn main() -> Result<()> {
                         let mut buf = [0u8; 512];
                         let mut control_frame_gate = IncrementalControlFrameGate::default();
                         let mut delivered_notice_ids = std::collections::HashSet::new();
+                        let mut route_report_delivered = false;
                         let read_error = loop {
                             match stdout.read(&mut buf) {
                                 Ok(0) => break None,
@@ -13548,9 +13705,11 @@ fn main() -> Result<()> {
                                         continue;
                                     };
                                     control_frame_gate.observe_decoded_buffer(decoded);
-                                    let parsed = parse_chat_stream_protocol_incremental(
+                                    let parsed =
+                                        parse_chat_stream_protocol_incremental_with_route_state(
                                         decoded,
                                         Some(stream_control_token.as_str()),
+                                        route_report_delivered,
                                     );
                                     if !parsed.protocol_valid {
                                         break Some(std::io::Error::other(
@@ -13567,15 +13726,48 @@ fn main() -> Result<()> {
                                         ));
                                     }
                                     let new_notices = parsed.notices.to_vec();
-                                    if let Err(error) = compact_completed_notice_frames(
+                                    let new_route_report = parsed.route_report.clone();
+                                    if let Err(error) = compact_completed_control_frames(
                                         &mut acc,
-                                        &parsed.completed_notice_ranges,
+                                        &parsed.completed_control_ranges,
                                     ) {
                                         break Some(std::io::Error::other(error));
                                     }
                                     delivered_notice_ids.extend(
                                         new_notices.iter().map(|notice| notice.id.clone()),
                                     );
+                                    if let Some(report) = new_route_report {
+                                        route_report_delivered = true;
+                                        let status = format_skill_route_status(&report);
+                                        let ov_route = ov_weak.clone();
+                                        let win_route = win_weak.clone();
+                                        let stream_route = stream.clone();
+                                        let _ = slint::invoke_from_event_loop(move || {
+                                            let is_current = stream_route
+                                                .lock()
+                                                .ok()
+                                                .and_then(|controller| {
+                                                    controller.current_request()
+                                                })
+                                                .is_some_and(|current| {
+                                                    current.request_id == request_id
+                                                        && current.surface
+                                                            == ChatStreamSurface::Buddy
+                                                        && !current.cancel_requested
+                                                });
+                                            if !is_current {
+                                                return;
+                                            }
+                                            if let Some(window) = win_route.upgrade() {
+                                                window.set_chat_skill_route_status(
+                                                    status.clone().into(),
+                                                );
+                                            }
+                                            if let Some(overlay) = ov_route.upgrade() {
+                                                overlay.set_skill_route_status(status.into());
+                                            }
+                                        });
+                                    }
                                     if !new_notices.is_empty() {
                                         let ov_notice = ov_weak.clone();
                                         let win_notice = win_weak.clone();
@@ -13704,9 +13896,10 @@ fn main() -> Result<()> {
                                 "Buddy chat stream emitted invalid UTF-8".to_string()
                             })?,
                         );
-                        let parsed = parse_chat_stream_protocol(
+                        let parsed = parse_chat_stream_protocol_with_route_state(
                             raw.as_str(),
                             Some(stream_control_token.as_str()),
+                            route_report_delivered,
                         );
                         if !parsed.protocol_valid {
                             return Err(with_chat_diagnostic(
@@ -13774,6 +13967,12 @@ fn main() -> Result<()> {
                         let win = win_weak.upgrade();
                         if let Some(win) = win.as_ref() {
                             win.set_chat_send_in_flight(false);
+                            if let Some(status) = terminal_skill_route_status(
+                                win.get_chat_skill_route_status().as_str(),
+                                terminal.phase,
+                            ) {
+                                win.set_chat_skill_route_status(status.into());
+                            }
                             buddy(win, GuiActivity::from(terminal.phase));
                             let terminal_text = match (terminal.phase, &result) {
                                 (ChatStreamPhase::Complete, Ok(reply)) => {
@@ -13797,6 +13996,12 @@ fn main() -> Result<()> {
                         let Some(ov) = ov_weak.upgrade() else {
                             return;
                         };
+                        if let Some(status) = terminal_skill_route_status(
+                            ov.get_skill_route_status().as_str(),
+                            terminal.phase,
+                        ) {
+                            ov.set_skill_route_status(status.into());
+                        }
                         let snippet = match (terminal.phase, &result) {
                             (ChatStreamPhase::Complete, Ok(reply)) if !reply.is_empty() => {
                                 let tail = utf8_suffix(reply, 120);
@@ -16100,6 +16305,17 @@ fn spawn_neothd_plain(bin: &Path) -> std::process::Command {
     cmd
 }
 
+fn append_chat_prompt_args(
+    command: &mut std::process::Command,
+    explicit_skill_id: Option<&str>,
+    body: &str,
+) {
+    if let Some(skill_id) = explicit_skill_id {
+        command.arg("--skill").arg(skill_id);
+    }
+    command.arg("--").arg(body);
+}
+
 fn channel_credential_command(bin: &Path) -> std::process::Command {
     let mut command = spawn_neothd_plain(bin);
     command
@@ -17771,7 +17987,7 @@ fn skill_summaries_from_inventory_at(
                     install_terminal_receipt_sha256,
                 } => {
                     let id = manifest.id.trim();
-                    if !valid_skill_gui_id(id) {
+                    if !panel_logic::valid_skill_operation_id(id) {
                         return Err(format!(
                             "skill inventory row {} has an invalid id",
                             index + 1
@@ -17780,6 +17996,24 @@ fn skill_summaries_from_inventory_at(
                     if manifest.description.trim().is_empty() {
                         return Err(format!(
                             "skill inventory row `{id}` has an empty description"
+                        ));
+                    }
+                    let origin_runtime_valid = matches!(
+                        (origin, runtime_state),
+                        (
+                            neothd::skills::loader::SkillInventoryOrigin::Bundled,
+                            neothd::skills::loader::SkillInventoryRuntimeState::TrustedBundledActive
+                                | neothd::skills::loader::SkillInventoryRuntimeState::Disabled
+                        ) | (
+                            neothd::skills::loader::SkillInventoryOrigin::User,
+                            neothd::skills::loader::SkillInventoryRuntimeState::InstalledActive
+                                | neothd::skills::loader::SkillInventoryRuntimeState::BundledFallbackActive
+                                | neothd::skills::loader::SkillInventoryRuntimeState::Disabled
+                        )
+                    );
+                    if !origin_runtime_valid {
+                        return Err(format!(
+                            "skill inventory row `{id}` has an invalid origin/runtime binding"
                         ));
                     }
                     let (
@@ -17909,6 +18143,15 @@ fn skill_summaries_from_inventory_at(
                             index + 1
                         ));
                     }
+                    if !matches!(
+                        runtime_state,
+                        neothd::skills::loader::SkillInventoryRuntimeState::BundledFallbackActive
+                            | neothd::skills::loader::SkillInventoryRuntimeState::Disabled
+                    ) {
+                        return Err(format!(
+                            "broken skill inventory row `{id}` has an invalid runtime binding"
+                        ));
+                    }
                     panel_logic::SkillSummary {
                         id: diagnostic_skill_display_id(&id),
                         operation_id: id.clone(),
@@ -17920,7 +18163,7 @@ fn skill_summaries_from_inventory_at(
                         error: diagnostic_skill_display_text(&error, 512),
                         path: diagnostic_skill_display_text(&path.display().to_string(), 512),
                         origin: "user".to_string(),
-                        repairable: valid_skill_gui_id(&id)
+                        repairable: panel_logic::valid_skill_operation_id(&id)
                             && repairability
                                 == neothd::skills::installer::SkillRepairability::ManifestReplaceable,
                         runtime_state: match runtime_state {
@@ -17982,14 +18225,6 @@ fn valid_skill_uninstall_id(id: &str) -> bool {
         && components.next().is_none()
 }
 
-fn valid_skill_gui_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 64
-        && id
-            .chars()
-            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
-}
-
 fn valid_lower_sha256(value: &str) -> bool {
     value.len() == 64
         && value
@@ -18025,6 +18260,102 @@ fn fetch_skills() -> std::result::Result<Vec<panel_logic::SkillSummary>, String>
 /// `None` is distinct from a verified empty inventory.
 static SKILLS_CACHE: std::sync::Mutex<Option<Vec<panel_logic::SkillSummary>>> =
     std::sync::Mutex::new(None);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SkillPickerSnapshot {
+    options: Vec<String>,
+    selected_index: usize,
+    selected_id: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct SkillPickerState {
+    options: Vec<String>,
+    selected_id: Option<String>,
+}
+
+impl SkillPickerState {
+    fn refresh(&mut self, options: Vec<String>) -> (SkillPickerSnapshot, bool) {
+        debug_assert_eq!(options.first().map(String::as_str), Some("Automatic"));
+        let previous = self.selected_id.clone();
+        let selected_index = previous
+            .as_ref()
+            .and_then(|selected| options.iter().position(|option| option == selected))
+            .unwrap_or(0);
+        let selection_removed = previous.is_some() && selected_index == 0;
+        if selection_removed {
+            self.selected_id = None;
+        }
+        self.options = options;
+        (self.snapshot(), selection_removed)
+    }
+
+    fn select(&mut self, index: i32) -> std::result::Result<SkillPickerSnapshot, String> {
+        let index = usize::try_from(index)
+            .map_err(|_| "Skill picker returned a negative selection index".to_string())?;
+        let selected = self
+            .options
+            .get(index)
+            .ok_or_else(|| "Skill picker returned an out-of-range selection".to_string())?;
+        self.selected_id = (index != 0).then(|| selected.clone());
+        Ok(self.snapshot())
+    }
+
+    fn snapshot(&self) -> SkillPickerSnapshot {
+        let selected_index = self
+            .selected_id
+            .as_ref()
+            .and_then(|selected| self.options.iter().position(|option| option == selected))
+            .unwrap_or(0);
+        SkillPickerSnapshot {
+            options: self.options.clone(),
+            selected_index,
+            selected_id: self.selected_id.clone(),
+        }
+    }
+}
+
+static SKILL_PICKER_STATE: std::sync::Mutex<SkillPickerState> =
+    std::sync::Mutex::new(SkillPickerState {
+        options: Vec::new(),
+        selected_id: None,
+    });
+
+fn selected_skill_id_for_request() -> std::result::Result<Option<String>, String> {
+    SKILL_PICKER_STATE
+        .lock()
+        .map(|state| state.selected_id.clone())
+        .map_err(|_| "Skill picker state is unavailable".to_string())
+}
+
+fn select_skill_picker_index(index: i32) -> std::result::Result<SkillPickerSnapshot, String> {
+    SKILL_PICKER_STATE
+        .lock()
+        .map_err(|_| "Skill picker state is unavailable".to_string())?
+        .select(index)
+}
+
+fn set_main_skill_picker(window: &MainWindow, snapshot: &SkillPickerSnapshot) {
+    use slint::{ModelRc, SharedString, VecModel};
+    let options = snapshot
+        .options
+        .iter()
+        .map(|option| SharedString::from(option.as_str()))
+        .collect::<Vec<_>>();
+    window.set_chat_skill_options(ModelRc::new(VecModel::from(options)));
+    window.set_chat_selected_skill_index(snapshot.selected_index as i32);
+}
+
+fn set_buddy_skill_picker(overlay: &MiniOverlay, snapshot: &SkillPickerSnapshot) {
+    use slint::{ModelRc, SharedString, VecModel};
+    let options = snapshot
+        .options
+        .iter()
+        .map(|option| SharedString::from(option.as_str()))
+        .collect::<Vec<_>>();
+    overlay.set_skill_options(ModelRc::new(VecModel::from(options)));
+    overlay.set_selected_skill_index(snapshot.selected_index as i32);
+}
 
 #[derive(Clone, Debug)]
 struct VerifiedSkillAuthorityExpectation {
@@ -18183,6 +18514,7 @@ fn verified_skill_uninstall_target_in_cache(id: &str) -> std::result::Result<(),
 /// operator-visible instead of masquerading as a successful empty inventory.
 fn apply_skills(
     window: &MainWindow,
+    overlay: Option<&MiniOverlay>,
     skills: std::result::Result<Vec<panel_logic::SkillSummary>, String>,
 ) -> std::result::Result<(), String> {
     let skills = match skills {
@@ -18198,6 +18530,7 @@ fn apply_skills(
         }
     };
     let total = skills.len() as i32;
+    let picker_options = panel_logic::skill_picker_options(&skills);
     let mut cache = match SKILLS_CACHE.lock() {
         Ok(cache) => cache,
         Err(_) => {
@@ -18208,9 +18541,32 @@ fn apply_skills(
             return Err(error);
         }
     };
+    let mut picker_state = match SKILL_PICKER_STATE.lock() {
+        Ok(state) => state,
+        Err(_) => {
+            let error = "Skill picker state is unavailable".to_string();
+            window.set_status_line(
+                "Skill picker state is unavailable. Keeping the previous verified list.".into(),
+            );
+            return Err(error);
+        }
+    };
     *cache = Some(skills);
+    let (picker_snapshot, selection_removed) = picker_state.refresh(picker_options);
     drop(cache);
+    drop(picker_state);
     window.set_skills_total(total);
+    set_main_skill_picker(window, &picker_snapshot);
+    if let Some(overlay) = overlay {
+        set_buddy_skill_picker(overlay, &picker_snapshot);
+    }
+    if selection_removed {
+        let status = "Skill: Automatic · previous selection unavailable after refresh";
+        window.set_chat_skill_route_status(status.into());
+        if let Some(overlay) = overlay {
+            overlay.set_skill_route_status(status.into());
+        }
+    }
     render_skill_index(window);
     Ok(())
 }
@@ -20939,13 +21295,13 @@ fn new_stream_control_token() -> std::result::Result<zeroize::Zeroizing<String>,
     Ok(zeroize::Zeroizing::new(hex::encode(control_nonce.as_ref())))
 }
 
-const CHAT_STREAM_PROTOCOL_VERSION: u64 = 2;
+const CHAT_STREAM_PROTOCOL_VERSION: u64 = 3;
 
 fn chat_stream_request_id(control_token: &str) -> String {
     use sha2::{Digest as _, Sha256};
 
     let mut digest = Sha256::new();
-    digest.update(b"neoth-chat-stream-request-v2\0");
+    digest.update(b"neoth-chat-stream-request-v3\0");
     digest.update(control_token.as_bytes());
     hex::encode(digest.finalize())
 }
@@ -20964,13 +21320,82 @@ fn chat_stream_finalization_receipt(
     use sha2::{Digest as _, Sha256};
 
     let mut digest = Sha256::new();
-    digest.update(b"neoth-chat-stream-finalization-v2\0");
+    digest.update(b"neoth-chat-stream-finalization-v3\0");
     digest.update(request_id.as_bytes());
     digest.update(b"\0");
     digest.update(chunk_count.to_le_bytes());
     digest.update(b"\0");
     digest.update(content_hash.as_bytes());
     hex::encode(digest.finalize())
+}
+
+fn format_skill_route_status(report: &neothd::skills::resolver::SkillRouteReport) -> String {
+    use neothd::skills::resolver::{SkillRouteOutcome, SkillRouteRejectionCode, SkillRouteStage};
+
+    let candidate_label = |candidate: &neothd::skills::resolver::SkillRouteCandidateReport| {
+        candidate.mode_id.as_ref().map_or_else(
+            || candidate.skill_id.clone(),
+            |mode| format!("{}/{mode}", candidate.skill_id),
+        )
+    };
+    let degradation = report
+        .degraded_reason
+        .as_deref()
+        .map(|reason| format!(" · degraded: {reason}"))
+        .unwrap_or_default();
+    match report.outcome {
+        SkillRouteOutcome::Match => {
+            let selected = report
+                .candidates
+                .first()
+                .map(candidate_label)
+                .unwrap_or_else(|| "unknown".to_string());
+            let stage = match report.stage {
+                Some(SkillRouteStage::Explicit) => "explicit",
+                Some(SkillRouteStage::ParentLiteral) => "trigger",
+                Some(SkillRouteStage::Mode) => "mode",
+                Some(SkillRouteStage::Embedding) => "semantic",
+                None => "matched",
+            };
+            format!("Skill: {selected} · {stage}{degradation}")
+        }
+        SkillRouteOutcome::NoMatch => format!("Skill: Automatic · no match{degradation}"),
+        SkillRouteOutcome::Conflict => {
+            let candidates = report
+                .candidates
+                .iter()
+                .map(candidate_label)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("Skill conflict: {candidates}{degradation}")
+        }
+        SkillRouteOutcome::Rejected => {
+            let reason = match report.rejection {
+                Some(SkillRouteRejectionCode::EmptyExplicitSkill) => "empty selection",
+                Some(SkillRouteRejectionCode::ExplicitSkillUnavailable) => "unavailable",
+                Some(SkillRouteRejectionCode::ExplicitSkillDisabled) => "disabled",
+                Some(SkillRouteRejectionCode::ExplicitSkillOutsidePathScope) => {
+                    "outside path scope"
+                }
+                None => "rejected",
+            };
+            format!("Skill rejected: {reason}{degradation}")
+        }
+    }
+}
+
+fn terminal_skill_route_status(
+    current_status: &str,
+    phase: ChatStreamPhase,
+) -> Option<&'static str> {
+    if current_status != "Resolving Skill…" {
+        return None;
+    }
+    match phase {
+        ChatStreamPhase::Cancelled => Some("Skill: unresolved · request cancelled before report"),
+        ChatStreamPhase::Failed => Some("Skill: unavailable · no authenticated route report"),
+        _ => None,
+    }
 }
 
 /// Chat-feel parity #3 (beat-openhuman): split the raw stdout of
@@ -20999,15 +21424,22 @@ pub struct StreamStats {
     pub model: String,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 struct ParsedChatStream {
     text: String,
+    route_report: Option<neothd::skills::resolver::SkillRouteReport>,
     notices: Vec<StreamNotice>,
-    completed_notice_ranges: Vec<std::ops::Range<usize>>,
+    completed_control_ranges: Vec<std::ops::Range<usize>>,
     provider_done: bool,
     done: bool,
     protocol_valid: bool,
     stats: StreamStats,
+}
+
+enum ParsedSkillRouteFrame {
+    NotRoute,
+    Valid(neothd::skills::resolver::SkillRouteReport),
+    InvalidControl,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21078,14 +21510,31 @@ fn parse_stream_sentinel_with_expected_token(
 }
 
 fn parse_chat_stream_protocol(raw: &str, expected_control_token: Option<&str>) -> ParsedChatStream {
-    parse_chat_stream_protocol_with_mode(raw, expected_control_token, true)
+    parse_chat_stream_protocol_with_mode(raw, expected_control_token, true, false)
 }
 
+#[cfg(test)]
 fn parse_chat_stream_protocol_incremental(
     raw: &str,
     expected_control_token: Option<&str>,
 ) -> ParsedChatStream {
-    parse_chat_stream_protocol_with_mode(raw, expected_control_token, false)
+    parse_chat_stream_protocol_with_mode(raw, expected_control_token, false, false)
+}
+
+fn parse_chat_stream_protocol_incremental_with_route_state(
+    raw: &str,
+    expected_control_token: Option<&str>,
+    route_report_delivered: bool,
+) -> ParsedChatStream {
+    parse_chat_stream_protocol_with_mode(raw, expected_control_token, false, route_report_delivered)
+}
+
+fn parse_chat_stream_protocol_with_route_state(
+    raw: &str,
+    expected_control_token: Option<&str>,
+    route_report_delivered: bool,
+) -> ParsedChatStream {
+    parse_chat_stream_protocol_with_mode(raw, expected_control_token, true, route_report_delivered)
 }
 
 #[derive(Debug, Default)]
@@ -21108,7 +21557,7 @@ impl IncrementalControlFrameGate {
     }
 }
 
-fn compact_completed_notice_frames(
+fn compact_completed_control_frames(
     buffer: &mut Vec<u8>,
     completed_ranges: &[std::ops::Range<usize>],
 ) -> Result<(), &'static str> {
@@ -21123,7 +21572,7 @@ fn compact_completed_notice_frames(
     let mut cursor = 0usize;
     for range in completed_ranges {
         if range.start < cursor || range.end > buffer.len() || range.start > range.end {
-            return Err("chat stream parser produced an invalid notice byte range");
+            return Err("chat stream parser produced an invalid control-frame byte range");
         }
         compacted.extend_from_slice(&buffer[cursor..range.start]);
         cursor = range.end;
@@ -21139,6 +21588,7 @@ fn parse_chat_stream_protocol_with_mode(
     raw: &str,
     expected_control_token: Option<&str>,
     input_complete: bool,
+    route_report_delivered: bool,
 ) -> ParsedChatStream {
     let terminal = if input_complete || raw.ends_with('\n') {
         final_stream_sentinel(raw, expected_control_token)
@@ -21168,13 +21618,17 @@ fn parse_chat_stream_protocol_with_mode(
             .to_string(),
     };
     let mut visible = String::with_capacity(reply_end);
+    let mut route_report = None;
+    let mut route_report_count = u8::from(route_report_delivered);
     let mut notices = Vec::new();
-    let mut completed_notice_ranges = Vec::new();
+    let mut completed_control_ranges = Vec::new();
     let mut notice_ids = std::collections::HashSet::new();
     let mut provider_done: Option<ProviderDoneFrame> = None;
     let mut provider_done_count = 0u8;
     let mut provider_delta_count = 0u64;
     let mut provider_delta_text = String::new();
+    let mut saw_provider_activity = false;
+    let mut saw_route_blocking_notice = false;
     let mut saw_untyped_reply = false;
     let mut provider_reply_open = true;
     let mut protocol_valid = true;
@@ -21196,52 +21650,92 @@ fn parse_chat_stream_protocol_with_mode(
             segment_start = segment_end;
             continue;
         }
-        match authenticated_stream_notice(line, expected_control_token) {
-            StreamNoticeFrame::Valid(notice) => {
-                if !notice_ids.insert(notice.id.clone()) {
+        match authenticated_skill_route(line, expected_control_token) {
+            ParsedSkillRouteFrame::Valid(report) => {
+                route_report_count = route_report_count.saturating_add(1);
+                let route_is_late = saw_provider_activity
+                    || saw_route_blocking_notice
+                    || provider_delta_count != 0
+                    || provider_done_count != 0
+                    || saw_untyped_reply
+                    || !provider_reply_open;
+                if route_report_count != 1 || route_is_late {
                     protocol_valid = false;
+                } else {
+                    route_report = Some(report);
                 }
-                notices.push(notice);
-                completed_notice_ranges.push(segment_start..segment_end);
+                completed_control_ranges.push(segment_start..segment_end);
             }
-            StreamNoticeFrame::InvalidAuthenticated => {
+            ParsedSkillRouteFrame::InvalidControl => {
                 protocol_valid = false;
+                completed_control_ranges.push(segment_start..segment_end);
             }
-            StreamNoticeFrame::NotNotice => {
-                match authenticated_provider_delta(line, expected_control_token) {
-                    ParsedProviderDeltaFrame::Valid(delta) => {
-                        if !provider_reply_open
-                            || delta.sequence != provider_delta_count.saturating_add(1)
-                        {
+            ParsedSkillRouteFrame::NotRoute => {
+                match authenticated_stream_notice(line, expected_control_token) {
+                    StreamNoticeFrame::Valid(notice) => {
+                        let route_precedes_notice = route_report_count == 1;
+                        saw_route_blocking_notice = true;
+                        if !route_precedes_notice {
+                            protocol_valid = false;
+                        } else if !notice_ids.insert(notice.id.clone()) {
                             protocol_valid = false;
                         } else {
-                            provider_delta_count = delta.sequence;
-                            provider_delta_text.push_str(&delta.text);
-                            visible.push_str(&delta.text);
+                            notices.push(notice);
+                            completed_control_ranges.push(segment_start..segment_end);
                         }
                     }
-                    ParsedProviderDeltaFrame::InvalidAuthenticated => {
+                    StreamNoticeFrame::InvalidAuthenticated => {
                         protocol_valid = false;
                     }
-                    ParsedProviderDeltaFrame::NotDelta => {
-                        match authenticated_provider_done(line, expected_control_token) {
-                            ParsedProviderDoneFrame::Valid(boundary) => {
-                                provider_done_count = provider_done_count.saturating_add(1);
-                                if provider_done.replace(boundary).is_some() {
+                    StreamNoticeFrame::NotNotice => {
+                        match authenticated_provider_delta(line, expected_control_token) {
+                            ParsedProviderDeltaFrame::Valid(delta) => {
+                                saw_provider_activity = true;
+                                if route_report_count != 1
+                                    || !provider_reply_open
+                                    || delta.sequence != provider_delta_count.saturating_add(1)
+                                {
                                     protocol_valid = false;
+                                } else {
+                                    provider_delta_count = delta.sequence;
+                                    provider_delta_text.push_str(&delta.text);
+                                    visible.push_str(&delta.text);
                                 }
-                                provider_reply_open = false;
                             }
-                            ParsedProviderDoneFrame::InvalidAuthenticated => {
+                            ParsedProviderDeltaFrame::InvalidAuthenticated => {
                                 protocol_valid = false;
                             }
-                            ParsedProviderDoneFrame::NotDone if provider_reply_open => {
-                                if !segment.trim().is_empty() {
-                                    saw_untyped_reply = true;
+                            ParsedProviderDeltaFrame::NotDelta => {
+                                match authenticated_provider_done(line, expected_control_token) {
+                                    ParsedProviderDoneFrame::Valid(boundary) => {
+                                        saw_provider_activity = true;
+                                        provider_done_count = provider_done_count.saturating_add(1);
+                                        if provider_done.replace(boundary).is_some() {
+                                            protocol_valid = false;
+                                        }
+                                        provider_reply_open = false;
+                                    }
+                                    ParsedProviderDoneFrame::InvalidAuthenticated => {
+                                        protocol_valid = false;
+                                    }
+                                    ParsedProviderDoneFrame::NotDone if provider_reply_open => {
+                                        let leading_control_delimiter = expected_control_token
+                                            .is_some()
+                                            && visible.is_empty()
+                                            && !saw_provider_activity
+                                            && !saw_untyped_reply
+                                            && segment.trim().is_empty();
+                                        if !leading_control_delimiter && !segment.trim().is_empty()
+                                        {
+                                            saw_untyped_reply = true;
+                                        }
+                                        if !leading_control_delimiter {
+                                            visible.push_str(segment);
+                                        }
+                                    }
+                                    ParsedProviderDoneFrame::NotDone => {}
                                 }
-                                visible.push_str(segment);
                             }
-                            ParsedProviderDoneFrame::NotDone => {}
                         }
                     }
                 }
@@ -21251,7 +21745,8 @@ fn parse_chat_stream_protocol_with_mode(
     }
     if let Some(boundary) = provider_done.as_ref() {
         if boundary.protocol_version == CHAT_STREAM_PROTOCOL_VERSION {
-            protocol_valid &= !saw_untyped_reply
+            protocol_valid &= route_report_count == 1
+                && !saw_untyped_reply
                 && provider_delta_count == boundary.count
                 && chat_stream_content_hash(&provider_delta_text) == boundary.content_hash;
         } else {
@@ -21271,8 +21766,9 @@ fn parse_chat_stream_protocol_with_mode(
     }
     ParsedChatStream {
         text: visible.trim_end().to_string(),
+        route_report,
         notices,
-        completed_notice_ranges,
+        completed_control_ranges,
         provider_done: provider_done_count == 1,
         done: terminal.is_some(),
         protocol_valid: protocol_valid
@@ -21288,6 +21784,66 @@ fn is_incomplete_stream_control_tail(segment: &str) -> bool {
     let candidate = segment.trim();
     !candidate.is_empty()
         && (CONTROL_PREFIX.starts_with(candidate) || candidate.starts_with(CONTROL_PREFIX))
+}
+
+fn authenticated_skill_route(
+    line: &str,
+    expected_control_token: Option<&str>,
+) -> ParsedSkillRouteFrame {
+    let frame = match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(frame) => frame,
+        Err(_) => {
+            let claims_skill_route = line.trim_start().starts_with('{')
+                && line.contains("\"neoth_stream\"")
+                && line.contains("\"skill_route\"");
+            return if claims_skill_route {
+                ParsedSkillRouteFrame::InvalidControl
+            } else {
+                ParsedSkillRouteFrame::NotRoute
+            };
+        }
+    };
+    if frame.get("neoth_stream").and_then(|value| value.as_str()) != Some("skill_route") {
+        return ParsedSkillRouteFrame::NotRoute;
+    }
+    let Some(expected_control_token) = expected_control_token else {
+        return ParsedSkillRouteFrame::InvalidControl;
+    };
+    let Some(object) = frame.as_object() else {
+        return ParsedSkillRouteFrame::InvalidControl;
+    };
+    const FRAME_KEYS: [&str; 5] = [
+        "neoth_stream",
+        "protocol_version",
+        "request_id",
+        "control_token",
+        "report",
+    ];
+    if object.len() != FRAME_KEYS.len() || FRAME_KEYS.iter().any(|key| !object.contains_key(*key)) {
+        return ParsedSkillRouteFrame::InvalidControl;
+    }
+    if frame.get("control_token").and_then(|value| value.as_str()) != Some(expected_control_token)
+        || frame
+            .get("protocol_version")
+            .and_then(|value| value.as_u64())
+            != Some(CHAT_STREAM_PROTOCOL_VERSION)
+        || frame.get("request_id").and_then(|value| value.as_str())
+            != Some(chat_stream_request_id(expected_control_token).as_str())
+    {
+        return ParsedSkillRouteFrame::InvalidControl;
+    }
+    let Some(raw_report) = frame.get("report") else {
+        return ParsedSkillRouteFrame::InvalidControl;
+    };
+    let Ok(report) =
+        serde_json::from_value::<neothd::skills::resolver::SkillRouteReport>(raw_report.clone())
+    else {
+        return ParsedSkillRouteFrame::InvalidControl;
+    };
+    if serde_json::to_value(&report).ok().as_ref() != Some(raw_report) {
+        return ParsedSkillRouteFrame::InvalidControl;
+    }
+    ParsedSkillRouteFrame::Valid(report)
 }
 
 fn authenticated_stream_notice(
@@ -21700,6 +22256,49 @@ pub const PRESET_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::fr
 mod chat_subprocess_tests {
     use super::*;
 
+    fn skill_route_report() -> neothd::skills::resolver::SkillRouteReport {
+        use neothd::skills::resolver::{
+            SkillExecutionBinding, SkillRouteCandidateReport, SkillRouteOutcome, SkillRouteReport,
+            SkillRouteStage,
+        };
+
+        SkillRouteReport {
+            outcome: SkillRouteOutcome::Match,
+            stage: Some(SkillRouteStage::Explicit),
+            config_epoch: 7,
+            authority_epoch: 11,
+            snapshot_sha256: "a".repeat(64),
+            candidates: vec![SkillRouteCandidateReport {
+                skill_id: "systematic_debugging".to_string(),
+                mode_id: None,
+                matched_terms: Vec::new(),
+                score: 1.0,
+                execution: SkillExecutionBinding {
+                    trusted_bundled: true,
+                    content_hash: "b".repeat(64),
+                    package_generation_sha256: None,
+                    manifest_sha256: None,
+                    install_incarnation: None,
+                    install_terminal_receipt_sha256: None,
+                    authority_record_sha256: None,
+                },
+            }],
+            rejection: None,
+            degraded_reason: None,
+        }
+    }
+
+    fn skill_route_frame(token: &str) -> String {
+        serde_json::json!({
+            "neoth_stream": "skill_route",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id(token),
+            "control_token": token,
+            "report": skill_route_report(),
+        })
+        .to_string()
+    }
+
     fn provider_delta_frame(token: &str, sequence: u64, text: &str) -> String {
         serde_json::json!({
             "neoth_stream": "provider_delta",
@@ -21899,6 +22498,7 @@ mod chat_subprocess_tests {
 
     #[test]
     fn gui_stream_sentinel_is_bound_to_the_per_turn_control_token() {
+        let route = skill_route_frame("right");
         let delta = provider_delta_frame("right", 1, "reply");
         let provider_done = provider_done_frame("right", 1, "reply");
         let mut done = done_frame("right", 1, "reply");
@@ -21907,7 +22507,7 @@ mod chat_subprocess_tests {
             "kind": "kanban",
             "id": "7",
         }]);
-        let raw = format!("{delta}\n{provider_done}\n{done}\n");
+        let raw = format!("{route}\n{delta}\n{provider_done}\n{done}\n");
         let (_, done, _) = parse_stream_sentinel_with_token(&raw, "wrong");
         assert!(!done);
         assert!(parse_stream_links_with_token(&raw, "wrong").is_empty());
@@ -21922,7 +22522,188 @@ mod chat_subprocess_tests {
     }
 
     #[test]
+    fn authenticated_skill_route_is_typed_hidden_and_shared_by_status_projection() {
+        let route = skill_route_frame("right");
+        let parsed = parse_chat_stream_protocol_incremental(&format!("{route}\n"), Some("right"));
+
+        assert!(parsed.protocol_valid);
+        assert_eq!(parsed.text, "");
+        assert_eq!(parsed.route_report, Some(skill_route_report()));
+        assert_eq!(parsed.completed_control_ranges.len(), 1);
+        assert_eq!(
+            format_skill_route_status(parsed.route_report.as_ref().unwrap()),
+            "Skill: systematic_debugging · explicit"
+        );
+        assert_eq!(
+            terminal_skill_route_status("Resolving Skill…", ChatStreamPhase::Failed),
+            Some("Skill: unavailable · no authenticated route report")
+        );
+        assert_eq!(
+            terminal_skill_route_status(
+                "Skill: systematic_debugging · explicit",
+                ChatStreamPhase::Failed,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn core_route_frame_delimiter_never_prefixes_visible_reply() {
+        let route = skill_route_frame("right");
+        let delta = provider_delta_frame("right", 1, "reply");
+        let mut accumulated = format!("\n{route}\n").into_bytes();
+
+        let parsed = parse_chat_stream_protocol_incremental(
+            std::str::from_utf8(&accumulated).unwrap(),
+            Some("right"),
+        );
+        assert!(parsed.protocol_valid);
+        assert_eq!(parsed.text, "");
+        assert!(parsed.route_report.is_some());
+        compact_completed_control_frames(&mut accumulated, &parsed.completed_control_ranges)
+            .unwrap();
+
+        accumulated.extend_from_slice(format!("{delta}\n").as_bytes());
+        let parsed = parse_chat_stream_protocol_incremental_with_route_state(
+            std::str::from_utf8(&accumulated).unwrap(),
+            Some("right"),
+            true,
+        );
+        assert!(parsed.protocol_valid);
+        assert_eq!(parsed.text, "reply");
+    }
+
+    #[test]
+    fn skill_route_rejects_wrong_binding_malformed_duplicate_and_late_frames() {
+        let valid: serde_json::Value = serde_json::from_str(&skill_route_frame("right")).unwrap();
+        for (name, mut invalid) in [
+            ("token", valid.clone()),
+            ("request", valid.clone()),
+            ("version", valid.clone()),
+            ("report", valid.clone()),
+            ("extra-report-field", valid.clone()),
+            ("extra-frame-field", valid.clone()),
+        ] {
+            match name {
+                "token" => invalid["control_token"] = serde_json::json!("wrong"),
+                "request" => invalid["request_id"] = serde_json::json!("wrong"),
+                "version" => invalid["protocol_version"] = serde_json::json!(2),
+                "report" => {
+                    invalid["report"].as_object_mut().unwrap().remove("outcome");
+                }
+                "extra-report-field" => {
+                    invalid["report"]["display_summary"] = serde_json::json!("untrusted");
+                }
+                "extra-frame-field" => {
+                    invalid["display_summary"] = serde_json::json!("untrusted");
+                }
+                _ => unreachable!(),
+            }
+            let parsed =
+                parse_chat_stream_protocol_incremental(&format!("{invalid}\n"), Some("right"));
+            assert!(!parsed.protocol_valid, "{name} must fail closed");
+            assert_eq!(
+                parsed.text, "",
+                "{name} must never render as assistant text"
+            );
+            assert!(parsed.route_report.is_none());
+        }
+
+        let malformed_json = parse_chat_stream_protocol_incremental(
+            "{\"neoth_stream\":\"skill_route\",}\n",
+            Some("right"),
+        );
+        assert!(!malformed_json.protocol_valid);
+        assert_eq!(malformed_json.text, "");
+
+        let route = skill_route_frame("right");
+        let duplicate =
+            parse_chat_stream_protocol_incremental(&format!("{route}\n{route}\n"), Some("right"));
+        assert!(!duplicate.protocol_valid);
+        assert_eq!(duplicate.text, "");
+
+        let late = parse_chat_stream_protocol_incremental(
+            &format!("{}\n{route}\n", provider_delta_frame("right", 1, "reply")),
+            Some("right"),
+        );
+        assert!(!late.protocol_valid);
+        assert_eq!(late.text, "");
+        assert!(late.route_report.is_none());
+    }
+
+    #[test]
+    fn authenticated_notice_before_route_fails_before_materialization_or_compaction() {
+        let notice = serde_json::json!({
+            "neoth_stream": "notice",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id("right"),
+            "control_token": "right",
+            "kind": "review_result",
+            "id": "0123456789abcdef",
+            "text": "must remain hidden",
+            "durable": false,
+        });
+        let route = skill_route_frame("right");
+        let contiguous =
+            parse_chat_stream_protocol_incremental(&format!("{notice}\n{route}\n"), Some("right"));
+        assert!(!contiguous.protocol_valid);
+        assert!(contiguous.notices.is_empty());
+        assert!(contiguous.route_report.is_none());
+        assert_eq!(contiguous.text, "");
+
+        let mut accumulated = format!("{notice}\n").into_bytes();
+        let before_route = parse_chat_stream_protocol_incremental(
+            std::str::from_utf8(&accumulated).unwrap(),
+            Some("right"),
+        );
+        assert!(!before_route.protocol_valid);
+        assert!(before_route.notices.is_empty());
+        assert!(before_route.completed_control_ranges.is_empty());
+        compact_completed_control_frames(&mut accumulated, &before_route.completed_control_ranges)
+            .unwrap();
+        accumulated.extend_from_slice(format!("{route}\n").as_bytes());
+        let after_attempted_compaction = parse_chat_stream_protocol_incremental(
+            std::str::from_utf8(&accumulated).unwrap(),
+            Some("right"),
+        );
+        assert!(!after_attempted_compaction.protocol_valid);
+        assert!(after_attempted_compaction.notices.is_empty());
+        assert!(after_attempted_compaction.route_report.is_none());
+    }
+
+    #[test]
+    fn split_and_compacted_skill_route_frame_remains_exactly_once() {
+        let route = skill_route_frame("right");
+        for split in 0..=route.len() {
+            let parsed = parse_chat_stream_protocol_incremental(&route[..split], Some("right"));
+            assert!(parsed.protocol_valid, "split byte {split}");
+            assert_eq!(parsed.text, "", "split byte {split}");
+            assert!(parsed.route_report.is_none(), "split byte {split}");
+        }
+
+        let mut accumulated = format!("{route}\n").into_bytes();
+        let parsed = parse_chat_stream_protocol_incremental(
+            std::str::from_utf8(&accumulated).unwrap(),
+            Some("right"),
+        );
+        assert!(parsed.route_report.is_some());
+        compact_completed_control_frames(&mut accumulated, &parsed.completed_control_ranges)
+            .unwrap();
+        assert!(accumulated.is_empty());
+
+        accumulated.extend_from_slice(format!("{route}\n").as_bytes());
+        let duplicate = parse_chat_stream_protocol_incremental_with_route_state(
+            std::str::from_utf8(&accumulated).unwrap(),
+            Some("right"),
+            true,
+        );
+        assert!(!duplicate.protocol_valid);
+        assert_eq!(duplicate.text, "");
+    }
+
+    #[test]
     fn typed_review_event_survives_provider_done_and_enters_finalizing_before_done() {
+        let route = skill_route_frame("right");
         let delta = provider_delta_frame("right", 1, "reply");
         let provider_done = provider_done_frame("right", 1, "reply");
         let review = serde_json::json!({
@@ -21935,7 +22716,7 @@ mod chat_subprocess_tests {
             "text": "quality: PASS\nlooks good",
             "durable": false,
         });
-        let partial = format!("{delta}\n{provider_done}\n{review}\n");
+        let partial = format!("{route}\n{delta}\n{provider_done}\n{review}\n");
         let parsed = parse_chat_stream_protocol(&partial, Some("right"));
         assert_eq!(parsed.text, "reply");
         assert!(parsed.provider_done);
@@ -21956,10 +22737,11 @@ mod chat_subprocess_tests {
 
     #[test]
     fn incremental_stream_never_renders_split_control_frames() {
+        let route = skill_route_frame("right");
         let delta = provider_delta_frame("right", 1, "reply");
         let provider_done = provider_done_frame("right", 1, "reply");
         for split in 0..=provider_done.len() {
-            let raw = format!("{delta}\n{}", &provider_done[..split]);
+            let raw = format!("{route}\n{delta}\n{}", &provider_done[..split]);
             let parsed = parse_chat_stream_protocol_incremental(&raw, Some("right"));
             assert_eq!(parsed.text, "reply", "provider_done split at byte {split}");
             assert!(
@@ -21981,7 +22763,7 @@ mod chat_subprocess_tests {
         })
         .to_string();
         for split in 0..=notice.len() {
-            let raw = format!("{delta}\n{}", &notice[..split]);
+            let raw = format!("{route}\n{delta}\n{}", &notice[..split]);
             let parsed = parse_chat_stream_protocol_incremental(&raw, Some("right"));
             assert_eq!(parsed.text, "reply", "notice split at byte {split}");
             assert!(
@@ -21991,7 +22773,7 @@ mod chat_subprocess_tests {
             assert!(!parsed.provider_done);
         }
 
-        let prefix = format!("{delta}\n{provider_done}\n");
+        let prefix = format!("{route}\n{delta}\n{provider_done}\n");
         let done = done_frame("right", 1, "reply").to_string();
         for split in 0..=done.len() {
             let raw = format!("{prefix}{}", &done[..split]);
@@ -22015,12 +22797,24 @@ mod chat_subprocess_tests {
     #[test]
     fn large_split_notice_is_decoded_once_after_its_line_completes() {
         const MAX_BACKGROUND_RESULT_BYTES: usize = 16 * 1024 * 1024;
+        let mut accumulated = format!("{}\n", skill_route_frame("right")).into_bytes();
+        let route = parse_chat_stream_protocol_incremental(
+            std::str::from_utf8(&accumulated).unwrap(),
+            Some("right"),
+        );
+        assert!(route.protocol_valid);
+        assert!(route.route_report.is_some());
+        compact_completed_control_frames(&mut accumulated, &route.completed_control_ranges)
+            .unwrap();
+        assert!(accumulated.is_empty());
+
         let mut frame = Vec::with_capacity(MAX_BACKGROUND_RESULT_BYTES + 256);
         frame.extend_from_slice(
             format!(
-                "{{\"neoth_stream\":\"notice\",\"protocol_version\":2,\
+                "{{\"neoth_stream\":\"notice\",\"protocol_version\":{},\
                   \"request_id\":\"{}\",\"control_token\":\"right\",\
                   \"kind\":\"background_result\",\"id\":\"0123456789abcdef\",\"text\":\"",
+                CHAT_STREAM_PROTOCOL_VERSION,
                 chat_stream_request_id("right")
             )
             .as_bytes(),
@@ -22029,7 +22823,7 @@ mod chat_subprocess_tests {
         frame.extend_from_slice(b"\",\"durable\":true}\n");
         let reply = "reply-token ".repeat(4_096);
 
-        let mut accumulated = Vec::with_capacity(frame.len());
+        accumulated.reserve(frame.len());
         let mut gate = IncrementalControlFrameGate::default();
         let mut large_prefix_decode_attempts = 0usize;
         let mut parsed_notice_count = 0usize;
@@ -22050,13 +22844,20 @@ mod chat_subprocess_tests {
                 );
             }
             gate.observe_decoded_buffer(decoded);
-            let parsed = parse_chat_stream_protocol_incremental(decoded, Some("right"));
+            let parsed = parse_chat_stream_protocol_incremental_with_route_state(
+                decoded,
+                Some("right"),
+                true,
+            );
             assert!(parsed.protocol_valid);
             parsed_notice_count += parsed.notices.len();
-            if !parsed.completed_notice_ranges.is_empty() {
+            if !parsed.completed_control_ranges.is_empty() {
                 assert!(!notice_compacted);
-                compact_completed_notice_frames(&mut accumulated, &parsed.completed_notice_ranges)
-                    .unwrap();
+                compact_completed_control_frames(
+                    &mut accumulated,
+                    &parsed.completed_control_ranges,
+                )
+                .unwrap();
                 assert!(accumulated.is_empty());
                 notice_compacted = true;
             }
@@ -22068,9 +22869,10 @@ mod chat_subprocess_tests {
             "the completed 16 MiB notice may be decoded once, never per later reply chunk"
         );
         assert_eq!(accumulated, reply.as_bytes());
-        let parsed = parse_chat_stream_protocol_incremental(
+        let parsed = parse_chat_stream_protocol_incremental_with_route_state(
             std::str::from_utf8(&accumulated).unwrap(),
             Some("right"),
+            true,
         );
         assert_eq!(parsed.text, reply.trim_end());
         assert!(parsed.notices.is_empty());
@@ -22090,7 +22892,8 @@ mod chat_subprocess_tests {
     #[test]
     fn authenticated_done_without_provider_boundary_fails_closed() {
         let raw = format!(
-            "{}\n{}\n",
+            "{}\n{}\n{}\n",
+            skill_route_frame("right"),
             provider_delta_frame("right", 1, "reply"),
             done_frame("right", 1, "reply")
         );
@@ -22111,7 +22914,8 @@ mod chat_subprocess_tests {
 
         let delta = provider_delta_frame("right", 1, "reply");
         let provider_done = provider_done_frame("right", 1, "reply");
-        let duplicate = format!("{delta}\n{provider_done}\n{provider_done}\n");
+        let route = skill_route_frame("right");
+        let duplicate = format!("{route}\n{delta}\n{provider_done}\n{provider_done}\n");
         let parsed = parse_chat_stream_protocol(&duplicate, Some("right"));
         assert!(!parsed.provider_done);
         assert!(!parsed.protocol_valid);
@@ -22120,54 +22924,57 @@ mod chat_subprocess_tests {
 
     #[test]
     fn provider_completion_binds_version_request_sequence_count_hash_and_receipt() {
+        let route = skill_route_frame("right");
         let delta = provider_delta_frame("right", 1, "reply");
         let provider_done = provider_done_frame("right", 1, "reply");
         let done = done_frame("right", 1, "reply");
-        let valid = format!("{delta}\n{provider_done}\n{done}\n");
+        let valid = format!("{route}\n{delta}\n{provider_done}\n{done}\n");
         assert!(
             parse_chat_stream_protocol(&valid, Some("right")).protocol_valid,
-            "control fixture must prove the complete v2 contract"
+            "control fixture must prove the complete v3 contract"
         );
 
         let mut bad_delta: serde_json::Value = serde_json::from_str(&delta).unwrap();
         bad_delta["sequence"] = serde_json::json!(2);
-        let bad_sequence = format!("{bad_delta}\n{provider_done}\n{done}\n");
+        let bad_sequence = format!("{route}\n{bad_delta}\n{provider_done}\n{done}\n");
         assert!(!parse_chat_stream_protocol(&bad_sequence, Some("right")).protocol_valid);
 
         let mut bad_boundary: serde_json::Value = serde_json::from_str(&provider_done).unwrap();
         bad_boundary["count"] = serde_json::json!(9);
-        let bad_count = format!("{delta}\n{bad_boundary}\n{done}\n");
+        let bad_count = format!("{route}\n{delta}\n{bad_boundary}\n{done}\n");
         assert!(!parse_chat_stream_protocol(&bad_count, Some("right")).protocol_valid);
 
         let mut bad_hash: serde_json::Value = serde_json::from_str(&provider_done).unwrap();
         bad_hash["content_hash"] = serde_json::json!("0".repeat(64));
-        let bad_hash = format!("{delta}\n{bad_hash}\n{done}\n");
+        let bad_hash = format!("{route}\n{delta}\n{bad_hash}\n{done}\n");
         assert!(!parse_chat_stream_protocol(&bad_hash, Some("right")).protocol_valid);
 
         let mut bad_done = done.clone();
         bad_done["protocol_version"] = serde_json::json!(1);
-        let bad_version = format!("{delta}\n{provider_done}\n{bad_done}\n");
+        let bad_version = format!("{route}\n{delta}\n{provider_done}\n{bad_done}\n");
         assert!(!parse_chat_stream_protocol(&bad_version, Some("right")).protocol_valid);
 
         let mut bad_receipt = done;
         bad_receipt["finalization_receipt"] = serde_json::json!("0".repeat(64));
-        let bad_receipt = format!("{delta}\n{provider_done}\n{bad_receipt}\n");
+        let bad_receipt = format!("{route}\n{delta}\n{provider_done}\n{bad_receipt}\n");
         assert!(!parse_chat_stream_protocol(&bad_receipt, Some("right")).protocol_valid);
     }
 
     #[test]
     fn duplicate_or_shadowed_authenticated_done_frames_fail_closed() {
+        let route = skill_route_frame("right");
         let delta = provider_delta_frame("right", 1, "reply");
         let provider_done = provider_done_frame("right", 1, "reply");
         let valid_done = done_frame("right", 1, "reply");
-        let duplicate = format!("{delta}\n{provider_done}\n{valid_done}\n{valid_done}\n");
+        let duplicate = format!("{route}\n{delta}\n{provider_done}\n{valid_done}\n{valid_done}\n");
         let parsed = parse_chat_stream_protocol(&duplicate, Some("right"));
         assert!(parsed.done);
         assert!(!parsed.protocol_valid);
 
         let mut malformed_first = valid_done.clone();
         malformed_first["count"] = serde_json::json!(999);
-        let shadowed = format!("{delta}\n{provider_done}\n{malformed_first}\n{valid_done}\n");
+        let shadowed =
+            format!("{route}\n{delta}\n{provider_done}\n{malformed_first}\n{valid_done}\n");
         let parsed = parse_chat_stream_protocol(&shadowed, Some("right"));
         assert!(parsed.done);
         assert!(!parsed.protocol_valid);
@@ -22176,13 +22983,14 @@ mod chat_subprocess_tests {
     #[test]
     fn stream_finalization_receipt_matches_the_cli_wire_fixture() {
         assert_eq!(
-            chat_stream_finalization_receipt("fixture-request-v2", 7, "fixture-content-hash"),
-            "f29748caef33c551f3324f3f481e7afcd17de8c4452ca97e1bcc772d0c66c98f"
+            chat_stream_finalization_receipt("fixture-request-v3", 7, "fixture-content-hash"),
+            "700789ec6ce07122034132eee764130ac63c7a92a7863ca713f0f3acd3134d77"
         );
     }
 
     #[test]
     fn authenticated_background_notice_is_hidden_and_preserves_multiline_text() {
+        let route = skill_route_frame("right");
         let notice = serde_json::json!({
             "neoth_stream": "notice",
             "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
@@ -22193,7 +23001,7 @@ mod chat_subprocess_tests {
             "text": "first line\nsecond line",
             "durable": true,
         });
-        let raw = format!("{notice}\nreply");
+        let raw = format!("{route}\n{notice}\nreply");
         let parsed = parse_chat_stream_protocol(&raw, Some("right"));
 
         assert_eq!(parsed.text, "reply");
@@ -22212,6 +23020,7 @@ mod chat_subprocess_tests {
 
     #[test]
     fn background_notice_requires_token_and_unique_valid_id() {
+        let route = skill_route_frame("right");
         let wrong_token = serde_json::json!({
             "neoth_stream": "notice",
             "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
@@ -22237,10 +23046,10 @@ mod chat_subprocess_tests {
             "text": "result",
             "durable": true,
         });
-        let duplicate = format!("{valid}\n{valid}\nreply");
+        let duplicate = format!("{route}\n{valid}\n{valid}\nreply");
         let parsed = parse_chat_stream_protocol(&duplicate, Some("right"));
         assert_eq!(parsed.text, "reply");
-        assert_eq!(parsed.notices.len(), 2);
+        assert_eq!(parsed.notices.len(), 1);
         assert!(!parsed.protocol_valid);
 
         let malformed = serde_json::json!({
@@ -22253,7 +23062,8 @@ mod chat_subprocess_tests {
             "text": "result",
             "durable": true,
         });
-        let parsed = parse_chat_stream_protocol(&format!("{malformed}\nreply"), Some("right"));
+        let parsed =
+            parse_chat_stream_protocol(&format!("{route}\n{malformed}\nreply"), Some("right"));
         assert_eq!(parsed.text, "reply");
         assert!(parsed.notices.is_empty());
         assert!(!parsed.protocol_valid);
@@ -22267,8 +23077,10 @@ mod chat_subprocess_tests {
             "id": "0123456789abcdef",
             "text": "result",
         });
-        let parsed =
-            parse_chat_stream_protocol(&format!("{no_durable_receipt}\nreply"), Some("right"));
+        let parsed = parse_chat_stream_protocol(
+            &format!("{route}\n{no_durable_receipt}\nreply"),
+            Some("right"),
+        );
         assert_eq!(parsed.text, "reply");
         assert!(parsed.notices.is_empty());
         assert!(!parsed.protocol_valid);
@@ -22283,7 +23095,8 @@ mod chat_subprocess_tests {
             "text": "result",
             "durable": false,
         });
-        let parsed = parse_chat_stream_protocol(&format!("{recoverable}\nreply"), Some("right"));
+        let parsed =
+            parse_chat_stream_protocol(&format!("{route}\n{recoverable}\nreply"), Some("right"));
         assert_eq!(parsed.text, "reply");
         assert!(parsed.protocol_valid);
         assert_eq!(parsed.notices.len(), 1);
@@ -22379,15 +23192,46 @@ mod chat_subprocess_tests {
     }
 
     #[test]
-    fn gui_chat_terminates_clap_flag_scanning_before_user_text() {
+    fn gui_chat_skill_args_precede_flag_terminator_with_automatic_omitting_flag() {
+        let mut explicit = std::process::Command::new("neoth");
+        explicit.arg("chat").arg("--stream");
+        append_chat_prompt_args(
+            &mut explicit,
+            Some("systematic_debugging"),
+            "--operator-text",
+        );
+        let explicit_args = explicit
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            explicit_args,
+            vec![
+                "chat",
+                "--stream",
+                "--skill",
+                "systematic_debugging",
+                "--",
+                "--operator-text",
+            ]
+        );
+
+        let mut automatic = std::process::Command::new("neoth");
+        automatic.arg("chat").arg("--stream");
+        append_chat_prompt_args(&mut automatic, None, "prompt");
+        let automatic_args = automatic
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(automatic_args, vec!["chat", "--stream", "--", "prompt"]);
+
         let source = include_str!("main.rs");
         let compact = source.split_whitespace().collect::<String>();
+        let production = source.split("mod chat_subprocess_tests").next().unwrap();
         assert_eq!(
-            compact
-                .matches("cmd.arg(\"--\").arg(body.as_str())")
-                .count(),
-            2,
-            "main chat and Buddy must terminate flag scanning before user text"
+            production.matches("append_chat_prompt_args(").count(),
+            3,
+            "one shared helper plus Main and Buddy call sites must stay in parity"
         );
         assert_eq!(
             source
@@ -22398,6 +23242,37 @@ mod chat_subprocess_tests {
         );
         assert!(!source.contains(concat!("NEOTH_STREAM_", "CONTROL_TOKEN")));
         assert!(compact.contains(".arg(\"loop\").arg(\"run\").arg(\"--\").arg(&prompt)"));
+    }
+
+    #[test]
+    fn consent_bound_skill_selection_is_captured_by_value_and_refreshes_by_id() {
+        let mut state = SkillPickerState::default();
+        state.refresh(vec![
+            "Automatic".to_string(),
+            "alpha".to_string(),
+            "beta".to_string(),
+        ]);
+        let selected = state.select(2).unwrap();
+        let captured_for_consent = selected.selected_id.clone();
+
+        let (reordered, removed) = state.refresh(vec![
+            "Automatic".to_string(),
+            "beta".to_string(),
+            "alpha".to_string(),
+        ]);
+        assert!(!removed);
+        assert_eq!(reordered.selected_index, 1);
+        assert_eq!(reordered.selected_id.as_deref(), Some("beta"));
+
+        state.select(0).unwrap();
+        assert_eq!(captured_for_consent.as_deref(), Some("beta"));
+        assert!(state.snapshot().selected_id.is_none());
+
+        state.select(2).unwrap();
+        let (reset, removed) = state.refresh(vec!["Automatic".to_string(), "beta".to_string()]);
+        assert!(removed);
+        assert_eq!(reset.selected_index, 0);
+        assert!(reset.selected_id.is_none());
     }
 
     #[test]
@@ -26568,6 +27443,58 @@ mod tests {
                 .unwrap_err()
                 .contains("invalid origin/path binding")
         );
+
+        for (origin, runtime_state) in [
+            (
+                neothd::skills::loader::SkillInventoryOrigin::Bundled,
+                neothd::skills::loader::SkillInventoryRuntimeState::InstalledActive,
+            ),
+            (
+                neothd::skills::loader::SkillInventoryOrigin::Bundled,
+                neothd::skills::loader::SkillInventoryRuntimeState::BundledFallbackActive,
+            ),
+            (
+                neothd::skills::loader::SkillInventoryOrigin::User,
+                neothd::skills::loader::SkillInventoryRuntimeState::TrustedBundledActive,
+            ),
+        ] {
+            let user_origin = origin == neothd::skills::loader::SkillInventoryOrigin::User;
+            let impossible = vec![neothd::skills::loader::SkillInventoryRow::Healthy {
+                manifest: Box::new(test_skill_manifest("impossible", "Impossible binding")),
+                origin,
+                path: user_origin.then(|| skills_dir.join("impossible")),
+                runtime_state,
+                package_generation_sha256: user_origin.then(|| "a".repeat(64)),
+                install_incarnation: None,
+                install_terminal_receipt_sha256: None,
+            }];
+            assert!(
+                skill_summaries_from_inventory_at(impossible, &skills_dir)
+                    .unwrap_err()
+                    .contains("invalid origin/runtime binding")
+            );
+        }
+
+        for runtime_state in [
+            neothd::skills::loader::SkillInventoryRuntimeState::TrustedBundledActive,
+            neothd::skills::loader::SkillInventoryRuntimeState::InstalledActive,
+        ] {
+            let impossible = vec![neothd::skills::loader::SkillInventoryRow::Broken {
+                id: "broken-impossible".to_string(),
+                error: "invalid runtime binding".to_string(),
+                path: skills_dir.join("broken-impossible"),
+                repairability: neothd::skills::installer::SkillRepairability::RemoveOnly,
+                runtime_state,
+                package_generation_sha256: None,
+                install_incarnation: None,
+                install_terminal_receipt_sha256: None,
+            }];
+            assert!(
+                skill_summaries_from_inventory_at(impossible, &skills_dir)
+                    .unwrap_err()
+                    .contains("invalid runtime binding")
+            );
+        }
     }
 
     #[test]

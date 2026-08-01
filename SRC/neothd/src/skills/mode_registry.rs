@@ -17,10 +17,9 @@
 //!   mode-id across the whole set (two skills can't claim the same
 //!   mode name).
 //! - `ModeRegistry::get(id)` — deterministic lookup by id.
-//! - `ModeRegistry::match_trigger(prompt)` — finds the
-//!   lexicographically-first mode whose `trigger_phrases` matches the
-//!   operator's message. Mirrors the skill router's keyword-scan, one level
-//!   deeper without a `HashMap` iteration tie.
+//! - `ModeRegistry::match_trigger(prompt)` — retained as a legacy diagnostic
+//!   matcher for tests and embedders that explicitly accept its `Option`
+//!   contract. It is not a production routing authority.
 //! - `ModeRegistry::iter()` — deterministic enumeration for `neoth mode list`
 //!   rendering.
 //! - `ResolvedMode` — bundles the matched mode + its parent skill id
@@ -29,11 +28,14 @@
 //!
 //! ## Runtime wiring
 //!
-//! CLI chat and the channel pipeline both build this registry from the exact
-//! authority-admitted [`super::schema::RuntimeSkill`] snapshot and resolve
-//! mode triggers before broader Skill routing. The `neoth mode` CLI reads the
-//! same admitted layer. Mode checkpoints use the canonical WAL event defined
-//! by the runtime rather than a second mode-only audit path.
+//! CLI chat, channels, `neoth skills --test`, and `neoth mode match` route only
+//! through [`super::resolver::SkillRouteResolver`]. That resolver owns the
+//! compound config+authority snapshot, reports ties instead of choosing one,
+//! applies path and visibility gates at every tier, and keeps the publication
+//! alive through dispatch. This registry remains the deterministic catalogue
+//! used by `neoth mode list` and direct id lookup. Mode checkpoints use the
+//! canonical WAL event defined by the runtime rather than a second mode-only
+//! audit path.
 
 use std::collections::BTreeMap;
 
@@ -134,10 +136,9 @@ impl ModeRegistry {
         self.entries.values()
     }
 
-    /// Stage-1 trigger matcher. Returns the lexicographically-first mode whose
-    /// trigger phrases substring-match the operator's prompt
-    /// (case-insensitive), giving overlapping phrases an explicit stable
-    /// tie-break.
+    /// Legacy diagnostic trigger matcher. Production routing must use
+    /// [`super::resolver::SkillRouteResolver`], whose typed conflict outcome
+    /// prevents an ambiguous phrase from silently selecting a mode.
     pub fn match_trigger(&self, prompt: &str) -> Option<&ResolvedMode> {
         let lower = prompt.to_lowercase();
         for resolved in self.entries.values() {

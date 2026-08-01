@@ -5,13 +5,13 @@
 //!            skills ship. Sorted by mode id.
 //!   `show <id>` — render one mode's full shape (spectrum, oversight,
 //!                 output contract, trigger phrases, system_prompt_delta).
-//!   `match "<text>"` — run the registry's trigger matcher against an
-//!                      arbitrary message and report which mode (if any)
-//!                      would activate.
+//!   `match "<text>"` — run the same authority-bound resolver used by chat,
+//!                      channels, and `skills --test`, then emit its typed
+//!                      route report.
 //!
 //! Output respects the global `--output` flag.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
@@ -47,13 +47,15 @@ pub enum ModeAction {
 pub async fn run_mode(args: ModeArgs) -> Result<()> {
     let skills_dir = FreedomConfig::default_neoth_home().join("skills");
     let skills = crate::skills::SkillRegistry::load(&skills_dir).await?;
-    let snapshot = skills.snapshot_owned();
-    let registry = ModeRegistry::from_skills(snapshot.as_slice())?;
+    let snapshot = skills
+        .authority_bound_snapshot()
+        .context("acquire authority-bound Mode CLI Skill snapshot")?;
+    let registry = ModeRegistry::from_skills(snapshot.skills())?;
 
     match args.action {
         ModeAction::List => list_modes(&registry, args.output),
         ModeAction::Show { id } => show_mode(&registry, &id, args.output),
-        ModeAction::Match { text } => match_mode(&registry, &text, args.output),
+        ModeAction::Match { text } => match_mode(snapshot, &text, args.output).await?,
     }
     Ok(())
 }
@@ -150,43 +152,123 @@ fn show_mode(registry: &ModeRegistry, id: &str, output: OutputFormat) {
     }
 }
 
-fn match_mode(registry: &ModeRegistry, text: &str, output: OutputFormat) {
-    match registry.match_trigger(text) {
-        Some(resolved) => match output {
+async fn match_mode(
+    snapshot: crate::skills::registry::SkillSnapshot,
+    text: &str,
+    output: OutputFormat,
+) -> Result<()> {
+    let config = FreedomConfig::load_from_default_path_or_default()
+        .context("load Skill routing policy for mode match")?;
+    let mut blocked_skill_ids = std::collections::BTreeSet::<String>::new();
+    if !config.skills.pinned_hashes.is_empty() {
+        let verdicts = crate::skills::versioning::check_pinned_hashes(
+            snapshot
+                .skills()
+                .iter()
+                .map(|skill| (skill.id(), skill.content_hash.as_str())),
+            &config.skills.pinned_hashes,
+        );
+        for (skill, verdict) in snapshot.skills().iter().zip(verdicts) {
+            if verdict.verdict == crate::skills::versioning::PinnedHashOutcome::Mismatch {
+                blocked_skill_ids.insert(skill.id().to_owned());
+            }
+        }
+    }
+    let eval_suppress = config.skills.should_suppress_for_eval();
+    let resolver = crate::skills::resolver::SkillRouteResolver::new(snapshot.clone())
+        .retaining(|skill| !eval_suppress && !blocked_skill_ids.contains(skill.id()));
+    let explicit_skill_id = match crate::slash::parse_invocation(text) {
+        crate::slash::Invocation::Command { name, .. }
+            if snapshot
+                .skills()
+                .iter()
+                .any(|skill| skill.id().eq_ignore_ascii_case(&name)) =>
+        {
+            Some(name.to_lowercase())
+        }
+        _ => None,
+    };
+    let literal_floor = if config.skills.enable_all_bundled {
+        crate::skills::router::FULL_AUTO_MIN_WEIGHT
+    } else {
+        crate::skills::router::DEFAULT_MIN_WEIGHT
+    };
+    let embed_provider = if !eval_suppress && config.skills.always_embed_route {
+        crate::providers::embed_provider_from_config(&config).await
+    } else {
+        None
+    };
+    let active_files = crate::skills::resolver::active_files_from_env();
+    let decision = resolver
+        .resolve(
+            crate::skills::resolver::SkillRouteRequest::automatic(
+                text,
+                literal_floor,
+                &active_files,
+            )
+            .with_explicit_skill(explicit_skill_id.as_deref()),
+            embed_provider.as_deref(),
+        )
+        .await;
+    let report = decision.report().clone();
+
+    match decision {
+        crate::skills::resolver::SkillRouteDecision::Match(route) => match output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 let v = serde_json::json!({
-                    "matched_mode": resolved.mode.id,
-                    "skill_id": resolved.skill_id,
-                    "description": resolved.mode.description,
-                    "spectrum": resolved.mode.spectrum.as_str(),
-                    "oversight": resolved.mode.oversight.as_str(),
+                    "matched_skill": route.skill().id(),
+                    "matched_mode": route.mode().map(|mode| mode.id.as_str()),
+                    "route_report": report,
                 });
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&v).expect("mode match is infallible JSON")
-                );
+                println!("{}", serde_json::to_string_pretty(&v)?);
             }
             OutputFormat::Table => {
-                println!("match: {} (skill: {})", resolved.mode.id, resolved.skill_id);
-                println!("  spectrum:  {}", resolved.mode.spectrum.as_str());
-                println!("  oversight: {}", resolved.mode.oversight.as_str());
+                println!(
+                    "match: {}{} (stage: {:?})",
+                    route.skill().id(),
+                    route
+                        .mode()
+                        .map(|mode| format!("/{}", mode.id))
+                        .unwrap_or_default(),
+                    report.stage,
+                );
+                println!("  snapshot: {}", report.snapshot_sha256);
             }
         },
-        None => match output {
+        crate::skills::resolver::SkillRouteDecision::NoMatch(_)
+        | crate::skills::resolver::SkillRouteDecision::Conflict(_)
+        | crate::skills::resolver::SkillRouteDecision::Rejected(_) => match output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 println!(
                     "{}",
-                    serde_json::to_string(
-                        &serde_json::json!({"matched_mode": serde_json::Value::Null})
-                    )
-                    .unwrap_or_default()
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "matched_skill": serde_json::Value::Null,
+                        "matched_mode": serde_json::Value::Null,
+                        "route_report": report,
+                    }))?
                 );
             }
             OutputFormat::Table => {
-                println!("no mode activated for this message");
+                println!("skill route: {:?}", report.outcome);
+                if !report.candidates.is_empty() {
+                    println!(
+                        "  candidates: {}",
+                        report
+                            .candidates
+                            .iter()
+                            .map(|candidate| candidate.skill_id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                if let Some(rejection) = report.rejection {
+                    println!("  rejection: {rejection:?}");
+                }
+                println!("  snapshot: {}", report.snapshot_sha256);
             }
         },
     }
+    Ok(())
 }
 
 fn truncate(s: &str, n: usize) -> String {

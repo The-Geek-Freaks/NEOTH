@@ -73,12 +73,14 @@ pub(crate) async fn load_validated_skills(skills_dir: &Path) -> Result<Vec<Skill
     let skills = load_all(skills_dir).await?;
     super::mode_registry::ModeRegistry::validate_inventory(&skills)
         .context("validate unique mode ids in skill inventory")?;
+    super::route_ownership::validate_inventory(&skills)?;
     Ok(skills)
 }
 
 fn validate_runtime_skills(skills: Vec<RuntimeSkill>) -> Result<Vec<RuntimeSkill>> {
     super::mode_registry::ModeRegistry::from_skills(&skills)
         .context("validate unique mode ids in skill registry")?;
+    super::route_ownership::validate_runtime(&skills)?;
     Ok(skills)
 }
 
@@ -143,6 +145,49 @@ struct PublishedSkillSnapshot {
     config_epoch: u64,
     authority_epoch: u64,
     skills: Arc<Vec<RuntimeSkill>>,
+}
+
+/// Owning runtime authority capability for one accepted Skill generation.
+///
+/// The compound publication Arc, not a detached `Arc<Vec<RuntimeSkill>>`, is
+/// the routing unit. Resolved routes retain a clone through provider/tool
+/// dispatch so the exact config and authority generation remains provable
+/// while an in-flight turn finishes across a later hot reload.
+#[derive(Clone)]
+pub struct SkillSnapshot {
+    inner: Arc<PublishedSkillSnapshot>,
+}
+
+impl std::fmt::Debug for SkillSnapshot {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SkillSnapshot")
+            .field("config_epoch", &self.config_epoch())
+            .field("authority_epoch", &self.authority_epoch())
+            .field("skill_count", &self.skills().len())
+            .finish()
+    }
+}
+
+impl SkillSnapshot {
+    pub fn config_epoch(&self) -> u64 {
+        self.inner.config_epoch
+    }
+
+    pub fn authority_epoch(&self) -> u64 {
+        self.inner.authority_epoch
+    }
+
+    pub fn skills(&self) -> &[RuntimeSkill] {
+        self.inner.skills.as_slice()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_test_skills(skills: Vec<RuntimeSkill>) -> Self {
+        Self {
+            inner: published_skill_snapshot(0, 0, Arc::new(skills)),
+        }
+    }
 }
 
 fn published_skill_snapshot(
@@ -573,6 +618,43 @@ impl SkillRegistry {
         self.snapshot()
     }
 
+    /// Acquire one compound config+authority snapshot. Unlike the historical
+    /// `snapshot_owned*` compatibility methods, this never erases the epochs
+    /// that authorized the returned runtime layer.
+    pub fn authority_bound_snapshot(&self) -> Result<SkillSnapshot> {
+        let accepted_epoch = self.reload_controller.accepted_snapshot().epoch();
+        let snapshot = self.authority_bound_snapshot_for_epoch(accepted_epoch)?;
+        anyhow::ensure!(
+            self.reload_controller.accepted_snapshot().epoch() == accepted_epoch,
+            "accepted Skill policy changed during authority-bound snapshot acquisition"
+        );
+        Ok(snapshot)
+    }
+
+    /// Acquire the exact compound Skill generation for a config epoch already
+    /// pinned by the caller. A mismatch is a visible fail-closed error rather
+    /// than an empty layer that could be mistaken for a semantic no-match.
+    pub fn authority_bound_snapshot_for_epoch(
+        &self,
+        expected_config_epoch: u64,
+    ) -> Result<SkillSnapshot> {
+        let authority_epoch = self.authority_epoch.current();
+        let published = self.inner.load_full();
+        anyhow::ensure!(
+            published.config_epoch == expected_config_epoch,
+            "Skill registry config epoch does not match the pinned turn"
+        );
+        anyhow::ensure!(
+            published.authority_epoch == authority_epoch,
+            "Skill registry authority epoch is stale"
+        );
+        anyhow::ensure!(
+            self.authority_epoch.current() == authority_epoch,
+            "Skill authority changed during snapshot acquisition"
+        );
+        Ok(SkillSnapshot { inner: published })
+    }
+
     /// Acquire the Skill layer for the exact config epoch already pinned by
     /// one turn. Returning a newer or older generation would create a torn
     /// config/Skill authority pair, so any mismatch is an empty fail-closed
@@ -665,7 +747,7 @@ impl SkillRegistry {
         let new = match validate_runtime_skills(new_snapshot.skills) {
             Ok(new) => Arc::new(new),
             Err(error) => {
-                self.publish_bundled_only_fail_closed("runtime mode validation failed")
+                self.publish_bundled_only_fail_closed("runtime Skill validation failed")
                     .await;
                 return Err(error);
             }
@@ -1721,6 +1803,40 @@ modes:
       format: markdown
 "#
         )
+    }
+
+    fn trusted_route_owner(id: &str, trigger: &str) -> RuntimeSkill {
+        let manifest: super::super::schema::SkillManifest = serde_yaml::from_str(&format!(
+            r#"id: {id}
+description: route-owner registry fixture
+trigger_keywords:
+  - {trigger:?}
+system_prompt: test
+"#
+        ))
+        .unwrap();
+        RuntimeSkill::from_trusted_bundled(Skill {
+            manifest,
+            path: PathBuf::from("<bundled>").join(id).join("skill.yaml"),
+            content_hash: "00".repeat(32),
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn runtime_publication_rejects_cross_owner_aliases_before_arcswap() {
+        let error = validate_runtime_skills(vec![
+            trusted_route_owner("owner-a", "Deploy, now!"),
+            trusted_route_owner("owner-b", "deploy now"),
+        ])
+        .unwrap_err();
+
+        let detail = format!("{error:#}");
+        assert!(detail.contains("deploy now"), "{detail}");
+        assert!(
+            detail.contains("owner-a") && detail.contains("owner-b"),
+            "{detail}"
+        );
     }
 
     fn install_test_authority_key(home: &Path) {

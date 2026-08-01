@@ -931,9 +931,11 @@ mod tests {
 
     #[test]
     fn every_bundled_skill_has_nonempty_body() {
-        assert!(BUNDLED_SKILLS
-            .iter()
-            .any(|(id, _)| *id == "academic_research"));
+        assert!(
+            BUNDLED_SKILLS
+                .iter()
+                .any(|(id, _)| *id == "academic_research")
+        );
         for (id, body) in BUNDLED_SKILLS {
             assert!(
                 !body.trim().is_empty(),
@@ -1106,29 +1108,6 @@ mod tests {
     const EXPECTED_BUNDLED_SKILL_COUNT: usize = 182;
     const EXPECTED_DEFAULT_ENABLED_SKILL_COUNT: usize = 99;
 
-    /// Collapse case, punctuation, underscores, and repeated whitespace so
-    /// spelling aliases such as `stress-test` and `stress test` have one owner.
-    fn normalize_trigger_alias(trigger: &str) -> String {
-        let mut normalized = String::with_capacity(trigger.len());
-        let mut separator_pending = false;
-
-        for character in trigger.trim().chars() {
-            for lowercase in character.to_lowercase() {
-                if lowercase.is_alphanumeric() {
-                    if separator_pending && !normalized.is_empty() {
-                        normalized.push(' ');
-                    }
-                    normalized.push(lowercase);
-                    separator_pending = false;
-                } else {
-                    separator_pending = true;
-                }
-            }
-        }
-
-        normalized
-    }
-
     fn bundled_skill_matrix(force_enabled: bool) -> Vec<crate::skills::schema::Skill> {
         use crate::skills::schema::Skill;
 
@@ -1182,36 +1161,15 @@ mod tests {
     /// table. Same-owner punctuation aliases count once; no normalized phrase
     /// may be claimed by two different skills, enabled or disabled.
     #[test]
-    fn all_bundled_triggers_have_one_normalized_owner() {
+    fn all_bundled_parent_and_mode_aliases_have_one_normalized_owner() {
         assert_eq!(
             BUNDLED_SKILLS.len(),
             EXPECTED_BUNDLED_SKILL_COUNT,
             "the v1 built-in catalogue contract changed"
         );
 
-        let mut owners: std::collections::HashMap<String, (String, String)> =
-            std::collections::HashMap::new();
-        for (id, body) in BUNDLED_SKILLS {
-            let manifest: SkillManifest = serde_yaml::from_str(body)
-                .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
-            for trigger in &manifest.trigger_keywords {
-                let normalized = normalize_trigger_alias(trigger);
-                assert!(
-                    !normalized.is_empty(),
-                    "`{id}` declares an empty trigger after normalization: {trigger:?}"
-                );
-                if let Some((existing_owner, existing_trigger)) = owners.get(&normalized) {
-                    assert_eq!(
-                        existing_owner.as_str(),
-                        *id,
-                        "normalized trigger collision: {trigger:?} from `{id}` and \
-                         {existing_trigger:?} from `{existing_owner}` both own `{normalized}`"
-                    );
-                } else {
-                    owners.insert(normalized, ((*id).to_owned(), trigger.clone()));
-                }
-            }
-        }
+        crate::skills::route_ownership::validate_inventory(&bundled_skill_matrix(false))
+            .expect("all 182 bundled parent and mode aliases must have one owner");
     }
 
     /// Trigger curation must preserve the adoption contracts that made these
@@ -1285,11 +1243,12 @@ mod tests {
     }
 
     /// Full-auto deliberately enables the complete 182-skill catalogue. Every
-    /// multiword trigger clears the production confidence floor and must route
-    /// to its one declared owner.
+    /// multi-token trigger clears the production confidence floor and must
+    /// route to its one declared owner. Token boundaries match production:
+    /// punctuation such as `.` and `-` separates lexical tokens too.
     #[test]
     fn full_auto_bundled_catalogue_routes_every_multiword_trigger() {
-        use crate::skills::router::{route_with_min_weight, FULL_AUTO_MIN_WEIGHT};
+        use crate::skills::router::{FULL_AUTO_MIN_WEIGHT, keyword_weight, route_with_min_weight};
 
         let skills = bundled_skill_matrix(true);
         assert_eq!(skills.len(), EXPECTED_BUNDLED_SKILL_COUNT);
@@ -1302,7 +1261,7 @@ mod tests {
         for skill in &skills {
             let owner = skill.manifest.id.as_str();
             for trigger in &skill.manifest.trigger_keywords {
-                if trigger.split_whitespace().count().max(1) < FULL_AUTO_MIN_WEIGHT {
+                if keyword_weight(trigger) < FULL_AUTO_MIN_WEIGHT {
                     continue;
                 }
 
@@ -1325,13 +1284,13 @@ mod tests {
         );
     }
 
-    /// A single-word trigger intentionally sits below the full-auto confidence
+    /// A single-token trigger intentionally sits below the full-auto confidence
     /// floor. It may therefore be suppressed; if another same-owner signal
     /// makes it route, the result must still be deterministic and may never be
     /// captured by a different skill.
     #[test]
     fn full_auto_singleword_triggers_are_suppressed_or_owned_deterministically() {
-        use crate::skills::router::{route_with_min_weight, FULL_AUTO_MIN_WEIGHT};
+        use crate::skills::router::{FULL_AUTO_MIN_WEIGHT, keyword_weight, route_with_min_weight};
 
         let skills = bundled_skill_matrix(true);
         assert_eq!(skills.len(), EXPECTED_BUNDLED_SKILL_COUNT);
@@ -1339,7 +1298,7 @@ mod tests {
         for skill in &skills {
             let owner = skill.manifest.id.as_str();
             for trigger in &skill.manifest.trigger_keywords {
-                if trigger.split_whitespace().count().max(1) >= FULL_AUTO_MIN_WEIGHT {
+                if keyword_weight(trigger) >= FULL_AUTO_MIN_WEIGHT {
                     continue;
                 }
 

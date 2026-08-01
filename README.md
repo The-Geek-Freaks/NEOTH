@@ -195,7 +195,7 @@ operator.
 
 | Area | 1.0 target behavior |
 | :-- | :-- |
-| **Buddy** | Keeps approved facts separate from a default-on local communication profile. It adapts presentation without storing raw messages or inferring diagnoses; inspect, pin, explain or reset it with `neoth profile communication ...`. Native GUI/Buddy controls are still a Gold parity item. |
+| **Buddy** | Keeps approved facts separate from a default-on local communication profile. It adapts presentation without storing raw messages or inferring diagnoses; inspect, pin, explain or reset it with `neoth profile communication ...`. Main GUI and Buddy share the same authority-bound Skill picker; broader communication-profile control parity remains a separate Gold item. |
 | **Brain** | Routes work through role-bound brain paths for fast answers, deeper reasoning, and verification. |
 | **Memory** | Uses five durable memory tiers — episode, profile, ground truth, consolidated, long-term — plus your external vault (Obsidian/Paperless) ingested into them. |
 | **Daily life** | Ingests Paperless documents, CalDAV calendar, notes, files, images, audio, and video into reviewable memory; IMAP inbox triage is a source-build opt-in and has no SMTP/send path. |
@@ -211,7 +211,7 @@ operator.
 | **Automation** | Runs small local cron jobs and larger n8n workflows through a default-off, scoped localhost API with endpoint-specific consent and WAL auditing. |
 | **Channels** | One canonical GUI/CLI registry for Telegram, Slack, WhatsApp Business, repository-owned WhatsApp Web/Baileys, Discord, Signal, LINE, IRC, iMessage through BlueBubbles, Mattermost, Google Chat, Matrix, Twitch, Nostr, and the full-duplex Keet-identity Pear/Hyperswarm companion. Private/work inbound adapters require an exact operator identity in addition to transport authentication; missing policies keep them off and mismatches are WAL-audited before the pipeline. Read-only live probes are shared by both surfaces, and hot credential/policy rotation restarts only the affected adapter. The Keet companion creates private NEOTH topics; it does not claim access to existing Keet app rooms because no supported room/message API exists. |
 | **Private mesh** | Pairs nodes over LAN/mDNS, Tailscale, Hysteria, and consent-gated cluster discovery. |
-| **Extensions** | Installs Skills as bounded, no-follow data generations with typed receipts. External installed Skills route only through an authenticated authority record plus Current Anchor that exactly binds their published generation and effective runtime scope; any missing, stale, revoked, edited, or mismatched binding falls back to bundled-only. Running-daemon adoption/revocation and subprocess MCP/Buddy parity remain Gold work. WASM code uses exact-digest operator approval, runtime capability checks, revocation and hostcall audit. |
+| **Extensions** | Installs Skills as bounded, no-follow data generations with typed receipts. External installed Skills route only through an authenticated authority record plus Current Anchor that exactly binds their published generation and effective runtime scope; any missing, stale, revoked, edited, or mismatched binding falls back to bundled-only. Install, enable, disable and revoke validate the prospective runtime catalogue before commit; CLI, GUI, Buddy and channels consume one typed route report. WASM code uses exact-digest operator approval, runtime capability checks, revocation and hostcall audit. |
 | **Doctor** | Explains broken setup, missing keys, model cache problems, channel wiring, disk issues, plugin state, provider flapping, and cluster discovery. |
 
 <img src=".github/assets/neoth-readme-life-automation.svg" alt="NEOTH real-life automation — Paperless documents, optional IMAP email triage, CalDAV calendar, workflows, and notes become useful only after memory, approval, and audit gates" width="100%">
@@ -298,10 +298,14 @@ Skill is routable only through a versioned authenticated authority record and
 Current Anchor that exactly bind package generation/incarnation, terminal
 receipt, provenance, enabled state, effective tool scope, delegation, model,
 source, and policy. A missing, stale, revoked, edited, or mismatched binding
-falls back to bundled-only routing. Running-daemon adoption/revocation,
-subprocess MCP reconnect/poisoning, Buddy parity, and exact-head gates remain
-open under GOLD-R3-17. NEOTH does not market the WASM sandbox as protection for
-Skills.
+falls back to bundled-only routing. Positive and negative Skill mutations
+validate the authority-admitted post-mutation catalogue under the package lock
+before filesystem, configuration or authority publication. Chat, channels,
+CLI, GUI and Buddy consume the same typed route decision; inspect it with
+`neoth skills --check-routing` or select explicitly with
+`neoth chat --skill <id> "..."`. Subprocess MCP reconnect/poisoning, broader
+Buddy parity and exact-head platform gates remain open under the Gold roadmap.
+NEOTH does not market the WASM sandbox as protection for Skills.
 
 <img src=".github/assets/neoth-readme-fail-closed.svg" alt="NEOTH fail-closed consent — boundary crossings are denied by default and proceed only on an explicit, persisted operator grant; both allow and deny are audited" width="100%">
 

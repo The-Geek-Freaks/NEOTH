@@ -50,6 +50,11 @@ pub struct ChatArgs {
     #[arg(long, value_name = "MODEL")]
     pub model: Option<String>,
 
+    /// Explicit authority-validated Skill for this turn. This selection wins
+    /// over automatic routing and any `/skill-id` embedded in the message.
+    #[arg(long, value_name = "SKILL_ID")]
+    pub skill: Option<String>,
+
     /// Inject a one-shot system prompt for this call.
     #[arg(long, value_name = "TEXT")]
     pub system: Option<String>,
@@ -322,6 +327,11 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
 /// back out because the later phases still consume them.
 struct PromptBundle {
     combined_system: Option<String>,
+    /// Owning authority capability retained until this turn's dispatch
+    /// finishes. Derived strings alone are not execution authority.
+    skill_route_guard: Option<crate::skills::resolver::ResolvedSkillRoute>,
+    /// Cross-surface, JSON-ready explanation of the exact routing decision.
+    skill_route_report: crate::skills::resolver::SkillRouteReport,
     /// Exact typed A-E/Conductor representation of `combined_system` plus the
     /// single user-message E block.  This survives hooks, slash/agent routing
     /// and output-preset assembly until the final provider Request is built.
@@ -581,6 +591,13 @@ fn routed_skill_tool_allowlist(
 /// loop routing must be derived from the resolved parent object itself.
 pub(crate) fn routed_skill_loop_trigger(skill: Option<&crate::skills::schema::Skill>) -> bool {
     skill.is_some_and(crate::skills::schema::Skill::loop_trigger)
+}
+
+fn slash_invocation_name(prompt: &str) -> Option<String> {
+    match crate::slash::parse_invocation(prompt) {
+        crate::slash::Invocation::Command { name, .. } => Some(name.to_lowercase()),
+        _ => None,
+    }
 }
 
 #[derive(Debug)]
@@ -1163,21 +1180,6 @@ struct PromptBuildOptions {
     persona_override_from_tweaks: Option<String>,
 }
 
-/// GOLD-CCPARITY-PATHS-01 — read the operator's active editor files from the
-/// `NEOTH_ACTIVE_FILES` environment variable. Paths are separated by `;` on
-/// Windows and `:` on Unix. Returns an empty Vec when the variable is unset
-/// or empty — this disables path gating (all skills activate normally).
-fn read_env_active_files() -> Vec<String> {
-    let sep = if cfg!(windows) { ';' } else { ':' };
-    std::env::var("NEOTH_ACTIVE_FILES")
-        .unwrap_or_default()
-        .split(sep)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect()
-}
-
 async fn build_prompt_bundle(
     config: FreedomConfig,
     prompt: String,
@@ -1308,11 +1310,13 @@ async fn build_prompt_bundle(
     // `cli/serve.rs::build_pipeline_handler` calls the same helper
     // so every inbound surface reaches the same context layering.
 
-    // Arc<Vec<RuntimeSkill>> snapshot — every installed entry consumed a
-    // validated authority capability before reaching this point.
-    let raw_installed_skills = registry_res
+    // Compound config+authority snapshot. The resolver and any successful
+    // route retain this exact publication Arc through provider/tool dispatch.
+    let skill_snapshot = registry_res
         .with_context(|| format!("load skill registry from {}", skills_dir.display()))?
-        .snapshot_owned_for_epoch(one_shot_config_epoch);
+        .authority_bound_snapshot_for_epoch(one_shot_config_epoch)
+        .context("acquire authority-bound chat Skill snapshot")?;
+    let raw_installed_skills = skill_snapshot.skills();
 
     // ── ARCH-07 (Session 28) — pinned-hash integrity gate ─────────────────
     //
@@ -1320,9 +1324,9 @@ async fn build_prompt_bundle(
     // operator's `freedom.yaml::skills.pinned_hashes` map. Mismatches
     // get one `SKILL_INJECT_SKIPPED` (0x29) WAL frame with reason
     // `hash_mismatch` + both expected + actual hashes in the payload
-    // + are filtered out of the working `installed_skills` Arc so
-    // every downstream router / mode-registry / injection path sees
-    // them as if uninstalled. Skills NOT in the pinned map pass
+    // + are excluded by index from the authority-bound resolver view. The
+    // underlying compound snapshot is never cloned into a provenance-free
+    // vector. Skills NOT in the pinned map pass
     // through unchanged — operator pins what they care about; bundled
     // skills can drift across NEOTH releases without pinning every
     // one.
@@ -1331,22 +1335,19 @@ async fn build_prompt_bundle(
     // skill is STILL dropped on failure (integrity comes first; the
     // missing audit frame is the next-tick problem, not a reason to
     // let a tampered skill through).
-    let installed_skills = if config.skills.pinned_hashes.is_empty() {
-        raw_installed_skills.clone()
-    } else {
+    let mut blocked_skill_ids = std::collections::BTreeSet::<String>::new();
+    if !config.skills.pinned_hashes.is_empty() {
         let verdicts = crate::skills::versioning::check_pinned_hashes(
             raw_installed_skills
                 .iter()
                 .map(|s| (s.id(), s.content_hash.as_str())),
             &config.skills.pinned_hashes,
         );
-        let mut kept: Vec<crate::skills::schema::RuntimeSkill> = Vec::new();
         for (skill, verdict) in raw_installed_skills.iter().zip(verdicts.iter()) {
             match verdict.verdict {
-                crate::skills::versioning::PinnedHashOutcome::Allowed => {
-                    kept.push(skill.clone());
-                }
+                crate::skills::versioning::PinnedHashOutcome::Allowed => {}
                 crate::skills::versioning::PinnedHashOutcome::Mismatch => {
+                    blocked_skill_ids.insert(skill.id().to_owned());
                     warn!(
                         skill = %verdict.skill_id,
                         expected = ?verdict.expected_hash,
@@ -1373,8 +1374,7 @@ async fn build_prompt_bundle(
                 }
             }
         }
-        std::sync::Arc::new(kept)
-    };
+    }
 
     // Round-3 v0.4 ARCH-07 — eval-session skill suppression. When
     // `config.skills.should_suppress_for_eval()` is true, every
@@ -1385,7 +1385,10 @@ async fn build_prompt_bundle(
     // ensure the eval isn't biased by an active skill.
     let eval_suppress = config.skills.should_suppress_for_eval();
     if eval_suppress {
-        for s in installed_skills.iter().filter(|s| s.manifest.enabled) {
+        for s in raw_installed_skills
+            .iter()
+            .filter(|s| s.manifest.enabled && !blocked_skill_ids.contains(s.id()))
+        {
             let payload = serde_json::to_vec(&serde_json::json!({
                 "skill_id": s.id(),
                 "content_hash": s.content_hash,
@@ -1404,122 +1407,134 @@ async fn build_prompt_bundle(
             }
         }
         info!(
-            count = installed_skills
+            count = raw_installed_skills
                 .iter()
-                .filter(|s| s.manifest.enabled)
+                .filter(|s| s.manifest.enabled && !blocked_skill_ids.contains(s.id()))
                 .count(),
             "eval-session active — all skills suppressed per ARCH-07"
         );
     }
 
-    // ── GOLD-CCPARITY-SKILLVIS-01 — visibility pre-filter ────────────────────
-    // `Off` skills were already removed at load time (enabled=false → router
-    // skips them). Here we remove `NameOnly` and `UserInvocableOnly` skills
-    // from the auto-routing pool unless the current turn was initiated by a
-    // matching explicit `/skill-id` slash invocation. This keeps the router
-    // pure — it never needs to know about visibility; filtering happens before
-    // it is called (same architecture as the path-gate filter for PATHS-01).
-    let installed_skills: std::sync::Arc<Vec<crate::skills::schema::RuntimeSkill>> = {
-        let needs_filter = installed_skills
-            .iter()
-            .any(|s| !matches!(s.manifest.visibility, crate::config::SkillVisibility::On));
-        if needs_filter && !eval_suppress {
-            let slash_name = slash_skill_name.as_deref();
-            let mut skipped_vis: Vec<String> = Vec::new();
-            let filtered: Vec<_> = installed_skills
+    // `--skill` is always passed to the resolver so empty/unknown/disabled or
+    // out-of-scope choices become a typed rejection. `/skill-id` is the
+    // compatibility fallback only when it names an admitted Skill; unrelated
+    // slash commands continue to the normal slash dispatcher.
+    let explicit_slash_skill_id = (!eval_suppress)
+        .then_some(slash_skill_name.as_deref())
+        .flatten()
+        .filter(|name| {
+            raw_installed_skills
                 .iter()
-                .filter(|s| match s.manifest.visibility {
-                    crate::config::SkillVisibility::On => true,
-                    crate::config::SkillVisibility::NameOnly
-                    | crate::config::SkillVisibility::UserInvocableOnly => {
-                        // Eligible only when the operator typed /skill-id
-                        let eligible = slash_name.is_some_and(|n| n == s.id());
-                        if !eligible {
-                            skipped_vis.push(s.id().to_string());
-                        }
-                        eligible
-                    }
-                    crate::config::SkillVisibility::Off => false, // shouldn't reach (disabled at load)
-                })
-                .cloned()
-                .collect();
-            // Best-effort WAL audit: one 0x29 frame per suppressed skill so
-            // the audit log captures "this skill was available but gated by
-            // visibility". Mirrors the eval-session emit block above.
-            for skipped_id in &skipped_vis {
-                let reason = installed_skills
-                    .iter()
-                    .find(|s| s.id() == skipped_id)
-                    .map(|s| match s.manifest.visibility {
-                        crate::config::SkillVisibility::NameOnly => "visibility_name_only",
-                        crate::config::SkillVisibility::UserInvocableOnly => {
-                            "visibility_user_invocable_only"
-                        }
-                        _ => "visibility_off",
-                    })
-                    .unwrap_or("visibility_name_only");
-                let content_hash = installed_skills
-                    .iter()
-                    .find(|s| s.id() == skipped_id)
-                    .map(|s| s.content_hash.as_str())
-                    .unwrap_or("");
-                let payload = serde_json::to_vec(&serde_json::json!({
-                    "skill_id": skipped_id,
-                    "content_hash": content_hash,
-                    "reason": reason,
-                    "prompt_bundle_hash": prompt_bundle_hash,
-                    "slash_skill_name": slash_skill_name,
-                    "ts_unix": crate::time::now_unix_secs(),
-                }))
-                .unwrap_or_default();
-                let header = crate::wal::make_header(EVENT_TYPE_SKILL_INJECT_SKIPPED, &payload);
-                if let Err(e) = writer.append(header, payload).await {
-                    warn!(
-                        skill = %skipped_id,
-                        error = %e,
-                        "SKILL_INJECT_SKIPPED (visibility) emit failed (non-fatal)"
-                    );
-                }
-            }
-            if !skipped_vis.is_empty() {
-                info!(
-                    count = skipped_vis.len(),
-                    slash_name = ?slash_skill_name,
-                    "SKILLVIS-01: {} skill(s) gated by NameOnly/UserInvocableOnly visibility on non-slash turn",
-                    skipped_vis.len()
-                );
-            }
-            std::sync::Arc::new(filtered)
-        } else {
-            installed_skills
+                .any(|skill| skill.id().eq_ignore_ascii_case(name))
+        });
+    let explicit_skill_id = args.skill.as_deref().or(explicit_slash_skill_id);
+
+    // Keep the existing visibility audit, but let the shared resolver enforce
+    // visibility itself. No filtered RuntimeSkill clone can detach authority.
+    let skipped_visibility = raw_installed_skills
+        .iter()
+        .filter(|skill| {
+            !blocked_skill_ids.contains(skill.id())
+                && !matches!(skill.visibility(), crate::config::SkillVisibility::On)
+                && !explicit_skill_id
+                    .is_some_and(|requested| requested.eq_ignore_ascii_case(skill.id()))
+        })
+        .collect::<Vec<_>>();
+    for skill in &skipped_visibility {
+        let reason = match skill.visibility() {
+            crate::config::SkillVisibility::NameOnly => "visibility_name_only",
+            crate::config::SkillVisibility::UserInvocableOnly => "visibility_user_invocable_only",
+            crate::config::SkillVisibility::Off => "visibility_off",
+            crate::config::SkillVisibility::On => continue,
+        };
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "skill_id": skill.id(),
+            "content_hash": skill.content_hash,
+            "reason": reason,
+            "prompt_bundle_hash": prompt_bundle_hash,
+            "slash_skill_name": slash_skill_name,
+            "ts_unix": crate::time::now_unix_secs(),
+        }))
+        .unwrap_or_default();
+        let header = crate::wal::make_header(EVENT_TYPE_SKILL_INJECT_SKIPPED, &payload);
+        if let Err(error) = writer.append(header, payload).await {
+            warn!(
+                skill = skill.id(),
+                error = %error,
+                "SKILL_INJECT_SKIPPED (visibility) emit failed (non-fatal)"
+            );
         }
+    }
+    if !skipped_visibility.is_empty() {
+        info!(
+            count = skipped_visibility.len(),
+            slash_name = ?slash_skill_name,
+            "Skill visibility excluded automatic routing candidates"
+        );
+    }
+
+    let skill_resolver = crate::skills::resolver::SkillRouteResolver::new(skill_snapshot.clone())
+        .retaining(|skill| !eval_suppress && !blocked_skill_ids.contains(skill.id()));
+    let stage1_floor = if config.skills.enable_all_bundled {
+        crate::skills::router::FULL_AUTO_MIN_WEIGHT
+    } else {
+        crate::skills::router::DEFAULT_MIN_WEIGHT
+    };
+    let active_files = crate::skills::resolver::active_files_from_env();
+    // Compatibility field, corrected semantics: `true` enables semantic
+    // fallback after literal NoMatch. It can no longer override a literal or
+    // mode decision.
+    let embed_provider = if !eval_suppress && config.skills.always_embed_route {
+        crate::providers::embed_provider_from_config(&config).await
+    } else {
+        None
+    };
+    let route_request =
+        crate::skills::resolver::SkillRouteRequest::automatic(&prompt, stage1_floor, &active_files)
+            .with_explicit_skill(explicit_skill_id);
+    let route_decision = skill_resolver
+        .resolve(route_request, embed_provider.as_deref())
+        .await;
+    let skill_route_report = route_decision.report().clone();
+    let selected_skill_route = match route_decision {
+        crate::skills::resolver::SkillRouteDecision::Match(route) => Some(route),
+        crate::skills::resolver::SkillRouteDecision::NoMatch(_) => None,
+        crate::skills::resolver::SkillRouteDecision::Conflict(_)
+        | crate::skills::resolver::SkillRouteDecision::Rejected(_) => None,
     };
 
-    // QM-3 + QM-23 (2026-05-22 Session 20): ModeRegistry trigger_phrases
-    // beat the broader skill keyword scan when they hit. The matched
-    // mode's `system_prompt_delta` layers on top of the parent skill's
-    // base `system_prompt`. When no mode hits, fall back to the broad
-    // `skills::route` Stage-1 keyword scan + Stage-2 embedding re-rank.
-    let mode_registry =
-        crate::skills::mode_registry::ModeRegistry::from_skills(installed_skills.as_slice())
-            .context("build chat skill mode registry")?;
-    let mode_hit = if eval_suppress {
-        None
+    if eval_suppress {
+        crate::analytics::babel::signals::emit(
+            crate::analytics::babel::signals::SignalKind::SkillSuppressed,
+        );
     } else {
-        mode_registry.match_trigger(&prompt)
-    };
-    // SC-11 — captured from the exact routed skill below, including a mode's
-    // parent. It stays None only for eval-suppressed / no-skill paths (no
-    // skill → no tool-allowlist gate). Owned so it outlives the match block to
-    // the MCP dispatch call.
-    let mut skill_tool_allowlist: Option<Vec<String>> = None;
-    // GOLD-ADAPT-OH-13: extended to 3-tuple to capture `delegate_to` from the
-    // matched skill manifest without requiring a second scan of `skill_match`.
-    // GOLD-CCPARITY-MODEL-02: extended to 4-tuple to capture `skill_model`
-    // from the matched skill's `manifest.model` field.
-    // GOLD-CCPARITY-EFFORT-03: extended to capture `skill_effort` from the
-    // matched skill's `manifest.effort` field. The final boolean preserves the
-    // matched skill's `loop: true` runtime contract through CLI preflight.
+        crate::analytics::babel::signals::emit(match skill_route_report.stage {
+            Some(crate::skills::resolver::SkillRouteStage::Mode) => {
+                crate::analytics::babel::signals::SignalKind::SkillMode
+            }
+            Some(crate::skills::resolver::SkillRouteStage::Embedding) => {
+                crate::analytics::babel::signals::SignalKind::SkillEmbedding
+            }
+            Some(crate::skills::resolver::SkillRouteStage::Explicit)
+            | Some(crate::skills::resolver::SkillRouteStage::ParentLiteral) => {
+                crate::analytics::babel::signals::SignalKind::SkillKeyword
+            }
+            None => crate::analytics::babel::signals::SignalKind::SkillNoMatch,
+        });
+    }
+
+    if let Some(route) = selected_skill_route.as_ref() {
+        info!(
+            skill = route.skill().id(),
+            mode = ?route.mode().map(|mode| mode.id.as_str()),
+            stage = ?route.report().stage,
+            snapshot = %route.report().snapshot_sha256,
+            "authority-bound Skill route selected"
+        );
+    }
+
+    // Every derived execution field comes from the same owning route handle.
+    // The handle itself is retained in PromptBundle through dispatch.
     #[allow(clippy::type_complexity)]
     let (
         skill_layer,
@@ -1535,137 +1550,21 @@ async fn build_prompt_bundle(
         Option<String>,
         Option<crate::providers::effort_override::EffortBudget>,
         bool,
-    ) = if eval_suppress {
-        crate::analytics::babel::signals::emit(
-            crate::analytics::babel::signals::SignalKind::SkillSuppressed,
-        );
-        (None, None, None, None, None, false)
-    } else if let Some(resolved) = mode_hit {
-        let parent = installed_skills
-            .iter()
-            .find(|s| s.id() == resolved.skill_id);
-        info!(
-            mode = %resolved.mode.id,
-            skill = %resolved.skill_id,
-            spectrum = %resolved.mode.spectrum.as_str(),
-            oversight = %resolved.mode.oversight.as_str(),
-            "mode activated via ModeRegistry"
-        );
-        // GOLD-ADOPT-28 lazy routing: load ONLY the matched mode's sub-doc on
-        // top of the parent's thin base (shared primitive — same rule as the
-        // channel path in serve_pipeline.rs).
-        let layer = crate::skills::router::compose_mode_skill_layer(
-            parent.map(|skill| skill.as_skill()),
-            resolved,
-        );
-        // GOLD-CCPARITY-MODEL-02: parent skill's model override still applies
-        // when a mode is active — the mode is a behaviour variant of its
-        // parent and inherits the parent's model selection.
-        let model = parent.and_then(|s| s.manifest.model.clone());
-        // GOLD-CCPARITY-EFFORT-03: parent skill's effort override also applies
-        // when a mode is active — mode inherits parent effort setting.
-        let effort = parent.and_then(|s| s.manifest.effort);
-        // A mode is a behaviour variant of its parent skill, not a separate
-        // security principal. Preserve the parent's delegation boundary just
-        // like its model, effort and tool allowlist.
-        let delegate_to = parent.and_then(|s| s.manifest.delegate_to.clone());
-        let parent_skill = parent.map(|skill| skill.as_skill());
-        let loop_trigger = routed_skill_loop_trigger(parent_skill);
-        skill_tool_allowlist = routed_skill_tool_allowlist(parent_skill);
-        crate::analytics::babel::signals::emit(
-            crate::analytics::babel::signals::SignalKind::SkillMode,
-        );
-        // Mode activation is its own audit path — review-gate
-        // dispatching via /agent is the explicit operator path,
-        // so no used_skill_id surfaces here (mirrors the prior
-        // `_skill_match` discard).
-        (layer, None, delegate_to, model, effort, loop_trigger)
+    ) = if let Some(route) = selected_skill_route.as_ref() {
+        let skill = route.skill();
+        (
+            route.system_prompt_layer(),
+            Some(skill.id().to_owned()),
+            skill.manifest.delegate_to.clone(),
+            skill.manifest.model.clone(),
+            skill.manifest.effort,
+            routed_skill_loop_trigger(Some(skill)),
+        )
     } else {
-        // Day-14b Phase 2 — Stage-2 embedding cosine re-rank.
-        // PF-01 (Session 30): Stage-2 runs when EITHER keyword Stage-1
-        // missed OR `skills.always_embed_route` is set (the default) —
-        // so the skill library routes by SEMANTICS, not only on a literal
-        // keyword. A Stage-2 hit (cosine ≥ EMBEDDING_THRESHOLD) takes
-        // PRECEDENCE over the keyword match; when Stage-2 returns None
-        // (nothing crosses the bar) the keyword Stage-1 result stands as
-        // the fallback. Either way Stage-2 only fires when the operator
-        // configured `inference.embedding_provider` (off by default).
-        // Full-auto mode (the whole bundled skill library is live) raises the
-        // Stage-1 confidence floor so a lone generic single-word trigger can't
-        // false-activate; gated mode keeps the historical floor of 1.
-        let stage1_floor = if config.skills.enable_all_bundled {
-            crate::skills::router::FULL_AUTO_MIN_WEIGHT
-        } else {
-            crate::skills::router::DEFAULT_MIN_WEIGHT
-        };
-        // GOLD-CCPARITY-PATHS-01: read active editor files from env so path-gated
-        // skills only activate when the operator is working in matching files.
-        let active_files = read_env_active_files();
-        let mut skill_match = crate::skills::router::route_with_min_weight(
-            &prompt,
-            installed_skills.as_slice(),
-            stage1_floor,
-            &active_files,
-        );
-        if (skill_match.is_none() || config.skills.always_embed_route)
-            && let Some(embed_provider) =
-                crate::providers::embed_provider_from_config(&config).await
-            && let Some((skill, score)) = crate::skills::router::route_stage2_embedding(
-                &prompt,
-                installed_skills.as_slice(),
-                embed_provider.as_ref(),
-            )
-            .await
-        {
-            info!(
-                skill = skill.id(),
-                cosine = score,
-                overrode_keyword = skill_match.is_some(),
-                "skill activated via Stage-2 embedding re-rank"
-            );
-            skill_match = Some(crate::skills::router::RouteMatch {
-                skill,
-                matched_keywords: Vec::new(),
-                embedding_score: Some(score),
-            });
-        }
-        if let Some(m) = &skill_match
-            && m.embedding_score.is_none()
-        {
-            info!(
-                skill = m.skill.id(),
-                matched_keywords = ?m.matched_keywords,
-                "skill activated"
-            );
-        }
-        crate::analytics::babel::signals::emit(match &skill_match {
-            Some(m) if m.embedding_score.is_some() => {
-                crate::analytics::babel::signals::SignalKind::SkillEmbedding
-            }
-            Some(_) => crate::analytics::babel::signals::SignalKind::SkillKeyword,
-            None => crate::analytics::babel::signals::SignalKind::SkillNoMatch,
-        });
-        let layer = skill_match
-            .as_ref()
-            .map(|m| m.skill.system_prompt().to_string());
-        let id = skill_match.as_ref().map(|m| m.skill.id().to_string());
-        // GOLD-ADAPT-OH-13: capture delegate_to from the matched skill manifest.
-        let delegate = skill_match
-            .as_ref()
-            .and_then(|m| m.skill.manifest.delegate_to.clone());
-        // GOLD-CCPARITY-MODEL-02: capture per-skill model override.
-        let model = skill_match
-            .as_ref()
-            .and_then(|m| m.skill.manifest.model.clone());
-        // GOLD-CCPARITY-EFFORT-03: capture per-skill effort/reasoning-budget.
-        let effort = skill_match.as_ref().and_then(|m| m.skill.manifest.effort);
-        let loop_trigger =
-            routed_skill_loop_trigger(skill_match.as_ref().map(|matched| matched.skill));
-        // SC-11 — the matched skill's tool_allowlist scopes the MCP gate.
-        skill_tool_allowlist =
-            routed_skill_tool_allowlist(skill_match.as_ref().map(|matched| matched.skill));
-        (layer, id, delegate, model, effort, loop_trigger)
+        (None, None, None, None, None, false)
     };
+    let skill_tool_allowlist =
+        routed_skill_tool_allowlist(selected_skill_route.as_ref().map(|route| route.skill()));
     // Shadow as mutable so GOLD-ADAPT-PWF-01 can append the fenced plan block.
     let mut skill_layer = skill_layer;
 
@@ -1940,6 +1839,8 @@ async fn build_prompt_bundle(
     Ok((
         PromptBundle {
             combined_system,
+            skill_route_guard: selected_skill_route,
+            skill_route_report,
             budget_items,
             mcp_catalogue_slot,
             skill_tool_allowlist,
@@ -2970,13 +2871,13 @@ fn should_check_refusal_hard_block(
         && (response_replacement_requested || teacher_triggered)
 }
 
-const CHAT_STREAM_PROTOCOL_VERSION: u8 = 2;
+const CHAT_STREAM_PROTOCOL_VERSION: u8 = 3;
 
 fn stream_request_id(control_token: &str) -> String {
     use sha2::{Digest as _, Sha256};
 
     let mut digest = Sha256::new();
-    digest.update(b"neoth-chat-stream-request-v2\0");
+    digest.update(b"neoth-chat-stream-request-v3\0");
     digest.update(control_token.as_bytes());
     hex::encode(digest.finalize())
 }
@@ -3021,7 +2922,7 @@ fn stream_finalization_receipt(request_id: &str, chunk_count: u32, content_hash:
     use sha2::{Digest as _, Sha256};
 
     let mut digest = Sha256::new();
-    digest.update(b"neoth-chat-stream-finalization-v2\0");
+    digest.update(b"neoth-chat-stream-finalization-v3\0");
     digest.update(request_id.as_bytes());
     digest.update(b"\0");
     digest.update(u64::from(chunk_count).to_le_bytes());
@@ -3121,6 +3022,38 @@ fn write_stream_control_line(
     writeln!(output)?;
     writeln!(output, "{stream_control_line}")?;
     output.flush()
+}
+
+fn skill_route_frame_line(
+    control_token: &str,
+    report: &crate::skills::resolver::SkillRouteReport,
+) -> std::io::Result<String> {
+    #[derive(serde::Serialize)]
+    struct SkillRouteFrame<'a> {
+        neoth_stream: &'static str,
+        protocol_version: u8,
+        request_id: String,
+        control_token: &'a str,
+        report: &'a crate::skills::resolver::SkillRouteReport,
+    }
+
+    serde_json::to_string(&SkillRouteFrame {
+        neoth_stream: "skill_route",
+        protocol_version: CHAT_STREAM_PROTOCOL_VERSION,
+        request_id: stream_request_id(control_token),
+        control_token,
+        report,
+    })
+    .map_err(std::io::Error::other)
+}
+
+fn write_skill_route_frame(
+    mut output: impl std::io::Write,
+    control_token: &str,
+    report: &crate::skills::resolver::SkillRouteReport,
+) -> std::io::Result<()> {
+    let frame = skill_route_frame_line(control_token, report)?;
+    write_stream_control_line(&mut output, &frame)
 }
 
 fn write_authenticated_stream_notice(
@@ -6063,6 +5996,11 @@ async fn run_chat_with_consent(
         None => current_mcp_servers,
     };
     let scoped_mcp_servers = enabled_mcp_scope(&mcp_servers);
+    // Parse a slash selection before every local shortcut. A later authority
+    // check decides whether this is an admitted Skill or an ordinary slash
+    // command, but neither kind may be pre-empted by coding/recall heuristics.
+    let slash_skill_name = slash_invocation_name(&prompt);
+    let explicit_route_requested = args.skill.is_some() || slash_skill_name.is_some();
 
     // Round-3 v0.4 — coding-intent auto-dispatch. When the prompt
     // looks like a coding request (bilingual EN/DE heuristic: verb
@@ -6078,7 +6016,10 @@ async fn run_chat_with_consent(
     // auto-dispatch entirely. Low-confidence detections (verb XOR
     // noun, not both) print an offer banner but still run the chat
     // turn — only High confidence auto-dispatches.
-    if !has_attachments && crate::coding::intent::should_auto_dispatch(&prompt) {
+    if !explicit_route_requested
+        && !has_attachments
+        && crate::coding::intent::should_auto_dispatch(&prompt)
+    {
         let intent = crate::coding::intent::detect_coding_intent(&prompt)
             .expect("should_auto_dispatch returned true so detect must return Some");
         write_chat_notice(
@@ -6105,7 +6046,8 @@ async fn run_chat_with_consent(
             .context("write coding auto-dispatch stream completion markers")?;
         }
         return result;
-    } else if !has_attachments
+    } else if !explicit_route_requested
+        && !has_attachments
         && let Some(intent) = crate::coding::intent::detect_coding_intent(&prompt)
     {
         // Low-confidence: print an offer banner + continue with chat.
@@ -6327,7 +6269,8 @@ async fn run_chat_with_consent(
     // through to the normal provider path below unchanged.
     // GR-039: gated on `memory.recall_shortcut` (default true) so operators
     // can route recall-looking prompts to the provider like any other turn.
-    if attachment_contexts.is_none()
+    if !explicit_route_requested
+        && attachment_contexts.is_none()
         && config.memory.recall_shortcut
         && let Some(reply) = crate::cli::recall::answer_conversational_recall(
             &prompt,
@@ -6393,13 +6336,11 @@ async fn run_chat_with_consent(
     // command dispatch in enforce_preflight) and check whether the name matches
     // a skill id. The full slash-command dispatch still runs in enforce_preflight
     // as before — this is a read-only pre-check for the visibility gate only.
-    let slash_skill_name: Option<String> = match crate::slash::parse_invocation(&prompt) {
-        crate::slash::Invocation::Command { name, .. } => Some(name.to_lowercase()),
-        _ => None,
-    };
     let (
         PromptBundle {
             combined_system,
+            skill_route_guard: _skill_route_guard,
+            skill_route_report,
             budget_items,
             mcp_catalogue_slot,
             skill_tool_allowlist,
@@ -6430,6 +6371,53 @@ async fn run_chat_with_consent(
         },
     )
     .await?;
+
+    // Authenticated GUI/Buddy consumers receive the exact shared typed route
+    // report once, before any local action or provider delta. Terminal streams
+    // stay raw text and therefore never receive this JSON control frame.
+    if let Some(control_token) = stream_control_token.as_ref().map(|token| token.as_str()) {
+        let stdout = std::io::stdout();
+        if let Err(error) =
+            write_skill_route_frame(stdout.lock(), control_token, &skill_route_report)
+        {
+            drop(writer);
+            writer_join
+                .await
+                .context("WAL writer task failed after Skill route-frame failure")?;
+            return Err(error).context("write authenticated Skill route frame");
+        }
+    }
+
+    let route_failure = match skill_route_report.outcome {
+        crate::skills::resolver::SkillRouteOutcome::Conflict => {
+            let candidates = skill_route_report
+                .candidates
+                .iter()
+                .map(|candidate| match &candidate.mode_id {
+                    Some(mode) => format!("{}/{}", candidate.skill_id, mode),
+                    None => candidate.skill_id.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(anyhow::anyhow!(
+                "Skill routing conflict at {:?}: {candidates}. Select one explicitly with --skill <id> or /skill-id.",
+                skill_route_report.stage
+            ))
+        }
+        crate::skills::resolver::SkillRouteOutcome::Rejected => Some(anyhow::anyhow!(
+            "Explicit Skill selection rejected: {:?}",
+            skill_route_report.rejection
+        )),
+        crate::skills::resolver::SkillRouteOutcome::Match
+        | crate::skills::resolver::SkillRouteOutcome::NoMatch => None,
+    };
+    if let Some(error) = route_failure {
+        drop(writer);
+        writer_join
+            .await
+            .context("WAL writer task failed after rejected Skill route")?;
+        return Err(error);
+    }
 
     // GOLD-CCPARITY-ONCE: session-scoped once-guard. One run_chat_with call =
     // one CLI session. Created here before enforce_preflight so the same guard
@@ -10846,6 +10834,39 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    #[derive(clap::Parser)]
+    struct ChatArgsParser {
+        #[command(flatten)]
+        chat: ChatArgs,
+    }
+
+    #[test]
+    fn explicit_skill_cli_selection_is_typed_and_separate_from_the_message() {
+        let parsed = <ChatArgsParser as clap::Parser>::try_parse_from([
+            "neoth-chat-test",
+            "--skill",
+            "academic_research",
+            "review this paper",
+        ])
+        .expect("parse explicit Skill selection");
+
+        assert_eq!(parsed.chat.skill.as_deref(), Some("academic_research"));
+        assert_eq!(parsed.chat.message.as_deref(), Some("review this paper"));
+    }
+
+    #[test]
+    fn slash_skill_selection_is_visible_before_coding_auto_dispatch() {
+        let prompt = "/academic_research build a function";
+        assert!(
+            crate::coding::intent::should_auto_dispatch(prompt),
+            "fixture must independently exercise the high-confidence coding shortcut"
+        );
+        assert_eq!(
+            slash_invocation_name(prompt).as_deref(),
+            Some("academic_research")
+        );
+    }
+
     #[test]
     fn incognito_refuses_durable_background_sessions() {
         for name in ["background", "btw"] {
@@ -10948,6 +10969,32 @@ mod tests {
         assert_eq!(sentinel["used_tokens"], 8);
         assert_eq!(sentinel["model"], "test-model");
         assert!(stdout.contains("[spec]\nlooks good"));
+    }
+
+    #[test]
+    fn skill_route_frame_is_token_bound_and_roundtrips_the_exact_typed_report() {
+        let control_token = "0123456789abcdef0123456789abcdef";
+        let report = crate::skills::resolver::SkillRouteReport {
+            outcome: crate::skills::resolver::SkillRouteOutcome::NoMatch,
+            stage: None,
+            config_epoch: 17,
+            authority_epoch: 23,
+            snapshot_sha256: "ab".repeat(32),
+            candidates: Vec::new(),
+            rejection: None,
+            degraded_reason: Some("embedding_unavailable".to_owned()),
+        };
+
+        let line = skill_route_frame_line(control_token, &report).unwrap();
+        let frame: serde_json::Value = serde_json::from_str(&line).unwrap();
+
+        assert_eq!(frame["neoth_stream"], "skill_route");
+        assert_eq!(frame["protocol_version"], CHAT_STREAM_PROTOCOL_VERSION);
+        assert_eq!(frame["request_id"], stream_request_id(control_token));
+        assert_eq!(frame["control_token"], control_token);
+        let decoded: crate::skills::resolver::SkillRouteReport =
+            serde_json::from_value(frame["report"].clone()).unwrap();
+        assert_eq!(decoded, report);
     }
 
     #[test]
@@ -11181,6 +11228,21 @@ mod tests {
         }
 
         let error = write_stream_control_line(RejectWrites, "{}").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+
+        let report = crate::skills::resolver::SkillRouteReport {
+            outcome: crate::skills::resolver::SkillRouteOutcome::NoMatch,
+            stage: None,
+            config_epoch: 0,
+            authority_epoch: 0,
+            snapshot_sha256: "00".repeat(32),
+            candidates: Vec::new(),
+            rejection: None,
+            degraded_reason: None,
+        };
+        let error =
+            write_skill_route_frame(RejectWrites, "0123456789abcdef0123456789abcdef", &report)
+                .unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
     }
 
@@ -12637,6 +12699,7 @@ modes:
             attach: Vec::new(),
             message: Some("Reply with one short greeting.".into()),
             model: None,
+            skill: None,
             system: None,
             edit: false,
             config: Some(config_path),
@@ -12684,6 +12747,7 @@ modes:
             attach: Vec::new(),
             message: Some("Do you remember when we talked about rust?".into()),
             model: None,
+            skill: None,
             system: None,
             edit: false,
             config: Some(dir.path().join("freedom.yaml")),
@@ -12811,6 +12875,7 @@ modes:
             attach: Vec::new(),
             message: Some("hi".into()),
             model: None,
+            skill: None,
             system: None,
             edit: false,
             config: Some(dir.path().join("freedom.yaml")),
@@ -13001,6 +13066,7 @@ modes:
             attach: Vec::new(),
             message: Some("do the dangerous thing".into()),
             model: None,
+            skill: None,
             system: None,
             edit: false,
             config: Some(dir.path().join("freedom.yaml")),
@@ -13125,6 +13191,7 @@ modes:
             attach: Vec::new(),
             message: Some("Capital of France?".into()),
             model: None,
+            skill: None,
             system: None,
             edit: false,
             config: Some(dir.path().join("freedom.yaml")),
@@ -13300,6 +13367,7 @@ modes:
             attach: Vec::new(),
             message: Some("hi".into()),
             model: None,
+            skill: None,
             system: None,
             edit: false,
             config: Some(dir.path().join("freedom.yaml")),
@@ -13478,6 +13546,7 @@ modes:
             attach: Vec::new(),
             message: Some("trigger".into()),
             model: None,
+            skill: None,
             system: None,
             edit: false,
             config: Some(dir.path().join("freedom.yaml")),
@@ -13645,6 +13714,7 @@ modes:
             attach: Vec::new(),
             message: Some("b22 test prompt".into()),
             model: None, // no CLI override — freedom tier must win
+            skill: None,
             system: None,
             edit: false,
             config: Some(dir.path().join("freedom.yaml")),
@@ -15576,6 +15646,7 @@ modes:
             attach: Vec::new(),
             message: Some("test prompt".to_string()),
             model: args_model,
+            skill: None,
             system: None,
             edit: false,
             config: None,
@@ -15721,6 +15792,7 @@ modes:
             attach: Vec::new(),
             message: Some("blocked prompt".to_string()),
             model: Some("unknown-paid-model".to_string()),
+            skill: None,
             system: None,
             edit: false,
             config: None,
@@ -15844,6 +15916,7 @@ modes:
             attach: Vec::new(),
             message: Some("effort test".to_string()),
             model: None,
+            skill: None,
             system: None,
             edit: false,
             config: None,
@@ -16461,6 +16534,7 @@ mod attach_tests {
             message: None,
             attach: Vec::new(),
             model: None,
+            skill: None,
             system: None,
             edit: false,
             config: None,

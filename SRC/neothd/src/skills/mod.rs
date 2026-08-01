@@ -36,6 +36,8 @@ pub(crate) mod mutation_lifecycle;
 /// provider call so a tampered plan file is blocked with `[PLAN TAMPERED]`.
 pub mod plan_attestation;
 pub mod registry;
+pub mod resolver;
+pub mod route_ownership;
 pub mod router;
 pub mod schema;
 pub(crate) mod store;

@@ -1074,13 +1074,23 @@ export component MainWindow inherits Window {
     /// choice to ~/.neoth/.gui-density + calls Theme.set_density_mode(val).
     callback density-changed(int);
 
+    /// ADOPT31-B10 — labels shown by both chat surfaces. Rust owns the
+    /// parallel canonical Skill IDs and resolves the selected index.
+    in property <[string]> chat-skill-options: [];
+    in-out property <int> chat-selected-skill-index: 0;
+    /// Dedicated Skill route result; never reused as the generic status line.
+    in property <string> chat-skill-route-status: "";
+    callback chat-skill-selected(int);
+
     /// Operator typed + sent a message. Rust dispatches through
     /// `cli::chat::run_chat_with`.
     callback chat-send-clicked(string);
-    /// Internal continuation invoked by Rust only after typed consent preflight.
-    callback chat-send-approved(string, string);
-    /// Internal Buddy continuation after the same typed consent preflight.
-    callback buddy-chat-send-approved(string, string);
+    /// Internal continuation invoked by Rust only after typed consent preflight:
+    /// (request-id, text, captured-skill-id).
+    callback chat-send-approved(string, string, string);
+    /// Internal Buddy continuation after the same typed consent preflight:
+    /// (request-id, text, captured-skill-id).
+    callback buddy-chat-send-approved(string, string, string);
     /// Internal Buddy window hand-off while the main window owns the consent modal.
     callback buddy-chat-consent-prompt-required();
     /// Internal Buddy restoration when consent is denied or preflight fails.
@@ -3748,9 +3758,13 @@ export component MainWindow inherits Window {
                     history-active: root.chat-history-active;
                     stall-active: root.chat-stall-active;
                     pending-attachments: root.chat-pending-attachments;
+                    skill-options: root.chat-skill-options;
+                    selected-skill-index <=> root.chat-selected-skill-index;
+                    skill-route-status: root.chat-skill-route-status;
                     link-chips: root.chat-link-chips;
                     link-chip-clicked(k, id) => { root.chat-link-chip-clicked(k, id); }
                     send-clicked(text) => { root.chat-send-clicked(text); }
+                    skill-selected(i) => { root.chat-skill-selected(i); }
                     live-session-selected => { root.chat-live-session-selected(); }
                     session-selected(id) => { root.chat-session-selected(id); }
                     attach-clicked => { root.chat-attach-clicked(); }

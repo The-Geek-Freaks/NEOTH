@@ -1615,10 +1615,14 @@ pub fn inspect_local_install(
     let validated = validate_local_source(source_dir)?;
     let target_generation_sha256 =
         match open_bound_directory(target_skills_dir, false, "skills root")? {
-            None => None,
+            None => {
+                validate_prospective_route_ownership(None, &validated.manifest)?;
+                None
+            }
             Some(root) => {
                 let _mutation_guard = lock_skill_mutations(&root)?;
                 recover_pending_transactions_locked(&root)?;
+                validate_prospective_route_ownership(Some(&root), &validated.manifest)?;
                 target_generation_locked(&root, &validated.manifest.id)?
             }
         };
@@ -1629,6 +1633,108 @@ pub fn inspect_local_install(
         replacing_existing: target_generation_sha256.is_some(),
         target_generation_sha256,
     })
+}
+
+/// Validate every executable post-mutation catalogue while the caller holds
+/// the Skill-namespace mutation lock. Raw installed manifests override bundled
+/// ids, but an installed candidate without exact active authority leaves its
+/// same-id bundled fallback executable. Authority is deliberately stored
+/// outside the package tree, so mutation preflight conservatively validates
+/// both the installed override and every possible bundled fallback. Broken
+/// entries cannot route and therefore contribute no aliases.
+fn validate_prospective_route_ownership(
+    target_root: Option<&BoundDirectory>,
+    candidate: &SkillManifest,
+) -> Result<()> {
+    validate_prospective_route_ownership_change(target_root, Some(candidate), None)
+        .with_context(|| format!("Skill `{}` route-owner preflight failed", candidate.id))
+}
+
+/// Validate removal or authority reduction before its commit boundary. The
+/// caller must hold `target_root`'s Skill mutation lock for the full mutation.
+pub(crate) fn validate_prospective_route_reduction_locked(
+    target_root: &BoundDirectory,
+    removed_installed_id: &str,
+) -> Result<()> {
+    validate_prospective_route_ownership_change(Some(target_root), None, Some(removed_installed_id))
+        .with_context(|| {
+            format!("Skill `{removed_installed_id}` route-owner reduction preflight failed")
+        })
+}
+
+/// Revalidate the complete installed/fallback catalogue immediately before an
+/// authority activation commits. The caller must retain `target_root`'s Skill
+/// mutation lock through the authority and policy transaction.
+pub(crate) fn validate_prospective_route_activation_locked(
+    target_root: &BoundDirectory,
+) -> Result<()> {
+    validate_prospective_route_ownership_change(Some(target_root), None, None)
+        .context("Skill activation route-owner preflight failed")
+}
+
+fn validate_prospective_route_ownership_change(
+    target_root: Option<&BoundDirectory>,
+    candidate: Option<&SkillManifest>,
+    removed_installed_id: Option<&str>,
+) -> Result<()> {
+    let bundled = super::loader::parse_bundled_skills()
+        .context("load bundled catalogue for Skill route-owner preflight")?;
+    let mut by_id = bundled.clone();
+    let mut installed_override_ids = Vec::new();
+    if let Some(root) = target_root {
+        for entry in list_installed_locked_with_limit(root, MAX_SKILL_ENTRIES)? {
+            let Some(manifest) = entry.manifest else {
+                continue;
+            };
+            if removed_installed_id.is_some_and(|removed| manifest.id == removed) {
+                continue;
+            }
+            installed_override_ids.push(manifest.id.clone());
+            by_id.insert(
+                manifest.id.clone(),
+                super::schema::Skill {
+                    manifest,
+                    path: entry.path.join("skill.yaml"),
+                    content_hash: String::new(),
+                },
+            );
+        }
+    }
+    if let Some(candidate) = candidate {
+        installed_override_ids.retain(|id| id != &candidate.id);
+        installed_override_ids.push(candidate.id.clone());
+        by_id.insert(
+            candidate.id.clone(),
+            super::schema::Skill {
+                manifest: candidate.clone(),
+                path: PathBuf::from("<prospective>/skill.yaml"),
+                content_hash: String::new(),
+            },
+        );
+    }
+
+    validate_route_ownership_map(by_id.values())?;
+    installed_override_ids.sort();
+    installed_override_ids.dedup();
+    for fallback_id in installed_override_ids {
+        let Some(fallback) = bundled.get(&fallback_id) else {
+            continue;
+        };
+        let mut fallback_view = by_id.clone();
+        fallback_view.insert(fallback_id.clone(), fallback.clone());
+        validate_route_ownership_map(fallback_view.values()).with_context(|| {
+            format!("validate bundled fallback route ownership for `{fallback_id}`")
+        })?;
+    }
+    Ok(())
+}
+
+fn validate_route_ownership_map<'a>(
+    skills: impl Iterator<Item = &'a super::schema::Skill>,
+) -> Result<()> {
+    let mut prospective = skills.cloned().collect::<Vec<_>>();
+    prospective.sort_by(|left, right| left.id().cmp(right.id()));
+    super::route_ownership::validate_inventory(&prospective)
 }
 
 /// Test-only compatibility wrapper that copies `<source_dir>/skill.yaml`
@@ -1748,6 +1854,7 @@ pub(crate) fn prepare_install_from_local_with_expectation_and_origin(
     let target_root = open_or_create_bound_skills_root(target_skills_dir)?;
     let _mutation_guard = lock_skill_mutations(&target_root)?;
     recover_pending_transactions_locked(&target_root)?;
+    validate_prospective_route_ownership(Some(&target_root), &manifest)?;
     let target_dir = target_root.display_path.join(&manifest.id);
     let replaced_generation_sha256 = target_generation_locked(&target_root, &manifest.id)?;
     let replacing = replaced_generation_sha256.is_some();
@@ -1936,7 +2043,7 @@ pub(crate) fn prepare_skill_document_mutation(
             "expected installed-Skill package generation must be 64 lowercase hex characters"
         );
     }
-    if request.document == SkillPackageDocument::Manifest {
+    let prospective_manifest = if request.document == SkillPackageDocument::Manifest {
         let manifest: SkillManifest = serde_yaml::from_slice(&request.replacement)
             .context("parse generated skill manifest before staging")?;
         if manifest.id != request.id {
@@ -1949,11 +2056,17 @@ pub(crate) fn prepare_skill_document_mutation(
         if manifest.description.trim().is_empty() {
             anyhow::bail!("generated skill manifest description must not be empty");
         }
-    }
+        Some(manifest)
+    } else {
+        None
+    };
 
     let target_root = open_or_create_bound_skills_root(&request.target_skills_dir)?;
     let mutation_guard = lock_skill_mutations(&target_root)?;
     recover_pending_transactions_locked(&target_root)?;
+    if let Some(manifest) = prospective_manifest.as_ref() {
+        validate_prospective_route_ownership(Some(&target_root), manifest)?;
+    }
     let target_display = target_root.display_path.join(&request.id);
     let replaced_generation_sha256 = installed_entry_generation_locked(&target_root, &request.id)?;
     let kind = if replaced_generation_sha256.is_some() {
@@ -2733,6 +2846,7 @@ pub(crate) fn prepare_uninstall_with_expectation_and_origin(
             warnings: Vec::new(),
         }));
     };
+    validate_prospective_route_reduction_locked(&root, id)?;
     let incarnation = super::mutation_lifecycle::prepare_skill_mutation_incarnation(
         target_skills_dir,
         id,
@@ -5922,7 +6036,7 @@ mod tests {
         format!(
             "id: {id}\n\
              description: A test skill\n\
-             trigger_keywords: [test, hello]\n\
+             trigger_keywords: [fixture-{id}-trigger]\n\
              system_prompt: You are a test skill.\n"
         )
     }
@@ -6883,6 +6997,65 @@ mod tests {
     }
 
     #[test]
+    fn install_preflight_rejects_cross_owner_alias_before_publication() {
+        let staging = tempdir().unwrap();
+        let dest = temp_skills_root();
+        let source = staging.path().join("collision-source");
+        write_skill(
+            &source,
+            "custom_collision",
+            "id: custom_collision\n\
+             description: Must not capture a bundled route\n\
+             trigger_keywords: [research]\n\
+             system_prompt: collision fixture\n",
+        );
+
+        let error = inspect_local_install(&source, dest.path()).unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("route-owner preflight failed"), "{detail}");
+        assert!(detail.contains("academic_research"), "{detail}");
+        assert!(detail.contains("custom_collision"), "{detail}");
+        assert!(!dest.path().join("custom_collision").exists());
+    }
+
+    #[test]
+    fn install_preflight_rejects_alias_hidden_by_inactive_bundled_override() {
+        let staging = tempdir().unwrap();
+        let dest = temp_skills_root();
+        let shadow = dest.path().join("academic_research");
+        write_skill(
+            &shadow,
+            "academic_research",
+            "id: academic_research\n\
+             description: Inactive installed shadow\n\
+             trigger_keywords: [installed-shadow-only]\n\
+             system_prompt: shadow fixture\n\
+             enabled: false\n",
+        );
+        let shadow_before = std::fs::read(shadow.join("skill.yaml")).unwrap();
+        let source = staging.path().join("collision-source");
+        write_skill(
+            &source,
+            "custom_collision",
+            "id: custom_collision\n\
+             description: Must not capture a fallback route\n\
+             trigger_keywords: [research]\n\
+             system_prompt: collision fixture\n",
+        );
+
+        let error = inspect_local_install(&source, dest.path()).unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("bundled fallback"), "{detail}");
+        assert!(detail.contains("academic_research"), "{detail}");
+        assert!(detail.contains("custom_collision"), "{detail}");
+        assert_eq!(
+            std::fs::read(shadow.join("skill.yaml")).unwrap(),
+            shadow_before
+        );
+        assert!(!dest.path().join("custom_collision").exists());
+    }
+
+    #[test]
     fn install_from_local_rejects_a_linked_source_root() {
         let parent = tempdir().unwrap();
         let outside = tempdir().unwrap();
@@ -7793,6 +7966,48 @@ mod tests {
         let removed = uninstall(dest.path(), "doomed").unwrap();
         assert!(removed);
         assert!(!target.exists());
+    }
+
+    #[test]
+    fn uninstall_rejects_reexposed_bundled_alias_before_journaling() {
+        let dest = temp_skills_root();
+        let target = dest.path().join("academic_research");
+        write_skill(
+            &target,
+            "academic_research",
+            "id: academic_research\n\
+             description: Active installed override\n\
+             trigger_keywords: [installed-override-only]\n\
+             system_prompt: override fixture\n",
+        );
+        write_skill(
+            &dest.path().join("custom_collision"),
+            "custom_collision",
+            "id: custom_collision\n\
+             description: Claims the bundled fallback alias\n\
+             trigger_keywords: [research]\n\
+             system_prompt: collision fixture\n",
+        );
+        let target_before = std::fs::read(target.join("skill.yaml")).unwrap();
+
+        let error = uninstall(dest.path(), "academic_research").unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(
+            detail.contains("route-owner reduction preflight"),
+            "{detail}"
+        );
+        assert!(detail.contains("academic_research"), "{detail}");
+        assert!(detail.contains("custom_collision"), "{detail}");
+        assert_eq!(
+            std::fs::read(target.join("skill.yaml")).unwrap(),
+            target_before
+        );
+        assert!(
+            open_pending_skill_mutation_reconciliation(dest.path())
+                .unwrap()
+                .is_none(),
+            "ownership rejection must happen before mutation journaling"
+        );
     }
 
     #[test]

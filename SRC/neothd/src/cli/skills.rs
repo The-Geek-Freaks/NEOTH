@@ -21,7 +21,7 @@ use crate::skills::loader::{
     SkillInventoryOrigin, SkillInventoryRow, SkillInventoryRuntimeState, diagnostic_inventory,
 };
 use crate::skills::mutation_lifecycle::{self, IntentDelivery as SkillIntentDelivery};
-use crate::skills::{installer, operator_skill_warnings, route};
+use crate::skills::{installer, operator_skill_warnings};
 
 fn print_operator_skill_warnings(warnings: &[String]) {
     for warning in operator_skill_warnings(warnings) {
@@ -176,6 +176,12 @@ pub struct SkillsArgs {
     /// Print the table of installed skills.
     #[arg(long, conflicts_with_all = ["test", "run_tests", "install", "inspect_install", "inspect_target", "uninstall", "create", "enable", "disable", "revoke"])]
     pub list: bool,
+
+    /// Validate catalogue-wide parent/mode alias ownership and emit every
+    /// cross-owner collision. Exits non-zero when the hot-reload gate would
+    /// reject the current catalogue.
+    #[arg(long = "check-routing", conflicts_with_all = ["list", "test", "run_tests", "install", "inspect_install", "inspect_target", "uninstall", "create", "enable", "disable", "revoke"])]
+    pub check_routing: bool,
 
     /// Run the router against an arbitrary message and report the match.
     #[arg(long, value_name = "MESSAGE", conflicts_with_all = ["list", "run_tests", "install", "uninstall"])]
@@ -383,51 +389,6 @@ fn update_skill_policy_at(config_path: &Path, id_lc: &str, turn_on: bool) -> Res
     .map_err(|error| anyhow::anyhow!("update freedom.yaml: {error}"))
 }
 
-async fn publish_installed_skill_decision(
-    home: &Path,
-    id: &str,
-    reload: &crate::config::reload::ReloadController,
-    decision: crate::skills::authority::SkillAuthorityDecision,
-    expectation: Option<crate::skills::authority::InstalledSkillDecisionExpectation>,
-) -> Result<crate::skills::authority::SkillAuthorityReceipt> {
-    let home = home.to_path_buf();
-    let id = id.to_string();
-    let reload = reload.clone();
-    tokio::task::spawn_blocking(move || {
-        let first =
-            crate::skills::authority::publish_installed_authority_decision_with_expectation(
-                &home,
-                &id,
-                &reload,
-                decision.clone(),
-                expectation.as_ref(),
-            )?;
-        if first.durability().is_live_verified() && first.accepted_policy_current_at_return() {
-            return Ok(first);
-        }
-        let confirmed =
-            crate::skills::authority::publish_installed_authority_decision_with_expectation(
-                &home,
-                &id,
-                &reload,
-                decision,
-                expectation.as_ref(),
-            )
-            .context("reconfirm visible installed-Skill authority decision")?;
-        anyhow::ensure!(
-            confirmed.durability().is_live_verified(),
-            "installed-Skill authority decision is visible but publication remains unverified"
-        );
-        anyhow::ensure!(
-            confirmed.accepted_policy_current_at_return(),
-            "accepted Skill policy changed before authority confirmation"
-        );
-        Ok(confirmed)
-    })
-    .await
-    .context("installed-Skill authority worker failed")?
-}
-
 async fn activate_installed_skill(
     home: &Path,
     config_path: &Path,
@@ -461,6 +422,37 @@ async fn activate_installed_skill(
     })
     .await
     .context("installed-Skill activation transaction worker failed")?
+}
+
+async fn reduce_installed_skill(
+    home: &Path,
+    config_path: &Path,
+    id: &str,
+    decision: crate::skills::authority::SkillAuthorityDecision,
+    expectation: Option<crate::skills::authority::InstalledSkillDecisionExpectation>,
+) -> Result<crate::skills::authority::SkillAuthorityReceipt> {
+    let id_for_plan = id.to_string();
+    let (prepared, prospective_config) = FreedomConfig::prepare_update_at(config_path, |config| {
+        apply_skill_toggle(&mut config.skills, &id_for_plan, false);
+        Ok(config.clone())
+    })
+    .context("prepare exact Skill disable policy generation")?;
+    let prospective_reload =
+        crate::config::reload::ReloadController::new(prospective_config, config_path.to_path_buf());
+    let home = home.to_path_buf();
+    let id = id.to_string();
+    tokio::task::spawn_blocking(move || {
+        crate::skills::authority::publish_installed_reduction_transaction(
+            &home,
+            &id,
+            &prospective_reload,
+            decision,
+            expectation.as_ref(),
+            move || prepared.commit(),
+        )
+    })
+    .await
+    .context("installed-Skill authority reduction worker failed")?
 }
 
 async fn verify_skill_decision_commit(
@@ -614,6 +606,14 @@ pub(crate) async fn set_skill_authority_at_config_with_expectation(
         config_path.to_path_buf(),
     )
     .await?;
+    if target == SkillAuthorityTarget::Enabled {
+        let ownership_inventory =
+            crate::skills::loader::load_all_from_config_path(&skills_dir, config_path)
+                .await
+                .context("load Skill catalogue for enable route-owner preflight")?;
+        crate::skills::route_ownership::validate_inventory(&ownership_inventory)
+            .context("Skill enable rejected by route-owner preflight")?;
+    }
     let origin = match inventory
         .iter()
         .find(|row| row.id().eq_ignore_ascii_case(&id_lc))
@@ -658,11 +658,6 @@ pub(crate) async fn set_skill_authority_at_config_with_expectation(
                 activate_installed_skill(home, config_path, &id_lc, decision_source, expectation)
                     .await?
             } else {
-                update_skill_policy_at(config_path, &id_lc, false)?;
-                let config = FreedomConfig::load_from_path(config_path)
-                    .context("load denied Skill policy for authority reduction")?;
-                let reload =
-                    crate::config::reload::ReloadController::new(config, config_path.to_path_buf());
                 let (state, reason) = match target {
                     SkillAuthorityTarget::Disabled => (
                         crate::skills::authority::SkillAuthorityState::Inactive,
@@ -679,8 +674,7 @@ pub(crate) async fn set_skill_authority_at_config_with_expectation(
                     state,
                     reason,
                 )?;
-                publish_installed_skill_decision(home, &id_lc, &reload, decision, expectation)
-                    .await?
+                reduce_installed_skill(home, config_path, &id_lc, decision, expectation).await?
             };
             Some(receipt)
         }
@@ -1030,6 +1024,62 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
         return Ok(());
     }
 
+    if args.check_routing {
+        let config_path = home.join("freedom.yaml");
+        let inventory = crate::skills::loader::load_all_from_config_path(&skills_dir, &config_path)
+            .await
+            .with_context(|| {
+                format!(
+                    "load prospective Skill catalogue for route-owner probe from {}",
+                    skills_dir.display()
+                )
+            })?;
+        let collisions = crate::skills::route_ownership::inventory_collisions(&inventory);
+        match args.output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "valid": collisions.is_empty(),
+                        "collision_count": collisions.len(),
+                        "collisions": collisions,
+                    }))?
+                );
+            }
+            OutputFormat::Table => {
+                if collisions.is_empty() {
+                    println!("Skill routing ownership: valid (no cross-owner aliases)");
+                } else {
+                    println!(
+                        "Skill routing ownership: {} cross-owner collision(s)",
+                        collisions.len()
+                    );
+                    for collision in &collisions {
+                        println!("  `{}`", collision.normalized_alias);
+                        for claim in &collision.claims {
+                            match &claim.mode_id {
+                                Some(mode) => println!(
+                                    "    - {}/{} ({:?}): {:?}",
+                                    claim.skill_id, mode, claim.kind, claim.raw_alias
+                                ),
+                                None => println!(
+                                    "    - {} ({:?}): {:?}",
+                                    claim.skill_id, claim.kind, claim.raw_alias
+                                ),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        anyhow::ensure!(
+            collisions.is_empty(),
+            "Skill route-owner probe found {} collision(s)",
+            collisions.len()
+        );
+        return Ok(());
+    }
+
     if args.list
         || (args.test.is_none()
             && args.run_tests.is_none()
@@ -1149,6 +1199,9 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
     }
 
     if let Some(msg) = &args.test {
+        let config_path = home.join("freedom.yaml");
+        let config = FreedomConfig::load_from_path_or_default(&config_path)
+            .with_context(|| format!("load Skill routing policy from {}", config_path.display()))?;
         let runtime_registry = crate::skills::SkillRegistry::load(&skills_dir)
             .await
             .with_context(|| {
@@ -1157,37 +1210,118 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                     skills_dir.display()
                 )
             })?;
-        let runtime_skills = runtime_registry.snapshot_owned();
-        match route(msg, runtime_skills.as_slice()) {
-            Some(m) => match args.output {
+        let snapshot = runtime_registry
+            .authority_bound_snapshot()
+            .context("acquire authority-bound Skill probe snapshot")?;
+        let mut blocked_skill_ids = std::collections::BTreeSet::<String>::new();
+        if !config.skills.pinned_hashes.is_empty() {
+            let verdicts = crate::skills::versioning::check_pinned_hashes(
+                snapshot
+                    .skills()
+                    .iter()
+                    .map(|skill| (skill.id(), skill.content_hash.as_str())),
+                &config.skills.pinned_hashes,
+            );
+            for (skill, verdict) in snapshot.skills().iter().zip(verdicts) {
+                if verdict.verdict == crate::skills::versioning::PinnedHashOutcome::Mismatch {
+                    blocked_skill_ids.insert(skill.id().to_owned());
+                }
+            }
+        }
+        let eval_suppress = config.skills.should_suppress_for_eval();
+        let resolver = crate::skills::resolver::SkillRouteResolver::new(snapshot.clone())
+            .retaining(|skill| !eval_suppress && !blocked_skill_ids.contains(skill.id()));
+        let explicit_skill_id = match crate::slash::parse_invocation(msg) {
+            crate::slash::Invocation::Command { name, .. }
+                if snapshot
+                    .skills()
+                    .iter()
+                    .any(|skill| skill.id().eq_ignore_ascii_case(&name)) =>
+            {
+                Some(name.to_lowercase())
+            }
+            _ => None,
+        };
+        let floor = if config.skills.enable_all_bundled {
+            crate::skills::router::FULL_AUTO_MIN_WEIGHT
+        } else {
+            crate::skills::router::DEFAULT_MIN_WEIGHT
+        };
+        let embed_provider = if !eval_suppress && config.skills.always_embed_route {
+            crate::providers::embed_provider_from_config(&config).await
+        } else {
+            None
+        };
+        let active_files = crate::skills::resolver::active_files_from_env();
+        let decision = resolver
+            .resolve(
+                crate::skills::resolver::SkillRouteRequest::automatic(msg, floor, &active_files)
+                    .with_explicit_skill(explicit_skill_id.as_deref()),
+                embed_provider.as_deref(),
+            )
+            .await;
+        let report = decision.report().clone();
+        match decision {
+            crate::skills::resolver::SkillRouteDecision::Match(route) => match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     let v = serde_json::json!({
-                        "matched_skill": m.skill.id(),
-                        "description": m.skill.description(),
-                        "matched_keywords": m.matched_keywords,
+                        "matched_skill": route.skill().id(),
+                        "matched_mode": route.mode().map(|mode| mode.id.as_str()),
+                        "description": route.skill().description(),
+                        "matched_keywords": report.candidates.first().map(|candidate| &candidate.matched_terms),
+                        "route_report": report,
                     });
                     println!("{}", serde_json::to_string_pretty(&v)?);
                 }
                 OutputFormat::Table => {
+                    let evidence = report
+                        .candidates
+                        .first()
+                        .map(|candidate| candidate.matched_terms.join(", "))
+                        .unwrap_or_default();
                     println!(
-                        "match: {} — keywords: {}",
-                        m.skill.id(),
-                        m.matched_keywords.join(", ")
+                        "match: {}{} — stage: {:?} — evidence: {}",
+                        route.skill().id(),
+                        route
+                            .mode()
+                            .map(|mode| format!("/{}", mode.id))
+                            .unwrap_or_default(),
+                        report.stage,
+                        evidence,
                     );
-                    println!("  description: {}", m.skill.description());
+                    println!("  description: {}", route.skill().description());
+                    println!("  snapshot: {}", report.snapshot_sha256);
                 }
             },
-            None => match args.output {
+            crate::skills::resolver::SkillRouteDecision::NoMatch(_)
+            | crate::skills::resolver::SkillRouteDecision::Conflict(_)
+            | crate::skills::resolver::SkillRouteDecision::Rejected(_) => match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     println!(
                         "{}",
-                        serde_json::to_string_pretty(
-                            &serde_json::json!({"matched_skill": serde_json::Value::Null})
-                        )?
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "matched_skill": serde_json::Value::Null,
+                            "route_report": report,
+                        }))?
                     );
                 }
                 OutputFormat::Table => {
-                    println!("no skill activated for this message");
+                    println!("skill route: {:?}", report.outcome);
+                    if !report.candidates.is_empty() {
+                        println!(
+                            "  candidates: {}",
+                            report
+                                .candidates
+                                .iter()
+                                .map(|candidate| candidate.skill_id.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                    }
+                    if let Some(rejection) = report.rejection {
+                        println!("  rejection: {rejection:?}");
+                    }
+                    println!("  snapshot: {}", report.snapshot_sha256);
                 }
             },
         }
@@ -1394,6 +1528,27 @@ mod tests {
     use super::*;
     use crate::config::SkillsConfig;
     use clap::Parser as _;
+
+    #[test]
+    fn routing_collision_probe_is_typed_and_exclusive() {
+        let cli = crate::cli::Cli::try_parse_from(["neoth", "skills", "--check-routing"])
+            .expect("parse route-owner probe");
+        let crate::cli::Commands::Skills(args) = cli.command else {
+            panic!("expected skills command");
+        };
+        assert!(args.check_routing);
+
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "neoth",
+                "skills",
+                "--check-routing",
+                "--test",
+                "deploy now",
+            ])
+            .is_err()
+        );
+    }
 
     #[test]
     fn force_parses_for_create_and_install_but_not_by_itself() {
@@ -2014,6 +2169,15 @@ mod tests {
         );
         let config = FreedomConfig::load_from_path(&home.path().join("freedom.yaml")).unwrap();
         assert!(config.skills.disabled.iter().any(|value| value == id));
+        let reload =
+            crate::config::reload::ReloadController::new(config, home.path().join("freedom.yaml"));
+        let runtime = crate::skills::loader::load_authorized_reload_from_reload_controller(
+            &home.path().join("skills"),
+            &reload,
+        )
+        .await
+        .unwrap();
+        crate::skills::route_ownership::validate_runtime(&runtime.skills).unwrap();
         let current = crate::skills::authority::inspect_current_authority(home.path(), id)
             .unwrap()
             .unwrap();
@@ -2036,6 +2200,218 @@ mod tests {
         );
         assert!(revoked.reload_requested);
         assert!(Path::new(&revoked.reload_sentinel).is_file());
+    }
+
+    #[tokio::test]
+    async fn revoke_rejects_reexposed_bundled_alias_without_mutating_state() {
+        let home = tempfile::tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let bundled_override = skills_dir.join("academic_research");
+        let custom_collision = skills_dir.join("custom_collision");
+        std::fs::create_dir_all(&bundled_override).unwrap();
+        std::fs::create_dir_all(&custom_collision).unwrap();
+        std::fs::write(
+            bundled_override.join("skill.yaml"),
+            "id: academic_research\n\
+             description: Active installed override\n\
+             trigger_keywords: [installed-override-only]\n\
+             system_prompt: override fixture\n",
+        )
+        .unwrap();
+        std::fs::write(
+            custom_collision.join("skill.yaml"),
+            "id: custom_collision\n\
+             description: Claims the bundled fallback alias\n\
+             trigger_keywords: [research]\n\
+             system_prompt: collision fixture\n",
+        )
+        .unwrap();
+        let config_path = home.path().join("freedom.yaml");
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
+        install_authority_test_wal_key(home.path());
+        record_authority_test_install(home.path(), "academic_research");
+        record_authority_test_install(home.path(), "custom_collision");
+
+        // Reconstruct a legacy/upgraded state that predates the public enable
+        // preflight. New operator activations must never be able to create it.
+        let reload = crate::config::reload::ReloadController::new(
+            FreedomConfig::load_from_path(&config_path).unwrap(),
+            config_path.clone(),
+        );
+        for id in ["academic_research", "custom_collision"] {
+            let decision = crate::skills::authority::SkillAuthorityDecision::new(
+                crate::skills::authority::SkillAuthorityDecisionSource::Migration,
+                crate::skills::authority::SkillAuthorityState::Active,
+                None,
+            )
+            .unwrap();
+            crate::skills::authority::publish_installed_authority_decision(
+                home.path(),
+                id,
+                &reload,
+                decision,
+            )
+            .unwrap();
+        }
+        let policy_before = std::fs::read(&config_path).unwrap();
+        let target_before = installer::inspect_current_install(&skills_dir, "academic_research")
+            .unwrap()
+            .generation_sha256;
+        let collision_before = installer::inspect_current_install(&skills_dir, "custom_collision")
+            .unwrap()
+            .generation_sha256;
+        let authority_before =
+            crate::skills::authority::inspect_current_authority(home.path(), "academic_research")
+                .unwrap()
+                .unwrap()
+                .record_sha256()
+                .to_string();
+        let collision_authority_before =
+            crate::skills::authority::inspect_current_authority(home.path(), "custom_collision")
+                .unwrap()
+                .unwrap()
+                .record_sha256()
+                .to_string();
+
+        let error = set_skill_authority_at_config(
+            home.path(),
+            &config_path,
+            "academic_research",
+            SkillAuthorityTarget::Revoked,
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli,
+        )
+        .await
+        .unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(
+            detail.contains("route-owner reduction preflight"),
+            "{detail}"
+        );
+        assert!(detail.contains("academic_research"), "{detail}");
+        assert!(detail.contains("custom_collision"), "{detail}");
+        assert_eq!(std::fs::read(&config_path).unwrap(), policy_before);
+        assert_eq!(
+            installer::inspect_current_install(&skills_dir, "academic_research")
+                .unwrap()
+                .generation_sha256,
+            target_before
+        );
+        assert_eq!(
+            installer::inspect_current_install(&skills_dir, "custom_collision")
+                .unwrap()
+                .generation_sha256,
+            collision_before
+        );
+        assert_eq!(
+            crate::skills::authority::inspect_current_authority(home.path(), "academic_research")
+                .unwrap()
+                .unwrap()
+                .record_sha256(),
+            authority_before
+        );
+        assert_eq!(
+            crate::skills::authority::inspect_current_authority(home.path(), "custom_collision")
+                .unwrap()
+                .unwrap()
+                .record_sha256(),
+            collision_authority_before
+        );
+    }
+
+    #[tokio::test]
+    async fn enable_rejects_alias_hidden_by_unauthorized_bundled_shadow_without_mutation() {
+        let home = tempfile::tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let bundled_shadow = skills_dir.join("academic_research");
+        let target = skills_dir.join("custom_collision");
+        std::fs::create_dir_all(&bundled_shadow).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(
+            bundled_shadow.join("skill.yaml"),
+            "id: academic_research\n\
+             description: Installed shadow without authority\n\
+             trigger_keywords: [installed-shadow-only]\n\
+             system_prompt: shadow fixture\n",
+        )
+        .unwrap();
+        std::fs::write(
+            target.join("skill.yaml"),
+            "id: custom_collision\n\
+             description: Claims the bundled fallback alias\n\
+             trigger_keywords: [research]\n\
+             system_prompt: collision fixture\n",
+        )
+        .unwrap();
+        let config_path = home.path().join("freedom.yaml");
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
+        install_authority_test_wal_key(home.path());
+        record_authority_test_install(home.path(), "academic_research");
+        record_authority_test_install(home.path(), "custom_collision");
+        let policy_before = std::fs::read(&config_path).unwrap();
+        let shadow_before = installer::inspect_current_install(&skills_dir, "academic_research")
+            .unwrap()
+            .generation_sha256;
+        let target_before = installer::inspect_current_install(&skills_dir, "custom_collision")
+            .unwrap()
+            .generation_sha256;
+        assert!(
+            crate::skills::authority::inspect_current_authority(home.path(), "academic_research")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            crate::skills::authority::inspect_current_authority(home.path(), "custom_collision")
+                .unwrap()
+                .is_none()
+        );
+
+        let error = set_skill_authority_at_config(
+            home.path(),
+            &config_path,
+            "custom_collision",
+            SkillAuthorityTarget::Enabled,
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli,
+        )
+        .await
+        .unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(
+            detail.contains("Skill activation route-owner preflight failed"),
+            "{detail}"
+        );
+        assert!(detail.contains("academic_research"), "{detail}");
+        assert!(detail.contains("custom_collision"), "{detail}");
+        assert_eq!(std::fs::read(&config_path).unwrap(), policy_before);
+        assert_eq!(
+            installer::inspect_current_install(&skills_dir, "academic_research")
+                .unwrap()
+                .generation_sha256,
+            shadow_before
+        );
+        assert_eq!(
+            installer::inspect_current_install(&skills_dir, "custom_collision")
+                .unwrap()
+                .generation_sha256,
+            target_before
+        );
+        assert!(
+            crate::skills::authority::inspect_current_authority(home.path(), "academic_research")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            crate::skills::authority::inspect_current_authority(home.path(), "custom_collision")
+                .unwrap()
+                .is_none()
+        );
     }
 
     /// Decode every authenticated-home WAL frame to `{event_type, payload}`

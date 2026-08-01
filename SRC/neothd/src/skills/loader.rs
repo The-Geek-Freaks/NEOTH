@@ -1058,7 +1058,7 @@ pub(crate) fn load_skill_policy_from_config_path(freedom_path: &Path) -> Result<
 /// in `super::bundled` pin every YAML at compile time), so a failure here
 /// would only fire on a corrupted compile-time asset. Propagating that error
 /// prevents a partially populated built-in registry from reaching callers.
-fn parse_bundled_skills() -> Result<HashMap<String, Skill>> {
+pub(crate) fn parse_bundled_skills() -> Result<HashMap<String, Skill>> {
     let mut out = HashMap::new();
     for (expected_id, yaml_body) in super::bundled::BUNDLED_SKILLS {
         let mut manifest = serde_yaml::from_str::<SkillManifest>(yaml_body)

@@ -238,6 +238,10 @@ pub enum ExtendedSubtype {
     /// machine. Payload is metadata-only and binds the intent plus Armed claim
     /// digest.
     ChannelEgressArmed = 0x24,
+    /// ADOPT31-B10 — exact authority-bound Skill routing report for a channel
+    /// turn. The payload contains only the typed resolver report, channel kind,
+    /// sender digest and schema version; no operator text or raw identifier.
+    SkillRouteResolved = 0x25,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -328,6 +332,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::MediaCallIntent => "media_call_intent",
             ExtendedSubtype::MediaCallResult => "media_call_result",
             ExtendedSubtype::ChannelEgressArmed => "channel_egress_armed",
+            ExtendedSubtype::SkillRouteResolved => "skill_route_resolved",
         }
     }
 
@@ -370,6 +375,7 @@ impl ExtendedSubtype {
             0x22 => Some(ExtendedSubtype::MediaCallIntent),
             0x23 => Some(ExtendedSubtype::MediaCallResult),
             0x24 => Some(ExtendedSubtype::ChannelEgressArmed),
+            0x25 => Some(ExtendedSubtype::SkillRouteResolved),
             _ => None,
         }
     }
@@ -414,6 +420,7 @@ impl ExtendedSubtype {
             Self::MediaCallIntent,
             Self::MediaCallResult,
             Self::ChannelEgressArmed,
+            Self::SkillRouteResolved,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -3820,6 +3827,7 @@ mod tests {
             ExtendedSubtype::MediaCallIntent,
             ExtendedSubtype::MediaCallResult,
             ExtendedSubtype::ChannelEgressArmed,
+            ExtendedSubtype::SkillRouteResolved,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

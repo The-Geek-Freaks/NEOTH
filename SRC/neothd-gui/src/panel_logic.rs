@@ -998,13 +998,47 @@ pub fn parse_skills(json: &str) -> Vec<SkillSummary> {
         .collect()
 }
 
-#[cfg(test)]
-fn valid_skill_operation_id(id: &str) -> bool {
+pub fn valid_skill_operation_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
         && id
             .chars()
             .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
+}
+
+/// Verified inventory projection for the Chat/Buddy Skill picker. The exact
+/// operation id is both the display value and the eventual `--skill` argv
+/// value; diagnostic display ids must never cross that authority boundary.
+pub fn skill_picker_options(skills: &[SkillSummary]) -> Vec<String> {
+    let mut ids = skills
+        .iter()
+        .filter(|skill| {
+            valid_skill_operation_id(&skill.operation_id)
+                && matches!(
+                    (
+                        skill.origin.as_str(),
+                        skill.runtime_state.as_str(),
+                        skill.enabled,
+                        skill.broken,
+                    ),
+                    ("bundled", "trusted_bundled_active", true, false)
+                        | ("user", "installed_active", true, false)
+                        | ("user", "bundled_fallback_active", false, _)
+                )
+        })
+        .map(|skill| skill.operation_id.clone())
+        .collect::<Vec<_>>();
+    ids.sort_by(|left, right| {
+        left.to_ascii_lowercase()
+            .cmp(&right.to_ascii_lowercase())
+            .then_with(|| left.cmp(right))
+    });
+    ids.dedup();
+
+    let mut options = Vec::with_capacity(ids.len() + 1);
+    options.push("Automatic".to_string());
+    options.extend(ids);
+    options
 }
 
 #[cfg(test)]
@@ -7032,6 +7066,63 @@ mod tests {
         assert_eq!(rows[1].id, "bad�skill");
         assert_eq!(rows[1].error, "bad�manifest");
         assert!(!rows[1].repairable);
+    }
+
+    #[test]
+    fn skill_picker_uses_stable_active_operation_ids_with_automatic_first() {
+        let mk =
+            |operation_id: &str, origin: &str, runtime_state: &str, enabled: bool, broken: bool| {
+                SkillSummary {
+                    id: format!("display-{operation_id}"),
+                    operation_id: operation_id.to_string(),
+                    description: String::new(),
+                    enabled,
+                    keywords: String::new(),
+                    tags: Vec::new(),
+                    broken,
+                    error: String::new(),
+                    path: String::new(),
+                    origin: origin.to_string(),
+                    repairable: false,
+                    runtime_state: runtime_state.to_string(),
+                    authority_generation: String::new(),
+                    authority_incarnation: String::new(),
+                    authority_install_receipt: String::new(),
+                }
+            };
+        let skills = vec![
+            mk("zeta", "user", "installed_active", true, false),
+            mk("fallback", "user", "bundled_fallback_active", false, true),
+            mk("alpha", "bundled", "trusted_bundled_active", true, false),
+            mk("disabled", "bundled", "disabled", false, false),
+            mk("bad id", "user", "installed_active", true, false),
+            mk(
+                "bundled-installed",
+                "bundled",
+                "installed_active",
+                true,
+                false,
+            ),
+            mk(
+                "bundled-fallback",
+                "bundled",
+                "bundled_fallback_active",
+                false,
+                true,
+            ),
+            mk(
+                "user-bundled",
+                "user",
+                "trusted_bundled_active",
+                true,
+                false,
+            ),
+        ];
+
+        assert_eq!(
+            skill_picker_options(&skills),
+            vec!["Automatic", "alpha", "fallback", "zeta"]
+        );
     }
 
     #[test]

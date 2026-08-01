@@ -1,9 +1,10 @@
 //! Skill router — decides which skill (if any) activates on a given message.
 //!
 //! V1: keyword-scan only. Each enabled skill's `trigger_keywords` are tested
-//! against the lowercased message; the skill with the most distinct keyword
-//! hits wins, ties broken by skill id (stable). Returns `None` when no
-//! keyword matches.
+//! against the lowercased message; the unique skill with the strongest
+//! weighted match wins. Returns `None` when no keyword matches or the top
+//! score is tied. Production surfaces use the authority-bound resolver, which
+//! reports a tie as an explicit conflict.
 //!
 //! V2 (Day-14b Phase 2, shipped 2026-05-23): embedding re-rank — LIVE.
 //! Stage 1 produces a candidate list; Stage 2 ([`route_stage2_embedding`])
@@ -58,7 +59,7 @@ const FUZZY_MIN_TOKEN_LEN: usize = 4;
 ///
 /// Returns the total additive fuzzy bonus (to be combined as `exact * 2 + fuzzy`
 /// and compared against `min_weight * 2`).
-fn fuzzy_keyword_bonus(
+pub(super) fn fuzzy_keyword_bonus(
     keywords: &[String],
     query_tokens: &[String],
     already_hit: &[String],
@@ -121,15 +122,17 @@ pub struct RouteMatch<'a> {
 /// router that consumes it.
 pub const EMBEDDING_THRESHOLD: f32 = 0.72;
 
-/// Number of whitespace-separated words in a trigger keyword (min 1). A
-/// multi-word trigger like `"pay down tech debt"` (weight 4) is a far more
-/// intentional signal than a lone generic token like `"ideas"` (weight 1):
-/// the operator had to type the whole phrase. The router scores by SUMMED
-/// weight rather than raw hit-count so specific phrases dominate generic
-/// single tokens — and the [`route_with_min_weight`] floor can then suppress
-/// activations that rest on nothing but a single generic word.
-fn keyword_weight(kw: &str) -> usize {
-    kw.split_whitespace().count().max(1)
+/// Number of Unicode-alphanumeric tokens in a trigger keyword (min 1). This
+/// uses the same lexical boundaries as [`lowercase_tokens`], so punctuation-
+/// separated phrases such as `"context.md"` and `"mehrfach-triage"` carry
+/// weight 2 instead of tying their contained generic `"context"`/`"triage"`
+/// triggers at weight 1. The router scores by SUMMED weight rather than raw
+/// hit-count so specific phrases dominate generic single tokens.
+pub(super) fn keyword_weight(kw: &str) -> usize {
+    kw.split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .count()
+        .max(1)
 }
 
 /// Minimum summed keyword weight a skill needs to activate under the default
@@ -158,7 +161,7 @@ pub const FULL_AUTO_MIN_WEIGHT: usize = 2;
 ///
 /// Returns `false` ONLY when the skill has patterns AND active_files is
 /// non-empty AND NO file matches any pattern — the skill is gated out.
-fn passes_path_gate(paths: &[String], active_files: &[String]) -> bool {
+pub(super) fn passes_path_gate(paths: &[String], active_files: &[String]) -> bool {
     if paths.is_empty() || active_files.is_empty() {
         return true;
     }
@@ -213,9 +216,10 @@ pub fn route<'a, S: RuntimeSkillView>(message: &str, skills: &'a [S]) -> Option<
 
 /// Stage-1 keyword router with an explicit confidence floor. A skill activates
 /// only when the SUMMED [`keyword_weight`] of its matched triggers is
-/// `>= min_weight`. The winner is the highest summed weight, ties broken by
-/// skill id alphabetically (stable, deterministic). `embedding_score` is left
-/// `None` — Stage-2 cosine re-rank is a separate path.
+/// `>= min_weight`. The winner is the unique highest summed weight. A real
+/// top-score tie returns `None`; the authority-bound resolver exposes the same
+/// condition as a typed conflict instead of silently choosing alphabetically.
+/// `embedding_score` is left `None` — Stage-2 cosine re-rank is a separate path.
 ///
 /// `active_files` — the set of files the operator's editor currently has open,
 /// as relative (or absolute) path strings. Used by the GOLD-CCPARITY-PATHS-01
@@ -236,6 +240,7 @@ pub fn route_with_min_weight<'a, S: RuntimeSkillView>(
     }
 
     let mut best: Option<(usize, &Skill, Vec<String>)> = None;
+    let mut top_score_tied = false;
     for runtime_skill in skills {
         let skill = runtime_skill.runtime_skill();
         if !skill.is_enabled() {
@@ -286,17 +291,25 @@ pub fn route_with_min_weight<'a, S: RuntimeSkillView>(
         // equal-weight exact hits (2 * exact > 2 * exact - k + k for any k > 0
         // because exact carries twice the coefficient).
         let effective_score = effective_exact * 2 + fuzzy_bonus;
-        let take = match &best {
-            None => true,
-            Some((bw, b, _)) => {
-                effective_score > *bw || (effective_score == *bw && skill.id() < b.id())
+        match &best {
+            None => {
+                best = Some((effective_score, skill, hits));
+                top_score_tied = false;
             }
-        };
-        if take {
-            best = Some((effective_score, skill, hits));
+            Some((best_score, _, _)) if effective_score > *best_score => {
+                best = Some((effective_score, skill, hits));
+                top_score_tied = false;
+            }
+            Some((best_score, _, _)) if effective_score == *best_score => {
+                top_score_tied = true;
+            }
+            Some(_) => {}
         }
     }
 
+    if top_score_tied {
+        return None;
+    }
     best.map(|(_, skill, matched_keywords)| RouteMatch {
         skill,
         matched_keywords,
@@ -345,6 +358,7 @@ pub fn cosine_rerank<'a, S: RuntimeSkillView>(
     skill_embeddings: &std::collections::HashMap<String, Vec<f32>>,
 ) -> Option<(&'a Skill, f32)> {
     let mut best: Option<(&Skill, f32)> = None;
+    let mut top_score_tied = false;
     for runtime_skill in skills {
         let skill = runtime_skill.runtime_skill();
         if !skill.is_enabled() {
@@ -357,15 +371,22 @@ pub fn cosine_rerank<'a, S: RuntimeSkillView>(
         if score < EMBEDDING_THRESHOLD {
             continue;
         }
-        let take = match &best {
-            None => true,
-            Some((_, bs)) => score > *bs,
-        };
-        if take {
-            best = Some((skill, score));
+        match &best {
+            None => {
+                best = Some((skill, score));
+                top_score_tied = false;
+            }
+            Some((_, best_score)) if score > *best_score => {
+                best = Some((skill, score));
+                top_score_tied = false;
+            }
+            Some((_, best_score)) if score == *best_score => {
+                top_score_tied = true;
+            }
+            Some(_) => {}
         }
     }
-    best
+    (!top_score_tied).then_some(best).flatten()
 }
 
 /// Day-14b Phase 2 chat-loop entry point. Runs Stage-2 cosine
@@ -448,7 +469,7 @@ pub async fn route_stage2_embedding<'a, S: RuntimeSkillView>(
     cosine_rerank(&msg_resp.vector, skills, &skill_embeddings)
 }
 
-fn lowercase_tokens(s: &str) -> Vec<String> {
+pub(super) fn lowercase_tokens(s: &str) -> Vec<String> {
     s.split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
         .map(|t| t.to_lowercase())
@@ -461,7 +482,7 @@ fn lowercase_tokens(s: &str) -> Vec<String> {
 /// keeps `fact-check`, `node.js`, `/ship`, and `max++` precise while rejecting
 /// prefix captures such as `create a PR` inside `create a presentation` or
 /// `feature idea` inside `feature ideas`.
-fn keyword_matches(needle: &str, tokens: &[String], lower_message: &str) -> bool {
+pub(super) fn keyword_matches(needle: &str, tokens: &[String], lower_message: &str) -> bool {
     if needle.is_empty() {
         return false;
     }
@@ -610,13 +631,12 @@ mod tests {
     }
 
     #[test]
-    fn tie_broken_by_skill_id_alphabetically() {
+    fn legacy_router_never_resolves_a_real_tie_alphabetically() {
         let skills = vec![
             skill("zeta", &["news"], true),
             skill("alpha", &["news"], true),
         ];
-        let m = route("morning news", &skills).unwrap();
-        assert_eq!(m.skill.id(), "alpha");
+        assert!(route("morning news", &skills).is_none());
     }
 
     #[test]
@@ -729,6 +749,28 @@ mod tests {
         let skills = vec![skill("nodejs", &["node.js"], true)];
         let m = route("Got a node.js bug to chase", &skills).unwrap();
         assert_eq!(m.skill.id(), "nodejs");
+    }
+
+    #[test]
+    fn punctuation_separated_trigger_outranks_its_contained_generic_token() {
+        for (specific_id, specific_trigger, generic_id, generic_trigger) in [
+            ("grill_with_docs", "context.md", "context", "context"),
+            ("loop_triage", "mehrfach-triage", "triage", "triage"),
+        ] {
+            assert_eq!(keyword_weight(specific_trigger), 2);
+            let skills = vec![
+                skill(generic_id, &[generic_trigger], true),
+                skill(specific_id, &[specific_trigger], true),
+            ];
+            let matched =
+                route_with_min_weight(specific_trigger, &skills, FULL_AUTO_MIN_WEIGHT, &[])
+                    .expect("punctuation-separated specific trigger must clear full-auto floor");
+            assert_eq!(matched.skill.id(), specific_id);
+            assert_eq!(matched.matched_keywords, vec![specific_trigger]);
+        }
+
+        assert_eq!(keyword_weight("/ship"), 1);
+        assert_eq!(keyword_weight("max++"), 1);
     }
 
     #[test]
@@ -978,8 +1020,8 @@ mod tests {
             // Conflict pair: diagnose vs systematic_debugging.
             // "diagnose this bug" hits BOTH ("diagnose" is a
             // diagnose trigger, "bug" is a systematic_debugging
-            // trigger). Highest-hit-count tie-broken by skill id
-            // alphabetically → diagnose (d < s).
+            // trigger). The more specific catalogue weights keep diagnose the
+            // unique winner; a real score tie would now be rejected.
             ("Please diagnose this bug for me", "diagnose"),
             // Pure systematic-debugging path: only the systematic
             // markers fire.
@@ -1277,12 +1319,16 @@ mod tests {
             dim: 4,
             rules: vec![("weather", 0)],
         };
-        assert!(route_stage2_embedding("", &skills, &provider)
-            .await
-            .is_none());
-        assert!(route_stage2_embedding("   ", &skills, &provider)
-            .await
-            .is_none());
+        assert!(
+            route_stage2_embedding("", &skills, &provider)
+                .await
+                .is_none()
+        );
+        assert!(
+            route_stage2_embedding("   ", &skills, &provider)
+                .await
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -1398,9 +1444,8 @@ mod tests {
             skill("arch_skill", &["software architecture diagram view"], true),
         ];
         // "news" matches exactly; "architcture" gives fuzzy bonus to arch_skill
-        // but 0*2+2=2 vs news_skill's 1*2+0=2 → tie broken by skill id ("arch_skill" < "news_skill")
-        // → arch_skill wins alphabetically when scores are equal. Adjust prompt
-        // so only news fires exactly and architecture typo doesn't also appear.
+        // but a real equal top score would now be rejected. Keep the prompt
+        // specific so only the exact news trigger fires.
         let m = route("latest news today", &skills);
         // Only "news" fires exactly. arch_skill has no tokens matching its
         // 4-word trigger in "latest news today". So news_skill must win.

@@ -343,7 +343,7 @@ impl SkillAuthorityRecordV1 {
 }
 
 /// Operator or policy decision applied to the exact installed package snapshot
-/// resolved inside [`publish_installed_authority_decision`].
+/// resolved inside the activation or reduction publication transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkillAuthorityDecision {
     pub decision_source: SkillAuthorityDecisionSource,
@@ -1424,7 +1424,8 @@ pub fn validate_installed_authority(
 /// Publish a decision for the exact live installed package. The shared Skill
 /// mutation lock remains held through the authority commit, so a cooperating
 /// installer cannot replace the package after its generation was authorized.
-pub fn publish_installed_authority_decision(
+#[cfg(test)]
+pub(crate) fn publish_installed_authority_decision(
     home: &Path,
     skill_id: &str,
     reload: &crate::config::reload::ReloadController,
@@ -1433,6 +1434,7 @@ pub fn publish_installed_authority_decision(
     publish_installed_authority_decision_with_expectation(home, skill_id, reload, decision, None)
 }
 
+#[cfg(test)]
 pub(crate) fn publish_installed_authority_decision_with_expectation(
     home: &Path,
     skill_id: &str,
@@ -1550,6 +1552,7 @@ where
         snapshot.effective_enabled,
         "prospective operator Skill policy does not enable `{skill_id}`"
     );
+    super::installer::validate_prospective_route_activation_locked(&snapshot._skills_root)?;
 
     let active = SkillAuthorityDecision::new(decision_source, SkillAuthorityState::Active, None)?;
     let active_record = authority_record_for_snapshot(&snapshot, active)?;
@@ -1611,6 +1614,76 @@ where
             ));
         }
     };
+    receipt.accepted_policy_current_at_return =
+        prospective_reload.accepted_snapshot().epoch() == accepted_policy.config_epoch;
+    Ok(receipt)
+}
+
+/// Reduce one installed package's authority without exposing an unchecked
+/// same-id bundled fallback between policy and authority commits. The package
+/// mutation lock acquired by `bind_installed_authority_snapshot` remains held
+/// across route-owner preflight, the exact config CAS, and authority
+/// publication.
+pub(crate) fn publish_installed_reduction_transaction<C>(
+    home: &Path,
+    skill_id: &str,
+    prospective_reload: &crate::config::reload::ReloadController,
+    decision: SkillAuthorityDecision,
+    expectation: Option<&InstalledSkillDecisionExpectation>,
+    commit_disabled_policy: C,
+) -> Result<SkillAuthorityReceipt>
+where
+    C: FnOnce() -> Result<()>,
+{
+    anyhow::ensure!(
+        decision.state != SkillAuthorityState::Active,
+        "Skill authority reduction cannot publish an active decision"
+    );
+    let accepted = prospective_reload.accepted_snapshot();
+    let accepted_policy = AcceptedSkillPolicySnapshot::from_accepted(&accepted)?;
+    let skills_dir = home.join("skills");
+    let snapshot = bind_installed_authority_snapshot(&skills_dir, skill_id, &accepted_policy)
+        .map_err(|failure| match failure {
+            InstalledSnapshotFailure::Missing => {
+                anyhow::anyhow!("installed Skill package `{skill_id}` is missing")
+            }
+            InstalledSnapshotFailure::PinnedHashMismatch => {
+                anyhow::anyhow!("installed Skill package `{skill_id}` violates its accepted pin")
+            }
+            InstalledSnapshotFailure::IncarnationInvalid => anyhow::anyhow!(
+                "installed Skill package `{skill_id}` lacks its exact authenticated install receipt"
+            ),
+            InstalledSnapshotFailure::AggregateTraversal(error) => error,
+            InstalledSnapshotFailure::Invalid(error) => error,
+        })?;
+    if let Some(expectation) = expectation {
+        anyhow::ensure!(
+            snapshot.expectation.package_generation_sha256 == expectation.package_generation_sha256
+                && snapshot.expectation.install_incarnation == expectation.install_incarnation
+                && snapshot.expectation.install_terminal_receipt_sha256
+                    == expectation.install_terminal_receipt_sha256,
+            "installed Skill changed after operator consent; refuse authority mutation"
+        );
+    }
+    anyhow::ensure!(
+        !snapshot.effective_enabled,
+        "prospective operator Skill policy does not disable `{skill_id}`"
+    );
+    super::installer::validate_prospective_route_reduction_locked(
+        &snapshot._skills_root,
+        skill_id,
+    )?;
+
+    let record = authority_record_for_snapshot(&snapshot, decision)?;
+    let already_current = inspect_current_authority(home, skill_id)?
+        .is_some_and(|current| authority_decision_semantics_match(current.record(), &record));
+    if !already_current {
+        ensure_authority_record_capacity(home, skill_id, 1)
+            .context("reserve reduced Skill authority revision")?;
+    }
+    commit_disabled_policy().context("commit prepared Skill disable policy")?;
+    let mut receipt = publish_authority_decision_verified(home, &record)
+        .context("publish reduced installed-Skill authority")?;
     receipt.accepted_policy_current_at_return =
         prospective_reload.accepted_snapshot().epoch() == accepted_policy.config_epoch;
     Ok(receipt)

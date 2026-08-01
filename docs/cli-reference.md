@@ -33,6 +33,7 @@ neoth status
 
 ```bash
 neoth chat "hello"
+neoth chat --skill academic_research "review this paper"
 neoth chat --temperature 0.7 --top-p 0.9 --sampling-seed 42 "replayable draft"
 neoth recall "the router issue from last month"
 neoth ingest ./document.pdf
@@ -44,7 +45,7 @@ portable limits are in [providers.md](providers.md#per-call-controls).
 
 | Command | Purpose |
 | :-- | :-- |
-| `neoth chat <prompt>` | Ask NEOTH from the terminal. |
+| `neoth chat <prompt>` | Ask NEOTH from the terminal; `--skill <id>` pins one authority-admitted Skill for the turn. |
 | `neoth recall <query>` | Search memory and indexed context. |
 | `neoth ingest <path>` | Ingest a file, folder, document, image, audio, or video. |
 | `neoth search <query>` | Search local indexed material where configured. |
@@ -330,6 +331,7 @@ neoth council show <id>
 
 ```bash
 neoth skills --list
+neoth skills --check-routing
 neoth skills --install ./skill
 neoth skills --test rust-review
 # Skills hot-reload automatically (file watcher) — no reload command needed.
@@ -343,7 +345,7 @@ neoth plugin ledger my-plugin
 
 | Command | Purpose |
 | :-- | :-- |
-| `skills ...` | Manage data-only skills (`--list` / `--install` / `--test`). |
+| `skills ...` | Manage data-only skills. `--check-routing` validates catalogue-wide parent/mode ownership before publication; `--test` exercises the production resolver. |
 | `plugin ...` | Manage sandboxed WASM plugins (`list` / `verify` / `enable` / `ledger`). |
 
 ## Automation

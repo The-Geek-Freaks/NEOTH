@@ -39,7 +39,7 @@ trigger_keywords:
 
 system_prompt: |
   Academic research skill (auto-installed). When an operator says
-  "do research on X" / "review this paper" / "fact-check these
+  "do research on X" / "conduct a full academic review" / "fact-check these
   claims", route through one of the named modes via `/mode <id>`.
   Each mode has a specific spectrum + oversight + output contract.
   Operate exactly inside the mode's contract when active; surface
@@ -243,7 +243,7 @@ modes:
       format: markdown
       length_hint: "~1000-2000 words structured review"
     trigger_phrases:
-      - "review this paper"
+      - "conduct a full academic review"
       - "peer review"
       - "begutachten"
     system_prompt_delta: |

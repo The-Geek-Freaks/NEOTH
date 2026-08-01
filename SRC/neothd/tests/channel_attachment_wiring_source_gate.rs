@@ -41,8 +41,8 @@ fn channel_caption_and_media_keep_separate_trust_paths() {
     assert!(after_take.contains("channel_learning_signal(&sanitized_text)"));
 
     let route = handler
-        .find("route_with_min_weight(")
-        .expect("caption-only skill route");
+        .find("SkillRouteResolver::new(skill_snapshot.clone())")
+        .expect("authority-bound caption-only Skill route");
     let extraction = handler
         .find("handle_media_attachment(")
         .expect("typed media extraction");

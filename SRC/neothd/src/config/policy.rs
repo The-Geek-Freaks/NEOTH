@@ -79,23 +79,18 @@ pub struct SkillsConfig {
     #[serde(default)]
     pub pinned_hashes: std::collections::HashMap<String, String>,
     /// PF-01 (Session 30) — when `true`, the chat router runs Stage-2
-    /// embedding cosine re-rank on EVERY turn (not only on a keyword
-    /// Stage-1 miss), and a Stage-2 hit (cosine ≥ `EMBEDDING_THRESHOLD`)
-    /// takes precedence over the keyword match. This makes the skill
-    /// library route by SEMANTICS by default rather than only when a
-    /// literal keyword is present — so a request whose wording misses
-    /// the keyword, or hits the wrong skill's keyword, still lands on
-    /// the semantically-closest skill.
+    /// Enable embedding-based semantic fallback after the authority-bound
+    /// resolver has produced a literal `NoMatch`. Embeddings never override an
+    /// explicit selection, parent trigger, or mode trigger, and a tie is an
+    /// explicit conflict rather than an alphabetical winner.
     ///
     /// Cost note: Stage-2 only runs at all when the operator has
     /// configured `inference.embedding_provider` (off by default), so a
     /// default install pays NOTHING here. For operators who DID opt into
-    /// an embedding provider, this adds N+1 embed calls per turn (1
-    /// message + 1 per enabled skill) on turns that previously short-
-    /// circuited on a keyword hit — acceptable because configuring an
-    /// embedding provider is itself the opt-in to that cost, and the
-    /// per-skill embeds are cached within `route_stage2_embedding`'s
-    /// invocation. Set `false` to restore the keyword-miss-only fallback.
+    /// an embedding provider, this adds N+1 embed calls only on turns where
+    /// all literal tiers miss (1 message + 1 per eligible skill). Set `false`
+    /// to disable semantic fallback while preserving explicit, parent, and
+    /// mode routing.
     #[serde(default = "default_skills_always_embed_route")]
     pub always_embed_route: bool,
     /// GOLD-HON-11 (B-16) — operator blocklist of skill ids to disable,

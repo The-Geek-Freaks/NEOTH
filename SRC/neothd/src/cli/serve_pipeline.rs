@@ -98,6 +98,45 @@ pub(crate) struct PipelineHandlerDeps {
     pub(crate) confirm_bus: Option<Arc<crate::permissions::confirm_bus::ConfirmBus>>,
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+struct ChannelSkillRouteAudit {
+    schema_version: u8,
+    channel: String,
+    sender_hash: String,
+    route_report: crate::skills::resolver::SkillRouteReport,
+}
+
+fn channel_skill_route_audit_payload(
+    channel: &str,
+    sender_hash: &str,
+    route_report: &crate::skills::resolver::SkillRouteReport,
+) -> Result<Vec<u8>> {
+    serde_json::to_vec(&ChannelSkillRouteAudit {
+        schema_version: 1,
+        channel: channel.to_owned(),
+        sender_hash: sender_hash.to_owned(),
+        route_report: route_report.clone(),
+    })
+    .context("serialize authority-bound channel Skill route report")
+}
+
+async fn emit_channel_skill_route_report(
+    writer: &WalWriterHandle,
+    channel: &str,
+    sender_hash: &str,
+    route_report: &crate::skills::resolver::SkillRouteReport,
+) -> Result<()> {
+    let payload = channel_skill_route_audit_payload(channel, sender_hash, route_report)?;
+    let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::SkillRouteResolved as u8)
+        .build();
+    writer
+        .append(header, payload)
+        .await
+        .context("durably append authority-bound channel Skill route report")?;
+    Ok(())
+}
+
 /// SC-11 — derive the MCP `tool_allowlist` that scopes a single channel
 /// inbound from the routed skill. `None` (no skill matched this turn) lets
 /// the gate allow every tool; `Some(empty)` (the manifest default) allows no
@@ -110,37 +149,6 @@ pub(crate) fn channel_skill_allowlist(
     skill: Option<&crate::skills::schema::Skill>,
 ) -> Option<Vec<String>> {
     skill.map(|s| s.manifest.tool_allowlist.clone())
-}
-
-/// Channel turns have no explicit `/skill-id` invocation once they enter the
-/// provider pipeline. Filter the authority-admitted snapshot once and feed the
-/// same view to both ModeRegistry and keyword routing. The generic sealed view
-/// keeps production callers on [`crate::skills::schema::RuntimeSkill`] while
-/// permitting raw fixtures in unit tests.
-fn channel_auto_routing_skills<S>(skills: &[S]) -> std::borrow::Cow<'_, [S]>
-where
-    S: crate::skills::schema::RuntimeSkillView + Clone,
-{
-    if skills.iter().all(|skill| {
-        matches!(
-            skill.runtime_skill().manifest.visibility,
-            crate::config::SkillVisibility::On
-        )
-    }) {
-        return std::borrow::Cow::Borrowed(skills);
-    }
-    std::borrow::Cow::Owned(
-        skills
-            .iter()
-            .filter(|skill| {
-                matches!(
-                    skill.runtime_skill().manifest.visibility,
-                    crate::config::SkillVisibility::On
-                )
-            })
-            .cloned()
-            .collect(),
-    )
 }
 
 /// ADV-09: `0x3C CHANNEL_PRIVILEGE_BLOCKED` audit frame for a destructive
@@ -456,10 +464,9 @@ pub(crate) async fn sanitize_inbound(
     // dropped message still counts as evidence — a quarantined turn is the
     // strongest signal there is, and skipping it would let an attacker hide
     // escalation behind messages that got dropped anyway.
-    if let Some(alert) = crate::security::injection_tracker::observe_inbound_for(
-        sender_hash,
-        &report,
-    ) {
+    if let Some(alert) =
+        crate::security::injection_tracker::observe_inbound_for(sender_hash, &report)
+    {
         warn!(
             channel = channel_str,
             sender_hash = %sender_hash,
@@ -1568,7 +1575,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // released through `release_channel_reply`, i.e. the SAME PreEgress
             // hooks + ChannelSend gate as a model reply: no provider call does
             // NOT mean no egress policy.
-            if !has_media {
+            if !has_media
+                && !matches!(
+                    crate::slash::parse_invocation(&sanitized_text),
+                    crate::slash::Invocation::Command { .. }
+                )
+            {
                 let operator_uuid = config_for_handler
                     .channel_weights
                     .operator_human_uuid
@@ -1849,8 +1861,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // Prefer the daemon's global SkillRegistry (built once at
             // startup + hot-reloaded by the file watcher); fall back to
             // per-call load when the global wasn't initialised.
-            let installed_skills = match crate::skills::registry::global() {
-                Some(reg) => reg.snapshot_owned_for_epoch(config_epoch_for_handler),
+            let skill_snapshot = match crate::skills::registry::global() {
+                Some(reg) => reg
+                    .authority_bound_snapshot_for_epoch(config_epoch_for_handler)
+                    .context("acquire authority-bound channel Skill snapshot")?,
                 None => crate::skills::SkillRegistry::load_with_reload_controller(
                     channel_home.join("skills"),
                     Arc::clone(&reload_controller),
@@ -1862,19 +1876,100 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         channel_home.join("skills").display()
                     )
                 })?
-                .snapshot_owned_for_epoch(config_epoch_for_handler),
+                .authority_bound_snapshot_for_epoch(config_epoch_for_handler)
+                .context("acquire fallback authority-bound channel Skill snapshot")?,
             };
 
-            // Channel messages have no explicit `/skill-id` invocation by the
-            // time they reach this pipeline. Apply visibility before BOTH mode
-            // and keyword routing: otherwise a NameOnly/UserInvocableOnly
-            // Skill could still auto-activate through one of its mode trigger
-            // phrases even though the later keyword-only filter rejected it.
-            let routing_skills = channel_auto_routing_skills(installed_skills.as_slice());
-            let mode_registry =
-                crate::skills::mode_registry::ModeRegistry::from_skills(routing_skills.as_ref())
-                    .context("build channel skill mode registry")?;
-            let mode_hit = mode_registry.match_trigger(&sanitized_text);
+            let mut blocked_skill_ids = std::collections::BTreeSet::<String>::new();
+            if !config_for_handler.skills.pinned_hashes.is_empty() {
+                let verdicts = crate::skills::versioning::check_pinned_hashes(
+                    skill_snapshot
+                        .skills()
+                        .iter()
+                        .map(|skill| (skill.id(), skill.content_hash.as_str())),
+                    &config_for_handler.skills.pinned_hashes,
+                );
+                for (skill, verdict) in skill_snapshot.skills().iter().zip(verdicts) {
+                    if verdict.verdict == crate::skills::versioning::PinnedHashOutcome::Mismatch {
+                        blocked_skill_ids.insert(skill.id().to_owned());
+                        warn!(
+                            channel = channel_str,
+                            skill = skill.id(),
+                            "channel Skill excluded by pinned-hash policy"
+                        );
+                    }
+                }
+            }
+            let eval_suppress = config_for_handler.skills.should_suppress_for_eval();
+            let skill_resolver =
+                crate::skills::resolver::SkillRouteResolver::new(skill_snapshot.clone())
+                    .retaining(|skill| !eval_suppress && !blocked_skill_ids.contains(skill.id()));
+            let slash_skill_name = match crate::slash::parse_invocation(&sanitized_text) {
+                crate::slash::Invocation::Command { name, .. }
+                    if skill_snapshot
+                        .skills()
+                        .iter()
+                        .any(|skill| skill.id().eq_ignore_ascii_case(&name)) =>
+                {
+                    Some(name.to_lowercase())
+                }
+                _ => None,
+            };
+            let stage1_floor = if config_for_handler.skills.enable_all_bundled {
+                crate::skills::router::FULL_AUTO_MIN_WEIGHT
+            } else {
+                crate::skills::router::DEFAULT_MIN_WEIGHT
+            };
+            let embed_provider = if !eval_suppress && config_for_handler.skills.always_embed_route {
+                crate::providers::embed_provider_from_config(&config_for_handler).await
+            } else {
+                None
+            };
+            let route_decision = skill_resolver
+                .resolve(
+                    crate::skills::resolver::SkillRouteRequest::automatic(
+                        &sanitized_text,
+                        stage1_floor,
+                        &[],
+                    )
+                    .with_explicit_skill(slash_skill_name.as_deref()),
+                    embed_provider.as_deref(),
+                )
+                .await;
+            let channel_skill_route_report = route_decision.report().clone();
+            // The channel surface has no authenticated stdout control stream.
+            // Persist the exact shared typed report before any slash action or
+            // provider leaf instead; conflict/rejection remains inspectable
+            // even though the turn then fails closed.
+            emit_channel_skill_route_report(
+                &writer,
+                channel_str,
+                &sender_hash,
+                &channel_skill_route_report,
+            )
+            .await?;
+            let selected_skill_route = match route_decision {
+                crate::skills::resolver::SkillRouteDecision::Match(route) => Some(route),
+                crate::skills::resolver::SkillRouteDecision::NoMatch(_) => None,
+                crate::skills::resolver::SkillRouteDecision::Conflict(report) => {
+                    let candidates = report
+                        .candidates
+                        .iter()
+                        .map(|candidate| candidate.skill_id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    anyhow::bail!(
+                        "Channel Skill routing conflict at {:?}: {candidates}; select one explicitly",
+                        report.stage
+                    );
+                }
+                crate::skills::resolver::SkillRouteDecision::Rejected(report) => {
+                    anyhow::bail!(
+                        "Channel explicit Skill selection rejected: {:?}",
+                        report.rejection
+                    );
+                }
+            };
             // SC-11 (Session 28d) — the channel path now threads the
             // matched skill's `tool_allowlist` into the MCP dispatch loop
             // exactly like `cli/chat.rs`. Previously the channel/daemon
@@ -1909,107 +2004,46 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 Option<crate::providers::effort_override::EffortBudget>,
                 Option<String>,
                 bool,
-            ) = if let Some(resolved) = mode_hit {
-                let parent = routing_skills.iter().find(|s| s.id() == resolved.skill_id);
+            ) = if let Some(route) = selected_skill_route.as_ref() {
+                let skill = route.skill();
                 info!(
                     channel = channel_str,
-                    mode = %resolved.mode.id,
-                    skill = %resolved.skill_id,
-                    "mode activated via ModeRegistry (channel path)"
+                    skill = skill.id(),
+                    mode = ?route.mode().map(|mode| mode.id.as_str()),
+                    stage = ?route.report().stage,
+                    snapshot = %route.report().snapshot_sha256,
+                    "authority-bound channel Skill route selected"
                 );
-                // GOLD-ADOPT-28 lazy routing: shared primitive — load ONLY the
-                // matched mode's sub-doc + thin parent base (same rule as the
-                // CLI path in cli/chat.rs, so the two can't drift).
-                let parent_skill = parent.map(|skill| skill.as_skill());
-                let layer = crate::skills::router::compose_mode_skill_layer(parent_skill, resolved);
-                let allowlist = channel_skill_allowlist(parent_skill);
-                // GOLD-CCPARITY-MODEL-02: parent skill's model override applies
-                // when a mode is active (mode inherits parent skill model).
-                let skill_model = parent.and_then(|s| s.manifest.model.clone());
-                // GOLD-CCPARITY-EFFORT-03: parent skill's effort override also applies
-                // when a mode is active (mode inherits parent effort setting).
-                let skill_effort = parent.and_then(|s| s.manifest.effort);
-                let skill_delegate_to = parent.and_then(|s| s.manifest.delegate_to.clone());
-                let loop_trigger = crate::cli::chat::routed_skill_loop_trigger(parent_skill);
-                crate::analytics::babel::signals::emit(
-                    crate::analytics::babel::signals::SignalKind::SkillMode,
-                );
-                // Modes inherit the parent's delegation boundary along with its
-                // model, effort and tool allowlist.
                 (
-                    layer,
-                    None,
-                    allowlist,
-                    skill_model,
-                    skill_effort,
-                    skill_delegate_to,
-                    loop_trigger,
+                    route.system_prompt_layer(),
+                    Some(skill.id().to_owned()),
+                    channel_skill_allowlist(Some(skill)),
+                    skill.manifest.model.clone(),
+                    skill.manifest.effort,
+                    skill.manifest.delegate_to.clone(),
+                    crate::cli::chat::routed_skill_loop_trigger(Some(skill)),
                 )
             } else {
-                // Full-auto mode raises the Stage-1 confidence floor so the
-                // now-fully-populated skill library can't false-activate on a
-                // lone generic single-word trigger. The validated per-turn
-                // reload snapshot already reflects hot changes and prevents a
-                // malformed file from becoming a false disabled default.
-                let stage1_floor = if config_for_handler.skills.enable_all_bundled {
-                    crate::skills::router::FULL_AUTO_MIN_WEIGHT
-                } else {
-                    crate::skills::router::DEFAULT_MIN_WEIGHT
-                };
-                // GOLD-CCPARITY-SKILLVIS-01 — channel path visibility pre-filter.
-                // Channel messages never carry CLI slash commands, so
-                // `slash_skill_name = None` always: `NameOnly` and
-                // `UserInvocableOnly` skills are never auto-routed here. `Off`
-                // skills were already removed at load time (enabled=false).
-                let skill_match = crate::skills::router::route_with_min_weight(
-                    &sanitized_text,
-                    routing_skills.as_ref(),
-                    stage1_floor,
-                    &[], // GOLD-CCPARITY-PATHS-01: channel path has no editor context; empty = always-activate
-                );
-                if let Some(m) = &skill_match {
-                    info!(
-                        channel = channel_str,
-                        skill = m.skill.id(),
-                        matched_keywords = ?m.matched_keywords,
-                        "skill activated (channel path)"
-                    );
-                }
-                crate::analytics::babel::signals::emit(if skill_match.is_some() {
-                    crate::analytics::babel::signals::SignalKind::SkillKeyword
-                } else {
-                    crate::analytics::babel::signals::SignalKind::SkillNoMatch
-                });
-                let layer = skill_match
-                    .as_ref()
-                    .map(|m| m.skill.system_prompt().to_string());
-                let id = skill_match.as_ref().map(|m| m.skill.id().to_string());
-                // GOLD-CCPARITY-MODEL-02: capture skill model BEFORE passing
-                // skill_match ref to channel_skill_allowlist to avoid reborrow.
-                let skill_model = skill_match
-                    .as_ref()
-                    .and_then(|m| m.skill.manifest.model.clone());
-                // GOLD-CCPARITY-EFFORT-03: capture per-skill effort override.
-                let skill_effort = skill_match.as_ref().and_then(|m| m.skill.manifest.effort);
-                // BUG-W2-P1-CHANNEL-DELEGATION: capture delegate_to from the matched
-                // skill manifest — mirrors GOLD-ADAPT-OH-13 in cli/chat.rs (~line 1234).
-                let skill_delegate_to = skill_match
-                    .as_ref()
-                    .and_then(|m| m.skill.manifest.delegate_to.clone());
-                let loop_trigger = crate::cli::chat::routed_skill_loop_trigger(
-                    skill_match.as_ref().map(|matched| matched.skill),
-                );
-                let allowlist = channel_skill_allowlist(skill_match.as_ref().map(|m| m.skill));
-                (
-                    layer,
-                    id,
-                    allowlist,
-                    skill_model,
-                    skill_effort,
-                    skill_delegate_to,
-                    loop_trigger,
-                )
+                (None, None, None, None, None, None, false)
             };
+
+            crate::analytics::babel::signals::emit(if eval_suppress {
+                crate::analytics::babel::signals::SignalKind::SkillSuppressed
+            } else {
+                match channel_skill_route_report.stage {
+                    Some(crate::skills::resolver::SkillRouteStage::Mode) => {
+                        crate::analytics::babel::signals::SignalKind::SkillMode
+                    }
+                    Some(crate::skills::resolver::SkillRouteStage::Embedding) => {
+                        crate::analytics::babel::signals::SignalKind::SkillEmbedding
+                    }
+                    Some(crate::skills::resolver::SkillRouteStage::Explicit)
+                    | Some(crate::skills::resolver::SkillRouteStage::ParentLiteral) => {
+                        crate::analytics::babel::signals::SignalKind::SkillKeyword
+                    }
+                    None => crate::analytics::babel::signals::SignalKind::SkillNoMatch,
+                }
+            });
 
             let channel_persona = channel_tweaks.persona_override.clone();
 
@@ -4852,72 +4886,40 @@ mod tests {
     use super::*;
     use crate::channels::{Channel, ChannelError, ChannelKind, MessageId, PipelineHandler};
 
-    fn channel_visibility_fixture(
-        id: &str,
-        visibility: &str,
-        mode_trigger: &str,
-    ) -> crate::skills::schema::Skill {
-        // The indentation is written INSIDE each literal rather than by
-        // continuing the source line. A trailing `\` strips the newline *and*
-        // the next line's leading whitespace, so the previous form emitted
-        // every mode field at column 0 — `modes[0]` ended up carrying only
-        // `id`, and each field became a duplicate top-level key. That stayed
-        // invisible until `description` became required on a mode, at which
-        // point the fixture failed to parse at all.
-        let manifest = serde_yaml::from_str(&format!(
-            concat!(
-                "id: {id}\n",
-                "description: {id} fixture\n",
-                "visibility: {visibility}\n",
-                "trigger_keywords: [{mode_trigger}]\n",
-                "modes:\n",
-                "- id: {id}-mode\n",
-                "  description: {id} mode\n",
-                "  spectrum: balanced\n",
-                "  oversight: low\n",
-                "  output:\n",
-                "    format: prose\n",
-                "  trigger_phrases: [{mode_trigger}]\n",
-            ),
-            id = id,
-            visibility = visibility,
-            mode_trigger = mode_trigger,
-        ))
-        .expect("valid Skill visibility fixture");
-        crate::skills::schema::Skill {
-            manifest,
-            path: std::path::PathBuf::from(format!("<fixture>/{id}/skill.yaml")),
-            content_hash: format!("{id}-hash"),
-        }
-    }
-
     #[test]
-    fn channel_visibility_filters_mode_and_keyword_routing_through_one_view() {
-        let skills = vec![
-            channel_visibility_fixture("name-only", "name_only", "hidden-name-mode"),
-            channel_visibility_fixture("user-only", "user_invocable_only", "hidden-user-mode"),
-            channel_visibility_fixture("visible", "on", "visible-mode"),
-        ];
+    fn channel_route_audit_roundtrips_the_exact_shared_report() {
+        let report = crate::skills::resolver::SkillRouteReport {
+            outcome: crate::skills::resolver::SkillRouteOutcome::NoMatch,
+            stage: None,
+            config_epoch: 17,
+            authority_epoch: 23,
+            snapshot_sha256: "ab".repeat(32),
+            candidates: Vec::new(),
+            rejection: None,
+            degraded_reason: Some("embedding_unavailable".to_owned()),
+        };
+        let sender_hash = sender_hash_of("operator-42");
+        let payload = channel_skill_route_audit_payload("telegram", &sender_hash, &report)
+            .expect("serialize channel route audit");
+        let decoded: ChannelSkillRouteAudit =
+            serde_json::from_slice(&payload).expect("decode channel route audit");
 
-        let routed = channel_auto_routing_skills(&skills);
-
-        assert_eq!(
-            routed.iter().map(|skill| skill.id()).collect::<Vec<_>>(),
-            vec!["visible"]
-        );
-        let modes =
-            crate::skills::mode_registry::ModeRegistry::from_skills(routed.as_ref()).unwrap();
-        assert!(modes.match_trigger("hidden-name-mode").is_none());
-        assert!(modes.match_trigger("hidden-user-mode").is_none());
-        assert_eq!(
-            modes
-                .match_trigger("visible-mode")
-                .map(|resolved| resolved.skill_id.as_str()),
-            Some("visible")
-        );
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.channel, "telegram");
+        assert_eq!(decoded.sender_hash, sender_hash);
+        assert_eq!(decoded.sender_hash.len(), 16);
         assert!(
-            crate::skills::router::route("hidden-name-mode", routed.as_ref()).is_none(),
-            "the same filtered view must feed keyword routing"
+            decoded
+                .sender_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        );
+        assert_eq!(decoded.route_report, report);
+        assert_eq!(
+            crate::wal::events::ExtendedSubtype::from_u8(
+                crate::wal::events::ExtendedSubtype::SkillRouteResolved as u8
+            ),
+            Some(crate::wal::events::ExtendedSubtype::SkillRouteResolved)
         );
     }
 

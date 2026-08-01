@@ -113,10 +113,10 @@ modes:
       format: markdown
       length_hint: "MECHANISM section always; PROCEDURE section only on explicit request"
     trigger_phrases:
-      - "mechanism only"
-      - "no steps"
-      - "why not how"
-      - "explain the mechanism"
+      - "threat mechanism only"
+      - "threat analysis no steps"
+      - "threat why not how"
+      - "explain the threat mechanism"
     system_prompt_delta: |
       Mode: pme_format (mechanism-vs-procedure). Structure the answer in two
       sections. '## MECHANISM (what + why)' — the threat class, the trust boundary
@@ -125,4 +125,3 @@ modes:
       — is OMITTED unless the operator has explicitly asked for the procedure or
       steps in this turn. Keeps a "what's the threat here" question from auto-emitting
       a full attacker playbook while preserving on-demand depth.
-

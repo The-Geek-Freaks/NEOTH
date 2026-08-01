@@ -50,7 +50,7 @@
 
 import { ScrollView, LineEdit, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, Led, ConfirmDialog } from "components.slint";
+import { NeothButton, Card, Led, ConfirmDialog, NeothComboBox } from "components.slint";
 
 /// One message in the scrollback. Owned by the Rust side; Slint
 /// renders the list reactively.
@@ -718,7 +718,14 @@ component Composer inherits Rectangle {
     /// GOLD-ADAPT-ODY-03 — display names of pending attachments; the
     /// paths live Rust-side (Arc<Mutex<Vec<PathBuf>>>).
     in property <[string]> pending-attachments: [];
+    /// Operator-visible Skill labels. Rust owns the parallel canonical IDs.
+    in property <[string]> skill-options: [];
+    /// Shared explicit Skill selection. Index 0 is the Rust-provided auto route.
+    in-out property <int> selected-skill-index: 0;
+    /// Typed result of the Skill router for this composer surface.
+    in property <string> skill-route-status: "";
     callback send-clicked(string);
+    callback skill-selected(int);
     callback attach-clicked();
     callback remove-attachment(int);
     /// Fires when the operator taps the Stop button while send-in-flight
@@ -828,6 +835,42 @@ component Composer inherits Rectangle {
                     mouse-cursor: pointer;
                     clicked => { root.draft = cmd + " "; }
                 }
+            }
+        }
+
+        // ADOPT31-B10 — explicit Skill selection stays visible beside the
+        // router result. The route status is intentionally not folded into
+        // the generic chat/helper status line.
+        HorizontalLayout {
+            spacing: Theme.space-base;
+            alignment: center;
+
+            Text {
+                text: "Skill";
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-caption;
+                font-weight: Theme.weight-medium;
+                color: Theme.text-tertiary;
+                vertical-alignment: center;
+            }
+
+            NeothComboBox {
+                width: 300px;
+                model: root.skill-options;
+                current-index <=> root.selected-skill-index;
+                enabled: root.skill-options.length > 0 && !root.send-in-flight;
+                selected(i) => { root.skill-selected(i); }
+            }
+
+            Text {
+                text: root.skill-route-status;
+                visible: root.skill-route-status != "";
+                horizontal-stretch: 1;
+                overflow: elide;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-2xs;
+                color: Theme.text-tertiary;
+                vertical-alignment: center;
             }
         }
 
@@ -1013,6 +1056,11 @@ export component ChatView inherits Rectangle {
     in property <bool> stall-active: false;
     /// GOLD-ADAPT-ODY-03 — pending attachment display names.
     in property <[string]> pending-attachments: [];
+    /// ADOPT31-B10 — explicit Skill picker labels, shared selection and the
+    /// resolver's dedicated status line. Canonical Skill IDs remain Rust-owned.
+    in property <[string]> skill-options: [];
+    in-out property <int> selected-skill-index: 0;
+    in property <string> skill-route-status: "";
     /// GOLD-ADAPT-ODY-12/14 — deep-link chips for the LAST reply.
     /// Rendered above the composer; replaced on every completed turn.
     in property <[LinkChip]> link-chips: [];
@@ -1025,6 +1073,7 @@ export component ChatView inherits Rectangle {
     in property <[string]> starter-prompts: ["What can you do?", "Show me a demo", "Help me get started"];
 
     callback send-clicked(string);
+    callback skill-selected(int);
     callback channel-ctx(string /*channel*/, length /*x*/, length /*y*/);
     callback live-session-selected();
     callback session-selected(string);
@@ -1741,7 +1790,11 @@ export component ChatView inherits Rectangle {
                 send-in-flight: root.send-in-flight;
                 slash-active: root.slash-active;
                 pending-attachments: root.pending-attachments;
+                skill-options: root.skill-options;
+                selected-skill-index <=> root.selected-skill-index;
+                skill-route-status: root.skill-route-status;
                 send-clicked(text) => { root.send-clicked(text); }
+                skill-selected(i) => { root.skill-selected(i); }
                 attach-clicked => { root.attach-clicked(); }
                 remove-attachment(i) => { root.remove-attachment(i); }
                 recall-requested => { root.recall-requested(); }
