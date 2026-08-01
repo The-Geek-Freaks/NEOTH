@@ -7530,12 +7530,18 @@ mod tests {
             format!("{error:#}").contains("parse clock floor"),
             "malformed persisted rollback state must fail closed: {error:#}"
         );
+        // The override is the only bypass of the clock guard — and taking it
+        // still yields the instance lock. `is_none()` encoded an older shape
+        // where the bypass returned no guard, which would mean starting without
+        // the single-instance lock the module doc requires even for --one-shot.
+        // Assert the bypass SUCCEEDS and hands back the guard.
+        let bypassed = run_preflight_guards(home.path(), true, true)
+            .expect("the explicit operator rollback override must pass preflight");
         assert!(
-            run_preflight_guards(home.path(), true, true)
-                .unwrap()
-                .is_none(),
-            "the explicit operator rollback override is the only bypass"
+            bypassed.is_some(),
+            "the bypass must still own the single-instance lock"
         );
+        drop(bypassed);
     }
 
     #[test]

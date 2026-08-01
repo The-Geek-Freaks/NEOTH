@@ -1343,6 +1343,18 @@ mod tests {
     async fn proof_key_rotate_dry_run_then_commits_a_showable_audit() {
         let home = tempdir().unwrap();
         let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        // Establish the instance's HMAC identity BEFORE anything else lands in
+        // `wal/`. The writer refuses to mint a fresh identity in a directory
+        // that already holds key material — here the rotation's own
+        // `signing.key.archive-*` — which is the right guard: silently creating
+        // a second identity next to an existing one is how an audit chain gets
+        // forked. The fixture simply never established one.
+        crate::cli::security::recover_and_load_or_initialize_hmac_key(
+            home.path(),
+            &wal_dir.join("hmac.key"),
+        )
+        .expect("seed the instance HMAC identity before proof-key rotation");
         let key_path = wal_dir.join("signing.key");
         let old = crate::wal::signing::load_or_init_signing_key(&key_path).unwrap();
         let old_public = crate::wal::signing::pubkey_b64(&old);
