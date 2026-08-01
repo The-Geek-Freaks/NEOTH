@@ -2414,11 +2414,17 @@ mod tests {
             "--home must never fall back to the default daemon lock"
         );
 
-        std::fs::write(&custom_pidfile, std::process::id().to_string()).unwrap();
+        // Daemon liveness is a HELD advisory lock on the pidfile, not a live
+        // pid written into it — a stale pidfile from a crashed daemon must not
+        // block anything. Simulating a running daemon therefore means holding
+        // the lock, exactly as the daemon does.
+        let guard = crate::daemon::pidfile::acquire(&custom_pidfile)
+            .expect("hold the custom-home daemon lock");
         assert!(
             native_mutation_requires_stopped_daemon(custom_home.path(), "native:call-1").is_err(),
-            "the live PID in the custom home must block native mutation"
+            "a daemon holding the lock in the custom home must block native mutation"
         );
+        drop(guard);
         assert!(
             native_mutation_requires_stopped_daemon(custom_home.path(), "developer-call-1").is_ok(),
             "non-native sources do not own a local recovery receipt"

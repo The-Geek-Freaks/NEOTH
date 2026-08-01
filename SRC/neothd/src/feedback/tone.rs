@@ -109,6 +109,42 @@ impl ToneScore {
 /// matched phrase contributes a fixed weight (no double-count of repeats),
 /// so a single strong "that's wrong" already crosses the negative threshold
 /// while a neutral question scores 0.0.
+/// Substring match that will not fire inside a longer word.
+///
+/// A plain `contains` made the classifier cancel itself out: the positive
+/// pattern `"correct"` matches inside the negative word `"incorrect"`, so
+/// "stop, this is incorrect" scored -0.5 + 0.5 = 0.0 and was read as neutral —
+/// the single most explicit correction phrase in the list was the one it could
+/// not detect.
+///
+/// Boundaries are only enforced on the side where the pattern itself ends in a
+/// word character. `"no, "` ends in a space, so what follows it is free; a
+/// pattern like `"correct"` must be flanked by non-word characters on both
+/// sides.
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    let needle_starts_word = needle.chars().next().is_some_and(is_word_char);
+    let needle_ends_word = needle.chars().next_back().is_some_and(is_word_char);
+    let mut from = 0usize;
+    while let Some(found) = haystack[from..].find(needle) {
+        let start = from + found;
+        let end = start + needle.len();
+        let left_ok = !needle_starts_word
+            || haystack[..start].chars().next_back().is_none_or(|c| !is_word_char(c));
+        let right_ok = !needle_ends_word
+            || haystack[end..].chars().next().is_none_or(|c| !is_word_char(c));
+        if left_ok && right_ok {
+            return true;
+        }
+        // Advance past this occurrence's first char to keep scanning.
+        from = start + haystack[start..].chars().next().map_or(1, char::len_utf8);
+    }
+    false
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
 pub fn score_follow_up(text: &str) -> ToneScore {
     let lower = text.to_lowercase();
     let mut matched = Vec::new();
@@ -118,13 +154,13 @@ pub fn score_follow_up(text: &str) -> ToneScore {
     // −0.3; one praise phrase (+0.5) crosses +0.4. Multiple hits accumulate
     // but the net is clamped, so stuffing can't runaway.
     for pat in NEGATIVE_PATTERNS {
-        if lower.contains(pat) {
+        if contains_word(&lower, pat) {
             score -= 0.5;
             matched.push((*pat).to_string());
         }
     }
     for pat in POSITIVE_PATTERNS {
-        if lower.contains(pat) {
+        if contains_word(&lower, pat) {
             score += 0.5;
             matched.push((*pat).to_string());
         }
@@ -185,5 +221,29 @@ mod tests {
         let s = score_follow_up("thanks, but that's wrong");
         assert_eq!(s.score, 0.0);
         assert!(!s.is_correction());
+    }
+
+    #[test]
+    fn a_positive_pattern_inside_a_negative_word_does_not_cancel_it() {
+        // "correct" sits inside "incorrect". With a plain substring match the
+        // two hits cancelled to 0.0 and the clearest correction phrase in the
+        // language read as neutral.
+        let s = score_follow_up("stop, this is incorrect");
+        assert!(
+            s.is_correction(),
+            "an explicit correction must not be neutralised by its own substring: {s:?}"
+        );
+        assert!(
+            !s.matched.iter().any(|m| m == "correct"),
+            "the positive pattern must not match inside a longer word: {s:?}"
+        );
+    }
+
+    #[test]
+    fn word_boundaries_do_not_break_phrase_patterns() {
+        // Patterns ending in punctuation/space must still match mid-sentence.
+        assert!(score_follow_up("no, that is wrong").is_correction());
+        // And a genuine standalone praise word still scores positive.
+        assert!(score_follow_up("that is correct, thanks").is_positive());
     }
 }
