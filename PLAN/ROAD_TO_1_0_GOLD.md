@@ -3815,15 +3815,23 @@ Verified gap: `rg -i 'barge|cancel_generation|should_listen|cancel_scope' src/me
   `ort` crate, weights supervised by `media/model_manager.rs`. The trait seam is already
   correct; this is a backend, not a refactor. *NEOTH:* `media/vad/silero_backend.rs` (new).
   *Consumer:* `media/vad/mod.rs`. **M**
-- [ ] **ADOPT31-A4** VAD tuning constants as `freedom.yaml` keys, not literals:
-  `thresh=0.6`, `min_silence_ms=64`, `min_speech_ms=384`, `speech_pad_ms=500`,
-  `speculative_reopen_ms=1000`, `unanswered_reopen_ms=7000`. *NEOTH:* `config/` + GUI voice
-  panel. *Consumer:* A3/A7. **S**
+- [~] **ADOPT31-A4** VAD tuning constants as `freedom.yaml` keys — **TEILWEISE
+  GEGENSTANDSLOS (geprüft 2026-08-01).** Zwei der sechs genannten Schlüssel,
+  `speculative_reopen_ms` und `unanswered_reopen_ms`, gehören zum Turn-Tracker **A7**, der
+  nicht gebaut ist. Sie jetzt als Config-Keys anzulegen wäre ein Primitiv ohne Konsument.
+  Die real existierenden Konstanten sind zudem andere als die im Item genannten:
+  `DEFAULT_ENERGY_THRESHOLD`, `DEFAULT_SMOOTH_WINDOW`, `DEFAULT_SPEECH_PROB`,
+  `DEFAULT_MIN_FRAGMENT_MS`, `DEFAULT_HANGOVER_MS` (`media/vad/smoothed.rs`).
+  **Neuer Zuschnitt:** diese fünf konfigurierbar machen; die zwei A7-Schlüssel wandern in
+  A7. Beachten: das Item verlangt zusätzlich ein GUI-Voice-Panel — das ist der größere Teil
+  und macht aus **S** eher **M**. **M**
 - [ ] **ADOPT31-A5** Sentence-batching between LLM stream and TTS — batch 3 sentences before
   synthesis; cuts first-audio latency without word-by-word synthesis lag. *NEOTH:*
   `media/lm_output_processor.rs` (new). *Consumer:* A2. **M**
-- [ ] **ADOPT31-A6** Short-segment false-barge-in guard — active speech under 100 ms never
-  triggers cancellation. *NEOTH:* extend `media/vad/smoothed.rs`. *Consumer:* A1/A7. **S**
+- [x] **ADOPT31-A6** Short-segment false-barge-in guard — **GEBAUT** (2026-08-01, diese Session).
+  `media/vad/smoothed.rs:25` `DEFAULT_MIN_FRAGMENT_MS: u32 = 100` + `candidate_speech_ms`-
+  Akkumulator: ein Turn öffnet erst, wenn genug zusammenhängende Sprache vorliegt, statt beim
+  ersten Frame. Bestehender Test `custom_parameters_respected` auf 120 ms angehoben. **S**
 - [ ] **ADOPT31-A7** Speculative turn tracker — soft-end / reopen / committed states so a
   mid-sentence pause does not read as end-of-turn. *NEOTH:* `media/turn_tracker.rs` (new).
   *Consumer:* A2. **M**
@@ -3865,7 +3873,10 @@ seeded by Fabric's `reflexion.json` / `self-refine.json`.
   `explain_code`, `create_summary`, `extract_insights`, `create_conceptmap`. Ignore
   Fabric's `extract_skills` — it is HR job-description parsing, useless here. *NEOTH:*
   `skills/bundled.rs`. *Consumer:* `skills/router.rs`. **M**
-- [ ] **ADOPT31-B10** Pairwise negative routing test — assert each skill's phrase routes to
+- [x] **ADOPT31-B10** (**GEBAUT** 2026-08-01: `skills/bundled.rs`
+  `every_bundled_trigger_routes_to_its_own_skill_against_the_whole_catalogue` mit
+  `KNOWN_COLLISIONS`-Baseline von 10 echten, per-Pack unsichtbaren Trigger-Kollisionen.)
+  Pairwise negative routing test — assert each skill's phrase routes to
   itself and to nothing else. *NEOTH:* `skills/test_harness.rs`. *Consumer:* CI gate. **M**
 - [ ] **ADOPT31-B11** Session-start active-skill catalog injection. *NEOTH:* `hooks/` SessionStart
   handler. *Consumer:* every session. **S**
@@ -4025,7 +4036,11 @@ None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
   on `ActionKind`, no-write-down check. Port as a plain Rust enum, **not** the Cedar dep.
   *NEOTH:* `permissions/ifc.rs` (new). *Consumer:* `permissions/gate.rs` MCP + external-HTTP
   provenance gate. **L** 🔒
-- [ ] **ADOPT31-C8** `security/risk_gate.rs` block-pattern gap-fill from gstack `/careful` —
+- [x] **ADOPT31-C8** (**GEBAUT** 2026-08-01: `security/dangerous_command.rs` um
+  `secure_erase` + `sql_destructive` als Critical-Regeln erweitert, je mit Positiv- **und**
+  Negativtest. `DELETE` ohne `WHERE` bewusst ausgelassen — per Regex nicht von einem
+  parametrisierten `DELETE` unterscheidbar, das wäre ein Fehlalarm-Generator.)
+  `security/risk_gate.rs` block-pattern gap-fill from gstack `/careful` —
   verify SQL-destructive, `format`, `dd`, `shred` coverage. *Consumer:*
   `risk_gate.rs::is_dangerous_command()`. **S** 🔒
 - [ ] **ADOPT31-C9** Align WAL audit event field names with the toolkit's AUDIT-COMPLIANCE-1.0
