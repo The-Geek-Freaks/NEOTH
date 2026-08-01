@@ -3979,8 +3979,26 @@ None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
   Decision Audit Trail written to WAL *before* high-impact dispatch. *NEOTH:*
   `council/pre_action_gate.rs` (new). *Consumer:* `coding/dispatcher.rs` ahead of
   SelfSourceEdit / ExecArbitrary / SelfBinaryReplace. **L** 🔒
-- [ ] **ADOPT31-C6** Credential placeholder vault — `{{cred:NAME}}` opaque references resolved
-  at call time from an AES-256-GCM store, so secrets never transit prompts or tool args.
+- [~] **ADOPT31-C6** Credential placeholder vault — **UMSKOPIERT (2026-08-01), zwei Drittel
+  des Items sind gegenstandslos, ein Drittel ist eine echte Lücke.**
+  1. **Der Store existiert und ist stärker.** `SecretsBackend::{File, Keychain}`
+     (`config/mod.rs:618`) hält `SecretString`-Felder mlock'd im RAM und lädt sie aus dem
+     **OS**-Credential-Store (Windows Credential Manager / Keychain / Secret Service), mit
+     `neoth credential migrate --to keychain`. Einen eigenen AES-256-GCM-Datei-Store
+     danebenzusetzen wäre ein **Rückschritt**: handgerollte Dateiverschlüsselung ist
+     schwächer als der OS-Store und wäre der dritte Mechanismus für dieselbe Aufgabe.
+  2. **Die genannte Bedrohung tritt nicht auf.** Gezählt: `.expose()` erscheint ausschließlich
+     in `models/sources` (Provider-Header) und in der WAL-Verschlüsselung
+     (`wal/master_key.rs`, `wal/crypto.rs`) — **null Treffer** in Prompt-Komposition,
+     MCP- oder Coding-Tool-Pfaden. Secrets transitieren heute weder Prompts noch Tool-Args.
+  3. **Echte Restlücke, viel kleiner:** `McpServerConfig::env` (`mcp/config.rs:46`) ist ein
+     `HashMap<String, String>` im **Klartext** in `mcp_servers.yaml`. Die einzige Indirektion
+     ist der Literal `from_env`, der zur Spawn-Zeit aus der **Prozessumgebung** liest — also
+     genau die Fläche, die auch **T8** betrifft (auf Linux via `/proc/<pid>/environ` lesbar).
+  **Neuer Zuschnitt `ADOPT31-C6a`:** ein `from_secret:NAME`-Literal für `McpServerConfig::env`,
+  zur Spawn-Zeit aus dem **vorhandenen** `SecretsBackend` aufgelöst. Schließt Klartext-Secrets
+  auf der Platte, nutzt den bereits gehärteten Store, und vermeidet den Umweg über die
+  Prozessumgebung. Klein, additiv, kein neuer Store. **S** 🔒
   *NEOTH:* `security/credential_vault.rs` (new). *Consumer:* channel tool-call injectors,
   `permissions/lease.rs` MCP scope. **L** 🔒
 - [ ] **ADOPT31-C7** Information-flow-control label lattice — `source_labels[]` + `clearance`
