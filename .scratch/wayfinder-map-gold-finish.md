@@ -623,13 +623,34 @@ From T13/T14. Order chosen by how much of a live gap each closes.
   deliberately omitted — regex cannot separate it from a parameterised DELETE
   without firing on ordinary queries. 12/12, clippy clean.
 
-- **`ADOPT31-C4` — sized, not started.** HMAC fingerprinting of MCP tool
-  schemas needs four pieces: persist each server's advertised schema at install
-  time, fingerprint it, compare at call time, fail closed on mismatch.
-  `mcp/catalogue.rs` is a *prompt* catalogue with no schema persistence and no
-  hashing, so this is a new persistence layer plus dispatch integration plus a
-  config migration — a feature, not a patch. Worth doing: it is the rug-pull
-  vector on a live dispatch loop.
+- **`ADOPT31-C4` — DONE** (`ea12dab3` core, `5d47eeb5` enforcement).
+  `security/mcp_guardian.rs`: HMAC pin under the instance WAL identity over
+  server, tool name, description, canonical input schema **and annotations**.
+  The annotations are the point — SmartApprove grants by *declared effect*, so a
+  `destructiveHint → readOnlyHint` flip buys silent auto-approval; a guard over
+  input_schema alone waves it through, and there is a test for exactly that.
+  Enforced in `smart_approve::reject_repinned_tools` *before*
+  `classify_tool_verdicts`, so a re-declared tool loses the **bypass**, not the
+  tool. Canonicalisation is hand-rolled because `serde_json` key ordering only
+  holds while `preserve_order` is off and cargo features are additive. 9/9 + 3.
+
+- **`ADOPT31-C1` — DONE** (`2ab2ba4a`). `security/injection_tracker.rs`:
+  bounded 8-turn window, escalation at 3 probing turns, reports once. Only
+  injection-class findings count — hygiene findings fire on ordinary traffic and
+  would drown the signal. Registry capped at 256 conversations, or identity
+  rotation turns the detector into a memory-exhaustion vector. The canary is
+  never recorded: no `Serialize`, redacting `Debug`, digests in alerts.
+
+- **`GOLD-LF-P1-01` — DONE** (`e20f6b56`, `cac92ee1`, `25d6cbee`). Durable
+  pre-mutation intents `0x1C`–`0x23` across OS file writes, app launches,
+  channel egress and media calls. `SelfUpdateIntent` dropped: R3-18 already
+  binds that edge.
+
+- **`ADOPT31-C6a` — DONE** (`acc2da28`). `from_secret:NAME` for MCP server env,
+  resolved from the store NEOTH already has. `C6` as written was rescoped, not
+  built: the OS credential backend is stronger than a hand-rolled AES file, and
+  its stated threat (secrets in prompts/tool args) does not occur — `.expose()`
+  has zero hits in prompt or tool paths.
 
 - **`ADOPT31-C9` — BLOCKED, and the blocker is worth recording.** The item says
   "align WAL audit field names with `AUDIT-COMPLIANCE-1.0` §4.1". That spec is
@@ -799,3 +820,49 @@ documented-unsupported.
 
 - Anything that redraws the destination itself (a v2 feature set, a different
   distribution model). Those return as a fresh effort, not a resumption.
+
+---
+
+### T16 — The roadmap drifts from the code, in both directions · **answered** · `wayfinder:research`
+
+Seven items checked, seven mismatches. This is the finding that changes how the
+rest of the lane should be worked.
+
+| Item | Roadmap | Code |
+|---|---|---|
+| `P1-02` | stages 2–6 missing | all four built under the superseding spec |
+| `P1-04` | swap ±300s for HLC | ±300s orders nothing; VectorClock gives *exact* causality, HLC only approximates |
+| `P1-05` | no trust ledger | band `0xA0..0xAF` + `neoth permissions audit`, `subject` present |
+| `C2` | add SHA-256 prev_hash chain | `wal/compaction.rs` has a section rejecting exactly that, titled "Why HMAC, not plain hash" |
+| `C6` | build an AES-256-GCM store | OS credential store wired; stated threat absent |
+| `C5` | new `pre_action_gate.rs` | audit trail + 22 council modules exist; only wiring missing |
+| `A6`/`B10`/`C8` | open | built *this session*, boxes never flipped |
+
+**Rule that follows:** verify each item against the code before building it.
+Twice, building as written would have replaced a stronger primitive with a
+weaker one.
+
+**And I generated three of these myself** by not flipping boxes after building.
+Flip the box in the same commit as the code.
+
+### T17 — What the red suite was hiding · **answered** · `wayfinder:research`
+
+Driving 41 red tests to 1 surfaced three silent production defects. None had a
+ticket, because nobody could see them.
+
+1. **Windows audit-RPC served one connection per daemon lifetime.** `accept()`
+   took the pending pipe instance before awaiting `connect()`, and
+   `run_accept_loop` awaits it inside a `select!` — one cancellation destroyed
+   the only listener, and accept errors are fatal. Silent because
+   `AuditSink::DaemonRpc` is best-effort. Unix is cancel-safe, so Linux CI could
+   never see it.
+2. **Pipe DACL compared against `GENERIC_ALL`**, which Windows never returns
+   after generic mapping. Every bind failed, silently.
+3. **Tone classifier cancelled itself out** — `"correct"` matches inside
+   `"incorrect"`.
+
+Fixture pattern behind most of the 41: they pinned an exact sentence or an exact
+layout instead of the invariant. The code kept getting *better* — sharper errors,
+liveness via a held lock rather than a bare pid, a hashed operator id — and the
+tests reported each improvement as a regression. One would have pressured a
+future reader into undoing a privacy change to go green.
