@@ -3911,6 +3911,27 @@ None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
   5. Outbound: `injection_tracker::InjectionTracker::observe_outbound(&canary, &response)`
      nach der Provider-Antwort; Token pro Session halten, **niemals** persistieren.
   **S** 🔒
+- [ ] **TESTDEBT-WAL-01** — 40 vorbestehende rote Lib-Tests, großenteils **eine** Fehlerklasse.
+  **Belegt (2026-08-01):** Worktree auf `9315bfb3` + voller Lauf + Mengen-Vergleich → diese 40
+  sind identisch vor und nach der Session, also nicht durch aktuelle Arbeit entstanden.
+  **Mechanik, im Code nachgelesen:** `wal::writer::spawn_for_home` ruft
+  `spawn_with_policy_and_compression_at_home(…, skip_compaction_markers: false)`
+  (`writer.rs:944`), erwirbt damit HMAC-Authority (`writer.rs:1367`) und emittiert einen
+  `0x15 EVENT_TYPE_COMPACTION_MARKER` (`events.rs:642`). Fixtures, die internes Segment-Layout
+  festnageln — „genau ein Frame", „jeder Frame ist X", „Frame Nr. 1 ist Y" — brechen daran.
+  Betroffen u. a. `cli::plugin` (4×, `plugin.rs:3004` erwartet 1 Frame, bekommt 2),
+  `permissions::gate:1145` („jeder Frame ist PERMISSION_GRANTED"), `cli::chat:12898`
+  (feste Frame-Reihenfolge), `feedback`, `worker_watch`.
+  **Vorschlag:** EIN test-seitiger Lese-Helfer, der `0x15`-Frames überspringt, statt ~20
+  Fixtures einzeln nachzuziehen — sonst reißt derselbe Bruch beim nächsten WAL-Feature wieder
+  auf. Eine markerfreie Spawn-Variante scheidet aus: der einzige `skip=true`-Pfad ist der
+  HMAC-Rotations-Writer und verlangt seinen UUID-gebundenen Namespace (`writer.rs:968`).
+  **Vorsicht bei der Umsetzung:** je Fixture prüfen, ob die Assertion wirklich nur Layout
+  meint. Eine, die einen echten Zusatz-Frame fände, darf nicht mit-„gefixt" werden.
+  **Nicht enthalten:** die 6 `skills::`-Fehler (eigene Ursachen, davon einer eine
+  Scope-Frage) und die 7 `daemon::audit_rpc`-Pipe-Isolationsfehler (fester Pipe-Nonce +
+  prozessglobaler IPC-Cooldown). **M**
+
 - [ ] **ADOPT31-C2** SHA-256 hash-chain tamper-evident audit log —
   `AuditEntry{seq, prev_hash, hash}` + `verify_chain()`. *NEOTH:* augment
   `permissions/audit.rs`. *Consumer:* `permissions/gate.rs::record_decision()` chains every
