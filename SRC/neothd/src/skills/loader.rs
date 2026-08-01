@@ -52,7 +52,8 @@ pub(crate) struct AuthorizedRuntimeSkillSnapshot {
 ///
 /// This function does **not** grant runtime authority and its output must not
 /// route, inject prompts, select models, or execute tests. Runtime consumers
-/// use [`load_authorized_from_reload_controller`]. In this inventory only,
+/// use [`load_authorized_initial_from_reload_controller`] or
+/// [`load_authorized_reload_from_reload_controller`]. In this inventory only,
 /// user candidates override bundled ids so operators can inspect or repair the
 /// candidate they actually installed. A missing user dir is a normal
 /// fresh-install state; an existing unreadable user dir is an error.
@@ -91,16 +92,38 @@ pub(crate) async fn load_all_from_config_path(
 /// registry. Missing, stale, revoked, mismatched, or policy-disabled authority
 /// leaves the candidate absent; an installed same-id package never inherits
 /// the bundled package's trust.
-pub(crate) async fn load_authorized_from_reload_controller(
+pub(crate) async fn load_authorized_initial_from_reload_controller(
     skills_dir: &Path,
     reload: &crate::config::reload::ReloadController,
 ) -> Result<AuthorizedRuntimeSkillSnapshot> {
-    load_authorized_with_budget_override(skills_dir, reload, None).await
+    load_authorized_with_mode_and_budget_override(
+        skills_dir,
+        reload,
+        UserSkillLoadMode::Strict,
+        None,
+    )
+    .await
 }
 
-async fn load_authorized_with_budget_override(
+/// Rebuild a live routing snapshot while quarantining malformed installed
+/// generations so one poisoned package cannot retain stale runtime authority.
+pub(crate) async fn load_authorized_reload_from_reload_controller(
     skills_dir: &Path,
     reload: &crate::config::reload::ReloadController,
+) -> Result<AuthorizedRuntimeSkillSnapshot> {
+    load_authorized_with_mode_and_budget_override(
+        skills_dir,
+        reload,
+        UserSkillLoadMode::Quarantine,
+        None,
+    )
+    .await
+}
+
+async fn load_authorized_with_mode_and_budget_override(
+    skills_dir: &Path,
+    reload: &crate::config::reload::ReloadController,
+    user_skill_load_mode: UserSkillLoadMode,
     authority_budget_override: Option<(usize, u64)>,
 ) -> Result<AuthorizedRuntimeSkillSnapshot> {
     let installed_store_ready = match super::mutation_lifecycle::reconcile_for_runtime(skills_dir)
@@ -141,8 +164,11 @@ async fn load_authorized_with_budget_override(
             .collect();
 
         let candidates = if installed_store_ready {
-            match load_user_skills_with_mode(&skills_dir, UserSkillLoadMode::Quarantine) {
+            match load_user_skills_with_mode(&skills_dir, user_skill_load_mode) {
                 Ok(candidates) => candidates,
+                Err(error) if user_skill_load_mode == UserSkillLoadMode::Strict => {
+                    return Err(error)
+                }
                 Err(error) => {
                     tracing::warn!(
                         dir = %skills_dir.display(),
@@ -520,7 +546,7 @@ pub(crate) async fn diagnostic_inventory_for_accepted_config(
 ) -> Result<Vec<SkillInventoryRow>> {
     let policy = SkillPolicy::from_config(&config.skills);
     let reload = crate::config::reload::ReloadController::new(config, config_path);
-    let runtime = load_authorized_from_reload_controller(skills_dir, &reload)
+    let runtime = load_authorized_reload_from_reload_controller(skills_dir, &reload)
         .await
         .with_context(|| {
             format!(
@@ -692,8 +718,8 @@ fn load_user_skills(skills_dir: &Path) -> Result<Vec<LoadedUserSkill>> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UserSkillLoadMode {
-    /// Inventory and operator-facing validation must expose a broken package
-    /// as an error instead of silently pretending it is absent.
+    /// Initial runtime construction, inventory, and operator-facing validation
+    /// must expose a broken package instead of silently pretending it is absent.
     Strict,
     /// Runtime authority reloads quarantine each broken candidate so one
     /// poisoned package cannot retain an older, already-revoked routing
@@ -1484,10 +1510,14 @@ system_prompt: |
         // entry plus its one authority-record entry and is admitted. Beta's
         // first package entry then crosses the shared limit. The loader must
         // discard that partial map and return the complete bundled-only layer.
-        let snapshot =
-            load_authorized_with_budget_override(&skills_dir, &reload, Some((2, u64::MAX)))
-                .await
-                .unwrap();
+        let snapshot = load_authorized_with_mode_and_budget_override(
+            &skills_dir,
+            &reload,
+            UserSkillLoadMode::Quarantine,
+            Some((2, u64::MAX)),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             snapshot.skills.len(),
@@ -1529,7 +1559,7 @@ system_prompt: |
         let reload = test_reload_controller(home.path());
         activate_test_skill(home.path(), id, &reload);
 
-        let before = load_authorized_from_reload_controller(&skills_dir, &reload)
+        let before = load_authorized_reload_from_reload_controller(&skills_dir, &reload)
             .await
             .unwrap();
         assert!(
@@ -1570,7 +1600,7 @@ system_prompt: |
             "both mutation and authority proof segments must reject topic redaction"
         );
 
-        let after = load_authorized_from_reload_controller(&skills_dir, &reload)
+        let after = load_authorized_reload_from_reload_controller(&skills_dir, &reload)
             .await
             .unwrap();
         assert!(

@@ -61,7 +61,8 @@ use arc_swap::ArcSwap;
 use tracing::{debug, info, warn};
 
 use super::loader::{
-    load_all, load_authorized_from_reload_controller, load_trusted_bundled_from_reload_controller,
+    load_all, load_authorized_initial_from_reload_controller,
+    load_authorized_reload_from_reload_controller, load_trusted_bundled_from_reload_controller,
 };
 use super::schema::{RuntimeSkill, Skill};
 
@@ -432,7 +433,7 @@ impl SkillRegistry {
             config_path.clone(),
         ));
         let initial_snapshot =
-            load_authorized_from_reload_controller(&skills_dir, reload_controller.as_ref())
+            load_authorized_initial_from_reload_controller(&skills_dir, reload_controller.as_ref())
                 .await
                 .with_context(|| {
                     format!(
@@ -501,7 +502,7 @@ impl SkillRegistry {
         let authority_epoch = runtime_authority_epoch(&authority_home);
         let validated_authority_epoch = authority_epoch.current();
         let initial_snapshot =
-            load_authorized_from_reload_controller(&skills_dir, reload_controller.as_ref())
+            load_authorized_initial_from_reload_controller(&skills_dir, reload_controller.as_ref())
                 .await
                 .with_context(|| {
                     format!(
@@ -641,7 +642,7 @@ impl SkillRegistry {
                 return Err(error);
             }
         }
-        let new_snapshot = match load_authorized_from_reload_controller(
+        let new_snapshot = match load_authorized_reload_from_reload_controller(
             &self.skills_dir,
             self.reload_controller.as_ref(),
         )
@@ -2410,6 +2411,22 @@ modes:
         write_skill(dir.path(), "broken", "id: [not-valid\n").await;
         let error = match SkillRegistry::load(dir.path()).await {
             Ok(_) => panic!("malformed manifest must reject initial registry load"),
+            Err(error) => error,
+        };
+        let detail = format!("{error:#}");
+        assert!(detail.contains("load initial skill registry"));
+        assert!(detail.contains("parse YAML"));
+        assert!(detail.contains("broken"));
+    }
+
+    #[tokio::test]
+    async fn initial_load_with_reload_controller_propagates_existing_malformed_manifest() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        write_skill(&skills_dir, "broken", "id: [not-valid\n").await;
+        let reload = test_reload_controller(home.path(), crate::config::FreedomConfig::default());
+        let error = match SkillRegistry::load_with_reload_controller(&skills_dir, reload).await {
+            Ok(_) => panic!("malformed manifest must reject daemon registry startup"),
             Err(error) => error,
         };
         let detail = format!("{error:#}");
