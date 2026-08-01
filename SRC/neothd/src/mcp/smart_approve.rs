@@ -700,6 +700,13 @@ mod tests {
 
     fn home_with_key() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        #[cfg(windows)]
+        crate::wal::win_native::set_private_current_user_directory_dacl(dir.path()).unwrap();
         let wal = dir.path().join("wal");
         std::fs::create_dir_all(&wal).unwrap();
         std::fs::write(wal.join("hmac.key"), [9u8; 32]).unwrap();
@@ -783,18 +790,14 @@ mod tests {
     }
 
     #[test]
-    fn a_first_pin_flush_failure_withholds_every_grant_and_leaves_no_pin_file() {
+    fn a_first_pin_transaction_failure_withholds_every_grant_and_leaves_no_pin_file() {
         let home = home_with_key();
         let pin_path = home.path().join("mcp_tool_pins.json");
-        let atomic_temp_path = home.path().join(format!(
-            ".neoth-write-{}-mcp_tool_pins.json.tmp",
-            std::process::id()
-        ));
-
-        // `write_file_atomic` stages to this exact sibling path. A directory at
-        // that path makes the real staging write fail on both Unix and Windows
-        // without relying on platform-specific permission semantics.
-        std::fs::create_dir(&atomic_temp_path).unwrap();
+        // The transaction lock is a regular private file. A directory at the
+        // stable lock path makes acquisition fail on Unix and Windows before
+        // any pin-store publication, without coupling this regression to an
+        // atomic writer's private/random staging-name implementation.
+        std::fs::create_dir(home.path().join("mcp_tool_pins.lock")).unwrap();
 
         let cfg = server("srv");
         let session = SmartApproveSession::default().with_home(home.path().to_path_buf());
@@ -1012,10 +1015,12 @@ mod tests {
         let cfg = server("sealed-failure");
         let mut session = SmartApproveSession::default();
         assert!(session.cache.seed_verdicts(&cfg, HashMap::new()));
-        assert!(session
-            .bind_or_initialize(&cfg, "read_graph")
-            .await
-            .is_none());
+        assert!(
+            session
+                .bind_or_initialize(&cfg, "read_graph")
+                .await
+                .is_none()
+        );
         assert!(session.cache.is_bound_to(&cfg));
         assert!(session.cache.grant_for(&cfg, "read_graph").is_none());
     }
