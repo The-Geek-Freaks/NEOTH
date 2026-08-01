@@ -1487,10 +1487,7 @@ async fn notify_task_accepted(neoth_home: &std::path::Path, task_id: &str, peer_
         // H-1: locked load→enqueue→save so a concurrent drain tick can't
         // lose this notice. `false` from enqueue = duplicate accept
         // (re-delivered frame) — prior item wins, nothing written.
-        match crate::proactive::ProactiveQueue::modify(&queue_path, |q| {
-            let inserted = q.enqueue(item);
-            (inserted, inserted)
-        }) {
+        match crate::proactive::ProactiveQueue::enqueue_at(&queue_path, item) {
             Ok(true) => debug!(task_id = %task_id, "cluster: proactive accept notice queued"),
             Ok(false) => {}
             Err(e) => warn!(error = %e, task_id = %task_id,

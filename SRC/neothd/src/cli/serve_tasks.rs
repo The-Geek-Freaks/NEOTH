@@ -4115,15 +4115,18 @@ pub(crate) fn spawn_reload_poller(
     })
 }
 
-/// G-01 consumer half — proactive drain loop (Round-3 v0.4). Drains the
-/// ProactiveQueue + appends to the JSONL sidecar on a cadence. Bare
-/// `JoinHandle<()>` (always spawns). WAL-emitting via the writer clone.
+/// G-01 consumer half — durable proactive egress loop. Recovery runs before
+/// policy gates; every live send requires an ACKed intent and Armed proof, then
+/// terminal state is projected to the private CLI/GUI history. Bare
+/// `JoinHandle<()>` (always spawns), with WAL ACKs via the writer clone.
 pub(crate) fn spawn_proactive_dispatcher(
     home: &std::path::Path,
+    wal_segment_path: &std::path::Path,
     writer: &WalWriterHandle,
 ) -> JoinHandle<()> {
     let handle = crate::daemon::proactive_dispatcher::spawn_proactive_drain_loop(
         home.to_path_buf(),
+        wal_segment_path.to_path_buf(),
         crate::daemon::proactive_dispatcher::PROACTIVE_DRAIN_INTERVAL_SECS,
         writer.clone(),
     );
@@ -6190,10 +6193,10 @@ pub(crate) async fn prepare_wal(
     if absolute_segment.parent() != Some(absolute_wal_dir.as_path())
         || !absolute_segment
             .file_name()
-            .is_some_and(crate::wal::scan::canonical_segment_name)
+            .is_some_and(crate::wal::scan::canonical_chain_base_segment_name)
     {
         anyhow::bail!(
-            "WAL segment must be a canonically named direct child of the instance WAL directory {}",
+            "WAL segment must be a canonical sequence-1 direct child of the instance WAL directory {}",
             absolute_wal_dir.display()
         );
     }
@@ -6947,12 +6950,10 @@ pub(crate) async fn shutdown_background_tasks(
     // boot sees a consistent state.
     crate::cli::serve_tasks::abort_join(reflection_cron_handle).await;
 
-    // Round-3 v0.4 G-01 consumer half — proactive drain loop.
-    // Drains queue + appends to JSONL sidecar; the JSONL sidecar
-    // is append-only so a mid-tick abort either landed the line
-    // (delivered) or didn't (next tick re-picks the item). Worst
-    // case: one item is dropped from a tick that aborted mid-flight
-    // — operator sees it on next drain cycle.
+    // G-01 consumer half — durable proactive egress. Cancellation-safe WAL
+    // ACKs and private claims make recovery classify the exact phase: before
+    // Armed the item remains retryable; after Armed an unknown transport result
+    // settles pessimistically and is never silently re-sent.
     crate::cli::serve_tasks::abort_join(proactive_dispatcher_handle).await;
 
     // Round-3 v0.4 G-02 — surfacing cron loop. Reads idx_profile +

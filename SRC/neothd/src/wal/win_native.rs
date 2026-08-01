@@ -35,6 +35,8 @@ use windows_sys::Win32::Security::Authorization::{
     SE_FILE_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW, SetSecurityInfo, TRUSTEE_IS_NAME,
     TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
+#[cfg(test)]
+use windows_sys::Win32::Security::UNPROTECTED_DACL_SECURITY_INFORMATION;
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
     CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation,
@@ -50,15 +52,18 @@ use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken}
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, CREATE_NEW, CreateDirectoryW, CreateFileW, DELETE, FILE_ALL_ACCESS,
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
-    FILE_GENERIC_WRITE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FILE_WRITE_DATA, FileRenameInfoEx, FlushFileBuffers,
-    GetFileInformationByHandle, OPEN_EXISTING, READ_CONTROL, SetFileInformationByHandle, WRITE_DAC,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH,
+    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_LIST_DIRECTORY, FILE_READ_DATA, FILE_RENAME_INFO,
+    FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_DATA,
+    FileRenameInfoEx, FlushFileBuffers, GetFileInformationByHandle, OPEN_EXISTING, READ_CONTROL,
+    SetFileInformationByHandle, WRITE_DAC,
 };
 
 // ───────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ───────────────────────────────────────────────────────────────────────────
+
+const GENERIC_ALL_ACCESS: u32 = 0x1000_0000;
 
 /// Encode a Rust `&str` as a null-terminated UTF-16 `Vec<u16>` for Win32.
 fn to_wide_nul(s: &str) -> Vec<u16> {
@@ -118,6 +123,30 @@ fn map_win32(code: u32, ctx: &'static str) -> io::Result<()> {
 /// is best-effort on Windows.
 pub fn set_owner_dacl(path: &Path, account: &str) -> io::Result<()> {
     set_owner_dacl_impl(path, account, false)
+}
+
+/// Test fixture helper for a deliberately non-private but current-token-owned
+/// file. Resolving `%USERNAME%` can select a different local/domain principal;
+/// use the exact TokenUser SID so broad-file migration tests never lock the
+/// running process out before exercising the production reader.
+#[cfg(test)]
+pub(crate) fn set_unprotected_current_user_file_dacl_for_test(path: &Path) -> io::Result<()> {
+    let sid = current_process_token_sid()?;
+    set_trustee_dacl_with_protection(
+        path,
+        sid.as_ptr() as *mut u16,
+        TRUSTEE_IS_SID,
+        NO_INHERITANCE,
+        UNPROTECTED_DACL_SECURITY_INFORMATION,
+    )?;
+    let readable = File::open(path)?;
+    drop(readable);
+    if verify_private_dacl(path).is_ok() {
+        return Err(io::Error::other(
+            "broad-file fixture retained a protected private DACL",
+        ));
+    }
+    Ok(())
 }
 
 /// Replace `path`'s DACL with a protected, non-inherited Full Control ACE for
@@ -184,7 +213,11 @@ pub fn set_private_current_user_file_handle_dacl<H: AsRawHandle + ?Sized>(
 ) -> io::Result<()> {
     let handle = checked_raw_handle(file)?;
     let sid = current_process_token_sid()?;
-    verify_handle_owner_for_sid(handle, &sid)?;
+    set_private_current_user_file_handle_dacl_for_sid(handle, &sid)
+}
+
+fn set_private_current_user_file_handle_dacl_for_sid(handle: HANDLE, sid: &[u8]) -> io::Result<()> {
+    verify_handle_owner_for_sid(handle, sid)?;
     let acl = single_trustee_acl(sid.as_ptr() as *mut u16, TRUSTEE_IS_SID, NO_INHERITANCE)?;
 
     // SAFETY: `handle` is the validated live file handle borrowed from the
@@ -201,7 +234,7 @@ pub fn set_private_current_user_file_handle_dacl<H: AsRawHandle + ?Sized>(
         )
     };
     map_win32(rc, "SetSecurityInfo")?;
-    verify_private_handle_for_sid(handle, &sid)
+    verify_private_handle_for_sid(handle, sid)
 }
 
 /// Derive an append-only writer from an already-validated read/write control
@@ -277,10 +310,13 @@ fn set_private_current_user_directory_handle_dacl_for_sid(
 ///
 /// `expected_directory` needs only `READ_CONTROL`, as provided by an ordinary
 /// `cap_std::fs::Dir` on Windows. This function opens a short-lived
-/// `READ_CONTROL | WRITE_DAC` security handle without following a final
-/// reparse point, compares stable volume/file identity with the capability
-/// handle, and mutates only that identity-matched handle. A stale or swapped
-/// display path therefore fails before any DACL is changed.
+/// `FILE_LIST_DIRECTORY | READ_CONTROL | WRITE_DAC` security handle without
+/// following a final reparse point, compares stable volume/file identity with
+/// the capability handle, and mutates only that identity-matched handle.
+/// `FILE_LIST_DIRECTORY` deliberately participates in Windows share accounting;
+/// a security-only handle would not pin the namespace against an already-open
+/// `DELETE` authority. A stale or swapped display path therefore fails before
+/// any DACL is changed.
 pub fn set_private_current_user_directory_dacl_bound<H: AsRawHandle + ?Sized>(
     path: &Path,
     expected_directory: &H,
@@ -291,8 +327,10 @@ pub fn set_private_current_user_directory_dacl_bound<H: AsRawHandle + ?Sized>(
 
     // SAFETY:
     // - `path_w` is a live, null-terminated UTF-16 path.
-    // - READ_CONTROL | WRITE_DAC are exactly the rights needed by the
-    //   handle-bound read-back and DACL mutation.
+    // - READ_CONTROL | WRITE_DAC permit the handle-bound read-back and DACL
+    //   mutation. FILE_LIST_DIRECTORY is deliberately included so this open
+    //   participates in delete-share accounting and really pins the namespace;
+    //   it is not used to mutate directory contents.
     // - OPEN_EXISTING cannot create or truncate an object.
     // - BACKUP_SEMANTICS permits opening a directory, while OPEN_REPARSE_POINT
     //   exposes a final reparse point itself so it can be rejected below.
@@ -301,7 +339,7 @@ pub fn set_private_current_user_directory_dacl_bound<H: AsRawHandle + ?Sized>(
     let raw_security_handle = unsafe {
         CreateFileW(
             path_w.as_ptr(),
-            READ_CONTROL | WRITE_DAC,
+            FILE_LIST_DIRECTORY | READ_CONTROL | WRITE_DAC,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             std::ptr::null(),
             OPEN_EXISTING,
@@ -327,6 +365,111 @@ pub fn set_private_current_user_directory_dacl_bound<H: AsRawHandle + ?Sized>(
     set_private_current_user_directory_handle_dacl_for_sid(security_handle.0, &sid)
 }
 
+/// Harden a path-resolved file only when it is the exact object behind an
+/// already-open file handle.
+///
+/// The expected handle remains live while a no-reparse `FILE_READ_DATA |
+/// READ_CONTROL | WRITE_DAC` handle is opened without delete sharing. The data
+/// read right deliberately participates in Windows share accounting; a
+/// security-only handle would not pin the namespace against an already-open
+/// `DELETE` authority. Stable volume/file
+/// identity is compared before any mutation, so a swapped display path fails
+/// without changing either object. After the private DACL is installed, a
+/// second read/write handle is opened, checked against the same identity and
+/// flushed before return. Opening that durability handle only after the DACL
+/// transition preserves migration support for legacy files that grant
+/// `WRITE_DAC` but initially deny ordinary data writes. All handles reject
+/// every reparse-point file, including non-name-surrogate tags that
+/// `FileType::is_symlink` does not expose. Callers must acquire any separate
+/// `DELETE`-capable authority only after this function returns: Windows share
+/// checks cannot combine such authority with the namespace-pinning security
+/// handle used here.
+pub fn set_private_current_user_file_dacl_bound<H: AsRawHandle + ?Sized>(
+    path: &Path,
+    expected_file: &H,
+) -> io::Result<()> {
+    let expected_handle = checked_raw_handle(expected_file)?;
+    let expected_identity = private_file_identity(expected_handle)?;
+    let path_w = path_to_wide_nul(path)?;
+
+    // SAFETY:
+    // - `path_w` is a live, null-terminated UTF-16 path.
+    // - READ_CONTROL | WRITE_DAC permit the handle-bound owner/DACL mutation
+    //   and read-back proof. FILE_READ_DATA is deliberately included so this
+    //   open participates in Windows delete-share accounting and really pins
+    //   the namespace; it is not used to mutate file contents.
+    // - OPEN_EXISTING cannot create or truncate an object.
+    // - OPEN_REPARSE_POINT exposes a final reparse point so the handle-bound
+    //   identity check below can reject it.
+    // - omitting FILE_SHARE_DELETE pins the identity-matched object until its
+    //   DACL mutation and proof are complete.
+    let raw_security_handle = unsafe {
+        CreateFileW(
+            path_w.as_ptr(),
+            FILE_READ_DATA | READ_CONTROL | WRITE_DAC,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        )
+    };
+    if raw_security_handle == INVALID_HANDLE_VALUE {
+        return Err(last_win32_error("CreateFileW(bound file security handle)"));
+    }
+    let security_handle = OwnedHandle(raw_security_handle);
+    let actual_identity = private_file_identity(security_handle.0)?;
+    if actual_identity != expected_identity {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "file display path no longer identifies the bound file",
+        ));
+    }
+
+    let sid = current_process_token_sid()?;
+    set_private_current_user_file_handle_dacl_for_sid(security_handle.0, &sid)?;
+
+    // The original capability may be read-only. FlushFileBuffers requires a
+    // write-capable handle, so acquire one only after the new TokenUser DACL
+    // grants Full Control. The no-delete-share security handle above remains
+    // live and pins the public name throughout this open/identity/flush proof.
+    // FILE_SHARE_DELETE keeps this handle compatible with any already-retained
+    // exact-object removal capability; it cannot weaken the security handle's
+    // independent rename/delete exclusion.
+    // SAFETY:
+    // - `path_w` remains a live, null-terminated UTF-16 path.
+    // - OPEN_EXISTING cannot create or truncate the bound file.
+    // - OPEN_REPARSE_POINT exposes a swapped leaf for the identity helper to
+    //   reject instead of following it.
+    // - the returned handle is transferred immediately into `OwnedHandle`.
+    let raw_durability_handle = unsafe {
+        CreateFileW(
+            path_w.as_ptr(),
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        )
+    };
+    if raw_durability_handle == INVALID_HANDLE_VALUE {
+        return Err(last_win32_error(
+            "CreateFileW(bound file durability handle)",
+        ));
+    }
+    let durability_handle = OwnedHandle(raw_durability_handle);
+    let durability_identity = private_file_identity(durability_handle.0)?;
+    if durability_identity != expected_identity || durability_identity != actual_identity {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "file durability handle no longer identifies the bound file",
+        ));
+    }
+    verify_private_handle_for_sid(durability_handle.0, &sid)?;
+    flush_file_handle(durability_handle.0)
+}
+
 fn set_owner_dacl_impl(path: &Path, account: &str, protected: bool) -> io::Result<()> {
     let account_w = to_wide_nul(account);
     set_trustee_dacl(
@@ -345,13 +488,53 @@ fn set_trustee_dacl(
     inheritance: u32,
     protected: bool,
 ) -> io::Result<()> {
+    set_trustee_dacl_with_protection(
+        path,
+        trustee,
+        trustee_form,
+        inheritance,
+        if protected {
+            PROTECTED_DACL_SECURITY_INFORMATION
+        } else {
+            0
+        },
+    )
+}
+
+fn set_trustee_dacl_with_protection(
+    path: &Path,
+    trustee: *mut u16,
+    trustee_form: i32,
+    inheritance: u32,
+    dacl_protection: u32,
+) -> io::Result<()> {
+    set_trustee_dacl_with_access(
+        path,
+        trustee,
+        trustee_form,
+        inheritance,
+        dacl_protection,
+        GENERIC_ALL_ACCESS,
+    )
+}
+
+fn set_trustee_dacl_with_access(
+    path: &Path,
+    trustee: *mut u16,
+    trustee_form: i32,
+    inheritance: u32,
+    dacl_protection: u32,
+    access_permissions: u32,
+) -> io::Result<()> {
     let path_w = path_to_wide_nul(path)?;
-    let new_acl = single_trustee_acl(trustee, trustee_form, inheritance)?;
+    let new_acl =
+        single_trustee_acl_with_access(trustee, trustee_form, inheritance, access_permissions)?;
 
     // Apply the new DACL to the named file.
     //
-    // Security flags: we set only the DACL. Private state additionally marks
-    // the DACL protected, which prevents parent-directory ACE inheritance.
+    // `dacl_protection` is either zero (preserve existing protection state),
+    // PROTECTED_DACL_SECURITY_INFORMATION for private state, or the explicit
+    // UNPROTECTED flag used only by broad-file migration fixtures.
     //
     // SAFETY:
     //  - `path_w.as_ptr()` is a valid non-null, null-terminated UTF-16
@@ -366,12 +549,7 @@ fn set_trustee_dacl(
         SetNamedSecurityInfoW(
             path_w.as_ptr(),
             SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION
-                | if protected {
-                    PROTECTED_DACL_SECURITY_INFORMATION
-                } else {
-                    0
-                },
+            DACL_SECURITY_INFORMATION | dacl_protection,
             std::ptr::null_mut(), // psidowner — unchanged
             std::ptr::null_mut(), // psidgroup — unchanged
             new_acl.0,
@@ -399,10 +577,19 @@ fn single_trustee_acl(
     trustee_form: i32,
     inheritance: u32,
 ) -> io::Result<OwnedLocalAcl> {
-    // Build one EXPLICIT_ACCESS_W entry for the named account with
-    // Full Control. We initialise the struct to zero first (all-integer
-    // POD fields), then fill in the fields by hand to match the
-    // documented semantics of BuildExplicitAccessWithNameW.
+    single_trustee_acl_with_access(trustee, trustee_form, inheritance, GENERIC_ALL_ACCESS)
+}
+
+fn single_trustee_acl_with_access(
+    trustee: *mut u16,
+    trustee_form: i32,
+    inheritance: u32,
+    access_permissions: u32,
+) -> io::Result<OwnedLocalAcl> {
+    // Build one EXPLICIT_ACCESS_W entry for the requested access mask. We
+    // initialise the struct to zero first (all-integer POD fields), then fill
+    // in the fields by hand to match the documented semantics of
+    // BuildExplicitAccessWithNameW.
     //
     // SAFETY:
     //  - `EXPLICIT_ACCESS_W` and `TRUSTEE_W` are POD structs containing
@@ -411,8 +598,7 @@ fn single_trustee_acl(
     //    the correct empty/no-op state before we overwrite them.
     let mut ea: EXPLICIT_ACCESS_W = unsafe { std::mem::zeroed() };
 
-    // GENERIC_ALL — grants all access including read, write, execute, delete.
-    ea.grfAccessPermissions = 0x1000_0000u32;
+    ea.grfAccessPermissions = access_permissions;
     ea.grfAccessMode = GRANT_ACCESS;
     ea.grfInheritance = inheritance;
 
@@ -464,6 +650,8 @@ fn single_trustee_acl(
 /// `SECURITY_ATTRIBUTES`, so the file never exists with an inherited or token
 /// default DACL. The returned [`File`] owns the exact handle created by that
 /// call. Read, write, and delete sharing are all disabled for its lifetime.
+/// The handle is opened with `FILE_FLAG_WRITE_THROUGH`, so a later handle-bound
+/// rename flushes the namespace mutation as well as the already-synced bytes.
 ///
 /// The descriptor is verified through `GetSecurityInfo` on that handle before
 /// it is returned, avoiding path replacement races in the security check.
@@ -533,7 +721,15 @@ fn create_private_file_new_with_share(path: &Path, share_mode: u32) -> io::Resul
     // - CREATE_NEW prevents replacement/truncation of an existing object.
     // - `share_mode` is either zero for state commits or the explicit
     //   read/write/delete set for private child-process media staging.
+    // - state commits use WRITE_THROUGH so a later handle-bound rename also
+    //   flushes NTFS namespace metadata; shared media staging stays buffered.
     // - a null template handle is documented for ordinary file creation.
+    let create_flags = FILE_ATTRIBUTE_NORMAL
+        | if share_mode == 0 {
+            FILE_FLAG_WRITE_THROUGH
+        } else {
+            0
+        };
     let raw_handle = unsafe {
         CreateFileW(
             path_w.as_ptr(),
@@ -541,7 +737,7 @@ fn create_private_file_new_with_share(path: &Path, share_mode: u32) -> io::Resul
             share_mode,
             &security_attributes,
             CREATE_NEW,
-            FILE_ATTRIBUTE_NORMAL,
+            create_flags,
             std::ptr::null_mut(),
         )
     };
@@ -640,9 +836,10 @@ pub fn create_private_directory_new(path: &Path) -> io::Result<()> {
 ///
 /// `file` must originate from [`create_private_file_new`]; this function
 /// verifies that contract handle-bound, flushes its contents, and publishes it
-/// with `SetFileInformationByHandle(FileRenameInfoEx)`. There is deliberately
-/// no path-based fallback: closing before `MoveFileExW` would reopen a
-/// temp-path substitution window.
+/// through the handle's `FILE_FLAG_WRITE_THROUGH` contract with
+/// `SetFileInformationByHandle(FileRenameInfoEx)`. There is deliberately no
+/// path-based fallback: closing before `MoveFileExW` would reopen a temp-path
+/// substitution window.
 ///
 /// A relative `target` is resolved to one absolute current-directory snapshot
 /// before the kernel call. Source and target must be on the same volume, as
@@ -870,6 +1067,53 @@ fn checked_raw_handle<H: AsRawHandle + ?Sized>(object: &H) -> io::Result<HANDLE>
 struct PrivateDirectoryIdentity {
     volume_serial_number: u32,
     file_index: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PrivateFileIdentity {
+    volume_serial_number: u32,
+    file_index: u64,
+}
+
+fn private_file_identity(handle: HANDLE) -> io::Result<PrivateFileIdentity> {
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot identify a null or invalid file handle",
+        ));
+    }
+    let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // SAFETY: `handle` is live and `information` is correctly sized, aligned
+    // writable storage that is observed only after Win32 reports success.
+    if unsafe { GetFileInformationByHandle(handle, information.as_mut_ptr()) } == 0 {
+        return Err(last_win32_error("GetFileInformationByHandle"));
+    }
+    // SAFETY: the successful Win32 call initialized the complete structure.
+    let information = unsafe { information.assume_init() };
+    if information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "bound security object is not a regular file",
+        ));
+    }
+    if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "bound security file must not be a reparse point",
+        ));
+    }
+    let file_index =
+        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
+    if file_index == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "file system did not provide a stable file identifier",
+        ));
+    }
+    Ok(PrivateFileIdentity {
+        volume_serial_number: information.dwVolumeSerialNumber,
+        file_index,
+    })
 }
 
 fn private_directory_identity(handle: HANDLE) -> io::Result<PrivateDirectoryIdentity> {
@@ -1403,15 +1647,24 @@ pub async fn set_owner_dacl_async(path: &Path, account: &str) -> io::Result<()> 
 /// # Errors
 /// Returns `Err` when `FlushFileBuffers` returns `0` (FALSE).
 pub fn flush_file_buffers(file: &File) -> io::Result<()> {
+    flush_file_handle(file.as_raw_handle() as HANDLE)
+}
+
+fn flush_file_handle(handle: HANDLE) -> io::Result<()> {
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot flush a null or invalid file handle",
+        ));
+    }
     // SAFETY:
-    //  - `file.as_raw_handle()` returns a valid, open HANDLE that is owned
-    //    and kept alive by the `File` reference for at least the duration of
-    //    this call.
+    //  - the caller retains ownership of a validated live file HANDLE for at
+    //    least the duration of this call.
     //  - `FlushFileBuffers` accepts the HANDLE by value (integer copy) and
     //    does not store or alias it.
     //  - The return value is a Win32 BOOL: non-zero means success, 0 means
     //    failure (caller must check `GetLastError` for the code).
-    let rc = unsafe { FlushFileBuffers(file.as_raw_handle() as HANDLE) };
+    let rc = unsafe { FlushFileBuffers(handle) };
 
     if rc != 0 {
         Ok(())
@@ -1615,6 +1868,52 @@ mod tests {
     }
 
     #[test]
+    fn bound_directory_dacl_bridge_requires_delete_authority_after_migration() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("legacy-delete-order");
+        std::fs::create_dir(&path).unwrap();
+        let directory = OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ | READ_CONTROL)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&path)
+            .expect("open identity-bound legacy directory handle");
+        let sid = current_process_token_sid().unwrap();
+        set_trustee_dacl_with_access(
+            &path,
+            sid.as_ptr() as *mut u16,
+            TRUSTEE_IS_SID,
+            OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+            PROTECTED_DACL_SECURITY_INFORMATION,
+            FILE_GENERIC_READ | READ_CONTROL | WRITE_DAC | DELETE,
+        )
+        .expect("seed a legacy directory ACL with DACL and delete authority");
+        let retained_delete = OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ | DELETE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&path)
+            .expect("retain the old DELETE-capable directory topology");
+
+        let error = set_private_current_user_directory_dacl_bound(&path, &directory)
+            .expect_err("a retained DELETE handle must conflict with the namespace pin");
+        assert!(
+            error.to_string().contains("0x00000020"),
+            "expected ERROR_SHARING_VIOLATION, got {error}"
+        );
+        assert!(
+            verify_private_directory_handle_dacl(&directory).is_err(),
+            "failed ordering must not claim the partial directory ACL is private"
+        );
+
+        drop(retained_delete);
+        set_private_current_user_directory_dacl_bound(&path, &directory)
+            .expect("directory migration must succeed before DELETE authority is reacquired");
+        verify_private_directory_handle_dacl(&directory)
+            .expect("two-phase ordering must harden the exact directory");
+    }
+
+    #[test]
     fn bound_directory_dacl_bridge_rejects_swapped_display_path() {
         let root = tempdir().unwrap();
         let bound_path = root.path().join("bound");
@@ -1657,6 +1956,183 @@ mod tests {
             verify_private_directory_dacl(&moved_path).is_err(),
             "original capability directory must remain unprotected"
         );
+    }
+
+    #[test]
+    fn bound_file_dacl_bridge_hardens_the_identity_matched_file() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("bound-file.jsonl");
+        std::fs::write(&path, b"operator evidence").unwrap();
+
+        let file = OpenOptions::new()
+            .access_mode(READ_CONTROL)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&path)
+            .expect("open read-only file capability");
+        let sid = current_process_token_sid().unwrap();
+        set_trustee_dacl(
+            &path,
+            sid.as_ptr() as *mut u16,
+            TRUSTEE_IS_SID,
+            NO_INHERITANCE,
+            false,
+        )
+        .expect("start from a deliberately unprotected file DACL");
+
+        set_private_current_user_file_dacl_bound(&path, &file)
+            .expect("identity-matched bridge must harden the capability file");
+        verify_private_file_handle(&file)
+            .expect("read-only capability must verify the resulting owner/DACL");
+        verify_private_dacl(&path).expect("path and capability proofs must agree");
+        assert_eq!(std::fs::read(path).unwrap(), b"operator evidence");
+    }
+
+    #[test]
+    fn bound_file_dacl_bridge_opens_durable_handle_only_after_legacy_acl_upgrade() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("legacy-read-only-claim.json");
+        std::fs::write(&path, b"legacy claim evidence").unwrap();
+        let file = OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ | READ_CONTROL)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&path)
+            .expect("open the legacy claim before restricting its DACL");
+        let identity_before =
+            private_file_identity(file.as_raw_handle() as HANDLE).expect("bind legacy file id");
+
+        let sid = current_process_token_sid().unwrap();
+        set_trustee_dacl_with_access(
+            &path,
+            sid.as_ptr() as *mut u16,
+            TRUSTEE_IS_SID,
+            NO_INHERITANCE,
+            PROTECTED_DACL_SECURITY_INFORMATION,
+            FILE_GENERIC_READ | READ_CONTROL | WRITE_DAC,
+        )
+        .expect("seed a legacy ACL that permits DACL migration but denies data writes");
+        assert!(
+            OpenOptions::new()
+                .access_mode(FILE_GENERIC_WRITE)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(&path)
+                .is_err(),
+            "fixture must deny ordinary data-write access before migration"
+        );
+        assert!(
+            verify_private_file_handle(&file).is_err(),
+            "a read-only partial-control ACL is not the private Full Control contract"
+        );
+
+        set_private_current_user_file_dacl_bound(&path, &file)
+            .expect("DACL migration must acquire and flush its writer only after the upgrade");
+
+        let identity_after =
+            private_file_identity(file.as_raw_handle() as HANDLE).expect("re-read legacy file id");
+        assert_eq!(identity_after, identity_before);
+        verify_private_file_handle(&file).expect("original read handle must see the private DACL");
+        verify_private_dacl(&path).expect("path must resolve to the same private file");
+        assert_eq!(std::fs::read(&path).unwrap(), b"legacy claim evidence");
+        let writer = OpenOptions::new()
+            .access_mode(FILE_GENERIC_WRITE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&path)
+            .expect("the upgraded DACL must now admit a durable writer for the same file");
+        flush_file_buffers(&writer).expect("write-capable same-file handle must flush");
+    }
+
+    #[test]
+    fn bound_file_dacl_bridge_requires_delete_authority_after_migration() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("legacy-delete-order.claim");
+        std::fs::write(&path, b"legacy claim evidence").unwrap();
+        let file = OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ | READ_CONTROL)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&path)
+            .expect("open identity-bound legacy read handle");
+        let sid = current_process_token_sid().unwrap();
+        set_trustee_dacl_with_access(
+            &path,
+            sid.as_ptr() as *mut u16,
+            TRUSTEE_IS_SID,
+            NO_INHERITANCE,
+            PROTECTED_DACL_SECURITY_INFORMATION,
+            FILE_GENERIC_READ | READ_CONTROL | WRITE_DAC | DELETE,
+        )
+        .expect("seed a legacy ACL that permits DACL migration but denies data writes");
+        let retained_delete = OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ | DELETE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&path)
+            .expect("retain the old DELETE-capable claim topology");
+
+        let error = set_private_current_user_file_dacl_bound(&path, &file)
+            .expect_err("a retained DELETE handle must conflict with the namespace pin");
+        assert!(
+            error.to_string().contains("0x00000020"),
+            "expected ERROR_SHARING_VIOLATION, got {error}"
+        );
+        assert!(
+            verify_private_file_handle(&file).is_err(),
+            "failed ordering must not claim the partial ACL is private"
+        );
+
+        drop(retained_delete);
+        set_private_current_user_file_dacl_bound(&path, &file)
+            .expect("migration must succeed before DELETE authority is reacquired");
+        verify_private_file_handle(&file).expect("two-phase ordering must harden the exact file");
+        assert_eq!(std::fs::read(path).unwrap(), b"legacy claim evidence");
+    }
+
+    #[test]
+    fn bound_file_dacl_bridge_rejects_swapped_display_path() {
+        let root = tempdir().unwrap();
+        let bound_path = root.path().join("bound-file.jsonl");
+        let replacement_path = root.path().join("replacement-file.jsonl");
+        let moved_path = root.path().join("moved-file.jsonl");
+        std::fs::write(&bound_path, b"bound evidence").unwrap();
+        std::fs::write(&replacement_path, b"replacement evidence").unwrap();
+
+        let file = OpenOptions::new()
+            .access_mode(READ_CONTROL)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&bound_path)
+            .expect("open read-only file capability");
+        let sid = current_process_token_sid().unwrap();
+        for path in [&bound_path, &replacement_path] {
+            set_trustee_dacl(
+                path,
+                sid.as_ptr() as *mut u16,
+                TRUSTEE_IS_SID,
+                NO_INHERITANCE,
+                false,
+            )
+            .expect("start from a deliberately unprotected file DACL");
+        }
+
+        std::fs::rename(&bound_path, &moved_path).expect("rename handle-bound file");
+        std::fs::rename(&replacement_path, &bound_path).expect("swap original display path");
+
+        let error = set_private_current_user_file_dacl_bound(&bound_path, &file)
+            .expect_err("identity mismatch must fail before changing either file DACL");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            verify_private_dacl(&bound_path).is_err(),
+            "replacement file must remain unprotected"
+        );
+        assert!(
+            verify_private_dacl(&moved_path).is_err(),
+            "original capability file must remain unprotected"
+        );
+        assert_eq!(std::fs::read(bound_path).unwrap(), b"replacement evidence");
+        assert_eq!(std::fs::read(moved_path).unwrap(), b"bound evidence");
     }
 
     #[test]

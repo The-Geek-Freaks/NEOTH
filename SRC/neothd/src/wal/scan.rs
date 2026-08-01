@@ -118,6 +118,9 @@ struct AuthenticatedHomeSegment {
     physical_sha256_hex: String,
     logical: Vec<u8>,
     header_len: usize,
+    /// End of the last verified keyed-marker frame. A live tail after this
+    /// offset may be durable and CRC-valid, but is not yet authentic.
+    authenticated_through: usize,
     allow_torn_tail: bool,
 }
 
@@ -281,6 +284,11 @@ fn load_home_segment_key(
 
 pub(crate) fn canonical_segment_name(name: &std::ffi::OsStr) -> bool {
     canonical_segment_parts(name).is_some()
+}
+
+/// Select a rotating namespace only through its canonical first segment.
+pub(crate) fn canonical_chain_base_segment_name(name: &std::ffi::OsStr) -> bool {
+    canonical_segment_parts(name).is_some_and(|(_, sequence)| sequence == 1)
 }
 
 /// Iterate every frame in a WAL segment, transparently handling v1 (plain) and
@@ -498,7 +506,7 @@ where
             );
         }
         let allow_torn_tail = ends_namespace && !parsed.is_sealed();
-        crate::wal::writer::verify_existing_compaction_marker_windows(
+        let authenticated_through = crate::wal::writer::verify_existing_compaction_marker_windows(
             &logical,
             header_len,
             &verification_keys,
@@ -519,6 +527,7 @@ where
             physical_sha256_hex,
             logical,
             header_len,
+            authenticated_through,
             allow_torn_tail,
         });
     }
@@ -530,6 +539,7 @@ where
             segment.parsed,
             &segment.logical,
             segment.header_len,
+            segment.logical.len(),
             segment.allow_torn_tail,
             &mut cb,
         )?;
@@ -851,7 +861,7 @@ pub(crate) fn for_each_frame_in_home_segment_chain<F>(
 where
     F: FnMut(&HomeWalFrameLocation, &DecodedFrame<'_>) -> Result<()>,
 {
-    for_each_frame_in_selected_home_segment_chain(home, base_segment_path, limits, false, cb)
+    for_each_frame_in_selected_home_segment_chain(home, base_segment_path, limits, false, false, cb)
 }
 
 /// Walk a selected rotating namespace only when its canonical base segment
@@ -871,7 +881,22 @@ pub(crate) fn for_each_frame_in_existing_home_segment_chain<F>(
 where
     F: FnMut(&HomeWalFrameLocation, &DecodedFrame<'_>) -> Result<()>,
 {
-    for_each_frame_in_selected_home_segment_chain(home, base_segment_path, limits, true, cb)
+    for_each_frame_in_selected_home_segment_chain(home, base_segment_path, limits, true, false, cb)
+}
+
+/// Walk only frames at or before the last successfully verified keyed
+/// compaction marker. Durable CRC-valid bytes in the live unsealed tail are
+/// deliberately invisible to this consumer boundary.
+pub(crate) fn for_each_authenticated_frame_in_existing_home_segment_chain<F>(
+    home: &Path,
+    base_segment_path: &Path,
+    limits: HomeWalScanLimits,
+    cb: F,
+) -> Result<()>
+where
+    F: FnMut(&HomeWalFrameLocation, &DecodedFrame<'_>) -> Result<()>,
+{
+    for_each_frame_in_selected_home_segment_chain(home, base_segment_path, limits, true, true, cb)
 }
 
 fn for_each_frame_in_selected_home_segment_chain<F>(
@@ -879,6 +904,7 @@ fn for_each_frame_in_selected_home_segment_chain<F>(
     base_segment_path: &Path,
     limits: HomeWalScanLimits,
     require_existing_base: bool,
+    authenticated_prefix_only: bool,
     mut cb: F,
 ) -> Result<()>
 where
@@ -954,7 +980,7 @@ where
             limits.max_total_logical_bytes
         );
         let allow_torn_tail = index == final_index && !parsed.is_sealed();
-        crate::wal::writer::verify_existing_compaction_marker_windows(
+        let authenticated_through = crate::wal::writer::verify_existing_compaction_marker_windows(
             &logical,
             header_len,
             &verification_keys,
@@ -979,18 +1005,25 @@ where
             physical_sha256_hex,
             logical,
             header_len,
+            authenticated_through,
             allow_torn_tail,
         });
     }
     validate_cross_segment_links(&authenticated_segments)
         .context("validate authenticated cross-segment links before selected-chain callbacks")?;
     for segment in &authenticated_segments {
+        let logical_end = if authenticated_prefix_only {
+            segment.authenticated_through
+        } else {
+            segment.logical.len()
+        };
         scan_one_home_segment(
             &segment.name,
             segment.parsed,
             &segment.logical,
             segment.header_len,
-            segment.allow_torn_tail,
+            logical_end,
+            segment.allow_torn_tail && logical_end == segment.logical.len(),
             &mut cb,
         )?;
     }
@@ -1100,7 +1133,7 @@ where
             limits.max_total_logical_bytes
         );
         let allow_unmarked_tail = index == final_index && !parsed.is_sealed();
-        crate::wal::writer::verify_existing_compaction_marker_windows(
+        let authenticated_through = crate::wal::writer::verify_existing_compaction_marker_windows(
             &logical,
             header_len,
             &verification_keys,
@@ -1125,6 +1158,7 @@ where
             physical_sha256_hex,
             logical,
             header_len,
+            authenticated_through,
             allow_torn_tail: allow_unmarked_tail,
         });
     }
@@ -1211,14 +1245,19 @@ fn scan_one_home_segment<F>(
     parsed: ParsedSegmentHeader,
     logical: &[u8],
     header_len: usize,
+    logical_end: usize,
     allow_torn_tail: bool,
     cb: &mut F,
 ) -> Result<()>
 where
     F: FnMut(&HomeWalFrameLocation, &DecodedFrame<'_>) -> Result<()>,
 {
+    anyhow::ensure!(
+        logical_end >= header_len && logical_end <= logical.len(),
+        "authenticated WAL scan boundary is outside the logical segment"
+    );
     for_each_logical_frame(
-        logical,
+        &logical[..logical_end],
         header_len,
         allow_torn_tail,
         &mut |cursor, frame| {
@@ -1735,6 +1774,59 @@ mod tests {
             format!("{all_home_error:#}").contains("non-canonical"),
             "the stricter all-home integrity scanner must retain its existing contract"
         );
+    }
+
+    #[test]
+    fn authenticated_prefix_scan_hides_live_tail_and_accepts_rotation_archive() {
+        let dir = tempdir().unwrap();
+        let base = dir.path().join("wal/000001.wal");
+        let first = frame_bytes(0x44, b"marker-confirmed");
+        let mut segment = authenticated_segment_with_identity(1, 1, [9u8; 16], &first);
+        segment.extend_from_slice(&frame_bytes(0x45, b"durable-but-unmarked"));
+        write_home_segment(dir.path(), "000001.wal", &segment);
+
+        let mut ordinary = Vec::new();
+        for_each_frame_in_home_segment_chain(
+            dir.path(),
+            &base,
+            HomeWalScanLimits::default(),
+            |_, frame| {
+                ordinary.push(frame.header.event_type);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(ordinary.contains(&0x44));
+        assert!(ordinary.contains(&0x45));
+
+        let scan_authenticated = || {
+            let mut authenticated = Vec::new();
+            for_each_authenticated_frame_in_existing_home_segment_chain(
+                dir.path(),
+                &base,
+                HomeWalScanLimits::default(),
+                |_, frame| {
+                    authenticated.push(frame.header.event_type);
+                    Ok(())
+                },
+            )
+            .unwrap();
+            authenticated
+        };
+        let authenticated = scan_authenticated();
+        assert!(authenticated.contains(&0x44));
+        assert!(!authenticated.contains(&0x45));
+
+        let wal = dir.path().join("wal");
+        fs::rename(
+            wal.join("hmac.key"),
+            wal.join("hmac.key.00000000000000000001.archive"),
+        )
+        .unwrap();
+        fs::write(wal.join("hmac.key"), [11u8; 32]).unwrap();
+        let authenticated_after_rotation = scan_authenticated();
+        assert!(authenticated_after_rotation.contains(&0x44));
+        assert!(!authenticated_after_rotation.contains(&0x45));
     }
 
     #[test]

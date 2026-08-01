@@ -995,16 +995,32 @@ pub fn stage_and_enqueue(
         }
         if existing.status == ProposalStatus::Pending {
             let item = build_proposal_notification(&existing);
-            let enqueued = queue.enqueue(item);
+            let enqueued = queue.enqueue(item).map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("proposal proactive notification rejected: {error:#}"),
+                )
+            })?;
             return Ok((existing, enqueued));
         }
         return Ok((existing, false));
     }
+    let item = build_proposal_notification(&proposal);
+    item.validate().map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("proposal proactive notification rejected: {error}"),
+        )
+    })?;
     let body = proposal_body(&proposal)?;
     create_proposal_file(&root, &proposal, &body)?;
     drop(_guard);
-    let item = build_proposal_notification(&proposal);
-    let enqueued = queue.enqueue(item);
+    let enqueued = queue.enqueue(item).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("proposal proactive notification rejected: {error:#}"),
+        )
+    })?;
     Ok((proposal, enqueued))
 }
 

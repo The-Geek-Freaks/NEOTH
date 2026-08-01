@@ -305,10 +305,11 @@ pub fn run_reflection_tick_once(
     // Always persist (dirty=true) — same as the old code which called save_to
     // unconditionally regardless of whether enqueue deduped the item.
     let enqueued = ProactiveQueue::modify(&queue_path, |queue| {
-        let inserted = queue.enqueue(item);
-        (true, inserted)
+        let result = queue.enqueue(item);
+        (result.is_ok(), result)
     })
-    .map_err(|e| format!("queue load/save failed: {e}"))?;
+    .map_err(|e| format!("queue load/save failed: {e}"))?
+    .map_err(|e| format!("reflection proactive enqueue rejected: {e:#}"))?;
 
     // Queue persistence is the delivery commit. Persist the replay gate even
     // when enqueue deduped: that is the recovery path after a crash/error
@@ -404,10 +405,11 @@ fn commit_tech_currency_tick(
 
     let queue_path = home.join("proactive_queue.json");
     let enqueued = ProactiveQueue::modify(&queue_path, |queue| {
-        let inserted = queue.enqueue(item);
-        (true, inserted)
+        let result = queue.enqueue(item);
+        (result.is_ok(), result)
     })
-    .map_err(|error| format!("queue load/save failed: {error}"))?;
+    .map_err(|error| format!("queue load/save failed: {error}"))?
+    .map_err(|error| format!("tech-currency proactive enqueue rejected: {error:#}"))?;
 
     // Queue must reach disk first. If marker persistence fails, return Err;
     // queue dedup makes the retry safe and the marker then converges.

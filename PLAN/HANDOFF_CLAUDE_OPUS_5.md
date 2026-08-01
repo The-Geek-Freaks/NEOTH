@@ -1,396 +1,310 @@
-# NEOTH v1.0 GOLD handoff for Claude Opus 5
+# NEOTH v1.0 GOLD execution handoff for Claude Opus 5
 
-**Created:** 2026-07-31
+**Created:** 2026-07-31  **Refreshed:** 2026-08-01
 **Repository:** `C:\Users\Shadow-PC\CascadeProjects\AGENTER`
 **Remote:** `https://github.com/The-Geek-Freaks/NEOTH.git`
 **Branch:** `main`
-**Provider checkpoint commit:** `94006a53315345d7e11452df09acf82fd2b11ec1`
-(`fix(providers): bound OpenAI response envelopes`).
-**Handoff commit:** this file is committed immediately after that checkpoint and
-both commits are pushed together. Start from the newest exact `origin/main`.
+**Pushed parent before the exact-egress checkpoint:**
+`2c8e435e14bbd2c9830f39ae7026ec69780b27ac`
 
-This is an execution handoff, not a request for another high-level audit.
-Continue delivering bounded, wired, reviewed checkpoints until every v1.0 Gold
-contract is closed and the exact release head passes the final platform gates.
+The pushed B10 catalog baseline is:
 
-## 1. Mission and non-negotiable completion standard
+- `351dc6a6` — eliminate built-in routing collisions;
+- `2c8e435e` — satisfy strict router lint without changing match semantics.
+
+This file lands with the exact proactive-egress checkpoint. Do not trust a hash
+written in prose as the current head: fetch, inspect and start from the newest
+exact `origin/main`.
+
+## 1. Mission and completion standard
 
 The authoritative backlog is `PLAN/ROAD_TO_1_0_GOLD.md`. Everything in that
-document is v1.0 scope. Do not silently defer work to 1.1, delete findings,
-convert unfinished work to prose-only completion, or mark a task complete
-because a helper/module/test exists.
+document is v1.0 scope. Do not silently defer work to 1.1, remove findings,
+convert unfinished runtime work into prose-only completion or mark a task done
+because a helper, module or isolated test exists.
 
-A task is complete only when all applicable parts are true:
+A task is complete only when every applicable part is true:
 
-1. The implementation exists and handles failure paths explicitly.
-2. Every intended production caller is wired; searches prove no stale bypass or
-   duplicate legacy path remains.
-3. Config, safe/default behavior, migrations, wizard/onboarding, doctor/probe,
-   CLI, GUI, channels, and release packaging are updated where the feature
-   crosses those surfaces.
-4. CLI/GUI/channel behavior is genuinely parity-safe, not merely documented.
-5. Tests cover the real boundary and a production-shaped path, including
-   negative/adversarial cases.
-6. Public docs and operator guidance tell the truth about what ships.
-7. An independent code review and, for trust boundaries, a security review have
-   no unresolved blocking finding.
-8. The checkpoint is committed, pushed, and `HEAD == origin/main` is verified.
+1. The implementation exists and all failure paths are explicit.
+2. Every intended production caller is wired.
+3. Searches prove no stale bypass, duplicate implementation or dead partial
+   remains.
+4. Config, safe/default behavior, migrations, wizard/onboarding, Doctor/probe,
+   CLI, GUI, Buddy, channels and release packaging are updated where relevant.
+5. CLI/GUI/channel behavior is genuinely parity-safe.
+6. Tests exercise the real boundary and a production-shaped path, including
+   negative, recovery and adversarial cases.
+7. Public docs, roadmap and progress state tell the truth.
+8. Independent code review and, for trust boundaries, security review have no
+   unresolved blocker.
+9. The checkpoint is committed, pushed and verified with
+   `HEAD == origin/main`.
 
-NEOTH's v1.0 product target remains: zero-friction install and first run,
-complete release artifacts, GUI included where the target supports it, easy
-CLI/GUI switching, useful Buddy behavior, provider/channel parity, clean
-migration, no hidden manual prerequisite, and no advertised feature that is
-partial or unwired.
+The v1.0 product target remains zero-friction install and first run, complete
+release artifacts, GUI included where supported, easy CLI/GUI switching, useful
+Buddy behavior, provider/channel parity, clean migration, no hidden manual
+prerequisite and no advertised partial or unwired feature.
 
 ## 2. Start every resumed session safely
 
-Run these checks before editing:
+Run before editing:
 
 ```powershell
 Set-Location C:\Users\Shadow-PC\CascadeProjects\AGENTER
-git status --short
-git fetch origin --prune
+git status --short --branch
+git fetch --prune origin
 git rev-parse HEAD
 git rev-parse origin/main
-git log -5 --oneline
-git merge-base --is-ancestor 94006a53315345d7e11452df09acf82fd2b11ec1 origin/main
+git rev-list --left-right --count HEAD...origin/main
+git log -8 --oneline --decorate
+git merge-base --is-ancestor 2c8e435e14bbd2c9830f39ae7026ec69780b27ac origin/main
 ```
 
-Do not pull/rebase over a dirty tree blindly. Another agent or the operator may
-have legitimate work present. Inspect provenance and integrate around it.
-Never use `git reset --hard`, `git clean`, broad checkout/revert, or `git add -A`.
-Do not begin the Ollama slice unless the ancestry check above succeeds and
-`HEAD == origin/main`. If the heads differ, stop the commit path, inspect the
-foreign commits and dirty-file provenance, then integrate explicitly without
-discarding either side.
+Do not pull or rebase blindly over a dirty shared worktree. Inspect the
+provenance of every changed file and integrate around concurrent work. Never use
+`git reset --hard`, `git clean`, broad checkout/revert or `git add -A`.
 
-At this handoff the following local items are explicitly unrelated to the
-provider-bounds checkpoint and must not be staged, deleted, reformatted, or
-claimed:
+Do not start a new slice unless the ancestry check succeeds and
+`HEAD == origin/main`. If heads differ, inspect every foreign commit and dirty
+file before changing or committing anything. Resume an unfinished shared slice
+only after its ownership, callers and test state are understood.
+
+These local items are unrelated to the exact-egress checkpoint. Do not stage,
+delete, reformat or claim them:
 
 - modified `.gitignore`;
 - untracked `.kilo/`;
 - untracked `SRC/_autoupdate.py`;
-- untracked helper batches shown by `git status` under `SRC/_*.bat`;
+- untracked `SRC/_*.bat` helper scripts;
+- untracked `SRC/.freedom-credentials.transaction.lock`;
+- untracked `SRC/credentials.lock` and `SRC/freedom.yaml.lock`;
 - untracked `SRC/neothd/unused/`.
 
-The repository may have changed after this handoff. Re-read current status and
-history; never assume the list above is exhaustive or still current.
+The list can drift. Re-read `git status`; never assume it is exhaustive.
 
-## 3. Required loop and engineering behavior
+## 3. Required continuous delivery loop
 
-For every checkpoint:
+For each bounded roadmap slice:
 
-1. Read `PLAN/ROAD_TO_1_0_GOLD.md`, `PLAN/PROGRESS_v1_0.md`, the relevant SPEC,
-   and current code/history before deciding scope.
-2. Perform a deep trace:
-   config/default -> constructor -> runtime caller -> policy/audit gate ->
-   output/error -> CLI/GUI/channel/doctor/wizard -> docs/release.
-3. Search all callers and sibling adapters. A function with zero production
-   callers is not shipped. A new guarded path with an old bypass still present
-   is not shipped.
-4. Use parallel read-only agents for independent inventory, adoption research,
-   adversarial review, or test-gap analysis. Give write ownership to only one
-   agent per file. Do not let agents overwrite each other in the shared tree.
-5. Implement the smallest complete root-cause fix. Reuse native/shared helpers;
-   avoid speculative abstractions and new dependencies.
-6. Add exact boundary tests, one-byte-over tests, malformed-input tests,
-   secret/raw-payload non-echo assertions, and production-shaped wiring tests
-   where applicable.
-7. Run proportional verification while building. Do not run the entire
-   workspace/platform matrix after every small edit.
-8. Run an independent code reviewer after code changes. Run a security reviewer
-   for provider, credential, transport, permission, audit, updater, channel, or
-   release trust-boundary changes. Fix all valid blockers and re-review.
-9. Update roadmap/progress/docs honestly. Keep the parent task open until all
-   listed adapters/surfaces are adopted.
-10. Stage exact owned paths, inspect the cached diff, commit one coherent
-    checkpoint, push, fetch, and verify exact remote equality.
+1. Re-read the exact ROAD entry and nearby corrections.
+2. Perform a deep source/caller/data-flow analysis before editing.
+3. Query an existing Graphify graph if present, but treat `INFERRED` edges as
+   hypotheses and filter generated/legacy/upload/backup noise.
+4. Search all definitions, callers, config fields, migrations, tests, GUI/CLI
+   surfaces, channel consumers and release/docs references.
+5. Assign one worker clear file ownership. Other agents are read-only
+   explorers, reviewers or security auditors.
+6. Implement the smallest coherent vertical slice. Do not land a foundation
+   whose consumers are still unwired.
+7. Run cheap focused checks while iterating.
+8. Freeze source before expensive Cargo gates.
+9. Run independent final code review; fix every blocker and re-review.
+10. Update ROAD and PROGRESS additively. Preserve historical findings and mark
+    stale statements `HISTORICAL — SUPERSEDED`.
+11. Stage only an explicit file allowlist, inspect the cached diff, commit,
+    push and prove exact remote equality.
+12. Continue with the next open task. A checkpoint is not full v1.0 closure.
 
-Do not hallucinate completion from a green compile. Do not suppress errors,
-swallow malformed provider frames, log raw untrusted bodies, or replace typed
-outcomes with generic strings. Do not claim a test ran unless its actual result
-was observed.
+Use parallel agents only for independent work. Never let two workers own
+overlapping files. Reviewers do not run Cargo while the worker is active.
 
-## 4. Build/test strategy that avoids wasted hours
-
-Use three verification tiers:
+## 4. Build and test strategy
 
 ### Inner loop
 
-- `cargo fmt --all` after Rust edits.
-- Focused unit/module tests only.
-- Reuse the newest already-linked
-  `SRC\target\debug\deps\neothd-*.exe` for neighboring test filters when source
-  has not changed since the link.
-- Run `cargo check -p neoth --lib` when a compile boundary changes.
+Use source search, targeted unit tests, `rustfmt --check`, source-contract
+tests and `git diff --check`. Do not run full workspace Clippy or all platform
+suites after every edit.
 
 ### Checkpoint gate
 
-- Focused changed-scope tests.
-- Relevant neighboring security/termination/recovery tests.
-- `cargo clippy -p neoth --lib --tests --no-deps -- -D warnings`.
-- `git diff --check`.
-- Roadmap and lost-feature gates.
-- Independent review.
+After source freeze:
+
+- run strict Clippy for the changed crate/surface;
+- run the exact affected unit and integration groups;
+- run feature-specific checks only where the slice changed those features;
+- run one Cargo process at a time with `CARGO_BUILD_JOBS=1`;
+- retain exact pass counts and any environment limitation;
+- do not call a skipped platform or physical external-delivery test green.
+
+On this Windows host, use the repository MSVC environment:
+
+```powershell
+Set-Location C:\Users\Shadow-PC\CascadeProjects\AGENTER\SRC
+& cmd.exe /d /s /c 'call "_msvc_env.bat" && set "CARGO_BUILD_JOBS=1" && cargo <command>'
+```
+
+The pushed workspace currently contains rustfmt drift in unrelated source
+files. Do not sweep it into a feature commit. Use targeted
+`rustfmt --edition 2024 --config skip_children=true --check <owned files>`
+and record the workspace-wide drift separately.
 
 ### Release-candidate gate
 
-Only after the roadmap is actually closed: exact-head workspace CI, security,
-CodeQL, all feature combinations required by release, clean-machine installer
-tests, and the Windows/macOS/Linux artifact matrix. Do not repeatedly run that
-full matrix while later roadmap work will rewrite the same code.
+Only after roadmap implementation freezes, run the complete workspace, feature
+matrix, security, CodeQL, packaging, clean-machine installer and supported
+platform/distro matrix. Release-candidate gates must execute against one exact
+commit. A local Windows pass does not prove Linux, macOS, musl or installer
+behavior.
 
-On this Windows machine use the repository's MSVC environment helper. The
-tracked/local wrappers currently used successfully are:
+## 5. Historical provider-boundary checkpoint
 
-```powershell
-cmd /c SRC\_check.bat
-cmd /c SRC\_clippy.bat
-$env:NEOTH_TEST_THREADS='1'; cmd /c SRC\_test.bat <filter>
-```
+OpenAI-compatible and native Ollama response-envelope work landed on
+2026-07-31. Detailed notes remain in git history and PROGRESS. Do not derive
+current task ownership, current blocker counts or next work from that historical
+snapshot. `PLAN/ROAD_TO_1_0_GOLD.md` is authoritative.
 
-The OpenAI adapter tests share a process-global circuit breaker keyed by adapter
-identity. Several tests deliberately fail to prove fail-closed behavior. Keep
-the focused suite serial and do not arrange five deliberate failures
-consecutively without an intervening success, or later tests will correctly
-observe the opened breaker and produce misleading cascades. Diagnose the first
-failure, never count the cascade as 17 independent bugs.
+## 6. Current pushed B10 baseline and open resolver contract
 
-## 5. Checkpoint just landed: OpenAI-compatible response bounds
+The pushed catalog baseline contains 182 bundled skill manifests, 99 enabled by
+default, zero normalized cross-owner collisions and no exception allowlist.
+Every raw alias is checked. Literal routing is Unicode- and token-boundary-aware,
+including punctuation triggers such as `fact-check`, `node.js`, `/ship` and
+`max++`.
 
-The pushed checkpoint is the first part of open task `GOLD-R4-15k1`. It covers
-the shared Chat-Completions family:
+Focused B10 evidence before the exact-egress landing:
 
-- OpenAI;
-- OpenRouter;
-- DeepSeek;
-- Moonshot/Kimi;
-- Qwen Chat compatible mode;
-- reviewed custom OpenAI-compatible endpoints.
+- bundled tests 22/22;
+- router tests 53/53;
+- targeted Rustfmt and `git diff --check` green;
+- independent Rust review green.
 
-Implemented contracts:
+This is a partial B10 delivery, not closure. The next owned slice is one shared,
+authority-bound typed resolver returning `Match`, `NoMatch`, `Conflict` or
+`Rejected`. Required precedence:
 
-- successful JSON is incrementally read into a hard 8 MiB byte envelope before
-  deserialization;
-- individual SSE lines/residuals and the joined data payload of a complete SSE
-  event are hard-capped at 1 MiB before append;
-- multiple standard SSE `data:` fields are joined with `\n` and decoded once at
-  the blank event separator or EOF;
-- UTF-8 is validated only after bounded byte assembly, so split code points are
-  valid and invalid UTF-8 fails closed;
-- retained refusal metadata is capped at 1 MiB for streaming fragments,
-  non-stream `message.refusal`, and concatenated `content[].refusal`;
-- successful-body, malformed-frame, over-limit, and truncated-transport errors
-  expose only bounded, domain-separated digest evidence;
-- SSE read errors drop the raw `reqwest::Error` source chain;
-- existing typed quota, `Retry-After`, OpenRouter observation, finish/refusal,
-  and visible completion behavior remains intact.
+1. explicit `/skill-id` before automatic routing;
+2. Parent before Mode;
+3. embedding only after `NoMatch`.
 
-Relevant files:
+Bind resolved skill generation and authority to execution. Apply Custom owner
+and reload policy. Preflight install/create/enable/self-activate mutations.
+Make chat, channels, CLI probe, GUI and Buddy consume the same route report.
+Add parity and no-bypass source gates before marking B10 complete.
 
-- `SRC/neothd/src/providers/response_bounds.rs`;
-- `SRC/neothd/src/providers/openai_api.rs`;
-- `SRC/neothd/src/providers/mod.rs`;
-- `SRC/neothd/src/security/redact.rs`;
-- `PLAN/ROAD_TO_1_0_GOLD.md`;
-- `PLAN/PROGRESS_v1_0.md`;
-- `PLAN/SPEC_refusal_recovery.md`;
-- `docs/providers.md`;
-- `docs/security/threat-model.md`.
+## 7. Exact proactive-egress checkpoint
 
-Observed local verification against exact provider checkpoint
-`94006a53315345d7e11452df09acf82fd2b11ec1` (this is not a claim that remote
-exact-head CI has already completed):
+Every terminal proactive item now follows one recoverable transaction:
 
-- OpenAI-compatible adapter tests: **53/53**;
-- shared response-bounds tests: **3/3**;
-- redaction tests: **53/53**;
-- quota tests: **22/22**;
-- termination tests: **4/4**;
-- refusal-recovery tests: **26/26**;
-- abliterated-fallback tests: **11/11**;
-- turn-journal tests: **13/13**;
-- affected total: **185/185**;
-- Cargo check: pass;
-- Clippy `-D warnings`: pass;
-- roadmap release-gate tests: **11/11**;
-- lost-feature integrity tests: **19/19**;
-- independent code review: approve;
-- independent security review: approve.
+`Prepared → Intent WAL ACK → Armed WAL ACK → one transport invocation through`
+`the sole seam → authenticated Result WAL ACK → idempotent history/Cron/queue`
+`projection`.
 
-Roadmap state remains intentionally open:
+Recovery runs before config, enable, quiet-hours, idle and routing gates. One
+immutable tick context feeds one production `execute_claimed_once` seam; all
+eleven constructible live route arms use it.
 
-```text
-total=1222
-complete=988
-open/raw blockers=234
-pre-tag blockers=233
-```
+The live set is Telegram, Slack, Discord, WhatsApp Cloud, WhatsApp/Baileys,
+Keet, Signal, LINE, Mattermost, iMessage and feature-gated Matrix. IRC, Twitch,
+Nostr and Google Chat remain connection-bound `SidecarOnly`, so
+`GOLD-LF-P1-14` remains open.
 
-Do not mark `GOLD-R4-15k1` complete yet.
+The private projection is bound to the canonical authenticated WAL chain,
+recipient digest and exact Intent/Armed/Result frame hashes. Modern unverified
+or forged projections fail closed. Migrated legacy rows stay visibly
+`legacy_unverified`. CLI `neoth proactive list --history`, GUI feed and Buddy
+use the same verified reader.
 
-## 6. Native Ollama response envelopes — LANDED 2026-07-31
+Windows claim/history operations pin no-follow handles, private DACLs,
+volume/File-ID identity, exact rotation bytes, torn tails and monotonic archive
+IDs across clock rollback.
 
-Status: implemented, tested and pushed on top of `076bda02`. All nine required
-fixtures below exist and pass, including the raw HTTP/1.1 chunked fixture.
-`GOLD-R4-15k1` stays open; the next owned target is the Anthropic Messages
-transport, then Gemini, Cohere, Azure, Bedrock, Copilot-token refresh, Claude
-CLI, Tmux and RecursiveMAS. The original specification is kept verbatim below
-as the contract the next adapters must match.
+Observed evidence on the frozen combined tree:
 
-Implementation target:
+- strict `cargo clippy -p neoth --lib -- -D warnings`: green;
+- proactive egress 35/35;
+- proactive queue and CLI admission 45/45;
+- proactive dispatcher 26/26;
+- cron state 10/10;
+- GUI stream 20/20;
+- bound Windows file/directory DACL bridges 7/7;
+- private create/replace/atomic-write regressions 8/8;
+- authenticated WAL marker/DACL groups 7/7;
+- proactive source contract 17/17;
+- GUI channel feed 6/6;
+- GUI all-features check green;
+- final independent review: 0 Critical, 0 High, 0 Medium, 0 Low.
 
-`SRC/neothd/src/providers/ollama_api.rs`
+Do not overclaim physical exactly-once external effects across a crash window.
+`Armed` without `Result` becomes visible `CrashUnknown` and is not blindly
+replayed.
 
-Adopt the shared `response_bounds` primitives without changing public Ollama
-semantics:
+`GOLD-LF-P1-14` also remains open for canonical `ChannelAccountId`, a
+claim-bound typed one-shot permit, uniform intent-bound retry/attempt budgets
+and exact-head platform/channel-contract evidence.
 
-1. Cap non-2xx complete and stream handshake bodies at 64 KiB and surface only
-   status plus digest evidence.
-2. Replace unbounded successful `response.json().await` with shared bounded
-   decoding using the 8 MiB success cap and an Ollama-specific evidence domain.
-3. Replace streaming `String` accumulation with raw-byte NDJSON framing.
-4. Cap each NDJSON line/EOF residual at 1 MiB before append.
-5. Validate UTF-8 only after a complete bounded line exists.
-6. Parse newline-delimited and newline-less final frames through the same helper.
-7. Change today's malformed-NDJSON behavior from raw warning + skip to a
-   digest-only fail-closed error. It must never skip malformed input and then
-   synthesize a false successful done frame.
-8. Preserve real delta text, `done_reason`, input/output token counts,
-   `ProviderTermination`, model identity, remote-consent behavior, and the
-   existing synthetic EOF terminator only when no malformed frame occurred.
+## 8. Immediate continuation after this push
 
-Required Ollama tests:
+1. Fetch and prove `HEAD == origin/main`; inspect dirty provenance.
+2. Continue B10 only through the shared resolver slice in section 6.
+3. Keep explorer/research lanes read-only; give one worker exact file ownership.
+4. Reuse the existing B10 caller map before broad source traversal.
+5. Wire every resolver consumer in the same coherent checkpoint; do not leave a
+   second legacy decision path.
+6. Run focused tests during implementation, then one coherent frozen
+   Clippy/test/review gate.
+7. Update ROAD/PROGRESS, stage an explicit allowlist, inspect, commit, push and
+   verify the remote hash.
 
-- oversized valid/near-valid 2xx body, secret sentinel not echoed;
-- malformed 2xx JSON, digest only;
-- oversized 500 body for complete and stream handshake, digest only;
-- newline-free NDJSON line over 1 MiB;
-- malformed newline-delimited line fails closed;
-- malformed EOF residual fails closed and emits no synthetic success;
-- invalid UTF-8 line, digest only;
-- UTF-8 code point split across transport chunks using a local HTTP/1.1 chunked
-  fixture that splits the four-byte code point between two transfer chunks;
-  assert the exact reconstructed delta and final done metadata;
-- all existing progressive/done/token/redirect/consent tests remain green.
+## 9. Adoption and wiring audit rules
 
-After landing Ollama, update docs to say “OpenAI-compatible + native Ollama
-adopted”, but leave `GOLD-R4-15k1` open.
+For every later adoption:
 
-## 7. Remaining `GOLD-R4-15k1` inventory after Ollama
+- deep-read source code and record actual algorithm/data-flow findings;
+- verify the source license before copying; reimplement behavior when needed;
+- compare upstream behavior with NEOTH's real architecture and defaults;
+- map every intended consumer before implementation;
+- include config/schema/default/migration/wizard/Doctor/CLI/GUI/Buddy/channel/
+  release/docs effects;
+- expose model/artifact downloads with readiness, progress, error and
+  cancellation in both CLI and GUI;
+- prove install and migration paths on production-shaped fixtures;
+- verify feature flags and release packaging actually include the adoption;
+- search for partials, stubs, duplicate legacy paths and dead tests;
+- never close an adoption from file presence alone.
 
-Trace and adopt every real response surface:
-
-- ~~Anthropic Messages JSON and error bodies~~ — **done 2026-07-31**;
-- ~~Gemini JSON and error bodies~~ — **done 2026-07-31**;
-- ~~Cohere JSON and error bodies~~ — **done 2026-07-31**;
-- ~~Azure OpenAI JSON and error bodies~~ — **done 2026-07-31** (classifies
-  under the cap, `Raw body:` echo removed);
-- ~~AWS Bedrock JSON and error bodies~~ — **done 2026-07-31** (same);
-- ~~Copilot token-refresh JSON/error body~~ — **done 2026-07-31** (Copilot chat
-  already delegates to the OpenAI transport);
-- Claude CLI non-stream stdout/stderr, `stream-json` records, and cumulatively
-  retained visible/refusal text — **open**; inventory: unbounded
-  `read_to_end` into `stdout_bytes`/`stderr_bytes`, unbounded
-  `BufReader::lines()` per record, unbounded cumulative `visible_text`, and
-  raw stderr embedded in two `anyhow::bail!` messages;
-- Tmux captured stdout/stderr — **open**; `capture_pane` is bounded by line
-  count only, and tmux stderr lands raw in an error; PTY `read_until` is
-  time-bounded but byte-unbounded;
-- feature-gated RecursiveMAS line input — **open**; unbounded `read_line` from
-  the sidecar, then `serde_json::from_str` on it.
-
-Decorators were traced and confirmed to delegate rather than re-parse:
-`fallback.rs`, `compactor.rs`, `abliterated.rs` and `token_cap.rs` all forward
-to the leaf adapter and never touch response bytes. `meter.rs`,
-`singleflight.rs`, `circuit_breaker*.rs`, `effort_override.rs` and
-`model_roles.rs` are not Provider decorators at all.
-
-The no-bypass search now has a permanent home:
-`SRC/neothd/tests/provider_response_bounds_source_gate.rs` pins every adopted
-transport and keeps a `PENDING` ratchet of the rest. Closing this box means
-that list is empty and the gate's own guard test is deleted.
-
-Local Qwen/Ouro inference is in-process and does not need a remote HTTP response
-envelope. Decorators must be proven to delegate through a bounded leaf rather
-than receiving redundant parsing. Close `GOLD-R4-15k1` only after a final
-no-bypass search proves every listed external byte stream is bounded.
-
-## 8. Adoption and wiring audit rules
-
-When implementing any later roadmap adoption:
-
-- Deep-read the source project and record exact feature/algorithm/data-flow
-  findings; do not infer from its README.
-- Check the source license before copying anything. Reimplement behavior when
-  code reuse is incompatible.
-- Search NEOTH first for partial, duplicate, legacy, or “built but zero caller”
-  implementations.
-- Define the production entrypoint and the exact operator-visible surface before
-  writing a helper.
-- Wire configuration defaults, validation, serialization, example config,
-  onboarding, CLI, GUI, doctor/probe, audit/WAL, migration, and release artifacts
-  as applicable.
-- Test the consumer, not only the helper.
-- Search again after implementation for old bypasses and stale docs.
-- Keep feature availability honest when a platform or build feature cannot ship
-  on a target.
-
-Graphify may accelerate architecture tracing, but treat `INFERRED` edges as
-hypotheses and exclude generated files, uploads, backups, screenshots, old
-reports, and `target/` before making a decision.
-
-## 9. Git landing protocol
+## 10. Git landing protocol
 
 Before every commit:
 
 ```powershell
 git diff --check
-git status --short
-git diff --stat
-git fetch origin --prune
-git rev-parse HEAD
-git rev-parse origin/main
+git fetch --prune origin
+git rev-list --left-right --count HEAD...origin/main
 ```
 
-If `HEAD != origin/main` before staging or committing, do not commit or push.
-Inspect the divergence and integrate the remote work first. Immediately after a
-local commit and before push, require the old `origin/main` to be an ancestor of
-`HEAD`, inspect `git rev-list --left-right --count origin/main...HEAD`, and
-expect exactly the checkpoint commits you just created on the local-ahead side.
-
-Stage only the explicitly owned files:
+Require `0 0` before landing. Stage only the intended files:
 
 ```powershell
-git add -- <exact paths>
-git diff --cached --check
+git add -- <explicit files only>
+git diff --cached --name-only
 git diff --cached --stat
+git diff --cached --check
 git status --short
 ```
 
-Inspect the cached file list and prove none of `.gitignore`, `.kilo/`,
-`SRC/_*.bat`, `SRC/_autoupdate.py`, or `SRC/neothd/unused/` entered the index
-unless the operator later assigns those exact files.
+If any unrelated path is staged, unstage only that path without reverting its
+worktree contents. Re-run the focused evidence after any code fix made during
+review.
 
 Then:
 
 ```powershell
-git commit -m "<coherent checkpoint subject>"
+git commit -m "<type(scope): exact checkpoint>"
 git push origin main
-git fetch origin --prune
+git fetch --prune origin
 git rev-parse HEAD
 git rev-parse origin/main
-git status --short
 ```
 
 Report separately:
 
 - what is implemented and wired;
-- exact tests/gates that passed;
-- the pushed commit hash;
-- remaining roadmap blockers;
-- unrelated dirty/untracked files left untouched.
+- exact tests/reviews passed;
+- known open roadmap contracts;
+- workspace-wide or platform verification not run;
+- local commit hash;
+- whether push succeeded and `HEAD == origin/main`.
 
-Do not stop after writing a plan. Land the next verified checkpoint, push it,
-then start the next loop.
+Never describe a dirty tree as committed, a local commit as pushed, a focused
+test as a full release gate or a partial checkpoint as v1.0 Gold completion.

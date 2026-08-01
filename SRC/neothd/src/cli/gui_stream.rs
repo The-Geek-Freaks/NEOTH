@@ -86,6 +86,7 @@ pub async fn run_gui_stream(args: GuiStreamArgs) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path_or_default()?;
     // Mirror the GUI's `kanban watch` call (no `--wal-dir` → default dir).
     let wal_dir = FreedomConfig::default_wal_dir();
+    let proactive_home = FreedomConfig::default_neoth_home();
 
     tracing::info!(
         db = %db_path.display(),
@@ -102,6 +103,56 @@ pub async fn run_gui_stream(args: GuiStreamArgs) -> Result<()> {
     // last frame we emitted. The offset is segment-local and must reset when
     // the writer rotates to a new WAL segment.
     let mut channel_cursor = ChannelFeedCursor::default();
+    let mut last_proactive_activity = None;
+    let (proactive_tx, mut proactive_rx) = tokio::sync::mpsc::channel(4);
+    tokio::spawn(async move {
+        let mut cursor = ProactiveHistoryCursor::default();
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+        loop {
+            interval.tick().await;
+            let home = proactive_home.clone();
+            let owned_cursor = cursor;
+            let joined = tokio::task::spawn_blocking(move || {
+                let mut cursor = owned_cursor;
+                let records = poll_proactive_history(&home, &mut cursor);
+                (cursor, records)
+            })
+            .await;
+            let (returned_cursor, records) = match joined {
+                Ok(result) => result,
+                Err(error) => {
+                    tracing::warn!(error = %error, "gui-stream: proactive history worker failed");
+                    cursor = ProactiveHistoryCursor::default();
+                    continue;
+                }
+            };
+            cursor = returned_cursor;
+            let records = match records {
+                Ok(records) => records,
+                Err(error) => {
+                    tracing::warn!(error = %error, "gui-stream: proactive history unavailable");
+                    continue;
+                }
+            };
+            if records.is_empty() {
+                continue;
+            }
+            let activity = records.last().map(|record| ProactiveActivity {
+                completed_at_unix: record.delivered_at_unix(),
+                outcome: record.outcome(),
+            });
+            if proactive_tx
+                .send(ProactiveHistoryUpdate {
+                    activity,
+                    feed: proactive_history_feed(&records),
+                })
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
 
     let stdin = tokio::io::stdin();
     let mut reader = tokio::io::BufReader::new(stdin);
@@ -133,12 +184,29 @@ pub async fn run_gui_stream(args: GuiStreamArgs) -> Result<()> {
                 if trimmed.is_empty() {
                     continue;
                 }
-                let response = handle_request_line(trimmed, &conn, &wal_dir, &cfg);
+                let response = handle_request_line_with_proactive(
+                    trimmed,
+                    &conn,
+                    &wal_dir,
+                    &cfg,
+                    last_proactive_activity,
+                );
                 // One response line per request. Flush so the GUI's blocking
                 // `read_line` unblocks immediately rather than waiting on the
                 // OS pipe buffer.
                 writeln!(out, "{response}").context("gui-stream: write response")?;
                 out.flush().context("gui-stream: flush response")?;
+            }
+
+            Some(update) = proactive_rx.recv() => {
+                if let Some(activity) = update.activity {
+                    last_proactive_activity = Some(activity);
+                }
+                if !update.feed.is_empty() {
+                    let push = serde_json::json!({"push": true, "channel_feed": update.feed});
+                    writeln!(out, "{push}").context("gui-stream: write proactive history push")?;
+                    out.flush().context("gui-stream: flush proactive history push")?;
+                }
             }
 
             // GOLD-ADAPT-TRAIL-02: mtime-poll arm — spontaneous push when
@@ -189,14 +257,12 @@ fn open_warm_conn(db_path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Parse one NDJSON request line and produce the response line. Pure
-/// w.r.t. its inputs (the `conn`/`wal_dir`/`cfg`) — no global state — so
-/// the request→response shaping is unit-testable against an in-memory db.
-fn handle_request_line(
+fn handle_request_line_with_proactive(
     line: &str,
     conn: &Connection,
     wal_dir: &Path,
     cfg: &FreedomConfig,
+    last_proactive_activity: Option<ProactiveActivity>,
 ) -> String {
     let req: GuiRequest = match serde_json::from_str(line) {
         Ok(r) => r,
@@ -211,7 +277,7 @@ fn handle_request_line(
         // Buddy mood, so the orb reflects what the daemon is doing right now
         // (memory, audit, consent, channel ingress, provider fallback, cluster).
         "activity" => {
-            let (activity, caption) = assemble_activity(wal_dir);
+            let (activity, caption) = assemble_activity(wal_dir, last_proactive_activity);
             serde_json::json!({
                 "id": req.id, "ok": true, "activity": activity, "caption": caption,
             })
@@ -233,7 +299,10 @@ fn handle_request_line(
 /// The most-recent WAL event in the live segment, mapped to a Buddy
 /// `(activity, caption)`. Returns `idle` if the last event is older than 30s
 /// (so a long-quiet daemon doesn't pin a stale mood) or the WAL is unreadable.
-fn assemble_activity(wal_dir: &Path) -> (String, String) {
+fn assemble_activity(
+    wal_dir: &Path,
+    last_proactive_activity: Option<ProactiveActivity>,
+) -> (String, String) {
     let idle = || ("idle".to_string(), "ready".to_string());
     let Some(seg) = latest_segment(wal_dir) else {
         return idle();
@@ -242,16 +311,35 @@ fn assemble_activity(wal_dir: &Path) -> (String, String) {
         return idle();
     };
     let mut last_event: u8 = 0;
+    let mut last_subtype: u8 = 0;
+    let mut last_payload = serde_json::Value::Null;
     let mut last_ns: u128 = 0;
     let _ = crate::wal::scan::for_each_frame(&bytes, |_, dec| {
         last_event = dec.header.event_type;
+        last_subtype = dec.header.event_subtype;
+        last_payload = serde_json::from_slice(dec.payload).unwrap_or(serde_json::Value::Null);
         last_ns = dec.header.hlc.physical_ns() as u128;
         Ok(())
     });
+    let now_ns = crate::time::now_unix_ns() as u128;
+    if is_proactive_result(last_event, last_subtype, &last_payload) {
+        // Raw latest-segment bytes are not the proactive truth boundary. Wait
+        // for the authenticated result to reach the strict private projection.
+        last_ns = 0;
+    }
+    if let Some(proactive) = last_proactive_activity {
+        let proactive_ns =
+            (proactive.completed_at_unix.max(0) as u128).saturating_mul(1_000_000_000);
+        if proactive_ns >= last_ns && now_ns.saturating_sub(proactive_ns) <= 30_000_000_000 {
+            return (
+                proactive.outcome.buddy_activity().to_string(),
+                proactive.outcome.buddy_caption().to_string(),
+            );
+        }
+    }
     if last_ns == 0 {
         return idle();
     }
-    let now_ns = crate::time::now_unix_ns() as u128;
     // 30s freshness window — only reflect activity the daemon did recently.
     if now_ns.saturating_sub(last_ns) > 30_000_000_000 {
         return idle();
@@ -264,12 +352,43 @@ fn assemble_activity(wal_dir: &Path) -> (String, String) {
 
 /// Map a channel `event_type` byte to a direction string for the GUI feed.
 /// Returns `None` for non-channel event types (caller skips them).
-fn channel_event_direction(event_type: u8) -> Option<&'static str> {
+fn is_proactive_result(event_type: u8, event_subtype: u8, payload: &serde_json::Value) -> bool {
+    event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+        && event_subtype == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
+        && payload.get("purpose").and_then(serde_json::Value::as_str) == Some("proactive")
+}
+
+fn proactive_result_outcome(
+    event_type: u8,
+    event_subtype: u8,
+    payload: &serde_json::Value,
+) -> Option<crate::daemon::proactive_egress::ProactiveEgressOutcome> {
+    if !is_proactive_result(event_type, event_subtype, payload) {
+        return None;
+    }
+    crate::daemon::proactive_egress::ProactiveEgressOutcome::from_wire_str(
+        payload.get("outcome")?.as_str()?,
+    )
+}
+
+fn channel_event_direction(
+    event_type: u8,
+    event_subtype: u8,
+    payload: &serde_json::Value,
+) -> Option<&'static str> {
     use crate::wal::events as ev;
+    // Proactive results are deliberately excluded here. The GUI consumes
+    // those through the strict private delivery-history reader after the
+    // authenticated WAL recovery/projection transaction has committed.
+    if is_proactive_result(event_type, event_subtype, payload) {
+        return None;
+    }
     match event_type {
         ev::EVENT_TYPE_CHANNEL_INGRESS => Some("in"),
         ev::EVENT_TYPE_CHANNEL_EGRESS | ev::EVENT_TYPE_CHANNEL_SEND => Some("out"),
-        ev::EVENT_TYPE_PROACTIVE_SENT => Some("proactive"),
+        // Legacy pre-projection proactive events have no authenticated
+        // terminal outcome and therefore do not enter the trusted GUI feed.
+        ev::EVENT_TYPE_PROACTIVE_SENT => None,
         ev::EVENT_TYPE_CHANNEL_GATE_REJECTED | ev::EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED => {
             Some("blocked")
         }
@@ -297,6 +416,111 @@ fn channel_event_direction(event_type: u8) -> Option<&'static str> {
 struct ChannelFeedCursor {
     segment: Option<std::path::PathBuf>,
     offset: usize,
+}
+
+#[derive(Debug, Default)]
+struct ProactiveHistoryCursor {
+    processed_revision: Option<String>,
+    warned_revision: Option<String>,
+    retained_intents: std::collections::HashSet<String>,
+    initialized: bool,
+}
+
+const PROACTIVE_HISTORY_INITIAL_LIMIT: usize = 60;
+
+#[derive(Clone, Copy)]
+struct ProactiveActivity {
+    completed_at_unix: i64,
+    outcome: crate::daemon::proactive_egress::ProactiveEgressOutcome,
+}
+
+struct ProactiveHistoryUpdate {
+    activity: Option<ProactiveActivity>,
+    feed: Vec<serde_json::Value>,
+}
+
+fn poll_proactive_history(
+    home: &Path,
+    cursor: &mut ProactiveHistoryCursor,
+) -> Result<Vec<crate::daemon::proactive_egress::ProactiveDeliveryRecord>> {
+    let mut read_history = |home: &Path| -> Result<_> {
+        let records = crate::daemon::proactive_egress::read_delivery_history(home)?;
+        Ok(records)
+    };
+    poll_proactive_history_with_reader(home, cursor, &mut read_history)
+}
+
+fn poll_proactive_history_with_reader<F>(
+    home: &Path,
+    cursor: &mut ProactiveHistoryCursor,
+    read_history: &mut F,
+) -> Result<Vec<crate::daemon::proactive_egress::ProactiveDeliveryRecord>>
+where
+    F: FnMut(&Path) -> Result<Vec<crate::daemon::proactive_egress::ProactiveDeliveryRecord>>,
+{
+    let revision = crate::daemon::proactive_egress::delivery_history_revision(home)?;
+    if cursor.processed_revision.as_deref() == Some(revision.as_str()) {
+        return Ok(Vec::new());
+    }
+    // A failed revision remains eligible for validation on every poll. Only
+    // its repeated warning is suppressed; recovery must not depend on file
+    // metadata changing. Keep the revision captured before the read so an
+    // append racing this scan still forces another poll.
+    let records = match read_history(home) {
+        Ok(records) => records,
+        Err(error) => {
+            if cursor.warned_revision.as_deref() == Some(revision.as_str()) {
+                return Ok(Vec::new());
+            }
+            cursor.warned_revision = Some(revision);
+            return Err(error);
+        }
+    };
+    let retained_intents = records
+        .iter()
+        .map(|record| record.intent_id().to_string())
+        .collect();
+    let fresh = if cursor.initialized {
+        records
+            .into_iter()
+            .filter(|record| !cursor.retained_intents.contains(record.intent_id()))
+            .collect()
+    } else {
+        let first = records
+            .len()
+            .saturating_sub(PROACTIVE_HISTORY_INITIAL_LIMIT);
+        records.into_iter().skip(first).collect()
+    };
+    // Commit the successful snapshot together. Replacement bounds cursor
+    // memory to identities the shared strict reader currently retains.
+    *cursor = ProactiveHistoryCursor {
+        processed_revision: Some(revision),
+        warned_revision: None,
+        retained_intents,
+        initialized: true,
+    };
+    Ok(fresh)
+}
+
+fn proactive_history_feed(
+    records: &[crate::daemon::proactive_egress::ProactiveDeliveryRecord],
+) -> Vec<serde_json::Value> {
+    records
+        .iter()
+        .map(|record| {
+            serde_json::json!({
+                "event_id": record.intent_id(),
+                "identity": format!("proactive:{}", record.intent_id()),
+                "direction": "proactive",
+                "channel": record.target_channel(),
+                "peer": record.dedup_sha256().chars().take(8).collect::<String>(),
+                "bytes": record.message_bytes(),
+                "ts_unix": record.delivered_at_unix().max(0) as u64,
+                "outcome": record.outcome().display_label(),
+                "verification": record.verification_label(),
+            })
+        })
+        .collect()
 }
 
 fn poll_channel_feed(wal_dir: &Path, cursor: &mut ChannelFeedCursor) -> Vec<serde_json::Value> {
@@ -336,17 +560,19 @@ fn poll_channel_feed(wal_dir: &Path, cursor: &mut ChannelFeedCursor) -> Vec<serd
             return Ok(());
         }
 
-        let Some(direction) = channel_event_direction(dec.header.event_type) else {
-            return Ok(());
-        };
-
         // Parse payload JSON; tolerate non-JSON payloads (some events use
         // binary or empty bodies — just produce a minimal metadata record).
         let payload: serde_json::Value = serde_json::from_slice(dec.payload)
             .unwrap_or(serde_json::Value::Object(Default::default()));
+        let Some(direction) =
+            channel_event_direction(dec.header.event_type, dec.header.event_subtype, &payload)
+        else {
+            return Ok(());
+        };
 
         let channel = payload
             .get("channel")
+            .or_else(|| payload.get("target_channel"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -362,26 +588,50 @@ fn poll_channel_feed(wal_dir: &Path, cursor: &mut ChannelFeedCursor) -> Vec<serd
             // recipient_hash or to_hash — take first 8 chars as display hint.
             let hash = payload
                 .get("recipient_hash")
+                .or_else(|| payload.get("recipient_sha256"))
                 .or_else(|| payload.get("to_hash"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             hash.chars().take(8).collect()
         };
 
-        let bytes_count = payload.get("bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+        let bytes_count = payload
+            .get("bytes")
+            .or_else(|| payload.get("message_bytes"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
 
         let ts_unix = payload
             .get("ts_unix")
+            .or_else(|| payload.get("completed_at_unix"))
             .and_then(|v| v.as_u64())
             .unwrap_or_else(|| dec.header.hlc.physical_ns() / 1_000_000_000);
 
+        let outcome =
+            proactive_result_outcome(dec.header.event_type, dec.header.event_subtype, &payload);
+        let segment_name = seg_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("unknown");
+        let identity = if let Some(intent_id) = payload
+            .get("intent_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|_| outcome.is_some())
+        {
+            format!("proactive:{intent_id}")
+        } else {
+            format!("wal:{segment_name}:{frame_offset}")
+        };
+
         events.push(serde_json::json!({
             "event_id":  frame_offset,
+            "identity":  identity,
             "direction": direction,
             "channel":   channel,
             "peer":      peer,
             "bytes":     bytes_count,
             "ts_unix":   ts_unix,
+            "outcome":   outcome.map(|value| value.display_label()),
         }));
 
         Ok(())
@@ -459,7 +709,7 @@ mod tests {
         let conn = fresh_conn();
         let cfg = FreedomConfig::default();
         let wal = std::path::PathBuf::from(".");
-        let resp = handle_request_line("not json at all", &conn, &wal, &cfg);
+        let resp = handle_request_line_with_proactive("not json at all", &conn, &wal, &cfg, None);
         let v = parse(&resp);
         assert_eq!(v["ok"], false);
         assert_eq!(v["id"], 0);
@@ -474,7 +724,13 @@ mod tests {
         let conn = fresh_conn();
         let cfg = FreedomConfig::default();
         let wal = std::path::PathBuf::from(".");
-        let resp = handle_request_line(r#"{"id":7,"method":"nuke"}"#, &conn, &wal, &cfg);
+        let resp = handle_request_line_with_proactive(
+            r#"{"id":7,"method":"nuke"}"#,
+            &conn,
+            &wal,
+            &cfg,
+            None,
+        );
         let v = parse(&resp);
         assert_eq!(v["ok"], false);
         assert_eq!(v["id"], 7);
@@ -517,7 +773,13 @@ mod tests {
         let cfg = FreedomConfig::default();
         let tmp = std::env::temp_dir().join("neoth_gui_activity_test_empty");
         let _ = std::fs::create_dir_all(&tmp);
-        let resp = handle_request_line(r#"{"id":9,"method":"activity"}"#, &conn, &tmp, &cfg);
+        let resp = handle_request_line_with_proactive(
+            r#"{"id":9,"method":"activity"}"#,
+            &conn,
+            &tmp,
+            &cfg,
+            None,
+        );
         let v = parse(&resp);
         assert_eq!(v["ok"], true, "got: {resp}");
         assert_eq!(v["activity"], "idle");
@@ -528,7 +790,13 @@ mod tests {
         let conn = fresh_conn();
         let cfg = FreedomConfig::default();
         let wal = std::path::PathBuf::from(".");
-        let resp = handle_request_line(r#"{"id":42,"method":"ping"}"#, &conn, &wal, &cfg);
+        let resp = handle_request_line_with_proactive(
+            r#"{"id":42,"method":"ping"}"#,
+            &conn,
+            &wal,
+            &cfg,
+            None,
+        );
         let v = parse(&resp);
         assert_eq!(v["ok"], true);
         assert_eq!(v["id"], 42);
@@ -540,7 +808,13 @@ mod tests {
         let conn = fresh_conn();
         let cfg = FreedomConfig::default();
         let wal = std::path::PathBuf::from(".");
-        let resp = handle_request_line(r#"{"id":1,"method":"board"}"#, &conn, &wal, &cfg);
+        let resp = handle_request_line_with_proactive(
+            r#"{"id":1,"method":"board"}"#,
+            &conn,
+            &wal,
+            &cfg,
+            None,
+        );
         let v = parse(&resp);
         assert_eq!(v["ok"], true, "got: {resp}");
         assert_eq!(v["id"], 1);
@@ -567,7 +841,13 @@ mod tests {
 
         let cfg = FreedomConfig::default();
         let wal = std::path::PathBuf::from(".");
-        let resp = handle_request_line(r#"{"id":3,"method":"board"}"#, &conn, &wal, &cfg);
+        let resp = handle_request_line_with_proactive(
+            r#"{"id":3,"method":"board"}"#,
+            &conn,
+            &wal,
+            &cfg,
+            None,
+        );
         let v = parse(&resp);
         assert_eq!(v["ok"], true, "got: {resp}");
         let summary = v["board"]["summary"].as_str().unwrap();
@@ -590,7 +870,13 @@ mod tests {
         cfg.provider_kind = Some(crate::cli::init::ProviderKind::ClaudeCli);
         let conn = fresh_conn();
         let wal = std::path::PathBuf::from(".");
-        let resp = handle_request_line(r#"{"id":1,"method":"board"}"#, &conn, &wal, &cfg);
+        let resp = handle_request_line_with_proactive(
+            r#"{"id":1,"method":"board"}"#,
+            &conn,
+            &wal,
+            &cfg,
+            None,
+        );
         let v = parse(&resp);
         assert_eq!(v["board"]["cerebellum_bound"], true, "got: {resp}");
     }
@@ -600,37 +886,51 @@ mod tests {
     #[test]
     fn channel_event_direction_maps_all_covered_types() {
         use crate::wal::events as ev;
+        let empty = serde_json::Value::Null;
         assert_eq!(
-            channel_event_direction(ev::EVENT_TYPE_CHANNEL_INGRESS),
+            channel_event_direction(ev::EVENT_TYPE_CHANNEL_INGRESS, 0, &empty),
             Some("in")
         );
         assert_eq!(
-            channel_event_direction(ev::EVENT_TYPE_CHANNEL_EGRESS),
+            channel_event_direction(ev::EVENT_TYPE_CHANNEL_EGRESS, 0, &empty),
             Some("out")
         );
         assert_eq!(
-            channel_event_direction(ev::EVENT_TYPE_CHANNEL_SEND),
+            channel_event_direction(ev::EVENT_TYPE_CHANNEL_SEND, 0, &empty),
             Some("out")
         );
         assert_eq!(
-            channel_event_direction(ev::EVENT_TYPE_PROACTIVE_SENT),
-            Some("proactive")
+            channel_event_direction(ev::EVENT_TYPE_PROACTIVE_SENT, 0, &empty),
+            None
         );
         assert_eq!(
-            channel_event_direction(ev::EVENT_TYPE_CHANNEL_GATE_REJECTED),
+            channel_event_direction(ev::EVENT_TYPE_CHANNEL_GATE_REJECTED, 0, &empty),
             Some("blocked")
         );
         assert_eq!(
-            channel_event_direction(ev::EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED),
+            channel_event_direction(ev::EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED, 0, &empty),
             Some("blocked")
         );
         // Non-channel events → None
         assert_eq!(
-            channel_event_direction(ev::EVENT_TYPE_PROVIDER_REQUEST),
+            channel_event_direction(ev::EVENT_TYPE_PROVIDER_REQUEST, 0, &empty),
             None
         );
-        assert_eq!(channel_event_direction(ev::EVENT_TYPE_RAW_TEXT), None);
-        assert_eq!(channel_event_direction(0x00), None);
+        assert_eq!(
+            channel_event_direction(ev::EVENT_TYPE_RAW_TEXT, 0, &empty),
+            None
+        );
+        assert_eq!(channel_event_direction(0x00, 0, &empty), None);
+        let proactive = serde_json::json!({"purpose": "proactive"});
+        assert_eq!(
+            channel_event_direction(
+                ev::EVENT_TYPE_EXTENDED,
+                ev::ExtendedSubtype::ChannelEgressResult as u8,
+                &proactive,
+            ),
+            None,
+            "raw WAL must not bypass the authenticated delivery projection"
+        );
     }
 
     /// Build a minimal uncompressed WAL segment from a slice of raw frame bytes.
@@ -646,6 +946,228 @@ mod tests {
     fn make_frame(event_type: u8, payload: &[u8]) -> Vec<u8> {
         let h = HeaderBuilder::new(event_type, payload).build();
         encode_frame(&h, payload)
+    }
+
+    fn proactive_history_path(home: &Path) -> std::path::PathBuf {
+        home.join(crate::daemon::proactive_dispatcher::PROACTIVE_DELIVERED_SIDECAR)
+    }
+
+    fn write_legacy_proactive_history(home: &Path, timestamps: &[i64]) {
+        let mut body = Vec::new();
+        for timestamp in timestamps {
+            serde_json::to_writer(
+                &mut body,
+                &serde_json::json!({
+                    "delivered_at_unix": timestamp,
+                    "status": "delivered",
+                    "item": {
+                        "priority": 50,
+                        "dedup_key": format!("gui-history-{timestamp}"),
+                        "channel": "telegram",
+                        "source": "gui-stream-test",
+                        "body": format!("history body {timestamp}"),
+                        "scheduled_for_unix": 0,
+                        "is_failure": false,
+                        "expires_unix": 0,
+                    },
+                }),
+            )
+            .unwrap();
+            body.push(b'\n');
+        }
+        crate::util::atomic_write::atomic_write_private(&proactive_history_path(home), &body)
+            .unwrap();
+    }
+
+    #[test]
+    fn real_proactive_delivery_record_reaches_gui_without_secrets() {
+        let record = crate::daemon::proactive_egress::delivery_record_for_gui_test();
+        let feed = proactive_history_feed(&[record]);
+        assert_eq!(feed.len(), 1);
+        assert_eq!(feed[0]["direction"], "proactive");
+        assert_eq!(feed[0]["channel"], "telegram");
+        assert_eq!(feed[0]["outcome"], "delivered");
+        assert_eq!(feed[0]["verification"], "wal_verified");
+        assert_eq!(feed[0]["bytes"], "operator notification".len() as u64);
+        assert_eq!(feed[0]["peer"].as_str().unwrap().len(), 8);
+        let feed_text = serde_json::to_string(&feed).unwrap();
+        assert!(!feed_text.contains("operator notification"));
+        assert!(!feed_text.contains("123456"));
+        assert!(!feed_text.contains("provider-receipt"));
+    }
+
+    #[test]
+    fn proactive_history_initial_poll_caps_newest_sixty() {
+        let home = tempfile::tempdir().unwrap();
+        let timestamps: Vec<_> = (0..75).collect();
+        write_legacy_proactive_history(home.path(), &timestamps);
+
+        let mut cursor = ProactiveHistoryCursor::default();
+        let records = poll_proactive_history(home.path(), &mut cursor).unwrap();
+
+        assert_eq!(records.len(), PROACTIVE_HISTORY_INITIAL_LIMIT);
+        assert_eq!(records.first().unwrap().item().dedup_key, "gui-history-15");
+        assert_eq!(records.last().unwrap().item().dedup_key, "gui-history-74");
+        assert_eq!(cursor.retained_intents.len(), 75);
+        assert!(cursor.initialized);
+        assert!(
+            poll_proactive_history(home.path(), &mut cursor)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn proactive_history_later_append_is_delivered_once() {
+        let home = tempfile::tempdir().unwrap();
+        write_legacy_proactive_history(home.path(), &[1, 2]);
+        let mut cursor = ProactiveHistoryCursor::default();
+        assert_eq!(
+            poll_proactive_history(home.path(), &mut cursor)
+                .unwrap()
+                .len(),
+            2
+        );
+
+        write_legacy_proactive_history(home.path(), &[1, 2, 3]);
+        let appended = poll_proactive_history(home.path(), &mut cursor).unwrap();
+        assert_eq!(appended.len(), 1);
+        assert_eq!(appended[0].item().dedup_key, "gui-history-3");
+        assert!(
+            poll_proactive_history(home.path(), &mut cursor)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn proactive_history_retries_failed_revision_and_emits_recovery_once() {
+        let home = tempfile::tempdir().unwrap();
+        write_legacy_proactive_history(home.path(), &[4]);
+        let revision =
+            crate::daemon::proactive_egress::delivery_history_revision(home.path()).unwrap();
+        let attempts = std::cell::Cell::new(0usize);
+        let mut flaky_read = |home: &Path| {
+            let attempt = attempts.get();
+            attempts.set(attempt + 1);
+            if attempt == 0 {
+                anyhow::bail!("injected transient proactive history read failure");
+            }
+            crate::daemon::proactive_egress::read_delivery_history(home)
+        };
+        let mut cursor = ProactiveHistoryCursor::default();
+
+        let error = poll_proactive_history_with_reader(home.path(), &mut cursor, &mut flaky_read)
+            .unwrap_err();
+        assert!(error.to_string().contains("injected transient"));
+        assert_eq!(cursor.processed_revision, None);
+        assert_eq!(cursor.warned_revision.as_deref(), Some(revision.as_str()));
+        assert_eq!(
+            crate::daemon::proactive_egress::delivery_history_revision(home.path()).unwrap(),
+            revision,
+            "recovery regression requires an unchanged revision token"
+        );
+
+        let recovered =
+            poll_proactive_history_with_reader(home.path(), &mut cursor, &mut flaky_read).unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].item().dedup_key, "gui-history-4");
+        assert_eq!(
+            cursor.processed_revision.as_deref(),
+            Some(revision.as_str())
+        );
+        assert_eq!(cursor.warned_revision, None);
+        assert!(
+            poll_proactive_history_with_reader(home.path(), &mut cursor, &mut flaky_read)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(attempts.get(), 2, "processed revision must skip its reader");
+    }
+
+    #[test]
+    fn proactive_history_rotation_and_pruning_bound_cursor_without_replay() {
+        let home = tempfile::tempdir().unwrap();
+        let timestamps: Vec<_> = (0..70).collect();
+        write_legacy_proactive_history(home.path(), &timestamps);
+        let mut cursor = ProactiveHistoryCursor::default();
+        assert_eq!(
+            poll_proactive_history(home.path(), &mut cursor)
+                .unwrap()
+                .len(),
+            PROACTIVE_HISTORY_INITIAL_LIMIT
+        );
+
+        let archive = home.path().join(format!(
+            "proactive_delivered.{}.jsonl",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::rename(proactive_history_path(home.path()), &archive).unwrap();
+        write_legacy_proactive_history(home.path(), &[70]);
+        let after_rotation = poll_proactive_history(home.path(), &mut cursor).unwrap();
+        assert_eq!(after_rotation.len(), 1, "retained rows must not replay");
+        assert_eq!(after_rotation[0].item().dedup_key, "gui-history-70");
+        assert_eq!(cursor.retained_intents.len(), 71);
+
+        std::fs::remove_file(archive).unwrap();
+        assert!(
+            poll_proactive_history(home.path(), &mut cursor)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            cursor.retained_intents.len(),
+            1,
+            "pruned identities must not accumulate for process lifetime"
+        );
+
+        write_legacy_proactive_history(home.path(), &[70, 71]);
+        let after_prune = poll_proactive_history(home.path(), &mut cursor).unwrap();
+        assert_eq!(after_prune.len(), 1);
+        assert_eq!(after_prune[0].item().dedup_key, "gui-history-71");
+        assert!(
+            poll_proactive_history(home.path(), &mut cursor)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn proactive_history_malformed_and_legacy_unverified_behavior_is_unchanged() {
+        let home = tempfile::tempdir().unwrap();
+        crate::util::atomic_write::atomic_write_private(
+            &proactive_history_path(home.path()),
+            b"{malformed\n",
+        )
+        .unwrap();
+        let mut cursor = ProactiveHistoryCursor::default();
+
+        let error = poll_proactive_history(home.path(), &mut cursor).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("decode proactive history JSON"),
+            "{error:#}"
+        );
+        assert!(!cursor.initialized);
+        assert!(cursor.retained_intents.is_empty());
+        let warned_revision = cursor.warned_revision.clone();
+        assert!(
+            poll_proactive_history(home.path(), &mut cursor)
+                .unwrap()
+                .is_empty(),
+            "an unchanged malformed revision must remain log-suppressed"
+        );
+        assert_eq!(cursor.processed_revision, None);
+        assert_eq!(cursor.warned_revision, warned_revision);
+
+        write_legacy_proactive_history(home.path(), &[9]);
+        let repaired = poll_proactive_history(home.path(), &mut cursor).unwrap();
+        assert_eq!(repaired.len(), 1);
+        assert_eq!(cursor.warned_revision, None);
+        assert_eq!(repaired[0].verification_label(), "legacy_unverified");
+        assert_eq!(
+            proactive_history_feed(&repaired)[0]["verification"],
+            "legacy_unverified"
+        );
     }
 
     #[test]

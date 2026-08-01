@@ -1,6 +1,6 @@
 //! Round-3 v0.4 G-02 cron — daily-tick daemon loop that scans
 //! `idx_profile` for novel high-confidence claims + enqueues each
-//! as a `ProactiveItem` for the G-01 drain → sidecar chain.
+//! as a `ProactiveItem` for the G-01 durable egress transaction.
 //!
 //! Glue between:
 //! - `profile::surfacing::find_novel_high_confidence_claims` —
@@ -8,7 +8,7 @@
 //! - `profile::surfacing::build_g02_proactive_item` — render
 //!   bilingual ProactiveItem.
 //! - `proactive::ProactiveQueue::enqueue` — bounded queue + dedup.
-//! - `daemon::proactive_dispatcher` — drain loop into JSONL sidecar.
+//! - `daemon::proactive_dispatcher` — WAL-bound transport and private history.
 //!
 //! Daily cadence matches the novelty window default — running
 //! more frequently is wasteful (same claims surface; dedup key
@@ -68,19 +68,27 @@ pub fn run_g02_surfacing_tick(home: &std::path::Path, now_unix: i64) -> Result<u
         return Ok(0);
     }
 
+    let items = claims
+        .iter()
+        .map(|claim| build_g02_proactive_item(claim, G02_DEFAULT_CHANNEL, now_unix))
+        .collect::<Vec<_>>();
+    for item in &items {
+        item.validate()
+            .map_err(|error| format!("invalid G-02 proactive item: {error}"))?;
+    }
+
     let queue_path = home.join("proactive_queue.json");
     ProactiveQueue::modify(&queue_path, |queue| {
-        let mut enqueued_count = 0usize;
-        for claim in &claims {
-            let item = build_g02_proactive_item(claim, G02_DEFAULT_CHANNEL, now_unix);
-            if queue.enqueue(item) {
-                enqueued_count += 1;
-            }
-        }
-        // Always persist — same as the old unconditional save_to call.
-        (true, enqueued_count)
+        let result = items.into_iter().try_fold(0usize, |count, item| {
+            queue
+                .enqueue(item)
+                .map(|inserted| count + usize::from(inserted))
+        });
+        // Always persist on success — same as the old unconditional save_to call.
+        (result.is_ok(), result)
     })
-    .map_err(|e| format!("queue load/save failed: {e}"))
+    .map_err(|e| format!("queue load/save failed: {e}"))?
+    .map_err(|e| format!("G-02 proactive enqueue rejected: {e:#}"))
 }
 
 /// Spawn the daemon-side G-02 cron loop. Matches the doctor_cron /

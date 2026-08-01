@@ -454,22 +454,36 @@ pub fn run_pattern_tick_once(
     // reflection + g02 producers.
     items.sort_by_key(|i| std::cmp::Reverse(i.priority));
     let cap = config.max_nudges_per_tick.max(1) as usize;
+    for item in &items {
+        item.validate()
+            .map_err(|error| format!("invalid pattern proactive item: {error}"))?;
+    }
 
     let queue_path = home.join("proactive_queue.json");
     ProactiveQueue::modify(&queue_path, |queue| {
         let mut enqueued = 0usize;
+        let mut error = None;
         for item in items {
             if enqueued >= cap {
                 break;
             }
-            if queue.enqueue(item) {
-                enqueued += 1;
+            match queue.enqueue(item) {
+                Ok(true) => enqueued += 1,
+                Ok(false) => {}
+                Err(enqueue_error) => {
+                    error = Some(enqueue_error);
+                    break;
+                }
             }
         }
         // Always persist — same as the old unconditional save_to call.
-        (true, enqueued)
+        (error.is_none(), (enqueued, error))
     })
     .map_err(|e| format!("queue load/save failed: {e}"))
+    .and_then(|(enqueued, error)| match error {
+        Some(error) => Err(format!("pattern proactive enqueue rejected: {error:#}")),
+        None => Ok(enqueued),
+    })
 }
 
 /// Spawn the pattern-cron loop. Returns `None` when

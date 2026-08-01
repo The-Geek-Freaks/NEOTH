@@ -36,6 +36,9 @@ thread_local! {
     static TEST_BEFORE_OPEN_FILE_RENAME:
         std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    static TEST_AFTER_BOUND_FILE_REVALIDATION:
+        std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -69,6 +72,22 @@ fn set_before_open_file_rename_for_test(hook: impl FnOnce() + 'static) {
 #[cfg(all(test, unix))]
 fn run_before_open_file_rename_for_test() {
     TEST_BEFORE_OPEN_FILE_RENAME.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(all(test, unix))]
+fn set_after_bound_file_revalidation_for_test(hook: impl FnOnce() + 'static) {
+    TEST_AFTER_BOUND_FILE_REVALIDATION.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(all(test, unix))]
+fn run_after_bound_file_revalidation_for_test() {
+    TEST_AFTER_BOUND_FILE_REVALIDATION.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
             hook();
         }
@@ -122,6 +141,177 @@ impl BoundChildObject {
         display_path: &Path,
     ) -> Result<bool> {
         Ok(readonly_regular_file_identity(parent, name, display_path)? == self.identity_token)
+    }
+
+    /// Remove the exact regular file retained by this binding.
+    ///
+    /// Windows commits through the retained `DELETE`-capable handle, so a
+    /// same-name replacement cannot redirect the deletion. Unix has no
+    /// portable unlink-by-handle primitive; it therefore quarantines the name,
+    /// proves the atomic rename moved the retained inode, and only then unlinks
+    /// the unpredictable capability-relative tombstone.
+    pub(crate) fn remove_bound_file(
+        self,
+        _parent: &Dir,
+        name: &OsStr,
+        display_path: &Path,
+    ) -> Result<()> {
+        validate_child_name(name)?;
+        let handle = self._handle.with_context(|| {
+            format!(
+                "bound regular-file removal has no retained handle: {}",
+                display_path.display()
+            )
+        })?;
+        let metadata = handle.metadata().with_context(|| {
+            format!(
+                "inspect retained regular-file removal handle {}",
+                display_path.display()
+            )
+        })?;
+        anyhow::ensure!(
+            metadata.is_file() && !cap_metadata_is_link_like(&metadata),
+            "bound removal target is not a real regular file: {}",
+            display_path.display()
+        );
+        anyhow::ensure!(
+            child_identity_token(&metadata)? == self.identity_token,
+            "retained regular-file removal identity changed: {}",
+            display_path.display()
+        );
+
+        #[cfg(windows)]
+        {
+            windows_mark_delete(&handle, display_path)?;
+            Ok(())
+        }
+        #[cfg(unix)]
+        {
+            anyhow::ensure!(
+                readonly_regular_file_identity(_parent, name, display_path)? == self.identity_token,
+                "regular-file removal target changed before commit: {}",
+                display_path.display()
+            );
+
+            #[cfg(test)]
+            run_after_bound_file_revalidation_for_test();
+
+            // Unix has no portable unlink-by-handle operation. Move the
+            // currently named entry to an unpredictable private tombstone
+            // first, then prove which inode the atomic rename actually moved.
+            // A replacement that wins the validation/rename race is restored
+            // (or retained under the tombstone on a contested restore), never
+            // unlinked as though it were the authorized file.
+            let tombstone = std::ffi::OsString::from(format!(
+                ".neoth-bound-delete-{}",
+                uuid::Uuid::new_v4().simple()
+            ));
+            let tombstone_display = display_path
+                .parent()
+                .unwrap_or(display_path)
+                .join(&tombstone);
+            rename_child(
+                _parent,
+                name,
+                _parent,
+                &tombstone,
+                false,
+                display_path,
+                &tombstone_display,
+            )
+            .with_context(|| {
+                format!(
+                    "quarantine exact regular-file removal target {}",
+                    display_path.display()
+                )
+            })?;
+
+            let moved_identity =
+                readonly_regular_file_identity(_parent, &tombstone, &tombstone_display);
+            match moved_identity {
+                Ok(identity) if identity == self.identity_token => {}
+                Ok(_) => {
+                    let restore = rename_child(
+                        _parent,
+                        &tombstone,
+                        _parent,
+                        name,
+                        false,
+                        &tombstone_display,
+                        display_path,
+                    );
+                    let sync = sync_parent_directory(
+                        _parent,
+                        display_path.parent().unwrap_or(display_path),
+                    );
+                    return match (restore, sync) {
+                        (Ok(()), Ok(_)) => anyhow::bail!(
+                            "regular-file removal race moved a replacement; it was restored without deletion: {}",
+                            display_path.display()
+                        ),
+                        (Ok(()), Err(sync_error)) => Err(sync_error).with_context(|| {
+                            format!(
+                                "replacement was restored after a regular-file removal race, but parent durability is unconfirmed: {}",
+                                display_path.display()
+                            )
+                        }),
+                        (Err(restore_error), Ok(_)) => Err(restore_error).with_context(|| {
+                            format!(
+                                "regular-file removal race moved a replacement; it remains preserved at {} because restoring {} failed",
+                                tombstone_display.display(),
+                                display_path.display()
+                            )
+                        }),
+                        (Err(restore_error), Err(sync_error)) => {
+                            Err(restore_error).with_context(|| {
+                                format!(
+                                    "regular-file removal race moved a replacement; it remains preserved at {}; restoring {} failed and parent durability is also unconfirmed: {sync_error:#}",
+                                    tombstone_display.display(),
+                                    display_path.display()
+                                )
+                            })
+                        }
+                    };
+                }
+                Err(inspect_error) => {
+                    let sync = sync_parent_directory(
+                        _parent,
+                        display_path.parent().unwrap_or(display_path),
+                    );
+                    return match sync {
+                        Ok(_) => Err(inspect_error).with_context(|| {
+                            format!(
+                                "could not prove quarantined regular-file identity; object retained at {}",
+                                tombstone_display.display()
+                            )
+                        }),
+                        Err(sync_error) => Err(inspect_error).with_context(|| {
+                            format!(
+                                "could not prove quarantined regular-file identity; object retained at {} and parent durability is unconfirmed: {sync_error:#}",
+                                tombstone_display.display()
+                            )
+                        }),
+                    };
+                }
+            }
+
+            _parent.remove_file(&tombstone).with_context(|| {
+                format!(
+                    "remove exact capability-bound regular file {}",
+                    tombstone_display.display()
+                )
+            })?;
+            sync_parent_directory(_parent, display_path.parent().unwrap_or(display_path))?;
+            Ok(())
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (_parent, handle);
+            anyhow::bail!(
+                "exact bound regular-file removal is unsupported on this platform: {}",
+                display_path.display()
+            )
+        }
     }
 }
 
@@ -768,6 +958,46 @@ pub(crate) fn open_bound_regular_file(
         );
     }
     Ok((file, binding))
+}
+
+/// Open one regular file for reading and retain separate exact-object mutation
+/// authority for its later removal.
+///
+/// The read handle is intentionally kept independent from the Windows
+/// `DELETE`-capable binding. Comparing both kernel identities before return
+/// prevents a namespace swap from pairing bytes from one file with deletion
+/// authority over another.
+#[cfg(test)]
+pub(crate) fn open_bound_regular_file_for_removal(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<(File, BoundChildObject)> {
+    let (file, read_binding) = open_bound_regular_file(parent, name, display_path)?;
+    let removal_binding = bind_regular_file_for_removal(parent, name, display_path, &read_binding)?;
+    Ok((file, removal_binding))
+}
+
+/// Acquire exact-object removal authority for a regular file that is already
+/// held through an identity-bound read handle.
+///
+/// Keeping this as a second phase lets callers finish non-destructive security
+/// migration under a namespace-pinning handle before Windows `DELETE` access
+/// exists. The identity comparison rejects a same-name replacement in the gap
+/// instead of pairing old bytes with new removal authority.
+pub(crate) fn bind_regular_file_for_removal(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+    read_binding: &BoundChildObject,
+) -> Result<BoundChildObject> {
+    let removal_binding = bind_child_object(parent, name, display_path)?;
+    anyhow::ensure!(
+        removal_binding.identity_token() == read_binding.identity_token(),
+        "regular file changed while its removal authority was being bound: {}",
+        display_path.display()
+    );
+    Ok(removal_binding)
 }
 
 /// Open and bind one regular file for a non-destructive durability operation.
@@ -2530,6 +2760,109 @@ mod tests {
             bound
                 .matches_child(&root.dir, OsStr::new("stage"), &child_path)
                 .unwrap()
+        );
+    }
+
+    #[test]
+    fn bound_regular_file_removal_deletes_the_exact_opened_file() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("claim.json");
+        std::fs::write(&target, b"authenticated claim").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        let (file, binding) =
+            open_bound_regular_file_for_removal(&root.dir, OsStr::new("claim.json"), &target)
+                .unwrap();
+        binding
+            .remove_bound_file(&root.dir, OsStr::new("claim.json"), &target)
+            .unwrap();
+        drop(file);
+
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn bound_regular_file_removal_never_deletes_a_same_name_replacement() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("claim.json");
+        let displaced = temp.path().join("displaced-claim.json");
+        std::fs::write(&target, b"authenticated claim").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        let (file, binding) =
+            open_bound_regular_file_for_removal(&root.dir, OsStr::new("claim.json"), &target)
+                .unwrap();
+        std::fs::rename(&target, &displaced).unwrap();
+        std::fs::write(&target, b"same-name replacement sentinel").unwrap();
+
+        let removal = binding.remove_bound_file(&root.dir, OsStr::new("claim.json"), &target);
+        drop(file);
+
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"same-name replacement sentinel"
+        );
+        match removal {
+            Ok(()) => assert!(
+                !displaced.exists(),
+                "successful removal must delete only the exact retained object"
+            ),
+            Err(_) => assert_eq!(
+                std::fs::read(&displaced).unwrap(),
+                b"authenticated claim",
+                "fail-closed removal must retain the original object"
+            ),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bound_regular_file_removal_preserves_a_post_validation_replacement() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("claim.json");
+        let displaced = temp.path().join("displaced-claim.json");
+        std::fs::write(&target, b"authenticated claim").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        let (file, binding) =
+            open_bound_regular_file_for_removal(&root.dir, OsStr::new("claim.json"), &target)
+                .unwrap();
+
+        let hook_target = target.clone();
+        let hook_displaced = displaced.clone();
+        set_after_bound_file_revalidation_for_test(move || {
+            std::fs::rename(&hook_target, &hook_displaced).unwrap();
+            std::fs::write(&hook_target, b"same-name replacement sentinel").unwrap();
+        });
+        let error = binding
+            .remove_bound_file(&root.dir, OsStr::new("claim.json"), &target)
+            .expect_err("a replacement introduced after validation must fail closed");
+        drop(file);
+
+        assert!(
+            format!("{error:#}").contains("race moved a replacement"),
+            "{error:#}"
+        );
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"same-name replacement sentinel"
+        );
+        assert_eq!(std::fs::read(&displaced).unwrap(), b"authenticated claim");
+        assert_eq!(
+            std::fs::read_dir(temp.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".neoth-bound-delete-"))
+                .count(),
+            0
         );
     }
 

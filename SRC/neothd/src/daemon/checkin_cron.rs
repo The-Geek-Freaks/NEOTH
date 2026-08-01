@@ -203,11 +203,8 @@ pub async fn run_checkin_tick(
         expires_unix: now_unix + 86_400, // expire after 24h (stale nudge not wanted)
     };
 
-    let enqueued = ProactiveQueue::modify(&queue_path, |queue| {
-        let inserted = queue.enqueue(item);
-        (inserted, inserted)
-    })
-    .map_err(|e| anyhow::anyhow!("queue save: {e}"))?;
+    let enqueued = ProactiveQueue::enqueue_at(&queue_path, item)
+        .map_err(|e| anyhow::anyhow!("queue save: {e}"))?;
     if enqueued {
         info!(template = ?template, "checkin_cron: enqueued check-in nudge");
     }

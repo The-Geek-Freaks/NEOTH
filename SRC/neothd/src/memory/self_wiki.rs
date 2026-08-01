@@ -157,7 +157,7 @@ static DAEMON_CRONS: &[DaemonCron] = &[
     },
     DaemonCron {
         id: "proactive-dispatcher",
-        description: "Periodic drain of the ProactiveQueue into the proactive_delivered.jsonl sidecar.",
+        description: "Durable ProactiveQueue egress: WAL-bound transport, crash recovery, and private CLI/GUI history projection.",
         gate: None,
     },
     DaemonCron {

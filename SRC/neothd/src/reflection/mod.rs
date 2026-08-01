@@ -652,14 +652,14 @@ mod tests {
         let mut q = crate::proactive::ProactiveQueue::new();
         let item1 = build_reflection_item("2026-W21", &["memory".into()], 0).unwrap();
         let item2 = build_reflection_item("2026-W21", &["recall".into()], 0).unwrap();
-        assert!(q.enqueue(item1));
+        assert!(q.enqueue(item1).unwrap());
         assert!(
-            !q.enqueue(item2),
+            !q.enqueue(item2).unwrap(),
             "same week must dedupe even with different topics"
         );
         // Next week — different tag → both can coexist.
         let item3 = build_reflection_item("2026-W22", &["wal".into()], 0).unwrap();
-        assert!(q.enqueue(item3));
+        assert!(q.enqueue(item3).unwrap());
         assert_eq!(q.len(), 2);
     }
 

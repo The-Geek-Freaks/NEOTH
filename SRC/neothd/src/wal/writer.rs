@@ -327,6 +327,10 @@ pub struct WriteRequest {
     pub header: EventHeaderV2,
     pub payload: Vec<u8>,
     pub ack: oneshot::Sender<Result<u64, WalError>>,
+    /// Close and fsync the current HMAC window before acknowledging this
+    /// request. Reserved for producer/consumer contracts whose downstream
+    /// reader must prove the exact frame from authenticated WAL bytes.
+    force_authentication_marker: bool,
     #[cfg(test)]
     test_ack_gate: Option<TestAckGate>,
 }
@@ -400,6 +404,7 @@ impl TestAckGate {
 #[derive(Clone, Debug)]
 pub struct WalWriterHandle {
     tx: mpsc::Sender<WriteRequest>,
+    authentication_markers_enabled: bool,
     /// Phase 33c BS-4 pre-write quota guard. `None` keeps the writer free
     /// of disk-usage checks (tests + cli one-shots); the daemon sets it
     /// via `with_quota_guard` after `spawn`.
@@ -718,6 +723,35 @@ impl WalWriterHandle {
     }
 
     pub async fn append(&self, header: EventHeaderV2, payload: Vec<u8>) -> Result<u64, WalError> {
+        self.append_with_marker_policy(header, payload, false).await
+    }
+
+    /// Append one frame and acknowledge it only after a keyed compaction
+    /// marker covering the frame is itself durable.
+    ///
+    /// Ordinary [`Self::append`] proves durability, not cryptographic
+    /// authenticity of the live unsealed tail. Consumers that expose a
+    /// security-sensitive projection must use this boundary for the terminal
+    /// frame and scan only marker-authenticated bytes.
+    pub(crate) async fn append_authenticated(
+        &self,
+        header: EventHeaderV2,
+        payload: Vec<u8>,
+    ) -> Result<u64, WalError> {
+        if !self.authentication_markers_enabled {
+            return Err(compaction_recovery_error(
+                "authenticated append requires an HMAC-marker-enabled WAL writer",
+            ));
+        }
+        self.append_with_marker_policy(header, payload, true).await
+    }
+
+    async fn append_with_marker_policy(
+        &self,
+        header: EventHeaderV2,
+        payload: Vec<u8>,
+        force_authentication_marker: bool,
+    ) -> Result<u64, WalError> {
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -732,6 +766,7 @@ impl WalWriterHandle {
                 header,
                 payload,
                 ack: ack_tx,
+                force_authentication_marker,
                 #[cfg(test)]
                 test_ack_gate: self.test_ack_gate.clone(),
             })
@@ -772,6 +807,7 @@ impl WalWriterHandle {
                 header,
                 payload,
                 ack: ack_tx,
+                force_authentication_marker: false,
                 #[cfg(test)]
                 test_ack_gate: self.test_ack_gate.clone(),
             })
@@ -856,6 +892,7 @@ impl WalWriterHandle {
             header,
             payload,
             ack: ack_tx,
+            force_authentication_marker: false,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
         }) {
@@ -899,6 +936,7 @@ impl WalWriterHandle {
                 header,
                 payload,
                 ack: ack_tx,
+                force_authentication_marker: false,
                 #[cfg(test)]
                 test_ack_gate: self.test_ack_gate.clone(),
             })
@@ -1441,6 +1479,7 @@ fn spawn_with_policy_and_compression_at_home(
     Ok((
         WalWriterHandle {
             tx,
+            authentication_markers_enabled: !skip_compaction_markers,
             quota: None,
             #[cfg(test)]
             test_ack_gate: None,
@@ -2926,7 +2965,15 @@ async fn run_writer(
                 || state.bytes().saturating_add(frame.len() as u64)
                     >= crate::wal::compaction::MAX_BYTES_BETWEEN_MARKERS
         });
-        let marker_reserve = if hmac_key.is_some() && (!state.is_fixed() || frame_triggers_marker) {
+        if req.force_authentication_marker && (compaction_state.is_none() || hmac_key.is_none()) {
+            let _ = req.ack.send(Err(compaction_recovery_error(
+                "forced authenticated append reached a writer without HMAC compaction state",
+            )));
+            continue;
+        }
+        let marker_reserve = if hmac_key.is_some()
+            && (!state.is_fixed() || frame_triggers_marker || req.force_authentication_marker)
+        {
             MAX_COMPACTION_MARKER_FRAME_BYTES
         } else {
             0
@@ -3020,7 +3067,7 @@ async fn run_writer(
                 // bytes get HMAC'd.
                 if let (Some(state_c), Some(key)) = (compaction_state.as_mut(), hmac_key.as_ref()) {
                     state_c.update(&frame);
-                    if state_c.should_emit() {
+                    if state_c.should_emit() || req.force_authentication_marker {
                         validate_hmac_writer_authority(hmac_authority.as_ref())?;
                         if let Err(marker_error) =
                             emit_compaction_marker(&mut state, state_c, key).await
@@ -4139,6 +4186,7 @@ mod tests {
         drop(rx);
         let handle = WalWriterHandle {
             tx,
+            authentication_markers_enabled: false,
             quota: None,
             test_ack_gate: None,
         };
@@ -4167,6 +4215,7 @@ mod tests {
         drop(rx);
         let dead = WalWriterHandle {
             tx,
+            authentication_markers_enabled: false,
             quota: None,
             test_ack_gate: None,
         };
@@ -5816,6 +5865,7 @@ mod tests {
 
         let handle = WalWriterHandle {
             tx,
+            authentication_markers_enabled: false,
             quota: Some(Arc::clone(&guard)),
             test_ack_gate: None,
         };

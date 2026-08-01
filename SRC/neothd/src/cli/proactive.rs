@@ -1,8 +1,8 @@
 //! `neoth proactive` — operator surface for the OB-03 proposal
 //! staging chain. Subcommands:
 //!
-//!   - `neoth proactive list [--status <s>]`
-//!     Print pending / approved / rejected / discarded proposals.
+//!   - `neoth proactive list [--status <s>] [--history]`
+//!     Print proposals, or the complete retained delivery history.
 //!   - `neoth proactive accept <id> [--note <text>]`
 //!     Flip a proposal to Approved.
 //!   - `neoth proactive reject <id> [--note <text>]`
@@ -46,6 +46,10 @@ pub enum ProactiveAction {
         /// Filter: `pending` / `approved` / `rejected` / `all`.
         #[arg(long, default_value = "pending")]
         status: String,
+        /// Show terminal proactive delivery attempts from the private inbox,
+        /// including retained rotated history, newest first.
+        #[arg(long)]
+        history: bool,
     },
     /// Mark a proposal Approved. For a **Skill** proposal (KF-04 idle
     /// forge) this installs it — a canonical `enabled: false` manifest is
@@ -116,7 +120,10 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
     let home = args.home.clone().unwrap_or_else(default_neoth_home);
 
     match args.action {
-        ProactiveAction::List { status } => {
+        ProactiveAction::List { status, history } => {
+            if history {
+                return print_delivery_history(&home);
+            }
             let filter = parse_status_filter(&status)?;
             let items = list_proposals(&home, filter)?;
             if items.is_empty() {
@@ -241,6 +248,36 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn print_delivery_history(home: &std::path::Path) -> Result<()> {
+    let records = crate::daemon::proactive_egress::read_delivery_history(home)
+        .context("read private proactive delivery history")?;
+    if records.is_empty() {
+        println!("(no proactive delivery history)");
+        return Ok(());
+    }
+    for record in records.iter().rev() {
+        let item = record.item();
+        let summary: String = item
+            .body
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(120)
+            .collect();
+        println!(
+            "{ts}  [{outcome:>13}]  [{verification}]  {channel:<16}  {source:<20}  {intent}  {summary}",
+            ts = record.delivered_at_unix(),
+            outcome = record.outcome().display_label(),
+            verification = record.verification_label(),
+            channel = record.target_channel(),
+            source = item.source,
+            intent = record.intent_id(),
+        );
+    }
+    Ok(())
 }
 
 /// GOLD-FEAT-13 — `neoth proactive route`. Loads `channel_routing.json`,
@@ -491,6 +528,7 @@ mod tests {
         let args = ProactiveArgs {
             action: ProactiveAction::List {
                 status: "pending".into(),
+                history: false,
             },
             home: Some(home.path().to_path_buf()),
         };

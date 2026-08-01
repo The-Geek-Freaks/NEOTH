@@ -563,22 +563,19 @@ fn enqueue_session_summary(
     outcome: &crate::coding::dispatcher::DispatchOutcome,
     session_id: crate::coding::types::KanbanSessionId,
 ) {
-    use crate::proactive::ProactiveQueue;
     let queue_path =
         crate::config::FreedomConfig::default_neoth_home().join("proactive_queue.json");
-    let mut queue = match ProactiveQueue::load_from(&queue_path) {
-        Ok(q) => q,
-        Err(e) => {
-            tracing::warn!(error = %e, "session-summary: proactive queue load failed; skipping notify");
-            return;
-        }
-    };
     let item = crate::coding::feed::build_session_summary_item(outcome, session_id.raw());
-    if queue.enqueue(item)
-        && let Err(e) = queue.save_to(&queue_path)
-    {
-        tracing::warn!(error = %e, "session-summary: proactive queue save failed");
+    if let Err(e) = enqueue_session_summary_at(&queue_path, item) {
+        tracing::warn!(error = %e, "session-summary: proactive queue transaction failed");
     }
+}
+
+fn enqueue_session_summary_at(
+    queue_path: &std::path::Path,
+    item: crate::proactive::ProactiveItem,
+) -> anyhow::Result<bool> {
+    crate::proactive::ProactiveQueue::enqueue_at(queue_path, item)
 }
 
 /// ARCH-22 — intern Worker name labels so the `&'static str` the `Worker` trait
@@ -1079,6 +1076,55 @@ fn now_unix_ns() -> u64 {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn session_summary_enqueue_preserves_existing_queue_state() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("proactive_queue.json");
+        let mut queue = crate::proactive::ProactiveQueue::new();
+        assert!(
+            queue
+                .enqueue(crate::proactive::ProactiveItem {
+                    priority: 10,
+                    dedup_key: "retained".into(),
+                    channel: String::new(),
+                    source: "test".into(),
+                    body: "keep me".into(),
+                    scheduled_for_unix: 0,
+                    is_failure: false,
+                    expires_unix: 0,
+                })
+                .unwrap()
+        );
+        queue.save_to(&path).unwrap();
+
+        assert!(
+            enqueue_session_summary_at(
+                &path,
+                crate::proactive::ProactiveItem {
+                    priority: 50,
+                    dedup_key: "session-summary:42".into(),
+                    channel: String::new(),
+                    source: "coding_session".into(),
+                    body: "done".into(),
+                    scheduled_for_unix: 0,
+                    is_failure: false,
+                    expires_unix: 0,
+                },
+            )
+            .unwrap()
+        );
+        let loaded = crate::proactive::ProactiveQueue::load_from(&path).unwrap();
+        let keys = loaded
+            .peek()
+            .iter()
+            .map(|item| item.dedup_key.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            keys,
+            std::collections::BTreeSet::from(["retained", "session-summary:42"])
+        );
+    }
 
     // GOLD-ADAPT-AWE-AIDER-01 — an unindexed repo yields no repo-map context, so
     // run_code's decomposer falls back to context-free exactly as before (the

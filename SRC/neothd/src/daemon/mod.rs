@@ -75,10 +75,9 @@ pub mod export;
 /// Round-3 v0.4 G-02 cron-wiring — daily tick that scans
 /// `idx_profile` for novel high-confidence claims via
 /// `profile::surfacing::find_novel_high_confidence_claims` +
-/// renders each as a bilingual `ProactiveItem` for the G-01
-/// drain → sidecar chain. Per-claim dedup_key in the item itself
-/// caps re-enqueue noise; the cron just stays out of the LLM
-/// extractor's way (Stage 3 deferred).
+/// renders each as a bilingual `ProactiveItem` for the G-01 durable egress
+/// transaction. Per-claim `dedup_key` in the item itself caps re-enqueue noise;
+/// the cron stays out of the LLM extractor's way (Stage 3 deferred).
 pub mod g02_surfacing_cron;
 pub mod hardware;
 pub mod installer_audit_sidecar;
@@ -136,14 +135,14 @@ pub mod omi_native_ingest;
 /// substrate. Off by default. The first detector of the named
 /// pattern-detection cron; further detectors layer on the same shape.
 pub mod pattern_cron;
-/// Round-3 v0.4 G-01 consumer half — periodic drain of
-/// `proactive::ProactiveQueue` into a `proactive_delivered.jsonl`
-/// sidecar. Operators tail the sidecar OR future channel adapters
-/// subscribe to it for at-least-once delivery semantics. Ticks
-/// every 5min (PROACTIVE_DRAIN_INTERVAL_SECS); per-tick cap
-/// PROACTIVE_PER_TICK_CAP = 3 caps the notification storm even if
-/// the queue's daily budget is wider.
+/// Proactive queue dispatcher. Every terminal attempt crosses the durable
+/// Prepared/Armed WAL boundary below before it reaches a live adapter or the
+/// private local inbox.
 pub mod proactive_dispatcher;
+/// Durable Prepared/Armed claim + authenticated WAL recovery boundary used by
+/// the proactive dispatcher before any external channel effect. The public
+/// read-only history contract is shared by CLI and desktop GUI consumers.
+pub mod proactive_egress;
 pub mod profile_adapt_cron;
 /// MONITOR-03 / RECALL-METER-01 — recall-p95 latency alert cron. Reads the
 /// `idx_recall_latency` window + emits `0x4B RECALL_LATENCY_ALERT` when p95

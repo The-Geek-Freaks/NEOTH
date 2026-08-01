@@ -1259,6 +1259,29 @@ fn main() -> Result<()> {
 
     let window = MainWindow::new()?;
     hydrate_durable_background_notices(&window, &neoth_dir);
+    {
+        // Seed the existing Channel Activity surface from the same strict,
+        // rotation-aware record reader used by `neoth proactive list
+        // --history`. The merge key also suppresses the matching live WAL
+        // frame when gui-stream starts at the beginning of the current segment.
+        let history_home = neoth_dir.clone();
+        let history_window = window.as_weak();
+        std::thread::spawn(
+            move || match load_proactive_history_activity(&history_home) {
+                Ok(entries) if !entries.is_empty() => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(window) = history_window.upgrade() {
+                            merge_channel_activity_rows(&window, entries);
+                        }
+                    });
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(error = %error, "proactive history is unavailable to the GUI");
+                }
+            },
+        );
+    }
 
     // ── Companion overlay — created here, hidden until the operator
     // clicks "⊟" in the TopBar. Both windows share the one event loop
@@ -10976,7 +10999,6 @@ fn main() -> Result<()> {
                         // Runs every tick (not gated on want_board) so the feed stays
                         // live even when the operator is not on the Code Sessions tab.
                         {
-                            use slint::Model as _; // ModelRc row_count/row_data
                             let guard = client.lock().unwrap_or_else(|p| p.into_inner());
                             if let Some(ref c) = *guard {
                                 let new_entries = c.drain_channel_activity();
@@ -10984,31 +11006,7 @@ fn main() -> Result<()> {
                                     let weak_ca = weak.clone();
                                     let _ = slint::invoke_from_event_loop(move || {
                                         if let Some(w) = weak_ca.upgrade() {
-                                            use slint::{ModelRc, VecModel};
-                                            const MAX_DISPLAY: usize = 60;
-                                            // Read current model, append new entries, cap.
-                                            let mut rows: Vec<ChannelActivityRow> = (0..w
-                                                .get_channel_activity()
-                                                .row_count())
-                                                .map(|i| {
-                                                    w.get_channel_activity().row_data(i).unwrap()
-                                                })
-                                                .collect();
-                                            for entry in new_entries {
-                                                rows.push(ChannelActivityRow {
-                                                    direction: entry.direction.into(),
-                                                    channel: entry.channel.into(),
-                                                    peer: entry.peer.into(),
-                                                    bytes: fmt_event_bytes(entry.bytes).into(),
-                                                    ts: fmt_ts_unix(entry.ts_unix).into(),
-                                                });
-                                            }
-                                            if rows.len() > MAX_DISPLAY {
-                                                rows.drain(0..rows.len() - MAX_DISPLAY);
-                                            }
-                                            w.set_channel_activity(ModelRc::new(VecModel::from(
-                                                rows,
-                                            )));
+                                            merge_channel_activity_rows(&w, new_entries);
                                         }
                                     });
                                 }
@@ -19792,12 +19790,18 @@ const GUI_STREAM_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 /// WAL message bodies are hashed by design and never appear here.
 #[derive(Debug, Clone)]
 struct ChannelActivity {
+    /// Stable identity used to suppress history/live-WAL replay duplicates.
+    identity: String,
     /// "in" | "out" | "proactive" | "blocked"
     direction: String,
     channel: String,
     peer: String,
     bytes: u64,
     ts_unix: u64,
+    /// Empty for ordinary channel traffic; canonical terminal display label
+    /// for proactive records.
+    outcome: String,
+    verification: String,
 }
 
 /// Parse `{"push":true,"channel_feed":[...]}` tolerantly.
@@ -19813,8 +19817,13 @@ fn parse_channel_feed_push(line: &str) -> Option<Vec<ChannelActivity>> {
         .filter_map(|e| {
             // `event_id` presence gates what counts as a real feed row;
             // the value itself has no consumer (no replay/dedup on this side).
-            e.get("event_id")?;
+            let event_id = e.get("event_id")?;
             Some(ChannelActivity {
+                identity: e
+                    .get("identity")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("legacy:{event_id}")),
                 direction: e
                     .get("direction")
                     .and_then(|d| d.as_str())
@@ -19832,10 +19841,72 @@ fn parse_channel_feed_push(line: &str) -> Option<Vec<ChannelActivity>> {
                     .to_string(),
                 bytes: e.get("bytes").and_then(|b| b.as_u64()).unwrap_or(0),
                 ts_unix: e.get("ts_unix").and_then(|t| t.as_u64()).unwrap_or(0),
+                outcome: e
+                    .get("outcome")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                verification: e
+                    .get("verification")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string(),
             })
         })
         .collect();
     Some(entries)
+}
+
+fn load_proactive_history_activity(home: &Path) -> Result<Vec<ChannelActivity>> {
+    const MAX_DISPLAY: usize = 60;
+    let records = neothd::daemon::proactive_egress::read_delivery_history(home)
+        .context("read private proactive delivery history")?;
+    let first = records.len().saturating_sub(MAX_DISPLAY);
+    Ok(records
+        .into_iter()
+        .skip(first)
+        .map(|record| ChannelActivity {
+            identity: format!("proactive:{}", record.intent_id()),
+            direction: "proactive".to_string(),
+            channel: record.target_channel().to_string(),
+            peer: record.dedup_sha256().chars().take(8).collect(),
+            bytes: record.message_bytes() as u64,
+            ts_unix: record.delivered_at_unix().max(0) as u64,
+            outcome: record.outcome().display_label().to_string(),
+            verification: record.verification_label().to_string(),
+        })
+        .collect())
+}
+
+fn merge_channel_activity_rows(window: &MainWindow, entries: Vec<ChannelActivity>) {
+    use slint::Model as _;
+    use slint::{ModelRc, VecModel};
+
+    const MAX_DISPLAY: usize = 60;
+    let mut rows: Vec<ChannelActivityRow> = (0..window.get_channel_activity().row_count())
+        .filter_map(|index| window.get_channel_activity().row_data(index))
+        .collect();
+    let mut known: std::collections::HashSet<String> =
+        rows.iter().map(|row| row.event_id.to_string()).collect();
+    for entry in entries {
+        if !known.insert(entry.identity.clone()) {
+            continue;
+        }
+        rows.push(ChannelActivityRow {
+            event_id: entry.identity.into(),
+            direction: entry.direction.into(),
+            channel: entry.channel.into(),
+            peer: entry.peer.into(),
+            bytes: fmt_event_bytes(entry.bytes).into(),
+            ts: fmt_ts_unix(entry.ts_unix).into(),
+            outcome: entry.outcome.into(),
+            verification: entry.verification.into(),
+        });
+    }
+    if rows.len() > MAX_DISPLAY {
+        rows.drain(0..rows.len() - MAX_DISPLAY);
+    }
+    window.set_channel_activity(ModelRc::new(VecModel::from(rows)));
 }
 
 /// Parse a spontaneous board frame and keep it off the request/response
@@ -19865,14 +19936,17 @@ mod channel_feed_tests {
 
     #[test]
     fn parses_valid_push_frame() {
-        let line = r#"{"push":true,"channel_feed":[{"event_id":7,"direction":"in","channel":"telegram","peer":"u42","bytes":128,"ts_unix":1720000000}]}"#;
+        let line = r#"{"push":true,"channel_feed":[{"event_id":7,"identity":"proactive:abc","direction":"proactive","channel":"telegram","peer":"u42","bytes":128,"ts_unix":1720000000,"outcome":"crash_unknown","verification":"wal_verified"}]}"#;
         let result = parse_channel_feed_push(line).expect("should parse");
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].direction, "in");
+        assert_eq!(result[0].identity, "proactive:abc");
+        assert_eq!(result[0].direction, "proactive");
         assert_eq!(result[0].channel, "telegram");
         assert_eq!(result[0].peer, "u42");
         assert_eq!(result[0].bytes, 128);
         assert_eq!(result[0].ts_unix, 1_720_000_000);
+        assert_eq!(result[0].outcome, "crash_unknown");
+        assert_eq!(result[0].verification, "wal_verified");
     }
 
     #[test]

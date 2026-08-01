@@ -931,8 +931,9 @@ async fn run_job_with_paths(
             );
             // The primary job failure is already fixed at this point, so alert
             // delivery is best-effort; persistence errors remain operator-visible.
-            if let Err(error) = ProactiveQueue::modify(proactive_queue_path, |queue| {
-                let inserted = queue.enqueue(ProactiveItem {
+            if let Err(error) = ProactiveQueue::enqueue_at(
+                proactive_queue_path,
+                ProactiveItem {
                     priority: 80,
                     dedup_key,
                     channel: "cli".to_string(),
@@ -941,11 +942,8 @@ async fn run_job_with_paths(
                     scheduled_for_unix: 0,
                     is_failure: true,
                     expires_unix: crate::time::now_unix_i64().saturating_add(86_400),
-                });
-                // Persist only when enqueue accepted the item (same as old
-                // `if inserted { let _ = queue.save_to(...) }` logic).
-                (inserted, inserted)
-            }) {
+                },
+            ) {
                 warn!(job_id = %job.id, error = %error,
                     "cron self-heal alert persistence failed after completed job failure");
             }
@@ -1178,12 +1176,9 @@ fn enqueue_cron_delivery(
         is_failure: false,
         expires_unix: now_unix.saturating_add(86_400),
     };
-    ProactiveQueue::modify(queue_path, |queue| {
-        let inserted = queue.enqueue(item);
-        // `false` is an idempotent retry: this exact JOB_FIRED event is
-        // already durable under the same dedup key.
-        (inserted, inserted)
-    })
+    // `false` is an idempotent retry: this exact JOB_FIRED event is already
+    // durable under the same dedup key.
+    ProactiveQueue::enqueue_at(queue_path, item)
 }
 
 async fn finish_job_fired_failure(

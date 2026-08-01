@@ -193,12 +193,18 @@ export struct ChannelRow {
 /// Contains ONLY traffic metadata: direction, channel, peer, byte count, time.
 /// Message bodies are never stored (WAL is hashed by design).
 export struct ChannelActivityRow {
+    /// Stable hidden identity for history/live deduplication.
+    event-id: string,
     /// "in" | "out" | "proactive" | "blocked"
     direction: string,
     channel: string,
     peer: string,
     bytes: string,
     ts: string,
+    /// delivered | failed | configuration_error | suppressed | crash_unknown | sidecar_only.
+    outcome: string,
+    /// wal_verified | legacy_unverified.
+    verification: string,
 }
 
 component TabButton inherits Rectangle {
@@ -2033,6 +2039,50 @@ export component SettingsView inherits Rectangle {
                                                  : a.direction == "out"      ? Theme.accent-green
                                                  : a.direction == "proactive"? Theme.accent-amber
                                                  :                             Theme.accent-pink;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+                                    }
+
+                                    if a.outcome != "": Rectangle {
+                                        width: a.outcome == "configuration_error" ? 150px : 104px;
+                                        height: 20px;
+                                        border-radius: 4px;
+                                        background: a.outcome == "delivered"     ? Theme.accent-green.with-alpha(0.18)
+                                                  : a.outcome == "sidecar_only"  ? Theme.accent-cyan.with-alpha(0.18)
+                                                  : a.outcome == "suppressed" || a.outcome == "not_attempted"
+                                                                                  ? Theme.accent-amber.with-alpha(0.18)
+                                                  :                                Theme.accent-pink.with-alpha(0.18);
+                                        y: (parent.height - self.height) / 2;
+                                        Text {
+                                            text: a.outcome;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-caption;
+                                            color: a.outcome == "delivered"      ? Theme.accent-green
+                                                 : a.outcome == "sidecar_only"   ? Theme.accent-cyan
+                                                 : a.outcome == "suppressed" || a.outcome == "not_attempted"
+                                                                                  ? Theme.accent-amber
+                                                 :                                 Theme.accent-pink;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+                                    }
+
+                                    if a.verification == "legacy_unverified": Rectangle {
+                                        width: 116px;
+                                        height: 20px;
+                                        border-radius: 4px;
+                                        background: Theme.accent-amber.with-alpha(0.18);
+                                        y: (parent.height - self.height) / 2;
+                                        Text {
+                                            text: "legacy unverified";
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-caption;
+                                            color: Theme.accent-amber;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
                                             width: parent.width;

@@ -108,9 +108,9 @@ pub struct ServeArgs {
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
-    /// Override the WAL segment path. It must be a canonical direct child of
-    /// the selected config home's `wal` directory with a six-digit segment
-    /// suffix. Defaults to `<config-home>/wal/000001.wal`.
+    /// Override the WAL chain-base path. It must be the canonical sequence-1
+    /// direct child (`000001.wal`) of the selected config home's `wal`
+    /// directory. Defaults to `<config-home>/wal/000001.wal`.
     #[arg(long, value_name = "PATH")]
     pub wal_segment: Option<PathBuf>,
 
@@ -1713,18 +1713,18 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let reflection_cron_handle =
         crate::cli::serve_tasks::spawn_reflection_cron(&neoth_home, &reload_controller, &writer);
 
-    // ── 5d-tris. Proactive drain cron — G-01 consumer half (Round-3 v0.4) ──
+    // ── 5d-tris. Durable proactive egress — G-01 consumer half ───────────
     //
-    // Drains items the reflection_cron (above) enqueued into the
-    // ProactiveQueue + appends each to `~/.neoth/proactive_delivered.jsonl`
-    // for operator inspection. Ticks every 5min; per-tick cap of 3
-    // smooths bursty producers. Future channel adapters (Telegram /
-    // Slack) consume the same sidecar for at-least-once
-    // delivery semantics — the daemon-side drain stays channel-
-    // agnostic.
+    // Claims ready items, WAL-binds the exact intent, persists an Armed proof
+    // before a live transport can run, then records the terminal result and
+    // idempotently projects it to Cron state, queue settlement, and the private
+    // CLI/GUI history. Ticks every 5min; a per-tick cap of 3 smooths bursts.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let proactive_dispatcher_handle =
-        crate::cli::serve_tasks::spawn_proactive_dispatcher(&neoth_home, &writer);
+    let proactive_dispatcher_handle = crate::cli::serve_tasks::spawn_proactive_dispatcher(
+        &neoth_home,
+        &segment_chain_base_path,
+        &writer,
+    );
 
     // ── 5d-quartus. G-02 surfacing cron — "Knows things about you you
     //               don't know" producer (Round-3 v0.4) ──

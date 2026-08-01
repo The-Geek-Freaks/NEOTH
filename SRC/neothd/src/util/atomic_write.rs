@@ -29,6 +29,8 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// rename never exposes a wider-permission target even briefly. On Windows the
 /// temporary file receives and verifies a protected current-user-only DACL
 /// before any bytes are written; parent-directory ACLs are never inherited.
+/// Its handle is `FILE_FLAG_WRITE_THROUGH`, so the subsequent handle-bound
+/// rename durably commits Windows namespace metadata too.
 pub fn atomic_write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     atomic_write_impl(path, bytes, true)
 }
@@ -95,6 +97,25 @@ fn sync_create_new_parent(path: &Path) -> std::io::Result<()> {
     #[cfg(test)]
     CREATE_NEW_PARENT_SYNC_ATTEMPTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
+    sync_parent_directory_required(path)
+}
+
+/// Durably commit the parent-directory entry containing `path`.
+///
+/// [`atomic_write_impl`] retains its historical best-effort parent sync because
+/// cosmetic/cache callers cannot turn an otherwise successful replacement into
+/// an error on filesystems that reject directory fsync. Transactions that
+/// authorize an external effect call this helper after their atomic replacement
+/// and before crossing the effect boundary.
+///
+/// Unix propagates every open/fsync error. Windows has no portable directory
+/// fsync through `std`; private/capability atomic stages are opened with
+/// `FILE_FLAG_WRITE_THROUGH`, so the handle-bound rename flushes namespace
+/// metadata after the file bytes were explicitly committed.
+pub(crate) fn sync_parent_directory_required(path: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    REQUIRED_PARENT_SYNC_ATTEMPTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
     #[cfg(unix)]
     if let Some(parent) = path
         .parent()
@@ -105,6 +126,15 @@ fn sync_create_new_parent(path: &Path) -> std::io::Result<()> {
     #[cfg(not(unix))]
     let _ = path;
     Ok(())
+}
+
+#[cfg(test)]
+static REQUIRED_PARENT_SYNC_ATTEMPTS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn required_parent_sync_attempts_for_test() -> usize {
+    REQUIRED_PARENT_SYNC_ATTEMPTS.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 #[cfg(test)]
@@ -123,18 +153,24 @@ pub(crate) fn create_new_parent_sync_attempts_for_test() -> usize {
 pub fn durable_remove_file(path: &Path) -> std::io::Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let Some(parent) = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            else {
+                return Ok(());
+            };
+            match std::fs::symlink_metadata(parent) {
+                Ok(_) => return sync_parent_directory_required(path),
+                Err(parent_error) if parent_error.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(());
+                }
+                Err(parent_error) => return Err(parent_error),
+            }
+        }
         Err(error) => return Err(error),
     }
-
-    #[cfg(unix)]
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        std::fs::File::open(parent)?.sync_all()?;
-    }
-    Ok(())
+    sync_parent_directory_required(path)
 }
 
 fn atomic_write_impl(path: &Path, bytes: &[u8], private: bool) -> std::io::Result<()> {
@@ -345,7 +381,29 @@ mod tests {
 
         durable_remove_file(&target).unwrap();
         assert!(!target.exists());
+        let before_retry = required_parent_sync_attempts_for_test();
         durable_remove_file(&target).unwrap();
+        assert!(
+            required_parent_sync_attempts_for_test() > before_retry,
+            "an absent target under an existing parent must retry the durability barrier"
+        );
+    }
+
+    #[test]
+    fn required_parent_sync_accepts_an_existing_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        sync_parent_directory_required(&dir.path().join("transaction.json")).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn required_parent_sync_propagates_a_missing_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("missing-parent").join("transaction.json");
+        assert!(
+            sync_parent_directory_required(&target).is_err(),
+            "a required durability boundary must not discard parent-open errors"
+        );
     }
 
     #[test]

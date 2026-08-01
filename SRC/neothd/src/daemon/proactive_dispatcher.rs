@@ -1,54 +1,11 @@
-//! Round-3 v0.4 G-01 consumer half — drains [`ProactiveQueue`] +
-//! delivers items to a per-operator JSONL sidecar.
+//! Durable proactive queue consumer and live-channel router.
 //!
-//! G-01a (Session 24) shipped the bounded queue + `enqueue` /
-//! `drain` / persistence. G-01-mini (Session 24) ships the
-//! reflection producer. G-01 cron-wiring (Session 28 commit
-//! `7acb181`) wires the producer into a 24h cron. **This module
-//! closes the consumer half**: ticks every
-//! [`PROACTIVE_DRAIN_INTERVAL_SECS`], pops items in priority +
-//! schedule order respecting the daily-budget cap, appends each to
-//! `~/.neoth/proactive_delivered.jsonl` for operator inspection.
-//!
-//! The JSONL sidecar is the operator-visible "delivered inbox" —
-//! one JSON per line, append-only, never truncated. Operators
-//! `tail -f` it during a session OR a future
-//! `neoth proactive items list` CLI surface paginates the recent
-//! tail. Channel-side delivery (Telegram message / Slack DM /
-//! additional live adapters is the L follow-on once each adapter consumes
-//! the sidecar.
-//!
-//! ## Why sidecar not channel-direct
-//!
-//! Channel adapters are async + per-protocol (Telegram bot API,
-//! Slack Web API, etc.). Putting the channel-dispatch inside the
-//! drain loop would bind every operator to running the channels
-//! they care about + couple the drain cadence to the slowest
-//! adapter. A sidecar JSONL is:
-//!   - Always present (zero-channel operators still see their
-//!     proactive items).
-//!   - Append-only + crash-safe (no torn writes; each line is one
-//!     drain operation).
-//!   - Cheap to consume from any future adapter (channel adapter
-//!     tails the file + sends each new line; tail-cursor is the
-//!     adapter's local state).
-//!
-//! ## Delivery semantics — at-most-once via inflight claim files
-//!
-//! Before attempting a channel send the tick writes an atomic claim
-//! file to `~/.neoth/proactive_inflight/<sha256(dedup_key)>.claimed`.
-//! The batch's claim files are deleted only AFTER the post-send queue
-//! save is durable (deleting per-item would let an already-sent earlier
-//! item in the same batch re-drain before the save → a double-fire). On
-//! the NEXT tick [`evict_inflight_claimed`] scans for surviving claim
-//! files; each one represents a send whose outcome is unknown (daemon
-//! crashed before the save). Those items are evicted from the queue
-//! without resending and recorded in the sidecar as `crash_recovered`.
-//! This replaces the earlier at-least-once contract: a duplicate nudge
-//! is no longer preferred over a silent loss; the `crash_recovered`
-//! sidecar entry makes the event operator-visible. `is_failure` items
-//! (critical alerts) follow the same path — `was_failure: true` in
-//! the `crash_recovered` entry lets the operator act.
+//! Every terminal path (live delivery, policy suppression, local inbox, or
+//! crash recovery) goes through `proactive_egress`: private Prepared claim,
+//! ACKed WAL intent, private Armed transition plus ACKed Armed proof before
+//! transport, terminal WAL result, and idempotent sidecar/Cron/queue
+//! projections. The local JSONL inbox is an atomic, rotated operator view; it
+//! is not transport authority.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -60,6 +17,7 @@ use crate::config::{FreedomConfig, credentials::Credentials};
 #[cfg(test)]
 use crate::permissions::AutonomyLevel;
 use crate::permissions::{Action, evaluate};
+use crate::proactive::MAX_PROACTIVE_CHANNEL_BYTES;
 use crate::wal::writer::WalWriterHandle;
 
 /// Default drain-tick interval — 5 minutes in seconds. Producers
@@ -76,79 +34,14 @@ pub const PROACTIVE_DRAIN_INTERVAL_SECS: u64 = 5 * 60;
 /// guarantee; this tick-cap is just a smoothing layer.
 pub const PROACTIVE_PER_TICK_CAP: usize = 3;
 
-/// JSONL sidecar filename inside `~/.neoth/`. Operators tail this
-/// to see delivered items; future channel adapters subscribe to
-/// the same file for at-most-once delivery semantics.
+/// Private, rotated operator-history filename inside `~/.neoth/`. It is an
+/// idempotent CLI/GUI projection of terminal WAL truth, never transport input or
+/// delivery authority.
 pub const PROACTIVE_DELIVERED_SIDECAR: &str = "proactive_delivered.jsonl";
 
-/// Sub-directory inside `~/.neoth/` that holds in-flight claim files.
-/// Each file is named `<sha256hex(dedup_key)>.claimed` and is written
-/// atomically BEFORE a channel send attempt; deleted after any
-/// non-crash outcome. Surviving files on the next tick indicate a
-/// crash mid-send and are handled by [`evict_inflight_claimed`].
-pub const PROACTIVE_INFLIGHT_DIR: &str = "proactive_inflight";
+pub use crate::daemon::proactive_egress::PROACTIVE_INFLIGHT_DIR;
 
-/// One drain tick: load the queue, pop up to cap items, append
-/// each to the sidecar, save the post-drain queue.
-///
-/// Pure-fn (no async) so tests can call directly. Returns the
-/// number of items delivered (0 when queue empty / cap=0 / budget
-/// exhausted). Errors propagate from queue load/save + sidecar
-/// append.
-pub fn run_proactive_drain_tick(home: &Path, now_unix: i64) -> Result<usize, String> {
-    use crate::proactive::ProactiveQueue;
-
-    let queue_path = home.join("proactive_queue.json");
-    if !queue_path.exists() {
-        return Ok(0);
-    }
-    let sidecar_path = home.join(PROACTIVE_DELIVERED_SIDECAR);
-    // Review H-1 — the whole load→drain→append→save cycle holds the
-    // process-global queue lock, so a concurrent producer enqueue can no
-    // longer be lost to this tick's save. No network I/O in this path.
-    ProactiveQueue::modify(&queue_path, |queue| {
-        if queue.is_empty() {
-            return (false, Ok(0));
-        }
-        let len_before = queue.len();
-        let drained = queue.drain(now_unix, PROACTIVE_PER_TICK_CAP);
-        if drained.is_empty() {
-            // Either daily-budget exhausted OR cap=0 OR every item is
-            // future-scheduled. JV-PRO-10: drain may still have pruned
-            // expired items — persist the smaller queue then.
-            return (queue.len() < len_before, Ok(0));
-        }
-        if let Err(e) = append_to_sidecar(&sidecar_path, &drained, now_unix) {
-            // Not persisted → the batch re-drains next tick (at-least-once,
-            // same semantics as before the lock landed).
-            return (false, Err(format!("sidecar append failed: {e}")));
-        }
-        (true, Ok(drained.len()))
-    })
-    .map_err(|e| format!("queue load/save failed: {e}"))?
-}
-
-fn append_to_sidecar(
-    sidecar_path: &Path,
-    items: &[crate::proactive::ProactiveItem],
-    now_unix: i64,
-) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(sidecar_path)?;
-    for item in items {
-        let line = serde_json::to_string(&serde_json::json!({
-            "delivered_at_unix": now_unix,
-            "item": item,
-        }))
-        .unwrap_or_default();
-        writeln!(f, "{line}")?;
-    }
-    f.flush()?;
-    Ok(())
-}
+const LOCAL_INBOX_CHANNEL: &str = "local_inbox";
 
 /// G-01 channel-delivery (Session 28d, 4-lens gremium) — the outcome of
 /// attempting to deliver ONE drained proactive item.
@@ -427,232 +320,380 @@ pub(crate) fn plan_delivery(
     }
 }
 
-/// Whether a route can perform a live external send and therefore needs the
-/// at-most-once claim file before dispatch.
-fn route_needs_claim(route: &DeliveryRoute) -> bool {
+#[derive(Debug)]
+enum LiveRouteError {
+    /// Item-specific adapter configuration rejected before a claim existed.
+    AdapterConfiguration(String),
+    /// Durable claim/WAL/projection failure. The whole tick must stop.
+    Durability(String),
+}
+
+/// Construct one configured adapter and route it through the sole durable
+/// proactive transport seam. Constructor failures happen before a Prepared
+/// claim exists.
+async fn deliver_live_route(
+    egress: &crate::daemon::proactive_egress::ProactiveEgressContext<'_>,
+    credentials: &Credentials,
+    config: &FreedomConfig,
+    item: crate::proactive::ProactiveItem,
+    queue_generation: &str,
+    target_channel: &str,
+    route: DeliveryRoute,
+) -> Result<Option<ProactiveStatus>, LiveRouteError> {
+    let home = egress.home();
+    let wal_segment_path = egress.wal_segment_path();
+    let writer = egress.writer();
+    let now_unix = egress.now_unix();
+    macro_rules! execute {
+        ($recipient:expr, $channel:expr) => {
+            crate::daemon::proactive_egress::execute_claimed_once(
+                egress,
+                item,
+                queue_generation,
+                target_channel,
+                $recipient,
+                $channel,
+            )
+            .await
+            .map_err(LiveRouteError::Durability)
+        };
+    }
+
     match route {
-        DeliveryRoute::Suppressed | DeliveryRoute::SidecarOnly => false,
-        DeliveryRoute::Telegram { .. }
-        | DeliveryRoute::Slack { .. }
-        | DeliveryRoute::Discord { .. }
-        | DeliveryRoute::WhatsApp { .. }
-        | DeliveryRoute::WhatsAppBaileys { .. }
-        | DeliveryRoute::Keet
-        | DeliveryRoute::Signal { .. }
-        | DeliveryRoute::Line { .. }
-        | DeliveryRoute::Mattermost { .. }
-        | DeliveryRoute::IMessage { .. } => true,
-        #[cfg(feature = "matrix-channel")]
-        DeliveryRoute::Matrix { .. } => true,
-    }
-}
-
-/// SHA-256 hex of a recipient id. The WAL audit frame must NOT carry the
-/// raw chat id (a live user identifier); the hash lets an operator
-/// correlate frames for the same recipient without leaking the id.
-fn recipient_hash(recipient: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(recipient.as_bytes());
-    let out = hasher.finalize();
-    out.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// SHA-256 hex of `dedup_key` — used as the claim filename so that
-/// keys containing filesystem-hostile characters (slashes, null bytes,
-/// colons on Windows) never reach the filesystem.  Same hash function
-/// as `recipient_hash`; kept separate for readability.
-fn claim_filename(dedup_key: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(dedup_key.as_bytes());
-    let out = hasher.finalize();
-    format!(
-        "{}.claimed",
-        out.iter().map(|b| format!("{b:02x}")).collect::<String>()
-    )
-}
-
-/// Write an atomic claim file for `item` BEFORE the channel send.
-///
-/// The file path is `home/PROACTIVE_INFLIGHT_DIR/<sha256(dedup_key)>.claimed`.
-/// Content is the item JSON (enough to reconstruct `dedup_key`,
-/// `is_failure`, `body`, `source` for the `crash_recovered` sidecar
-/// entry if the daemon crashes before this file is deleted).
-///
-/// Uses [`crate::util::atomic_write::atomic_write`] (tmp+fsync+rename)
-/// so a crash mid-write leaves a `.pid.tmp` orphan, NOT a partial
-/// `.claimed` file.  The eviction scan only reads `*.claimed` files,
-/// so orphan temps are harmlessly ignored.
-fn write_inflight_claim(
-    home: &Path,
-    item: &crate::proactive::ProactiveItem,
-) -> std::io::Result<()> {
-    let dir = home.join(PROACTIVE_INFLIGHT_DIR);
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join(claim_filename(&item.dedup_key));
-    let bytes = serde_json::to_vec(item)
-        .map_err(|e| std::io::Error::other(format!("claim serialise: {e}")))?;
-    crate::util::atomic_write::atomic_write(&path, &bytes)
-}
-
-/// Delete the claim file for `dedup_key` after a non-crash outcome
-/// (success, transport error, suppressed — anything except a process
-/// crash). Missing file is not an error (idempotent).
-fn delete_inflight_claim(home: &Path, dedup_key: &str) {
-    let path = home
-        .join(PROACTIVE_INFLIGHT_DIR)
-        .join(claim_filename(dedup_key));
-    // Best-effort: a delete failure here means the next tick's eviction
-    // will pick it up as crash_recovered, which is slightly wrong but
-    // safe (the item was already removed from the queue by the completed
-    // drain, so there is no double-send risk — the eviction's
-    // remove_by_key call is a no-op on an already-absent key).
-    let _ = std::fs::remove_file(&path);
-}
-
-/// Scan `home/PROACTIVE_INFLIGHT_DIR/*.claimed` for leftover claim
-/// files from a crashed tick.  For each surviving file:
-///   1. Parse the stored `ProactiveItem` to recover `dedup_key`,
-///      `is_failure`, `body`, `source`.
-///   2. Call `queue.remove_by_key` to evict it WITHOUT resending
-///      (the queue file on disk still has the item because the crash
-///      happened before `save_to`).
-///   3. Append a `crash_recovered` line to the sidecar so the
-///      operator can see the event (with `was_failure` for critical
-///      alerts).
-///   4. Delete the claim file.
-///
-/// Must be called BEFORE `queue.drain()` so the evicted keys are
-/// gone before the drain produces the next batch.
-fn evict_inflight_claimed(
-    home: &Path,
-    queue: &mut crate::proactive::ProactiveQueue,
-    sidecar_path: &Path,
-    now_unix: i64,
-) -> Vec<String> {
-    let mut evicted_keys: Vec<String> = Vec::new();
-    let dir = home.join(PROACTIVE_INFLIGHT_DIR);
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(e) => e,
-        Err(_) => return evicted_keys, // Dir missing → nothing to evict.
-    };
-    use std::io::Write;
-    let mut f_opt: Option<std::fs::File> = None;
-    let mut sidecar_failed = false;
-
-    for entry in entries.flatten() {
-        let fname = entry.file_name();
-        let name = fname.to_string_lossy();
-        if !name.ends_with(".claimed") {
-            continue; // skip .pid.tmp orphans
+        DeliveryRoute::Suppressed => {
+            crate::daemon::proactive_egress::record_policy_suppressed_once(
+                home,
+                wal_segment_path,
+                writer,
+                item,
+                queue_generation,
+                target_channel,
+                now_unix,
+            )
+            .await
+            .map_err(LiveRouteError::Durability)
         }
-        let claim_path = entry.path();
-        let bytes = match std::fs::read(&claim_path) {
-            Ok(b) => b,
-            Err(e) => {
-                warn!(path = %claim_path.display(), error = %e, "evict: could not read claim file; skipping");
-                continue;
-            }
-        };
-        let item: crate::proactive::ProactiveItem = match serde_json::from_slice(&bytes) {
-            Ok(i) => i,
-            Err(e) => {
-                warn!(path = %claim_path.display(), error = %e, "evict: claim file not valid JSON; deleting orphan");
-                let _ = std::fs::remove_file(&claim_path);
-                continue;
-            }
-        };
-        // Evict from the in-memory queue (no-op if already absent). The key
-        // is tracked so the H-1 reconcile commit removes it from the FRESH
-        // queue too at the tick's save point.
-        queue.remove_by_key(&item.dedup_key);
-        evicted_keys.push(item.dedup_key.clone());
-        // Append crash_recovered sidecar line.
-        let line = serde_json::to_string(&serde_json::json!({
-            "delivered_at_unix": now_unix,
-            "status": "crash_recovered",
-            "was_failure": item.is_failure,
-            "dedup_key": item.dedup_key,
-            "source": item.source,
-            "body": item.body,
-            "item": &item,
-        }))
-        .unwrap_or_default();
-        // Lazy-open the sidecar once, on the first crash_recovered entry. If
-        // it can't be opened, warn once and keep evicting WITHOUT a sidecar
-        // line — losing one audit line is far better than aborting recovery
-        // or writing to a discarded sink.
-        if f_opt.is_none() && !sidecar_failed {
-            match std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(sidecar_path)
-            {
-                Ok(f) => f_opt = Some(f),
-                Err(e) => {
-                    sidecar_failed = true;
-                    warn!(error = %e, "evict: could not open sidecar; crash_recovered entries not logged this tick");
-                }
-            }
-        }
-        if let Some(f) = f_opt.as_mut()
-            && let Err(e) = writeln!(f, "{line}")
-        {
-            warn!(error = %e, dedup_key = %item.dedup_key, "evict: sidecar write failed for crash_recovered");
-        }
-        // Delete the claim file — done regardless of sidecar write outcome.
-        if let Err(e) = std::fs::remove_file(&claim_path) {
-            warn!(path = %claim_path.display(), error = %e, "evict: could not delete claim file");
-        }
-        info!(
-            dedup_key = %item.dedup_key,
-            is_failure = item.is_failure,
-            "proactive evict: crash_recovered — item evicted without resend"
-        );
-        if let Err(error) = crate::cron::state::update_announce_result(
+        DeliveryRoute::SidecarOnly => crate::daemon::proactive_egress::record_sidecar_only_once(
             home,
-            &item.dedup_key,
-            crate::cron::state::DeliveryStatus::CrashUnknown,
-        ) {
-            warn!(dedup_key = %item.dedup_key, error = %error,
-                "failed to persist Cron crash-unknown delivery status");
+            wal_segment_path,
+            writer,
+            item,
+            queue_generation,
+            target_channel,
+            now_unix,
+        )
+        .await
+        .map_err(LiveRouteError::Durability),
+        DeliveryRoute::Telegram { chat_id } => {
+            let token = config.telegram_token.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Telegram proactive route lost its token".to_string(),
+                )
+            })?;
+            let channel =
+                crate::channels::telegram::TelegramChannel::new(token, config.telegram_user_id);
+            execute!(&chat_id, &channel)
+        }
+        DeliveryRoute::Slack { channel_id } => {
+            let bot = credentials.slack_bot_token.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Slack proactive route lost its bot token".to_string(),
+                )
+            })?;
+            let app = credentials.slack_app_token.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Slack proactive route lost its app token".to_string(),
+                )
+            })?;
+            let channel = crate::channels::slack::SlackChannel::new(bot, app);
+            execute!(&channel_id, &channel)
+        }
+        DeliveryRoute::Discord { channel_id } => {
+            let token = credentials.discord_bot_token.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Discord proactive route lost its token".to_string(),
+                )
+            })?;
+            let channel = crate::channels::discord::DiscordChannel::new(token).map_err(|_| {
+                LiveRouteError::AdapterConfiguration(
+                    "construct Discord proactive adapter: rejected".to_string(),
+                )
+            })?;
+            execute!(&channel_id, &channel)
+        }
+        DeliveryRoute::WhatsApp { recipient } => {
+            let access = credentials.whatsapp_token.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "WhatsApp proactive route lost its token".to_string(),
+                )
+            })?;
+            let phone_id = credentials.whatsapp_phone_id.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "WhatsApp proactive route lost its phone id".to_string(),
+                )
+            })?;
+            let verify = credentials.whatsapp_verify_token.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "WhatsApp proactive route lost its verify token".to_string(),
+                )
+            })?;
+            let channel = crate::channels::whatsapp::WhatsAppChannel::new(access, phone_id, verify);
+            execute!(&recipient, &channel)
+        }
+        DeliveryRoute::WhatsAppBaileys { recipient } => {
+            let url = credentials.whatsapp_baileys_url.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Baileys proactive route lost its URL".to_string(),
+                )
+            })?;
+            let token = credentials.whatsapp_baileys_token.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Baileys proactive route lost its token".to_string(),
+                )
+            })?;
+            let senders = credentials
+                .whatsapp_baileys_allowed_senders
+                .clone()
+                .ok_or_else(|| {
+                    LiveRouteError::AdapterConfiguration(
+                        "Baileys proactive route lost its sender policy".to_string(),
+                    )
+                })?;
+            let channel = crate::channels::whatsapp_baileys::WhatsAppBaileysChannel::new(
+                url,
+                token,
+                senders,
+                credentials.whatsapp_baileys_allowed_groups.as_deref(),
+                home.join("channel-state/whatsapp-baileys-cursor.json"),
+            )
+            .map_err(|_| {
+                LiveRouteError::AdapterConfiguration(
+                    "construct Baileys proactive adapter: rejected".to_string(),
+                )
+            })?;
+            execute!(&recipient, &channel)
+        }
+        DeliveryRoute::Keet => {
+            let url = credentials.keet_bridge_url.as_deref().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Keet proactive route lost its bridge URL".to_string(),
+                )
+            })?;
+            let token = credentials
+                .keet_bridge_bearer_token
+                .clone()
+                .ok_or_else(|| {
+                    LiveRouteError::AdapterConfiguration(
+                        "Keet proactive route lost its bearer token".to_string(),
+                    )
+                })?;
+            let topic = credentials.keet_topic.as_ref().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Keet proactive route lost its topic".to_string(),
+                )
+            })?;
+            let topic_capability = topic.expose();
+            let allowed_senders = credentials.keet_allowed_senders.as_deref().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Keet proactive route lost its sender policy".to_string(),
+                )
+            })?;
+            let channel = crate::channels::keet::KeetChannel::new(
+                url,
+                token,
+                topic_capability,
+                allowed_senders,
+                home.join(crate::channels::keet::DEFAULT_CURSOR_FILE),
+            )
+            .map_err(|_| {
+                LiveRouteError::AdapterConfiguration(
+                    "construct Keet proactive adapter: rejected".to_string(),
+                )
+            })?;
+            execute!(topic_capability, &channel)
+        }
+        DeliveryRoute::Signal { recipient } => {
+            let url = credentials.signal_cli_url.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Signal proactive route lost its CLI URL".to_string(),
+                )
+            })?;
+            let number = credentials.signal_phone_number.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Signal proactive route lost its phone number".to_string(),
+                )
+            })?;
+            let channel =
+                crate::channels::signal::SignalChannel::new(url, number).map_err(|_| {
+                    LiveRouteError::AdapterConfiguration(
+                        "construct Signal proactive adapter: rejected".to_string(),
+                    )
+                })?;
+            execute!(&recipient, &channel)
+        }
+        DeliveryRoute::Line { recipient } => {
+            let token = credentials
+                .line_channel_access_token
+                .clone()
+                .ok_or_else(|| {
+                    LiveRouteError::AdapterConfiguration(
+                        "LINE proactive route lost its access token".to_string(),
+                    )
+                })?;
+            let channel = crate::channels::line::LineChannel::new(token).map_err(|_| {
+                LiveRouteError::AdapterConfiguration(
+                    "construct LINE proactive adapter: rejected".to_string(),
+                )
+            })?;
+            execute!(&recipient, &channel)
+        }
+        DeliveryRoute::Mattermost { channel_id } => {
+            let url = credentials.mattermost_url.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Mattermost proactive route lost its URL".to_string(),
+                )
+            })?;
+            let token = credentials.mattermost_token.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Mattermost proactive route lost its token".to_string(),
+                )
+            })?;
+            let channel = crate::channels::mattermost::MattermostChannel::new(url, token);
+            execute!(&channel_id, &channel)
+        }
+        DeliveryRoute::IMessage { chat_guid } => {
+            let url = credentials.bluebubbles_url.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "BlueBubbles proactive route lost its URL".to_string(),
+                )
+            })?;
+            let password = credentials.bluebubbles_password.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "BlueBubbles proactive route lost its password".to_string(),
+                )
+            })?;
+            let channel = crate::channels::imessage_bluebubbles::BlueBubblesChannel::new(
+                url, password, None, None,
+            )
+            .map_err(|_| {
+                LiveRouteError::AdapterConfiguration(
+                    "construct BlueBubbles proactive adapter: rejected".to_string(),
+                )
+            })?;
+            execute!(&chat_guid, &channel)
+        }
+        #[cfg(feature = "matrix-channel")]
+        DeliveryRoute::Matrix { room_id } => {
+            let homeserver = credentials.matrix_homeserver.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Matrix proactive route lost its homeserver".to_string(),
+                )
+            })?;
+            let user_id = credentials.matrix_user_id.clone().ok_or_else(|| {
+                LiveRouteError::AdapterConfiguration(
+                    "Matrix proactive route lost its user id".to_string(),
+                )
+            })?;
+            let channel = crate::channels::matrix::MatrixChannel::new(
+                homeserver,
+                user_id,
+                credentials.matrix_password.clone(),
+                credentials.matrix_access_token.clone(),
+                credentials
+                    .matrix_store_path
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .map(PathBuf::from),
+            )
+            .with_policy(
+                credentials.matrix_allowed_user_id.clone(),
+                credentials.matrix_allowed_room_ids.clone(),
+                credentials.matrix_requires_encryption(),
+                writer.clone(),
+            );
+            execute!(&room_id, &channel)
         }
     }
-    // Flush if we opened the file.
-    if let Some(mut f) = f_opt {
-        let _ = f.flush();
-    }
-    evicted_keys
 }
 
-/// G-01 delivery tick — drains the queue + ACTUALLY SENDS each item to the
-/// operator's channel (the slice the consumer-half sidecar left open),
-/// then records the outcome. Async because `Channel::send_proactive` is
-/// async.
-///
-/// ## At-most-once delivery contract
-///
-/// The tick, for the whole drained batch:
-///   1. Writes an atomic claim file BEFORE each live send
-///      (`~/.neoth/proactive_inflight/<sha256(dedup_key)>.claimed`).
-///   2. Attempts every channel send + records each outcome.
-///   3. Saves the queue LAST (drained items removed → no re-drain).
-///   4. ONLY THEN deletes the batch's claim files.
-///
-/// A crash anytime before step 3 leaves the in-flight claim files on
-/// disk. On the next tick [`evict_inflight_claimed`] runs BEFORE
-/// `drain()`, finds the surviving files, evicts those keys from the
-/// queue (no resend), and records a `crash_recovered` entry in the
-/// sidecar. Deleting claims only AFTER the save (not per-item) is what
-/// makes the guarantee hold for a MULTI-item batch — a per-item delete
-/// would let an already-sent earlier item re-drain (queue not yet
-/// saved). The operator sees the event; `is_failure` items carry
-/// `was_failure: true` so critical alerts are never silently lost.
-///
-/// Returns the number of items LIVE-DELIVERED (status `delivered`).
+fn canonical_target_channel(resolved: Option<String>, item_channel: &str) -> Result<String, usize> {
+    let channel = resolved
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let item = item_channel.trim();
+            (!item.is_empty()).then_some(item)
+        })
+        .unwrap_or(LOCAL_INBOX_CHANNEL)
+        .to_string();
+    if channel.len() > MAX_PROACTIVE_CHANNEL_BYTES {
+        return Err(channel.len());
+    }
+    Ok(channel)
+}
+
+/// Disabled proactivity still projects due items into the private operator
+/// inbox through the exact same WAL/claim authority chain. It performs no
+/// external transport and never uses the superseded raw JSONL writer.
+async fn run_proactive_sidecar_tick(
+    home: &Path,
+    wal_segment_path: &Path,
+    writer: &WalWriterHandle,
+    now_unix: i64,
+) -> Result<usize, String> {
+    use crate::proactive::ProactiveQueue;
+
+    crate::daemon::proactive_egress::recover_pending_claims(
+        home,
+        wal_segment_path,
+        writer,
+        now_unix,
+    )
+    .await?;
+    let queue_path = home.join("proactive_queue.json");
+    let drained = tokio::task::spawn_blocking(move || {
+        if !queue_path.exists() {
+            return Ok(Vec::new());
+        }
+        ProactiveQueue::modify(&queue_path, |queue| {
+            let pruned = queue.prune_expired(now_unix);
+            (pruned > 0, ())
+        })?;
+        let mut snapshot = ProactiveQueue::load_from(&queue_path)?;
+        Ok::<_, anyhow::Error>(snapshot.drain_with_generations(now_unix, PROACTIVE_PER_TICK_CAP))
+    })
+    .await
+    .map_err(|error| format!("join disabled proactive queue selection: {error}"))?
+    .map_err(|error| format!("select disabled proactive queue: {error:#}"))?;
+    let mut projected = 0usize;
+    for (item, queue_generation) in drained {
+        let target_channel = canonical_target_channel(None, &item.channel).map_err(|bytes| {
+            format!("validated proactive item produced an oversized {bytes}-byte target channel")
+        })?;
+        if crate::daemon::proactive_egress::record_sidecar_only_once(
+            home,
+            wal_segment_path,
+            writer,
+            item,
+            &queue_generation,
+            &target_channel,
+            now_unix,
+        )
+        .await?
+        .is_some()
+        {
+            projected += 1;
+        }
+    }
+    Ok(projected)
+}
+
+/// Drain eligible queue items and route all live adapters through the durable
+/// Prepared -> Intent -> Armed -> transport -> Result egress transaction.
 pub async fn run_proactive_delivery_tick(
     home: &Path,
+    wal_segment_path: &Path,
     config: &FreedomConfig,
     credentials: &Credentials,
     writer: &WalWriterHandle,
@@ -660,9 +701,20 @@ pub async fn run_proactive_delivery_tick(
 ) -> Result<usize, String> {
     use crate::proactive::ProactiveQueue;
 
-    // GOLD-FEAT-11 — quiet_hours gate: suppress delivery when the current UTC
-    // hour falls inside the configured quiet window. Wrap-around supported:
-    // [22, 7] = suppress 22:00–06:59 UTC.
+    // Recovery is deliberately first. No malformed config, disabled switch,
+    // quiet-hours, idle policy or routing failure may strand an Armed claim.
+    crate::daemon::proactive_egress::recover_pending_claims(
+        home,
+        wal_segment_path,
+        writer,
+        now_unix,
+    )
+    .await?;
+
+    if !config.proactive.enabled {
+        return Ok(0);
+    }
+
     if let Some([start, end]) = config.proactive.quiet_hours_utc {
         let utc_hour = ((now_unix % 86_400) / 3600) as u8;
         let suppressed = if start <= end {
@@ -671,41 +723,17 @@ pub async fn run_proactive_delivery_tick(
             utc_hour >= start || utc_hour < end
         };
         if suppressed {
-            tracing::debug!(
-                utc_hour,
-                quiet_start = start,
-                quiet_end = end,
-                "proactive_dispatcher: quiet_hours gate suppressing delivery"
-            );
             return Ok(0);
         }
     }
 
-    // GOLD-FEAT-11 — idle_only gate: suppress delivery when the operator has
-    // been active within the last `idle_only_window_secs`.
     if config.proactive.idle_only {
         let views_db = home.join("views.db");
         match tokio::fs::try_exists(&views_db).await {
             Ok(true) => {}
-            Ok(false) => {
-                tracing::debug!(
-                    path = %views_db.display(),
-                    "proactive_dispatcher: idle_only gate — activity database absent, suppressing"
-                );
-                return Ok(0);
-            }
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    path = %views_db.display(),
-                    "proactive_dispatcher: idle_only gate — activity database state unknown, suppressing"
-                );
-                return Ok(0);
-            }
+            Ok(false) | Err(_) => return Ok(0),
         }
-
-        let window = config.proactive.idle_only_window_secs;
-        let window_i64 = i64::try_from(window).unwrap_or(i64::MAX);
+        let window_i64 = i64::try_from(config.proactive.idle_only_window_secs).unwrap_or(i64::MAX);
         let cutoff_ns = now_unix
             .saturating_sub(window_i64)
             .saturating_mul(1_000_000_000);
@@ -722,680 +750,134 @@ pub async fn run_proactive_delivery_tick(
                     |row| row.get(0),
                 )
                 .map_err(|error| format!("query last operator activity: {error}"))?;
-            Ok(last_ns.is_some_and(|ts| ts > cutoff_ns))
+            Ok(last_ns.is_some_and(|timestamp| timestamp > cutoff_ns))
         })
         .await;
-
         match activity {
-            Ok(Ok(true)) => {
-                tracing::debug!(
-                    window_secs = window,
-                    "proactive_dispatcher: idle_only gate — operator recently active, suppressing"
-                );
-                return Ok(0);
-            }
             Ok(Ok(false)) => {}
-            Ok(Err(error)) => {
-                tracing::warn!(
-                    %error,
-                    "proactive_dispatcher: idle_only gate could not confirm inactivity, suppressing"
-                );
-                return Ok(0);
-            }
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    "proactive_dispatcher: idle_only activity task failed, suppressing"
-                );
-                return Ok(0);
-            }
+            Ok(Ok(true)) | Ok(Err(_)) | Err(_) => return Ok(0),
         }
     }
 
     let queue_path = home.join("proactive_queue.json");
-    if !queue_path.exists() {
-        return Ok(0);
-    }
-
-    // GOLD-FEAT-13: validate the operator's routing policy before touching the
-    // queue or any in-flight claims. Missing is the loader's explicit opt-in
-    // default; malformed or unreadable policy blocks the tick so an item can
-    // never fall back to a different channel silently.
-    let routing = crate::channels::routing::ChannelRouting::load_from(
-        &home.join(crate::channels::routing::CHANNEL_ROUTING_FILE),
-    )
-    .map_err(|e| format!("channel routing load failed: {e:#}"))?;
-
-    let mut queue =
-        ProactiveQueue::load_from(&queue_path).map_err(|e| format!("queue load failed: {e}"))?;
-
-    // Evict any surviving claim files from a previous crashed tick BEFORE
-    // draining — so those keys are gone and cannot be re-drained.
-    let sidecar_path = home.join(PROACTIVE_DELIVERED_SIDECAR);
-    let evicted_keys = evict_inflight_claimed(home, &mut queue, &sidecar_path, now_unix);
-
-    if queue.is_empty() && evicted_keys.is_empty() {
-        return Ok(0);
-    }
-    let len_before = queue.len();
-    let drained = queue.drain(now_unix, PROACTIVE_PER_TICK_CAP);
-    if drained.is_empty() {
-        // JV-PRO-10: drain may have pruned expired items (or eviction may
-        // have removed crashed claims) even when nothing was eligible to
-        // fire — reconcile those removals against the FRESH queue (H-1:
-        // never blind-save the working copy over concurrent enqueues).
-        if queue.len() < len_before || !evicted_keys.is_empty() {
-            ProactiveQueue::modify(&queue_path, |fresh| {
-                for key in &evicted_keys {
-                    fresh.remove_by_key(key);
-                }
-                let pruned = fresh.prune_expired(now_unix);
-                (pruned > 0 || !evicted_keys.is_empty(), ())
-            })
-            .map_err(|e| format!("queue save after ttl-prune failed: {e}"))?;
+    let routing_path = home.join(crate::channels::routing::CHANNEL_ROUTING_FILE);
+    let (routing, drained) = tokio::task::spawn_blocking(move || {
+        if !queue_path.exists() {
+            return Ok((
+                crate::channels::routing::ChannelRouting::default(),
+                Vec::new(),
+            ));
         }
+        let routing = crate::channels::routing::ChannelRouting::load_from(&routing_path)
+            .map_err(|error| anyhow::anyhow!("channel routing load failed: {error:#}"))?;
+        ProactiveQueue::modify(&queue_path, |queue| {
+            let pruned = queue.prune_expired(now_unix);
+            (pruned > 0, ())
+        })?;
+        let mut snapshot = ProactiveQueue::load_from(&queue_path)?;
+        let drained = snapshot.drain_with_generations(now_unix, PROACTIVE_PER_TICK_CAP);
+        Ok::<_, anyhow::Error>((routing, drained))
+    })
+    .await
+    .map_err(|error| format!("join proactive queue/routing selection: {error}"))?
+    .map_err(|error| format!("select proactive queue/routing: {error:#}"))?;
+    if drained.is_empty() {
         return Ok(0);
     }
 
-    let autonomy_policy = config.autonomy_policy();
-    // The daemon supplies config + effective credentials from one coherent
-    // runtime snapshot. Reloading credentials here would permit a backend
-    // migration between the two reads and could silently drain live items to
-    // SidecarOnly under a mixed generation.
-    let mut records: Vec<(crate::proactive::ProactiveItem, ProactiveStatus)> =
-        Vec::with_capacity(drained.len());
+    let policy = config.autonomy_policy();
+    let egress = crate::daemon::proactive_egress::ProactiveEgressContext::new(
+        home,
+        wal_segment_path,
+        writer,
+        now_unix,
+    );
     let mut delivered = 0usize;
-    // CLAW-01: dedup_keys whose claim file was written this tick. Claims are
-    // deleted ONLY after the queue save (see the save tail) so the WHOLE batch
-    // stays crash-protected — deleting per-item mid-loop would let an
-    // already-sent earlier item re-drain (queue not yet saved) → double-fire.
-    let mut claimed_keys: Vec<String> = Vec::new();
-    // Reuse one lazy Matrix client for every Matrix item in this bounded tick.
-    // Credentials are loaded once above, so constructing more than one would
-    // only repeat session restore/whoami and contend on the same crypto store.
-    #[cfg(feature = "matrix-channel")]
-    let mut matrix_channel: Option<crate::channels::matrix::MatrixChannel> = None;
-
-    for item in drained {
-        // GOLD-FEAT-13 — route by the item's `source` (per-purpose), falling
-        // back to the item's own channel when no routing rule applies.
-        let target_channel = routing
-            .resolve_channel(&item.source, item.is_failure)
-            .unwrap_or_else(|| item.channel.clone());
-
-        // GOLD-ADAPT-OH-08 — reflection observations (source = "g_01_mini")
-        // are surface-only and MUST NEVER be auto-posted into chat, Telegram,
-        // Slack, Discord, or WhatsApp regardless of autonomy level or routing
-        // config. The staged_observations.jsonl path is the real consumer;
-        // the operator reads them via `neoth proactive intelligence`.
-        // Items that reach the queue still land in proactive_delivered.jsonl
-        // (sidecar-only) so no data is lost — the operator can always see
-        // what the reflection cron produced.
+    for (item, queue_generation) in drained {
+        let target_channel = match canonical_target_channel(
+            routing.resolve_channel(&item.source, item.is_failure),
+            &item.channel,
+        ) {
+            Ok(channel) => channel,
+            Err(channel_bytes) => {
+                warn!(
+                    channel_bytes,
+                    dedup_key = %item.dedup_key,
+                    "proactive routing selected an invalid channel; settling this item as failed"
+                );
+                let status =
+                    crate::daemon::proactive_egress::record_adapter_configuration_error_once(
+                        home,
+                        wal_segment_path,
+                        writer,
+                        item,
+                        &queue_generation,
+                        LOCAL_INBOX_CHANNEL,
+                        now_unix,
+                    )
+                    .await?;
+                if let Some(status) = status {
+                    delivered += usize::from(status.is_delivered());
+                }
+                continue;
+            }
+        };
         let route = if item.source == "g_01_mini" {
             DeliveryRoute::SidecarOnly
         } else {
-            plan_delivery(
-                &target_channel,
-                &autonomy_policy,
-                config,
-                &routing,
-                credentials,
-            )
+            plan_delivery(&target_channel, &policy, config, &routing, credentials)
         };
-
-        // At-most-once guard: write the claim file BEFORE any live send.
-        // Suppressed + SidecarOnly never touch the network, so no claim
-        // file is needed for them.
-        let needs_claim = route_needs_claim(&route);
-        if needs_claim {
-            match write_inflight_claim(home, &item) {
-                // Track the key so its claim is deleted AFTER the queue save.
-                Ok(()) => claimed_keys.push(item.dedup_key.clone()),
-                // A claim-write failure is non-fatal: fall back to the old
-                // at-least-once behaviour for this ONE item rather than
-                // dropping it silently. Log prominently for the operator.
-                Err(e) => warn!(
-                    dedup_key = %item.dedup_key,
-                    error = %e,
-                    "proactive: inflight claim write failed; proceeding without at-most-once guard"
-                ),
-            }
-        }
-
-        let (status, recipient) = match route {
-            DeliveryRoute::Suppressed => (ProactiveStatus::Suppressed, String::new()),
-            DeliveryRoute::SidecarOnly => (ProactiveStatus::SidecarOnly, String::new()),
-            DeliveryRoute::Telegram { chat_id } => {
-                // Safe: plan_delivery returned Telegram only when the token
-                // is present. Clone the secret only at the send site.
-                let token = config
-                    .telegram_token
-                    .clone()
-                    .expect("plan_delivery guarantees telegram_token is Some");
-                let channel =
-                    crate::channels::telegram::TelegramChannel::new(token, config.telegram_user_id);
-                use crate::channels::Channel;
-                match channel.send_proactive(&chat_id, &item.body).await {
-                    Ok(_) => {
-                        delivered += 1;
-                        (ProactiveStatus::Delivered, chat_id)
-                    }
-                    Err(e) => {
-                        warn!(
-                            channel = %item.channel,
-                            dedup_key = %item.dedup_key,
-                            error = %e,
-                            "proactive send failed; recorded as failed (not re-enqueued)"
-                        );
-                        (ProactiveStatus::Failed, chat_id)
-                    }
-                }
-            }
-            DeliveryRoute::Slack { channel_id } => {
-                // Safe: plan_delivery returned Slack only when both tokens are
-                // present. channel_id is the operator's configured destination.
-                let bot = credentials
-                    .slack_bot_token
-                    .clone()
-                    .expect("plan_delivery guarantees slack_bot_token is Some");
-                let app = credentials
-                    .slack_app_token
-                    .clone()
-                    .expect("plan_delivery guarantees slack_app_token is Some");
-                let channel = crate::channels::slack::SlackChannel::new(bot, app);
-                use crate::channels::Channel;
-                match channel.send_proactive(&channel_id, &item.body).await {
-                    Ok(_) => {
-                        delivered += 1;
-                        (ProactiveStatus::Delivered, channel_id)
-                    }
-                    Err(e) => {
-                        warn!(
-                            channel = "slack",
-                            dedup_key = %item.dedup_key,
-                            error = %e,
-                            "proactive send failed; recorded as failed (not re-enqueued)"
-                        );
-                        (ProactiveStatus::Failed, channel_id)
-                    }
-                }
-            }
-            DeliveryRoute::Discord { channel_id } => {
-                let token = credentials
-                    .discord_bot_token
-                    .clone()
-                    .expect("plan_delivery guarantees discord_bot_token is Some");
-                use crate::channels::Channel;
-                match crate::channels::discord::DiscordChannel::new(token) {
-                    Ok(channel) => match channel.send_proactive(&channel_id, &item.body).await {
-                        Ok(_) => {
-                            delivered += 1;
-                            (ProactiveStatus::Delivered, channel_id)
-                        }
-                        Err(e) => {
-                            warn!(
-                                channel = "discord",
-                                dedup_key = %item.dedup_key,
-                                error = %e,
-                                "proactive send failed; recorded as failed (not re-enqueued)"
-                            );
-                            (ProactiveStatus::Failed, channel_id)
-                        }
-                    },
-                    Err(e) => {
-                        warn!(
-                            channel = "discord",
-                            dedup_key = %item.dedup_key,
-                            error = %e,
-                            "discord adapter construct failed; recorded as failed"
-                        );
-                        (ProactiveStatus::Failed, channel_id)
-                    }
-                }
-            }
-            DeliveryRoute::WhatsApp { recipient } => {
-                // Safe: plan_delivery returned WhatsApp only when all three
-                // credential fields are present. recipient = operator-own E.164.
-                let access = credentials
-                    .whatsapp_token
-                    .clone()
-                    .expect("plan_delivery guarantees whatsapp_token is Some");
-                let phone_id = credentials
-                    .whatsapp_phone_id
-                    .clone()
-                    .expect("plan_delivery guarantees whatsapp_phone_id is Some");
-                let verify = credentials
-                    .whatsapp_verify_token
-                    .clone()
-                    .expect("plan_delivery guarantees whatsapp_verify_token is Some");
-                let channel =
-                    crate::channels::whatsapp::WhatsAppChannel::new(access, phone_id, verify);
-                use crate::channels::Channel;
-                match channel.send_proactive(&recipient, &item.body).await {
-                    Ok(_) => {
-                        delivered += 1;
-                        (ProactiveStatus::Delivered, recipient)
-                    }
-                    Err(e) => {
-                        warn!(
-                            channel = "whatsapp",
-                            dedup_key = %item.dedup_key,
-                            error = %e,
-                            "proactive send failed; recorded as failed (not re-enqueued)"
-                        );
-                        (ProactiveStatus::Failed, recipient)
-                    }
-                }
-            }
-            DeliveryRoute::WhatsAppBaileys { recipient } => {
-                let url = credentials
-                    .whatsapp_baileys_url
-                    .clone()
-                    .expect("plan_delivery guarantees whatsapp_baileys_url is Some");
-                let token = credentials
-                    .whatsapp_baileys_token
-                    .clone()
-                    .expect("plan_delivery guarantees whatsapp_baileys_token is Some");
-                let senders = credentials
-                    .whatsapp_baileys_allowed_senders
-                    .clone()
-                    .expect("plan_delivery guarantees whatsapp_baileys_allowed_senders is Some");
-                use crate::channels::Channel;
-                match crate::channels::whatsapp_baileys::WhatsAppBaileysChannel::new(
-                    url,
-                    token,
-                    senders,
-                    credentials.whatsapp_baileys_allowed_groups.as_deref(),
-                    home.join("channel-state/whatsapp-baileys-cursor.json"),
-                ) {
-                    Ok(channel) => match channel.send_proactive(&recipient, &item.body).await {
-                        Ok(_) => {
-                            delivered += 1;
-                            (ProactiveStatus::Delivered, recipient)
-                        }
-                        Err(error) => {
-                            warn!(
-                                channel = "whatsapp_baileys",
-                                dedup_key = %item.dedup_key,
-                                error = %error,
-                                "proactive Baileys send failed; recorded as failed (not re-enqueued)"
-                            );
-                            (ProactiveStatus::Failed, recipient)
-                        }
-                    },
-                    Err(error) => {
-                        warn!(
-                            channel = "whatsapp_baileys",
-                            dedup_key = %item.dedup_key,
-                            error = %error,
-                            "Baileys adapter construction failed; recorded as failed"
-                        );
-                        (ProactiveStatus::Failed, recipient)
-                    }
-                }
-            }
-            DeliveryRoute::Keet => {
-                let url = credentials
-                    .keet_bridge_url
-                    .as_deref()
-                    .expect("plan_delivery guarantees keet_bridge_url is Some");
-                let token = credentials
-                    .keet_bridge_bearer_token
-                    .clone()
-                    .expect("plan_delivery guarantees keet_bridge_bearer_token is Some");
-                let topic = credentials
-                    .keet_topic
-                    .as_ref()
-                    .expect("plan_delivery guarantees keet_topic is Some");
-                let topic_capability = topic.expose();
-                let topic_alias = crate::channels::keet::topic_alias(topic_capability)
-                    .expect("plan_delivery guarantees a canonical Keet topic");
-                let allowed_senders = credentials
-                    .keet_allowed_senders
-                    .as_deref()
-                    .expect("plan_delivery guarantees keet_allowed_senders is Some");
-                use crate::channels::Channel;
-                match crate::channels::keet::KeetChannel::new(
-                    url,
-                    token,
-                    topic_capability,
-                    allowed_senders,
-                    home.join(crate::channels::keet::DEFAULT_CURSOR_FILE),
-                ) {
-                    Ok(channel) => match channel.send_proactive(topic_capability, &item.body).await
-                    {
-                        Ok(_) => {
-                            delivered += 1;
-                            (ProactiveStatus::Delivered, topic_alias)
-                        }
-                        Err(error) => {
-                            warn!(
-                                channel = "keet",
-                                dedup_key = %item.dedup_key,
-                                error = %error,
-                                "proactive Keet companion send failed; recorded as failed"
-                            );
-                            (ProactiveStatus::Failed, topic_alias)
-                        }
-                    },
-                    Err(error) => {
-                        warn!(
-                            channel = "keet",
-                            dedup_key = %item.dedup_key,
-                            error = %error,
-                            "Keet companion configuration rejected; recorded as failed"
-                        );
-                        (ProactiveStatus::Failed, topic_alias)
-                    }
-                }
-            }
-            DeliveryRoute::Signal { recipient } => {
-                // Safe: plan_delivery returned Signal only when url + number
-                // are present. recipient = operator-own configured value.
-                let url = credentials
-                    .signal_cli_url
-                    .clone()
-                    .expect("plan_delivery guarantees signal_cli_url is Some");
-                let number = credentials
-                    .signal_phone_number
-                    .clone()
-                    .expect("plan_delivery guarantees signal_phone_number is Some");
-                use crate::channels::Channel;
-                match crate::channels::signal::SignalChannel::new(url, number) {
-                    Ok(channel) => match channel.send_proactive(&recipient, &item.body).await {
-                        Ok(_) => {
-                            delivered += 1;
-                            (ProactiveStatus::Delivered, recipient)
-                        }
-                        Err(e) => {
-                            warn!(
-                                channel = "signal",
-                                dedup_key = %item.dedup_key,
-                                error = %e,
-                                "proactive send failed; recorded as failed (not re-enqueued)"
-                            );
-                            (ProactiveStatus::Failed, recipient)
-                        }
-                    },
-                    Err(e) => {
-                        warn!(
-                            channel = "signal",
-                            dedup_key = %item.dedup_key,
-                            error = %e,
-                            "signal adapter construct failed; recorded as failed"
-                        );
-                        (ProactiveStatus::Failed, recipient)
-                    }
-                }
-            }
-            DeliveryRoute::Line { recipient } => {
-                let token = credentials
-                    .line_channel_access_token
-                    .clone()
-                    .expect("plan_delivery guarantees line_channel_access_token is Some");
-                use crate::channels::Channel;
-                match crate::channels::line::LineChannel::new(token) {
-                    Ok(channel) => match channel.send_proactive(&recipient, &item.body).await {
-                        Ok(_) => {
-                            delivered += 1;
-                            (ProactiveStatus::Delivered, recipient)
-                        }
-                        Err(e) => {
-                            warn!(
-                                channel = "line",
-                                dedup_key = %item.dedup_key,
-                                error = %e,
-                                "proactive send failed; recorded as failed (not re-enqueued)"
-                            );
-                            (ProactiveStatus::Failed, recipient)
-                        }
-                    },
-                    Err(e) => {
-                        warn!(
-                            channel = "line",
-                            dedup_key = %item.dedup_key,
-                            error = %e,
-                            "line adapter construct failed; recorded as failed"
-                        );
-                        (ProactiveStatus::Failed, recipient)
-                    }
-                }
-            }
-            DeliveryRoute::Mattermost { channel_id } => {
-                let url = credentials
-                    .mattermost_url
-                    .clone()
-                    .expect("plan_delivery guarantees mattermost_url is Some");
-                let token = credentials
-                    .mattermost_token
-                    .clone()
-                    .expect("plan_delivery guarantees mattermost_token is Some");
-                let channel = crate::channels::mattermost::MattermostChannel::new(url, token);
-                use crate::channels::Channel;
-                match channel.send_proactive(&channel_id, &item.body).await {
-                    Ok(_) => {
-                        delivered += 1;
-                        (ProactiveStatus::Delivered, channel_id)
-                    }
-                    Err(e) => {
-                        warn!(
-                            channel = "mattermost",
-                            dedup_key = %item.dedup_key,
-                            error = %e,
-                            "proactive send failed; recorded as failed (not re-enqueued)"
-                        );
-                        (ProactiveStatus::Failed, channel_id)
-                    }
-                }
-            }
-            DeliveryRoute::IMessage { chat_guid } => {
-                let url = credentials
-                    .bluebubbles_url
-                    .clone()
-                    .expect("plan_delivery guarantees bluebubbles_url is Some");
-                let password = credentials
-                    .bluebubbles_password
-                    .clone()
-                    .expect("plan_delivery guarantees bluebubbles_password is Some");
-                use crate::channels::Channel;
-                match crate::channels::imessage_bluebubbles::BlueBubblesChannel::new(
-                    url, password, None, None,
-                ) {
-                    Ok(channel) => match channel.send_proactive(&chat_guid, &item.body).await {
-                        Ok(_) => {
-                            delivered += 1;
-                            (ProactiveStatus::Delivered, chat_guid)
-                        }
-                        Err(e) => {
-                            warn!(
-                                channel = "imessage_bluebubbles",
-                                dedup_key = %item.dedup_key,
-                                error = %e,
-                                "proactive send failed; recorded as failed (not re-enqueued)"
-                            );
-                            (ProactiveStatus::Failed, chat_guid)
-                        }
-                    },
-                    Err(e) => {
-                        warn!(
-                            channel = "imessage_bluebubbles",
-                            dedup_key = %item.dedup_key,
-                            error = %e,
-                            "bluebubbles adapter construct failed; recorded as failed"
-                        );
-                        (ProactiveStatus::Failed, chat_guid)
-                    }
-                }
-            }
-            #[cfg(feature = "matrix-channel")]
-            DeliveryRoute::Matrix { room_id } => {
-                let channel = matrix_channel.get_or_insert_with(|| {
-                    let homeserver = credentials
-                        .matrix_homeserver
-                        .clone()
-                        .expect("plan_delivery guarantees matrix_homeserver is Some");
-                    let user_id = credentials
-                        .matrix_user_id
-                        .clone()
-                        .expect("plan_delivery guarantees matrix_user_id is Some");
-                    crate::channels::matrix::MatrixChannel::new(
-                        homeserver,
-                        user_id,
-                        credentials.matrix_password.clone(),
-                        credentials.matrix_access_token.clone(),
-                        credentials
-                            .matrix_store_path
-                            .as_deref()
-                            .filter(|value| !value.trim().is_empty())
-                            .map(PathBuf::from),
-                    )
-                    .with_policy(
-                        credentials.matrix_allowed_user_id.clone(),
-                        credentials.matrix_allowed_room_ids.clone(),
-                        credentials.matrix_requires_encryption(),
-                        writer.clone(),
-                    )
-                });
-                use crate::channels::Channel;
-                match channel.send_proactive(&room_id, &item.body).await {
-                    Ok(_) => {
-                        delivered += 1;
-                        (ProactiveStatus::Delivered, room_id)
-                    }
-                    Err(e) => {
-                        warn!(
-                            channel = "matrix",
-                            dedup_key = %item.dedup_key,
-                            error = %e,
-                            "proactive send failed; recorded as failed (not re-enqueued)"
-                        );
-                        (ProactiveStatus::Failed, room_id)
-                    }
-                }
-            }
-        };
-
-        // Distinct WAL frame (0x3A) so an operator can grep exactly when
-        // the daemon spoke UNPROMPTED. recipient is hashed, never raw.
-        // GOLD-FEAT-13: log the ROUTED target channel (where it actually went),
-        // not the item's original channel tag.
-        let payload = serde_json::to_vec(&serde_json::json!({
-            "channel": target_channel,
-            "recipient_hash": recipient_hash(&recipient),
-            "dedup_key": item.dedup_key,
-            "source": item.source,
-            "status": status.as_str(),
-            "autonomy": autonomy_policy.level().as_str(),
-            "ts_unix": now_unix,
-        }))
-        .map_err(|error| format!("serialize PROACTIVE_SENT audit payload: {error}"))?;
-        let header =
-            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_PROACTIVE_SENT, &payload)
-                .build();
-        if let Err(e) = writer.append(header, payload).await {
-            warn!(error = %e, "PROACTIVE_SENT WAL append failed (best-effort audit frame)");
-        }
-
-        let cron_status = match status {
-            ProactiveStatus::Delivered => crate::cron::state::DeliveryStatus::Delivered,
-            ProactiveStatus::Failed => crate::cron::state::DeliveryStatus::Failed,
-            ProactiveStatus::Suppressed => crate::cron::state::DeliveryStatus::Suppressed,
-            ProactiveStatus::SidecarOnly => crate::cron::state::DeliveryStatus::SidecarOnly,
-        };
-        crate::cron::state::update_announce_result(home, &item.dedup_key, cron_status).map_err(
-            |error| {
-                format!(
-                    "persist correlated Cron delivery result for {}: {error:#}",
-                    item.dedup_key
+        let item_for_configuration_failure = item.clone();
+        let status = match deliver_live_route(
+            &egress,
+            credentials,
+            config,
+            item,
+            &queue_generation,
+            &target_channel,
+            route,
+        )
+        .await
+        {
+            Ok(status) => status,
+            Err(LiveRouteError::Durability(error)) => return Err(error),
+            Err(LiveRouteError::AdapterConfiguration(error)) => {
+                warn!(
+                    channel = %target_channel,
+                    dedup_key = %item_for_configuration_failure.dedup_key,
+                    error = %error,
+                    "proactive adapter configuration rejected; settling this item as failed"
+                );
+                crate::daemon::proactive_egress::record_adapter_configuration_error_once(
+                    home,
+                    wal_segment_path,
+                    writer,
+                    item_for_configuration_failure,
+                    &queue_generation,
+                    &target_channel,
+                    now_unix,
                 )
-            },
-        )?;
-        records.push((item, status));
-    }
-
-    append_delivery_records(&sidecar_path, &records, now_unix)
-        .map_err(|e| format!("sidecar append failed: {e}"))?;
-
-    // Saved LAST — at-most-once across a mid-send crash (claim files
-    // handle the crash window; this save removes items from the queue
-    // file so they don't re-drain on the next tick). Review H-1: the save
-    // RECONCILES against the freshly reloaded queue instead of blind-
-    // saving the pre-delivery working copy — items producers enqueued
-    // while the channel sends ran survive; delivered/evicted keys are
-    // removed and the drain budget is recorded on the fresh state.
-    let removed_keys: Vec<String> = evicted_keys
-        .iter()
-        .cloned()
-        .chain(records.iter().map(|(item, _)| item.dedup_key.clone()))
-        .collect();
-    let budget_used = records.len();
-    // Accepted edge-case: if this save fails (e.g. disk full or I/O error),
-    // the claim files written above are NOT deleted (we never reach the
-    // `delete_inflight_claim` loop below). On the next tick,
-    // `evict_inflight_claimed` will find those surviving claim files and
-    // record them as `crash_recovered` — items will NOT be resent, but the
-    // daily budget will undercount for this tick because `commit_drain`
-    // never ran (eviction does not charge budget). This is accepted: a
-    // failing queue-save means the disk is already in serious trouble and
-    // the error propagates loudly to the caller; operator intervention is
-    // required regardless of the budget counter.
-    ProactiveQueue::modify(&queue_path, |fresh| {
-        fresh.commit_drain(&removed_keys, budget_used, now_unix);
-        fresh.prune_expired(now_unix);
-        (true, ())
-    })
-    .map_err(|e| format!("queue save after delivery failed: {e}"))?;
-
-    // CLAW-01: claims are deleted ONLY now — after the queue save is durable.
-    // A crash before the save leaves EVERY in-flight claim on disk, so the
-    // next tick's `evict_inflight_claimed` drops the WHOLE batch (no resend).
-    // (A crash in the tiny window between this save and the deletes below
-    // just leaves stale claims → the next tick records a harmless
-    // `crash_recovered` for already-delivered items; safe, never a resend.)
-    for key in &claimed_keys {
-        delete_inflight_claim(home, key);
+                .await?
+            }
+        };
+        let Some(status) = status else { continue };
+        delivered += usize::from(status.is_delivered());
     }
     Ok(delivered)
-}
-
-/// Append delivery records (item + outcome status) to the JSONL ledger.
-/// Distinct from [`append_to_sidecar`] (the gate-off sidecar-only path)
-/// because each line carries the live-send `status`.
-fn append_delivery_records(
-    sidecar_path: &Path,
-    records: &[(crate::proactive::ProactiveItem, ProactiveStatus)],
-    now_unix: i64,
-) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(sidecar_path)?;
-    for (item, status) in records {
-        let line = serde_json::to_string(&serde_json::json!({
-            "delivered_at_unix": now_unix,
-            "status": status.as_str(),
-            "item": item,
-        }))
-        .unwrap_or_default();
-        writeln!(f, "{line}")?;
-    }
-    f.flush()?;
-    Ok(())
 }
 
 /// Spawn the daemon-side drain loop. Matches the doctor_cron /
 /// reflection_cron pattern. Returns the JoinHandle the daemon's
 /// shutdown path can `.abort()`.
 ///
-/// G-01 (Session 28d): each tick reads `FreedomConfig` FRESH so a mid-run
-/// `proactive.enabled` flip (or autonomy change) takes effect without a
-/// daemon restart. When `proactive.enabled` is true the tick runs the
-/// channel-delivery path (sends to the operator's channel + records
-/// outcome); when false it falls back to the sidecar-only drain (the
-/// pre-delivery behaviour — items still land in the JSONL ledger).
+/// Each tick reads `FreedomConfig` fresh so a mid-run `proactive.enabled` flip
+/// or autonomy change takes effect without a daemon restart. Recovery always
+/// runs first. Enabled items use the resolved live route; disabled items settle
+/// through the same WAL transaction as `SidecarOnly`, visible in the private
+/// CLI/GUI operator inbox without invoking external transport.
 pub fn spawn_proactive_drain_loop(
     home: PathBuf,
+    wal_segment_path: PathBuf,
     interval_secs: u64,
     writer: WalWriterHandle,
 ) -> JoinHandle<()> {
@@ -1410,6 +892,22 @@ pub fn spawn_proactive_drain_loop(
         loop {
             ticker.tick().await;
             let now_unix = crate::time::utc_now().timestamp();
+            // Claim recovery precedes config loading and every delivery gate.
+            // A malformed/disabled config must never strand an Armed effect.
+            if let Err(error) = crate::daemon::proactive_egress::recover_pending_claims(
+                &home,
+                &wal_segment_path,
+                &writer,
+                now_unix,
+            )
+            .await
+            {
+                warn!(
+                    error = %error,
+                    "proactive tick: durable claim recovery failed; all delivery blocked"
+                );
+                continue;
+            }
             // One strict fresh snapshot per tick — honours mid-run changes
             // without letting malformed policy masquerade as disabled defaults.
             let runtime = match crate::config::load_runtime_config_pair_from_path_or_default(
@@ -1428,6 +926,7 @@ pub fn spawn_proactive_drain_loop(
             if config.proactive.enabled {
                 match run_proactive_delivery_tick(
                     &home,
+                    &wal_segment_path,
                     &config,
                     &runtime.credentials,
                     &writer,
@@ -1443,7 +942,8 @@ pub fn spawn_proactive_drain_loop(
                 }
             } else {
                 // Gate off — sidecar-only drain (no channel send).
-                match run_proactive_drain_tick(&home, now_unix) {
+                match run_proactive_sidecar_tick(&home, &wal_segment_path, &writer, now_unix).await
+                {
                     Ok(0) => tracing::debug!("proactive drain tick: nothing to deliver"),
                     Ok(n) => info!(
                         delivered = n,
@@ -1480,33 +980,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn drain_tick_no_queue_file_returns_zero() {
-        let tmp = TempDir::new().unwrap();
-        let n = run_proactive_drain_tick(tmp.path(), 1_700_000_000).unwrap();
-        assert_eq!(n, 0);
-    }
-
-    #[test]
-    fn drain_tick_empty_queue_returns_zero() {
-        let tmp = TempDir::new().unwrap();
-        let queue = ProactiveQueue::new();
-        queue
-            .save_to(&tmp.path().join("proactive_queue.json"))
-            .unwrap();
-        let n = run_proactive_drain_tick(tmp.path(), 1_700_000_000).unwrap();
-        assert_eq!(n, 0);
-        // No sidecar gets written for empty drains.
-        assert!(!tmp.path().join(PROACTIVE_DELIVERED_SIDECAR).exists());
-    }
-
     #[tokio::test]
     async fn delivery_tick_invalid_routing_leaves_queue_untouched() {
         for routing_is_directory in [false, true] {
             let tmp = TempDir::new().unwrap();
             let queue_path = tmp.path().join("proactive_queue.json");
             let mut queue = ProactiveQueue::new();
-            queue.enqueue(item("must-remain", 50, 0));
+            queue.enqueue(item("must-remain", 50, 0)).unwrap();
             queue.save_to(&queue_path).unwrap();
             let queue_before = std::fs::read(&queue_path).unwrap();
 
@@ -1520,9 +1000,12 @@ mod tests {
             }
 
             let (writer, join) = crate::wal::spawn(tmp.path().join("routing-error.wal")).unwrap();
+            let mut config = FreedomConfig::default();
+            config.proactive.enabled = true;
             let error = run_proactive_delivery_tick(
                 tmp.path(),
-                &FreedomConfig::default(),
+                &tmp.path().join("routing-error.wal"),
+                &config,
                 &Credentials::default(),
                 &writer,
                 1_700_000_000,
@@ -1543,19 +1026,269 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disabled_delivery_tick_ignores_invalid_routing_and_preserves_queue() {
+        let tmp = TempDir::new().unwrap();
+        let queue_path = tmp.path().join("proactive_queue.json");
+        let mut queue = ProactiveQueue::new();
+        queue.enqueue(item("disabled-must-remain", 50, 0)).unwrap();
+        queue.save_to(&queue_path).unwrap();
+        let queue_before = std::fs::read(&queue_path).unwrap();
+        std::fs::write(
+            tmp.path()
+                .join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+            b"{not-json",
+        )
+        .unwrap();
+
+        let segment = tmp.path().join("disabled-routing-error.wal");
+        let (writer, join) = crate::wal::spawn(segment.clone()).unwrap();
+        let delivered = run_proactive_delivery_tick(
+            tmp.path(),
+            &segment,
+            &FreedomConfig::default(),
+            &Credentials::default(),
+            &writer,
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        assert_eq!(delivered, 0);
+        assert_eq!(std::fs::read(&queue_path).unwrap(), queue_before);
+        assert!(!tmp.path().join(PROACTIVE_DELIVERED_SIDECAR).exists());
+        assert!(!tmp.path().join(PROACTIVE_INFLIGHT_DIR).exists());
+    }
+
+    #[tokio::test]
+    async fn invalid_adapter_configuration_settles_only_that_item_and_does_not_starve_tick() {
+        let tmp = TempDir::new().unwrap();
+        let queue_path = tmp.path().join("proactive_queue.json");
+        let mut invalid = item("invalid-signal", 100, 0);
+        invalid.channel = "signal".to_string();
+        let mut later = item("later-local-inbox", 50, 0);
+        later.source = "g_01_mini".to_string();
+        let mut queue = ProactiveQueue::new();
+        assert!(queue.enqueue(invalid).unwrap());
+        assert!(queue.enqueue(later).unwrap());
+        queue.save_to(&queue_path).unwrap();
+
+        let mut routing = crate::channels::routing::ChannelRouting::default();
+        routing.destinations.signal_recipient = Some("+15550000002".to_string());
+        routing
+            .save_to(
+                &tmp.path()
+                    .join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+            )
+            .unwrap();
+        let mut config = FreedomConfig::default();
+        config.autonomy = AutonomyLevel::Full;
+        config.proactive.enabled = true;
+        let credentials = Credentials {
+            signal_cli_url: Some("not-a-valid-url".to_string()),
+            signal_phone_number: Some("+15550000001".to_string()),
+            ..Default::default()
+        };
+        let wal_dir = tmp.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                .unwrap();
+        ready.wait().await.unwrap();
+
+        assert_eq!(
+            run_proactive_delivery_tick(
+                tmp.path(),
+                &segment,
+                &config,
+                &credentials,
+                &writer,
+                1_700_000_000,
+            )
+            .await
+            .unwrap(),
+            0
+        );
+        assert!(ProactiveQueue::load_from(&queue_path).unwrap().is_empty());
+        let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(
+            history
+                .iter()
+                .find(|record| record.item().dedup_key == "invalid-signal")
+                .unwrap()
+                .outcome(),
+            crate::daemon::proactive_egress::ProactiveEgressOutcome::AdapterConfigurationError
+        );
+        assert_eq!(
+            history
+                .iter()
+                .find(|record| record.item().dedup_key == "later-local-inbox")
+                .unwrap()
+                .outcome(),
+            crate::daemon::proactive_egress::ProactiveEgressOutcome::SidecarOnly
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn oversized_persisted_route_is_settled_without_starving_valid_successor() {
+        let tmp = TempDir::new().unwrap();
+        let queue_path = tmp.path().join("proactive_queue.json");
+        let mut invalid_route = item("invalid-route", 100, 0);
+        invalid_route.source = "oversized-route-source".to_string();
+        let mut later = item("later-local-inbox", 50, 0);
+        later.source = "g_01_mini".to_string();
+        let mut queue = ProactiveQueue::new();
+        assert!(queue.enqueue(invalid_route).unwrap());
+        assert!(queue.enqueue(later).unwrap());
+        queue.save_to(&queue_path).unwrap();
+
+        let mut routing = crate::channels::routing::ChannelRouting::default();
+        routing.by_source.insert(
+            "oversized-route-source".to_string(),
+            "x".repeat(MAX_PROACTIVE_CHANNEL_BYTES + 1),
+        );
+        routing
+            .save_to(
+                &tmp.path()
+                    .join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+            )
+            .unwrap();
+        let mut config = FreedomConfig::default();
+        config.autonomy = AutonomyLevel::Full;
+        config.proactive.enabled = true;
+        let wal_dir = tmp.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                .unwrap();
+        ready.wait().await.unwrap();
+
+        assert_eq!(
+            run_proactive_delivery_tick(
+                tmp.path(),
+                &segment,
+                &config,
+                &Credentials::default(),
+                &writer,
+                1_700_000_000,
+            )
+            .await
+            .unwrap(),
+            0
+        );
+        assert!(ProactiveQueue::load_from(&queue_path).unwrap().is_empty());
+        let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(
+            history
+                .iter()
+                .find(|record| record.item().dedup_key == "invalid-route")
+                .unwrap()
+                .outcome(),
+            crate::daemon::proactive_egress::ProactiveEgressOutcome::AdapterConfigurationError
+        );
+        assert_eq!(
+            history
+                .iter()
+                .find(|record| record.item().dedup_key == "later-local-inbox")
+                .unwrap()
+                .outcome(),
+            crate::daemon::proactive_egress::ProactiveEgressOutcome::SidecarOnly
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_persisted_front_item_is_quarantined_without_starving_valid_successor() {
+        let tmp = TempDir::new().unwrap();
+        let queue_path = tmp.path().join("proactive_queue.json");
+        let mut invalid = item("invalid-front", 100, 0);
+        invalid.body = format!(
+            "invalid-front-secret-{}",
+            "x".repeat(crate::proactive::MAX_PROACTIVE_BODY_BYTES)
+        );
+        let mut valid = item("valid-successor", 50, 0);
+        valid.source = "g_01_mini".to_string();
+        let raw_queue = serde_json::json!({
+            "items": [invalid, valid],
+            "drained_at": [],
+            "config": { "max_per_day": 3 },
+            "settled_egress_intents": [],
+            "item_generations": {}
+        });
+        crate::util::atomic_write::atomic_write_private(
+            &queue_path,
+            &serde_json::to_vec(&raw_queue).unwrap(),
+        )
+        .unwrap();
+
+        let wal_dir = tmp.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                .unwrap();
+        ready.wait().await.unwrap();
+        let mut config = FreedomConfig::default();
+        config.proactive.enabled = true;
+
+        assert_eq!(
+            run_proactive_delivery_tick(
+                tmp.path(),
+                &segment,
+                &config,
+                &Credentials::default(),
+                &writer,
+                1_700_000_000,
+            )
+            .await
+            .unwrap(),
+            0,
+            "the valid local-inbox successor settles without a live send"
+        );
+
+        let queue = ProactiveQueue::load_from(&queue_path).unwrap();
+        assert!(queue.is_empty());
+        let persisted = std::fs::read_to_string(&queue_path).unwrap();
+        assert!(persisted.contains("body_too_large"));
+        assert!(!persisted.contains("invalid-front-secret"));
+        let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].item().dedup_key, "valid-successor");
+        assert_eq!(
+            history[0].outcome(),
+            crate::daemon::proactive_egress::ProactiveEgressOutcome::SidecarOnly
+        );
+
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn idle_only_missing_activity_db_suppresses_and_preserves_queue() {
         let tmp = TempDir::new().unwrap();
         let queue_path = tmp.path().join("proactive_queue.json");
         let mut queue = ProactiveQueue::new();
-        queue.enqueue(item("wait-for-confirmed-idle", 50, 0));
+        queue
+            .enqueue(item("wait-for-confirmed-idle", 50, 0))
+            .unwrap();
         queue.save_to(&queue_path).unwrap();
         let before = std::fs::read(&queue_path).unwrap();
         let mut config = FreedomConfig::default();
+        config.proactive.enabled = true;
         config.proactive.idle_only = true;
 
         let (writer, join) = crate::wal::spawn(tmp.path().join("idle-missing.wal")).unwrap();
         let delivered = run_proactive_delivery_tick(
             tmp.path(),
+            &tmp.path().join("idle-missing.wal"),
             &config,
             &Credentials::default(),
             &writer,
@@ -1576,15 +1309,17 @@ mod tests {
         std::fs::write(tmp.path().join("views.db"), b"not a sqlite database").unwrap();
         let queue_path = tmp.path().join("proactive_queue.json");
         let mut queue = ProactiveQueue::new();
-        queue.enqueue(item("wait-on-db-error", 50, 0));
+        queue.enqueue(item("wait-on-db-error", 50, 0)).unwrap();
         queue.save_to(&queue_path).unwrap();
         let before = std::fs::read(&queue_path).unwrap();
         let mut config = FreedomConfig::default();
+        config.proactive.enabled = true;
         config.proactive.idle_only = true;
 
         let (writer, join) = crate::wal::spawn(tmp.path().join("idle-corrupt.wal")).unwrap();
         let delivered = run_proactive_delivery_tick(
             tmp.path(),
+            &tmp.path().join("idle-corrupt.wal"),
             &config,
             &Credentials::default(),
             &writer,
@@ -1611,12 +1346,14 @@ mod tests {
         .unwrap();
         drop(conn);
         let mut config = FreedomConfig::default();
+        config.proactive.enabled = true;
         config.proactive.idle_only = true;
         config.proactive.idle_only_window_secs = u64::MAX;
         let (writer, join) = crate::wal::spawn(tmp.path().join("idle-overflow.wal")).unwrap();
 
         let delivered = run_proactive_delivery_tick(
             tmp.path(),
+            &tmp.path().join("idle-overflow.wal"),
             &config,
             &Credentials::default(),
             &writer,
@@ -1630,90 +1367,30 @@ mod tests {
     }
 
     #[test]
-    fn drain_tick_appends_each_drained_item_to_sidecar() {
-        let tmp = TempDir::new().unwrap();
-        let mut queue = ProactiveQueue::new();
-        queue.enqueue(item("a", 50, 0));
-        queue.enqueue(item("b", 50, 0));
-        queue
-            .save_to(&tmp.path().join("proactive_queue.json"))
-            .unwrap();
-        let n = run_proactive_drain_tick(tmp.path(), 1_700_000_000).unwrap();
-        assert_eq!(n, 2);
-        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
-        assert!(sidecar.exists());
-        let body = std::fs::read_to_string(sidecar).unwrap();
-        // Two lines (one per item) — JSONL format.
-        let lines: Vec<&str> = body.lines().collect();
-        assert_eq!(lines.len(), 2);
-        // Each line is valid JSON.
-        for line in &lines {
-            let v: serde_json::Value = serde_json::from_str(line).unwrap();
-            assert_eq!(v["delivered_at_unix"], 1_700_000_000);
-            assert!(v["item"].is_object());
-        }
-    }
-
-    #[test]
-    fn drain_tick_persists_post_drain_queue() {
-        let tmp = TempDir::new().unwrap();
-        let mut queue = ProactiveQueue::new();
-        queue.enqueue(item("a", 50, 0));
-        queue.enqueue(item("b", 50, 0));
-        let q_path = tmp.path().join("proactive_queue.json");
-        queue.save_to(&q_path).unwrap();
-        run_proactive_drain_tick(tmp.path(), 1_700_000_000).unwrap();
-        // Reload from disk + verify both items are gone.
-        let after = ProactiveQueue::load_from(&q_path).unwrap();
-        assert!(after.is_empty());
-    }
-
-    #[test]
-    fn drain_tick_respects_per_tick_cap() {
-        // Enqueue more items than PROACTIVE_PER_TICK_CAP and verify
-        // the tick only pops up to the cap. NB: the queue's daily
-        // budget defaults to 3, which equals PROACTIVE_PER_TICK_CAP
-        // — so the cap actually fires here only if both budgets
-        // align. With cap 3 + budget 3 + 5 items enqueued, we get 3
-        // out + 2 remain.
-        let tmp = TempDir::new().unwrap();
-        let mut queue = ProactiveQueue::new();
-        for k in 0..5 {
-            queue.enqueue(item(&format!("k{k}"), 50, 0));
-        }
-        queue
-            .save_to(&tmp.path().join("proactive_queue.json"))
-            .unwrap();
-        let n = run_proactive_drain_tick(tmp.path(), 1_700_000_000).unwrap();
-        assert_eq!(n, PROACTIVE_PER_TICK_CAP);
-        let after = ProactiveQueue::load_from(&tmp.path().join("proactive_queue.json")).unwrap();
-        assert_eq!(after.peek().len(), 5 - PROACTIVE_PER_TICK_CAP);
-    }
-
-    #[test]
-    fn drain_tick_appends_not_truncates_sidecar() {
-        let tmp = TempDir::new().unwrap();
-        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
-        std::fs::write(&sidecar, "{\"existing\": \"line\"}\n").unwrap();
-        let mut queue = ProactiveQueue::new();
-        queue.enqueue(item("new", 50, 0));
-        queue
-            .save_to(&tmp.path().join("proactive_queue.json"))
-            .unwrap();
-        run_proactive_drain_tick(tmp.path(), 1_700_000_000).unwrap();
-        let body = std::fs::read_to_string(&sidecar).unwrap();
-        assert!(
-            body.starts_with("{\"existing\": \"line\"}"),
-            "existing line MUST be preserved (append-only contract)",
-        );
-        assert!(body.contains("\"delivered_at_unix\"") && body.contains("\"item\""));
-    }
-
-    #[test]
     fn constants_canonical() {
         assert_eq!(PROACTIVE_DRAIN_INTERVAL_SECS, 5 * 60);
         assert_eq!(PROACTIVE_PER_TICK_CAP, 3);
         assert_eq!(PROACTIVE_DELIVERED_SIDECAR, "proactive_delivered.jsonl");
+    }
+
+    #[test]
+    fn empty_or_blank_target_resolves_to_the_local_operator_inbox() {
+        assert_eq!(
+            canonical_target_channel(None, "").unwrap(),
+            LOCAL_INBOX_CHANNEL
+        );
+        assert_eq!(
+            canonical_target_channel(Some("   ".to_string()), " \t").unwrap(),
+            LOCAL_INBOX_CHANNEL
+        );
+        assert_eq!(
+            canonical_target_channel(Some("telegram".to_string()), "cli").unwrap(),
+            "telegram"
+        );
+        assert_eq!(
+            canonical_target_channel(Some("x".repeat(MAX_PROACTIVE_CHANNEL_BYTES + 1)), "cli"),
+            Err(MAX_PROACTIVE_CHANNEL_BYTES + 1)
+        );
     }
 
     // ── G-01 channel-delivery (Session 28d) ──────────────────────────────
@@ -2061,19 +1738,6 @@ mod tests {
     }
 
     #[test]
-    fn route_claim_classification_covers_live_and_sidecar_routes() {
-        assert!(!route_needs_claim(&DeliveryRoute::Suppressed));
-        assert!(!route_needs_claim(&DeliveryRoute::SidecarOnly));
-        assert!(route_needs_claim(&DeliveryRoute::Telegram {
-            chat_id: "123".to_string()
-        }));
-        #[cfg(feature = "matrix-channel")]
-        assert!(route_needs_claim(&DeliveryRoute::Matrix {
-            room_id: "!ops:example.org".to_string()
-        }));
-    }
-
-    #[test]
     fn plan_delivery_slack_needs_both_tokens_and_destination() {
         let cfg = cfg_with_telegram(AutonomyLevel::Full);
         let mut rt = default_rt();
@@ -2209,334 +1873,5 @@ mod tests {
         assert_eq!(ProactiveStatus::SidecarOnly.as_str(), "sidecar_only");
         assert!(ProactiveStatus::Delivered.is_delivered());
         assert!(!ProactiveStatus::Failed.is_delivered());
-    }
-
-    #[test]
-    fn recipient_hash_is_deterministic_64_hex_and_input_sensitive() {
-        let a = recipient_hash("123456");
-        let b = recipient_hash("123456");
-        let c = recipient_hash("123457");
-        assert_eq!(a, b, "same input ⇒ same hash");
-        assert_ne!(a, c, "different input ⇒ different hash");
-        assert_eq!(a.len(), 64, "sha-256 hex is 64 chars");
-        assert!(
-            a.chars()
-                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
-        );
-        // The raw recipient id must NOT appear in the audit hash.
-        assert!(!a.contains("123456"));
-    }
-
-    // ── Inflight claim-file guard (at-most-once delivery) ─────────────────
-
-    fn failure_item(key: &str) -> ProactiveItem {
-        ProactiveItem {
-            is_failure: true,
-            ..item(key, 100, 0)
-        }
-    }
-
-    /// `claim_filename` is deterministic and produces a `.claimed` suffix,
-    /// with no raw key material in the filename.
-    #[test]
-    fn claim_filename_is_deterministic_and_opaque() {
-        let a = claim_filename("my/special:key");
-        let b = claim_filename("my/special:key");
-        let c = claim_filename("other/key");
-        assert_eq!(a, b);
-        assert_ne!(a, c);
-        assert!(a.ends_with(".claimed"), "must end with .claimed");
-        // The raw key must not appear in the filename (filesystem-safety).
-        assert!(!a.contains("my") && !a.contains("special") && !a.contains("key"));
-    }
-
-    /// `write_inflight_claim` creates a `.claimed` file; `delete_inflight_claim`
-    /// removes it; a second delete is a no-op (idempotent).
-    #[test]
-    fn write_and_delete_claim_file_lifecycle() {
-        let tmp = TempDir::new().unwrap();
-        let it = item("k1", 50, 0);
-        write_inflight_claim(tmp.path(), &it).unwrap();
-        let inflight_dir = tmp.path().join(PROACTIVE_INFLIGHT_DIR);
-        let claimed: Vec<_> = std::fs::read_dir(&inflight_dir)
-            .unwrap()
-            .flatten()
-            .filter(|e| e.file_name().to_string_lossy().ends_with(".claimed"))
-            .collect();
-        assert_eq!(
-            claimed.len(),
-            1,
-            "one .claimed file should exist after write"
-        );
-        // Content round-trips to the original item.
-        let bytes = std::fs::read(claimed[0].path()).unwrap();
-        let parsed: ProactiveItem = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(parsed.dedup_key, "k1");
-
-        delete_inflight_claim(tmp.path(), "k1");
-        let remaining: Vec<_> = std::fs::read_dir(&inflight_dir)
-            .unwrap()
-            .flatten()
-            .filter(|e| e.file_name().to_string_lossy().ends_with(".claimed"))
-            .collect();
-        assert!(remaining.is_empty(), "claim file must be gone after delete");
-
-        // Second delete is a no-op (no panic).
-        delete_inflight_claim(tmp.path(), "k1");
-    }
-
-    /// A surviving claim file is evicted by `evict_inflight_claimed`:
-    /// the item is removed from the queue and a `crash_recovered` entry
-    /// appears in the sidecar.
-    #[test]
-    fn evict_inflight_claimed_removes_item_and_records_crash_recovered() {
-        let tmp = TempDir::new().unwrap();
-        let it = item("crash-item", 50, 0);
-        // Simulate: claim file written but daemon crashed before delete.
-        write_inflight_claim(tmp.path(), &it).unwrap();
-
-        // Build a queue that still has the item on disk (crash prevented save).
-        let mut queue = ProactiveQueue::new();
-        queue.enqueue(it.clone());
-
-        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
-        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 1_700_000_000);
-
-        // Queue must be empty — item was evicted.
-        assert!(queue.is_empty(), "evicted item must be absent from queue");
-
-        // Claim file must be deleted.
-        let inflight_dir = tmp.path().join(PROACTIVE_INFLIGHT_DIR);
-        let remaining: Vec<_> = std::fs::read_dir(&inflight_dir)
-            .unwrap()
-            .flatten()
-            .filter(|e| e.file_name().to_string_lossy().ends_with(".claimed"))
-            .collect();
-        assert!(
-            remaining.is_empty(),
-            "claim file must be cleaned up by eviction"
-        );
-
-        // Sidecar must have a crash_recovered entry.
-        let body = std::fs::read_to_string(&sidecar).unwrap();
-        let v: serde_json::Value = serde_json::from_str(body.lines().next().unwrap()).unwrap();
-        assert_eq!(v["status"], "crash_recovered");
-        assert_eq!(v["dedup_key"], "crash-item");
-        assert_eq!(v["was_failure"], false);
-    }
-
-    /// A `crash_recovered` entry for an `is_failure` item carries
-    /// `was_failure: true` so the operator can distinguish critical alerts.
-    #[test]
-    fn evict_inflight_claimed_carries_was_failure_for_critical_alerts() {
-        let tmp = TempDir::new().unwrap();
-        let it = failure_item("critical-alert");
-        write_inflight_claim(tmp.path(), &it).unwrap();
-
-        let mut queue = ProactiveQueue::new();
-        queue.enqueue(it.clone());
-
-        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
-        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 1_700_000_001);
-
-        let body = std::fs::read_to_string(&sidecar).unwrap();
-        let v: serde_json::Value = serde_json::from_str(body.lines().next().unwrap()).unwrap();
-        assert_eq!(v["status"], "crash_recovered");
-        assert_eq!(
-            v["was_failure"], true,
-            "is_failure item must set was_failure=true"
-        );
-        assert_eq!(v["dedup_key"], "critical-alert");
-    }
-
-    /// A claim file without a matching queue entry is still cleaned up
-    /// without panicking (idempotent eviction — `remove_by_key` is a no-op).
-    #[test]
-    fn evict_inflight_claimed_handles_already_absent_queue_entry() {
-        let tmp = TempDir::new().unwrap();
-        let it = item("already-gone", 50, 0);
-        write_inflight_claim(tmp.path(), &it).unwrap();
-
-        // Queue is empty — item was already removed (e.g., save succeeded
-        // but claim delete crashed).
-        let mut queue = ProactiveQueue::new();
-        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
-        // Must not panic; still records crash_recovered + deletes file.
-        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 1_700_000_002);
-
-        let inflight_dir = tmp.path().join(PROACTIVE_INFLIGHT_DIR);
-        let remaining: Vec<_> = std::fs::read_dir(&inflight_dir)
-            .unwrap()
-            .flatten()
-            .filter(|e| e.file_name().to_string_lossy().ends_with(".claimed"))
-            .collect();
-        assert!(remaining.is_empty());
-        // Sidecar entry is present even though queue was already clean.
-        let body = std::fs::read_to_string(&sidecar).unwrap();
-        assert!(body.contains("crash_recovered"));
-    }
-
-    /// `evict_inflight_claimed` on a missing inflight dir returns without
-    /// error (common on a clean first-boot).
-    #[test]
-    fn evict_inflight_claimed_missing_dir_is_noop() {
-        let tmp = TempDir::new().unwrap();
-        let mut queue = ProactiveQueue::new();
-        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
-        // No inflight dir — must return silently.
-        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 0);
-        assert!(!sidecar.exists(), "no sidecar entry on empty eviction");
-    }
-
-    /// Eviction runs BEFORE drain, so a claim file written by a previous
-    /// crashed tick prevents re-drain of the same item.
-    #[test]
-    fn evict_runs_before_drain_in_drain_tick_ordering() {
-        // This test validates the ordering contract by calling eviction
-        // manually then drain, mimicking what run_proactive_delivery_tick does.
-        let tmp = TempDir::new().unwrap();
-
-        // Two items: "was-in-flight" has a surviving claim, "new-item" does not.
-        let in_flight = item("was-in-flight", 100, 0);
-        let new_it = item("new-item", 50, 0);
-
-        write_inflight_claim(tmp.path(), &in_flight).unwrap();
-
-        let mut queue = ProactiveQueue::new();
-        queue.enqueue(in_flight.clone());
-        queue.enqueue(new_it.clone());
-
-        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
-        // Step 1: evict (before drain).
-        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 1_700_000_003);
-
-        // "was-in-flight" must be gone; "new-item" must remain.
-        assert_eq!(queue.peek().len(), 1);
-        assert_eq!(queue.peek()[0].dedup_key, "new-item");
-
-        // Step 2: drain — only "new-item" drains.
-        let drained = queue.drain(1_700_000_003, 10);
-        assert_eq!(drained.len(), 1);
-        assert_eq!(drained[0].dedup_key, "new-item");
-
-        // Sidecar has crash_recovered for "was-in-flight" only.
-        let body = std::fs::read_to_string(&sidecar).unwrap();
-        assert!(body.contains("crash_recovered"));
-        assert!(body.contains("was-in-flight"));
-        assert!(!body.contains("new-item"));
-    }
-
-    /// `.tmp` orphan files in the inflight dir are ignored by eviction.
-    #[test]
-    fn evict_ignores_tmp_orphans_in_inflight_dir() {
-        let tmp = TempDir::new().unwrap();
-        let inflight_dir = tmp.path().join(PROACTIVE_INFLIGHT_DIR);
-        std::fs::create_dir_all(&inflight_dir).unwrap();
-        // Write a .pid.tmp orphan (atomic_write intermediate).
-        std::fs::write(inflight_dir.join("abc.12345.tmp"), b"garbage").unwrap();
-
-        let mut queue = ProactiveQueue::new();
-        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
-        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 0);
-
-        // No crash_recovered entry; orphan is untouched (eviction only reads *.claimed).
-        assert!(!sidecar.exists());
-        assert!(
-            inflight_dir.join("abc.12345.tmp").exists(),
-            "orphan must be left alone"
-        );
-    }
-
-    /// CLAW-01 regression: when a MULTI-item batch crashes before the queue
-    /// save, ALL its claim files survive together → eviction drops the WHOLE
-    /// batch (no item re-drains, none is re-sent). This is the scenario the
-    /// old per-item-delete broke: it deleted earlier items' claims mid-loop,
-    /// so on crash only the last item's claim survived and the already-sent
-    /// earlier items re-drained → double-fire. The fix (delete claims only
-    /// after the save) keeps every claim present until durability, which this
-    /// models by writing all three claims before the simulated crash.
-    #[test]
-    fn evict_drops_an_entire_multi_item_batch_no_resend() {
-        let tmp = TempDir::new().unwrap();
-        let a = item("batch-a", 100, 0);
-        let b = item("batch-b", 90, 0);
-        let c = item("batch-c", 80, 0);
-        // All three claims written (sends attempted), then crash before save.
-        write_inflight_claim(tmp.path(), &a).unwrap();
-        write_inflight_claim(tmp.path(), &b).unwrap();
-        write_inflight_claim(tmp.path(), &c).unwrap();
-
-        // Queue still has all three (save never happened).
-        let mut queue = ProactiveQueue::new();
-        queue.enqueue(a);
-        queue.enqueue(b);
-        queue.enqueue(c);
-
-        let sidecar = tmp.path().join(PROACTIVE_DELIVERED_SIDECAR);
-        evict_inflight_claimed(tmp.path(), &mut queue, &sidecar, 1_700_000_010);
-
-        // Whole batch evicted — nothing left to re-drain.
-        assert!(
-            queue.is_empty(),
-            "entire batch must be evicted (no re-send)"
-        );
-        // All claim files cleaned up.
-        let inflight_dir = tmp.path().join(PROACTIVE_INFLIGHT_DIR);
-        let remaining = std::fs::read_dir(&inflight_dir)
-            .unwrap()
-            .flatten()
-            .filter(|e| e.file_name().to_string_lossy().ends_with(".claimed"))
-            .count();
-        assert_eq!(remaining, 0, "all claim files cleaned up");
-    }
-
-    // ── GOLD-ADAPT-OH-08: reflection items are forced to SidecarOnly ─────────
-
-    #[test]
-    fn oh08_reflection_items_drain_to_sidecar_not_live_channel() {
-        // A ProactiveItem with source="g_01_mini" (the reflection cron's tag)
-        // must always drain to the sidecar — never to a live channel — regardless
-        // of what plan_delivery would have returned for the target_channel.
-        // We exercise this via run_proactive_drain_tick (the sidecar-only path):
-        // the item lands in proactive_delivered.jsonl with status sidecar_only,
-        // not status delivered.
-        let tmp = TempDir::new().unwrap();
-        let reflection_item = ProactiveItem {
-            priority: 50,
-            dedup_key: "reflection:weekly:2026-W25".to_string(),
-            channel: String::new(),
-            source: "g_01_mini".to_string(),
-            body: "Du hast diese Woche an rust, memory gearbeitet — willst du an einem mehr dranbleiben?".to_string(),
-            scheduled_for_unix: 0,
-            is_failure: false,
-            expires_unix: 0,
-        };
-        let mut queue = ProactiveQueue::new();
-        queue.enqueue(reflection_item);
-        queue
-            .save_to(&tmp.path().join("proactive_queue.json"))
-            .unwrap();
-
-        // run_proactive_drain_tick is the sync sidecar path (no channel creds).
-        let n = run_proactive_drain_tick(tmp.path(), 1_700_000_000).unwrap();
-        assert_eq!(n, 1, "reflection item must drain to sidecar (count=1)");
-
-        let sidecar =
-            std::fs::read_to_string(tmp.path().join(PROACTIVE_DELIVERED_SIDECAR)).unwrap();
-        let line = sidecar.lines().next().unwrap();
-        let v: serde_json::Value = serde_json::from_str(line).unwrap();
-        assert_eq!(
-            v["item"]["source"], "g_01_mini",
-            "sidecar record must carry the reflection source tag"
-        );
-        // The run_proactive_drain_tick path writes a raw {"delivered_at_unix":
-        // ..., "item":{...}} record — no status field at this level. The test
-        // verifies the item IS in the sidecar (operator can see it) and that
-        // source tag is preserved, proving the item went through the sidecar
-        // path rather than a live-channel path.
-        assert!(
-            sidecar.contains("g_01_mini"),
-            "sidecar must contain the reflection source tag"
-        );
     }
 }

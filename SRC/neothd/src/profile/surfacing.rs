@@ -1,11 +1,11 @@
 //! Round-3 v0.4 G-02 — "Knows things about you you don't know" —
 //! proactive surfacing of novel high-confidence profile claims.
 //!
-//! Builds on top of the G-01 consumer half (proactive_dispatcher
-//! drain loop into JSONL sidecar): when a profile-extraction pass
-//! lands a new claim above the high-confidence threshold, this
-//! module turns it into a `ProactiveItem` the operator sees in
-//! `~/.neoth/proactive_delivered.jsonl` next time the drain ticks.
+//! Builds on the G-01 durable egress consumer: when a profile-extraction pass
+//! lands a new claim above the high-confidence threshold, this module turns it
+//! into a `ProactiveItem`. The dispatcher then records an authenticated WAL
+//! transaction before any transport and projects the terminal result to the
+//! private operator inbox consumed by CLI and GUI.
 //!
 //! ## Why this surface
 //!

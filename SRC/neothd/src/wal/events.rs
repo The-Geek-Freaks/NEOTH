@@ -231,6 +231,13 @@ pub enum ExtendedSubtype {
     /// GOLD-LF-P1-01 — terminal outcome paired to `MediaCallIntent` by intent
     /// id.
     MediaCallResult = 0x23,
+    /// GOLD proactive egress — authenticated dispatch boundary. This ACK is
+    /// appended only after the private claim has durably transitioned to
+    /// Armed, and before transport. Recovery treats this frame, never the
+    /// mutable claim phase alone, as proof that the message may have left the
+    /// machine. Payload is metadata-only and binds the intent plus Armed claim
+    /// digest.
+    ChannelEgressArmed = 0x24,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -320,6 +327,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::ChannelEgressResult => "channel_egress_result",
             ExtendedSubtype::MediaCallIntent => "media_call_intent",
             ExtendedSubtype::MediaCallResult => "media_call_result",
+            ExtendedSubtype::ChannelEgressArmed => "channel_egress_armed",
         }
     }
 
@@ -361,6 +369,7 @@ impl ExtendedSubtype {
             0x21 => Some(ExtendedSubtype::ChannelEgressResult),
             0x22 => Some(ExtendedSubtype::MediaCallIntent),
             0x23 => Some(ExtendedSubtype::MediaCallResult),
+            0x24 => Some(ExtendedSubtype::ChannelEgressArmed),
             _ => None,
         }
     }
@@ -404,6 +413,7 @@ impl ExtendedSubtype {
             Self::ChannelEgressResult,
             Self::MediaCallIntent,
             Self::MediaCallResult,
+            Self::ChannelEgressArmed,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -3800,6 +3810,16 @@ mod tests {
             // R3-18
             ExtendedSubtype::UpdaterLeafIntent,
             ExtendedSubtype::UpdaterLeafResult,
+            // GOLD-LF-P1-01 effect boundaries
+            ExtendedSubtype::OsFileWriteIntent,
+            ExtendedSubtype::OsFileWriteResult,
+            ExtendedSubtype::OsAppLaunchIntent,
+            ExtendedSubtype::OsAppLaunchResult,
+            ExtendedSubtype::ChannelEgressIntent,
+            ExtendedSubtype::ChannelEgressResult,
+            ExtendedSubtype::MediaCallIntent,
+            ExtendedSubtype::MediaCallResult,
+            ExtendedSubtype::ChannelEgressArmed,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

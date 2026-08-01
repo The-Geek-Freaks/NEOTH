@@ -73,11 +73,8 @@ async fn run_post_init_check_inner(home: &Path) -> anyhow::Result<()> {
 
     // enqueue returns false when the dedup_key already exists — no-op on
     // re-runs within the same binary version.
-    let enqueued = ProactiveQueue::modify(&queue_path, |queue| {
-        let inserted = queue.enqueue(item);
-        (inserted, inserted)
-    })
-    .map_err(|e| anyhow::anyhow!("queue load/save: {e}"))?;
+    let enqueued = ProactiveQueue::enqueue_at(&queue_path, item)
+        .map_err(|e| anyhow::anyhow!("queue load/save: {e}"))?;
 
     if enqueued {
         tracing::info!(
