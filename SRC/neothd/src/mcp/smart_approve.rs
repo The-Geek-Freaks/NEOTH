@@ -434,7 +434,12 @@ impl SmartApproveSession {
             })
             .collect();
         if let Err(error) = guardian.flush() {
-            tracing::warn!(server = %cfg.id, error = %error, "could not persist MCP tool pins");
+            tracing::warn!(
+                server = %cfg.id,
+                error = %error,
+                "MCP tool pins could not be persisted; SmartApprove grants no auto-approval this session"
+            );
+            return Vec::new();
         }
         kept
     }
@@ -745,7 +750,10 @@ mod tests {
                 destructive_hint: Some(false),
             }),
         );
-        assert_eq!(session.reject_repinned_tools(&cfg, vec![t.clone()]).len(), 1);
+        assert_eq!(
+            session.reject_repinned_tools(&cfg, vec![t.clone()]).len(),
+            1
+        );
         assert_eq!(
             session.reject_repinned_tools(&cfg, vec![t]).len(),
             1,
@@ -771,6 +779,42 @@ mod tests {
         assert!(
             session.reject_repinned_tools(&cfg, vec![t]).is_empty(),
             "unverifiable pins must withhold auto-approval"
+        );
+    }
+
+    #[test]
+    fn a_first_pin_flush_failure_withholds_every_grant_and_leaves_no_pin_file() {
+        let home = home_with_key();
+        let pin_path = home.path().join("mcp_tool_pins.json");
+        let atomic_temp_path = home.path().join(format!(
+            ".neoth-write-{}-mcp_tool_pins.json.tmp",
+            std::process::id()
+        ));
+
+        // `write_file_atomic` stages to this exact sibling path. A directory at
+        // that path makes the real staging write fail on both Unix and Windows
+        // without relying on platform-specific permission semantics.
+        std::fs::create_dir(&atomic_temp_path).unwrap();
+
+        let cfg = server("srv");
+        let session = SmartApproveSession::default().with_home(home.path().to_path_buf());
+        let read_only = tool(
+            "read_graph",
+            Some(ToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+            }),
+        );
+
+        assert!(
+            session
+                .reject_repinned_tools(&cfg, vec![read_only])
+                .is_empty(),
+            "an uncommitted TOFU pin must never become a SmartApprove grant"
+        );
+        assert!(
+            !pin_path.exists(),
+            "a failed atomic flush must not leave a trusted pin store behind"
         );
     }
 
@@ -968,12 +1012,10 @@ mod tests {
         let cfg = server("sealed-failure");
         let mut session = SmartApproveSession::default();
         assert!(session.cache.seed_verdicts(&cfg, HashMap::new()));
-        assert!(
-            session
-                .bind_or_initialize(&cfg, "read_graph")
-                .await
-                .is_none()
-        );
+        assert!(session
+            .bind_or_initialize(&cfg, "read_graph")
+            .await
+            .is_none());
         assert!(session.cache.is_bound_to(&cfg));
         assert!(session.cache.grant_for(&cfg, "read_graph").is_none());
     }

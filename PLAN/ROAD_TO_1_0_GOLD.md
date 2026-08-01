@@ -4008,10 +4008,13 @@ None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
   `classify_tool_verdicts`): ein Tool, das seine Effekt-Deklaration nach der Registrierung
   ändert, verliert die Auto-Zustimmung und fällt auf den normalen Confirm zurück — entzogen
   wird der **Bypass**, nicht das Tool. Unverifizierbarer Pin-Store (kein HMAC-Key, malformt)
-  entzieht ebenfalls den Bypass, statt blind zu vertrauen. Zusätzlich in `cli/mcp.rs`
+  entzieht ebenfalls den Bypass, statt blind zu vertrauen. **TOFU-Persistenz ist ebenfalls
+  fail-closed:** ein First-Use-Pin wird erst nach erfolgreichem vollständigem Store-Flush zu
+  einem SmartApprove-Grant; jeder Flush-Fehler entzieht alle Auto-Approval-Grants der Session
+  und lässt das Tool über den normalen Confirm-/Lease-Pfad erreichbar. Zusätzlich in `cli/mcp.rs`
   (`neoth mcp tools`) gemeldet. `home` wird als Feld durchgereicht (Session-24-`_at(base)`-
-  Konvention), damit Tests ohne Env-Mutation laufen. Tests: guardian 9/9, smart_approve 37/37,
-  clippy 0. **L** 🔒
+  Konvention), damit Tests ohne Env-Mutation laufen. Tests: guardian 9/9; gezieltes
+  smart_approve-Modul 24/24 inklusive real erzwungenem Atomic-Flush-Fehler; clippy 0. **L** 🔒
 - [~] **ADOPT31-C5** Pre-work multi-role sign-off gate — **NEU GESCHNITTEN (2026-08-01);
   zwei Drittel existieren, das fehlende Drittel ist Verdrahtung, nicht Neubau.**
   1. **Die „Decision Audit Trail vor Dispatch"-Hälfte existiert.** `SelfSourceEdit`
