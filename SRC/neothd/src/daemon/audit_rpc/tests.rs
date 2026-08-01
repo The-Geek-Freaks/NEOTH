@@ -1540,3 +1540,48 @@ async fn client_rejects_stale_sidecar_with_dead_pid() {
         "a dead-pid sidecar must be refused as stale, got {r:?}"
     );
 }
+/// The accept loop runs inside a `tokio::select!`, so `accept()` is dropped
+/// whenever the other branch wins. It used to remove the pending pipe instance
+/// before awaiting the connection, so one such cancellation destroyed the only
+/// listener and every later connect failed with "listener is closed". Since the
+/// loop treats an accept error as fatal, the daemon served exactly ONE audit
+/// connection and then stopped — silently, because the DaemonRpc sink is
+/// best-effort. Two sequential round-trips are the smallest thing that fails
+/// when that regresses.
+#[tokio::test]
+async fn listener_serves_more_than_one_connection() {
+    let home = tempdir().unwrap();
+    let seg_dir = tempdir().unwrap();
+    let seg = canonical_test_wal(seg_dir.path(), "audit-two-connections");
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(seg, seg_dir.path().to_path_buf()).unwrap();
+    let state = AuditRpcState {
+        token: "tok".into(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
+    };
+    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
+
+    let body = r#"{"event_type":168,"payload_b64":"e30="}"#;
+    assert_eq!(raw_post(&addr, Some("tok"), body).await, 200, "first");
+    assert_eq!(
+        raw_post(&addr, Some("tok"), body).await,
+        200,
+        "the listener must still accept after serving one connection"
+    );
+    assert_eq!(
+        raw_post(&addr, Some("tok"), body).await,
+        200,
+        "and keep accepting"
+    );
+
+    task.abort();
+    drop(writer);
+    wal_join.await.ok();
+}

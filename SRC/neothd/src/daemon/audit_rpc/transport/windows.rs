@@ -74,16 +74,34 @@ impl Listener {
         })
     }
 
+    /// Cancel-safe: the pending instance is only removed AFTER `connect`
+    /// resolves.
+    ///
+    /// `run_accept_loop` awaits this inside a `tokio::select!`, so the future
+    /// is dropped whenever the other branch wins. Taking the instance up front
+    /// meant a cancellation at that point destroyed the only listening pipe
+    /// instance; the next call then found `None`, reported "listener is
+    /// closed", and the accept loop treats any accept error as fatal. The
+    /// daemon therefore served exactly one audit connection and silently
+    /// stopped accepting — silently, because `AuditSink::DaemonRpc` is
+    /// best-effort by AUDIT-RPC-01, so every later one-shot CLI audit frame
+    /// was dropped with nothing to show for it.
     pub(super) async fn accept(&mut self) -> Result<AuditStream> {
         loop {
+            {
+                let pending = self
+                    .pending
+                    .as_ref()
+                    .context("audit-RPC named-pipe listener is closed")?;
+                pending
+                    .connect()
+                    .await
+                    .context("accept audit-RPC named-pipe connection")?;
+            }
             let server = self
                 .pending
                 .take()
                 .context("audit-RPC named-pipe listener is closed")?;
-            server
-                .connect()
-                .await
-                .context("accept audit-RPC named-pipe connection")?;
 
             // Keep the listener continuously available.  The first
             // instance already established the protected pipe namespace.
