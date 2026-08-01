@@ -291,6 +291,11 @@ pub struct SmartApproveSession {
     cache: ReadOnlyCache,
     clients: SessionClients<McpClient>,
     duplicate_ids: HashSet<String>,
+    /// ADOPT31-C4a — neoth home for the MCP tool pin store. `None` resolves to
+    /// [`FreedomConfig::default_neoth_home`] at use. It is a field rather than
+    /// a direct call so tests can point at a tempdir without mutating process
+    /// env, matching the Session-24 `_at(base)` convention.
+    home: Option<std::path::PathBuf>,
     #[cfg(test)]
     initialization_attempts: usize,
 }
@@ -345,6 +350,13 @@ impl SmartApproveSession {
         }
     }
 
+    /// ADOPT31-C4a — point the tool-pin store at an explicit neoth home.
+    #[must_use]
+    pub fn with_home(mut self, home: std::path::PathBuf) -> Self {
+        self.home = Some(home);
+        self
+    }
+
     /// On the first real call for this server, establish one client, fetch its
     /// complete catalogue once, then retain that exact process for every call
     /// in this loop. A sealed cache entry (including a failed initialization)
@@ -370,6 +382,63 @@ impl SmartApproveSession {
         Some(BoundSmartApproveClient { client, grant })
     }
 
+    /// ADOPT31-C4a — drop any tool whose fingerprint no longer matches its pin.
+    ///
+    /// Failing to open the pin store removes every tool from the auto-approval
+    /// set rather than trusting them: SmartApprove is a *bypass* of an operator
+    /// confirmation, so losing the ability to verify it must cost the bypass,
+    /// not the verification. The tools stay callable behind normal Confirm.
+    fn reject_repinned_tools(
+        &self,
+        cfg: &McpServerConfig,
+        tools: Vec<crate::mcp::client::McpTool>,
+    ) -> Vec<crate::mcp::client::McpTool> {
+        let home = self
+            .home
+            .clone()
+            .unwrap_or_else(crate::config::FreedomConfig::default_neoth_home);
+        let mut guardian = match crate::security::mcp_guardian::McpGuardian::open(&home) {
+            Ok(guardian) => guardian,
+            Err(error) => {
+                tracing::warn!(
+                    server = %cfg.id,
+                    error = %error,
+                    "MCP tool pins unavailable; SmartApprove grants no auto-approval this session"
+                );
+                return Vec::new();
+            }
+        };
+        let now = crate::time::now_unix_i64();
+        let kept: Vec<_> = tools
+            .into_iter()
+            .filter(|tool| match guardian.check(&cfg.id, tool, now) {
+                Ok(verdict) if verdict.permits_call() => true,
+                Ok(crate::security::mcp_guardian::PinVerdict::Violation { detail }) => {
+                    tracing::error!(
+                        server = %cfg.id,
+                        tool = %tool.name,
+                        "SmartApprove auto-approval withdrawn — {detail}"
+                    );
+                    false
+                }
+                Ok(_) => false,
+                Err(error) => {
+                    tracing::warn!(
+                        server = %cfg.id,
+                        tool = %tool.name,
+                        error = %error,
+                        "MCP tool fingerprint failed; withholding auto-approval"
+                    );
+                    false
+                }
+            })
+            .collect();
+        if let Err(error) = guardian.flush() {
+            tracing::warn!(server = %cfg.id, error = %error, "could not persist MCP tool pins");
+        }
+        kept
+    }
+
     async fn initialize_server(&mut self, cfg: &McpServerConfig) {
         #[cfg(test)]
         {
@@ -389,6 +458,16 @@ impl SmartApproveSession {
                     .into_iter()
                     .map(|sanitized| sanitized.tool)
                     .collect::<Vec<_>>();
+                // ADOPT31-C4a — a tool whose declared contract changed after
+                // registration must not keep its auto-approval. SmartApprove
+                // grants by DECLARED EFFECT, so a server that re-declares
+                // `destructiveHint: true` as `readOnlyHint: true` would
+                // otherwise buy itself a silent Confirm bypass. Dropping the
+                // tool from the verdict map denies the BYPASS, not the tool —
+                // an absent verdict means "confirmations remain required",
+                // which is the same safe state as a server that declares no
+                // annotations at all.
+                let tools = self.reject_repinned_tools(cfg, tools);
                 let verdicts = match classify_tool_verdicts(&tools) {
                     Ok(verdicts) => verdicts,
                     Err(duplicate_tool) => {
@@ -610,6 +689,89 @@ mod tests {
             smart_approve: true,
             autonomy_gate: None,
         }
+    }
+
+    // ---- ADOPT31-C4a: a re-declared tool loses its auto-approval ----------
+
+    fn home_with_key() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let wal = dir.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        std::fs::write(wal.join("hmac.key"), [9u8; 32]).unwrap();
+        dir
+    }
+
+    #[test]
+    fn an_effect_flip_after_registration_withdraws_auto_approval() {
+        // The rug-pull SmartApprove is exposed to: register as destructive,
+        // then re-declare as read-only to buy a silent Confirm bypass.
+        let home = home_with_key();
+        let cfg = server("srv");
+        let session = SmartApproveSession::default().with_home(home.path().to_path_buf());
+
+        let destructive = tool(
+            "delete_node",
+            Some(ToolAnnotations {
+                read_only_hint: Some(false),
+                destructive_hint: Some(true),
+            }),
+        );
+        let kept = session.reject_repinned_tools(&cfg, vec![destructive]);
+        assert_eq!(kept.len(), 1, "first sighting pins and passes through");
+
+        let flipped = tool(
+            "delete_node",
+            Some(ToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+            }),
+        );
+        let kept = session.reject_repinned_tools(&cfg, vec![flipped]);
+        assert!(
+            kept.is_empty(),
+            "a tool that re-declared its effect must not reach classify_tool_verdicts —              an absent verdict is what keeps the operator Confirm in place"
+        );
+    }
+
+    #[test]
+    fn an_unchanged_tool_keeps_reaching_the_classifier() {
+        let home = home_with_key();
+        let cfg = server("srv");
+        let session = SmartApproveSession::default().with_home(home.path().to_path_buf());
+        let t = tool(
+            "read_graph",
+            Some(ToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+            }),
+        );
+        assert_eq!(session.reject_repinned_tools(&cfg, vec![t.clone()]).len(), 1);
+        assert_eq!(
+            session.reject_repinned_tools(&cfg, vec![t]).len(),
+            1,
+            "an unchanged declaration must keep its auto-approval path"
+        );
+    }
+
+    #[test]
+    fn an_unusable_pin_store_costs_the_bypass_not_the_tool() {
+        // No hmac.key ⇒ the guardian cannot verify anything. SmartApprove is a
+        // bypass of an operator confirmation, so losing verification must cost
+        // the bypass. The tools stay callable behind the normal Confirm path.
+        let home = tempfile::tempdir().unwrap();
+        let cfg = server("srv");
+        let session = SmartApproveSession::default().with_home(home.path().to_path_buf());
+        let t = tool(
+            "read_graph",
+            Some(ToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+            }),
+        );
+        assert!(
+            session.reject_repinned_tools(&cfg, vec![t]).is_empty(),
+            "unverifiable pins must withhold auto-approval"
+        );
     }
 
     #[test]

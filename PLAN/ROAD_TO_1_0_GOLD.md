@@ -3889,18 +3889,18 @@ None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
 - [ ] **ADOPT31-C3** Per-agent/peer trust score — 0–1000, five tiers, reward/penalty/decay.
   *NEOTH:* `cluster/peer_trust.rs` (new). *Consumer:* `cluster/hyperswarm.rs` peer
   accept/reject + `loop_engine/` delegation threshold. **M**
-- [~] **ADOPT31-C4** MCP tool fingerprinting + rug-pull detection — **Kern gebaut**
-  (`security/mcp_guardian.rs`, 9/9 Tests). HMAC-Pin unter der Instanz-WAL-Identität über
-  Servername, Toolname, Description, kanonisiertes Input-Schema **und Annotations**.
-  Trust-on-first-use; Delta blockiert statt neu zu pinnen. Verdrahtet in `cli/mcp.rs`
-  (`neoth mcp tools`) — meldet Verletzungen an den Operator und etabliert die Pins.
-  **Offen `ADOPT31-C4a`:** Durchsetzung im Auto-Approval-Pfad. `mcp/smart_approve.rs:383`
-  ist die eigentliche Angriffsfläche (SmartApprove genehmigt nach *declared effect*, also
-  genau nach `annotations`), hat aber kein `home` im Scope — das muss durchgereicht werden,
-  dann Verdikt-Set um verletzte Tools kürzen. *Consumer:* `smart_approve::initialize_server`.
-  Anmerkung: der Sanitizer fasst `annotations` NICHT an, die Angriffsfläche ist also exakt
-  gebunden; Pins liegen auf der post-sanitisierten Form, ein künftiger Sanitizer-Regelwechsel
-  zeigt sich daher als Verletzung beim Upgrade (sichtbar und behebbar). **L** 🔒
+- [x] **ADOPT31-C4** MCP tool fingerprinting + rug-pull detection — **GEBAUT + DURCHGESETZT.**
+  `security/mcp_guardian.rs`: HMAC-Pin unter der Instanz-WAL-Identität über Servername,
+  Toolname, Description, kanonisiertes Input-Schema **und Annotations**. Trust-on-first-use;
+  Delta blockiert statt neu zu pinnen. **Durchsetzung im Auto-Approval-Pfad**
+  (`mcp/smart_approve.rs::reject_repinned_tools`, aufgerufen in `initialize_server` vor
+  `classify_tool_verdicts`): ein Tool, das seine Effekt-Deklaration nach der Registrierung
+  ändert, verliert die Auto-Zustimmung und fällt auf den normalen Confirm zurück — entzogen
+  wird der **Bypass**, nicht das Tool. Unverifizierbarer Pin-Store (kein HMAC-Key, malformt)
+  entzieht ebenfalls den Bypass, statt blind zu vertrauen. Zusätzlich in `cli/mcp.rs`
+  (`neoth mcp tools`) gemeldet. `home` wird als Feld durchgereicht (Session-24-`_at(base)`-
+  Konvention), damit Tests ohne Env-Mutation laufen. Tests: guardian 9/9, smart_approve 37/37,
+  clippy 0. **L** 🔒
 - [ ] **ADOPT31-C5** Pre-work multi-role sign-off gate — sequential role verdicts plus a
   Decision Audit Trail written to WAL *before* high-impact dispatch. *NEOTH:*
   `council/pre_action_gate.rs` (new). *Consumer:* `coding/dispatcher.rs` ahead of
