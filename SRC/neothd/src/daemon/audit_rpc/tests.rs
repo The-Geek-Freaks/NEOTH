@@ -183,6 +183,15 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     let skill_removal_result = crate::wal::events::ExtendedSubtype::SkillRemovalResult as u8;
     let skill_authority_decision =
         crate::wal::events::ExtendedSubtype::SkillAuthorityDecision as u8;
+    // GOLD-LF-P1-01 — os_tools::gate reaches the WAL over this RPC route via
+    // AuditSink::DaemonRpc, so its intent/result pairs are admitted. The
+    // channel and media pairs are deliberately NOT here: they hold an
+    // in-process WalWriterHandle, and admitting a subtype with no client
+    // caller would widen the accepted surface for nothing.
+    let os_file_write_intent = crate::wal::events::ExtendedSubtype::OsFileWriteIntent as u8;
+    let os_file_write_result = crate::wal::events::ExtendedSubtype::OsFileWriteResult as u8;
+    let os_app_launch_intent = crate::wal::events::ExtendedSubtype::OsAppLaunchIntent as u8;
+    let os_app_launch_result = crate::wal::events::ExtendedSubtype::OsAppLaunchResult as u8;
     assert_eq!(
         ALLOWED_CLIENT_EXTENDED_SUBTYPES,
         &[
@@ -197,6 +206,10 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
             skill_removal_intent,
             skill_removal_result,
             skill_authority_decision,
+            os_file_write_intent,
+            os_file_write_result,
+            os_app_launch_intent,
+            os_app_launch_result,
         ]
     );
     assert!(is_allowed_client_event_pair(0x00, plugin_removal_intent));
@@ -208,6 +221,20 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     assert!(is_allowed_client_event_pair(0x00, skill_authority_decision));
     assert!(is_allowed_client_event_pair(0x00, proof_rotation));
     assert!(is_allowed_client_event_pair(0x00, communication_controlled));
+    assert!(is_allowed_client_event_pair(0x00, os_file_write_intent));
+    assert!(is_allowed_client_event_pair(0x00, os_file_write_result));
+    assert!(is_allowed_client_event_pair(0x00, os_app_launch_intent));
+    assert!(is_allowed_client_event_pair(0x00, os_app_launch_result));
+    // The pairs with no client caller must stay OUT — this is the half of the
+    // contract that actually bounds the surface.
+    assert!(!is_allowed_client_event_pair(
+        0x00,
+        crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+    ));
+    assert!(!is_allowed_client_event_pair(
+        0x00,
+        crate::wal::events::ExtendedSubtype::MediaCallIntent as u8
+    ));
     assert!(!is_allowed_client_event_pair(0x00, 0));
     assert!(!is_allowed_client_event_pair(0x00, self_edit_proposed));
     assert!(is_allowed_client_event_pair(0xA8, 0));
