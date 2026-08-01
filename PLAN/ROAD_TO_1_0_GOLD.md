@@ -3975,10 +3975,27 @@ None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
   (`neoth mcp tools`) gemeldet. `home` wird als Feld durchgereicht (Session-24-`_at(base)`-
   Konvention), damit Tests ohne Env-Mutation laufen. Tests: guardian 9/9, smart_approve 37/37,
   clippy 0. **L** 🔒
-- [ ] **ADOPT31-C5** Pre-work multi-role sign-off gate — sequential role verdicts plus a
-  Decision Audit Trail written to WAL *before* high-impact dispatch. *NEOTH:*
-  `council/pre_action_gate.rs` (new). *Consumer:* `coding/dispatcher.rs` ahead of
-  SelfSourceEdit / ExecArbitrary / SelfBinaryReplace. **L** 🔒
+- [~] **ADOPT31-C5** Pre-work multi-role sign-off gate — **NEU GESCHNITTEN (2026-08-01);
+  zwei Drittel existieren, das fehlende Drittel ist Verdrahtung, nicht Neubau.**
+  1. **Die „Decision Audit Trail vor Dispatch"-Hälfte existiert.** `SelfSourceEdit`
+     (`cli/bg_session.rs:2554`), `ExecArbitrary` (`cli/jobs.rs:575`) und
+     `SelfBinaryReplace` laufen durch `permissions::evaluate`, und
+     `permissions::gate::audit` schreibt `0xA0/0xA1` **vor** der Ausführung — mit Subjekt,
+     Lease und Bestätigungsquelle. `cli/autonomy.rs:158` hält zusätzlich einen
+     Sicherheits-Floor (`PatchApplyToRepo`/`SelfBinaryReplace` → immer Confirm).
+  2. **Die Rollen existieren ebenfalls.** `src/council/` hat 22 Module, darunter
+     `dissent.rs`, `self_challenge.rs`, `qa_verdict.rs`, `stop_verifier.rs`,
+     `quality_score.rs`, `diversity.rs`. Ein neues `pre_action_gate.rs` mit eigenen
+     Rollen würde diesen Apparat duplizieren.
+  3. **Was wirklich fehlt:** der Council ist an dieser Stelle **nicht verdrahtet** —
+     `grep council:: src/coding/dispatcher.rs src/cli/bg_session.rs` ist leer.
+  **Offene Entwurfsfragen, die vor dem Bauen zu klären sind (keine davon mechanisch):**
+  (a) Sind die Rollen-Verdikte LLM-gestützt? Dann kostet **jeder** Self-Edit Provider-Calls
+  und Latenz — das ist eine Budget- und Ergonomie-Entscheidung, kein Implementierungsdetail.
+  (b) Was passiert bei Uneinigkeit — Deny, oder Eskalation zum Operator-Confirm?
+  (c) Darf der Operator überstimmen, und wird das Überstimmen selbst auditiert?
+  **Realistische Größe nach dem Neuschnitt: M statt L**, weil nur der Gate-Aufruf plus
+  Verdikt-Aggregation neu ist. **M** 🔒
 - [~] **ADOPT31-C6** Credential placeholder vault — **UMSKOPIERT (2026-08-01), zwei Drittel
   des Items sind gegenstandslos, ein Drittel ist eine echte Lücke.**
   1. **Der Store existiert und ist stärker.** `SecretsBackend::{File, Keychain}`
