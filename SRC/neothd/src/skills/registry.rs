@@ -2232,6 +2232,18 @@ modes:
     }
 
     #[tokio::test]
+    // The test makes the skills root unavailable by renaming it while a watcher
+    // is active. On Windows a directory with an open ReadDirectoryChangesW
+    // handle cannot be renamed — the rename fails with ERROR_ACCESS_DENIED and
+    // the test never reaches the behaviour it is checking. That is a property
+    // of the test's mechanism, not of the registry: the drop-on-unavailable
+    // path is platform-independent and stays covered on Linux CI. Skipped
+    // rather than weakened, so the Windows gap is visible instead of papered
+    // over.
+    #[cfg_attr(
+        windows,
+        ignore = "renaming a watched directory is denied on Windows; covered on Unix"
+    )]
     async fn watcher_rebind_failure_still_drops_installed_runtime_skills() {
         let home = tempdir().unwrap();
         let skills_dir = home.path().join("skills");

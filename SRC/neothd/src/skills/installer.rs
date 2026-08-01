@@ -66,7 +66,7 @@ const MAX_SKILL_ENTRIES: usize = 4096;
 const MAX_RUNTIME_AUTHORITY_TRAVERSAL_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_RUNTIME_AUTHORITY_TRAVERSAL_ENTRIES: usize = 16_384;
 const MAX_SKILL_TREE_DEPTH: usize = 32;
-const SKILL_MUTATION_LOCK_FILE: &str = ".neoth-skills.lock";
+pub(crate) const SKILL_MUTATION_LOCK_FILE: &str = ".neoth-skills.lock";
 const SKILL_MUTATION_JOURNAL_FILE: &str = ".neoth-skill-mutation.json";
 const SKILL_MUTATION_JOURNAL_STAGE_PREFIX: &str = ".neoth-skill-mutation-write-";
 const SKILL_MUTATION_JOURNAL_VERSION: u32 = 2;
@@ -5977,9 +5977,15 @@ mod tests {
         for kind in [SkillMutationKind::Install, SkillMutationKind::Replace] {
             let error = validate_skill_mutation_journal(&prepared_journal_for_id(kind, legacy_id))
                 .unwrap_err();
+            // The validator now states the rule it enforced ("skill id may
+            // only contain lowercase [a-z0-9_-]") instead of a bare "invalid
+            // skill id" — more useful, and it strands a test pinned to the old
+            // wording. Assert what the test is about: the rejection is about
+            // the id, and it names the offending value.
+            let detail = format!("{error:#}");
             assert!(
-                format!("{error:#}").contains("invalid skill id"),
-                "{kind:?} must retain the canonical creator id boundary: {error:#}"
+                detail.contains("skill id") && detail.contains(legacy_id),
+                "{kind:?} must retain the canonical creator id boundary: {detail}"
             );
         }
         for kind in [

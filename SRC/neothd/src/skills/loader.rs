@@ -753,6 +753,19 @@ fn load_user_skills_with_limits(
         let mut root_entry_count = 0usize;
         let mut manifest_work_bytes = 0usize;
         for entry in entries {
+            // The loader creates `.neoth-skills.lock` in this very directory a
+            // few lines above, so charging it to the operator's entry budget
+            // makes the budget mean one less than it says — and makes a
+            // 1-entry limit unsatisfiable by even a single skill. The lock is
+            // our own bookkeeping, not installed content.
+            if entry
+                .as_ref()
+                .ok()
+                .and_then(|e| e.file_name().into_string().ok())
+                .is_some_and(|name| name == super::installer::SKILL_MUTATION_LOCK_FILE)
+            {
+                continue;
+            }
             root_entry_count = root_entry_count
                 .checked_add(1)
                 .context("installed Skill root-entry counter overflow")?;
