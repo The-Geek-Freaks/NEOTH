@@ -310,6 +310,7 @@ fn subprocess_transports_stay_bounded() {
 
     let tmux = production(TMUX_SESSION);
     assert!(tmux.contains("const MAX_CAPTURE_BYTES:"));
+    assert!(tmux.contains("const MAX_CAPTURE_STDERR_BYTES: usize = 64 * 1024;"));
     // `Command::output()` collects the whole body before returning, so a
     // post-hoc trim bounds nothing. The capture has to be streamed.
     assert!(
@@ -319,6 +320,22 @@ fn subprocess_transports_stay_bounded() {
     assert!(
         tmux.contains("captured.len() > MAX_CAPTURE_BYTES * 2"),
         "tmux_session.rs: the read loop must fold back to the tail window"
+    );
+    assert!(
+        !tmux.contains("read_to_end("),
+        "tmux_session.rs: capture-pane pipes must drain through bounded readers"
+    );
+    assert!(
+        tmux.contains("response_bounds::read_bounded(stderr, MAX_CAPTURE_STDERR_BYTES)"),
+        "tmux_session.rs: stderr must use the shared bounded, draining reader"
+    );
+    assert!(
+        tmux.contains("stderr_truncated: stderr.truncated"),
+        "tmux_session.rs: stderr truncation must remain visible to diagnostics"
+    );
+    assert!(
+        tmux.contains("stderr_truncated={}, stderr_retained_bytes={}, stderr_cap_bytes={}"),
+        "tmux_session.rs: failure diagnostics must report stderr truncation and retained size"
     );
 
     let pty = production(PTY_SESSION);

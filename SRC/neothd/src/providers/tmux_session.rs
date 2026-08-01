@@ -41,6 +41,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
+use super::response_bounds;
 use super::tmux_socket::{TmuxSocket, socket_args};
 
 /// Default prefix used by the operator's bridge. NEOTH inherits the convention so
@@ -60,6 +61,9 @@ pub const DEFAULT_CAPTURE_HISTORY_LINES: i32 = 1000;
 /// enormous line is still unbounded. 4 MiB is far above any real terminal
 /// snapshot and keeps the newest bytes, where the prompt and reply are.
 const MAX_CAPTURE_BYTES: usize = 4 * 1024 * 1024;
+/// Byte ceiling retained from `capture-pane` stderr. Reading continues past
+/// the cap so a noisy tmux process cannot fill its pipe and block `wait()`.
+const MAX_CAPTURE_STDERR_BYTES: usize = 64 * 1024;
 /// How much tmux stderr an operator-facing error may quote.
 const MAX_QUOTED_STDERR_CHARS: usize = 400;
 
@@ -73,6 +77,56 @@ fn keep_newest_bytes(mut captured: Vec<u8>, max_bytes: usize) -> Vec<u8> {
         captured.drain(..cut);
     }
     captured
+}
+
+struct CaptureStreams {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    stderr_truncated: bool,
+}
+
+/// Drain both `capture-pane` pipes concurrently while retaining bounded data.
+///
+/// Stdout keeps the newest pane bytes; stderr keeps a diagnostic prefix. Both
+/// readers continue through EOF after hitting their retention cap, otherwise a
+/// full pipe can block tmux and make the concurrent child `wait()` hang.
+async fn read_capture_streams<Stdout, Stderr>(
+    stdout: &mut Stdout,
+    stderr: &mut Stderr,
+) -> std::io::Result<CaptureStreams>
+where
+    Stdout: tokio::io::AsyncRead + Unpin,
+    Stderr: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+
+    let read_stdout = async {
+        let mut captured = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            let read = stdout.read(&mut chunk).await?;
+            if read == 0 {
+                break;
+            }
+            captured.extend_from_slice(&chunk[..read]);
+            // Hold at most twice the window, then fold back to it. Trimming
+            // per chunk would memmove on every read; this keeps the peak
+            // bounded without that cost.
+            if captured.len() > MAX_CAPTURE_BYTES * 2 {
+                let cut = captured.len() - MAX_CAPTURE_BYTES;
+                captured.drain(..cut);
+            }
+        }
+        Ok::<Vec<u8>, std::io::Error>(keep_newest_bytes(captured, MAX_CAPTURE_BYTES))
+    };
+    let read_stderr = response_bounds::read_bounded(stderr, MAX_CAPTURE_STDERR_BYTES);
+    let (stdout, stderr) = tokio::try_join!(read_stdout, read_stderr)?;
+
+    Ok(CaptureStreams {
+        stdout,
+        stderr: stderr.bytes,
+        stderr_truncated: stderr.truncated,
+    })
 }
 
 /// One live tmux session NEOTH owns. Holding the value keeps the
@@ -282,8 +336,6 @@ impl TmuxSession {
     /// Caller is responsible for parsing / detecting the prompt
     /// stabilisation — capture is a snapshot, not a wait.
     pub async fn capture_pane(&self, history_lines: i32) -> Result<String> {
-        use tokio::io::AsyncReadExt;
-
         let start = format!("-{history_lines}");
         // `Command::output()` collects the whole of stdout before returning, so
         // trimming afterwards bounds nothing: a wedged pane is already in
@@ -304,37 +356,15 @@ impl TmuxSession {
 
         let mut stdout = child.stdout.take().context("tmux capture-pane stdout")?;
         let mut stderr = child.stderr.take().context("tmux capture-pane stderr")?;
-        let mut captured: Vec<u8> = Vec::new();
-        let mut stderr_bytes = Vec::new();
-        let read_stdout = async {
-            let mut chunk = [0u8; 8192];
-            loop {
-                let read = stdout.read(&mut chunk).await?;
-                if read == 0 {
-                    break;
-                }
-                captured.extend_from_slice(&chunk[..read]);
-                // Hold at most twice the window, then fold back to it. Trimming
-                // per chunk would memmove on every read; this keeps the peak
-                // bounded without that cost.
-                if captured.len() > MAX_CAPTURE_BYTES * 2 {
-                    let cut = captured.len() - MAX_CAPTURE_BYTES;
-                    captured.drain(..cut);
-                }
-            }
-            Ok::<(), std::io::Error>(())
-        };
-        let read_stderr = async {
-            stderr.read_to_end(&mut stderr_bytes).await?;
-            Ok::<(), std::io::Error>(())
-        };
-        let (status, (), ()) = tokio::try_join!(child.wait(), read_stdout, read_stderr)
-            .context("read `tmux capture-pane`")?;
+        let read_streams = read_capture_streams(&mut stdout, &mut stderr);
+        let (status, streams) =
+            tokio::try_join!(child.wait(), read_streams).context("read `tmux capture-pane`")?;
 
         if !status.success() {
-            let stderr = String::from_utf8_lossy(&stderr_bytes);
+            let stderr = String::from_utf8_lossy(&streams.stderr);
             anyhow::bail!(
-                "tmux capture-pane (session={}) exited with {:?}: {}",
+                "tmux capture-pane (session={}) exited with {:?}: {} \
+                 (stderr_truncated={}, stderr_retained_bytes={}, stderr_cap_bytes={})",
                 self.name,
                 status.code(),
                 stderr
@@ -342,11 +372,12 @@ impl TmuxSession {
                     .chars()
                     .take(MAX_QUOTED_STDERR_CHARS)
                     .collect::<String>(),
+                streams.stderr_truncated,
+                streams.stderr.len(),
+                MAX_CAPTURE_STDERR_BYTES,
             );
         }
-        // The tail is where the prompt and the reply are.
-        let captured = keep_newest_bytes(captured, MAX_CAPTURE_BYTES);
-        Ok(String::from_utf8_lossy(&captured).into_owned())
+        Ok(String::from_utf8_lossy(&streams.stdout).into_owned())
     }
 
     /// Poll `capture_pane` until the output stops changing for
@@ -493,6 +524,25 @@ mod tests {
         // The head is what scrolled away; the reply lives at the tail.
         assert_eq!(keep_newest_bytes(b"abcdef".to_vec(), 4), b"cdef");
         assert_eq!(keep_newest_bytes(Vec::new(), 4), Vec::<u8>::new());
+    }
+
+    #[tokio::test]
+    async fn capture_streams_bound_and_fully_drain_large_stderr() {
+        let mut stdout = b"pane snapshot".as_slice();
+        let stderr_input = vec![b'e'; MAX_CAPTURE_STDERR_BYTES + 32 * 1024];
+        let mut stderr = stderr_input.as_slice();
+
+        let streams = read_capture_streams(&mut stdout, &mut stderr)
+            .await
+            .expect("read capture streams");
+
+        assert_eq!(streams.stdout, b"pane snapshot");
+        assert_eq!(streams.stderr.len(), MAX_CAPTURE_STDERR_BYTES);
+        assert!(streams.stderr_truncated);
+        assert!(
+            stderr.is_empty(),
+            "stderr must drain through EOF after retention hits the cap"
+        );
     }
 
     #[test]
