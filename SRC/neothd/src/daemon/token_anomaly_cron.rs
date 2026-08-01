@@ -529,7 +529,12 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_returns_none_when_disabled() {
-        let seg = tempfile::tempdir().unwrap().path().join("w.wal");
+        // The TempDir must outlive the writer: binding it to a variable keeps
+        // the directory alive. `tempfile::tempdir().unwrap().path()` drops the
+        // handle at the end of the statement and deletes the directory, so the
+        // writer then fails with "WAL rewrite lock parent is missing".
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("w.wal");
         let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
         let cfg = TokenAnomalyConfig::default(); // enabled = false
         let handle = spawn_token_anomaly_cron_loop(cfg, PathBuf::from("/tmp/wal"), writer);
@@ -538,7 +543,9 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_returns_some_when_enabled_then_abort() {
-        let seg = tempfile::tempdir().unwrap().path().join("w.wal");
+        // See above — the TempDir has to be bound, not dropped inline.
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("w.wal");
         let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
         let handle = spawn_token_anomaly_cron_loop(cfg(), PathBuf::from("/tmp/wal"), writer)
             .expect("enabled → handle");

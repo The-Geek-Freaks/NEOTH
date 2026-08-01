@@ -481,7 +481,14 @@ mod tests {
         .await
         .unwrap_err();
         let detail = format!("{error:#}");
-        assert!(detail.contains("load skill inventory"));
-        assert!(detail.contains("read skills directory"));
+        assert!(detail.contains("load skill inventory"), "{detail}");
+        // The loader was hardened since this test was written and now reports
+        // "skills root must be a real directory at every untrusted component"
+        // instead of "read skills directory" — a strictly better message. Assert
+        // the invariant the test actually cares about (the failure names the
+        // skills root and why it is unusable) rather than one exact sentence,
+        // which is what went stale here in the first place.
+        assert!(detail.contains("skills root"), "{detail}");
+        assert!(detail.contains("directory"), "{detail}");
     }
 }
