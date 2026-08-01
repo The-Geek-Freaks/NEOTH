@@ -12895,7 +12895,19 @@ modes:
         assert_eq!(dec1.header.event_type, EVENT_TYPE_PROVIDER_REQUEST);
         let req_payload: serde_json::Value = serde_json::from_slice(dec1.payload).unwrap();
         assert_eq!(req_payload["provider"], "mock");
-        assert_eq!(req_payload["operator_id"], "alice");
+        // The operator id is hashed into the WAL now, not written in the clear.
+        // Asserting the plaintext back would undo that privacy change, so pin
+        // BOTH halves of it: the identifier is recoverable as a digest, and the
+        // plaintext is genuinely absent.
+        {
+            use sha2::{Digest, Sha256};
+            let expected = format!("{:x}", Sha256::digest(b"alice"));
+            assert_eq!(req_payload["operator_id_sha256"], expected);
+            assert!(
+                req_payload.get("operator_id").is_none(),
+                "the operator id must not appear in the clear: {req_payload}"
+            );
+        }
         assert_eq!(req_payload["model_source"], "freedom");
         assert_eq!(req_payload["wire_model"], "claude-opus-4-7");
 
