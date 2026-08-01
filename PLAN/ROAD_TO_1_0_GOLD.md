@@ -3995,10 +3995,13 @@ None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
      `HashMap<String, String>` im **Klartext** in `mcp_servers.yaml`. Die einzige Indirektion
      ist der Literal `from_env`, der zur Spawn-Zeit aus der **Prozessumgebung** liest — also
      genau die Fläche, die auch **T8** betrifft (auf Linux via `/proc/<pid>/environ` lesbar).
-  **Neuer Zuschnitt `ADOPT31-C6a`:** ein `from_secret:NAME`-Literal für `McpServerConfig::env`,
-  zur Spawn-Zeit aus dem **vorhandenen** `SecretsBackend` aufgelöst. Schließt Klartext-Secrets
-  auf der Platte, nutzt den bereits gehärteten Store, und vermeidet den Umweg über die
-  Prozessumgebung. Klein, additiv, kein neuer Store. **S** 🔒
+  **`ADOPT31-C6a` — GEBAUT (2026-08-01).** `from_secret:NAME` in `McpServerConfig::env`,
+  zur Spawn-Zeit über den **vorhandenen** `SecretStore` aufgelöst (`keychain::open_store` +
+  `store_key`). Kein neuer Store, kein Umweg über die Prozessumgebung. Store ist injizierbar
+  (`resolve_env_with_store`), damit Tests nicht die echte OS-Keychain anfassen, und wird
+  **lazy** geöffnet — eine Config ohne `from_secret:` entsperrt nichts. Fehler nennen
+  ausschließlich den Schlüssel, nie den Wert; ein eigener Test beweist, dass ein
+  Lookup-Fehlschlag kein fremdes Secret zurückspiegelt. 4 Tests, `mcp::config` 60/60. **S** 🔒
   *NEOTH:* `security/credential_vault.rs` (new). *Consumer:* channel tool-call injectors,
   `permissions/lease.rs` MCP scope. **L** 🔒
 - [ ] **ADOPT31-C7** Information-flow-control label lattice — `source_labels[]` + `clearance`

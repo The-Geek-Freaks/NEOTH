@@ -12,8 +12,14 @@
 //!     command: npx
 //!     args: ["-y", "@example/mcp-server@1.2.3"]
 //!     env:
-//!       EXAMPLE_TOKEN: from_env  # operator-controlled
+//!       EXAMPLE_TOKEN: from_env             # from the process environment
+//!       GITHUB_TOKEN: from_secret:github_pat # from the secret store
 //! ```
+//!
+//! `env: from_secret:NAME` (ADOPT31-C6a) resolves `NAME` from the operator's
+//! configured secret store at spawn time, so an MCP server credential need not
+//! sit in this file in the clear — and need not be routed through the process
+//! environment, which is readable at `/proc/<pid>/environ` on Linux.
 //!
 //! `env: from_env` is a sentinel meaning "read this value from the
 //! NEOTH-process environment at spawn time". Plain values pass through.
@@ -26,6 +32,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::config::FreedomConfig;
+
+/// ADOPT31-C6a — prefix marking an `env` value as a secret-store reference.
+const SECRET_ENV_SENTINEL: &str = "from_secret:";
 
 /// One MCP server entry from the YAML config.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -424,22 +433,79 @@ impl McpServerConfig {
         parse_exact_npm_spec(&self.args[1]).map(|(package, _)| package)
     }
 
-    /// Resolve `env: from_env` sentinels at spawn time. Returns the final
-    /// env map the spawn helper will hand to the child process. Missing
-    /// variables surface as an error so the operator sees the failure
-    /// rather than the child silently misbehaving.
+    /// Resolve `env` sentinels at spawn time. Returns the final env map the
+    /// spawn helper hands to the child process. A missing source surfaces as an
+    /// error so the operator sees the failure rather than the child silently
+    /// misbehaving.
+    ///
+    /// Two sentinels:
+    /// - `from_env` — read the same-named variable from the NEOTH process
+    ///   environment.
+    /// - `from_secret:NAME` (ADOPT31-C6a) — read `NAME` from the operator's
+    ///   configured secret store, so an MCP server credential need not sit in
+    ///   `mcp_servers.yaml` in the clear nor be routed through the process
+    ///   environment (readable at `/proc/<pid>/environ` on Linux).
     pub fn resolve_env(&self) -> Result<HashMap<String, String>> {
+        self.resolve_env_with_store(None)
+    }
+
+    /// ADOPT31-C6a — as [`Self::resolve_env`], with an injectable store.
+    ///
+    /// The store is a parameter rather than an `open_store()` call buried in
+    /// the loop so this is testable without touching the operator's real OS
+    /// keychain. It is also opened lazily: a config using no `from_secret:`
+    /// sentinel must not unlock anything.
+    pub fn resolve_env_with_store(
+        &self,
+        store: Option<&dyn crate::config::keychain::SecretStore>,
+    ) -> Result<HashMap<String, String>> {
         let mut out = HashMap::with_capacity(self.env.len());
+        let mut opened: Option<Box<dyn crate::config::keychain::SecretStore>> = None;
         for (k, v) in &self.env {
             if v == "from_env" {
                 let actual = std::env::var(k).with_context(|| {
                     format!(
-                        "MCP server `{}`: env `{k}` requested via `from_env` \
-                         but no such variable in the NEOTH process environment",
+                        "MCP server `{}`: env `{k}` requested via `from_env` but no such                          variable in the NEOTH process environment",
                         self.id
                     )
                 })?;
                 out.insert(k.clone(), actual);
+            } else if let Some(name) = v.strip_prefix(SECRET_ENV_SENTINEL) {
+                let name = name.trim();
+                anyhow::ensure!(
+                    !name.is_empty(),
+                    "MCP server `{}`: env `{k}` uses `{SECRET_ENV_SENTINEL}` with no secret name",
+                    self.id
+                );
+                let store = match store {
+                    Some(store) => store,
+                    None => {
+                        if opened.is_none() {
+                            opened =
+                                Some(crate::config::keychain::open_store().with_context(|| {
+                                    format!(
+                                        "MCP server `{}`: env `{k}` needs the secret store",
+                                        self.id
+                                    )
+                                })?);
+                        }
+                        opened.as_deref().expect("just opened")
+                    }
+                };
+                let found = store
+                    .get(&crate::config::keychain::store_key(name))
+                    .with_context(|| {
+                        format!("MCP server `{}`: read secret `{name}` for env `{k}`", self.id)
+                    })?;
+                // Errors name the KEY, never the value — an operator debugging a
+                // typo must not get the secret echoed back at them.
+                let found = found.with_context(|| {
+                    format!(
+                        "MCP server `{}`: env `{k}` requested secret `{name}` but the store                          has no such entry",
+                        self.id
+                    )
+                })?;
+                out.insert(k.clone(), found.expose().to_string());
             } else {
                 out.insert(k.clone(), v.clone());
             }
@@ -1060,6 +1126,98 @@ pub fn tududi_recommended_config(server_js_path: &str) -> McpServerConfig {
 
 #[cfg(test)]
 mod tests {
+
+    // ---- ADOPT31-C6a: from_secret: env sentinel -------------------------
+
+    struct FakeStore(std::collections::HashMap<String, String>);
+
+    impl crate::config::keychain::SecretStore for FakeStore {
+        fn get(&self, key: &str) -> anyhow::Result<Option<crate::secret::SecretString>> {
+            Ok(self
+                .0
+                .get(key)
+                .map(|v| crate::secret::SecretString::from(v.clone())))
+        }
+        fn set(&self, _key: &str, _value: &crate::secret::SecretString) -> anyhow::Result<()> {
+            unreachable!("resolve_env never writes")
+        }
+        fn delete(&self, _key: &str) -> anyhow::Result<()> {
+            unreachable!("resolve_env never deletes")
+        }
+        fn backend_name(&self) -> &'static str {
+            "fake"
+        }
+    }
+
+    fn server_with_env(pairs: &[(&str, &str)]) -> McpServerConfig {
+        let mut cfg = McpServerConfig {
+            id: "srv".into(),
+            description: None,
+            command: "mcp-test".into(),
+            args: vec![],
+            env: HashMap::new(),
+            enabled: true,
+            allow_tools: None,
+            trust_all_tools: false,
+            smart_approve: false,
+            autonomy_gate: None,
+        };
+        for (k, v) in pairs {
+            cfg.env.insert((*k).to_string(), (*v).to_string());
+        }
+        cfg
+    }
+
+    #[test]
+    fn from_secret_resolves_through_the_store() {
+        let store = FakeStore(std::collections::HashMap::from([(
+            crate::config::keychain::store_key("github_pat"),
+            "ghp-real-value".to_string(),
+        )]));
+        let cfg = server_with_env(&[("GITHUB_TOKEN", "from_secret:github_pat")]);
+        let env = cfg.resolve_env_with_store(Some(&store)).unwrap();
+        assert_eq!(env.get("GITHUB_TOKEN").unwrap(), "ghp-real-value");
+    }
+
+    #[test]
+    fn a_missing_secret_fails_loud_and_never_echoes_a_value() {
+        let store = FakeStore(std::collections::HashMap::from([(
+            crate::config::keychain::store_key("other"),
+            "ghp-real-value".to_string(),
+        )]));
+        let cfg = server_with_env(&[("GITHUB_TOKEN", "from_secret:typo_name")]);
+        let error = cfg.resolve_env_with_store(Some(&store)).unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("typo_name") && detail.contains("GITHUB_TOKEN"), "{detail}");
+        // The whole point: a debugging operator must not get another secret
+        // echoed back at them by a lookup failure.
+        assert!(
+            !detail.contains("ghp-real-value"),
+            "an error must never carry a secret value: {detail}"
+        );
+    }
+
+    #[test]
+    fn an_empty_secret_name_is_refused() {
+        let store = FakeStore(std::collections::HashMap::new());
+        let cfg = server_with_env(&[("X", "from_secret:   ")]);
+        assert!(cfg.resolve_env_with_store(Some(&store)).is_err());
+    }
+
+    #[test]
+    fn plain_values_and_from_env_are_untouched_by_the_new_path() {
+        // SAFETY: single-threaded test; the variable is unique to this test.
+        unsafe { std::env::set_var("NEOTH_C6A_PROBE", "from-process-env") };
+        let cfg = server_with_env(&[
+            ("LITERAL", "kept-as-is"),
+            ("NEOTH_C6A_PROBE", "from_env"),
+        ]);
+        // No store passed and none needed: nothing uses `from_secret:`.
+        let env = cfg.resolve_env_with_store(None).unwrap();
+        assert_eq!(env.get("LITERAL").unwrap(), "kept-as-is");
+        assert_eq!(env.get("NEOTH_C6A_PROBE").unwrap(), "from-process-env");
+        unsafe { std::env::remove_var("NEOTH_C6A_PROBE") };
+    }
     use super::*;
     use tempfile::tempdir;
 
