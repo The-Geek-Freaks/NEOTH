@@ -1180,8 +1180,19 @@ mod tests {
         assert_eq!(std::fs::read(manifest_path).unwrap(), original);
     }
 
+    /// A backup generation with no mutation journal is NOT an interrupted
+    /// install — it is rollback evidence nobody can authenticate.
+    ///
+    /// This test used to assert the opposite: that such a backup gets published
+    /// back over the live skill and then deleted. That behaviour was removed on
+    /// purpose (`installer.rs`: "refusing to publish or delete unauthenticated
+    /// rollback evidence"), because restoring a backup whose provenance cannot
+    /// be checked will happily resurrect arbitrary content. Asserting the old
+    /// shape would be asserting a security regression, so the test now pins the
+    /// guarantee that replaced it: the operation refuses, and the evidence is
+    /// left exactly as found — neither published nor destroyed.
     #[test]
-    fn create_recovers_interrupted_install_before_refusing_replacement() {
+    fn journal_less_backup_evidence_is_refused_and_left_untouched() {
         let dir = tempfile::tempdir().unwrap();
         let nonce = "0123456789abcdef0123456789abcdef";
         let backup = dir
@@ -1204,13 +1215,28 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(format!("{error:#}").contains("pass --force to replace"));
+        let detail = format!("{error:#}");
+        assert!(
+            detail.contains("journal-less backup generation")
+                && detail.contains("morning-news"),
+            "the refusal must name what it found and for which skill: {detail}"
+        );
+
+        // Neither published…
+        assert!(
+            !dir.path().join("morning-news").exists(),
+            "unauthenticated rollback evidence must not be published over the live skill"
+        );
+        // …nor destroyed: the operator still has the evidence to inspect.
+        assert!(
+            backup.exists(),
+            "the refusal must preserve the evidence, not delete it"
+        );
         assert_eq!(
-            std::fs::read(dir.path().join("morning-news").join("skill.yaml")).unwrap(),
+            std::fs::read(backup.join("skill.yaml")).unwrap(),
             b"old generation"
         );
-        assert!(!backup.exists());
-        assert!(!stage.exists());
+        assert!(stage.exists(), "the staged partial must survive the refusal too");
     }
 
     #[test]
