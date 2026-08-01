@@ -3891,9 +3891,26 @@ None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
   Digest; ein Leak-Detektor, der das Geheimnis in Logs schreibt, erzeugt das Leck, das
   er finden soll (eigener Test). Verdrahtet in `cli/serve_pipeline.rs::sanitize_inbound`
   **vor** dem Quarantäne-Return, damit eine verworfene Nachricht als Evidenz zählt.
-  11/11 Tests, clippy 0. *Folgeschritt `C1a`:* Canary-Einbettung in den System-Prompt +
-  Outbound-Prüfung im Antwortpfad (`observe_outbound` ist gebaut und getestet, der
-  Einbettungspunkt ist eine eigene Änderung im Prompt-Composer). **M** 🔒
+  11/11 Tests, clippy 0. **M** 🔒
+- [ ] **ADOPT31-C1a** Canary-Einbettung + Outbound-Prüfung. `observe_outbound` ist gebaut
+  und getestet; offen ist nur das Einhängen. **Integrationsvertrag (verifiziert, nicht
+  geraten) — bitte in einem Zug mit vollem Kontext umsetzen, das ist der heikelste Pfad
+  der Codebase:**
+  1. **Nicht** an `merged_system` (`cli/chat.rs:3668`) anhängen. Der Kommentar dort sagt
+     ausdrücklich: *„Adding any prompt bytes here would bypass the cap."*
+  2. Einfügen als `BlockItem::new(Block::A, …)` dort, wo `final_system` entsteht
+     (`cli/chat.rs:2290`). **`Block::A`, weil es nicht degradierbar ist**
+     (`tokens/budget.rs:65`) — fiele das Canary bei knappem Budget weg, schwiege der
+     Detektor still, was schlimmer ist als kein Detektor (falsche Sicherheit).
+  3. **Beide Seiten konsistent bedienen.** `cli/chat.rs:2816` prüft hart
+     `typed_prompt == final_prompt && typed_system == final_system` und bricht sonst mit
+     *„typed prompt blocks diverged during preflight; provider dispatch refused"* ab.
+     Ein Block ohne passenden `final_system`-Text legt damit **jeden** Chat-Dispatch lahm.
+  4. Kosten offen benennen: das Canary belegt Budget in einer nicht-degradierbaren
+     Klasse (eine kurze Zeile, ~30 Tokens) und hebt damit den Mindestbedarf.
+  5. Outbound: `injection_tracker::InjectionTracker::observe_outbound(&canary, &response)`
+     nach der Provider-Antwort; Token pro Session halten, **niemals** persistieren.
+  **S** 🔒
 - [ ] **ADOPT31-C2** SHA-256 hash-chain tamper-evident audit log —
   `AuditEntry{seq, prev_hash, hash}` + `verify_chain()`. *NEOTH:* augment
   `permissions/audit.rs`. *Consumer:* `permissions/gate.rs::record_decision()` chains every
