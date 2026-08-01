@@ -38,6 +38,7 @@ pub(crate) mod provider_subject;
 pub mod redact;
 pub mod refusal_abliterated;
 pub mod refusal_cause;
+pub mod injection_tracker;
 pub mod mcp_guardian;
 pub mod refusal_detect;
 pub mod refusal_hard_block;

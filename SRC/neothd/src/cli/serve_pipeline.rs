@@ -449,6 +449,24 @@ pub(crate) async fn sanitize_inbound(
     if let Err(e) = crate::security::ingress_sanitizer::audit_append(&report, audit_dir).await {
         warn!(error = %e, "ingress audit append failed; continuing");
     }
+    // ADOPT31-C1 — fold this verdict into the sender's cross-turn window. The
+    // sanitizer above judges one message; an attacker gets many turns, and a
+    // sequence of individually-benign probes is invisible to a single-message
+    // filter by construction. Observed BEFORE the quarantine return so a
+    // dropped message still counts as evidence — a quarantined turn is the
+    // strongest signal there is, and skipping it would let an attacker hide
+    // escalation behind messages that got dropped anyway.
+    if let Some(alert) = crate::security::injection_tracker::observe_inbound_for(
+        sender_hash,
+        &report,
+    ) {
+        warn!(
+            channel = channel_str,
+            sender_hash = %sender_hash,
+            "{}",
+            alert.summary()
+        );
+    }
     if report.quarantined {
         info!(
             channel = channel_str,
@@ -4839,19 +4857,31 @@ mod tests {
         visibility: &str,
         mode_trigger: &str,
     ) -> crate::skills::schema::Skill {
+        // The indentation is written INSIDE each literal rather than by
+        // continuing the source line. A trailing `\` strips the newline *and*
+        // the next line's leading whitespace, so the previous form emitted
+        // every mode field at column 0 — `modes[0]` ended up carrying only
+        // `id`, and each field became a duplicate top-level key. That stayed
+        // invisible until `description` became required on a mode, at which
+        // point the fixture failed to parse at all.
         let manifest = serde_yaml::from_str(&format!(
-            "id: {id}\n\
-             description: {id} fixture\n\
-             visibility: {visibility}\n\
-             trigger_keywords: [{mode_trigger}]\n\
-             modes:\n\
-             - id: {id}-mode\n\
-               description: {id} mode\n\
-               spectrum: balanced\n\
-               oversight: low\n\
-               output:\n\
-                 format: prose\n\
-               trigger_phrases: [{mode_trigger}]\n"
+            concat!(
+                "id: {id}\n",
+                "description: {id} fixture\n",
+                "visibility: {visibility}\n",
+                "trigger_keywords: [{mode_trigger}]\n",
+                "modes:\n",
+                "- id: {id}-mode\n",
+                "  description: {id} mode\n",
+                "  spectrum: balanced\n",
+                "  oversight: low\n",
+                "  output:\n",
+                "    format: prose\n",
+                "  trigger_phrases: [{mode_trigger}]\n",
+            ),
+            id = id,
+            visibility = visibility,
+            mode_trigger = mode_trigger,
         ))
         .expect("valid Skill visibility fixture");
         crate::skills::schema::Skill {

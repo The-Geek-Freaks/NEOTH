@@ -3878,10 +3878,22 @@ seeded by Fabric's `reflexion.json` / `self-refine.json`.
 Every gap below verified by the agent's own ripgrep (zero hits for the named symbols).
 None of these require the toolkit's `cedar-policy` / `regorus` dependencies.
 
-- [ ] **ADOPT31-C1** Multi-turn prompt-injection escalation tracking + canary-token leak
-  detection — cross-turn ring buffer, `MultiTurnEscalation`, `CanaryLeak`. Today
-  `security/ingress_sanitizer.rs` is single-message only. *NEOTH:*
-  `security/injection_tracker.rs` (new). **M** 🔒
+- [x] **ADOPT31-C1** Multi-turn prompt-injection escalation tracking + canary-token leak —
+  **GEBAUT.** `security/injection_tracker.rs`: beschränkter Cross-Turn-Ring (8 Turns),
+  `MultiTurnEscalation` ab 3 Probing-Turns im Fenster, `CanaryLeak` über ein
+  CSPRNG-Token. Nur Injection-Findings zählen (`PromptInjectionMarker`,
+  `PersonaOverrideAttempt`) — Hygiene-Findings wie NFKC/Oversize feuern auf normalem
+  Verkehr und hätten das Signal ertränkt. Ein Einzeltreffer eskaliert NICHT; das
+  behandelt der Sanitizer bereits. Sustained-Attack meldet **einmal**, nicht pro Turn.
+  Prozessweite Registry ist auf 256 Konversationen **beschränkt** — sonst wäre
+  Identitäts-Rotation ein Speicher-DoS gegen den Detektor selbst. **Das Canary-Token
+  wird nirgends aufgezeichnet**: kein `Serialize`, `Debug` redigiert, Alerts tragen den
+  Digest; ein Leak-Detektor, der das Geheimnis in Logs schreibt, erzeugt das Leck, das
+  er finden soll (eigener Test). Verdrahtet in `cli/serve_pipeline.rs::sanitize_inbound`
+  **vor** dem Quarantäne-Return, damit eine verworfene Nachricht als Evidenz zählt.
+  11/11 Tests, clippy 0. *Folgeschritt `C1a`:* Canary-Einbettung in den System-Prompt +
+  Outbound-Prüfung im Antwortpfad (`observe_outbound` ist gebaut und getestet, der
+  Einbettungspunkt ist eine eigene Änderung im Prompt-Composer). **M** 🔒
 - [ ] **ADOPT31-C2** SHA-256 hash-chain tamper-evident audit log —
   `AuditEntry{seq, prev_hash, hash}` + `verify_chain()`. *NEOTH:* augment
   `permissions/audit.rs`. *Consumer:* `permissions/gate.rs::record_decision()` chains every
