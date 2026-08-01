@@ -320,7 +320,15 @@ mod tests {
     fn apply_opsec_trims_disclaimers() {
         let d = apply_preset(ProfilePreset::Opsec);
         assert!(d.trim_disclaimers);
-        assert!(d.system_addendum.to_lowercase().contains("authorised"));
+        // The addendum was rewritten to US spelling ("authorization"), which
+        // stranded a test pinned to "authorised". Match either spelling of the
+        // stem rather than one variant — and specifically the authoriz/s form,
+        // not a bare "authori", so this cannot pass on "authoritative" alone.
+        let addendum = d.system_addendum.to_lowercase();
+        assert!(
+            addendum.contains("authoriz") || addendum.contains("authoris"),
+            "{addendum}"
+        );
     }
 
     #[test]

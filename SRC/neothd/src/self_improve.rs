@@ -4482,12 +4482,13 @@ mod tests {
     async fn discard_journal_refuses_while_a_daemon_is_live() {
         let home = tempfile::tempdir().unwrap();
         write_discardable_journal(home.path());
-        // Our own pid is alive by construction.
-        std::fs::write(
-            home.path().join("neothd.pid"),
-            std::process::id().to_string(),
-        )
-        .unwrap();
+        // Daemon liveness is now an advisory lock HELD on the pidfile, not the
+        // mere presence of a live pid — a stale pidfile from a crashed daemon
+        // deliberately no longer blocks anything. Writing our own pid is
+        // therefore not enough to stand in for a running daemon; the test has
+        // to hold the lock the way the daemon does.
+        let _guard = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid"))
+            .expect("hold the daemon pidfile lock for the duration of this test");
 
         let error = discard_journal(home.path())
             .await
