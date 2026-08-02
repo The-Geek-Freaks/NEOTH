@@ -62,7 +62,10 @@ pub use repo_map::{DEFAULT_TOKEN_BUDGET, RepoMapSummary, build_summary};
 #[allow(unused_imports)]
 pub use root_identity::{CanonicalRepoRoot, RootIdentity};
 #[allow(unused_imports)]
-pub use snapshot::{RebuildOptions, RebuildSnapshot, rebuild_snapshot};
+pub use snapshot::{
+    RebuildOptions, RebuildSnapshot, rebuild_snapshot, rebuild_snapshot_excluding,
+    stable_source_fingerprint, stable_source_fingerprint_excluding,
+};
 #[allow(unused_imports)]
 pub use symbols::{Symbol, SymbolKind, extract_symbols};
 #[allow(unused_imports)]

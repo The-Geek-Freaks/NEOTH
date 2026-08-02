@@ -185,6 +185,7 @@ fn cli_proactive_list_then_accept_then_show_chain() {
     run_proactive(ProactiveArgs {
         action: ProactiveAction::List {
             status: "pending".to_string(),
+            history: false,
         },
         home: Some(home.path().to_path_buf()),
     })
@@ -302,6 +303,7 @@ fn cli_end_to_end_paperless_then_proposal_then_accept() {
     run_proactive(ProactiveArgs {
         action: ProactiveAction::List {
             status: "pending".to_string(),
+            history: false,
         },
         home: Some(home.path().to_path_buf()),
     })

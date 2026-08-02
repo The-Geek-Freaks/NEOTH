@@ -237,6 +237,8 @@ pub const DEFAULT_MAX_METADATA_TEXT_BYTES: usize = 32 * 1024 * 1024;
 /// Build pipeline for a `RepoMap`. Bounded by file count + byte size.
 pub struct RepoMapBuilder {
     root: PathBuf,
+    included_relative_paths: Option<Vec<PathBuf>>,
+    excluded_relative_paths: Vec<PathBuf>,
     max_file_bytes: u64,
     max_files: u64,
     max_total_bytes: u64,
@@ -251,6 +253,8 @@ impl RepoMapBuilder {
     pub fn new<P: Into<PathBuf>>(root: P) -> Self {
         Self {
             root: root.into(),
+            included_relative_paths: None,
+            excluded_relative_paths: Vec::new(),
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_files: DEFAULT_MAX_FILES,
             max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
@@ -321,6 +325,24 @@ impl RepoMapBuilder {
         self
     }
 
+    /// Exclude exact repo-relative files or complete repo-relative subtrees.
+    ///
+    /// Completion-producing callers use this for mutable runtime state that
+    /// lives below an otherwise valid source root. Invalid/escaping paths are
+    /// rejected by [`scan`](Self::scan); they are never silently ignored.
+    pub fn exclude_relative_paths(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.excluded_relative_paths.extend(paths);
+        self
+    }
+
+    /// Restrict the scan to explicit repo-relative files or subtrees. Ancestor
+    /// directories are traversed only to reach an included path. Calling this
+    /// with an empty iterator intentionally produces an empty source corpus.
+    pub fn include_relative_paths(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.included_relative_paths = Some(paths.into_iter().collect());
+        self
+    }
+
     /// Run the scan. Synchronous + sequential — fast enough for
     /// repos up to ~50k files. Phase 2 may switch to parallel walking
     /// via `ignore::WalkBuilder::threads(N)`.
@@ -332,6 +354,24 @@ impl RepoMapBuilder {
         let canonical_root = super::root_identity::CanonicalRepoRoot::discover(&self.root)?;
         let root_canonical = canonical_root.path().to_path_buf();
         let root_str = canonical_root.display().to_owned();
+        let included_relative_paths = self
+            .included_relative_paths
+            .as_deref()
+            .map(normalize_relative_scope_paths)
+            .transpose()?;
+        let excluded_relative_paths =
+            normalize_relative_scope_paths(&self.excluded_relative_paths)?;
+        if let Some(included_relative_paths) = &included_relative_paths {
+            for included in included_relative_paths {
+                anyhow::ensure!(
+                    !excluded_relative_paths
+                        .iter()
+                        .any(|excluded| included.starts_with(excluded)),
+                    "code-map include {} is contained by an excluded path",
+                    included.display()
+                );
+            }
+        }
         let mut files: Vec<RepoFile> = Vec::new();
         let mut report = ScanReport::default();
         let mut by_lang: std::collections::HashMap<Language, u64> =
@@ -353,12 +393,25 @@ impl RepoMapBuilder {
 
         let generated_root = root_canonical.clone();
         builder.filter_entry(move |entry| {
-            entry
-                .path()
-                .strip_prefix(&generated_root)
-                .ok()
-                .and_then(|relative| relative.components().next())
-                .is_none_or(|component| component.as_os_str() != "graphify-out")
+            let Ok(relative) = entry.path().strip_prefix(&generated_root) else {
+                return false;
+            };
+            let generated = relative
+                .components()
+                .next()
+                .is_some_and(|component| component.as_os_str() == "graphify-out");
+            let included = included_relative_paths
+                .as_ref()
+                .is_none_or(|included_paths| {
+                    included_paths.iter().any(|included| {
+                        relative.starts_with(included) || included.starts_with(relative)
+                    })
+                });
+            !generated
+                && included
+                && !excluded_relative_paths
+                    .iter()
+                    .any(|excluded| relative.starts_with(excluded))
         });
         for entry in builder.build() {
             let entry = match entry {
@@ -519,6 +572,33 @@ impl RepoMapBuilder {
             report,
         })
     }
+}
+
+pub(crate) fn normalize_relative_scope_paths(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let mut normalized = Vec::with_capacity(paths.len());
+    for path in paths {
+        let mut clean = PathBuf::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::Normal(part) => clean.push(part),
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_) => anyhow::bail!(
+                    "code-map exclusion must be a contained relative path: {}",
+                    path.display()
+                ),
+            }
+        }
+        anyhow::ensure!(
+            !clean.as_os_str().is_empty(),
+            "code-map exclusion cannot name the repository root"
+        );
+        normalized.push(clean);
+    }
+    normalized.sort();
+    normalized.dedup();
+    Ok(normalized)
 }
 
 pub(crate) fn read_file_bounded(
@@ -696,6 +776,73 @@ mod tests {
         let paths: Vec<&str> = map.files.iter().map(|f| f.path.as_str()).collect();
         assert!(paths.contains(&"public.txt"));
         assert!(!paths.contains(&"secrets.txt"));
+    }
+
+    #[test]
+    fn scan_applies_explicit_file_and_subtree_exclusions_before_bounds() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("runtime/nested")).unwrap();
+        std::fs::write(dir.path().join("source.rs"), "fn source() {}\n").unwrap();
+        std::fs::write(dir.path().join("state.json"), "{}\n").unwrap();
+        std::fs::write(dir.path().join("runtime/nested/wal.bin"), "mutable").unwrap();
+
+        let map = RepoMapBuilder::new(dir.path())
+            .max_files(1)
+            .exclude_relative_paths([PathBuf::from("state.json"), PathBuf::from("runtime")])
+            .scan()
+            .unwrap();
+
+        assert_eq!(map.report.total_files, 1);
+        assert_eq!(map.report.truncated_at, None);
+        assert_eq!(map.files[0].path, "source.rs");
+    }
+
+    #[test]
+    fn scan_exact_include_traverses_ancestors_but_omits_siblings() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("nested/deeper")).unwrap();
+        std::fs::write(
+            dir.path().join("nested/deeper/target.rs"),
+            "fn target() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("nested/deeper/sibling.rs"),
+            "fn sibling() {}\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("root_sibling.rs"), "fn root_sibling() {}\n").unwrap();
+
+        let map = RepoMapBuilder::new(dir.path())
+            .include_relative_paths([PathBuf::from("nested/deeper/target.rs")])
+            .scan()
+            .unwrap();
+
+        assert_eq!(map.report.total_files, 1);
+        assert_eq!(map.files[0].path, "nested/deeper/target.rs");
+    }
+
+    #[test]
+    fn scan_rejects_exclusions_that_escape_the_root() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("source.rs"), "fn source() {}\n").unwrap();
+
+        let error = RepoMapBuilder::new(dir.path())
+            .exclude_relative_paths([PathBuf::from("../outside")])
+            .scan()
+            .unwrap_err();
+
+        assert!(error.to_string().contains("contained relative path"));
+    }
+
+    #[test]
+    fn scan_rejects_includes_that_escape_the_root() {
+        let dir = tempdir().unwrap();
+        let error = RepoMapBuilder::new(dir.path())
+            .include_relative_paths([PathBuf::from("../outside")])
+            .scan()
+            .unwrap_err();
+        assert!(error.to_string().contains("contained relative path"));
     }
 
     #[test]

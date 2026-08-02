@@ -25,6 +25,11 @@ const SELF_IMPROVE_PROPOSALS_MAX_BYTES: usize = 256 * 1024 * 1024;
 const SELF_IMPROVE_STAGE_JOURNAL_MAX_BYTES: usize = 128 * 1024 * 1024;
 const SELF_IMPROVE_ACCEPT_JOURNAL_MAX_BYTES: usize = 128 * 1024 * 1024;
 const SELF_IMPROVE_SKILL_MAX_BYTES: usize = 8 * 1024 * 1024;
+const SELF_IMPROVE_CODE_MAP_MAX_FILES: usize = 32;
+
+pub(crate) fn read_skill_document(path: &Path, label: &str) -> Result<String> {
+    read_regular_file_bounded_utf8(path, SELF_IMPROVE_SKILL_MAX_BYTES, label)
+}
 
 /// Open one ambient path through a capability-bound parent, reject linked or
 /// special leaves, and read at most `max_bytes`. Missing files are the only
@@ -187,6 +192,23 @@ pub struct SelfImproveConfig {
     pub approved_verification_commands: Vec<String>,
 }
 
+static SELF_IMPROVE_CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn config_lock_path(home: &Path) -> PathBuf {
+    home.join("self_improve_config.lock")
+}
+
+fn with_config_lock<T>(home: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    let _guard = SELF_IMPROVE_CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _oslock = crate::util::locked_file::lock_file_blocking(
+        &config_lock_path(home),
+        "self-improvement config",
+    )?;
+    f()
+}
+
 impl SelfImproveConfig {
     pub fn path(home: &Path) -> PathBuf {
         home.join("self_improve.yaml")
@@ -198,12 +220,18 @@ impl SelfImproveConfig {
         Ok(Self::load_strict(home)?.unwrap_or_default())
     }
     pub fn save(&self, home: &Path) -> Result<()> {
+        anyhow::ensure!(
+            !self.auto || self.enabled,
+            "invalid self-improvement config: auto requires enabled"
+        );
         let yaml = serde_yaml::to_string(self)?;
         if yaml.len() > SELF_IMPROVE_CONFIG_MAX_BYTES {
             anyhow::bail!("self-improvement config exceeds its serialized size limit");
         }
-        crate::util::atomic_write::atomic_write_private(&Self::path(home), yaml.as_bytes())?;
-        Ok(())
+        with_config_lock(home, || {
+            crate::util::atomic_write::atomic_write_private(&Self::path(home), yaml.as_bytes())?;
+            Ok(())
+        })
     }
 
     /// B19: fail-closed config loader.
@@ -211,12 +239,23 @@ impl SelfImproveConfig {
     /// - Any other I/O error or YAML parse error → `Err` (corrupt — callers must
     ///   not fall back to a default that could re-enable a disabled master switch).
     pub fn load_strict(home: &Path) -> Result<Option<Self>> {
+        with_config_lock(home, || Self::load_strict_unlocked(home))
+    }
+
+    fn load_strict_unlocked(home: &Path) -> Result<Option<Self>> {
         let p = Self::path(home);
         match read_optional_regular_file_bounded(&p, SELF_IMPROVE_CONFIG_MAX_BYTES, "config")? {
             None => Ok(None),
-            Some(bytes) => serde_yaml::from_slice(&bytes)
-                .map(Some)
-                .map_err(|e| anyhow::anyhow!("{}: YAML parse error: {e}", p.display())),
+            Some(bytes) => {
+                let config: Self = serde_yaml::from_slice(&bytes)
+                    .map_err(|e| anyhow::anyhow!("{}: YAML parse error: {e}", p.display()))?;
+                anyhow::ensure!(
+                    !config.auto || config.enabled,
+                    "{}: invalid self-improvement config: auto requires enabled",
+                    p.display()
+                );
+                Ok(Some(config))
+            }
         }
     }
 
@@ -251,9 +290,9 @@ impl SelfImproveConfig {
 /// - `None` = file absent (never configured).  Under `Full` autonomy this implies
 ///   auto-on (same as the `Full && !asked` branch of the legacy `effective()`).
 ///   Below `Full`, defaults remain all-off until the operator enables explicitly.
-/// - `Some(cfg)` = stored choice is always returned unchanged at every autonomy
-///   level.  The corruption path never reaches here — callers abort on `Err`
-///   before calling this function.
+/// - `Some(cfg)` = an explicit `asked: true` choice wins. A legacy/unanswered
+///   `asked: false` config still receives the documented Full-autonomy default.
+///   The corruption path never reaches here — callers abort on `Err` first.
 ///
 /// B15 safety: `allow_shell_verify` is never set to `true` by this function.
 pub fn effective_from_option(
@@ -275,7 +314,7 @@ pub fn effective_from_option(
                 SelfImproveConfig::default()
             }
         }
-        Some(cfg) => cfg, // stored choice always wins — no override
+        Some(cfg) => cfg.effective(autonomy),
     }
 }
 
@@ -392,13 +431,46 @@ pub enum ProposalStatus {
     #[default]
     Pending,
     /// NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01 (residual 1): the proposal passed
-    /// `execute_proposal_with_verification` and the advisor issued an `Approved`
-    /// verdict that was **persisted to disk**. `accept_proposal` requires this
-    /// state — a `Pending` proposal (not yet verified) cannot be accepted
-    /// directly, even after a daemon restart.
+    /// advisor issued an `Approved` verdict and the caller then proved the
+    /// provider/verdict WAL writer finalized before persisting this state.
+    /// `accept_proposal` also requires a current fingerprint-bound code-map
+    /// capture, so legacy status-only approvals cannot be replayed.
     VerifiedApproved,
     Accepted,
     RolledBack,
+}
+
+/// Canonical code-map evidence captured for one staged proposal.
+///
+/// Older proposal files did not carry this field and deserialize to
+/// `LegacyMissing`. New staging and every execute preflight replace any
+/// caller-supplied value with an exact-target snapshot built in a private,
+/// hidden temporary workspace; no ambient-CWD or global default database is
+/// consulted. `captured_fresh` describes capture time, not perpetual freshness;
+/// execution revalidates the fingerprint before every external review and again
+/// before approval is persisted. The fingerprint is admission/review evidence,
+/// not a lock against arbitrary repository writers. Accept therefore uses the
+/// target/package compare-and-swap as its final mutation-integrity boundary.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ProposalCodeMapAnalysis {
+    #[serde(alias = "fresh")]
+    CapturedFresh {
+        receipt: crate::code_map::RecallWireReceipt,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_fingerprint_sha256: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        captured_at_unix_ns: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        proposal_payload_sha256: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audited_proposal_sha256: Option<String>,
+    },
+    Unmapped {
+        reason: String,
+    },
+    #[default]
+    LegacyMissing,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -433,6 +505,10 @@ pub struct Proposal {
     /// Known risks / caveats of adopting this edit (operator-facing).
     #[serde(default)]
     pub risk_notes: String,
+    /// Generation-bound structural context from this NEOTH instance's code map.
+    /// Missing on legacy proposals only; staging and execute refresh it.
+    #[serde(default)]
+    pub code_map_analysis: ProposalCodeMapAnalysis,
     // ── IMPR-01: ProposalSpec — structured execution / verification envelope ──
     /// Optional execution spec emitted by SkillOpt or an operator-supplied
     /// envelope. Back-compat: absent in older proposals → None.
@@ -1060,6 +1136,76 @@ fn clear_before_skill_write_hook() {
     });
 }
 
+#[cfg(test)]
+type AfterAcceptArchitectureValidationHook = Box<dyn FnOnce() + 'static>;
+
+#[cfg(test)]
+std::thread_local! {
+    static AFTER_ACCEPT_ARCHITECTURE_VALIDATION_HOOK: std::cell::RefCell<Option<AfterAcceptArchitectureValidationHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn set_after_accept_architecture_validation_hook(hook: impl FnOnce() + 'static) {
+    AFTER_ACCEPT_ARCHITECTURE_VALIDATION_HOOK.with(|slot| {
+        let previous = slot.replace(Some(Box::new(hook)));
+        assert!(
+            previous.is_none(),
+            "after-accept-architecture-validation test hook was already armed"
+        );
+    });
+}
+
+#[cfg(test)]
+fn run_after_accept_architecture_validation_hook() {
+    let hook = AFTER_ACCEPT_ARCHITECTURE_VALIDATION_HOOK.with(|slot| slot.borrow_mut().take());
+    if let Some(hook) = hook {
+        hook();
+    }
+}
+
+#[cfg(test)]
+fn clear_after_accept_architecture_validation_hook() {
+    AFTER_ACCEPT_ARCHITECTURE_VALIDATION_HOOK.with(|slot| {
+        slot.borrow_mut().take();
+    });
+}
+
+#[cfg(test)]
+type BeforeApprovalPersistUpdateHook = Box<dyn FnOnce() + 'static>;
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_APPROVAL_PERSIST_UPDATE_HOOK: std::cell::RefCell<Option<BeforeApprovalPersistUpdateHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn set_before_approval_persist_update_hook(hook: impl FnOnce() + 'static) {
+    BEFORE_APPROVAL_PERSIST_UPDATE_HOOK.with(|slot| {
+        let previous = slot.replace(Some(Box::new(hook)));
+        assert!(
+            previous.is_none(),
+            "before-approval-persist-update test hook was already armed"
+        );
+    });
+}
+
+#[cfg(test)]
+fn run_before_approval_persist_update_hook() {
+    let hook = BEFORE_APPROVAL_PERSIST_UPDATE_HOOK.with(|slot| slot.borrow_mut().take());
+    if let Some(hook) = hook {
+        hook();
+    }
+}
+
+#[cfg(test)]
+fn clear_before_approval_persist_update_hook() {
+    BEFORE_APPROVAL_PERSIST_UPDATE_HOOK.with(|slot| {
+        slot.borrow_mut().take();
+    });
+}
+
 fn stage_journal_path(home: &Path) -> PathBuf {
     home.join("self_improve_stage_journal.json")
 }
@@ -1590,66 +1736,7 @@ fn command_output_capped(
     max_bytes_per_stream: usize,
     timeout: std::time::Duration,
 ) -> Result<std::process::Output> {
-    command
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let mut child = command.spawn().context("spawn external command")?;
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("external command stdout was not piped"))?;
-    let mut stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("external command stderr was not piped"))?;
-    let (stdout_tx, stdout_rx) = std::sync::mpsc::channel();
-    let (stderr_tx, stderr_rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = stdout_tx.send(drain_reader_capped(&mut stdout, max_bytes_per_stream));
-    });
-    std::thread::spawn(move || {
-        let _ = stderr_tx.send(drain_reader_capped(&mut stderr, max_bytes_per_stream));
-    });
-    let deadline = std::time::Instant::now() + timeout;
-    let status = loop {
-        if let Some(status) = child.try_wait().context("poll external command")? {
-            break status;
-        }
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            anyhow::bail!("external command timed out after {timeout:?} and was killed");
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    };
-    // The child has EXITED; its pipes are closed and the reader threads are
-    // about to send. Charging the drain against the process deadline meant a
-    // child that finished just before it left a near-zero budget, so
-    // `recv_timeout` returned Timeout for a reader that had simply not been
-    // scheduled yet, and a successful command was reported as a deadline
-    // failure. Callers swallow that with `.ok()?`, which silently turned off the
-    // git drift check and made `is_installed()` answer "not installed" — a whole
-    // nightly self-improve pass skipped for a scheduling hiccup. The drain gets
-    // its own small window, independent of how much of the process budget the
-    // child consumed.
-    let stdout = stdout_rx
-        .recv_timeout(DRAIN_GRACE)
-        .context("external command stdout drain exceeded its deadline")?
-        .context("read external command stdout")?;
-    let stderr = stderr_rx
-        .recv_timeout(DRAIN_GRACE)
-        .context("external command stderr drain exceeded its deadline")?
-        .context("read external command stderr")?;
-    if stdout.exceeded || stderr.exceeded {
-        anyhow::bail!(
-            "external command output exceeded the {max_bytes_per_stream}-byte per-stream limit"
-        );
-    }
-    Ok(std::process::Output {
-        status,
-        stdout: stdout.bytes,
-        stderr: stderr.bytes,
-    })
+    run_process_capped(command, "external command", max_bytes_per_stream, timeout)
 }
 
 /// Capture the full verified HEAD commit from the target's own repository.
@@ -1715,12 +1802,359 @@ fn valid_git_commit_id(value: &str) -> bool {
     (4..=64).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+fn proposal_code_map_prompt(proposal: &Proposal) -> String {
+    format!(
+        "self improvement for {} targeting {}: {}",
+        proposal.skill, proposal.skill_path, proposal.summary
+    )
+}
+
+fn proposal_payload_sha256(proposal: &Proposal) -> Result<String> {
+    let bytes = serde_json::to_vec(&(
+        "neoth.self-improve.proposal-payload.v1",
+        &proposal.id,
+        &proposal.skill,
+        &proposal.skill_path,
+        &proposal.before,
+        &proposal.after,
+        &proposal.summary,
+        proposal.at_unix,
+        proposal.score_before,
+        proposal.score_after,
+        &proposal.heldout_eval_summary,
+        &proposal.why_this_improves,
+        &proposal.risk_notes,
+        &proposal.spec,
+    ))
+    .context("serialize canonical self-improve proposal payload")?;
+    use sha2::Digest as _;
+    Ok(hex::encode(sha2::Sha256::digest(bytes)))
+}
+
+/// Runtime state below a mapped source root must never become part of the
+/// proposal's architecture corpus. Otherwise staging/refreshing the proposal
+/// changes the very corpus it just certified, and the proposal store can outrank
+/// the actual target during recall.
+#[derive(Debug)]
+struct ProposalCodeMapScope {
+    included_relative_paths: Vec<PathBuf>,
+    excluded_relative_paths: Vec<PathBuf>,
+}
+
+fn proposal_code_map_scope(
+    home: &Path,
+    root: &crate::code_map::CanonicalRepoRoot,
+    target: &Path,
+) -> Result<ProposalCodeMapScope> {
+    let canonical_home = std::fs::canonicalize(home)
+        .with_context(|| format!("canonicalize NEOTH home {}", home.display()))?;
+    let target_relative = target.strip_prefix(root.path()).with_context(|| {
+        format!(
+            "bind self-improve target {} to mapped root {}",
+            target.display(),
+            root.display()
+        )
+    })?;
+    let Ok(relative_home) = canonical_home.strip_prefix(root.path()) else {
+        return Ok(ProposalCodeMapScope {
+            included_relative_paths: Vec::new(),
+            excluded_relative_paths: Vec::new(),
+        });
+    };
+    if relative_home.as_os_str().is_empty() {
+        // A direct NEOTH_HOME target shares its parent with an open-ended set
+        // of runtime stores. Target-only inclusion is future-proof; a denylist
+        // would inevitably let a new mutable subsystem reintroduce self-drift.
+        return Ok(ProposalCodeMapScope {
+            included_relative_paths: vec![target_relative.to_path_buf()],
+            excluded_relative_paths: Vec::new(),
+        });
+    }
+    Ok(ProposalCodeMapScope {
+        included_relative_paths: Vec::new(),
+        excluded_relative_paths: vec![relative_home.to_path_buf()],
+    })
+}
+
+/// Capture one strict, generation-bound code-map receipt for a proposal target.
+///
+/// Missing recall evidence, DB/canonicalization failures, mixed/zero
+/// generations, partial snapshots, and freshness failures all propagate. A
+/// receipt is accepted only after a full staleness check reports `Some(false)`
+/// and the shared wire envelope validates it. `Unmapped` is retained only for
+/// fail-closed deserialization of older proposal stores.
+fn capture_proposal_code_map_analysis(
+    home: &Path,
+    proposal: &Proposal,
+) -> Result<ProposalCodeMapAnalysis> {
+    let target = std::fs::canonicalize(&proposal.skill_path)
+        .with_context(|| format!("canonicalize self-improve target {}", proposal.skill_path))?;
+    let target_root = target
+        .parent()
+        .context("self-improve target has no parent directory")?;
+    let root = crate::code_map::CanonicalRepoRoot::discover(target_root)
+        .context("resolve exact self-improve target root")?;
+    let scope = proposal_code_map_scope(home, &root, &target)?;
+    // Keep scratch outside NEOTH_HOME so a crash cannot accumulate abandoned
+    // databases in the operator's durable state. The dot-prefixed directory is
+    // excluded by the native walker even when the OS temp root is mapped.
+    let scratch = tempfile::Builder::new()
+        .prefix(".neoth-self-improve-code-map-")
+        .tempdir()
+        .context("create private self-improve code-map workspace")?;
+    let db_path = scratch.path().join("code_map.db");
+    let scoped_snapshot = crate::code_map::snapshot::rebuild_snapshot_scoped(
+        &root,
+        &db_path,
+        crate::code_map::RebuildOptions::default(),
+        &scope.included_relative_paths,
+        &scope.excluded_relative_paths,
+    )
+    .context("rebuild exact-target self-improve code-map snapshot")?;
+    let snapshot = scoped_snapshot.snapshot();
+    let conn = crate::code_map::persist::open(&db_path)
+        .with_context(|| format!("open self-improve code map at {}", db_path.display()))?;
+    let persisted_map = crate::code_map::persist::load_map(&conn, root.display())?
+        .context("rebuilt self-improve code map omitted its target root")?;
+    let target_is_indexed = persisted_map.files.iter().any(|file| {
+        std::fs::canonicalize(root.path().join(Path::new(&file.path)))
+            .is_ok_and(|indexed| indexed == target)
+    });
+    anyhow::ensure!(
+        target_is_indexed,
+        "exact self-improve target {} was not indexed; check .gitignore, .ignore, and .neothignore",
+        target.display()
+    );
+    let prompt = proposal_code_map_prompt(proposal);
+    let receipt = crate::code_map::recall::recall_receipt_for_rebuild_snapshot(
+        &conn,
+        &target,
+        &prompt,
+        SELF_IMPROVE_CODE_MAP_MAX_FILES,
+        crate::code_map::RecallStaleness::Check,
+        &scoped_snapshot,
+    )
+    .context("capture self-improve code-map receipt")?
+    .context("exact-target self-improve code map returned no relevant files")?;
+    anyhow::ensure!(
+        receipt.stale == Some(false),
+        "self-improve code-map receipt is stale immediately after exact-target rebuild"
+    );
+    anyhow::ensure!(
+        receipt.snapshot.root == snapshot.root
+            && receipt.snapshot.index_generation == snapshot.index_generation
+            && receipt.snapshot.graph_generation == snapshot.graph_generation,
+        "self-improve code-map receipt is not bound to the rebuilt target snapshot"
+    );
+    let envelope = crate::code_map::RecallWireEnvelope::success(
+        prompt,
+        SELF_IMPROVE_CODE_MAP_MAX_FILES,
+        &receipt,
+    )
+    .context("validate self-improve code-map receipt envelope")?;
+    let receipt = envelope
+        .receipt
+        .context("validated self-improve code-map envelope omitted its receipt")?;
+    Ok(ProposalCodeMapAnalysis::CapturedFresh {
+        receipt,
+        source_fingerprint_sha256: Some(snapshot.source_fingerprint_sha256.clone()),
+        captured_at_unix_ns: Some(crate::time::now_unix_ns_i64()),
+        proposal_payload_sha256: Some(proposal_payload_sha256(proposal)?),
+        audited_proposal_sha256: None,
+    })
+}
+
+fn verify_proposal_code_map_capture(
+    home: &Path,
+    proposal: &Proposal,
+    expected: &ProposalCodeMapAnalysis,
+) -> Result<()> {
+    verify_proposal_target_still_staged(home, proposal)?;
+    let ProposalCodeMapAnalysis::CapturedFresh {
+        receipt,
+        source_fingerprint_sha256: Some(expected_fingerprint),
+        captured_at_unix_ns: Some(_),
+        proposal_payload_sha256: Some(expected_payload_sha256),
+        ..
+    } = expected
+    else {
+        anyhow::bail!(
+            "proposal `{}` has no fingerprint-bound captured code-map analysis; refresh execution preflight",
+            proposal.id
+        );
+    };
+    let target = std::fs::canonicalize(&proposal.skill_path).with_context(|| {
+        format!(
+            "canonicalize self-improve target {} for fingerprint revalidation",
+            proposal.skill_path
+        )
+    })?;
+    let root = crate::code_map::CanonicalRepoRoot::discover(
+        target
+            .parent()
+            .context("self-improve target has no parent directory")?,
+    )
+    .context("resolve self-improve target root for fingerprint revalidation")?;
+    let scope = proposal_code_map_scope(home, &root, &target)?;
+    anyhow::ensure!(
+        receipt.root == root.display() && receipt.root_identity == root.identity().as_str(),
+        "proposal `{}` target root identity changed after code-map capture",
+        proposal.id
+    );
+    anyhow::ensure!(
+        proposal_payload_sha256(proposal)? == *expected_payload_sha256,
+        "proposal `{}` payload changed after code-map capture",
+        proposal.id
+    );
+    let observed_fingerprint = crate::code_map::snapshot::stable_source_fingerprint_scoped(
+        &root,
+        crate::code_map::RebuildOptions::default(),
+        &scope.included_relative_paths,
+        &scope.excluded_relative_paths,
+    )
+    .context("verify self-improve source fingerprint against a stable live snapshot")?;
+    anyhow::ensure!(
+        observed_fingerprint == *expected_fingerprint,
+        "proposal `{}` target source fingerprint changed after code-map capture; rerun execute",
+        proposal.id
+    );
+    Ok(())
+}
+
+/// Prove the proposal still describes the exact target/package generation that
+/// was staged. This is intentionally cheaper than rebuilding the architecture
+/// map and runs before every provider/verifier egress as well as around refresh.
+fn verify_proposal_target_still_staged(home: &Path, proposal: &Proposal) -> Result<()> {
+    match proposal_installed_target(home, proposal)? {
+        Some(target) => with_locked_installed_skill(&target, |view| {
+            require_installed_generation(
+                proposal,
+                &view,
+                &proposal.before,
+                InstalledGenerationState::Staged,
+            )
+        }),
+        None => {
+            let target = BoundExternalSkillTarget::open(
+                Path::new(&proposal.skill_path),
+                "external self-improvement target",
+            )?;
+            let current = target.read_utf8("external self-improvement target")?;
+            anyhow::ensure!(
+                current == proposal.before,
+                "external self-improvement target `{}` changed after proposal `{}` was staged; re-stage before execution",
+                proposal.skill_path,
+                proposal.id
+            );
+            Ok(())
+        }
+    }
+}
+
+fn verify_audit_bound_proposal_approval(home: &Path, proposal: &Proposal) -> Result<()> {
+    let ProposalCodeMapAnalysis::CapturedFresh {
+        proposal_payload_sha256: Some(captured_payload),
+        audited_proposal_sha256: Some(audited_payload),
+        ..
+    } = &proposal.code_map_analysis
+    else {
+        anyhow::bail!(
+            "proposal `{}` has a legacy status-only approval without an audit-bound payload receipt",
+            proposal.id
+        );
+    };
+    let current_payload = proposal_payload_sha256(proposal)?;
+    anyhow::ensure!(
+        captured_payload == audited_payload && audited_payload == &current_payload,
+        "proposal `{}` payload differs from its audited approval receipt",
+        proposal.id
+    );
+    verify_proposal_code_map_capture(home, proposal, &proposal.code_map_analysis)
+}
+
+fn load_pending_proposal_bound_to_analysis(
+    home: &Path,
+    id: &str,
+    expected: &ProposalCodeMapAnalysis,
+) -> Result<Proposal> {
+    let proposals = load_proposals(home)?;
+    let proposal = unique_proposal_by_id(&proposals, id)?.clone();
+    anyhow::ensure!(
+        proposal.status == ProposalStatus::Pending,
+        "proposal `{id}` changed to {:?} while verification was running",
+        proposal.status
+    );
+    anyhow::ensure!(
+        &proposal.code_map_analysis == expected,
+        "proposal `{id}` code-map analysis changed while verification was running"
+    );
+    verify_proposal_code_map_capture(home, &proposal, expected)?;
+    Ok(proposal)
+}
+
+async fn verify_pending_proposal_execution_snapshot(
+    home: &Path,
+    id: &str,
+    expected: &ProposalCodeMapAnalysis,
+) -> Result<Proposal> {
+    let home = home.to_path_buf();
+    let id = id.to_owned();
+    let expected = expected.clone();
+    tokio::task::spawn_blocking(move || {
+        load_pending_proposal_bound_to_analysis(&home, &id, &expected)
+    })
+    .await
+    .context("self-improve proposal execution-snapshot validation task panicked")?
+}
+
 /// Stage a proposal (status Pending). Returns its id.
 ///
 /// IMPR-02: captures `git rev-parse --short HEAD` into `spec.drift_sha` so
 /// `accept_proposal` can later detect whether the skill file drifted.
-pub fn stage_proposal(home: &Path, mut p: Proposal) -> Result<String> {
+pub fn stage_proposal(home: &Path, p: Proposal) -> Result<String> {
+    Ok(stage_proposal_with_receipt(home, p)?.id)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StagedProposalReceipt {
+    pub id: String,
+    pub code_map_analysis: ProposalCodeMapAnalysis,
+}
+
+/// Stage and return the exact already-committed rendering state. Callers that
+/// need status output must use this result instead of performing a fallible
+/// post-commit reload and potentially reporting a false staging failure.
+pub(crate) fn stage_proposal_with_receipt(
+    home: &Path,
+    mut p: Proposal,
+) -> Result<StagedProposalReceipt> {
     require_proposal_document_bounds(&p)?;
+    anyhow::ensure!(
+        p.before != p.after,
+        "proposal `{}` is byte-identical to its baseline; refusing a no-op improvement",
+        p.id
+    );
+    anyhow::ensure!(
+        !p.after.trim().is_empty(),
+        "proposal `{}` has an empty candidate document; self-improvement cannot delete a skill",
+        p.id
+    );
+    let target_path = Path::new(&p.skill_path);
+    read_regular_file_bounded_utf8(
+        target_path,
+        SELF_IMPROVE_SKILL_MAX_BYTES,
+        "self-improvement target",
+    )?;
+    let canonical_target = std::fs::canonicalize(target_path).with_context(|| {
+        format!(
+            "canonicalize self-improvement target {}",
+            target_path.display()
+        )
+    })?;
+    p.skill_path = canonical_target
+        .to_str()
+        .context("canonical self-improvement target is not valid UTF-8")?
+        .to_owned();
     p.status = ProposalStatus::Pending;
     // IMPR-02: record the current HEAD SHA so accept can diff for drift.
     let sha = git_capture_head_sha(&p.skill_path);
@@ -1728,47 +2162,64 @@ pub fn stage_proposal(home: &Path, mut p: Proposal) -> Result<String> {
     // Never trust a caller- or disk-supplied revision as a Git argument.
     spec.drift_sha = sha;
     let installed_target = installed_skill_target(home, &p.skill_path)?;
-    with_state_lock(home, move || match installed_target {
-        Some(target) => with_locked_installed_skill(&target, |view| {
-            if view.content != p.before {
-                anyhow::bail!(
-                    "installed skill `{}` changed while proposal `{}` was being staged; retry",
-                    p.skill,
-                    p.id
-                );
+    with_state_lock(home, move || {
+        assign_unique_proposal_id_locked(home, &mut p)?;
+        match installed_target {
+            Some(target) => with_locked_installed_skill(&target, |view| {
+                if view.content != p.before {
+                    anyhow::bail!(
+                        "installed skill `{}` changed while proposal `{}` was being staged; retry",
+                        p.skill,
+                        p.id
+                    );
+                }
+                let accepted_generation = skill_tree_generation_sha256_with_skill_override(
+                    view.dir,
+                    &target.root.join(&target.id),
+                    p.after.as_bytes(),
+                )?;
+                let spec = p.spec.get_or_insert_with(ProposalSpec::default);
+                spec.skill_manifest_sha256 = None;
+                spec.skill_generation_sha256 = Some(view.generation_sha256);
+                spec.accepted_skill_generation_sha256 = Some(accepted_generation);
+                // Bind only the final staged payload. The final unique id and
+                // drift/generation fields above are part of the reviewed digest.
+                p.code_map_analysis = capture_proposal_code_map_analysis(home, &p)?;
+                let code_map_analysis = p.code_map_analysis.clone();
+                let id = stage_proposal_state_locked(home, p)?;
+                Ok(StagedProposalReceipt {
+                    id,
+                    code_map_analysis,
+                })
+            }),
+            None => {
+                let current = read_regular_file_bounded_utf8(
+                    Path::new(&p.skill_path),
+                    SELF_IMPROVE_SKILL_MAX_BYTES,
+                    "external self-improvement target",
+                )?;
+                if current != p.before {
+                    anyhow::bail!(
+                        "external self-improvement target `{}` changed while proposal `{}` was being staged; retry",
+                        p.skill_path,
+                        p.id
+                    );
+                }
+                p.code_map_analysis = capture_proposal_code_map_analysis(home, &p)?;
+                let code_map_analysis = p.code_map_analysis.clone();
+                let id = stage_proposal_state_locked(home, p)?;
+                Ok(StagedProposalReceipt {
+                    id,
+                    code_map_analysis,
+                })
             }
-            let accepted_generation = skill_tree_generation_sha256_with_skill_override(
-                view.dir,
-                &target.root.join(&target.id),
-                p.after.as_bytes(),
-            )?;
-            let spec = p.spec.get_or_insert_with(ProposalSpec::default);
-            spec.skill_manifest_sha256 = None;
-            spec.skill_generation_sha256 = Some(view.generation_sha256);
-            spec.accepted_skill_generation_sha256 = Some(accepted_generation);
-            stage_proposal_state_locked(home, p)
-        }),
-        None => {
-            let current = read_regular_file_bounded_utf8(
-                Path::new(&p.skill_path),
-                SELF_IMPROVE_SKILL_MAX_BYTES,
-                "external self-improvement target",
-            )?;
-            if current != p.before {
-                anyhow::bail!(
-                    "external self-improvement target `{}` changed while proposal `{}` was being staged; retry",
-                    p.skill_path,
-                    p.id
-                );
-            }
-            stage_proposal_state_locked(home, p)
         }
     })
 }
 
-fn stage_proposal_state_locked(home: &Path, mut p: Proposal) -> Result<String> {
-    let mut proposals = load_proposals_raw(home)?;
-    let mut ledger = load_ledger_raw(home)?;
+fn assign_unique_proposal_id_locked(home: &Path, p: &mut Proposal) -> Result<()> {
+    let proposals = load_proposals_raw(home)?;
+    let ledger = load_ledger_raw(home)?;
     // GR-fix: guarantee a unique proposal id. Callers build the id as `p{ts}`;
     // on a coarse clock (Windows timers are ~15 ms) two proposals staged in the
     // same tick would otherwise collide, and accept/rollback/pr resolve by
@@ -1793,6 +2244,20 @@ fn stage_proposal_state_locked(home: &Path, mut p: Proposal) -> Result<String> {
             n += 1;
         }
     }
+    Ok(())
+}
+
+fn stage_proposal_state_locked(home: &Path, p: Proposal) -> Result<String> {
+    let mut proposals = load_proposals_raw(home)?;
+    let mut ledger = load_ledger_raw(home)?;
+    anyhow::ensure!(
+        !proposals.iter().any(|entry| entry.id == p.id)
+            && !ledger
+                .iter()
+                .any(|record| record.proposal_id.as_deref() == Some(p.id.as_str())),
+        "proposal id `{}` became occupied after allocation; retry staging",
+        p.id
+    );
     let id = p.id.clone();
     let record = record_for_proposal(&p);
     let journal = StageJournal {
@@ -1848,6 +2313,13 @@ pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
                 p.status
             );
         }
+        verify_audit_bound_proposal_approval(home, &p).with_context(|| {
+            format!(
+                "proposal `{id_owned}` approval is legacy or its architectural source snapshot changed"
+            )
+        })?;
+        #[cfg(test)]
+        run_after_accept_architecture_validation_hook();
         // IMPR-02 + GR-fix: drift check — ABORT (not just warn) if the target skill
         // file changed since the proposal was staged.
         if let Some(sha) = p.spec.as_ref().and_then(|s| s.drift_sha.as_deref())
@@ -1858,6 +2330,16 @@ pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
                 p.skill_path
             );
         }
+        // The optional Git drift check can invoke an external process. Re-fence
+        // the full source snapshot immediately afterwards so a sibling edit in
+        // that window cannot ride an older audited architecture receipt into
+        // the commit path. Target/package compare-and-swap below remains the
+        // final mutation fence.
+        verify_audit_bound_proposal_approval(home, &p).with_context(|| {
+            format!(
+                "proposal `{id_owned}` architectural source snapshot changed immediately before accept"
+            )
+        })?;
         match proposal_installed_target(home, &p)? {
             Some(target) => {
                 let current = with_locked_installed_skill(&target, |view| {
@@ -2333,16 +2815,41 @@ fn sh_quote(value: &str) -> String {
 /// emitted; unchanged lines are elided.
 ///
 /// O(n·m) time+memory in the line counts. Inputs whose LCS matrix would exceed
-/// the bounded display budget return an explicit omission marker; the actual
-/// proposal content and verification path are unaffected.
+/// the bounded display budget return an explicit omission marker. Authorization
+/// must use [`complete_line_diff`] and fail closed instead of reviewing that
+/// marker as though it represented the candidate.
 pub fn line_diff(before: &str, after: &str) -> String {
-    const MAX_LCS_CELLS: usize = 4_000_000;
-    const MAX_DIFF_LINES: usize = 100_000;
-    const MAX_DIFF_INPUT_BYTES: usize = 4 * 1024 * 1024;
-    if before == after {
-        return "(no line changes)\n".to_string();
+    complete_line_diff(before, after).unwrap_or_else(|limit| limit.to_string())
+}
+
+#[derive(Debug)]
+struct LineDiffLimit {
+    before_lines: usize,
+    after_lines: usize,
+}
+
+impl std::fmt::Display for LineDiffLimit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            formatter,
+            "(diff omitted: {} vs {} lines exceeds the complete {}-cell audit limit)",
+            self.before_lines, self.after_lines, MAX_LCS_CELLS
+        )
     }
-    let (n, m) = (before.lines().count(), after.lines().count());
+}
+
+const MAX_LCS_CELLS: usize = 4_000_000;
+const MAX_DIFF_LINES: usize = 100_000;
+const MAX_DIFF_INPUT_BYTES: usize = 4 * 1024 * 1024;
+
+fn complete_line_diff(before: &str, after: &str) -> std::result::Result<String, LineDiffLimit> {
+    if before == after {
+        return Ok("(no line changes)\n".to_string());
+    }
+    let (n, m) = (
+        before.split_inclusive('\n').count(),
+        after.split_inclusive('\n').count(),
+    );
     let cells = n
         .checked_add(1)
         .and_then(|rows| m.checked_add(1).and_then(|cols| rows.checked_mul(cols)));
@@ -2352,12 +2859,16 @@ pub fn line_diff(before: &str, after: &str) -> String {
         || m > MAX_DIFF_LINES
         || cells.is_none_or(|cells| cells > MAX_LCS_CELLS)
     {
-        return format!(
-            "(diff omitted: {n} vs {m} lines exceeds {MAX_LCS_CELLS}-cell display limit)\n"
-        );
+        return Err(LineDiffLimit {
+            before_lines: n,
+            after_lines: m,
+        });
     }
-    let a: Vec<&str> = before.lines().collect();
-    let b: Vec<&str> = after.lines().collect();
+    // Preserve terminators so CRLF/LF changes and a missing final newline are
+    // reviewable changes rather than collapsing to identical `str::lines()`
+    // tokens. Debug rendering escapes every terminator unambiguously.
+    let a: Vec<&str> = before.split_inclusive('\n').collect();
+    let b: Vec<&str> = after.split_inclusive('\n').collect();
     // lcs[i][j] = LCS length of a[i..] and b[j..].
     let mut lcs = vec![vec![0usize; m + 1]; n + 1];
     for i in (0..n).rev() {
@@ -2376,25 +2887,27 @@ pub fn line_diff(before: &str, after: &str) -> String {
             i += 1; // unchanged — elided
             j += 1;
         } else if lcs[i + 1][j] >= lcs[i][j + 1] {
-            out.push_str(&format!("- {}\n", a[i]));
+            out.push_str(&format!("- {:?}\n", a[i]));
             i += 1;
         } else {
-            out.push_str(&format!("+ {}\n", b[j]));
+            out.push_str(&format!("+ {:?}\n", b[j]));
             j += 1;
         }
     }
     while i < n {
-        out.push_str(&format!("- {}\n", a[i]));
+        out.push_str(&format!("- {:?}\n", a[i]));
         i += 1;
     }
     while j < m {
-        out.push_str(&format!("+ {}\n", b[j]));
+        out.push_str(&format!("+ {:?}\n", b[j]));
         j += 1;
     }
     if out.is_empty() {
-        out.push_str("(no line changes)\n");
+        // Defensive invariant: byte-distinct inputs must never be represented
+        // as no change, even if tokenization is changed in the future.
+        out.push_str(&format!("- {before:?}\n+ {after:?}\n"));
     }
-    out
+    Ok(out)
 }
 
 /// Quality metadata for a staged proposal — the "why", not just the diff.
@@ -2551,48 +3064,293 @@ pub fn run_skillopt_capped(
     persona: &str,
     timeout: std::time::Duration,
 ) -> anyhow::Result<std::process::Output> {
-    use anyhow::Context;
-    let mut child = skillopt_command(persona)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .context("spawn SkillOpt engine")?;
-    let mut out_pipe = child.stdout.take().expect("stdout piped above");
-    let mut err_pipe = child.stderr.take().expect("stderr piped above");
-    let out_h =
-        std::thread::spawn(move || drain_reader_capped(&mut out_pipe, SKILLOPT_OUTPUT_CAP_BYTES));
-    let err_h =
-        std::thread::spawn(move || drain_reader_capped(&mut err_pipe, SKILLOPT_OUTPUT_CAP_BYTES));
-    let deadline = std::time::Instant::now() + timeout;
-    let status = loop {
-        if let Some(s) = child.try_wait().context("poll SkillOpt engine")? {
-            break s;
+    let mut command = skillopt_command(persona);
+    run_process_capped(
+        &mut command,
+        "SkillOpt engine",
+        SKILLOPT_OUTPUT_CAP_BYTES,
+        timeout,
+    )
+}
+
+#[derive(Debug)]
+enum CappedProcessFailure {
+    Timeout {
+        label: &'static str,
+        timeout: std::time::Duration,
+    },
+    OutputTooLarge {
+        label: &'static str,
+        stream: &'static str,
+        max_bytes: usize,
+    },
+}
+
+impl std::fmt::Display for CappedProcessFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Timeout { label, timeout } => {
+                write!(
+                    formatter,
+                    "{label} timed out after {timeout:?} — process tree killed"
+                )
+            }
+            Self::OutputTooLarge {
+                label,
+                stream,
+                max_bytes,
+            } => write!(
+                formatter,
+                "{label} {stream} exceeded the {max_bytes}-byte per-stream limit"
+            ),
         }
-        if std::time::Instant::now() >= deadline {
+    }
+}
+
+impl std::error::Error for CappedProcessFailure {}
+
+/// Run one child inside platform containment and drain both output streams under
+/// fixed memory and wall-clock budgets.
+///
+/// Windows uses a kill-on-close Job Object. Unix uses a dedicated process group
+/// and kills every descendant that remains in that group. A deliberately
+/// daemonising Unix child can leave the group, so this is resource containment
+/// for trusted/configured local tools, not a hostile-code sandbox. Callers keep
+/// their own authority boundary; the verifier specifically relies on its exact
+/// operator-owned allowlist.
+fn run_process_capped(
+    command: &mut std::process::Command,
+    label: &'static str,
+    output_cap_bytes: usize,
+    timeout: std::time::Duration,
+) -> anyhow::Result<std::process::Output> {
+    run_process_capped_with_memory_limit(command, label, output_cap_bytes, timeout, None)
+}
+
+fn run_process_capped_with_memory_limit(
+    command: &mut std::process::Command,
+    label: &'static str,
+    output_cap_bytes: usize,
+    timeout: std::time::Duration,
+    process_memory_limit: Option<usize>,
+) -> anyhow::Result<std::process::Output> {
+    use anyhow::Context as _;
+    use std::process::Stdio;
+
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        let _ = process_memory_limit;
+        use std::os::unix::process::CommandExt as _;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_SUSPENDED: u32 = 0x0000_0004;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW);
+    }
+
+    let mut child = command.spawn().with_context(|| format!("spawn {label}"))?;
+    #[cfg(unix)]
+    let mut containment = match UnixCappedProcessGroup::new(child.id()) {
+        Ok(group) => group,
+        Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            anyhow::bail!("SkillOpt engine timed out after {timeout:?} — killed");
+            return Err(error).with_context(|| format!("activate {label} process group"));
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
     };
-    let stdout = out_h
-        .join()
-        .map_err(|_| anyhow::anyhow!("SkillOpt stdout reader panicked"))?
-        .context("read SkillOpt stdout")?;
-    let stderr = err_h
-        .join()
-        .map_err(|_| anyhow::anyhow!("SkillOpt stderr reader panicked"))?
-        .context("read SkillOpt stderr")?;
-    if stdout.exceeded || stderr.exceeded {
-        anyhow::bail!(
-            "SkillOpt output exceeded the {SKILLOPT_OUTPUT_CAP_BYTES}-byte per-stream limit"
-        );
+    #[cfg(windows)]
+    let mut containment = match assign_child_to_job_with_memory_limit(&child, process_memory_limit)
+    {
+        Some(job) => {
+            if let Err(error) = resume_windows_child(&child) {
+                drop(job);
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error).with_context(|| format!("resume suspended {label}"));
+            }
+            Some(job)
+        }
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!("assign suspended {label} to a Windows Job Object");
+        }
+    };
+
+    let mut stdout_pipe = match child.stdout.take() {
+        Some(pipe) => pipe,
+        None => {
+            terminate_capped_process_tree(&mut child, &mut containment);
+            anyhow::bail!("{label} stdout pipe was not created");
+        }
+    };
+    let mut stderr_pipe = match child.stderr.take() {
+        Some(pipe) => pipe,
+        None => {
+            terminate_capped_process_tree(&mut child, &mut containment);
+            anyhow::bail!("{label} stderr pipe was not created");
+        }
+    };
+    let (stdout_tx, stdout_rx) = std::sync::mpsc::channel();
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::channel();
+    let stdout_reader = match std::thread::Builder::new()
+        .name("neoth-skillopt-stdout".into())
+        .spawn(move || {
+            let _ = stdout_tx.send(drain_reader_capped(&mut stdout_pipe, output_cap_bytes));
+        }) {
+        Ok(reader) => reader,
+        Err(error) => {
+            terminate_capped_process_tree(&mut child, &mut containment);
+            return Err(error).with_context(|| format!("spawn {label} stdout reader"));
+        }
+    };
+    let stderr_reader = match std::thread::Builder::new()
+        .name("neoth-skillopt-stderr".into())
+        .spawn(move || {
+            let _ = stderr_tx.send(drain_reader_capped(&mut stderr_pipe, output_cap_bytes));
+        }) {
+        Ok(reader) => reader,
+        Err(error) => {
+            terminate_capped_process_tree(&mut child, &mut containment);
+            if stdout_rx.recv_timeout(DRAIN_GRACE).is_ok() {
+                let _ = stdout_reader.join();
+            }
+            return Err(error).with_context(|| format!("spawn {label} stderr reader"));
+        }
+    };
+
+    let deadline = std::time::Instant::now() + timeout;
+    let mut timed_out = false;
+    let mut poll_error = None;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Ok(None) => {
+                timed_out = true;
+                terminate_capped_process_tree(&mut child, &mut containment);
+                break None;
+            }
+            Err(error) => {
+                terminate_capped_process_tree(&mut child, &mut containment);
+                poll_error = Some(error);
+                break None;
+            }
+        }
+    };
+    // A leader may exit while descendants still own inherited pipe handles.
+    // Terminate the containment boundary before waiting for drain completion.
+    terminate_capped_process_tree(&mut child, &mut containment);
+
+    let stdout_result = stdout_rx.recv_timeout(DRAIN_GRACE);
+    let stderr_result = stderr_rx.recv_timeout(DRAIN_GRACE);
+    if stdout_result.is_ok() {
+        stdout_reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("{label} stdout reader panicked"))?;
+    }
+    if stderr_result.is_ok() {
+        stderr_reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("{label} stderr reader panicked"))?;
+    }
+    let stdout = stdout_result
+        .with_context(|| format!("drain {label} stdout"))?
+        .with_context(|| format!("read {label} stdout"))?;
+    let stderr = stderr_result
+        .with_context(|| format!("drain {label} stderr"))?
+        .with_context(|| format!("read {label} stderr"))?;
+    if let Some(error) = poll_error {
+        return Err(error).with_context(|| format!("poll {label}"));
+    }
+    if timed_out {
+        return Err(CappedProcessFailure::Timeout { label, timeout }.into());
+    }
+    if stdout.exceeded {
+        return Err(CappedProcessFailure::OutputTooLarge {
+            label,
+            stream: "stdout",
+            max_bytes: output_cap_bytes,
+        }
+        .into());
+    }
+    if stderr.exceeded {
+        return Err(CappedProcessFailure::OutputTooLarge {
+            label,
+            stream: "stderr",
+            max_bytes: output_cap_bytes,
+        }
+        .into());
     }
     Ok(std::process::Output {
-        status,
+        status: status.context("bounded process exited without a status")?,
         stdout: stdout.bytes,
         stderr: stderr.bytes,
     })
+}
+
+#[cfg(unix)]
+struct UnixCappedProcessGroup {
+    pgid: i32,
+    armed: bool,
+}
+
+#[cfg(unix)]
+impl UnixCappedProcessGroup {
+    fn new(pid: u32) -> anyhow::Result<Self> {
+        Ok(Self {
+            pgid: i32::try_from(pid).context("bounded child PID exceeds POSIX process-group id")?,
+            armed: true,
+        })
+    }
+
+    fn terminate(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.armed = false;
+        // SAFETY: the command was spawned with process_group(0), so `pgid`
+        // names only this dedicated process tree. ESRCH is harmless after exit.
+        unsafe {
+            unsafe extern "C" {
+                fn kill(pid: i32, sig: i32) -> i32;
+            }
+            let _ = kill(-self.pgid, 9);
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for UnixCappedProcessGroup {
+    fn drop(&mut self) {
+        self.terminate();
+    }
+}
+
+#[cfg(unix)]
+fn terminate_capped_process_tree(
+    child: &mut std::process::Child,
+    group: &mut UnixCappedProcessGroup,
+) {
+    group.terminate();
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(windows)]
+fn terminate_capped_process_tree(
+    child: &mut std::process::Child,
+    job: &mut Option<WindowsChildJob>,
+) {
+    drop(job.take());
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 // ── IMPR-03 (nightly path): orchestrate a SkillOpt run + stage proposal ──────
@@ -2648,6 +3406,31 @@ pub fn run_nightly_with_engine<F>(
 where
     F: FnOnce(&str, std::time::Duration) -> anyhow::Result<std::process::Output>,
 {
+    run_nightly_with_engine_and_stage(
+        home,
+        persona,
+        skill_path,
+        autonomy,
+        run_engine_fn,
+        |proposal| stage_proposal(home, proposal),
+    )
+}
+
+/// Shared nightly orchestrator used by the public synchronous API and the
+/// Dreaming production path. Dreaming injects a staging closure that acquires
+/// its generation commit lease immediately before the durable proposal write.
+pub(crate) fn run_nightly_with_engine_and_stage<F, S>(
+    home: &Path,
+    persona: &str,
+    skill_path: &str,
+    autonomy: crate::permissions::AutonomyLevel,
+    run_engine_fn: F,
+    stage_fn: S,
+) -> NightlyOutcome
+where
+    F: FnOnce(&str, std::time::Duration) -> anyhow::Result<std::process::Output>,
+    S: FnOnce(Proposal) -> Result<String>,
+{
     // B19: fail-closed — corrupt config is an error, not a silent default-on.
     let cfg = match SelfImproveConfig::load_strict(home) {
         Ok(opt) => effective_from_option(opt, autonomy),
@@ -2670,33 +3453,9 @@ where
         };
     }
 
-    let output = match run_engine_fn(persona, SKILLOPT_TIMEOUT) {
-        Ok(o) => o,
-        Err(e) => {
-            return NightlyOutcome::Error {
-                reason: format!("SkillOpt engine failed to run: {e}"),
-            };
-        }
-    };
-
-    // Non-zero exit means the engine concluded there is nothing worth proposing.
-    if !output.status.success() {
-        return NightlyOutcome::NoImprovement;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    if stdout.trim().is_empty() {
-        return NightlyOutcome::NoImprovement;
-    }
-
-    let (content, quality, spec) = parse_proposal_output(&stdout);
-
-    // No improvement when the proposed content is byte-identical to the current
-    // file (handles the case where SkillOpt ran but concluded no edit was needed).
-    // A genuinely missing skill (NotFound) has no baseline → empty is correct; any
-    // OTHER read error must NOT default to empty — that would stage a proposal with
-    // a corrupt empty `before` baseline (and a wrong crash-recovery hash). Fail the
-    // nightly run instead (B19 fail-closed).
+    // Bind SkillOpt output to the exact pre-run baseline. The engine may take
+    // minutes; stage_proposal's target/package CAS then rejects any edit that
+    // landed while it was running instead of silently rebasing stale output.
     let before = match read_optional_regular_file_bounded(
         Path::new(skill_path),
         SELF_IMPROVE_SKILL_MAX_BYTES,
@@ -2717,7 +3476,36 @@ where
             };
         }
     };
-    if content.trim() == before.trim() {
+
+    let output = match run_engine_fn(persona, SKILLOPT_TIMEOUT) {
+        Ok(o) => o,
+        Err(e) => {
+            return NightlyOutcome::Error {
+                reason: format!("SkillOpt engine failed to run: {e}"),
+            };
+        }
+    };
+
+    // Non-zero exit means the engine concluded there is nothing worth proposing.
+    if !output.status.success() {
+        return NightlyOutcome::NoImprovement;
+    }
+
+    let stdout = match String::from_utf8(output.stdout) {
+        Ok(stdout) => stdout,
+        Err(error) => {
+            return NightlyOutcome::Error {
+                reason: format!("SkillOpt stdout is not valid UTF-8: {error}"),
+            };
+        }
+    };
+    if stdout.trim().is_empty() {
+        return NightlyOutcome::NoImprovement;
+    }
+
+    let (content, quality, spec) = parse_proposal_output(&stdout);
+
+    if content == before {
         return NightlyOutcome::NoImprovement;
     }
 
@@ -2747,14 +3535,30 @@ where
         heldout_eval_summary: quality.heldout_eval_summary,
         why_this_improves: quality.why_this_improves,
         risk_notes: quality.risk_notes,
+        code_map_analysis: ProposalCodeMapAnalysis::LegacyMissing,
         spec,
     };
 
-    let staged_id = match stage_proposal(home, proposal) {
-        Ok(id) => id,
+    // Serialize the final policy gate with NEOTH's enable/disable writes. If a
+    // disable commits first, this run cannot stage afterward; if staging owns
+    // the lease first, disable waits and therefore cannot report completion
+    // until the already-authorized commit has finished.
+    let staged_id = match with_config_lock(home, || {
+        let cfg = effective_from_option(SelfImproveConfig::load_strict_unlocked(home)?, autonomy);
+        if !cfg.enabled || !cfg.auto {
+            return Ok(None);
+        }
+        stage_fn(proposal).map(Some)
+    }) {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            return NightlyOutcome::Skipped {
+                reason: "self-improvement was disabled or auto was turned off while SkillOpt ran; proposal was not staged".to_string(),
+            };
+        }
         Err(e) => {
             return NightlyOutcome::Error {
-                reason: format!("stage_proposal failed: {e}"),
+                reason: format!("final self-improve policy gate or stage_proposal failed: {e}"),
             };
         }
     };
@@ -2765,10 +3569,10 @@ where
     }
 }
 
-/// Nightly self-improvement entry point — the dreaming-tick production caller
-/// (IMPR-03). Runs SkillOpt via `run_skillopt_capped` and stages any improvement
-/// as a Pending proposal. The operator must `neoth self-improve accept <id>` to
-/// adopt it. See `run_nightly_with_engine` for the full pipeline description.
+/// Synchronous nightly self-improvement entry point (IMPR-03). Dreaming uses the
+/// same orchestrator with a generation-lease staging closure. This convenience
+/// wrapper runs SkillOpt and stages any improvement directly as Pending; the
+/// operator must still execute and accept it explicitly.
 pub fn run_nightly(
     home: &Path,
     persona: &str,
@@ -2805,6 +3609,7 @@ pub trait ProposalQaAdvisor: Send + Sync {
         &self,
         diff: &str,
         verification_output: &str,
+        code_map_analysis: &ProposalCodeMapAnalysis,
     ) -> Result<crate::council::qa_verdict::QaVerdict>;
 }
 
@@ -2916,30 +3721,159 @@ fn find_ascii_word(haystack: &str, needle: &str) -> Option<usize> {
 ///
 /// Returns `(ExecutionVerdict, usize)` — the final verdict + number of revise
 /// rounds used. Never writes to a skill file (that stays gated behind `accept`).
-pub async fn execute_proposal_with_verification(
+/// Refresh and atomically persist the proposal's same-instance code-map state.
+///
+/// Capture happens before the proposal transaction. Any missing evidence,
+/// capture, freshness, mixed/zero-generation, partial snapshot, or save error
+/// leaves proposal status and ledger untouched.
+pub fn refresh_proposal_code_map_analysis_for_execute(
+    home: &Path,
+    id: &str,
+) -> Result<ProposalCodeMapAnalysis> {
+    let proposal = {
+        let proposals = load_proposals(home)?;
+        unique_proposal_by_id(&proposals, id)?.clone()
+    };
+    if proposal.status != ProposalStatus::Pending {
+        anyhow::bail!("proposal `{id}` is {:?}, not pending", proposal.status);
+    }
+    anyhow::ensure!(
+        Path::new(&proposal.skill_path).is_absolute(),
+        "legacy proposal `{id}` has a relative target path; re-stage it before execution so the audited target identity is unambiguous"
+    );
+    let expected_skill_path = proposal.skill_path.clone();
+    let expected_payload_sha256 = proposal_payload_sha256(&proposal)?;
+    verify_proposal_target_still_staged(home, &proposal)
+        .context("verify self-improve target before code-map refresh")?;
+    let refreshed = capture_proposal_code_map_analysis(home, &proposal)?;
+    verify_proposal_target_still_staged(home, &proposal)
+        .context("verify self-improve target after code-map refresh")?;
+    let persisted = refreshed.clone();
+    let proposal_id = id.to_string();
+    update_proposals(home, move |proposals| {
+        let mut matches = proposals
+            .iter_mut()
+            .filter(|proposal| proposal.id == proposal_id);
+        let entry = match (matches.next(), matches.next()) {
+            (Some(entry), None) => entry,
+            (Some(_), Some(_)) => anyhow::bail!("duplicate proposal id `{proposal_id}`"),
+            (None, _) => anyhow::bail!(
+                "proposal `{proposal_id}` disappeared before code-map refresh could be persisted"
+            ),
+        };
+        if entry.status != ProposalStatus::Pending {
+            anyhow::bail!(
+                "proposal `{proposal_id}` changed to {:?} during code-map refresh",
+                entry.status
+            );
+        }
+        if entry.skill_path != expected_skill_path {
+            anyhow::bail!(
+                "proposal `{proposal_id}` target changed during code-map refresh; retry execution"
+            );
+        }
+        anyhow::ensure!(
+            proposal_payload_sha256(entry)? == expected_payload_sha256,
+            "proposal `{proposal_id}` payload changed during code-map refresh; retry execution"
+        );
+        entry.code_map_analysis = persisted;
+        Ok(())
+    })?;
+    Ok(refreshed)
+}
+
+#[cfg(test)]
+async fn execute_proposal_with_verification(
     home: &Path,
     id: &str,
     max_revises: usize,
     autonomy: crate::permissions::AutonomyLevel,
     advisor: &dyn ProposalQaAdvisor,
 ) -> Result<(ExecutionVerdict, usize)> {
-    let all = load_proposals(home)?;
-    let p = all
-        .iter()
-        .find(|p| p.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no proposal `{id}`"))?;
-    if p.status != ProposalStatus::Pending {
-        anyhow::bail!("proposal `{id}` is {:?}, not pending", p.status);
+    let code_map_analysis = refresh_proposal_code_map_analysis_for_execute(home, id)?;
+    let outcome = execute_proposal_with_prepared_code_map_analysis(
+        home,
+        id,
+        max_revises,
+        autonomy,
+        &code_map_analysis,
+        advisor,
+    )
+    .await?;
+    // Unit tests have no production WAL writer. Treat return from the injected
+    // advisor as the test's explicit audit-completion boundary, then exercise
+    // the same delayed persistence function used by the CLI.
+    if matches!(outcome.0, ExecutionVerdict::Approved) {
+        persist_verified_approval_after_audit(home, id, &code_map_analysis)?;
     }
+    Ok(outcome)
+}
 
-    let diff = crate::self_improve::line_diff(&p.before, &p.after);
+/// Execute after a caller has completed the code-map preflight before
+/// allocating provider/WAL resources. The exact persisted state is rechecked
+/// before any verifier or advisor call.
+pub(crate) async fn execute_proposal_with_prepared_code_map_analysis(
+    home: &Path,
+    id: &str,
+    max_revises: usize,
+    autonomy: crate::permissions::AutonomyLevel,
+    prepared_code_map_analysis: &ProposalCodeMapAnalysis,
+    advisor: &dyn ProposalQaAdvisor,
+) -> Result<(ExecutionVerdict, usize)> {
+    let load_home = home.to_path_buf();
+    let load_id = id.to_owned();
+    let expected_analysis = prepared_code_map_analysis.clone();
+    let (p, si_cfg) = tokio::task::spawn_blocking(move || {
+        let all = load_proposals(&load_home)?;
+        let p = unique_proposal_by_id(&all, &load_id)
+            .map_err(|error| anyhow::anyhow!("load proposal for execution: {error:#}"))?
+            .clone();
+        anyhow::ensure!(
+            p.status == ProposalStatus::Pending,
+            "proposal `{load_id}` is {:?}, not pending",
+            p.status
+        );
+        anyhow::ensure!(
+            p.code_map_analysis == expected_analysis,
+            "proposal `{load_id}` code-map analysis changed after execute preflight"
+        );
+        anyhow::ensure!(
+            matches!(
+                &p.code_map_analysis,
+                ProposalCodeMapAnalysis::CapturedFresh {
+                    source_fingerprint_sha256: Some(_),
+                    captured_at_unix_ns: Some(_),
+                    ..
+                }
+            ),
+            "proposal `{load_id}` has no fingerprint-bound refreshed code-map analysis"
+        );
+        let si_cfg = SelfImproveConfig::load(&load_home)?;
+        Ok::<_, anyhow::Error>((p, si_cfg))
+    })
+    .await
+    .context("self-improve proposal execution preflight task panicked")??;
+    let persisted_code_map_analysis = p.code_map_analysis.clone();
+
+    let diff = match complete_line_diff(&p.before, &p.after) {
+        Ok(diff) => diff,
+        Err(limit) => {
+            return Ok((
+                ExecutionVerdict::Blocked {
+                    reason: format!(
+                        "proposal cannot be fully represented inside the bounded QA diff budget: {limit}"
+                    ),
+                },
+                0,
+            ));
+        }
+    };
 
     // SELF-IMPROVE-SAFETY-01 — model/SkillOpt output never carries process-spawn
     // authority. The master switch is necessary but insufficient: an external
     // verifier runs only when its complete command is already present in the
     // operator-owned exact allowlist. There is deliberately no prefix, token,
     // path, or shell-equivalence matching that proposal text could exploit.
-    let si_cfg = SelfImproveConfig::load(home)?;
     let requested_verifier = p
         .spec
         .as_ref()
@@ -2975,12 +3909,23 @@ pub async fn execute_proposal_with_verification(
     // constrained, but this is NOT a filesystem or network security sandbox.
     // The authority boundary is the exact operator-owned allowlist above.
     let verification_output = if let Some(cmd) = requested_verifier {
-        match run_approved_verification_command(
-            std::path::Path::new(&p.skill_path),
-            &p.after,
-            cmd,
-            SKILLOPT_TIMEOUT,
-        ) {
+        verify_pending_proposal_execution_snapshot(home, id, &persisted_code_map_analysis)
+            .await
+            .context("revalidate self-improve code map immediately before verifier egress")?;
+        let skill_path = p.skill_path.clone();
+        let after = p.after.clone();
+        let command = cmd.to_owned();
+        let verifier_result = tokio::task::spawn_blocking(move || {
+            run_approved_verification_command(
+                std::path::Path::new(&skill_path),
+                &after,
+                &command,
+                SKILLOPT_TIMEOUT,
+            )
+        })
+        .await
+        .context("self-improve verifier task panicked")?;
+        match verifier_result {
             Ok(stdout) => stdout,
             Err(e) => {
                 return Ok((
@@ -3015,7 +3960,13 @@ pub async fn execute_proposal_with_verification(
     // Steps 4–5: advisor review loop (max `max_revises` revise rounds).
     let mut revises = 0usize;
     loop {
-        let qa_verdict = match advisor.review(&diff, &verification_output).await {
+        verify_pending_proposal_execution_snapshot(home, id, &persisted_code_map_analysis)
+            .await
+            .context("revalidate self-improve code map immediately before advisor egress")?;
+        let qa_verdict = match advisor
+            .review(&diff, &verification_output, &persisted_code_map_analysis)
+            .await
+        {
             Ok(verdict) => {
                 verdict
                     .validate()
@@ -3092,32 +4043,6 @@ pub async fn execute_proposal_with_verification(
                         continue;
                     }
                 }
-                // NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01 (residual 1): persist the
-                // VerifiedApproved state so accept_proposal can verify the
-                // evidence even after a daemon restart.
-                // B19: use update_proposals (locked + atomic) so a save failure
-                // returns Err instead of silently producing an unverified Approved.
-                {
-                    let pid = id.to_string();
-                    update_proposals(home, move |proposals_w| {
-                        let entry = proposals_w
-                            .iter_mut()
-                            .find(|x| x.id == pid)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "proposal `{pid}` disappeared before verified approval could be persisted"
-                                )
-                            })?;
-                        if entry.status != ProposalStatus::Pending {
-                            anyhow::bail!(
-                                "proposal `{pid}` changed to {:?} while verification was running",
-                                entry.status
-                            );
-                        }
-                        entry.status = ProposalStatus::VerifiedApproved;
-                        Ok(())
-                    })?;
-                }
                 return Ok((ExecutionVerdict::Approved, revises));
             }
             ExecutionVerdict::Revise { reason } => {
@@ -3137,6 +4062,82 @@ pub async fn execute_proposal_with_verification(
     }
 }
 
+/// Make an approved proposal accept-ready only after the caller has proven its
+/// provider/cost/verdict WAL writer completed successfully.
+pub(crate) fn persist_verified_approval_after_audit(
+    home: &Path,
+    id: &str,
+    expected_code_map_analysis: &ProposalCodeMapAnalysis,
+) -> Result<ProposalCodeMapAnalysis> {
+    let proposal = {
+        let proposals = load_proposals(home)?;
+        let mut matches = proposals.iter().filter(|proposal| proposal.id == id);
+        match (matches.next(), matches.next()) {
+            (Some(entry), None) => entry.clone(),
+            (Some(_), Some(_)) => anyhow::bail!("duplicate proposal id `{id}`"),
+            (None, _) => {
+                anyhow::bail!("proposal `{id}` disappeared before audited approval persistence")
+            }
+        }
+    };
+    anyhow::ensure!(
+        proposal.status == ProposalStatus::Pending,
+        "proposal `{id}` changed to {:?} before audited approval persistence",
+        proposal.status
+    );
+    anyhow::ensure!(
+        &proposal.code_map_analysis == expected_code_map_analysis,
+        "proposal `{id}` code-map analysis changed before audited approval persistence"
+    );
+    verify_proposal_code_map_capture(home, &proposal, expected_code_map_analysis)
+        .context("revalidate self-improve code map immediately before approval persistence")?;
+
+    let mut audit_bound_analysis = expected_code_map_analysis.clone();
+    let ProposalCodeMapAnalysis::CapturedFresh {
+        proposal_payload_sha256: Some(captured_payload_sha256),
+        audited_proposal_sha256,
+        ..
+    } = &mut audit_bound_analysis
+    else {
+        anyhow::bail!("proposal `{id}` has no payload-bound code-map analysis");
+    };
+    let expected_payload_sha256 = captured_payload_sha256.clone();
+    *audited_proposal_sha256 = Some(captured_payload_sha256.clone());
+
+    let proposal_id = id.to_string();
+    let expected = expected_code_map_analysis.clone();
+    #[cfg(test)]
+    run_before_approval_persist_update_hook();
+    update_proposals(home, move |proposals| {
+        let mut matches = proposals
+            .iter_mut()
+            .filter(|proposal| proposal.id == proposal_id);
+        let entry = match (matches.next(), matches.next()) {
+            (Some(entry), None) => entry,
+            (Some(_), Some(_)) => anyhow::bail!("duplicate proposal id `{proposal_id}`"),
+            (None, _) => anyhow::bail!(
+                "proposal `{proposal_id}` disappeared before audited approval persistence"
+            ),
+        };
+        anyhow::ensure!(
+            entry.status == ProposalStatus::Pending,
+            "proposal `{proposal_id}` changed to {:?} while audited approval was being persisted",
+            entry.status
+        );
+        anyhow::ensure!(
+            entry.code_map_analysis == expected,
+            "proposal `{proposal_id}` code-map analysis changed while audited approval was being persisted"
+        );
+        anyhow::ensure!(
+            proposal_payload_sha256(entry)? == expected_payload_sha256,
+            "proposal `{proposal_id}` payload changed while audited approval was being persisted"
+        );
+        entry.code_map_analysis = audit_bound_analysis;
+        entry.status = ProposalStatus::VerifiedApproved;
+        Ok(entry.code_map_analysis.clone())
+    })
+}
+
 /// Run an exact operator-approved `verification_command` in a temporary
 /// workspace containing the proposed `after` document. Runtime, output,
 /// process-tree lifetime, cwd, and inherited environment are constrained.
@@ -3145,6 +4146,47 @@ pub async fn execute_proposal_with_verification(
 /// network with the daemon user's authority. Safety therefore depends on the
 /// caller's exact operator-owned allowlist check; this helper must never be
 /// wired directly to model- or proposal-controlled command text.
+fn sanitized_verification_path() -> std::result::Result<std::ffi::OsString, VerificationCommandError>
+{
+    let absolute_entries = std::env::var_os("PATH")
+        .map(|path| {
+            std::env::split_paths(&path)
+                .filter(|entry| entry.is_absolute())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    std::env::join_paths(absolute_entries).map_err(|_| {
+        VerificationCommandError::Setup(
+            "PATH contains an unrepresentable absolute component".to_string(),
+        )
+    })
+}
+
+#[cfg(windows)]
+fn windows_verification_shell() -> std::result::Result<(PathBuf, PathBuf), VerificationCommandError>
+{
+    let system_root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .ok_or_else(|| {
+            VerificationCommandError::Setup(
+                "SystemRoot is missing or is not an absolute path".to_string(),
+            )
+        })?;
+    let shell =
+        std::fs::canonicalize(system_root.join("System32").join("cmd.exe")).map_err(|_| {
+            VerificationCommandError::Setup(
+                "canonical Windows command processor is unavailable".to_string(),
+            )
+        })?;
+    if !shell.is_file() {
+        return Err(VerificationCommandError::Setup(
+            "canonical Windows command processor is not a regular file".to_string(),
+        ));
+    }
+    Ok((shell, system_root))
+}
+
 fn run_approved_verification_command(
     skill_path: &std::path::Path,
     after_content: &str,
@@ -3154,248 +4196,107 @@ fn run_approved_verification_command(
     // Defense in depth for accidentally over-broad operator approvals. This is
     // not the authority boundary and must not be treated as network isolation.
     validate_verification_command(cmd)?;
-    let workspace = std::env::temp_dir().join(format!(
-        "neoth_si_verify_{}",
-        verification_workspace_token()
-    ));
-    std::fs::create_dir_all(&workspace)
-        .map_err(|e| VerificationCommandError::Setup(e.to_string()))?;
-    // RAII: the temporary workspace is removed on every exit path.
-    let _guard = VerificationWorkspaceGuard(workspace.clone());
+    // tempfile creates the directory atomically with an unpredictable name and
+    // owns cleanup. Never enter a pre-existing/symlinked temp namespace whose
+    // relative build files could alter an otherwise exact-approved command.
+    let workspace_guard = tempfile::Builder::new()
+        .prefix("neoth_si_verify_")
+        .tempdir()
+        .map_err(|error| VerificationCommandError::Setup(error.to_string()))?;
+    let workspace = workspace_guard.path();
+    let input_dir = workspace.join("input");
+    let runner_dir = workspace.join("runner");
+    std::fs::create_dir(&input_dir)
+        .and_then(|()| std::fs::create_dir(&runner_dir))
+        .map_err(|error| VerificationCommandError::Setup(error.to_string()))?;
 
     let basename = skill_path
         .file_name()
         .ok_or_else(|| VerificationCommandError::Setup("skill_path has no filename".into()))?;
-    std::fs::write(workspace.join(basename), after_content.as_bytes())
+    std::fs::write(input_dir.join(basename), after_content.as_bytes())
         .map_err(|e| VerificationCommandError::Setup(e.to_string()))?;
 
-    // Spawn with piped stdio — background threads drain stdout/stderr to
-    // prevent pipe-buffer deadlock; the main thread polls try_wait and kills
-    // the child tree if the wall-clock deadline is reached.
-    //
-    // NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01 (residual 2): process isolation.
-    // - Unix:    child spawned in its own process group (process_group(0)) so
-    //            kill(-pgid, SIGKILL) on timeout terminates the whole tree.
-    // - Windows: child assigned to a Job Object with KILL_ON_JOB_CLOSE so any
-    //            subprocess tree is killed when the job handle is released.
-    //
+    // The common bounded runner owns the complete child lifecycle. On Windows
+    // it starts cmd.exe suspended, assigns the process to a kill-on-close Job
+    // Object, and only then resumes it; Unix starts a dedicated process group.
     // Neither mechanism blocks filesystem or network access. Exact operator
-    // approval at the caller is the security boundary; the token denylist below
-    // is only defense in depth against an accidentally broad entry.
-    use std::process::Stdio;
+    // approval at the caller remains the authority boundary.
     #[cfg(windows)]
-    let windows_control_dir = {
-        // Keep control files below a reserved directory, never beside the
-        // proposal-controlled basename. If that basename is itself
-        // `.neoth-control`, `create_dir` fails closed before any process exists.
-        let path = workspace.join(".neoth-control");
-        std::fs::create_dir(&path)
-            .map_err(|error| VerificationCommandError::Setup(error.to_string()))?;
-        path
-    };
+    let (shell_path, system_root) = windows_verification_shell()?;
+    #[cfg(not(windows))]
+    let shell_path = PathBuf::from("/bin/sh");
+    let sanitized_path = sanitized_verification_path()?;
+    let mut spawn_cmd = std::process::Command::new(&shell_path);
     #[cfg(windows)]
-    let windows_job_gate = windows_control_dir.join("job-ready");
-    #[cfg(windows)]
-    let windows_wrapper = {
-        let path = windows_control_dir.join("verification.cmd");
-        // cmd.exe alone spins on builtins until the parent has assigned it to
-        // the Job Object. It cannot launch the untrusted command (or any
-        // descendant) in the spawn-to-assignment window. The exclusive control
-        // directory makes both helper paths unreachable by the one copied
-        // proposal basename.
-        let body = format!(
-            "@echo off\r\n:neoth_wait_for_job\r\nif not exist \".neoth-control\\job-ready\" goto neoth_wait_for_job\r\ndel /q \".neoth-control\\job-ready\" >nul 2>nul\r\n{cmd}\r\n"
-        );
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|error| VerificationCommandError::Setup(error.to_string()))?;
-        std::io::Write::write_all(&mut file, body.as_bytes())
-            .map_err(|error| VerificationCommandError::Setup(error.to_string()))?;
-        path
-    };
-    let mut spawn_cmd = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" });
-    #[cfg(windows)]
-    spawn_cmd.args(["/D", "/Q", "/C"]).arg(&windows_wrapper);
+    {
+        use std::os::windows::process::CommandExt as _;
+
+        // cmd.exe does not parse arguments with CommandLineToArgvW. Feeding
+        // the command through Command::arg therefore backslash-escapes inner
+        // quotes that cmd treats as literal characters (for example a quoted
+        // executable path). The command has already passed the exact
+        // operator-owned allowlist. cmd /C also requires one outer transport
+        // quote when the exact command itself starts with a quoted executable;
+        // raw_arg preserves both that wrapper and all approved inner syntax.
+        let cmd_transport = format!("\"{cmd}\"");
+        spawn_cmd.args(["/D", "/Q", "/C"]).raw_arg(cmd_transport);
+    }
     #[cfg(not(windows))]
     spawn_cmd.args(["-c", cmd]);
     spawn_cmd
-        .current_dir(&workspace)
+        // Keep proposal bytes out of the executable-search directory. The
+        // candidate is available at `../input/<original basename>` while this
+        // runner directory starts empty, so e.g. a candidate named cargo.cmd
+        // cannot hijack an approved `cargo ...` verifier.
+        .current_dir(&runner_dir)
         // Scrub the environment: a verification command must not inherit
         // NEOTH_HOME or any token/secret env var. Re-add only what a shell needs.
         .env_clear()
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .env("HOME", std::env::var("HOME").unwrap_or_default())
-        .env(
-            "USERPROFILE",
-            std::env::var("USERPROFILE").unwrap_or_default(),
-        )
-        .env(
-            "SystemRoot",
-            std::env::var("SystemRoot").unwrap_or_default(),
-        )
-        .env("ComSpec", std::env::var("ComSpec").unwrap_or_default())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    // Unix: spawn in own process group — pgid == child pid after process_group(0).
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        spawn_cmd.process_group(0);
+        .env("PATH", sanitized_path);
+    if let Some(home) = std::env::var_os("HOME") {
+        spawn_cmd.env("HOME", home);
     }
-    let mut child = spawn_cmd
-        .spawn()
-        .map_err(|e| VerificationCommandError::SpawnFailed(e.to_string()))?;
-    // Windows: retain the owning Job Object guard until the child exits. Closing
-    // it then kills grandchildren that may still own inherited pipe handles.
+    if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+        spawn_cmd.env("USERPROFILE", user_profile);
+    }
     #[cfg(windows)]
-    let mut child_job = match assign_child_to_job(&child) {
-        Some(job) => {
-            let release_gate = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&windows_job_gate)
-                .and_then(|mut file| std::io::Write::write_all(&mut file, b"ready"));
-            if let Err(error) = release_gate {
-                drop(job);
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(VerificationCommandError::Setup(format!(
-                    "release Windows verification job gate: {error}"
-                )));
-            }
-            Some(job)
-        }
-        None => {
-            let child_pid = child.id();
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(VerificationCommandError::SpawnFailed(format!(
-                "verification child {child_pid} could not be assigned to a Windows Job Object"
-            )));
-        }
-    };
+    spawn_cmd
+        .env("SystemRoot", system_root)
+        .env("ComSpec", &shell_path)
+        .env("NoDefaultCurrentDirectoryInExePath", "1");
 
-    // Drain stdout/stderr in background threads to avoid pipe-buffer deadlock
-    // when the child writes a lot before exiting.
-    let stdout_pipe = child.stdout.take();
-    let stderr_pipe = child.stderr.take();
-    let (tx_out, rx_out) = std::sync::mpsc::channel::<std::io::Result<CappedRead>>();
-    let (tx_err, rx_err) = std::sync::mpsc::channel::<std::io::Result<CappedRead>>();
-    if let Some(mut pipe) = stdout_pipe {
-        std::thread::spawn(move || {
-            let _ = tx_out.send(drain_reader_capped(
-                &mut pipe,
-                VERIFICATION_OUTPUT_CAP_BYTES,
-            ));
-        });
-    }
-    if let Some(mut pipe) = stderr_pipe {
-        std::thread::spawn(move || {
-            let _ = tx_err.send(drain_reader_capped(
-                &mut pipe,
-                VERIFICATION_OUTPUT_CAP_BYTES,
-            ));
-        });
-    }
-
-    // Poll until the child exits or the wall-clock deadline passes.
-    let deadline = std::time::Instant::now() + timeout;
-    let status = loop {
-        if std::time::Instant::now() >= deadline {
-            // Unix: kill the entire process group (child + any subprocesses it
-            // spawned) before the direct-child kill so no orphan survives.
-            #[cfg(unix)]
-            {
-                let pgid = child.id(); // pgid == pid when spawned with process_group(0)
-                // SAFETY: pgid is the process group id we created above with
-                // process_group(0); SIGKILL = 9 is defined on all POSIX platforms.
-                // Using an extern "C" declaration avoids a hard dep on the `libc`
-                // crate while still calling the well-known POSIX `kill(2)` symbol.
-                unsafe {
-                    unsafe extern "C" {
-                        fn kill(pid: i32, sig: i32) -> i32;
+    let output = match run_process_capped_with_memory_limit(
+        &mut spawn_cmd,
+        "approved self-improve verifier",
+        VERIFICATION_OUTPUT_CAP_BYTES,
+        timeout,
+        Some(256 * 1024 * 1024),
+    ) {
+        Ok(output) => output,
+        Err(error) => {
+            if let Some(failure) = error.downcast_ref::<CappedProcessFailure>() {
+                return Err(match failure {
+                    CappedProcessFailure::Timeout { .. } => VerificationCommandError::Timeout,
+                    CappedProcessFailure::OutputTooLarge { stream, .. } => {
+                        VerificationCommandError::OutputTooLarge(stream)
                     }
-                    let _ = kill(-(pgid as i32), 9); // 9 = SIGKILL
-                }
+                });
             }
-            #[cfg(windows)]
-            drop(child_job.take());
-            let _ = child.kill();
-            let _ = child.wait(); // reap to avoid a zombie process
-            return Err(VerificationCommandError::Timeout);
-        }
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-            Err(e) => return Err(VerificationCommandError::SpawnFailed(e.to_string())),
+            return Err(VerificationCommandError::Execution(format!("{error:#}")));
         }
     };
 
-    // Child exited before the deadline (normal-exit path).  Any grandchildren
-    // that a backgrounded command (`cmd &`) spawned inside the workspace are
-    // still alive and hold inherited pipe write-ends, which makes
-    // rx_out/rx_err.recv() block until those grandchildren exit on their own.
-    // Kill the whole process group now to close those write-ends before we
-    // block on recv.  The timeout path already does this kill + returns early,
-    // so the kill here only covers the success path — it never weakens the
-    // production timeout-kill behaviour.
-    #[cfg(unix)]
-    {
-        let pgid = child.id(); // pgid == child pid; process_group(0) was set at spawn
-        // SAFETY: same invariants as the timeout-path kill above.
-        unsafe {
-            unsafe extern "C" {
-                fn kill(pid: i32, sig: i32) -> i32;
-            }
-            let _ = kill(-(pgid as i32), 9); // SIGKILL orphaned grandchildren
-        }
-    }
-
-    #[cfg(windows)]
-    drop(child_job.take());
-
-    // Never wait indefinitely for a leaked pipe writer. Job assignment is
-    // fail-closed on Windows, but a platform/driver error can still strand a
-    // reader thread and must not wedge self-improve.
-    let drain_timeout = std::time::Duration::from_secs(2);
-    let stdout = rx_out
-        .recv_timeout(drain_timeout)
-        .map_err(|error| VerificationCommandError::Setup(format!("drain stdout: {error}")))?
-        .map_err(|error| VerificationCommandError::Setup(format!("read stdout: {error}")))?;
-    let stderr = rx_err
-        .recv_timeout(drain_timeout)
-        .map_err(|error| VerificationCommandError::Setup(format!("drain stderr: {error}")))?
-        .map_err(|error| VerificationCommandError::Setup(format!("read stderr: {error}")))?;
-    if stdout.exceeded {
-        return Err(VerificationCommandError::OutputTooLarge("stdout"));
-    }
-    if stderr.exceeded {
-        return Err(VerificationCommandError::OutputTooLarge("stderr"));
-    }
-
-    if status.success() {
-        Ok(String::from_utf8_lossy(&stdout.bytes).into_owned())
+    if output.status.success() {
+        String::from_utf8(output.stdout)
+            .map_err(|error| VerificationCommandError::Execution(error.to_string()))
     } else {
+        let stderr = String::from_utf8(output.stderr)
+            .map_err(|error| VerificationCommandError::Execution(error.to_string()))?;
         Err(VerificationCommandError::CommandFailed {
-            exit: status.code(),
-            stderr: String::from_utf8_lossy(&stderr.bytes).into_owned(),
+            exit: output.status.code(),
+            stderr,
         })
     }
-}
-
-/// RAII cleanup for a verification workspace — removed on every exit path.
-struct VerificationWorkspaceGuard(std::path::PathBuf);
-impl Drop for VerificationWorkspaceGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-/// Collision-resistant workspace suffix (nanos + pid; no external dep).
-fn verification_workspace_token() -> String {
-    format!("{:x}_{}", crate::time::now_unix_ns(), std::process::id())
 }
 
 /// Error from an approved external-verification run.
@@ -3405,7 +4306,7 @@ enum VerificationCommandError {
     /// before it ran.
     Rejected(String),
     Setup(String),
-    SpawnFailed(String),
+    Execution(String),
     CommandFailed {
         exit: Option<i32>,
         stderr: String,
@@ -3419,9 +4320,7 @@ impl std::fmt::Display for VerificationCommandError {
         match self {
             Self::Rejected(e) => write!(f, "verification_command rejected: {e}"),
             Self::Setup(e) => write!(f, "verification workspace setup failed: {e}"),
-            Self::SpawnFailed(e) => {
-                write!(f, "could not spawn approved verification_command: {e}")
-            }
+            Self::Execution(e) => write!(f, "approved verification_command failed: {e}"),
             Self::CommandFailed { exit, stderr } => {
                 write!(
                     f,
@@ -3440,24 +4339,11 @@ impl std::fmt::Display for VerificationCommandError {
     }
 }
 
-/// NEOTH-AUDIT-SELF-IMPROVE-SAFETY-01 (residual 2, Windows) — assign the
-/// child process to a new Job Object so that any subprocess tree spawned by the
-/// verification command is killed when the job handle is closed.
-///
-/// Configured limits:
-/// - `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`: entire tree dies when the last
-///   handle to this job is released (happens on daemon exit or object GC).
-/// - `JOB_OBJECT_LIMIT_ACTIVE_PROCESS` (max 64): prevents fork-bomb escalation.
-/// - `JOB_OBJECT_LIMIT_PROCESS_MEMORY` (256 MiB): caps runaway allocators.
-///
-/// **No security isolation**: Job Objects do not restrict host filesystem or
-/// network access. Exact operator approval at the caller is mandatory.
-///
-/// Returns an owning guard on success. Dropping it closes the Job Object and
-/// terminates any remaining descendants. The caller fails closed on assignment
-/// failure before releasing the gate that permits the verification command.
 #[cfg(windows)]
-fn assign_child_to_job(child: &std::process::Child) -> Option<WindowsChildJob> {
+fn assign_child_to_job_with_memory_limit(
+    child: &std::process::Child,
+    process_memory_limit: Option<usize>,
+) -> Option<WindowsChildJob> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
@@ -3477,12 +4363,13 @@ fn assign_child_to_job(child: &std::process::Child) -> Option<WindowsChildJob> {
     // SAFETY: all-zero is valid for this C POD struct; we set all used fields
     // explicitly before passing the pointer to SetInformationJobObject.
     let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        | JOB_OBJECT_LIMIT_ACTIVE_PROCESS
-        | JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+    info.BasicLimitInformation.LimitFlags =
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
     info.BasicLimitInformation.ActiveProcessLimit = 64;
-    // 256 MiB committed-memory cap per process — generous for linters/tests.
-    info.ProcessMemoryLimit = 256 * 1024 * 1024;
+    if let Some(process_memory_limit) = process_memory_limit {
+        info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+        info.ProcessMemoryLimit = process_memory_limit;
+    }
 
     // SAFETY: `job` is a valid handle we own; `info` is fully initialised above.
     let ok = unsafe {
@@ -3511,6 +4398,33 @@ fn assign_child_to_job(child: &std::process::Child) -> Option<WindowsChildJob> {
     }
 
     Some(WindowsChildJob(job))
+}
+
+#[cfg(windows)]
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    #[link_name = "NtResumeProcess"]
+    fn nt_resume_self_improve_process(
+        process_handle: windows_sys::Win32::Foundation::HANDLE,
+    ) -> i32;
+}
+
+#[cfg(windows)]
+fn resume_windows_child(child: &std::process::Child) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle as _;
+
+    let process_handle = child.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+    // SAFETY: `process_handle` is the live process created suspended immediately
+    // above and already assigned to our owning Job Object.
+    let status = unsafe { nt_resume_self_improve_process(process_handle) };
+    if status < 0 {
+        Err(std::io::Error::other(format!(
+            "NtResumeProcess failed with NTSTATUS 0x{:08x}",
+            status as u32
+        )))
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(windows)]
@@ -3584,7 +4498,8 @@ fn validate_verification_command(cmd: &str) -> std::result::Result<(), Verificat
         {
             return Err(VerificationCommandError::Rejected(format!(
                 "contains disallowed network-client/remote-exec token `{tok}`; shell verification \
-                 is process- and filesystem-contained but does not provide OS-level network isolation"
+                 constrains the process tree, cwd, runtime, and output; host filesystem and network \
+                 access are not isolated"
             )));
         }
     }
@@ -3715,6 +4630,22 @@ mod tests {
         }
     }
 
+    struct AfterAcceptArchitectureValidationHookReset;
+
+    impl Drop for AfterAcceptArchitectureValidationHookReset {
+        fn drop(&mut self) {
+            clear_after_accept_architecture_validation_hook();
+        }
+    }
+
+    struct BeforeApprovalPersistUpdateHookReset;
+
+    impl Drop for BeforeApprovalPersistUpdateHookReset {
+        fn drop(&mut self) {
+            clear_before_approval_persist_update_hook();
+        }
+    }
+
     #[test]
     fn command_output_capped_timeout_child() {
         if std::env::var_os("NEOTH_TEST_SLOW_CAPPED_COMMAND").is_some() {
@@ -3742,6 +4673,90 @@ mod tests {
         let result = drain_reader_capped(std::io::Cursor::new(&input), 32).unwrap();
         assert!(result.exceeded);
         assert_eq!(result.bytes, input[..32]);
+    }
+
+    #[test]
+    fn run_process_capped_grandchild_marker_helper() {
+        let Some(marker) = std::env::var_os("NEOTH_TEST_CAPPED_GRANDCHILD_MARKER") else {
+            return;
+        };
+        let delay_ms = std::env::var("NEOTH_TEST_CAPPED_GRANDCHILD_DELAY_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(700);
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        std::fs::write(marker, b"leaked").unwrap();
+    }
+
+    #[test]
+    #[allow(clippy::zombie_processes)] // The grandchild must outlive this helper to test tree containment.
+    fn run_process_capped_parent_helper() {
+        let Some(marker) = std::env::var_os("NEOTH_TEST_CAPPED_PARENT_MARKER") else {
+            return;
+        };
+        let _grandchild = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("run_process_capped_grandchild_marker_helper")
+            .env("NEOTH_TEST_CAPPED_GRANDCHILD_MARKER", marker)
+            .spawn()
+            .unwrap();
+        if let Some(ready) = std::env::var_os("NEOTH_TEST_CAPPED_PARENT_READY") {
+            std::fs::write(ready, b"grandchild-spawned").unwrap();
+        }
+        if std::env::var_os("NEOTH_TEST_CAPPED_PARENT_EXIT_FAST").is_none() {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+    }
+
+    #[test]
+    fn run_process_capped_timeout_terminates_grandchild_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let marker = tmp.path().join("grandchild-marker");
+        let ready = tmp.path().join("grandchild-ready");
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .arg("run_process_capped_parent_helper")
+            .env("NEOTH_TEST_CAPPED_PARENT_MARKER", &marker)
+            .env("NEOTH_TEST_CAPPED_PARENT_READY", &ready)
+            .env("NEOTH_TEST_CAPPED_GRANDCHILD_DELAY_MS", "1500");
+
+        let error = run_process_capped(
+            &mut command,
+            "process-tree test",
+            1024,
+            std::time::Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("timed out"));
+        assert!(
+            ready.exists(),
+            "test parent never confirmed grandchild spawn"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1700));
+        assert!(!marker.exists(), "timed-out grandchild escaped containment");
+    }
+
+    #[test]
+    fn run_process_capped_fast_leader_closes_long_lived_descendants() {
+        let tmp = tempfile::tempdir().unwrap();
+        let marker = tmp.path().join("fast-leader-grandchild-marker");
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .arg("run_process_capped_parent_helper")
+            .env("NEOTH_TEST_CAPPED_PARENT_MARKER", &marker)
+            .env("NEOTH_TEST_CAPPED_PARENT_EXIT_FAST", "1");
+
+        let started = std::time::Instant::now();
+        let output = run_process_capped(
+            &mut command,
+            "fast-leader process-tree test",
+            1024,
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap();
+        assert!(output.status.success());
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        std::thread::sleep(std::time::Duration::from_millis(900));
+        assert!(!marker.exists(), "fast leader left a grandchild running");
     }
 
     fn install_test_skill(
@@ -3780,6 +4795,606 @@ mod tests {
         }
     }
 
+    fn external_proposal(id: &str, target: &Path, before: &str) -> Proposal {
+        Proposal {
+            id: id.to_string(),
+            skill: "mapped_skill".into(),
+            skill_path: target.display().to_string(),
+            before: before.into(),
+            after: format!("{before}\n# improved"),
+            summary: "improve mapped_skill target".into(),
+            at_unix: 1,
+            ..Default::default()
+        }
+    }
+
+    fn persist_test_code_map(home: &Path, root: &Path) {
+        std::fs::create_dir_all(home).unwrap();
+        let map = crate::code_map::RepoMapBuilder::new(root)
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        let mut conn = crate::code_map::persist::open(&home.join("code_map.db")).unwrap();
+        crate::code_map::persist_map_and_edges(&mut conn, &map, &[]).unwrap();
+    }
+
+    #[test]
+    fn proposal_code_map_capture_is_fresh_and_bound_to_the_target_root() {
+        let home = tempfile::tempdir().unwrap();
+        let unrelated = tempfile::tempdir().unwrap();
+        let target_repo = tempfile::tempdir().unwrap();
+        std::fs::write(
+            unrelated.path().join("mapped_skill.rs"),
+            "fn unrelated() {}\n",
+        )
+        .unwrap();
+        let target = target_repo.path().join("mapped_skill.rs");
+        std::fs::write(&target, "fn mapped_skill() {}\n").unwrap();
+        persist_test_code_map(home.path(), unrelated.path());
+        persist_test_code_map(home.path(), target_repo.path());
+
+        let id = stage_proposal(
+            home.path(),
+            external_proposal("fresh-target-root", &target, "fn mapped_skill() {}\n"),
+        )
+        .unwrap();
+        let stored = load_proposals(home.path())
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .unwrap();
+        let ProposalCodeMapAnalysis::CapturedFresh {
+            receipt,
+            source_fingerprint_sha256,
+            captured_at_unix_ns,
+            ..
+        } = stored.code_map_analysis
+        else {
+            panic!("mapped proposal must persist a fingerprint-bound receipt");
+        };
+        let expected_root = std::fs::canonicalize(target_repo.path())
+            .unwrap()
+            .display()
+            .to_string();
+        let unrelated_root = std::fs::canonicalize(unrelated.path())
+            .unwrap()
+            .display()
+            .to_string();
+        assert_eq!(receipt.root, expected_root);
+        assert_ne!(receipt.root, unrelated_root);
+        assert_eq!(receipt.stale, Some(false));
+        assert!(receipt.index_generation > 0);
+        assert_eq!(receipt.index_generation, receipt.graph_generation);
+        assert!(!receipt.hits.is_empty());
+        assert!(receipt.hits.iter().all(|hit| hit.root == receipt.root));
+        assert_eq!(source_fingerprint_sha256.as_deref().map(str::len), Some(64));
+        assert!(captured_at_unix_ns.is_some());
+    }
+
+    #[test]
+    fn proposal_code_map_capture_rejects_an_ignored_exact_target_without_state_changes() {
+        let home = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let target = repo.path().join("ignored_skill.md");
+        let original = "# ignored target\n";
+        std::fs::write(&target, original).unwrap();
+        std::fs::write(repo.path().join(".neothignore"), "ignored_skill.md\n").unwrap();
+
+        let error = stage_proposal(
+            home.path(),
+            external_proposal("ignored-target", &target, original),
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("exact self-improve target"));
+        assert!(!proposals_path(home.path()).exists());
+        assert!(!ledger_path(home.path()).exists());
+        assert!(!stage_journal_path(home.path()).exists());
+    }
+
+    #[test]
+    fn proposal_stage_rejects_missing_target_without_state_changes() {
+        let home = tempfile::tempdir().unwrap();
+        let missing = home.path().join("missing").join("skill.md");
+        let error = stage_proposal(
+            home.path(),
+            external_proposal("missing-target", &missing, "before"),
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains("self-improvement target does not exist"),
+            "unexpected error: {error:#}"
+        );
+        assert!(load_proposals(home.path()).unwrap().is_empty());
+        assert!(!ledger_path(home.path()).exists());
+    }
+
+    #[test]
+    fn proposal_code_map_capture_maps_the_exact_target_without_a_global_fallback() {
+        let home = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let target = repo.path().join("outside.md");
+        std::fs::write(&target, "before").unwrap();
+
+        let id = stage_proposal(
+            home.path(),
+            external_proposal("unmapped-target", &target, "before"),
+        )
+        .unwrap();
+        let stored = load_proposals(home.path())
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .unwrap();
+        let ProposalCodeMapAnalysis::CapturedFresh { receipt, .. } = stored.code_map_analysis
+        else {
+            panic!("exact target must be mapped");
+        };
+        assert_eq!(
+            receipt.root,
+            std::fs::canonicalize(repo.path())
+                .unwrap()
+                .display()
+                .to_string()
+        );
+        assert!(receipt.hits.iter().any(|hit| hit.path == "outside.md"));
+    }
+
+    #[test]
+    fn proposal_code_map_capture_isolated_from_corrupt_global_code_map() {
+        enum Corruption {
+            Mixed,
+            Zero,
+            Partial,
+        }
+
+        for (name, corruption) in [
+            ("mixed", Corruption::Mixed),
+            ("zero", Corruption::Zero),
+            ("partial", Corruption::Partial),
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let repo = tempfile::tempdir().unwrap();
+            let target = repo.path().join("mapped_skill.rs");
+            std::fs::write(&target, "fn mapped_skill() {}\n").unwrap();
+            let map = crate::code_map::RepoMapBuilder::new(repo.path())
+                .with_symbols(true)
+                .scan()
+                .unwrap();
+            let mut conn =
+                crate::code_map::persist::open(&home.path().join("code_map.db")).unwrap();
+            match corruption {
+                Corruption::Mixed => {
+                    crate::code_map::persist_map(&mut conn, &map).unwrap();
+                }
+                Corruption::Zero => {
+                    crate::code_map::persist_map_and_edges(&mut conn, &map, &[]).unwrap();
+                    conn.execute(
+                        "UPDATE code_map_roots SET index_generation = 0, graph_generation = 0",
+                        [],
+                    )
+                    .unwrap();
+                }
+                Corruption::Partial => {
+                    crate::code_map::persist_map_and_edges(&mut conn, &map, &[]).unwrap();
+                    conn.execute("UPDATE code_map_roots SET truncated_at = 1", [])
+                        .unwrap();
+                }
+            }
+            drop(conn);
+
+            let id = stage_proposal(
+                home.path(),
+                external_proposal(name, &target, "fn mapped_skill() {}\n"),
+            )
+            .unwrap();
+            let proposal = load_proposals(home.path())
+                .unwrap()
+                .into_iter()
+                .find(|proposal| proposal.id == id)
+                .unwrap();
+            assert!(matches!(
+                proposal.code_map_analysis,
+                ProposalCodeMapAnalysis::CapturedFresh { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn legacy_proposal_without_code_map_analysis_roundtrips_as_legacy_missing() {
+        let legacy = r#"{
+            "id":"legacy","skill":"old","skill_path":"old.md",
+            "before":"before","after":"after","summary":"old proposal",
+            "status":"pending","at_unix":1
+        }"#;
+        let proposal: Proposal = serde_json::from_str(legacy).unwrap();
+        assert_eq!(
+            proposal.code_map_analysis,
+            ProposalCodeMapAnalysis::LegacyMissing
+        );
+        assert_eq!(
+            serde_json::to_value(proposal).unwrap()["code_map_analysis"]["state"],
+            "legacy_missing"
+        );
+    }
+
+    struct CountingQaAdvisor(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl ProposalQaAdvisor for CountingQaAdvisor {
+        async fn review(
+            &self,
+            _diff: &str,
+            _verification_output: &str,
+            _code_map_analysis: &ProposalCodeMapAnalysis,
+        ) -> Result<crate::council::qa_verdict::QaVerdict> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(crate::council::qa_verdict::QaVerdict::Pass {
+                evidence: vec!["counted".into()],
+            })
+        }
+    }
+
+    struct CapturingQaAdvisor(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    #[async_trait::async_trait]
+    impl ProposalQaAdvisor for CapturingQaAdvisor {
+        async fn review(
+            &self,
+            diff: &str,
+            _verification_output: &str,
+            _code_map_analysis: &ProposalCodeMapAnalysis,
+        ) -> Result<crate::council::qa_verdict::QaVerdict> {
+            self.0.lock().unwrap().push(diff.to_owned());
+            Ok(crate::council::qa_verdict::QaVerdict::Pass {
+                evidence: vec!["captured exact diff".into()],
+            })
+        }
+    }
+
+    #[test]
+    fn stage_rejects_byte_identical_candidate_without_state_mutation() {
+        let home = tempfile::tempdir().unwrap();
+        let target = home.path().join("no_op.rs");
+        std::fs::write(&target, "fn unchanged() {}\n").unwrap();
+        let error = stage_proposal(
+            home.path(),
+            Proposal {
+                id: "no-op".into(),
+                skill: "no-op".into(),
+                skill_path: target.display().to_string(),
+                before: "fn unchanged() {}\n".into(),
+                after: "fn unchanged() {}\n".into(),
+                summary: "must not stage".into(),
+                at_unix: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("byte-identical"));
+        assert!(!proposals_path(home.path()).exists());
+        assert!(!ledger_path(home.path()).exists());
+        assert!(!stage_journal_path(home.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn execute_sends_line_ending_only_change_to_advisor_exactly() {
+        let home = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let target = repo.path().join("line_endings.rs");
+        std::fs::write(&target, "fn line_endings() {}\r\n").unwrap();
+        let id = stage_proposal(
+            home.path(),
+            Proposal {
+                id: "line-ending-only".into(),
+                skill: "line-endings".into(),
+                skill_path: target.display().to_string(),
+                before: "fn line_endings() {}\r\n".into(),
+                after: "fn line_endings() {}\n".into(),
+                summary: "normalize line endings".into(),
+                at_unix: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let prepared = refresh_proposal_code_map_analysis_for_execute(home.path(), &id).unwrap();
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let advisor = CapturingQaAdvisor(captured.clone());
+
+        let (verdict, _) = execute_proposal_with_prepared_code_map_analysis(
+            home.path(),
+            &id,
+            0,
+            crate::permissions::AutonomyLevel::Standard,
+            &prepared,
+            &advisor,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(verdict, ExecutionVerdict::Approved));
+        let diffs = captured.lock().unwrap();
+        assert_eq!(diffs.len(), 1);
+        assert!(diffs[0].contains("\\r\\n"));
+        assert!(diffs[0].contains("\\n"));
+        assert!(!diffs[0].contains("(no line changes)"));
+    }
+
+    #[tokio::test]
+    async fn home_root_runtime_state_cannot_self_invalidate_refresh_and_execute() {
+        let home = tempfile::tempdir().unwrap();
+        let target = home.path().join("top_level_skill.md");
+        let original = "# Top-level skill\n\nBefore.\n";
+        std::fs::write(&target, original).unwrap();
+        let id = stage_proposal(
+            home.path(),
+            external_proposal("home-root-self-reference", &target, original),
+        )
+        .unwrap();
+
+        std::fs::create_dir(home.path().join("wal")).unwrap();
+        std::fs::write(
+            home.path().join("wal/runtime-segment.wal"),
+            "mutable runtime",
+        )
+        .unwrap();
+        let prepared = refresh_proposal_code_map_analysis_for_execute(home.path(), &id).unwrap();
+        std::fs::write(
+            home.path().join("future-runtime-cache.db"),
+            "new mutable state",
+        )
+        .unwrap();
+        std::fs::write(
+            home.path().join("wal/runtime-segment.wal"),
+            "changed runtime",
+        )
+        .unwrap();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let advisor = CountingQaAdvisor(calls.clone());
+        let (verdict, revisions) = execute_proposal_with_prepared_code_map_analysis(
+            home.path(),
+            &id,
+            0,
+            crate::permissions::AutonomyLevel::Standard,
+            &prepared,
+            &advisor,
+        )
+        .await
+        .unwrap();
+        persist_verified_approval_after_audit(home.path(), &id, &prepared).unwrap();
+
+        assert!(matches!(verdict, ExecutionVerdict::Approved));
+        assert_eq!(revisions, 0);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let stored = load_proposals(home.path())
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .unwrap();
+        assert_eq!(stored.status, ProposalStatus::VerifiedApproved);
+        let ProposalCodeMapAnalysis::CapturedFresh { receipt, .. } = stored.code_map_analysis
+        else {
+            panic!("home-root proposal lost its captured code-map receipt");
+        };
+        assert!(
+            receipt.hits.iter().all(|hit| {
+                !hit.path.contains("self_improve_") && !hit.path.starts_with("wal/")
+            })
+        );
+    }
+
+    #[test]
+    fn staged_code_map_capture_binds_the_final_proposal_payload() {
+        let home = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let target = repo.path().join("payload_bound.rs");
+        let original = "fn payload_bound() {}\n";
+        std::fs::write(&target, original).unwrap();
+
+        let id = stage_proposal(
+            home.path(),
+            external_proposal("payload-bound", &target, original),
+        )
+        .unwrap();
+        let proposal = load_proposals(home.path())
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .unwrap();
+        let ProposalCodeMapAnalysis::CapturedFresh {
+            proposal_payload_sha256: Some(captured_payload),
+            audited_proposal_sha256,
+            ..
+        } = &proposal.code_map_analysis
+        else {
+            panic!("staged proposal must carry a payload-bound code-map capture");
+        };
+
+        assert_eq!(
+            *captured_payload,
+            proposal_payload_sha256(&proposal).unwrap()
+        );
+        assert_eq!(*audited_proposal_sha256, None);
+    }
+
+    #[test]
+    fn refresh_rejects_legacy_relative_target_instead_of_rebinding_to_cwd() {
+        let home = tempfile::tempdir().unwrap();
+        save_proposals(
+            home.path(),
+            &[Proposal {
+                id: "legacy-relative".into(),
+                skill: "legacy".into(),
+                skill_path: "relative/skill.md".into(),
+                status: ProposalStatus::Pending,
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+
+        let error = refresh_proposal_code_map_analysis_for_execute(home.path(), "legacy-relative")
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("relative target path"));
+    }
+
+    #[test]
+    fn accept_rejects_legacy_status_only_approval() {
+        let home = tempfile::tempdir().unwrap();
+        let target = home.path().join("legacy-approved.md");
+        std::fs::write(&target, "before").unwrap();
+        save_proposals(
+            home.path(),
+            &[Proposal {
+                id: "legacy-approved".into(),
+                skill: "legacy".into(),
+                skill_path: target.display().to_string(),
+                before: "before".into(),
+                after: "after".into(),
+                status: ProposalStatus::VerifiedApproved,
+                code_map_analysis: ProposalCodeMapAnalysis::LegacyMissing,
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+
+        let error = accept_proposal(home.path(), "legacy-approved").unwrap_err();
+        assert!(format!("{error:#}").contains("legacy status-only approval"));
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "before");
+    }
+
+    #[tokio::test]
+    async fn stale_execute_keeps_target_bytes_and_state_unchanged_and_skips_provider() {
+        let home = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let target = repo.path().join("mapped_skill.rs");
+        let original = "fn mapped_skill() {}\n";
+        std::fs::write(&target, original).unwrap();
+        persist_test_code_map(home.path(), repo.path());
+        let id = stage_proposal(
+            home.path(),
+            external_proposal("stale-before-provider", &target, original),
+        )
+        .unwrap();
+        let prepared = refresh_proposal_code_map_analysis_for_execute(home.path(), &id).unwrap();
+        let proposals_before = std::fs::read(proposals_path(home.path())).unwrap();
+        let ledger_before = std::fs::read(ledger_path(home.path())).unwrap();
+        std::fs::write(repo.path().join("unrelated.rs"), "fn added_later() {}\n").unwrap();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let advisor = CountingQaAdvisor(calls.clone());
+
+        let error = execute_proposal_with_prepared_code_map_analysis(
+            home.path(),
+            &id,
+            0,
+            crate::permissions::AutonomyLevel::Standard,
+            &prepared,
+            &advisor,
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("target source fingerprint changed"));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), original);
+        assert_eq!(
+            std::fs::read(proposals_path(home.path())).unwrap(),
+            proposals_before
+        );
+        assert_eq!(
+            std::fs::read(ledger_path(home.path())).unwrap(),
+            ledger_before
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_blocks_unrepresentable_diff_before_advisor_or_approval() {
+        let home = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let target = repo.path().join("large_matrix.rs");
+        let before = (0..2_000)
+            .map(|line| format!("fn before_{line}() {{}}\n"))
+            .collect::<String>();
+        let after = (0..2_000)
+            .map(|line| format!("fn after_{line}() {{}}\n"))
+            .collect::<String>();
+        std::fs::write(&target, &before).unwrap();
+        let id = stage_proposal(
+            home.path(),
+            Proposal {
+                id: "qa-diff-budget".into(),
+                skill: "large-matrix".into(),
+                skill_path: target.display().to_string(),
+                before,
+                after,
+                summary: "exercise complete QA diff budget".into(),
+                at_unix: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let prepared = refresh_proposal_code_map_analysis_for_execute(home.path(), &id).unwrap();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let advisor = CountingQaAdvisor(calls.clone());
+
+        let (verdict, revises) = execute_proposal_with_prepared_code_map_analysis(
+            home.path(),
+            &id,
+            0,
+            crate::permissions::AutonomyLevel::Standard,
+            &prepared,
+            &advisor,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(
+                verdict,
+                ExecutionVerdict::Blocked { ref reason }
+                    if reason.contains("cannot be fully represented")
+            ),
+            "unrepresentable candidate must fail closed: {verdict:?}"
+        );
+        assert_eq!(revises, 0);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let stored_proposals = load_proposals(home.path()).unwrap();
+        let stored = unique_proposal_by_id(&stored_proposals, &id).unwrap();
+        assert_eq!(stored.status, ProposalStatus::Pending);
+        assert!(matches!(
+            &stored.code_map_analysis,
+            ProposalCodeMapAnalysis::CapturedFresh {
+                audited_proposal_sha256: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn refresh_rejects_target_drift_before_provider_allocation() {
+        let home = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let target = repo.path().join("drift_before_refresh.rs");
+        let before = "fn original() {}\n";
+        std::fs::write(&target, before).unwrap();
+        let id = stage_proposal(
+            home.path(),
+            external_proposal("drift-before-refresh", &target, before),
+        )
+        .unwrap();
+        std::fs::write(&target, "fn concurrent_edit() {}\n").unwrap();
+
+        let error = refresh_proposal_code_map_analysis_for_execute(home.path(), &id).unwrap_err();
+        assert!(format!("{error:#}").contains("changed after proposal"));
+        let stored_proposals = load_proposals(home.path()).unwrap();
+        let stored = unique_proposal_by_id(&stored_proposals, &id).unwrap();
+        assert_eq!(stored.status, ProposalStatus::Pending);
+        assert!(matches!(
+            &stored.code_map_analysis,
+            ProposalCodeMapAnalysis::CapturedFresh {
+                audited_proposal_sha256: None,
+                ..
+            }
+        ));
+    }
+
     struct FixedQaAdvisor(crate::council::qa_verdict::QaVerdict);
 
     #[async_trait::async_trait]
@@ -3788,6 +5403,7 @@ mod tests {
             &self,
             _diff: &str,
             _verification_output: &str,
+            _code_map_analysis: &ProposalCodeMapAnalysis,
         ) -> Result<crate::council::qa_verdict::QaVerdict> {
             Ok(self.0.clone())
         }
@@ -3810,6 +5426,7 @@ mod tests {
             &self,
             _diff: &str,
             _verification_output: &str,
+            _code_map_analysis: &ProposalCodeMapAnalysis,
         ) -> Result<crate::council::qa_verdict::QaVerdict> {
             let id = self.id.clone();
             match &self.mutation {
@@ -3861,15 +5478,15 @@ mod tests {
         ))
     }
 
-    /// Test-only helper: bypass the execute step by writing `VerifiedApproved`
-    /// directly into the proposals store. Use only in tests that focus on
-    /// accept/rollback/PR behaviour rather than the execute gate itself.
+    /// Test-only helper: model a completed audit boundary for tests that focus
+    /// on accept/rollback/PR behaviour rather than the execute gate itself.
     fn force_verified_approved(home: &std::path::Path, id: &str) {
-        let mut all = load_proposals(home).unwrap();
-        if let Some(p) = all.iter_mut().find(|p| p.id == id) {
-            p.status = ProposalStatus::VerifiedApproved;
-        }
-        save_proposals(home, &all).unwrap();
+        let proposal = load_proposals(home)
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .unwrap();
+        persist_verified_approval_after_audit(home, id, &proposal.code_map_analysis).unwrap();
     }
 
     #[test]
@@ -3915,11 +5532,14 @@ mod tests {
             "installed proposal must persist its full-tree generation"
         );
 
-        install_test_skill(home.path(), "source-v2", "generation-two", "live-v2", true);
         force_verified_approved(home.path(), &id);
+        install_test_skill(home.path(), "source-v2", "generation-two", "live-v2", true);
         let error = accept_proposal(home.path(), &id)
             .expect_err("replacement generation must invalidate staged proposal");
-        assert!(format!("{error:#}").contains("changed full package generation"));
+        assert!(
+            format!("{error:#}").contains("changed full package generation since proposal"),
+            "unexpected replacement-generation error: {error:#}"
+        );
         assert_eq!(
             std::fs::read_to_string(home.path().join("skills").join("pinned").join("skill.md"))
                 .unwrap(),
@@ -4579,7 +6199,7 @@ mod tests {
     }
 
     #[test]
-    fn installed_legacy_manifest_only_proposal_requires_restage() {
+    fn installed_legacy_status_only_proposal_is_rejected_before_accept() {
         let home = tempfile::tempdir().unwrap();
         install_test_skill(home.path(), "source-v1", "generation-one", "live-v1", false);
         let mut proposal =
@@ -4592,8 +6212,31 @@ mod tests {
         save_proposals(home.path(), &[proposal]).unwrap();
 
         let error = accept_proposal(home.path(), "legacy-generation")
-            .expect_err("manifest-only proposals must never be migrated implicitly");
-        assert!(format!("{error:#}").contains("predates full"));
+            .expect_err("status-only approvals must never be migrated implicitly");
+        assert!(
+            format!("{error:#}")
+                .contains("legacy status-only approval without an audit-bound payload receipt"),
+            "unexpected legacy-approval error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn installed_generation_rejects_legacy_manifest_only_binding() {
+        let proposal = Proposal {
+            id: "legacy-generation".into(),
+            spec: Some(ProposalSpec {
+                skill_manifest_sha256: Some("0".repeat(64)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let error = installed_generation_sha256(&proposal, InstalledGenerationState::Staged)
+            .expect_err("manifest-only generation evidence must require restaging");
+        assert_eq!(
+            error.to_string(),
+            "proposal `legacy-generation` predates full installed-skill generation binding; re-stage it"
+        );
     }
 
     #[cfg(windows)]
@@ -4659,9 +6302,10 @@ mod tests {
         .unwrap();
     }
 
-    /// An approved verifier starts in the temporary workspace, so an ordinary
-    /// relative write targets the copied proposal document rather than the live
-    /// file. This is cwd containment only, not a security-sandbox claim.
+    /// An approved verifier starts in an empty temporary runner directory, so
+    /// an ordinary relative write cannot target the live proposal file. The
+    /// candidate bytes live separately at `../input/<basename>`. This is cwd
+    /// containment only, not a security-sandbox claim.
     #[tokio::test]
     async fn approved_verifier_relative_write_stays_in_temporary_workspace() {
         let tmp = std::env::temp_dir().join(format!(
@@ -4676,9 +6320,9 @@ mod tests {
         let sentinel = "SENTINEL_CONTENT_MUST_NOT_CHANGE";
         std::fs::write(&live_skill, sentinel).unwrap();
 
-        // A verification command that DESTROYS the (basename) skill file and
-        // exits 0 — on the live tree this would obliterate the sentinel; with
-        // the temporary workspace cwd it only hits the throwaway copy.
+        // A verification command that writes the basename and exits 0 — on the
+        // live tree this would obliterate the sentinel; in the empty temporary
+        // runner directory it creates an unrelated throwaway file.
         #[cfg(windows)]
         let vcmd = "echo MALICIOUS> sentinel_skill.md && type sentinel_skill.md";
         #[cfg(not(windows))]
@@ -4895,16 +6539,13 @@ mod tests {
             cmd,
             std::time::Duration::from_secs(10),
         );
-        let out = result.unwrap_or_default();
+        let out = result.expect("approved verifier must execute successfully");
 
         // On Windows: if CARGO were inherited, output would contain a filesystem
         // path (e.g. C:\...\cargo.exe). Without inheritance it echoes "%CARGO%".
         // On Unix: output is "__CARGO_ABSENT__", not the real cargo binary path.
         #[cfg(windows)]
-        assert!(
-            !out.contains(":\\") && !out.contains(":/"),
-            "CARGO must not be inherited by the verification child (got: {out:?})"
-        );
+        assert_eq!(out.trim(), "%CARGO%");
         #[cfg(not(windows))]
         assert!(
             out.trim() == "__CARGO_ABSENT__",
@@ -4912,6 +6553,60 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shell_verify_candidate_cannot_shadow_unqualified_approved_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let candidate = tmp.path().join("cargo.cmd");
+        let hijack_marker = tmp.path().join("candidate-executed.marker");
+        let candidate_content = format!(
+            "@echo off\r\necho hijacked>\"{}\"\r\nexit /b 0\r\n",
+            hijack_marker.display()
+        );
+
+        let output = super::run_approved_verification_command(
+            &candidate,
+            &candidate_content,
+            "cargo --version",
+            std::time::Duration::from_secs(30),
+        )
+        .expect("the real cargo executable must remain reachable");
+
+        assert!(
+            output.trim_start().starts_with("cargo "),
+            "expected the real cargo version, got: {output:?}"
+        );
+        assert!(
+            !hijack_marker.exists(),
+            "model-controlled candidate bytes executed from the verifier cwd"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shell_verify_preserves_quoted_helper_path_and_argument() {
+        let tmp = tempfile::tempdir().unwrap();
+        let helper_dir = tmp.path().join("helper path with spaces");
+        std::fs::create_dir(&helper_dir).unwrap();
+        let helper = helper_dir.join("quoted helper.cmd");
+        std::fs::write(
+            &helper,
+            "@echo off\r\nif not \"%~1\"==\"exact-argument\" exit /b 9\r\necho quoted-helper-ok\r\n",
+        )
+        .unwrap();
+        let command = format!("\"{}\" \"exact-argument\"", helper.display());
+
+        let output = super::run_approved_verification_command(
+            &tmp.path().join("candidate.md"),
+            "content",
+            &command,
+            std::time::Duration::from_secs(10),
+        )
+        .expect("quoted helper path must execute with its exact argument");
+
+        assert_eq!(output.trim(), "quoted-helper-ok");
     }
 
     /// SELF-IMPROVE-SAFETY-01 (c) — wall-clock timeout: a child process that
@@ -4979,6 +6674,42 @@ mod tests {
                 "must allow normal verification command: {ok}"
             );
         }
+    }
+
+    #[test]
+    fn audited_approval_payload_cas_rejects_last_moment_mutation() {
+        let _hook_reset = BeforeApprovalPersistUpdateHookReset;
+        let home = tempfile::tempdir().unwrap();
+        let target = home.path().join("approval-cas.rs");
+        std::fs::write(&target, "pub fn before() {}\n").unwrap();
+        let id = stage_proposal(
+            home.path(),
+            external_proposal("approval-cas", &target, "pub fn before() {}\n"),
+        )
+        .unwrap();
+        let analysis = load_proposals(home.path()).unwrap()[0]
+            .code_map_analysis
+            .clone();
+        let hook_home = home.path().to_path_buf();
+        let hook_id = id.clone();
+        set_before_approval_persist_update_hook(move || {
+            update_proposals(&hook_home, |proposals| {
+                let proposal = proposals
+                    .iter_mut()
+                    .find(|proposal| proposal.id == hook_id)
+                    .unwrap();
+                proposal.summary = "mutated after audit validation".into();
+                Ok(())
+            })
+            .unwrap();
+        });
+
+        let error = persist_verified_approval_after_audit(home.path(), &id, &analysis)
+            .expect_err("final payload CAS must reject the mutation");
+        assert!(format!("{error:#}").contains("payload changed while audited approval"));
+        let stored = load_proposals(home.path()).unwrap();
+        assert_eq!(stored[0].status, ProposalStatus::Pending);
+        assert_eq!(stored[0].summary, "mutated after audit validation");
     }
 
     #[tokio::test]
@@ -5300,8 +7031,8 @@ mod tests {
     #[test]
     fn line_diff_shows_changes() {
         let d = line_diff("a\nb\nc", "a\nB\nc");
-        assert!(d.contains("- b"));
-        assert!(d.contains("+ B"));
+        assert!(d.contains("- \"b\\n\""));
+        assert!(d.contains("+ \"B\\n\""));
         assert!(!d.contains("(no line changes)"));
         assert!(line_diff("same", "same").contains("(no line changes)"));
     }
@@ -5315,7 +7046,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let diff = line_diff(&before, &after);
-        assert!(diff.contains("exceeds 4000000-cell display limit"));
+        assert!(diff.contains("exceeds the complete 4000000-cell audit limit"));
     }
 
     #[test]
@@ -5460,11 +7191,10 @@ mod tests {
             },
         )
         .unwrap();
-        std::fs::remove_file(&nonexistent).unwrap();
-
         // Set VerifiedApproved so the accept attempt reaches the backup-read step
         // (where the real failure occurs — skill file doesn't exist).
         force_verified_approved(&tmp, "p_ghost");
+        std::fs::remove_file(&nonexistent).unwrap();
         let err = accept_proposal(&tmp, "p_ghost");
         assert!(
             err.is_err(),
@@ -5484,9 +7214,22 @@ mod tests {
         );
         let dup = line_diff("x", "x\nx");
         assert!(
-            dup.contains("+ x"),
+            dup.contains("+ \"x\\n\""),
             "an added duplicate line must show: {dup}"
         );
+    }
+
+    #[test]
+    fn complete_line_diff_preserves_line_endings_and_final_newline() {
+        for (before, after) in [("a\r\n", "a\n"), ("a\n", "a"), ("", "\n")] {
+            let diff = complete_line_diff(before, after).unwrap();
+            assert!(
+                !diff.contains("(no line changes)"),
+                "{before:?} -> {after:?}"
+            );
+            assert!(diff.contains(&format!("- {before:?}")) || before.is_empty());
+            assert!(diff.contains(&format!("+ {after:?}")) || after.is_empty());
+        }
     }
 
     #[test]
@@ -5517,6 +7260,20 @@ mod tests {
             id2.starts_with("pSAME-"),
             "collision suffix must retain the requested id prefix"
         );
+        let proposals = load_proposals(&tmp).unwrap();
+        for proposal in &proposals {
+            let ProposalCodeMapAnalysis::CapturedFresh {
+                proposal_payload_sha256: Some(captured_payload),
+                ..
+            } = &proposal.code_map_analysis
+            else {
+                panic!("collision-staged proposal must carry a payload-bound capture");
+            };
+            assert_eq!(
+                captured_payload,
+                &proposal_payload_sha256(proposal).unwrap()
+            );
+        }
         let _ = std::fs::remove_file(proposals_path(&tmp));
     }
 
@@ -5563,6 +7320,7 @@ mod tests {
             heldout_eval_summary: String::new(),
             why_this_improves: String::new(),
             risk_notes: String::new(),
+            code_map_analysis: ProposalCodeMapAnalysis::LegacyMissing,
             spec: Some(ProposalSpec {
                 verification_command: Some("cargo test".to_string()),
                 done_criteria: None,
@@ -5699,6 +7457,35 @@ mod tests {
     }
 
     #[test]
+    fn external_accept_rejects_sibling_change_after_first_architecture_fence() {
+        let _hook_reset = AfterAcceptArchitectureValidationHookReset;
+        let home = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let target = repo.path().join("target.rs");
+        let sibling = repo.path().join("sibling.rs");
+        std::fs::write(&target, "pub fn before() {}\n").unwrap();
+        std::fs::write(&sibling, "pub fn sibling() {}\n").unwrap();
+        let id = stage_proposal(
+            home.path(),
+            external_proposal("accept-sibling-race", &target, "pub fn before() {}\n"),
+        )
+        .unwrap();
+        force_verified_approved(home.path(), &id);
+        let sibling_for_hook = sibling.clone();
+        set_after_accept_architecture_validation_hook(move || {
+            std::fs::write(&sibling_for_hook, "pub fn changed_during_accept() {}\n").unwrap();
+        });
+
+        let error = accept_proposal(home.path(), &id)
+            .expect_err("second architecture fence must catch the sibling race");
+        assert!(format!("{error:#}").contains("target source fingerprint changed"));
+        assert_eq!(
+            std::fs::read_to_string(target).unwrap(),
+            "pub fn before() {}\n"
+        );
+    }
+
+    #[test]
     fn external_accept_refuses_concurrent_bytes_without_git_evidence() {
         let tmp = tempfile::tempdir().unwrap();
         let skill = tmp.path().join("skill.md");
@@ -5720,10 +7507,11 @@ mod tests {
 
         let error = accept_proposal(tmp.path(), &id)
             .expect_err("accept must not overwrite a concurrent external edit");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("external self-improvement target"));
         assert!(
-            error
-                .to_string()
-                .contains("refusing to overwrite concurrent edits")
+            rendered.contains("changed after proposal"),
+            "unexpected concurrent-edit error: {error:#}"
         );
         assert_eq!(std::fs::read_to_string(&skill).unwrap(), "CONCURRENT");
     }
@@ -6004,15 +7792,12 @@ mod tests {
             }),
             ..Default::default()
         };
-        // Pre-set status to Pending (stage_proposal would overwrite drift_sha).
-        let mut all = load_proposals(&tmp).unwrap();
-        all.push(p);
-        save_proposals(&tmp, &all).unwrap();
+        let id = stage_proposal(&tmp, p).unwrap();
 
         // accept_proposal requires VerifiedApproved.
-        force_verified_approved(&tmp, "pnodrift");
+        force_verified_approved(&tmp, &id);
         // accept must succeed without panic/error
-        accept_proposal(&tmp, "pnodrift").unwrap();
+        accept_proposal(&tmp, &id).unwrap();
         assert_eq!(std::fs::read_to_string(&skill).unwrap(), "IMPROVED");
 
         let _ = std::fs::remove_file(proposals_path(&tmp));
@@ -6706,27 +8491,36 @@ mod tests {
             std::env::temp_dir().join(format!("neoth_si_job_descendant_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
-        let helper = tmp.join("grandchild.cmd");
         let escaped_marker = tmp.join("escaped.txt");
-        let candidate = format!(
-            "@echo off\r\nping -n 4 127.0.0.1 >nul\r\necho escaped>\"{}\"\r\n",
-            escaped_marker.display()
+        let ready = tmp.join("grandchild.ready");
+        let test_binary = std::env::current_exe().unwrap();
+        let command = format!(
+            "set \"NEOTH_TEST_CAPPED_PARENT_MARKER={}\" && \
+             set \"NEOTH_TEST_CAPPED_PARENT_READY={}\" && \
+             set \"NEOTH_TEST_CAPPED_GRANDCHILD_DELAY_MS=1500\" && \
+             set \"NEOTH_TEST_CAPPED_PARENT_EXIT_FAST=1\" && \
+             call \"{}\" run_process_capped_parent_helper",
+            escaped_marker.display(),
+            ready.display(),
+            test_binary.display()
         );
 
         let result = super::run_approved_verification_command(
-            &helper,
-            &candidate,
-            "start \"\" /B grandchild.cmd",
+            &tmp.join("candidate.md"),
+            "content",
+            &command,
             std::time::Duration::from_secs(10),
         );
         assert!(
             result.is_ok(),
             "the direct verification shell should exit normally: {result:?}"
         );
+        assert!(
+            ready.exists(),
+            "test parent never confirmed grandchild spawn"
+        );
 
-        // Without containment the background helper writes after roughly
-        // three seconds. Give it a full extra second before proving it died.
-        std::thread::sleep(std::time::Duration::from_secs(4));
+        std::thread::sleep(std::time::Duration::from_millis(1700));
         assert!(
             !escaped_marker.exists(),
             "a background descendant escaped the verification Job Object"
@@ -6737,7 +8531,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn verifier_windows_reserved_control_basename_fails_before_spawn() {
+    fn verifier_windows_dot_control_basename_is_plain_candidate_data() {
         let tmp = std::env::temp_dir().join(format!(
             "neoth_si_job_control_collision_{}",
             std::process::id()
@@ -6745,20 +8539,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let proposal = tmp.join(".neoth-control");
-        let escaped_marker = tmp.join("escaped.txt");
-        let command = format!("echo escaped>\"{}\"", escaped_marker.display());
 
         let result = super::run_approved_verification_command(
             &proposal,
-            "proposal-controlled collision",
-            &command,
+            "ordinary proposal data",
+            "echo dot_control_candidate",
             std::time::Duration::from_secs(10),
         );
         assert!(
-            matches!(result, Err(super::VerificationCommandError::Setup(_))),
-            "reserved control basename must fail closed before spawn: {result:?}"
+            result
+                .as_ref()
+                .is_ok_and(|output| output.contains("dot_control_candidate")),
+            "the suspended-before-job runner no longer reserves a control basename: {result:?}"
         );
-        assert!(!escaped_marker.exists(), "rejected command was spawned");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -6834,6 +8627,80 @@ mod tests {
             "expected Skipped when auto=false, got {outcome:?}"
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn run_nightly_rejects_target_drift_during_engine_run() {
+        let home = tempfile::tempdir().unwrap();
+        let target = home.path().join("nightly_drift.md");
+        std::fs::write(&target, "baseline A").unwrap();
+        SelfImproveConfig {
+            enabled: true,
+            auto: true,
+            asked: true,
+            allow_shell_verify: false,
+            approved_verification_commands: Vec::new(),
+        }
+        .save(home.path())
+        .unwrap();
+
+        let outcome = run_nightly_with_engine(
+            home.path(),
+            "test_persona",
+            target.to_str().unwrap(),
+            crate::permissions::AutonomyLevel::Standard,
+            |_persona, _timeout| {
+                std::fs::write(&target, "concurrent baseline B").unwrap();
+                Ok(stub_success_output(b"candidate derived from A"))
+            },
+        );
+        assert!(
+            matches!(outcome, NightlyOutcome::Error { ref reason } if reason.contains("changed while proposal")),
+            "target drift must fail before staging: {outcome:?}"
+        );
+        assert!(!proposals_path(home.path()).exists());
+        assert!(!ledger_path(home.path()).exists());
+    }
+
+    #[test]
+    fn run_nightly_disable_during_engine_prevents_later_stage() {
+        let home = tempfile::tempdir().unwrap();
+        let target = home.path().join("nightly_disable.md");
+        std::fs::write(&target, "baseline").unwrap();
+        SelfImproveConfig {
+            enabled: true,
+            auto: true,
+            asked: true,
+            allow_shell_verify: false,
+            approved_verification_commands: Vec::new(),
+        }
+        .save(home.path())
+        .unwrap();
+
+        let outcome = run_nightly_with_engine(
+            home.path(),
+            "test_persona",
+            target.to_str().unwrap(),
+            crate::permissions::AutonomyLevel::Standard,
+            |_persona, _timeout| {
+                SelfImproveConfig {
+                    enabled: false,
+                    auto: false,
+                    asked: true,
+                    allow_shell_verify: false,
+                    approved_verification_commands: Vec::new(),
+                }
+                .save(home.path())?;
+                Ok(stub_success_output(b"improved candidate"))
+            },
+        );
+
+        assert!(
+            matches!(outcome, NightlyOutcome::Skipped { ref reason } if reason.contains("disabled or auto was turned off")),
+            "disable must win the final serialized commit gate: {outcome:?}"
+        );
+        assert!(load_proposals(home.path()).unwrap().is_empty());
+        assert!(load_ledger(home.path()).unwrap().is_empty());
     }
 
     /// Engine returns non-zero exit → NoImprovement (engine found nothing to
@@ -7175,7 +9042,10 @@ mod tests {
             },
         )
         .expect_err("external symlink must not be followed");
-        assert!(format!("{error:#}").contains("external self-improvement target"));
+        assert!(
+            format!("{error:#}").contains("self-improvement target"),
+            "unexpected no-follow error: {error:#}"
+        );
         assert_eq!(std::fs::read_to_string(outside).unwrap(), "original");
     }
 
@@ -7289,6 +9159,18 @@ mod tests {
     }
 
     #[test]
+    fn b19_config_load_strict_rejects_auto_with_disabled_master_switch() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            SelfImproveConfig::path(tmp.path()),
+            b"enabled: false\nauto: true\nasked: true\nallow_shell_verify: false\napproved_verification_commands: []\n",
+        )
+        .unwrap();
+        let error = SelfImproveConfig::load_strict(tmp.path()).unwrap_err();
+        assert!(format!("{error:#}").contains("auto requires enabled"));
+    }
+
+    #[test]
     fn b19_effective_from_option_none_full_enables() {
         let cfg = effective_from_option(None, crate::permissions::AutonomyLevel::Full);
         assert!(cfg.enabled, "Full autonomy + no config must enable");
@@ -7328,6 +9210,22 @@ mod tests {
     }
 
     #[test]
+    fn b19_effective_from_option_unanswered_full_uses_full_auto_default() {
+        let stored = SelfImproveConfig {
+            enabled: false,
+            auto: false,
+            asked: false,
+            allow_shell_verify: false,
+            approved_verification_commands: Vec::new(),
+        };
+        let cfg = effective_from_option(Some(stored), crate::permissions::AutonomyLevel::Full);
+        assert!(cfg.enabled);
+        assert!(cfg.auto);
+        assert!(!cfg.asked);
+        assert!(!cfg.allow_shell_verify);
+    }
+
+    #[test]
     fn b19_update_proposals_closure_err_does_not_write_file() {
         let tmp = std::env::temp_dir().join(format!("neoth_b19_txn_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
@@ -7362,6 +9260,7 @@ mod tests {
             heldout_eval_summary: "".to_string(),
             why_this_improves: "".to_string(),
             risk_notes: "".to_string(),
+            code_map_analysis: ProposalCodeMapAnalysis::LegacyMissing,
             spec: None,
         };
 
@@ -7643,6 +9542,7 @@ mod tests {
                 heldout_eval_summary: String::new(),
                 why_this_improves: String::new(),
                 risk_notes: String::new(),
+                code_map_analysis: ProposalCodeMapAnalysis::LegacyMissing,
                 spec: None,
             });
             Ok(())
@@ -7689,6 +9589,7 @@ mod tests {
             heldout_eval_summary: "".to_string(),
             why_this_improves: "".to_string(),
             risk_notes: "".to_string(),
+            code_map_analysis: ProposalCodeMapAnalysis::LegacyMissing,
             spec: None,
         };
         save_proposals(&tmp, &[prop]).unwrap();
@@ -7878,7 +9779,7 @@ mod tests {
             before: "before".to_string(),
             after: "after".to_string(),
             summary: "".to_string(),
-            status: ProposalStatus::VerifiedApproved,
+            status: ProposalStatus::Pending,
             at_unix: 0,
             backup: None,
             score_before: 0.0,
@@ -7886,11 +9787,13 @@ mod tests {
             heldout_eval_summary: "".to_string(),
             why_this_improves: "".to_string(),
             risk_notes: "".to_string(),
+            code_map_analysis: ProposalCodeMapAnalysis::LegacyMissing,
             spec: None,
         };
-        save_proposals(&tmp, &[prop]).unwrap();
+        let id = stage_proposal(&tmp, prop).unwrap();
+        force_verified_approved(&tmp, &id);
 
-        accept_proposal(&tmp, "jp1").unwrap();
+        accept_proposal(&tmp, &id).unwrap();
 
         assert!(
             !journal_path(&tmp).exists(),
@@ -7898,7 +9801,7 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&skill_path).unwrap(), "after");
         let all = load_proposals(&tmp).unwrap();
-        let p = all.iter().find(|p| p.id == "jp1").unwrap();
+        let p = all.iter().find(|p| p.id == id).unwrap();
         assert_eq!(p.status, ProposalStatus::Accepted);
         assert_eq!(p.backup.as_deref(), Some("before"));
         let ledger = load_ledger(&tmp).unwrap();
@@ -7933,6 +9836,7 @@ mod tests {
             heldout_eval_summary: "".to_string(),
             why_this_improves: "".to_string(),
             risk_notes: "".to_string(),
+            code_map_analysis: ProposalCodeMapAnalysis::LegacyMissing,
             spec: None,
         };
         save_proposals(&tmp, &[prop]).unwrap();

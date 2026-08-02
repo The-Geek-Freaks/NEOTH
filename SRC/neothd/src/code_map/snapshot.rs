@@ -14,7 +14,8 @@ use super::graph::{CallGraph, DEFAULT_MAX_GRAPH_EDGES, FileInput};
 use super::persist::PersistStats;
 use super::root_identity::CanonicalRepoRoot;
 use super::walker::{
-    DEFAULT_MAX_FILE_BYTES, Language, RepoMap, RepoMapBuilder, ScanReport, read_file_bounded,
+    DEFAULT_MAX_FILE_BYTES, Language, RepoMap, RepoMapBuilder, ScanReport,
+    normalize_relative_scope_paths, read_file_bounded,
 };
 
 /// Maximum owned source text retained while building one native call graph.
@@ -64,6 +65,35 @@ pub struct RebuildSnapshot {
     pub scan_report: ScanReport,
 }
 
+/// Crate-internal capability tying an explicit source scope to the exact
+/// snapshot generation it published. Callers cannot pair an arbitrary scope
+/// with an unrelated persisted generation and claim a false-fresh recall.
+#[derive(Clone, Debug)]
+pub(crate) struct ScopedRebuildSnapshot {
+    snapshot: RebuildSnapshot,
+    database_path: PathBuf,
+    included_relative_paths: Vec<PathBuf>,
+    excluded_relative_paths: Vec<PathBuf>,
+}
+
+impl ScopedRebuildSnapshot {
+    pub(crate) fn snapshot(&self) -> &RebuildSnapshot {
+        &self.snapshot
+    }
+
+    pub(in crate::code_map) fn database_path(&self) -> &Path {
+        &self.database_path
+    }
+
+    pub(in crate::code_map) fn included_relative_paths(&self) -> &[PathBuf] {
+        &self.included_relative_paths
+    }
+
+    pub(in crate::code_map) fn excluded_relative_paths(&self) -> &[PathBuf] {
+        &self.excluded_relative_paths
+    }
+}
+
 /// Rebuild and atomically publish one native code-map snapshot.
 ///
 /// `root` is deliberately a [`CanonicalRepoRoot`], not a raw path: callers
@@ -76,21 +106,191 @@ pub fn rebuild_snapshot(
     db_path: &Path,
     options: RebuildOptions,
 ) -> Result<RebuildSnapshot> {
+    rebuild_snapshot_excluding(root, db_path, options, &[])
+}
+
+/// Rebuild a snapshot while excluding an explicit, fingerprint-bound set of
+/// repo-relative files or subtrees from both indexing and publication checks.
+pub fn rebuild_snapshot_excluding(
+    root: &CanonicalRepoRoot,
+    db_path: &Path,
+    options: RebuildOptions,
+    excluded_relative_paths: &[PathBuf],
+) -> Result<RebuildSnapshot> {
+    Ok(rebuild_snapshot_scoped(root, db_path, options, &[], excluded_relative_paths)?.snapshot)
+}
+
+/// Rebuild over an explicit source scope. An empty include set means the whole
+/// repository; exclusions always remove exact files or complete subtrees.
+pub(crate) fn rebuild_snapshot_scoped(
+    root: &CanonicalRepoRoot,
+    db_path: &Path,
+    options: RebuildOptions,
+    included_relative_paths: &[PathBuf],
+    excluded_relative_paths: &[PathBuf],
+) -> Result<ScopedRebuildSnapshot> {
+    let included_relative_paths = normalize_relative_scope_paths(included_relative_paths)?;
+    let excluded_relative_paths = normalize_relative_scope_paths(excluded_relative_paths)?;
     let max_file_bytes = options.max_file_bytes.unwrap_or(DEFAULT_MAX_FILE_BYTES);
-    rebuild_snapshot_with_reader(root, db_path, options, move |path| {
-        read_file_bounded(path, max_file_bytes)?.ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("file grew beyond the {max_file_bytes}-byte snapshot limit"),
-            )
-        })
+    let snapshot = rebuild_snapshot_with_reader(
+        root,
+        db_path,
+        options,
+        &included_relative_paths,
+        &excluded_relative_paths,
+        move |path| {
+            read_file_bounded(path, max_file_bytes)?.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("file grew beyond the {max_file_bytes}-byte snapshot limit"),
+                )
+            })
+        },
+    )?;
+    let database_path = std::fs::canonicalize(db_path).with_context(|| {
+        format!(
+            "canonicalize scoped code-map database {}",
+            db_path.display()
+        )
+    })?;
+    Ok(ScopedRebuildSnapshot {
+        snapshot,
+        database_path,
+        included_relative_paths,
+        excluded_relative_paths,
     })
+}
+
+/// Compute the native source-snapshot fingerprint without building or
+/// publishing an index/call graph.
+///
+/// This uses the same strict scan, bounded re-read, final corpus rescan, and
+/// physical-root identity fence as [`rebuild_snapshot`]. It is intended for
+/// cheap admission revalidation after a full snapshot has already been built.
+/// The digest proves one stable scan; it does not lock the repository against
+/// later writers, so callers still need a compare-and-swap at their mutation
+/// boundary.
+pub fn stable_source_fingerprint(
+    root: &CanonicalRepoRoot,
+    options: RebuildOptions,
+) -> Result<String> {
+    stable_source_fingerprint_excluding(root, options, &[])
+}
+
+/// Compute a stable source fingerprint over the same explicit exclusion set
+/// used for the corresponding rebuild.
+pub fn stable_source_fingerprint_excluding(
+    root: &CanonicalRepoRoot,
+    options: RebuildOptions,
+    excluded_relative_paths: &[PathBuf],
+) -> Result<String> {
+    stable_source_fingerprint_scoped(root, options, &[], excluded_relative_paths)
+}
+
+/// Revalidate the exact include/exclude scope used for a prior rebuild.
+pub(crate) fn stable_source_fingerprint_scoped(
+    root: &CanonicalRepoRoot,
+    options: RebuildOptions,
+    included_relative_paths: &[PathBuf],
+    excluded_relative_paths: &[PathBuf],
+) -> Result<String> {
+    let included_relative_paths = normalize_relative_scope_paths(included_relative_paths)?;
+    let excluded_relative_paths = normalize_relative_scope_paths(excluded_relative_paths)?;
+    let max_file_bytes = options.max_file_bytes.unwrap_or(DEFAULT_MAX_FILE_BYTES);
+    stable_source_fingerprint_with_reader(
+        root,
+        options,
+        &included_relative_paths,
+        &excluded_relative_paths,
+        move |path| {
+            read_file_bounded(path, max_file_bytes)?.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("file grew beyond the {max_file_bytes}-byte snapshot limit"),
+                )
+            })
+        },
+    )
+}
+
+fn stable_source_fingerprint_with_reader<F>(
+    root: &CanonicalRepoRoot,
+    options: RebuildOptions,
+    included_relative_paths: &[PathBuf],
+    excluded_relative_paths: &[PathBuf],
+    mut read_file: F,
+) -> Result<String>
+where
+    F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
+{
+    let mut builder = RepoMapBuilder::new(root.path())
+        .with_symbols(false)
+        .strict_errors(options.require_complete)
+        .exclude_relative_paths(excluded_relative_paths.iter().cloned());
+    if !included_relative_paths.is_empty() {
+        builder = builder.include_relative_paths(included_relative_paths.iter().cloned());
+    }
+    if let Some(max_files) = options.max_files {
+        builder = builder.max_files(max_files);
+    }
+    if let Some(max_file_bytes) = options.max_file_bytes {
+        builder = builder.max_file_bytes(max_file_bytes);
+    }
+    if options.include_hidden {
+        builder = builder.include_hidden(true);
+    }
+    let map = builder.scan().context("scan native source fingerprint")?;
+    if options.require_complete {
+        ensure!(
+            map.report.truncated_at.is_none(),
+            "native source fingerprint scan hit its file-count ceiling at {:?}",
+            map.report.truncated_at
+        );
+        ensure!(
+            map.report.oversize_skipped == 0,
+            "native source fingerprint scan skipped {} oversized file(s)",
+            map.report.oversize_skipped
+        );
+    }
+    ensure_root_unchanged(root, &map)?;
+    validate_scan_fingerprint(&map, &mut read_file)?;
+
+    let mut final_builder = RepoMapBuilder::new(root.path())
+        .with_symbols(false)
+        .strict_errors(options.require_complete)
+        .exclude_relative_paths(excluded_relative_paths.iter().cloned());
+    if !included_relative_paths.is_empty() {
+        final_builder =
+            final_builder.include_relative_paths(included_relative_paths.iter().cloned());
+    }
+    if let Some(max_files) = options.max_files {
+        final_builder = final_builder.max_files(max_files);
+    }
+    if let Some(max_file_bytes) = options.max_file_bytes {
+        final_builder = final_builder.max_file_bytes(max_file_bytes);
+    }
+    if options.include_hidden {
+        final_builder = final_builder.include_hidden(true);
+    }
+    let final_map = final_builder
+        .scan()
+        .context("final rescan of native source fingerprint corpus")?;
+    ensure_same_scanned_corpus(&map, &final_map)?;
+    ensure_root_unchanged(root, &map)?;
+    Ok(source_fingerprint_digest(
+        root,
+        &map,
+        included_relative_paths,
+        excluded_relative_paths,
+    ))
 }
 
 fn rebuild_snapshot_with_reader<F>(
     root: &CanonicalRepoRoot,
     db_path: &Path,
     options: RebuildOptions,
+    included_relative_paths: &[PathBuf],
+    excluded_relative_paths: &[PathBuf],
     mut read_file: F,
 ) -> Result<RebuildSnapshot>
 where
@@ -98,7 +298,11 @@ where
 {
     let mut builder = RepoMapBuilder::new(root.path())
         .with_symbols(true)
-        .strict_errors(options.require_complete);
+        .strict_errors(options.require_complete)
+        .exclude_relative_paths(excluded_relative_paths.iter().cloned());
+    if !included_relative_paths.is_empty() {
+        builder = builder.include_relative_paths(included_relative_paths.iter().cloned());
+    }
     if let Some(max_files) = options.max_files {
         builder = builder.max_files(max_files);
     }
@@ -130,7 +334,12 @@ where
     validate_scan_fingerprint(&map, &mut read_file)?;
     let mut verification_builder = RepoMapBuilder::new(root.path())
         .with_symbols(false)
-        .strict_errors(options.require_complete);
+        .strict_errors(options.require_complete)
+        .exclude_relative_paths(excluded_relative_paths.iter().cloned());
+    if !included_relative_paths.is_empty() {
+        verification_builder =
+            verification_builder.include_relative_paths(included_relative_paths.iter().cloned());
+    }
     if let Some(max_files) = options.max_files {
         verification_builder = verification_builder.max_files(max_files);
     }
@@ -149,7 +358,8 @@ where
     let cycles = graph
         .find_cycles(50)
         .context("run bounded call-cycle analysis before snapshot publication")?;
-    let source_fingerprint_sha256 = source_fingerprint_digest(root, &map);
+    let source_fingerprint_sha256 =
+        source_fingerprint_digest(root, &map, included_relative_paths, excluded_relative_paths);
 
     let mut conn = super::persist::open(db_path)
         .with_context(|| format!("open code-map database at {}", db_path.display()))?;
@@ -321,12 +531,29 @@ fn ensure_same_scanned_corpus(initial: &RepoMap, final_map: &RepoMap) -> Result<
     Ok(())
 }
 
-fn source_fingerprint_digest(root: &CanonicalRepoRoot, map: &RepoMap) -> String {
+fn source_fingerprint_digest(
+    root: &CanonicalRepoRoot,
+    map: &RepoMap,
+    included_relative_paths: &[PathBuf],
+    excluded_relative_paths: &[PathBuf],
+) -> String {
     let mut files: Vec<_> = map.files.iter().collect();
     files.sort_by(|left, right| left.path.cmp(&right.path));
     let mut digest = Sha256::new();
-    digest.update(b"neoth.code-map.source-snapshot.v1\0");
+    digest.update(b"neoth.code-map.source-snapshot.v2\0");
     digest.update(root.identity().as_str().as_bytes());
+    for path in included_relative_paths {
+        let encoded = exclusion_path_bytes(path);
+        digest.update(b"\0included\0");
+        digest.update((encoded.len() as u64).to_le_bytes());
+        digest.update(encoded);
+    }
+    for path in excluded_relative_paths {
+        let encoded = exclusion_path_bytes(path);
+        digest.update(b"\0excluded\0");
+        digest.update((encoded.len() as u64).to_le_bytes());
+        digest.update(encoded);
+    }
     for file in files {
         digest.update(b"\0");
         digest.update(file.path.as_bytes());
@@ -336,6 +563,26 @@ fn source_fingerprint_digest(root: &CanonicalRepoRoot, map: &RepoMap) -> String 
         digest.update(file.sha256.as_bytes());
     }
     hex::encode(digest.finalize())
+}
+
+#[cfg(unix)]
+fn exclusion_path_bytes(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt as _;
+    path.as_os_str().as_bytes().to_vec()
+}
+
+#[cfg(windows)]
+fn exclusion_path_bytes(path: &Path) -> Vec<u8> {
+    use std::os::windows::ffi::OsStrExt as _;
+    path.as_os_str()
+        .encode_wide()
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn exclusion_path_bytes(path: &Path) -> Vec<u8> {
+    path.as_os_str().to_string_lossy().into_owned().into_bytes()
 }
 
 fn root_identity_digest(root: &CanonicalRepoRoot) -> String {
@@ -374,6 +621,152 @@ mod tests {
     }
 
     #[test]
+    fn stable_fingerprint_matches_rebuild_and_tracks_source_changes() {
+        let repo = tempdir().unwrap();
+        let source = repo.path().join("lib.rs");
+        std::fs::write(&source, "pub fn first() {}\n").unwrap();
+        let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let db_dir = tempdir().unwrap();
+        let rebuilt = rebuild_snapshot(
+            &root,
+            &db_dir.path().join("code_map.db"),
+            RebuildOptions::default(),
+        )
+        .unwrap();
+
+        let verified = stable_source_fingerprint(&root, RebuildOptions::default()).unwrap();
+        assert_eq!(verified, rebuilt.source_fingerprint_sha256);
+
+        std::fs::write(&source, "pub fn second() {}\n").unwrap();
+        let changed = stable_source_fingerprint(&root, RebuildOptions::default()).unwrap();
+        assert_ne!(changed, verified);
+    }
+
+    #[test]
+    fn explicit_exclusions_are_shared_by_rebuild_revalidation_and_digest() {
+        let repo = tempdir().unwrap();
+        let source = repo.path().join("lib.rs");
+        let runtime = repo.path().join("runtime");
+        std::fs::create_dir(&runtime).unwrap();
+        std::fs::write(&source, "pub fn source() {}\n").unwrap();
+        std::fs::write(runtime.join("state.json"), "{\"generation\":1}\n").unwrap();
+        let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let db_dir = tempdir().unwrap();
+        let exclusions = [PathBuf::from("runtime")];
+
+        let rebuilt = rebuild_snapshot_excluding(
+            &root,
+            &db_dir.path().join("code_map.db"),
+            RebuildOptions::default(),
+            &exclusions,
+        )
+        .unwrap();
+        assert_eq!(rebuilt.stats.files_inserted, 1);
+        let original =
+            stable_source_fingerprint_excluding(&root, RebuildOptions::default(), &exclusions)
+                .unwrap();
+        assert_eq!(original, rebuilt.source_fingerprint_sha256);
+
+        std::fs::write(runtime.join("state.json"), "{\"generation\":2}\n").unwrap();
+        let after_runtime_change =
+            stable_source_fingerprint_excluding(&root, RebuildOptions::default(), &exclusions)
+                .unwrap();
+        assert_eq!(after_runtime_change, original);
+
+        let differently_scoped = stable_source_fingerprint_excluding(
+            &root,
+            RebuildOptions::default(),
+            &[PathBuf::from("other-runtime")],
+        )
+        .unwrap();
+        assert_ne!(differently_scoped, original);
+
+        std::fs::write(&source, "pub fn changed() {}\n").unwrap();
+        let after_source_change =
+            stable_source_fingerprint_excluding(&root, RebuildOptions::default(), &exclusions)
+                .unwrap();
+        assert_ne!(after_source_change, original);
+    }
+
+    #[test]
+    fn target_only_scope_ignores_siblings_and_binds_the_include_set() {
+        let repo = tempdir().unwrap();
+        let target = repo.path().join("target.rs");
+        let sibling = repo.path().join("sibling.rs");
+        std::fs::write(&target, "pub fn target() {}\n").unwrap();
+        std::fs::write(&sibling, "pub fn sibling() {}\n").unwrap();
+        let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let db_dir = tempdir().unwrap();
+        let included = [PathBuf::from("target.rs")];
+
+        let rebuilt = rebuild_snapshot_scoped(
+            &root,
+            &db_dir.path().join("code_map.db"),
+            RebuildOptions::default(),
+            &included,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(rebuilt.snapshot.stats.files_inserted, 1);
+        let original =
+            stable_source_fingerprint_scoped(&root, RebuildOptions::default(), &included, &[])
+                .unwrap();
+        assert_eq!(original, rebuilt.snapshot.source_fingerprint_sha256);
+
+        std::fs::write(&sibling, "pub fn changed_sibling() {}\n").unwrap();
+        assert_eq!(
+            stable_source_fingerprint_scoped(&root, RebuildOptions::default(), &included, &[],)
+                .unwrap(),
+            original
+        );
+        let sibling_scope = stable_source_fingerprint_scoped(
+            &root,
+            RebuildOptions::default(),
+            &[PathBuf::from("sibling.rs")],
+            &[],
+        )
+        .unwrap();
+        assert_ne!(sibling_scope, original);
+
+        std::fs::write(&target, "pub fn changed_target() {}\n").unwrap();
+        assert_ne!(
+            stable_source_fingerprint_scoped(&root, RebuildOptions::default(), &included, &[],)
+                .unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn stable_fingerprint_rejects_a_file_changed_after_its_reread() {
+        let repo = tempdir().unwrap();
+        let first = repo.path().join("a.rs");
+        let second = repo.path().join("b.rs");
+        std::fs::write(&first, "pub fn first() {}\n").unwrap();
+        std::fs::write(&second, "pub fn second() {}\n").unwrap();
+        let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let mut first_reread = None;
+
+        let error = stable_source_fingerprint_with_reader(
+            &root,
+            RebuildOptions::default(),
+            &[],
+            &[],
+            move |path| {
+                let bytes = std::fs::read(path)?;
+                if let Some(first_reread) = first_reread.take() {
+                    std::fs::write(first_reread, "pub fn changed() {}\n")?;
+                } else {
+                    first_reread = Some(path.to_path_buf());
+                }
+                Ok(bytes)
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("corpus changed"));
+    }
+
+    #[test]
     fn graph_build_refuses_cumulative_source_bytes_above_budget() {
         let repo = tempdir().unwrap();
         std::fs::write(repo.path().join("a.rs"), "pub fn alpha() {}\n").unwrap();
@@ -404,12 +797,13 @@ mod tests {
         let db = db_dir.path().join("code_map.db");
         rebuild_snapshot(&root, &db, RebuildOptions::default()).unwrap();
 
-        let error = rebuild_snapshot_with_reader(&root, &db, RebuildOptions::default(), |path| {
-            let mut bytes = std::fs::read(path)?;
-            bytes[0] ^= 1;
-            Ok(bytes)
-        })
-        .unwrap_err();
+        let error =
+            rebuild_snapshot_with_reader(&root, &db, RebuildOptions::default(), &[], &[], |path| {
+                let mut bytes = std::fs::read(path)?;
+                bytes[0] ^= 1;
+                Ok(bytes)
+            })
+            .unwrap_err();
 
         assert!(error.to_string().contains("changed after the scan"));
         assert!(error.to_string().contains("expected SHA-256"));
@@ -432,13 +826,14 @@ mod tests {
         let db_dir = tempdir().unwrap();
         let db = db_dir.path().join("code_map.db");
 
-        let error = rebuild_snapshot_with_reader(&root, &db, RebuildOptions::default(), |_| {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "injected unreadable snapshot file",
-            ))
-        })
-        .unwrap_err();
+        let error =
+            rebuild_snapshot_with_reader(&root, &db, RebuildOptions::default(), &[], &[], |_| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected unreadable snapshot file",
+                ))
+            })
+            .unwrap_err();
 
         assert!(format!("{error:#}").contains("injected unreadable snapshot file"));
         let conn = super::super::persist::open(&db).unwrap();

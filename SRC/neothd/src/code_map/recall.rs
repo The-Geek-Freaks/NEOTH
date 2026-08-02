@@ -373,12 +373,78 @@ pub fn recall_receipt_for_prompt(
     recall_receipt_for_prompt_with_hook(conn, current_path, prompt, max_files, staleness, || {})
 }
 
+/// Recall through the opaque capability returned by the scoped rebuild. The
+/// caller cannot substitute a narrower scope for an unrelated generation and
+/// thereby manufacture a false-fresh receipt.
+pub(crate) fn recall_receipt_for_rebuild_snapshot(
+    conn: &Connection,
+    current_path: &Path,
+    prompt: &str,
+    max_files: usize,
+    staleness: RecallStaleness,
+    scoped_snapshot: &super::snapshot::ScopedRebuildSnapshot,
+) -> Result<Option<RecallReceipt>> {
+    let connection_path = conn
+        .path()
+        .context("scoped recall requires a file-backed code-map database")?;
+    let connection_path = std::fs::canonicalize(connection_path)
+        .with_context(|| format!("canonicalize scoped recall database {connection_path}"))?;
+    ensure!(
+        connection_path == scoped_snapshot.database_path(),
+        "scoped recall database does not match its rebuild capability"
+    );
+    let receipt = recall_receipt_for_prompt_with_scope_and_hook(
+        conn,
+        current_path,
+        prompt,
+        max_files,
+        staleness,
+        scoped_snapshot.included_relative_paths(),
+        scoped_snapshot.excluded_relative_paths(),
+        || {},
+    )?;
+    if let Some(receipt) = &receipt {
+        ensure!(
+            receipt.snapshot.root == scoped_snapshot.snapshot().root
+                && receipt.snapshot.index_generation == scoped_snapshot.snapshot().index_generation
+                && receipt.snapshot.graph_generation == scoped_snapshot.snapshot().graph_generation,
+            "scoped recall database generation does not match its rebuild capability"
+        );
+    }
+    Ok(receipt)
+}
+
 fn recall_receipt_for_prompt_with_hook<F>(
     conn: &Connection,
     current_path: &Path,
     prompt: &str,
     max_files: usize,
     staleness: RecallStaleness,
+    after_snapshot: F,
+) -> Result<Option<RecallReceipt>>
+where
+    F: FnOnce(),
+{
+    recall_receipt_for_prompt_with_scope_and_hook(
+        conn,
+        current_path,
+        prompt,
+        max_files,
+        staleness,
+        &[],
+        &[],
+        after_snapshot,
+    )
+}
+
+fn recall_receipt_for_prompt_with_scope_and_hook<F>(
+    conn: &Connection,
+    current_path: &Path,
+    prompt: &str,
+    max_files: usize,
+    staleness: RecallStaleness,
+    included_relative_paths: &[std::path::PathBuf],
+    excluded_relative_paths: &[std::path::PathBuf],
     after_snapshot: F,
 ) -> Result<Option<RecallReceipt>>
 where
@@ -411,10 +477,12 @@ where
     );
     let initial_freshness = match staleness {
         RecallStaleness::Skip => None,
-        RecallStaleness::Check => Some(super::persist::index_freshness_receipt_cached(
+        RecallStaleness::Check => Some(super::persist::index_freshness_receipt_cached_scoped(
             &tx,
             snapshot.root.display(),
             snapshot.index_generation,
+            included_relative_paths,
+            excluded_relative_paths,
         )?),
     };
     after_snapshot();
@@ -427,10 +495,12 @@ where
     let stale = match initial_freshness {
         None => None,
         Some(initial) => {
-            let final_freshness = super::persist::index_freshness_receipt_cached(
+            let final_freshness = super::persist::index_freshness_receipt_cached_scoped(
                 &tx,
                 snapshot.root.display(),
                 snapshot.index_generation,
+                included_relative_paths,
+                excluded_relative_paths,
             )?;
             Some(
                 initial.stale

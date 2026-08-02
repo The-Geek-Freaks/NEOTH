@@ -1721,6 +1721,28 @@ pub(crate) fn index_freshness_receipt_cached(
     index_freshness_receipt(conn, root)
 }
 
+pub(crate) fn index_freshness_receipt_cached_scoped(
+    conn: &Connection,
+    root: &str,
+    generation: i64,
+    included_relative_paths: &[std::path::PathBuf],
+    excluded_relative_paths: &[std::path::PathBuf],
+) -> Result<IndexFreshnessReceipt> {
+    ensure!(
+        generation > 0,
+        "cannot verify a nonpositive code-map generation"
+    );
+    index_freshness_receipt_bounded_with_limits_and_scope_and_hook(
+        conn,
+        root,
+        MAX_FRESHNESS_FILES,
+        MAX_FRESHNESS_TEXT_BYTES,
+        included_relative_paths,
+        excluded_relative_paths,
+        || {},
+    )
+}
+
 pub(crate) fn index_freshness_receipt(
     conn: &Connection,
     root: &str,
@@ -1751,6 +1773,29 @@ fn index_freshness_receipt_bounded_with_limits_and_hook<F>(
     root: &str,
     max_files: usize,
     max_text_bytes: usize,
+    after_count: F,
+) -> Result<IndexFreshnessReceipt>
+where
+    F: FnOnce(),
+{
+    index_freshness_receipt_bounded_with_limits_and_scope_and_hook(
+        conn,
+        root,
+        max_files,
+        max_text_bytes,
+        &[],
+        &[],
+        after_count,
+    )
+}
+
+fn index_freshness_receipt_bounded_with_limits_and_scope_and_hook<F>(
+    conn: &Connection,
+    root: &str,
+    max_files: usize,
+    max_text_bytes: usize,
+    included_relative_paths: &[std::path::PathBuf],
+    excluded_relative_paths: &[std::path::PathBuf],
     after_count: F,
 ) -> Result<IndexFreshnessReceipt>
 where
@@ -1832,10 +1877,15 @@ where
     }
     let stored: std::collections::HashMap<String, String> = stored_rows.into_iter().collect();
     let walker_limit = u64::try_from(max_files).context("convert freshness walker file ceiling")?;
-    let scanned = super::walker::RepoMapBuilder::new(root)
+    let mut builder = super::walker::RepoMapBuilder::new(root)
         .max_files(walker_limit)
         .with_symbols(false)
         .strict_errors(true)
+        .exclude_relative_paths(excluded_relative_paths.iter().cloned());
+    if !included_relative_paths.is_empty() {
+        builder = builder.include_relative_paths(included_relative_paths.iter().cloned());
+    }
+    let scanned = builder
         .scan()
         .with_context(|| format!("re-scan {root} for staleness check"))?;
     if scanned.report.truncated_at.is_some() {

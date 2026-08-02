@@ -13,6 +13,7 @@
 //! Boundaries are claimed durably before effects; boot never catches up an
 //! already-passed boundary.
 
+#[cfg(test)]
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -684,6 +685,7 @@ async fn self_improve_auto_pass(
 /// Upper bound on the baseline `skill.md` read. The previous ambient
 /// `read_to_string` was unbounded; the capability-bound read caps it so a
 /// pathological installed file can never OOM the dreaming tick.
+#[cfg(test)]
 const MAX_BASELINE_SKILL_BYTES: usize = 16 * 1024 * 1024;
 
 /// GOLD-R3-11 — read the installed baseline skill body through the
@@ -696,6 +698,7 @@ const MAX_BASELINE_SKILL_BYTES: usize = 16 * 1024 * 1024;
 /// `skill.md` all yield an empty baseline (the same "no baseline yet" contract
 /// as the previous NotFound arm); any other error propagates. The lock guard is
 /// released when this function returns, before the SkillOpt run.
+#[cfg(test)]
 fn read_installed_baseline(skills_dir: &Path, persona: &str) -> Result<String> {
     let Some(root) = crate::skills::store::open_bound_directory(skills_dir, false, "skills root")?
     else {
@@ -738,6 +741,7 @@ fn read_installed_baseline(skills_dir: &Path, persona: &str) -> Result<String> {
 }
 
 /// Downcast an anyhow chain to an io `NotFound` (mirrors `skills::loader`).
+#[cfg(test)]
 fn baseline_error_is_not_found(error: &anyhow::Error) -> bool {
     error
         .root_cause()
@@ -758,8 +762,8 @@ fn self_improve_auto_pass_blocking(
         Ok(opt) => si::effective_from_option(opt, autonomy),
         Err(e) => return Err(e).context("self-improve auto-pass: config is corrupt"),
     };
-    if !cfg.auto || !si::is_installed() {
-        return Ok(()); // not in auto mode, or engine absent → nothing to do
+    if !cfg.enabled || !cfg.auto || !si::is_installed() {
+        return Ok(()); // master switch/auto is off, or engine absent
     }
     let persona = "default";
     // Don't pile up: if a proposal for this persona is already awaiting review,
@@ -770,50 +774,35 @@ fn self_improve_auto_pass_blocking(
     {
         return Ok(());
     }
-    let skills_dir = crate::skills::installer::default_skills_dir();
-    let skill_path = skills_dir.join(persona).join("skill.md");
-    // GOLD-R3-11: read the installed baseline THROUGH the capability-bound store
-    // under the skill mutation lock, not with an ambient `read_to_string` that
-    // follows symlinks, ignores the store lock and reads unbounded bytes.
-    let before = read_installed_baseline(&skills_dir, persona)
-        .with_context(|| format!("read baseline skill {}", skill_path.display()))?;
-    // F13 — bounded run: a hung/runaway SkillOpt python process must not block
-    // the dreaming tick (best-effort "any miss logs + skips" contract).
-    let (after, quality, parsed_spec) = match si::run_skillopt_capped(persona, si::SKILLOPT_TIMEOUT)
-    {
-        Ok(o) => si::parse_proposal_output(&String::from_utf8_lossy(&o.stdout)),
-        Err(e) => return Err(e).context("self-improve auto-pass: SkillOpt run failed/timed out"),
-    };
-    if after.trim().is_empty() || after == before {
-        return Ok(()); // engine proposed nothing new → don't stage a no-op
-    }
-    // The SkillOpt process can run for minutes. Acquire immediately before the
-    // durable mutation and retain the lease through stage_proposal's return.
-    let _lease = effect_rail.acquire_commit_lease(DreamCommitEffect::SelfImproveProposal)?;
-    let now = crate::time::now_unix_i64();
-    let id = format!("p{now}");
-    let staged_id = si::stage_proposal(
+    let skill_path = home.join("skills").join(persona).join("skill.md");
+    let stored_skill_path = skill_path
+        .to_str()
+        .context("self-improve auto-pass skill path is not valid UTF-8")?
+        .to_owned();
+    let outcome = si::run_nightly_with_engine_and_stage(
         home,
-        si::Proposal {
-            id: id.clone(),
-            skill: persona.to_string(),
-            skill_path: skill_path.display().to_string(),
-            before,
-            after,
-            summary: format!("nightly SkillOpt proposal for {persona}"),
-            status: si::ProposalStatus::Pending,
-            at_unix: now,
-            backup: None,
-            score_before: quality.score_before,
-            score_after: quality.score_after,
-            heldout_eval_summary: quality.heldout_eval_summary,
-            why_this_improves: quality.why_this_improves,
-            risk_notes: quality.risk_notes,
-            spec: parsed_spec, // IMPR-01: carry parsed spec; drift_sha added inside stage_proposal
+        persona,
+        &stored_skill_path,
+        autonomy,
+        si::run_skillopt_capped,
+        |proposal| {
+            // SkillOpt can run for minutes. Acquire immediately before the
+            // durable stage and retain the lease through its commit.
+            let _lease =
+                effect_rail.acquire_commit_lease(DreamCommitEffect::SelfImproveProposal)?;
+            si::stage_proposal(home, proposal)
         },
-    )?;
-    info!(proposal = %staged_id, "self-improve auto-pass staged a proposal for review");
-    Ok(())
+    );
+    match outcome {
+        si::NightlyOutcome::Staged { proposal_id, .. } => {
+            info!(proposal = %proposal_id, "self-improve auto-pass staged a proposal for review");
+            Ok(())
+        }
+        si::NightlyOutcome::Skipped { .. } | si::NightlyOutcome::NoImprovement => Ok(()),
+        si::NightlyOutcome::Error { reason } => {
+            anyhow::bail!("self-improve auto-pass failed: {reason}")
+        }
+    }
 }
 
 /// One pass result — operator-visible counters + the file path the
