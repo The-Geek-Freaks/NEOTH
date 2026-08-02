@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -279,16 +279,20 @@ impl RepoMapBuilder {
     /// repos up to ~50k files. Phase 2 may switch to parallel walking
     /// via `ignore::WalkBuilder::threads(N)`.
     pub fn scan(self) -> Result<RepoMap> {
-        let root_canonical =
-            std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
-        let root_str = root_canonical.to_string_lossy().to_string();
+        // A raw-path fallback poisons every downstream containment and cache
+        // key: the same directory can then be persisted under aliases, or a
+        // missing root can masquerade as an empty successful scan. Resolve the
+        // canonical physical root once and fail visibly before walking.
+        let canonical_root = super::root_identity::CanonicalRepoRoot::discover(&self.root)?;
+        let root_canonical = canonical_root.path().to_path_buf();
+        let root_str = canonical_root.display().to_owned();
         let mut files: Vec<RepoFile> = Vec::new();
         let mut report = ScanReport::default();
         let mut by_lang: std::collections::HashMap<Language, u64> =
             std::collections::HashMap::new();
         let mut counted: u64 = 0;
 
-        let mut builder = WalkBuilder::new(&self.root);
+        let mut builder = WalkBuilder::new(&root_canonical);
         builder
             .hidden(!self.include_hidden) // hidden(true) means HIDE hidden files
             .git_ignore(true)
@@ -347,9 +351,13 @@ impl RepoMapBuilder {
             let language = Language::from_path(path);
             let rel = path
                 .strip_prefix(&root_canonical)
-                .ok()
-                .or_else(|| path.strip_prefix(&self.root).ok())
-                .unwrap_or(path)
+                .with_context(|| {
+                    format!(
+                        "walked path {} escaped canonical repository root {}",
+                        path.display(),
+                        root_canonical.display()
+                    )
+                })?
                 .to_string_lossy()
                 .replace('\\', "/");
 
@@ -486,6 +494,17 @@ mod tests {
         let map = RepoMapBuilder::new(dir.path()).scan().unwrap();
         assert_eq!(map.report.total_files, 0);
         assert!(map.files.is_empty());
+    }
+
+    #[test]
+    fn scan_fails_when_root_cannot_be_canonicalized() {
+        let root = tempdir().unwrap();
+        let missing = root.path().join("does-not-exist");
+        let error = RepoMapBuilder::new(&missing).scan().unwrap_err();
+        assert!(
+            error.to_string().contains("canonicalize repository root"),
+            "unexpected error: {error:#}"
+        );
     }
 
     #[test]

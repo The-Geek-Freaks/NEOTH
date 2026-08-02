@@ -40,11 +40,15 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use regex::Regex;
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction};
 
 use super::persist::SymbolHit;
+use super::root_identity::CanonicalRepoRoot;
+
+/// Maximum number of path-only candidates materialized for one recall.
+const MAX_PATH_SCAN_CANDIDATES: usize = 200;
 
 /// One entry in the relevance ranking. Carries enough metadata for
 /// the operator-facing CLI render + for the Phase 3c prompt-block
@@ -64,6 +68,31 @@ pub struct RelevantFile {
     /// path components. Tie-break signal — a prompt mentioning "auth"
     /// pushes `src/auth/middleware.rs` above unrelated symbol-only hits.
     pub path_keyword_overlap: u32,
+}
+
+/// Canonical root and generations observed from one SQLite snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RootGenerationSnapshot {
+    pub root: CanonicalRepoRoot,
+    pub index_generation: i64,
+    pub graph_generation: i64,
+}
+
+/// Filesystem freshness is expensive and therefore explicit at each call site.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RecallStaleness {
+    #[default]
+    Skip,
+    Check,
+}
+
+/// Auditable result of one repository-local recall read transaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecallReceipt {
+    pub snapshot: RootGenerationSnapshot,
+    pub ranked_files: Vec<RelevantFile>,
+    /// `None` means the caller deliberately skipped the filesystem scan.
+    pub stale: Option<bool>,
 }
 
 /// Extract identifiers from `text` using a single combined regex
@@ -262,6 +291,134 @@ pub fn relevant_files_for_prompt(
     Ok(ranked)
 }
 
+/// Resolve and rank one recall receipt from a single SQLite read transaction.
+/// Root identity, both generations, and selected files can never come from
+/// different writer commits. Filesystem staleness is computed only when the
+/// caller explicitly requests it, and every canonicalization/SQLite/walk error
+/// is returned rather than converted into an empty result.
+pub fn recall_receipt_for_prompt(
+    conn: &Connection,
+    current_path: &Path,
+    prompt: &str,
+    max_files: usize,
+    staleness: RecallStaleness,
+) -> Result<Option<RecallReceipt>> {
+    recall_receipt_for_prompt_with_hook(conn, current_path, prompt, max_files, staleness, || {})
+}
+
+fn recall_receipt_for_prompt_with_hook<F>(
+    conn: &Connection,
+    current_path: &Path,
+    prompt: &str,
+    max_files: usize,
+    staleness: RecallStaleness,
+    after_snapshot: F,
+) -> Result<Option<RecallReceipt>>
+where
+    F: FnOnce(),
+{
+    let current_canonical = std::fs::canonicalize(current_path).with_context(|| {
+        format!(
+            "canonicalize active code-map path {}",
+            current_path.display()
+        )
+    })?;
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin atomic code-map recall read transaction")?;
+    let Some(snapshot) = resolve_active_root_snapshot_in_transaction(&tx, &current_canonical)?
+    else {
+        tx.commit()
+            .context("commit empty code-map recall read transaction")?;
+        return Ok(None);
+    };
+    after_snapshot();
+    let ranked_files = relevant_files_for_prompt(&tx, prompt, snapshot.root.display(), max_files)?;
+    let stale = match staleness {
+        RecallStaleness::Skip => None,
+        RecallStaleness::Check => Some(super::persist::is_index_stale(
+            &tx,
+            snapshot.root.display(),
+        )?),
+    };
+    tx.commit()
+        .context("commit atomic code-map recall read transaction")?;
+    Ok(Some(RecallReceipt {
+        snapshot,
+        ranked_files,
+        stale,
+    }))
+}
+
+/// Resolve the active canonical root and generation tuple atomically.
+pub fn resolve_active_root_snapshot(
+    conn: &Connection,
+    current_path: &Path,
+) -> Result<Option<RootGenerationSnapshot>> {
+    let current_canonical = std::fs::canonicalize(current_path).with_context(|| {
+        format!(
+            "canonicalize active code-map path {}",
+            current_path.display()
+        )
+    })?;
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin code-map root snapshot transaction")?;
+    let snapshot = resolve_active_root_snapshot_in_transaction(&tx, &current_canonical)?;
+    tx.commit()
+        .context("commit code-map root snapshot transaction")?;
+    Ok(snapshot)
+}
+
+fn resolve_active_root_snapshot_in_transaction(
+    tx: &Transaction<'_>,
+    current_canonical: &Path,
+) -> Result<Option<RootGenerationSnapshot>> {
+    let mut stmt = tx
+        .prepare(
+            "SELECT root, root_identity, index_generation, graph_generation \
+             FROM code_map_roots WHERE root_identity IS NOT NULL ORDER BY root ASC",
+        )
+        .context("prepare active code-map root snapshot query")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })
+        .context("query active code-map root snapshots")?;
+    let mut candidates = Vec::new();
+    for row in rows {
+        let (display, identity, index_generation, graph_generation) =
+            row.context("read active code-map root snapshot")?;
+        if current_canonical.starts_with(Path::new(&display)) {
+            candidates.push((display, identity, index_generation, graph_generation));
+        }
+    }
+    candidates.sort_by(|a, b| {
+        Path::new(&b.0)
+            .components()
+            .count()
+            .cmp(&Path::new(&a.0).components().count())
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    let Some((display, identity, index_generation, graph_generation)) =
+        candidates.into_iter().next()
+    else {
+        return Ok(None);
+    };
+    let root = CanonicalRepoRoot::from_persisted(&display, &identity)
+        .with_context(|| format!("verify persisted code-map root {display:?}"))?;
+    Ok(Some(RootGenerationSnapshot {
+        root,
+        index_generation,
+        graph_generation,
+    }))
+}
+
 /// GOLD-R3-13 — resolve the persisted code-map root that contains
 /// `current_path`, the canonical active repository for a recall query.
 ///
@@ -279,15 +436,10 @@ pub fn relevant_files_for_prompt(
 /// to fall back to another persisted root — that cross-repo fallback is exactly
 /// the leak this containment closes.
 pub fn resolve_active_root(conn: &Connection, current_path: &Path) -> Option<String> {
-    let canonical = std::fs::canonicalize(current_path).ok()?;
-    let mut stmt = conn
-        .prepare("SELECT root FROM code_map_roots ORDER BY root ASC")
-        .ok()?;
-    let roots = stmt.query_map([], |row| row.get::<_, String>(0)).ok()?;
-    roots
-        .filter_map(|row| row.ok())
-        .filter(|root| canonical.starts_with(Path::new(root)))
-        .max_by_key(|root| Path::new(root).components().count())
+    resolve_active_root_snapshot(conn, current_path)
+        .ok()
+        .flatten()
+        .map(|snapshot| snapshot.root.display().to_owned())
 }
 
 /// The one persisted root, when exactly one repository is indexed.
@@ -298,18 +450,48 @@ pub fn resolve_active_root(conn: &Connection, current_path: &Path) -> Option<Str
 /// using it cannot mix repos. With two or more roots this returns `None`, and
 /// the caller must inject nothing rather than pick one.
 pub fn sole_persisted_root(conn: &Connection) -> Option<String> {
-    let mut stmt = conn
-        .prepare("SELECT root FROM code_map_roots ORDER BY root ASC LIMIT 2")
-        .ok()?;
-    let roots: Vec<String> = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .ok()?
-        .filter_map(|row| row.ok())
-        .collect();
-    match roots.as_slice() {
-        [only] => Some(only.clone()),
+    sole_persisted_root_snapshot(conn)
+        .ok()
+        .flatten()
+        .map(|snapshot| snapshot.root.display().to_owned())
+}
+
+/// Typed, error-preserving daemon fallback. Exactly one persisted root is
+/// required; legacy roots without a physical identity and multi-root stores
+/// both return `None`, so the daemon never guesses.
+pub fn sole_persisted_root_snapshot(conn: &Connection) -> Result<Option<RootGenerationSnapshot>> {
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin sole code-map root snapshot transaction")?;
+    let rows: Vec<(String, Option<String>, i64, i64)> = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT root, root_identity, index_generation, graph_generation \
+                 FROM code_map_roots ORDER BY root ASC LIMIT 2",
+            )
+            .context("prepare sole code-map root snapshot query")?;
+        stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .context("query sole code-map root snapshot")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect sole code-map root snapshot")?
+    };
+    let snapshot = match rows.as_slice() {
+        [(display, Some(identity), index_generation, graph_generation)] => {
+            let root = CanonicalRepoRoot::from_persisted(display, identity)
+                .with_context(|| format!("verify sole persisted code-map root {display:?}"))?;
+            Some(RootGenerationSnapshot {
+                root,
+                index_generation: *index_generation,
+                graph_generation: *graph_generation,
+            })
+        }
         _ => None,
-    }
+    };
+    tx.commit()
+        .context("commit sole code-map root snapshot transaction")?;
+    Ok(snapshot)
 }
 
 /// SQL helper — find every file whose `path` contains any of the
@@ -332,14 +514,21 @@ fn scan_paths_by_keywords(
         .map(|p| format!("LOWER(path) LIKE {p}"))
         .collect::<Vec<_>>()
         .join(" OR ");
-    // GOLD-R3-13: the root filter is the LAST positional param and is ANDed
-    // outside the keyword OR-group so it bounds the row set BEFORE the LIMIT —
-    // an unrelated repo must not fill the 200-row scan cap and starve the
-    // active root's path-only matches.
+    // GOLD-R3-13: containment alone is insufficient. A single large active root
+    // can have >200 weak one-keyword matches that sort before the best multi-
+    // keyword candidate. Compute overlap inside SQLite, rank it first, then
+    // apply the bounded candidate cap with path as the deterministic tie-break.
     let root_param = keywords.len() + 1;
+    let limit_param = keywords.len() + 2;
+    let overlap_score = placeholders
+        .iter()
+        .map(|p| format!("CASE WHEN LOWER(path) LIKE {p} THEN 1 ELSE 0 END"))
+        .collect::<Vec<_>>()
+        .join(" + ");
     let sql = format!(
-        "SELECT root, path FROM code_map_files WHERE ({where_clause}) AND root = ?{root_param} \
-         ORDER BY root ASC, path ASC LIMIT 200"
+        "SELECT root, path, ({overlap_score}) AS path_overlap \
+         FROM code_map_files WHERE root = ?{root_param} AND ({where_clause}) \
+         ORDER BY path_overlap DESC, path ASC LIMIT ?{limit_param}"
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut params: Vec<rusqlite::types::Value> = keywords
@@ -347,6 +536,9 @@ fn scan_paths_by_keywords(
         .map(|kw| rusqlite::types::Value::from(format!("%{}%", kw.to_lowercase())))
         .collect();
     params.push(rusqlite::types::Value::from(active_root.to_string()));
+    params.push(rusqlite::types::Value::from(
+        i64::try_from(MAX_PATH_SCAN_CANDIDATES).context("convert path-scan candidate cap")?,
+    ));
     let rows: Vec<(String, String)> = stmt
         .query_map(rusqlite::params_from_iter(params.iter()), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -546,7 +738,9 @@ fn render_architecture_findings(
 mod tests {
     use super::*;
     use crate::code_map::graph::{CodeEdge, EdgeKind};
-    use crate::code_map::persist::{open, persist_edges, persist_map};
+    use crate::code_map::persist::{
+        open, persist_edges, persist_map, persist_map_and_edges, root_index_generation,
+    };
     use crate::code_map::symbols::{Symbol, SymbolKind};
     use crate::code_map::walker::{Language, RepoFile, RepoMap, ScanReport};
     use tempfile::tempdir;
@@ -558,26 +752,39 @@ mod tests {
     #[test]
     fn sole_persisted_root_is_only_unambiguous_for_one_repo() {
         let dir = tempdir().unwrap();
-        let conn = open(&dir.path().join("code_map.db")).unwrap();
+        let mut conn = open(&dir.path().join("code_map.db")).unwrap();
         assert_eq!(
             sole_persisted_root(&conn),
             None,
             "no roots → nothing to use"
         );
 
-        let insert = |root: &str| {
-            conn.execute(
-                "INSERT INTO code_map_roots \
-                 (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped) \
-                 VALUES (?1, 0, 0, 0, 0, 0)",
-                rusqlite::params![root],
-            )
-            .unwrap();
-        };
-        insert("/repo/only");
-        assert_eq!(sole_persisted_root(&conn).as_deref(), Some("/repo/only"));
+        let only = dir.path().join("only");
+        std::fs::create_dir(&only).unwrap();
+        let only = std::fs::canonicalize(only).unwrap().display().to_string();
+        persist_map(
+            &mut conn,
+            &RepoMap {
+                root: only.clone(),
+                files: Vec::new(),
+                report: ScanReport::default(),
+            },
+        )
+        .unwrap();
+        assert_eq!(sole_persisted_root(&conn).as_deref(), Some(only.as_str()));
 
-        insert("/repo/second");
+        let second = dir.path().join("second");
+        std::fs::create_dir(&second).unwrap();
+        let second = std::fs::canonicalize(second).unwrap().display().to_string();
+        persist_map(
+            &mut conn,
+            &RepoMap {
+                root: second,
+                files: Vec::new(),
+                report: ScanReport::default(),
+            },
+        )
+        .unwrap();
         assert_eq!(
             sole_persisted_root(&conn),
             None,
@@ -847,6 +1054,151 @@ mod tests {
     }
 
     #[test]
+    fn same_root_path_overlap_is_ranked_before_the_candidate_cap() {
+        let dir = tempdir().unwrap();
+        let mut conn = open(&dir.path().join("code_map.db")).unwrap();
+        let mut files: Vec<RepoFile> = (0..250)
+            .map(|index| RepoFile {
+                path: format!("aaa/auth/weak_{index:03}.rs"),
+                language: Language::Rust,
+                bytes: 1,
+                loc: 1,
+                sha256: String::new(),
+                mtime_ns: 0,
+                symbols: Vec::new(),
+            })
+            .collect();
+        files.push(RepoFile {
+            path: "zzz/auth/config/loader.rs".into(),
+            language: Language::Rust,
+            bytes: 1,
+            loc: 1,
+            sha256: String::new(),
+            mtime_ns: 0,
+            symbols: Vec::new(),
+        });
+        persist_map(
+            &mut conn,
+            &RepoMap {
+                root: "/repo/same-root-skew".into(),
+                files,
+                report: ScanReport::default(),
+            },
+        )
+        .unwrap();
+
+        let hits =
+            relevant_files_for_prompt(&conn, "auth config loader", "/repo/same-root-skew", 1)
+                .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "zzz/auth/config/loader.rs");
+        assert_eq!(hits[0].path_keyword_overlap, 3);
+    }
+
+    #[test]
+    fn typed_root_snapshot_resolves_subdirectories_and_dot_aliases() {
+        let repo = tempdir().unwrap();
+        let nested = repo.path().join("src/nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("code_map.db")).unwrap();
+        let root = std::fs::canonicalize(repo.path())
+            .unwrap()
+            .display()
+            .to_string();
+        persist_map(
+            &mut conn,
+            &RepoMap {
+                root: root.clone(),
+                files: Vec::new(),
+                report: ScanReport::default(),
+            },
+        )
+        .unwrap();
+
+        let alias = nested.join("..");
+        let snapshot = resolve_active_root_snapshot(&conn, &alias)
+            .unwrap()
+            .expect("subdirectory alias must resolve the containing root");
+        assert_eq!(snapshot.root.display(), root);
+        assert_eq!(snapshot.index_generation, 1);
+        assert_eq!(snapshot.graph_generation, 0);
+    }
+
+    #[test]
+    fn recall_receipt_binds_generations_and_preserves_empty_hits() {
+        let repo = tempdir().unwrap();
+        std::fs::create_dir_all(repo.path().join("src")).unwrap();
+        std::fs::write(repo.path().join("src/auth.rs"), "fn auth() {}\n").unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(repo.path())
+            .scan()
+            .unwrap();
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("code_map.db")).unwrap();
+        persist_map_and_edges(&mut conn, &map, &[]).unwrap();
+
+        let receipt = recall_receipt_for_prompt(
+            &conn,
+            repo.path(),
+            "NonexistentSymbolWithNoPathMatch",
+            5,
+            RecallStaleness::Check,
+        )
+        .unwrap()
+        .expect("an indexed root returns a receipt even with zero hits");
+        assert_eq!(receipt.snapshot.root.display(), map.root);
+        assert_eq!(receipt.snapshot.index_generation, 1);
+        assert_eq!(receipt.snapshot.graph_generation, 1);
+        assert!(receipt.ranked_files.is_empty());
+        assert_eq!(receipt.stale, Some(false));
+    }
+
+    #[test]
+    fn recall_read_transaction_cannot_mix_writer_generations() {
+        let repo = tempdir().unwrap();
+        let root = std::fs::canonicalize(repo.path())
+            .unwrap()
+            .display()
+            .to_string();
+        let db = tempdir().unwrap();
+        let path = db.path().join("code_map.db");
+        let mut setup = open(&path).unwrap();
+        let make_map = |file: &str| RepoMap {
+            root: root.clone(),
+            files: vec![RepoFile {
+                path: file.into(),
+                language: Language::Rust,
+                bytes: 1,
+                loc: 1,
+                sha256: String::new(),
+                mtime_ns: 0,
+                symbols: Vec::new(),
+            }],
+            report: ScanReport::default(),
+        };
+        persist_map(&mut setup, &make_map("old/auth.rs")).unwrap();
+        let mut writer = open(&path).unwrap();
+
+        let receipt = recall_receipt_for_prompt_with_hook(
+            &setup,
+            repo.path(),
+            "auth",
+            5,
+            RecallStaleness::Skip,
+            || {
+                persist_map(&mut writer, &make_map("new/auth.rs")).unwrap();
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(receipt.snapshot.index_generation, 1);
+        assert_eq!(receipt.ranked_files.len(), 1);
+        assert_eq!(receipt.ranked_files[0].path, "old/auth.rs");
+        assert_eq!(root_index_generation(&writer, &root).unwrap(), Some(2));
+    }
+
+    #[test]
     fn render_context_block_is_empty_for_no_files() {
         assert_eq!(render_context_block(&[]), "");
     }
@@ -936,11 +1288,11 @@ mod tests {
         // Ascending path order → middleware.rs (src/auth/...) BEFORE
         // loader.rs (src/config/...) because "src/auth" < "src/config".
         let paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
-        let auth_idx = paths.iter().position(|p| p.contains("auth"));
-        let config_idx = paths.iter().position(|p| p.contains("config"));
-        if let (Some(ai), Some(ci)) = (auth_idx, config_idx) {
-            assert!(ai < ci, "lex order broken: {paths:?}");
-        }
+        assert_eq!(
+            paths,
+            vec!["src/auth/middleware.rs", "src/config/loader.rs"],
+            "equal-score paths must have an exact deterministic order"
+        );
     }
 
     #[test]

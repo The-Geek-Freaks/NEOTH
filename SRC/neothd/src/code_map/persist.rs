@@ -29,7 +29,8 @@
 //!     oversize_skipped INTEGER NOT NULL,
 //!     truncated_at INTEGER,  -- nullable
 //!     index_generation INTEGER NOT NULL DEFAULT 0,
-//!     graph_generation INTEGER NOT NULL DEFAULT 0
+//!     graph_generation INTEGER NOT NULL DEFAULT 0,
+//!     root_identity TEXT  -- stable local dev+ino / volume+file-index token
 //! );
 //!
 //! CREATE TABLE code_map_files (
@@ -91,7 +92,11 @@ use super::walker::{Language, RepoFile, RepoMap, ScanReport};
 /// v4 adds `graph_generation`, advanced only in the same transaction that
 /// replaces a root's edges. Consumers can therefore reject a mixed snapshot
 /// after `persist_map` succeeds but edge persistence does not.
-pub const CODE_MAP_SCHEMA_VERSION: i64 = 4;
+/// v5 binds the canonical display path to a stable local directory identity.
+/// Unreachable legacy roots remain NULL and cannot produce typed receipts until
+/// a successful rebuild adopts their identity; reachable roots are adopted by
+/// the migration itself.
+pub const CODE_MAP_SCHEMA_VERSION: i64 = 5;
 
 /// Hard ceiling for one filesystem freshness receipt. The count gate runs
 /// before row materialisation and every SELECT still carries `LIMIT cap + 1`
@@ -287,9 +292,140 @@ where
             [],
         )
         .context("v3→v4: stamp schema_version=4")?;
+        v = 4;
+    }
+
+    // v4 → v5: stable local repository identity. The partial unique index
+    // permits unreachable legacy roots to remain NULL, while preventing one
+    // physical directory from being indexed under multiple live aliases.
+    if v < 5 {
+        tx.execute_batch("ALTER TABLE code_map_roots ADD COLUMN root_identity TEXT;")
+            .context("v4→v5: add physical root identity column")?;
+        adopt_reachable_root_identities_during_migration(&tx)?;
+        tx.execute_batch(
+            "CREATE UNIQUE INDEX idx_code_map_roots_identity \
+             ON code_map_roots(root_identity) WHERE root_identity IS NOT NULL;",
+        )
+        .context("v4→v5: enforce unique physical root identity")?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '5')",
+            [],
+        )
+        .context("v4→v5: stamp schema_version=5")?;
     }
 
     tx.commit().context("commit locked code-map migration")?;
+    Ok(())
+}
+
+#[derive(Debug)]
+struct MigratingRoot {
+    display: String,
+    canonical_display: String,
+    identity: String,
+    scanned_at: i64,
+    index_generation: i64,
+    graph_generation: i64,
+}
+
+/// Adopt every reachable v4 root under the migration writer lock. Multiple path
+/// aliases of the same physical directory are reduced to one complete snapshot:
+/// newest scan wins, then highest generations, then canonical spelling, then
+/// lexical path. Rows are never merged across generations.
+fn adopt_reachable_root_identities_during_migration(tx: &Transaction<'_>) -> Result<()> {
+    let stored: Vec<(String, i64, i64, i64)> = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT root, scanned_at, index_generation, graph_generation \
+                 FROM code_map_roots ORDER BY root ASC",
+            )
+            .context("prepare v5 root identity adoption query")?;
+        stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .context("query v4 roots for identity adoption")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect v4 roots for identity adoption")?
+    };
+
+    let mut by_identity: std::collections::BTreeMap<String, Vec<MigratingRoot>> =
+        std::collections::BTreeMap::new();
+    for (display, scanned_at, index_generation, graph_generation) in stored {
+        let canonical = match super::root_identity::CanonicalRepoRoot::discover(Path::new(&display))
+        {
+            Ok(root) => root,
+            Err(error) => match Path::new(&display).try_exists() {
+                Ok(false) => continue,
+                Ok(true) => {
+                    return Err(error)
+                        .with_context(|| format!("adopt reachable v4 code-map root {display:?}"));
+                }
+                Err(probe_error) => {
+                    return Err(probe_error).with_context(|| {
+                        format!("probe v4 code-map root {display:?} during identity migration")
+                    });
+                }
+            },
+        };
+        let identity = canonical.identity().as_str().to_owned();
+        by_identity
+            .entry(identity.clone())
+            .or_default()
+            .push(MigratingRoot {
+                display,
+                canonical_display: canonical.display().to_owned(),
+                identity,
+                scanned_at,
+                index_generation,
+                graph_generation,
+            });
+    }
+
+    for mut aliases in by_identity.into_values() {
+        aliases.sort_by(|a, b| {
+            b.scanned_at
+                .cmp(&a.scanned_at)
+                .then_with(|| b.index_generation.cmp(&a.index_generation))
+                .then_with(|| b.graph_generation.cmp(&a.graph_generation))
+                .then_with(|| {
+                    let a_is_canonical = a.display == a.canonical_display;
+                    let b_is_canonical = b.display == b.canonical_display;
+                    b_is_canonical.cmp(&a_is_canonical)
+                })
+                .then_with(|| a.display.cmp(&b.display))
+        });
+        let winner = aliases.remove(0);
+        if aliases
+            .iter()
+            .any(|alias| alias.canonical_display != winner.canonical_display)
+        {
+            bail!(
+                "physical code-map root identity {:?} resolved to multiple canonical paths",
+                winner.identity
+            );
+        }
+        for loser in aliases {
+            tx.execute(
+                "DELETE FROM code_map_roots WHERE root = ?1",
+                rusqlite::params![&loser.display],
+            )
+            .with_context(|| format!("remove superseded v4 root alias {:?}", loser.display))?;
+        }
+        if winner.display == winner.canonical_display {
+            tx.execute(
+                "UPDATE code_map_roots SET root_identity = ?2 WHERE root = ?1",
+                rusqlite::params![&winner.display, &winner.identity],
+            )
+            .with_context(|| format!("adopt v4 code-map root identity {:?}", winner.display))?;
+        } else {
+            move_root_snapshot(
+                tx,
+                &winner.display,
+                &winner.canonical_display,
+                &winner.identity,
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -310,8 +446,11 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             oversize_skipped INTEGER NOT NULL,
             truncated_at     INTEGER,
             index_generation INTEGER NOT NULL DEFAULT 0,
-            graph_generation INTEGER NOT NULL DEFAULT 0
+            graph_generation INTEGER NOT NULL DEFAULT 0,
+            root_identity    TEXT
         );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_code_map_roots_identity
+            ON code_map_roots(root_identity) WHERE root_identity IS NOT NULL;
 
         CREATE TABLE IF NOT EXISTS code_map_files (
             id        INTEGER PRIMARY KEY,
@@ -460,6 +599,130 @@ enum SymbolComparisonMode {
     ExactSnapshot,
 }
 
+/// Bind a canonical display path to its physical directory before reading the
+/// prior snapshot. If the same directory moved, migrate its root key and child
+/// rows inside this writer transaction so generations remain monotonic.
+fn prepare_root_identity_for_persist(tx: &Transaction<'_>, root: &str) -> Result<Option<String>> {
+    let canonical = match super::root_identity::CanonicalRepoRoot::discover(Path::new(root)) {
+        Ok(root) => root,
+        Err(error) if !Path::new(root).exists() => {
+            // Compatibility for imported/synthetic legacy maps: an unreachable
+            // root may remain NULL, but it is never eligible for a typed recall
+            // receipt. Never let an unreachable write retain a previously
+            // certified physical identity.
+            let existing_identity: Option<Option<String>> = tx
+                .query_row(
+                    "SELECT root_identity FROM code_map_roots WHERE root = ?1",
+                    rusqlite::params![root],
+                    |row| row.get(0),
+                )
+                .optional()
+                .context("query existing root identity for unreachable map")?;
+            if existing_identity.flatten().is_some() {
+                return Err(error).with_context(|| {
+                    format!(
+                        "refuse to update identity-bound code-map root {root:?} while it is unreachable"
+                    )
+                });
+            }
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    if canonical.display() != root {
+        bail!(
+            "code-map root {root:?} is not canonical; rebuild from {:?}",
+            canonical.display()
+        );
+    }
+    let identity = canonical.identity().as_str().to_owned();
+    let prior_path: Option<String> = tx
+        .query_row(
+            "SELECT root FROM code_map_roots WHERE root_identity = ?1",
+            rusqlite::params![&identity],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("query path previously bound to repository identity")?;
+
+    if let Some(prior_path) = prior_path
+        && prior_path != root
+    {
+        let target_exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM code_map_roots WHERE root = ?1)",
+                rusqlite::params![root],
+                |row| row.get(0),
+            )
+            .context("check renamed code-map target root collision")?;
+        if target_exists {
+            bail!(
+                "cannot reconcile renamed code-map root {prior_path:?} to {root:?}: target key already exists"
+            );
+        }
+
+        move_root_snapshot(tx, &prior_path, root, &identity)?;
+    }
+
+    // A path reused for a different physical directory is a new identity. The
+    // subsequent exact map replacement advances the generation and refreshes
+    // its rows, while the receipt's identity prevents cache confusion.
+    tx.execute(
+        "UPDATE code_map_roots SET root_identity = ?2 WHERE root = ?1",
+        rusqlite::params![root, &identity],
+    )
+    .context("adopt physical identity for existing code-map root")?;
+    Ok(Some(identity))
+}
+
+/// Rename one complete root snapshot without disabling foreign keys or mixing
+/// rows from another generation. `target` must not exist.
+fn move_root_snapshot(
+    tx: &Transaction<'_>,
+    source: &str,
+    target: &str,
+    identity: &str,
+) -> Result<()> {
+    // Release the unique identity long enough to create the new parent row,
+    // then move every child before deleting the old parent. Foreign keys remain
+    // enabled throughout; no cascade can discard the selected snapshot.
+    tx.execute(
+        "UPDATE code_map_roots SET root_identity = NULL WHERE root = ?1",
+        rusqlite::params![source],
+    )
+    .context("release prior code-map root identity during rename")?;
+    let inserted = tx
+        .execute(
+            "INSERT INTO code_map_roots \
+             (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped, \
+              truncated_at, index_generation, graph_generation, root_identity) \
+             SELECT ?2, scanned_at, total_files, total_bytes, total_loc, oversize_skipped, \
+                    truncated_at, index_generation, graph_generation, ?3 \
+             FROM code_map_roots WHERE root = ?1",
+            rusqlite::params![source, target, identity],
+        )
+        .context("create reconciled code-map root row")?;
+    if inserted != 1 {
+        bail!("code-map root {source:?} disappeared during identity reconciliation");
+    }
+    tx.execute(
+        "UPDATE code_map_files SET root = ?2 WHERE root = ?1",
+        rusqlite::params![source, target],
+    )
+    .context("move code-map files to reconciled root")?;
+    tx.execute(
+        "UPDATE code_map_edges SET root = ?2 WHERE root = ?1",
+        rusqlite::params![source, target],
+    )
+    .context("move code-map edges to reconciled root")?;
+    tx.execute(
+        "DELETE FROM code_map_roots WHERE root = ?1",
+        rusqlite::params![source],
+    )
+    .context("remove prior code-map root path after reconciliation")?;
+    Ok(())
+}
+
 /// Apply the map half of a snapshot to an already-exclusive transaction.
 ///
 /// Keeping the pre-pass under the same IMMEDIATE transaction as the writes is
@@ -472,6 +735,8 @@ fn persist_map_in_transaction(
 ) -> Result<PersistStats> {
     type StoredSymbols = Vec<(String, String, u32)>;
     type StoredFile = (String, i64, StoredSymbols);
+
+    let root_identity = prepare_root_identity_for_persist(tx, &map.root)?;
 
     // ── Pre-pass: load existing file fingerprints + declarations ─────
     // Exact declaration comparison matters when an older snapshot was built
@@ -587,8 +852,8 @@ fn persist_map_in_transaction(
     tx.execute(
         "INSERT INTO code_map_roots \
          (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped, truncated_at, \
-          index_generation, graph_generation) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 0) \
+          index_generation, graph_generation, root_identity) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 0, ?8) \
          ON CONFLICT(root) DO UPDATE SET \
              scanned_at       = excluded.scanned_at, \
              total_files      = excluded.total_files, \
@@ -596,6 +861,7 @@ fn persist_map_in_transaction(
              total_loc        = excluded.total_loc, \
              oversize_skipped = excluded.oversize_skipped, \
              truncated_at     = excluded.truncated_at, \
+             root_identity    = excluded.root_identity, \
              index_generation = index_generation + 1",
         rusqlite::params![
             &map.root,
@@ -605,6 +871,7 @@ fn persist_map_in_transaction(
             map.report.total_loc as i64,
             map.report.oversize_skipped as i64,
             map.report.truncated_at.map(|n| n as i64),
+            root_identity,
         ],
     )
     .context("upsert code_map_roots row")?;
@@ -1173,15 +1440,26 @@ fn index_freshness_receipt_bounded_with_limits_and_hook<F>(
 where
     F: FnOnce(),
 {
-    let stored_count: i64 = conn
+    let (root_exists, stored_count): (bool, i64) = conn
         .query_row(
-            "SELECT COUNT(*) FROM code_map_files WHERE root = ?1",
+            "SELECT EXISTS(SELECT 1 FROM code_map_roots WHERE root = ?1), \
+                    (SELECT COUNT(*) FROM code_map_files WHERE root = ?1)",
             rusqlite::params![root],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .context("count stored code-map files before freshness receipt")?;
+        .context("read root existence and stored file count before freshness receipt")?;
     enforce_freshness_file_count(stored_count, max_files)?;
     after_count();
+
+    // An unknown root has no persisted snapshot to compare. A KNOWN empty root
+    // is different: it must still be walked so the first newly-created file is
+    // reported stale instead of being mistaken for "no snapshot".
+    if !root_exists {
+        return Ok(IndexFreshnessReceipt {
+            stale: false,
+            filesystem_fingerprint: Vec::new(),
+        });
+    }
 
     let query_limit = i64::try_from(max_files.saturating_add(1))
         .context("convert freshness file-query limit to SQLite integer")?;
@@ -1235,12 +1513,6 @@ where
             "code-map freshness refused more than {max_files} stored file rows; \
              persist a narrower repository or select a smaller code-map root"
         );
-    }
-    if stored_rows.is_empty() {
-        return Ok(IndexFreshnessReceipt {
-            stale: false,
-            filesystem_fingerprint: Vec::new(),
-        });
     }
     let stored: std::collections::HashMap<String, String> = stored_rows.into_iter().collect();
     let walker_limit = u64::try_from(max_files).context("convert freshness walker file ceiling")?;
@@ -2627,6 +2899,45 @@ mod tests {
     }
 
     #[test]
+    fn physical_root_rename_preserves_generation_and_reconciles_children() {
+        let workspace = tempdir().unwrap();
+        let old_path = workspace.path().join("before");
+        let new_path = workspace.path().join("after");
+        std::fs::create_dir(&old_path).unwrap();
+        std::fs::write(old_path.join("main.rs"), "fn main() {}\n").unwrap();
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("code_map.db")).unwrap();
+
+        let first = crate::code_map::walker::RepoMapBuilder::new(&old_path)
+            .scan()
+            .unwrap();
+        let old_root = first.root.clone();
+        persist_map_and_edges(&mut conn, &first, &[]).unwrap();
+        assert_eq!(root_index_generation(&conn, &old_root).unwrap(), Some(1));
+
+        std::fs::rename(&old_path, &new_path).unwrap();
+        let second = crate::code_map::walker::RepoMapBuilder::new(&new_path)
+            .scan()
+            .unwrap();
+        let new_root = second.root.clone();
+        persist_map_and_edges(&mut conn, &second, &[]).unwrap();
+
+        assert_eq!(root_index_generation(&conn, &old_root).unwrap(), None);
+        assert_eq!(root_index_generation(&conn, &new_root).unwrap(), Some(2));
+        assert_eq!(root_graph_generation(&conn, &new_root).unwrap(), Some(2));
+        assert!(load_map(&conn, &old_root).unwrap().is_none());
+        assert_eq!(load_map(&conn, &new_root).unwrap().unwrap().files.len(), 1);
+        let identity: Option<String> = conn
+            .query_row(
+                "SELECT root_identity FROM code_map_roots WHERE root = ?1",
+                rusqlite::params![&new_root],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(identity.is_some());
+    }
+
+    #[test]
     fn is_index_stale_detects_edit_add_and_remove() {
         use crate::code_map::walker::RepoMapBuilder;
 
@@ -2684,6 +2995,25 @@ mod tests {
         assert!(
             is_index_stale(&conn, &root).unwrap(),
             "a removed file must be detected"
+        );
+    }
+
+    #[test]
+    fn known_empty_snapshot_becomes_stale_when_first_file_appears() {
+        let repo = tempdir().unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(repo.path())
+            .scan()
+            .unwrap();
+        assert!(map.files.is_empty());
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("cm.db")).unwrap();
+        persist_map(&mut conn, &map).unwrap();
+        assert!(!is_index_stale(&conn, &map.root).unwrap());
+
+        std::fs::write(repo.path().join("first.rs"), "fn first() {}\n").unwrap();
+        assert!(
+            is_index_stale(&conn, &map.root).unwrap(),
+            "a known empty snapshot must detect its first on-disk file"
         );
     }
 
@@ -2850,7 +3180,7 @@ mod tests {
             .expect("first migration opener failed");
 
         // Release that same stale-v3 opener only after A committed. It must
-        // acquire IMMEDIATE, re-read v4 under the lock, and skip a duplicate
+        // acquire IMMEDIATE, re-read v5 under the lock, and skip a duplicate
         // ALTER TABLE rather than relying on a fresh outer version read.
         allow_b_tx.send(()).unwrap();
         b_locked_rx
@@ -2867,7 +3197,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "4");
+        assert_eq!(version, "5");
         let graph_columns: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('code_map_roots') \
@@ -2877,16 +3207,147 @@ mod tests {
             )
             .unwrap();
         assert_eq!(graph_columns, 1);
+        let identity_columns: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('code_map_roots') \
+                 WHERE name = 'root_identity'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(identity_columns, 1);
         assert_eq!(root_graph_generation(&conn, "/legacy").unwrap(), Some(-1));
+        let identity: Option<String> = conn
+            .query_row(
+                "SELECT root_identity FROM code_map_roots WHERE root = '/legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(identity, None, "unreachable legacy roots stay unbound");
     }
 
     #[test]
-    fn open_migrates_v1_to_v4_on_existing_db() {
+    fn v4_migration_adopts_reachable_root_and_reconciles_aliases() {
+        let repo = tempdir().unwrap();
+        std::fs::write(repo.path().join("winner.rs"), "fn winner() {}\n").unwrap();
+        let canonical = std::fs::canonicalize(repo.path())
+            .unwrap()
+            .display()
+            .to_string();
+        #[cfg(windows)]
+        let alias = canonical
+            .strip_prefix(r"\\?\")
+            .expect("Windows canonical temp path must use the extended prefix")
+            .to_owned();
+        #[cfg(not(windows))]
+        let alias = format!("{canonical}{}.", std::path::MAIN_SEPARATOR);
+        assert_ne!(alias, canonical);
+
+        let db = tempdir().unwrap();
+        let path = db.path().join("v4.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO meta (key, value) VALUES ('schema_version', '4');
+                 CREATE TABLE code_map_roots (
+                     root TEXT PRIMARY KEY,
+                     scanned_at INTEGER NOT NULL,
+                     total_files INTEGER NOT NULL,
+                     total_bytes INTEGER NOT NULL,
+                     total_loc INTEGER NOT NULL,
+                     oversize_skipped INTEGER NOT NULL,
+                     truncated_at INTEGER,
+                     index_generation INTEGER NOT NULL DEFAULT 0,
+                     graph_generation INTEGER NOT NULL DEFAULT -1
+                 );
+                 CREATE TABLE code_map_files (
+                     id INTEGER PRIMARY KEY,
+                     root TEXT NOT NULL,
+                     path TEXT NOT NULL,
+                     language TEXT NOT NULL,
+                     bytes INTEGER NOT NULL,
+                     loc INTEGER NOT NULL,
+                     sha256 TEXT NOT NULL DEFAULT '',
+                     mtime_ns INTEGER NOT NULL DEFAULT 0,
+                     UNIQUE(root, path),
+                     FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE
+                 );
+                 CREATE TABLE code_map_symbols (
+                     id INTEGER PRIMARY KEY,
+                     file_id INTEGER NOT NULL REFERENCES code_map_files(id) ON DELETE CASCADE,
+                     name TEXT NOT NULL,
+                     kind TEXT NOT NULL,
+                     line INTEGER NOT NULL
+                 );
+                 CREATE TABLE code_map_edges (
+                     id INTEGER PRIMARY KEY,
+                     root TEXT NOT NULL,
+                     from_file TEXT NOT NULL,
+                     from_symbol TEXT NOT NULL,
+                     to_name TEXT NOT NULL,
+                     kind TEXT NOT NULL,
+                     FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE
+                 );",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO code_map_roots VALUES (?1, 10, 1, 1, 1, 0, NULL, 2, 2)",
+                rusqlite::params![&canonical],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO code_map_roots VALUES (?1, 20, 1, 1, 1, 0, NULL, 7, 7)",
+                rusqlite::params![&alias],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO code_map_files
+                 (root, path, language, bytes, loc, sha256, mtime_ns)
+                 VALUES (?1, 'loser.rs', 'rust', 1, 1, '', 0)",
+                rusqlite::params![&canonical],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO code_map_files
+                 (root, path, language, bytes, loc, sha256, mtime_ns)
+                 VALUES (?1, 'winner.rs', 'rust', 1, 1, '', 0)",
+                rusqlite::params![&alias],
+            )
+            .unwrap();
+        }
+
+        let conn = open(&path).expect("v4 reachable root migration must succeed");
+        let snapshot = crate::code_map::recall::resolve_active_root_snapshot(&conn, repo.path())
+            .unwrap()
+            .expect("reachable migrated root must remain immediately recallable");
+        assert_eq!(snapshot.root.display(), canonical);
+        assert_eq!(snapshot.index_generation, 7);
+        assert_eq!(snapshot.graph_generation, 7);
+        let roots: i64 = conn
+            .query_row("SELECT COUNT(*) FROM code_map_roots", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(roots, 1, "aliases must collapse to one physical root");
+        let files: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT path FROM code_map_files ORDER BY path")
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert_eq!(files, vec!["winner.rs"]);
+    }
+
+    #[test]
+    fn open_migrates_v1_to_v5_on_existing_db() {
         // Build a v1 DB manually (apply_schema with version stamped as 1,
         // without sha256/mtime_ns columns), then call open() and verify the
-        // migration chain fires: schema_version advances to "4"
-        // (v1→v2→v3→v4), the v2 file columns exist, and both generation
-        // columns exist.
+        // migration chain fires: schema_version advances to "5"
+        // (v1→v2→v3→v4→v5), the v2 file columns exist, both generation
+        // columns exist, and physical identity is nullable for legacy roots.
         let dir = tempdir().unwrap();
         let path = dir.path().join("v1.db");
         let repo = tempdir().unwrap();
@@ -2970,7 +3431,7 @@ mod tests {
         // Open via the public API — should trigger v1→v2 migration.
         let mut conn = open(&path).expect("open must succeed on a v1 DB");
 
-        // schema_version must now be "4" (v1→v2→v3→v4 chain).
+        // schema_version must now be "5" (v1→v2→v3→v4→v5 chain).
         let version: String = conn
             .query_row(
                 "SELECT value FROM meta WHERE key='schema_version'",
@@ -2979,8 +3440,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            version, "4",
-            "schema_version must advance to 4 after migration"
+            version, "5",
+            "schema_version must advance to 5 after migration"
         );
 
         // v3 column: code_map_roots.index_generation exists, and the migrated
@@ -3000,6 +3461,10 @@ mod tests {
             root_cols.iter().any(|c| c == "graph_generation"),
             "v4 must add graph_generation to code_map_roots; got {root_cols:?}"
         );
+        assert!(
+            root_cols.iter().any(|c| c == "root_identity"),
+            "v5 must add root_identity to code_map_roots; got {root_cols:?}"
+        );
         assert_eq!(
             root_index_generation(&conn, &root).unwrap(),
             Some(0),
@@ -3009,6 +3474,17 @@ mod tests {
             root_graph_generation(&conn, &root).unwrap(),
             Some(-1),
             "a migrated legacy graph must carry an invalid sentinel until rebuilt"
+        );
+        let legacy_identity: Option<String> = conn
+            .query_row(
+                "SELECT root_identity FROM code_map_roots WHERE root = ?1",
+                rusqlite::params![&root],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            legacy_identity.is_some(),
+            "migration must adopt the reachable root identity"
         );
         let impact_error = crate::code_map::impact::impact_radius(
             &conn,
@@ -3068,5 +3544,16 @@ mod tests {
         .expect("a complete atomic rebuild must certify the migrated root");
         assert_eq!(impact.index_generation, 1);
         assert_eq!(impact.graph_generation, 1);
+        let rebuilt_identity: Option<String> = conn
+            .query_row(
+                "SELECT root_identity FROM code_map_roots WHERE root = ?1",
+                rusqlite::params![&root],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            rebuilt_identity.is_some(),
+            "rebuild must adopt physical identity"
+        );
     }
 }

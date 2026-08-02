@@ -25,6 +25,7 @@ pub mod persist;
 pub mod recall;
 pub mod repo_map;
 pub mod risk;
+pub mod root_identity;
 pub mod symbols;
 pub mod walker;
 
@@ -46,10 +47,14 @@ pub use persist::{
 };
 #[allow(unused_imports)]
 pub use recall::{
-    RelevantFile, relevant_files_for_prompt, render_context_block, resolve_active_root,
+    RecallReceipt, RecallStaleness, RelevantFile, RootGenerationSnapshot,
+    recall_receipt_for_prompt, relevant_files_for_prompt, render_context_block,
+    resolve_active_root, resolve_active_root_snapshot, sole_persisted_root_snapshot,
 };
 #[allow(unused_imports)]
 pub use repo_map::{DEFAULT_TOKEN_BUDGET, RepoMapSummary, build_summary};
+#[allow(unused_imports)]
+pub use root_identity::{CanonicalRepoRoot, RootIdentity};
 #[allow(unused_imports)]
 pub use symbols::{Symbol, SymbolKind, extract_symbols};
 #[allow(unused_imports)]
