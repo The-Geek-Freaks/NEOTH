@@ -15,6 +15,111 @@
 
 use zeroize::Zeroizing;
 
+// ── GOLD-R3-13 — repository-local code-map recall ───────────────────────────
+
+pub const CODE_MAP_RECALL_SCHEMA: &str = neothd::code_map::RECALL_WIRE_SCHEMA;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodeMapRecallStatus {
+    Ok,
+    Unmapped,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeMapRecallHit {
+    pub path: String,
+    pub identifier_hits: u64,
+    pub matched_symbols: Vec<String>,
+    pub path_keyword_overlap: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeMapRecallReceipt {
+    pub root: String,
+    pub root_identity: String,
+    pub index_generation: u64,
+    pub graph_generation: u64,
+    pub stale: bool,
+    pub truncated: bool,
+    pub hits: Vec<CodeMapRecallHit>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeMapRecallEnvelope {
+    pub status: CodeMapRecallStatus,
+    pub note: Option<String>,
+    pub receipt: Option<CodeMapRecallReceipt>,
+}
+
+/// Build argv for the canonical CLI consumer. Prompt and root stay separate
+/// process arguments: no shell, no interpolation, and no process-CWD fallback.
+pub fn code_map_recall_args(prompt: &str, explicit_root: &str) -> Vec<String> {
+    vec![
+        "code-map".into(),
+        "relevant".into(),
+        prompt.into(),
+        "--path".into(),
+        explicit_root.into(),
+        "--check-stale".into(),
+        "--output".into(),
+        "json".into(),
+    ]
+}
+
+/// Strictly decode the versioned CLI envelope. Status/receipt coherence and
+/// root binding are validated here so the GUI never displays a mixed or
+/// partially understood generation receipt.
+pub fn parse_code_map_recall(json: &str) -> Result<CodeMapRecallEnvelope, String> {
+    let raw = neothd::code_map::RecallWireEnvelope::parse_json(json)
+        .map_err(|error| format!("invalid recall JSON: {error:#}"))?;
+    let status = match raw.status {
+        neothd::code_map::RecallWireStatus::Ok => CodeMapRecallStatus::Ok,
+        neothd::code_map::RecallWireStatus::Unmapped => CodeMapRecallStatus::Unmapped,
+        neothd::code_map::RecallWireStatus::Unavailable => CodeMapRecallStatus::Unavailable,
+    };
+
+    let receipt = match (status, raw.receipt) {
+        (CodeMapRecallStatus::Ok, Some(receipt)) => {
+            let mut hits = Vec::with_capacity(receipt.hits.len());
+            for hit in receipt.hits {
+                hits.push(CodeMapRecallHit {
+                    path: hit.path,
+                    identifier_hits: u64::from(hit.identifier_hits),
+                    matched_symbols: hit.matched_symbols,
+                    path_keyword_overlap: u64::from(hit.path_keyword_overlap),
+                });
+            }
+            Some(CodeMapRecallReceipt {
+                root: receipt.root,
+                root_identity: receipt.root_identity,
+                index_generation: u64::try_from(receipt.index_generation)
+                    .map_err(|_| "recall receipt has a negative index generation")?,
+                graph_generation: u64::try_from(receipt.graph_generation)
+                    .map_err(|_| "recall receipt has a negative graph generation")?,
+                stale: receipt
+                    .stale
+                    .ok_or("GUI recall requires an explicit freshness observation")?,
+                truncated: receipt.truncated,
+                hits,
+            })
+        }
+        (CodeMapRecallStatus::Ok, None) => {
+            return Err("ok recall envelope is missing its receipt".into());
+        }
+        (CodeMapRecallStatus::Unmapped | CodeMapRecallStatus::Unavailable, Some(_)) => {
+            return Err("non-ok recall envelope must not carry a receipt".into());
+        }
+        (CodeMapRecallStatus::Unmapped | CodeMapRecallStatus::Unavailable, None) => None,
+    };
+
+    Ok(CodeMapRecallEnvelope {
+        status,
+        note: raw.note,
+        receipt,
+    })
+}
+
 /// Mirror of `neothd::wizard::recommend::ComplexityLevel`.
 /// Serde/string wire form: `"minimal"` | `"standard"` | `"full"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -6282,6 +6387,107 @@ pub fn parse_cron_jobs(json: &str) -> Vec<CronJobRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn code_map_recall_argv_always_carries_explicit_root_and_json_contract() {
+        assert_eq!(
+            code_map_recall_args("find auth", r"C:\work tree\repo"),
+            vec![
+                "code-map",
+                "relevant",
+                "find auth",
+                "--path",
+                r"C:\work tree\repo",
+                "--check-stale",
+                "--output",
+                "json",
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_code_map_recall_preserves_ranked_hits_and_symbols() {
+        let parsed = parse_code_map_recall(
+            r#"{
+                "schema":"neoth.code_map.recall.v1",
+                "status":"ok",
+                "prompt":"find auth",
+                "max":5,
+                "receipt":{
+                    "root":"C:/repo",
+                    "root_identity":"sha256:abc",
+                    "index_generation":7,
+                    "graph_generation":0,
+                    "stale":true,
+                    "truncated":true,
+                    "hits":[
+                        {"root":"C:/repo","path":"src/auth.rs","identifier_hits":3,"matched_symbols":["authorize","AuthGate"],"path_keyword_overlap":1},
+                        {"root":"C:/repo","path":"tests/auth.rs","identifier_hits":1,"matched_symbols":["auth_rejects"],"path_keyword_overlap":1}
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.status, CodeMapRecallStatus::Ok);
+        let receipt = parsed.receipt.unwrap();
+        assert_eq!(receipt.root, "C:/repo");
+        assert_eq!(receipt.root_identity, "sha256:abc");
+        assert_eq!((receipt.index_generation, receipt.graph_generation), (7, 0));
+        assert!(receipt.stale);
+        assert!(receipt.truncated);
+        assert_eq!(receipt.hits[0].path, "src/auth.rs");
+        assert_eq!(
+            receipt.hits[0].matched_symbols,
+            ["authorize".to_string(), "AuthGate".to_string()]
+        );
+        assert_eq!(receipt.hits[1].path, "tests/auth.rs");
+    }
+
+    #[test]
+    fn parse_code_map_recall_accepts_known_empty_states_only() {
+        for status in ["unmapped", "unavailable"] {
+            let json = format!(
+                r#"{{"schema":"neoth.code_map.recall.v1","status":"{status}","prompt":"q","max":5,"receipt":null,"note":"not ready"}}"#
+            );
+            let parsed = parse_code_map_recall(&json).unwrap();
+            assert!(parsed.receipt.is_none());
+        }
+
+        let wrong_schema = r#"{"schema":"neoth.code_map.recall.v2","status":"unmapped","prompt":"q","max":5,"receipt":null}"#;
+        assert!(
+            parse_code_map_recall(wrong_schema)
+                .unwrap_err()
+                .contains("unsupported recall schema")
+        );
+        let unknown = r#"{"schema":"neoth.code_map.recall.v1","status":"maybe","prompt":"q","max":5,"receipt":null}"#;
+        assert!(
+            parse_code_map_recall(unknown)
+                .unwrap_err()
+                .contains("unknown variant")
+        );
+    }
+
+    #[test]
+    fn parse_code_map_recall_rejects_mixed_or_unbound_receipts() {
+        let missing = r#"{"schema":"neoth.code_map.recall.v1","status":"ok","prompt":"q","max":5,"receipt":null}"#;
+        assert!(
+            parse_code_map_recall(missing)
+                .unwrap_err()
+                .contains("missing its receipt")
+        );
+
+        let cross_root = r#"{
+            "schema":"neoth.code_map.recall.v1","status":"ok","prompt":"q","max":5,
+            "receipt":{"root":"/a","root_identity":"id","index_generation":1,"graph_generation":1,"stale":false,"truncated":false,
+            "hits":[{"root":"/b","path":"src/x.rs","identifier_hits":1,"matched_symbols":[],"path_keyword_overlap":0}]}}
+        "#;
+        assert!(
+            parse_code_map_recall(cross_root)
+                .unwrap_err()
+                .contains("not bound to the receipt root")
+        );
+    }
 
     // ── MV-01c catalog model-id parser ────────────────────────────────────
     #[test]

@@ -61,6 +61,14 @@ export struct KanbanCommentRow {
     body: string,
 }
 
+/// One deterministic repository-local recall hit. Rust preserves the CLI's
+/// ranked order and pre-formats symbols/score for this compact settings card.
+export struct CodeMapHitRow {
+    path: string,
+    symbols: string,
+    score: string,
+}
+
 // GR-10 — one row in the Safety Rails panel, from `neoth security safe-mode --json`.
 export struct SafeRailRow {
     name: string,
@@ -909,6 +917,24 @@ export component SettingsView inherits Rectangle {
     in property <[KanbanTaskRow]> kanban-review: [];
     in property <[KanbanTaskRow]> kanban-done: [];
     in property <[KanbanFeedRow]> kanban-feed: [];
+    // GOLD-R3-13 — explicit-root repository-local code-map recall. The root
+    // draft is never inferred from the GUI process CWD. Rust invokes the
+    // versioned CLI JSON path and publishes only a validated receipt.
+    in-out property <string> code-map-root: "";
+    in-out property <string> code-map-query: "";
+    in property <bool> code-map-running: false;
+    in property <bool> code-map-error: false;
+    in property <bool> code-map-has-receipt: false;
+    in property <bool> code-map-stale: false;
+    in property <bool> code-map-truncated: false;
+    in property <string> code-map-status: "Choose a repository root and enter a query.";
+    in property <string> code-map-canonical-root: "";
+    in property <string> code-map-root-identity: "";
+    in property <string> code-map-index-generation: "";
+    in property <string> code-map-graph-generation: "";
+    in property <[CodeMapHitRow]> code-map-hits: [];
+    callback code-map-browse-clicked();
+    callback code-map-search-clicked(string, string);
     /// One-line summary above the board: which session is showing,
     /// when it was opened, what the operator's prompt was. Empty
     /// string means "no sessions yet — operator has not run `neoth
@@ -2253,7 +2279,7 @@ export component SettingsView inherits Rectangle {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
                         NeothCheckBox {
-                            text: "Auto-route skills (embed a skill's prompt when its triggers fire)";
+                            text: "Semantic skill fallback after no exact trigger matches";
                             checked: root.skills-always-embed-route;
                             toggled(checked) => {
                                 root.skills-always-embed-route = checked;
@@ -2261,7 +2287,7 @@ export component SettingsView inherits Rectangle {
                             }
                         }
                         Text {
-                            text: "Off = skills load only when you ask explicitly. Writes skills.always_embed_route in freedom.yaml; the daemon hot-reloads.";
+                            text: "Off keeps explicit selection, parent triggers, and mode triggers active; it disables only the embedding fallback. The daemon hot-reloads freedom.yaml.";
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
@@ -4438,6 +4464,126 @@ export component SettingsView inherits Rectangle {
                     title: "Code Sessions";
                     subtitle: "Hermes-style autonomous coding workflow. Decompose a prompt with Cerebellum, dispatch tasks to Left (fast) + Right (deep) hemispheres, watch the kanban board fill.";
                     mirrors-slash: "/code <prompt>   |   neoth kanban {list,show,task,add,move,assign,comment,archive,watch,review}";
+                }
+
+                Card {
+                    shimmer: false;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: "REPOSITORY RECALL";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-medium;
+                                letter-spacing: Theme.letter-spacing-tight;
+                                color: Theme.accent-cyan;
+                                horizontal-stretch: 1;
+                                vertical-alignment: center;
+                            }
+                            if root.code-map-running: Text {
+                                text: "SEARCHING…";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.accent-amber;
+                                vertical-alignment: center;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            NeothLineEdit {
+                                text <=> root.code-map-root;
+                                placeholder-text: "Repository root (required; never inferred from GUI CWD)";
+                                enabled: !root.code-map-running;
+                                horizontal-stretch: 1;
+                            }
+                            NeothButton {
+                                label: "Browse…";
+                                size: "sm";
+                                enabled: !root.code-map-running;
+                                clicked => { root.code-map-browse-clicked(); }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            NeothLineEdit {
+                                text <=> root.code-map-query;
+                                placeholder-text: "What code is relevant?";
+                                enabled: !root.code-map-running;
+                                horizontal-stretch: 1;
+                            }
+                            NeothButton {
+                                label: root.code-map-running ? "Searching…" : "Search";
+                                size: "sm";
+                                primary: true;
+                                enabled: !root.code-map-running && root.code-map-root != "" && root.code-map-query != "";
+                                clicked => { root.code-map-search-clicked(root.code-map-root, root.code-map-query); }
+                            }
+                        }
+                        Text {
+                            text: root.code-map-status;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: root.code-map-error ? Theme.accent-pink
+                                 : root.code-map-stale ? Theme.accent-amber
+                                 : Theme.text-secondary;
+                            wrap: word-wrap;
+                        }
+                        if root.code-map-has-receipt: VerticalBox {
+                            spacing: 2px;
+                            Text {
+                                text: "root  " + root.code-map-canonical-root;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            Text {
+                                text: "identity  " + root.code-map-root-identity
+                                    + "   index " + root.code-map-index-generation
+                                    + "   graph " + root.code-map-graph-generation
+                                    + (root.code-map-stale ? "   STALE" : "   fresh")
+                                    + (root.code-map-truncated ? "   LIMITED" : "");
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: root.code-map-stale ? Theme.accent-amber : Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            if root.code-map-hits.length == 0: Text {
+                                text: "No matching files in this repository generation.";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                            for hit in root.code-map-hits: HorizontalLayout {
+                                spacing: Theme.space-base;
+                                Text {
+                                    text: hit.path;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.text-primary;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: hit.symbols;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.accent-cyan;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: hit.score;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.text-muted;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // GOLD-ADAPT-AOS-06 — spec-shape entry (agent-os shape-spec):

@@ -22,9 +22,10 @@
 //!   operator's code-map DB path and returns a [`ToolCallResult`]
 //!   ready for the MCP `tools/call` response envelope.
 //!
-//! Today's tool set (7 tools, mirrors the smallcode minimum + graph analysis):
+//! Today's tool set (8 tools, including a versioned recall receipt):
 //!
 //! - `codegraph_relevant_files` — top-N files for a prompt
+//! - `codegraph_recall_v1` — identity/generation-bound recall envelope
 //! - `codegraph_extract_identifiers` — symbol-shape extraction
 //! - `codegraph_path_keywords` — path-segment extraction
 //! - `codegraph_callers` — transitive callers of a symbol (inverse BFS)
@@ -69,7 +70,8 @@ pub fn codegraph_tools() -> Vec<McpTool> {
             description: Some(
                 "Return the top-N files from the local code-map most relevant to a prompt. \
                  Uses identifier-shape extraction + path-keyword overlap; ranks by \
-                 symbol hits with path overlap as tie-break."
+                 symbol hits with path overlap as tie-break. Legacy response: JSON array. \
+                 Use codegraph_recall_v1 for the identity/generation receipt envelope."
                     .into(),
             ),
             input_schema: serde_json::json!({
@@ -85,6 +87,31 @@ pub fn codegraph_tools() -> Vec<McpTool> {
                         "minimum": 1,
                         "maximum": 50,
                         "description": "Cap on returned files. Default 5."
+                    }
+                },
+                "required": ["prompt"]
+            }),
+            annotations: read_only_annotations(),
+        },
+        McpTool {
+            name: "codegraph_recall_v1".into(),
+            description: Some(
+                "Return a versioned repository-local recall receipt containing canonical root \
+                 identity, index/graph generations, freshness, truncation truth and ranked files."
+                    .into(),
+            ),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Free-form text used for identifier and path ranking."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 5,
+                        "minimum": 1,
+                        "maximum": 50
                     }
                 },
                 "required": ["prompt"]
@@ -289,6 +316,7 @@ pub fn codegraph_tools() -> Vec<McpTool> {
 /// to [`codegraph_tools`] forces a dispatcher update.
 pub const TOOL_NAMES: &[&str] = &[
     "codegraph_relevant_files",
+    "codegraph_recall_v1",
     "codegraph_extract_identifiers",
     "codegraph_path_keywords",
     "codegraph_callers",
@@ -328,7 +356,8 @@ pub(crate) fn dispatch_codegraph_tool_at(
     match tool_name {
         "codegraph_extract_identifiers" => tool_extract_identifiers(args),
         "codegraph_path_keywords" => tool_path_keywords(args),
-        "codegraph_relevant_files" => tool_relevant_files(db_path, args),
+        "codegraph_relevant_files" => tool_relevant_files(db_path, args, cwd, false),
+        "codegraph_recall_v1" => tool_relevant_files(db_path, args, cwd, true),
         "codegraph_callers" => tool_callers(db_path, args, cwd),
         "codegraph_callees" => tool_callees(db_path, args, cwd),
         "codegraph_impact_radius" => tool_impact_radius(db_path, args, cwd),
@@ -380,58 +409,91 @@ fn tool_path_keywords(args: &serde_json::Value) -> ToolCallResult {
     )
 }
 
-fn tool_relevant_files(db_path: &Path, args: &serde_json::Value) -> ToolCallResult {
+fn tool_relevant_files(
+    db_path: &Path,
+    args: &serde_json::Value,
+    cwd: &Path,
+    versioned: bool,
+) -> ToolCallResult {
     let parsed: RelevantFilesArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
         Err(e) => return error_result(format!("bad args: {e}")),
     };
     let limit = parsed.limit.clamp(1, 50) as usize;
-    match relevant_files_inner(db_path, &parsed.prompt, limit) {
-        Ok(payload) => text_result(payload),
+    match recall_v1_inner(db_path, &parsed.prompt, limit, cwd) {
+        Ok(envelope) => {
+            let payload: Result<String> = if versioned {
+                serde_json::to_string(&envelope).map_err(Into::into)
+            } else {
+                legacy_relevant_files_json(&envelope)
+            };
+            match payload {
+                Ok(payload) => text_result(payload),
+                Err(error) => error_result(format!("serialize relevant_files result: {error:#}")),
+            }
+        }
         Err(e) => error_result(format!("relevant_files failed: {e:#}")),
     }
 }
 
-fn relevant_files_inner(db_path: &Path, prompt: &str, limit: usize) -> Result<String> {
+fn recall_v1_inner(
+    db_path: &Path,
+    prompt: &str,
+    limit: usize,
+    cwd: &Path,
+) -> Result<crate::code_map::recall_wire::RecallWireEnvelope> {
     if !db_path.exists() {
-        // Empty result rather than error — the operator hasn't built
-        // a code map yet; the MCP client should see "0 files", not
-        // a hard failure that kills its tool-call retry loop.
-        return Ok("[]".into());
+        // Missing setup is a valid zero-result state, but it still uses the
+        // same versioned envelope as a successful recall so clients never
+        // have to infer whether an empty array carried a generation receipt.
+        return crate::code_map::recall_wire::RecallWireEnvelope::empty(
+            crate::code_map::recall_wire::RecallWireStatus::Unavailable,
+            prompt,
+            limit,
+            "code-map index is not built",
+        );
     }
     let conn = crate::code_map::persist::open(db_path)
         .with_context(|| format!("open {}", db_path.display()))?;
-    // GOLD-R3-13: scope to the persisted root that contains the server's
-    // working directory. An unmapped CWD returns an empty result rather than a
-    // cross-repo mix — the MCP client sees "0 files", never another repo's.
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let Some(active_root) = crate::code_map::recall::resolve_active_root(&conn, &cwd) else {
+    let Some(receipt) = crate::code_map::recall::recall_receipt_for_prompt(
+        &conn,
+        cwd,
+        prompt,
+        limit,
+        crate::code_map::recall::RecallStaleness::Skip,
+    )?
+    else {
+        return crate::code_map::recall_wire::RecallWireEnvelope::empty(
+            crate::code_map::recall_wire::RecallWireStatus::Unmapped,
+            prompt,
+            limit,
+            "server working directory is not inside a persisted code-map root",
+        );
+    };
+    crate::code_map::recall_wire::RecallWireEnvelope::success(prompt, limit, &receipt)
+}
+
+fn legacy_relevant_files_json(
+    envelope: &crate::code_map::recall_wire::RecallWireEnvelope,
+) -> Result<String> {
+    let Some(receipt) = envelope.receipt.as_ref() else {
         return Ok("[]".into());
     };
-    let files =
-        crate::code_map::recall::relevant_files_for_prompt(&conn, prompt, &active_root, limit)?;
-    // GOLD-R3-13: surface the active root's index generation so an MCP client can
-    // detect a re-index under it and invalidate a cached result. Carried per file
-    // (the array shape is preserved so existing clients keep parsing) — every row
-    // shares the one active root's generation.
-    let index_generation =
-        crate::code_map::persist::root_index_generation(&conn, &active_root).unwrap_or(None);
-    // Project the typed result down to the JSON shape MCP clients want.
-    let payload: Vec<serde_json::Value> = files
+    let rows: Vec<serde_json::Value> = receipt
+        .hits
         .iter()
-        .map(|f| {
+        .map(|hit| {
             serde_json::json!({
-                "root": f.root,
-                "path": f.path,
-                "identifier_hits": f.identifier_hits,
-                "matched_symbols": f.matched_symbols,
-                "path_keyword_overlap": f.path_keyword_overlap,
-                "index_generation": index_generation,
+                "root": hit.root,
+                "path": hit.path,
+                "identifier_hits": hit.identifier_hits,
+                "matched_symbols": hit.matched_symbols,
+                "path_keyword_overlap": hit.path_keyword_overlap,
+                "index_generation": receipt.index_generation,
             })
         })
         .collect();
-    Ok(serde_json::to_string(&payload)
-        .expect("serde_json::Value arrays are always JSON-serializable"))
+    Ok(serde_json::to_string(&rows)?)
 }
 
 #[derive(Deserialize)]
@@ -990,11 +1052,12 @@ mod tests {
     }
 
     #[test]
-    fn codegraph_tools_lists_seven_canonical_tools() {
+    fn codegraph_tools_lists_eight_canonical_tools() {
         let tools = codegraph_tools();
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 8);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"codegraph_relevant_files"));
+        assert!(names.contains(&"codegraph_recall_v1"));
         assert!(names.contains(&"codegraph_extract_identifiers"));
         assert!(names.contains(&"codegraph_path_keywords"));
         assert!(names.contains(&"codegraph_callers"));
@@ -1100,9 +1163,8 @@ mod tests {
 
     #[test]
     fn dispatch_relevant_files_returns_empty_array_when_db_missing() {
-        // Defensive: operator hasn't built a code map yet. MCP client
-        // gets `[]`, NOT an error. Pinned so a future eager-error
-        // refactor doesn't break the "operator just installed" path.
+        // Backward-compatible legacy tool contract: an operator who has not
+        // built a map receives the same empty array existing MCP clients parse.
         let dir = tempdir().unwrap();
         let r = dispatch_codegraph_tool(
             &dir.path().join("never-built.db"),
@@ -1110,8 +1172,21 @@ mod tests {
             &serde_json::json!({"prompt": "any prompt"}),
         );
         assert!(!r.is_error, "missing DB must not produce error result");
-        let body = text_content(&r);
-        assert_eq!(body, "[]");
+        assert_eq!(text_content(&r), "[]");
+    }
+
+    #[test]
+    fn dispatch_recall_v1_returns_typed_unavailable_receipt_when_db_missing() {
+        let dir = tempdir().unwrap();
+        let r = dispatch_codegraph_tool(
+            &dir.path().join("never-built.db"),
+            "codegraph_recall_v1",
+            &serde_json::json!({"prompt": "any prompt"}),
+        );
+        assert!(!r.is_error);
+        let body = crate::code_map::RecallWireEnvelope::parse_json(&text_content(&r)).unwrap();
+        assert_eq!(body.status, crate::code_map::RecallWireStatus::Unavailable);
+        assert!(body.receipt.is_none());
     }
 
     #[test]
@@ -1139,7 +1214,6 @@ mod tests {
             &serde_json::json!({"prompt": "x", "limit": 10000}),
         );
         assert!(!r.is_error);
-        // The clamp path didn't crash + returned the empty body.
         assert_eq!(text_content(&r), "[]");
     }
 

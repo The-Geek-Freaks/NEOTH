@@ -55,6 +55,12 @@ static DREAM_CRON_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic:
 static DREAM_CRON_OPERATION_ACTIVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+// GOLD-R3-13: only one explicit-root code-map recall may own the compact card
+// and Buddy state at a time. The Slint button is also disabled while active;
+// this guard covers callback re-entry and tests driving the callback directly.
+static CODE_MAP_RECALL_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 // Multiple background-job refreshes can overlap (manual refresh, route entry,
 // and the automatic refresh after a successful spawn). Only the newest request
 // may publish its list or clear the loading state.
@@ -12677,6 +12683,160 @@ fn main() -> Result<()> {
         });
     });
 
+    // GOLD-R3-13 — repository-local code-map recall. Root selection is an
+    // explicit operator input; this path never consults the GUI process CWD.
+    let weak_code_map_browse = window.as_weak();
+    window.on_code_map_browse_clicked(move || {
+        let weak = weak_code_map_browse.clone();
+        std::thread::spawn(move || {
+            let picked = rfd::FileDialog::new()
+                .set_title("Select repository root for code-map recall")
+                .pick_folder();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let (Some(window), Some(path)) = (weak.upgrade(), picked) {
+                    window.set_code_map_root(path.to_string_lossy().into_owned().into());
+                }
+            });
+        });
+    });
+
+    let weak_code_map_search = window.as_weak();
+    window.on_code_map_search_clicked(move |explicit_root, query| {
+        let root = explicit_root.trim().to_string();
+        let prompt = query.trim().to_string();
+        let Some(window) = weak_code_map_search.upgrade() else {
+            return;
+        };
+        if root.is_empty() || prompt.is_empty() {
+            window.set_code_map_error(true);
+            window.set_code_map_status("Repository root and query are required.".into());
+            buddy(&window, GuiActivity::SettingsError);
+            return;
+        }
+        if CODE_MAP_RECALL_ACTIVE
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .is_err()
+        {
+            return;
+        }
+
+        clear_code_map_recall_receipt(&window);
+        window.set_code_map_running(true);
+        window.set_code_map_error(false);
+        window.set_code_map_status("Searching this repository generation…".into());
+        buddy(&window, GuiActivity::CodeMapRecall);
+
+        let weak = weak_code_map_search.clone();
+        std::thread::spawn(move || {
+            let result = run_code_map_recall(&root, &prompt);
+            CODE_MAP_RECALL_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(window) = weak.upgrade() else {
+                    return;
+                };
+                window.set_code_map_running(false);
+
+                match result {
+                    Ok(envelope) => match envelope.status {
+                        panel_logic::CodeMapRecallStatus::Ok => {
+                            let Some(receipt) = envelope.receipt else {
+                                unreachable!("strict parser requires an ok receipt")
+                            };
+                            let hit_count = receipt.hits.len();
+                            let rows = receipt
+                                .hits
+                                .into_iter()
+                                .map(|hit| CodeMapHitRow {
+                                    path: hit.path.into(),
+                                    symbols: if hit.matched_symbols.is_empty() {
+                                        "—".into()
+                                    } else {
+                                        hit.matched_symbols.join(", ").into()
+                                    },
+                                    score: format!(
+                                        "symbol {} · path {}",
+                                        hit.identifier_hits, hit.path_keyword_overlap
+                                    )
+                                    .into(),
+                                })
+                                .collect::<Vec<_>>();
+                            let index_generation = receipt.index_generation;
+                            window.set_code_map_has_receipt(true);
+                            window.set_code_map_stale(receipt.stale);
+                            window.set_code_map_truncated(receipt.truncated);
+                            window.set_code_map_canonical_root(receipt.root.into());
+                            window.set_code_map_root_identity(receipt.root_identity.into());
+                            window.set_code_map_index_generation(
+                                index_generation.to_string().into(),
+                            );
+                            window.set_code_map_graph_generation(
+                                receipt.graph_generation.to_string().into(),
+                            );
+                            window.set_code_map_hits(slint::ModelRc::new(
+                                slint::VecModel::from(rows),
+                            ));
+                            window.set_code_map_status(
+                                if receipt.stale {
+                                    format!(
+                                        "{hit_count} file(s) matched{} — index is stale; rebuild before relying on it.",
+                                        if receipt.truncated { " (limited)" } else { "" }
+                                    )
+                                } else {
+                                    format!(
+                                        "{hit_count} file(s) matched{} in the current generation.",
+                                        if receipt.truncated { " (limited)" } else { "" }
+                                    )
+                                }
+                                .into(),
+                            );
+                            buddy_with_caption(
+                                &window,
+                                GuiActivity::SettingsApplied,
+                                &format!("{hit_count} files / generation {index_generation}"),
+                            );
+                        }
+                        panel_logic::CodeMapRecallStatus::Unmapped => {
+                            clear_code_map_recall_receipt(&window);
+                            window.set_code_map_error(true);
+                            window.set_code_map_status(
+                                envelope
+                                    .note
+                                    .unwrap_or_else(|| {
+                                        "Repository is not mapped. Run `neoth code-map persist <root>`."
+                                            .into()
+                                    })
+                                    .into(),
+                            );
+                            buddy(&window, GuiActivity::SettingsError);
+                        }
+                        panel_logic::CodeMapRecallStatus::Unavailable => {
+                            clear_code_map_recall_receipt(&window);
+                            window.set_code_map_error(true);
+                            window.set_code_map_status(
+                                envelope
+                                    .note
+                                    .unwrap_or_else(|| "Repository recall is unavailable.".into())
+                                    .into(),
+                            );
+                            buddy(&window, GuiActivity::SettingsError);
+                        }
+                    },
+                    Err(error) => {
+                        clear_code_map_recall_receipt(&window);
+                        window.set_code_map_error(true);
+                        window.set_code_map_status(error.into());
+                        buddy(&window, GuiActivity::SettingsError);
+                    }
+                }
+            });
+        });
+    });
+
     // GAP-07 / R4-05 — Backup now: `neoth backup --output json` bound through the
     // typed automation boundary. The GUI decodes a self-identifying `BackupAck`
     // and reads the acknowledged archive back off disk before claiming success;
@@ -17623,6 +17783,52 @@ fn publish_buddy_cluster_result(
     });
 }
 
+fn run_code_map_recall(
+    explicit_root: &str,
+    prompt: &str,
+) -> std::result::Result<panel_logic::CodeMapRecallEnvelope, String> {
+    let root_path = Path::new(explicit_root);
+    if !root_path.is_dir() {
+        return Err(format!(
+            "Repository root does not exist or is not a directory: {explicit_root}"
+        ));
+    }
+    let bin = which_neothd().ok_or_else(|| {
+        "neothd binary not on PATH — repository recall is unavailable.".to_string()
+    })?;
+    let args = panel_logic::code_map_recall_args(prompt, explicit_root);
+    let output = spawn_neothd_plain(&bin)
+        .args(&args)
+        .output()
+        .map_err(|error| format!("Could not start repository recall: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        return Err(if detail.is_empty() {
+            format!("Repository recall exited with {}.", output.status)
+        } else {
+            format!("Repository recall failed: {detail}")
+        });
+    }
+    let stdout = std::str::from_utf8(&output.stdout)
+        .map_err(|error| format!("Repository recall returned non-UTF-8 JSON: {error}"))?;
+    panel_logic::parse_code_map_recall(stdout)
+        .map_err(|error| format!("Repository recall contract error: {error}"))
+}
+
+fn clear_code_map_recall_receipt(window: &MainWindow) {
+    window.set_code_map_has_receipt(false);
+    window.set_code_map_stale(false);
+    window.set_code_map_truncated(false);
+    window.set_code_map_canonical_root("".into());
+    window.set_code_map_root_identity("".into());
+    window.set_code_map_index_generation("".into());
+    window.set_code_map_graph_generation("".into());
+    window.set_code_map_hits(slint::ModelRc::new(slint::VecModel::from(Vec::<
+        CodeMapHitRow,
+    >::new())));
+}
+
 /// Central Buddy driver — the ONE place a GUI event becomes an orb reaction.
 /// Every handler that wants the Buddy to react calls `buddy(&w, GuiActivity::X)`
 /// instead of poking `set_buddy_mood` directly, so the orb's vocabulary stays
@@ -17630,6 +17836,13 @@ fn publish_buddy_cluster_result(
 fn buddy(window: &MainWindow, activity: GuiActivity) {
     let (mood, caption) = activity.mood();
     window.set_buddy_mood(mood.into());
+    window.set_buddy_caption(caption.into());
+}
+
+/// Completion captions can carry receipt data while mood selection remains on
+/// the same audited `GuiActivity` bus. This never triggers another query.
+fn buddy_with_caption(window: &MainWindow, activity: GuiActivity, caption: &str) {
+    buddy(window, activity);
     window.set_buddy_caption(caption.into());
 }
 

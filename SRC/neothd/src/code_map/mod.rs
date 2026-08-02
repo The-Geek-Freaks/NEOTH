@@ -23,6 +23,7 @@ pub mod outline;
 pub mod ownership;
 pub mod persist;
 pub mod recall;
+pub mod recall_wire;
 pub mod repo_map;
 pub mod risk;
 pub mod root_identity;
@@ -50,6 +51,10 @@ pub use recall::{
     RecallReceipt, RecallStaleness, RelevantFile, RootGenerationSnapshot,
     recall_receipt_for_prompt, relevant_files_for_prompt, render_context_block,
     resolve_active_root, resolve_active_root_snapshot, sole_persisted_root_snapshot,
+};
+#[allow(unused_imports)]
+pub use recall_wire::{
+    RECALL_WIRE_SCHEMA, RecallWireEnvelope, RecallWireHit, RecallWireReceipt, RecallWireStatus,
 };
 #[allow(unused_imports)]
 pub use repo_map::{DEFAULT_TOKEN_BUDGET, RepoMapSummary, build_summary};

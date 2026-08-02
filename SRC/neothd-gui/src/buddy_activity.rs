@@ -54,6 +54,8 @@ pub enum GuiActivity {
     // ── Agents / coding ──────────────────────────────────────────────
     AgentParallel,
     AgentDeploy,
+    /// Explicit repository-root code-map recall in the Coding panel.
+    CodeMapRecall,
 
     // ── Daemon lifecycle (WAL-driven, fired by the events follower) ──
     /// Dreaming pass composing a journal entry (WAL 0xF4).
@@ -108,6 +110,7 @@ impl GuiActivity {
 
             GuiActivity::AgentParallel => ("parallel", "parallel workers"),
             GuiActivity::AgentDeploy => ("agents", "agents deployed"),
+            GuiActivity::CodeMapRecall => ("searching", "searching repository…"),
 
             GuiActivity::Dreaming => ("sleeping", "dreaming…"),
             GuiActivity::CouncilDeliberating => ("parallel", "council in session"),
@@ -193,6 +196,7 @@ mod tests {
         GuiActivity::ProviderFallback,
         GuiActivity::AgentParallel,
         GuiActivity::AgentDeploy,
+        GuiActivity::CodeMapRecall,
         GuiActivity::Dreaming,
         GuiActivity::CouncilDeliberating,
         GuiActivity::SelfImproving,
@@ -227,6 +231,14 @@ mod tests {
         assert_eq!(GuiActivity::ChatComplete.mood(), ("success", "done ✓"));
         assert_eq!(GuiActivity::ChatCancelled.mood(), ("idle", "cancelled"));
         assert_eq!(GuiActivity::ChatFailed.mood(), ("error", "error"));
+    }
+
+    #[test]
+    fn code_map_recall_uses_searching_mood() {
+        assert_eq!(
+            GuiActivity::CodeMapRecall.mood(),
+            ("searching", "searching repository…")
+        );
     }
 
     #[test]

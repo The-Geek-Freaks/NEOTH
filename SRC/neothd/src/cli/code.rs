@@ -101,8 +101,12 @@ pub struct CodeArgs {
 /// summary is empty — the decomposer then proceeds context-free exactly as before.
 fn repo_map_context() -> Option<String> {
     let conn = crate::code_map::persist::open(&crate::code_map::persist::default_path()).ok()?;
-    let root = std::env::current_dir().ok()?.to_string_lossy().to_string();
-    repo_map_context_from(&conn, &root)
+    let cwd = std::env::current_dir().ok()?;
+    let before = crate::code_map::recall::resolve_active_root_snapshot(&conn, &cwd).ok()??;
+    let context = repo_map_context_from(&conn, before.root.display())?;
+    let after =
+        crate::code_map::recall::resolve_active_root_snapshot(&conn, before.root.path()).ok()??;
+    (before == after).then_some(context)
 }
 
 /// Testable core: build the repo-map context for `root` from an open code_map
@@ -127,12 +131,40 @@ const RECALL_CALLERS_PER_SYMBOL: usize = 3;
 /// matches, and the decomposer proceeds exactly as before.
 fn prompt_recall_context(prompt: &str) -> Option<String> {
     let conn = crate::code_map::persist::open(&crate::code_map::persist::default_path()).ok()?;
-    // GOLD-R3-13: resolve the persisted root that CONTAINS the working dir
-    // (canonical, sub-directory-aware) instead of comparing the raw CWD string.
-    // None → the CWD is not inside a persisted repo, so there is no context.
     let cwd = std::env::current_dir().ok()?;
-    let root = crate::code_map::recall::resolve_active_root(&conn, &cwd)?;
-    prompt_recall_context_from(&conn, &root, prompt)
+    let receipt = crate::code_map::recall::recall_receipt_for_prompt(
+        &conn,
+        &cwd,
+        prompt,
+        RECALL_CONTEXT_MAX_FILES,
+        crate::code_map::recall::RecallStaleness::Skip,
+    )
+    .ok()??;
+    prompt_recall_context_from_receipt(&conn, &receipt)
+}
+
+fn prompt_recall_context_from_receipt(
+    conn: &rusqlite::Connection,
+    receipt: &crate::code_map::recall::RecallReceipt,
+) -> Option<String> {
+    if receipt.ranked_files.is_empty() {
+        return None;
+    }
+    let root = receipt.snapshot.root.display();
+    let edges = match crate::code_map::persist::load_edges(conn, root) {
+        Ok(edges) => edges,
+        Err(_) => return render_prompt_recall_context(&receipt.ranked_files, Vec::new()),
+    };
+    // The receipt and its callers must describe one committed generation. If
+    // a writer advanced either the file or graph snapshot between the atomic
+    // recall and the edge read, discard the context instead of mixing epochs.
+    let after =
+        crate::code_map::recall::resolve_active_root_snapshot(conn, receipt.snapshot.root.path())
+            .ok()??;
+    if after != receipt.snapshot {
+        return None;
+    }
+    render_prompt_recall_context(&receipt.ranked_files, edges)
 }
 
 /// Testable core (mirrors [`repo_map_context_from`]). `root` is the canonical
@@ -152,19 +184,21 @@ fn prompt_recall_context_from(
         RECALL_CONTEXT_MAX_FILES,
     )
     .ok()?;
+    let edges = crate::code_map::persist::load_edges(conn, root).unwrap_or_default();
+    render_prompt_recall_context(&files, edges)
+}
+
+fn render_prompt_recall_context(
+    files: &[crate::code_map::recall::RelevantFile],
+    edges: Vec<crate::code_map::graph::CodeEdge>,
+) -> Option<String> {
     if files.is_empty() {
         return None;
     }
-    let files_block = crate::code_map::recall::render_context_block(&files);
-    // Root-scoped edges only — cross-root symbol-name conflation would
-    // attribute Project B's callers to Project A's symbols.
-    let callers_block = crate::code_map::persist::load_edges(conn, root)
-        .ok()
-        .map(|edges| {
-            let graph = crate::code_map::graph::CallGraph::from_edges(edges);
-            crate::code_map::recall::render_callers_block(&graph, &files, RECALL_CALLERS_PER_SYMBOL)
-        })
-        .unwrap_or_default();
+    let files_block = crate::code_map::recall::render_context_block(files);
+    let graph = crate::code_map::graph::CallGraph::from_edges(edges);
+    let callers_block =
+        crate::code_map::recall::render_callers_block(&graph, files, RECALL_CALLERS_PER_SYMBOL);
     if callers_block.is_empty() {
         Some(files_block)
     } else {
@@ -1197,6 +1231,11 @@ mod tests {
             !ctx.contains("src/foreign/token.rs"),
             "a foreign persisted root must never leak into this repo's context"
         );
+        conn.execute_batch("DROP TABLE code_map_edges").unwrap();
+        let without_edges =
+            prompt_recall_context_from(&conn, "/repo/a", "fix verify_token refresh handling")
+                .expect("edge read failure must retain the valid ranked-file context");
+        assert!(without_edges.contains("src/auth/middleware.rs"));
         assert!(
             prompt_recall_context_from(&conn, "/repo/a", "zzzz qqqq").is_none(),
             "no identifier/keyword match must keep the decomposer context-free"

@@ -154,8 +154,19 @@ pub enum CodeMapAction {
         #[arg(value_name = "PROMPT")]
         prompt: String,
 
+        /// Repository path to bind the recall receipt to. Defaults to the
+        /// current working directory for interactive CLI use. GUI, daemon and
+        /// automation callers should always pass this explicitly.
+        #[arg(long, value_name = "PATH")]
+        path: Option<PathBuf>,
+
         /// Max files to return. Default 5.
-        #[arg(long, value_name = "N", default_value_t = 5)]
+        #[arg(
+            long,
+            value_name = "N",
+            default_value_t = 5,
+            value_parser = parse_recall_max
+        )]
         max: usize,
 
         /// Also report whether the persisted index is stale relative to the
@@ -199,6 +210,16 @@ pub enum CodeMapAction {
     },
 }
 
+fn parse_recall_max(raw: &str) -> std::result::Result<usize, String> {
+    let value = raw
+        .parse::<usize>()
+        .map_err(|_| "recall max must be an integer from 1 through 200".to_string())?;
+    if !(1..=200).contains(&value) {
+        return Err("recall max must be from 1 through 200".into());
+    }
+    Ok(value)
+}
+
 pub async fn run_code_map(args: CodeMapArgs) -> Result<()> {
     match args.action {
         CodeMapAction::Scan {
@@ -235,9 +256,10 @@ pub async fn run_code_map(args: CodeMapArgs) -> Result<()> {
         CodeMapAction::Search { name } => run_search(name, args.output),
         CodeMapAction::Relevant {
             prompt,
+            path,
             max,
             check_stale,
-        } => run_relevant(prompt, max, check_stale, args.output),
+        } => run_relevant(prompt, path, max, check_stale, args.output),
         CodeMapAction::Impact {
             files,
             symbols,
@@ -654,88 +676,83 @@ fn run_search(name: String, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn run_relevant(prompt: String, max: usize, check_stale: bool, output: OutputFormat) -> Result<()> {
+fn run_relevant(
+    prompt: String,
+    path: Option<PathBuf>,
+    max: usize,
+    check_stale: bool,
+    output: OutputFormat,
+) -> Result<()> {
     let db_path = crate::code_map::persist::default_path();
     let conn = crate::code_map::persist::open(&db_path)
         .with_context(|| format!("open code_map db at {}", db_path.display()))?;
-    // GOLD-R3-13: scope recall to the persisted root that contains the current
-    // directory. Refuse a cross-repo fallback — an unrelated repo must never
-    // hide (or masquerade as) the active repo's matches.
-    let cwd = std::env::current_dir().context("resolve current directory for code-map recall")?;
-    let Some(active_root) = crate::code_map::recall::resolve_active_root(&conn, &cwd) else {
+    let active_path = match path {
+        Some(path) => path,
+        None => std::env::current_dir().context("resolve current directory for code-map recall")?,
+    };
+    let staleness = if check_stale {
+        crate::code_map::recall::RecallStaleness::Check
+    } else {
+        crate::code_map::recall::RecallStaleness::Skip
+    };
+    // Root identity, generations, ranking and optional staleness come from one
+    // read transaction. A caller can no longer assemble a mixed receipt while
+    // a concurrent persist advances the repository snapshot.
+    let Some(receipt) = crate::code_map::recall::recall_receipt_for_prompt(
+        &conn,
+        &active_path,
+        &prompt,
+        max,
+        staleness,
+    )?
+    else {
         match output {
             OutputFormat::Json | OutputFormat::Jsonl => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "prompt": prompt,
-                        "max": max,
-                        "hits": [],
-                        "note": "current directory is not inside a persisted code-map root",
-                    }))?
-                );
+                let envelope = crate::code_map::recall_wire::RecallWireEnvelope::empty(
+                    crate::code_map::recall_wire::RecallWireStatus::Unmapped,
+                    &prompt,
+                    max,
+                    "requested path is not inside a persisted code-map root",
+                )?;
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
             }
             OutputFormat::Table => {
                 println!(
-                    "current directory is not inside a persisted code-map root \
+                    "requested path is not inside a persisted code-map root \
                      (run `neoth code-map persist` here first)"
                 );
             }
         }
         return Ok(());
     };
-    let hits =
-        crate::code_map::recall::relevant_files_for_prompt(&conn, &prompt, &active_root, max)?;
-    // GOLD-R3-13: surface the active root's index generation so a client can
-    // detect a re-scan under it and invalidate a cached result.
-    let index_generation =
-        crate::code_map::persist::root_index_generation(&conn, &active_root).unwrap_or(None);
-    // GOLD-R3-13: opt-in staleness — re-scans the active root and reports
-    // whether the index predates on-disk edits. `None` unless requested.
-    let stale = if check_stale {
-        crate::code_map::persist::is_index_stale(&conn, &active_root).ok()
-    } else {
-        None
-    };
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            let arr: Vec<_> = hits
-                .iter()
-                .map(|h| {
-                    json!({
-                        "root": h.root,
-                        "path": h.path,
-                        "identifier_hits": h.identifier_hits,
-                        "matched_symbols": h.matched_symbols,
-                        "path_keyword_overlap": h.path_keyword_overlap,
-                    })
-                })
-                .collect();
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json!({
-                    "prompt": prompt,
-                    "max": max,
-                    "root": active_root,
-                    "index_generation": index_generation,
-                    "stale": stale,
-                    "hits": arr,
-                }))?
-            );
+            let envelope =
+                crate::code_map::recall_wire::RecallWireEnvelope::success(&prompt, max, &receipt)?;
+            println!("{}", serde_json::to_string_pretty(&envelope)?);
         }
         OutputFormat::Table => {
-            if stale == Some(true) {
+            if receipt.stale == Some(true) {
                 println!(
-                    "⚠ index is STALE for {active_root} — files changed on disk since the last \
-                     `neoth code-map persist`; results may be incomplete"
+                    "⚠ index is STALE for {} — files changed on disk since the last \
+                     `neoth code-map persist`; results may be incomplete",
+                    receipt.snapshot.root.display()
                 );
             }
-            if hits.is_empty() {
+            if receipt.truncated {
+                println!(
+                    "⚠ showing the first {max} ranked files; more matches exist in this repository"
+                );
+            }
+            if receipt.ranked_files.is_empty() {
                 println!("no relevant files for prompt (try `neoth code-map persist` first)");
                 return Ok(());
             }
-            print!("{}", crate::code_map::recall::render_context_block(&hits));
+            print!(
+                "{}",
+                crate::code_map::recall::render_context_block(&receipt.ranked_files)
+            );
         }
     }
     Ok(())
@@ -1237,7 +1254,7 @@ mod tests {
         with_temp_home(|| {
             // No persist beforehand — relevant must still Ok (returns
             // an empty hit list).
-            run_relevant("auth_middleware".into(), 5, false, OutputFormat::Json)
+            run_relevant("auth_middleware".into(), None, 5, false, OutputFormat::Json)
                 .expect("relevant on empty db must Ok");
         });
     }
@@ -1266,6 +1283,7 @@ mod tests {
             // Prompt mentions the symbol → relevant must find the file.
             run_relevant(
                 "where is auth_middleware defined?".into(),
+                Some(repo.path().to_path_buf()),
                 5,
                 true,
                 OutputFormat::Json,

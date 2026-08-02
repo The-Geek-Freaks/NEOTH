@@ -20,7 +20,7 @@
 import { AboutSlint, Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette, ContextMenu, MenuItem, ConfirmDialog } from "components.slint";
-import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow, PermRow } from "settings.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, CodeMapHitRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow, PermRow } from "settings.slint";
 import { ChatView, ChatMessage, ChatChannelRow, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
@@ -1298,6 +1298,22 @@ export component MainWindow inherits Window {
     /// Operator clicked Refresh on the Code Sessions tab. Rust
     /// re-fetches via subprocess + updates the seven properties above.
     callback kanban-refresh-clicked;
+    // GOLD-R3-13 — repository-local code-map recall forwarding.
+    in-out property <string> code-map-root: "";
+    in-out property <string> code-map-query: "";
+    in property <bool> code-map-running: false;
+    in property <bool> code-map-error: false;
+    in property <bool> code-map-has-receipt: false;
+    in property <bool> code-map-stale: false;
+    in property <bool> code-map-truncated: false;
+    in property <string> code-map-status: "Choose a repository root and enter a query.";
+    in property <string> code-map-canonical-root: "";
+    in property <string> code-map-root-identity: "";
+    in property <string> code-map-index-generation: "";
+    in property <string> code-map-graph-generation: "";
+    in property <[CodeMapHitRow]> code-map-hits: [];
+    callback code-map-browse-clicked;
+    callback code-map-search-clicked(string, string);
     callback channels-refresh-clicked;
     callback channel-test(string);
     callback channel-remove(string);
@@ -3402,6 +3418,21 @@ export component MainWindow inherits Window {
             kanban-done: root.kanban-done;
             kanban-feed: root.kanban-feed;
             kanban-session-summary: root.kanban-session-summary;
+            code-map-root <=> root.code-map-root;
+            code-map-query <=> root.code-map-query;
+            code-map-running: root.code-map-running;
+            code-map-error: root.code-map-error;
+            code-map-has-receipt: root.code-map-has-receipt;
+            code-map-stale: root.code-map-stale;
+            code-map-truncated: root.code-map-truncated;
+            code-map-status: root.code-map-status;
+            code-map-canonical-root: root.code-map-canonical-root;
+            code-map-root-identity: root.code-map-root-identity;
+            code-map-index-generation: root.code-map-index-generation;
+            code-map-graph-generation: root.code-map-graph-generation;
+            code-map-hits: root.code-map-hits;
+            code-map-browse-clicked => { root.code-map-browse-clicked(); }
+            code-map-search-clicked(repo-root, query) => { root.code-map-search-clicked(repo-root, query); }
             // A3 — session selector.
             kanban-sessions: root.kanban-sessions;
             kanban-session-idx <=> root.kanban-session-idx;

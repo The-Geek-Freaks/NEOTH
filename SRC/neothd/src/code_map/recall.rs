@@ -47,8 +47,9 @@ use rusqlite::{Connection, Transaction};
 use super::persist::SymbolHit;
 use super::root_identity::CanonicalRepoRoot;
 
-/// Maximum number of path-only candidates materialized for one recall.
-const MAX_PATH_SCAN_CANDIDATES: usize = 200;
+/// Maximum path-only candidates materialized, including one probe row beyond
+/// the public 200-file output ceiling so a receipt can disclose truncation.
+const MAX_PATH_SCAN_CANDIDATES: usize = 201;
 
 /// One entry in the relevance ranking. Carries enough metadata for
 /// the operator-facing CLI render + for the Phase 3c prompt-block
@@ -93,6 +94,8 @@ pub struct RecallReceipt {
     pub ranked_files: Vec<RelevantFile>,
     /// `None` means the caller deliberately skipped the filesystem scan.
     pub stale: Option<bool>,
+    /// More ranked files existed than the caller's output limit.
+    pub truncated: bool,
 }
 
 /// Extract identifiers from `text` using a single combined regex
@@ -333,7 +336,11 @@ where
         return Ok(None);
     };
     after_snapshot();
-    let ranked_files = relevant_files_for_prompt(&tx, prompt, snapshot.root.display(), max_files)?;
+    let candidate_limit = max_files.saturating_add(1);
+    let mut ranked_files =
+        relevant_files_for_prompt(&tx, prompt, snapshot.root.display(), candidate_limit)?;
+    let truncated = ranked_files.len() > max_files;
+    ranked_files.truncate(max_files);
     let stale = match staleness {
         RecallStaleness::Skip => None,
         RecallStaleness::Check => Some(super::persist::is_index_stale(
@@ -347,6 +354,7 @@ where
         snapshot,
         ranked_files,
         stale,
+        truncated,
     }))
 }
 
@@ -1151,6 +1159,36 @@ mod tests {
         assert_eq!(receipt.snapshot.graph_generation, 1);
         assert!(receipt.ranked_files.is_empty());
         assert_eq!(receipt.stale, Some(false));
+        assert!(!receipt.truncated);
+    }
+
+    #[test]
+    fn recall_receipt_discloses_output_truncation() {
+        let repo = tempdir().unwrap();
+        std::fs::create_dir_all(repo.path().join("src")).unwrap();
+        for index in 0..202 {
+            std::fs::write(
+                repo.path().join(format!("src/auth_{index:03}.rs")),
+                format!("fn item_{index}() {{}}\n"),
+            )
+            .unwrap();
+        }
+        let map = crate::code_map::walker::RepoMapBuilder::new(repo.path())
+            .scan()
+            .unwrap();
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("code_map.db")).unwrap();
+        persist_map_and_edges(&mut conn, &map, &[]).unwrap();
+
+        let receipt =
+            recall_receipt_for_prompt(&conn, repo.path(), "auth", 200, RecallStaleness::Skip)
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(receipt.ranked_files.len(), 200);
+        assert_eq!(receipt.ranked_files[0].path, "src/auth_000.rs");
+        assert_eq!(receipt.ranked_files[199].path, "src/auth_199.rs");
+        assert!(receipt.truncated);
     }
 
     #[test]
