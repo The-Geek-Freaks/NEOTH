@@ -15,12 +15,11 @@
 //!   - `impact`          Compute a generation-bound structural blast radius
 //!                       from changed files or exact file::symbol seeds.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::json;
-use sha2::{Digest, Sha256};
 
 use crate::cli::OutputFormat;
 use crate::code_map::RepoMapBuilder;
@@ -135,9 +134,8 @@ pub enum CodeMapAction {
         full: bool,
     },
 
-    /// Phase 3a — find every persisted file that declares a symbol
-    /// matching NAME exactly. Searches across every root the DB has
-    /// snapshots for.
+    /// Phase 3a — find persisted files in the active repository that declare
+    /// a symbol matching NAME exactly.
     Search {
         /// Symbol name to look up.
         #[arg(value_name = "NAME")]
@@ -288,6 +286,7 @@ fn run_scan(
     symbols: bool,
     output: OutputFormat,
 ) -> Result<()> {
+    let jsonl = matches!(&output, OutputFormat::Jsonl);
     let root = path
         .or_else(|| std::env::current_dir().ok())
         .ok_or_else(|| anyhow::anyhow!("cannot resolve scan root: no path given + no cwd"))?;
@@ -310,7 +309,7 @@ fn run_scan(
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             if full {
-                println!("{}", serde_json::to_string_pretty(&map)?);
+                print_json_value(&map, jsonl)?;
             } else {
                 let summary = json!({
                     "root": map.root,
@@ -323,7 +322,7 @@ fn run_scan(
                     "oversize_skipped": map.report.oversize_skipped,
                     "truncated_at": map.report.truncated_at,
                 });
-                println!("{}", serde_json::to_string_pretty(&summary)?);
+                print_json_value(&summary, jsonl)?;
             }
         }
         OutputFormat::Table => {
@@ -395,37 +394,40 @@ fn run_persist(
     _symbols: bool,
     output: OutputFormat,
 ) -> Result<()> {
+    let jsonl = matches!(&output, OutputFormat::Jsonl);
+    if max_files.is_some() || max_file_bytes.is_some() || include_hidden {
+        anyhow::bail!(
+            "custom scan limits/hidden-file policy cannot be published as a consumable code-map snapshot because freshness must replay one canonical policy; use `neoth code-map scan` for bounded exploratory output, then persist without those flags"
+        );
+    }
     let root = path
         .or_else(|| std::env::current_dir().ok())
         .ok_or_else(|| anyhow::anyhow!("cannot resolve persist root: no path given + no cwd"))?;
 
-    let mut builder = RepoMapBuilder::new(&root);
-    if let Some(n) = max_files {
-        builder = builder.max_files(n);
-    }
-    if let Some(n) = max_file_bytes {
-        builder = builder.max_file_bytes(n);
-    }
-    if include_hidden {
-        builder = builder.include_hidden(true);
-    }
-    // A persisted graph without declarations cannot resolve name-only edge
-    // endpoints to concrete `(root,file,symbol,line)` identities. Persisted
-    // snapshots therefore always include symbols; the legacy --symbols flag
-    // remains accepted as a no-op for script compatibility.
-    builder = builder.with_symbols(true);
-    let map = builder.scan()?;
-
     let db_path = crate::code_map::persist::default_path();
-    let mut conn = crate::code_map::persist::open(&db_path)
-        .with_context(|| format!("open code_map db at {}", db_path.display()))?;
-    let (stats, edges_inserted, cycles) =
-        persist_validated_snapshot(&mut conn, &map, |path| std::fs::read(path))?;
+    let root = crate::code_map::CanonicalRepoRoot::discover(&root)?;
+    let rebuilt = crate::code_map::rebuild_snapshot(
+        &root,
+        &db_path,
+        crate::code_map::RebuildOptions {
+            max_files: None,
+            max_file_bytes: None,
+            include_hidden: false,
+            require_complete: true,
+        },
+    )?;
+    let stats = &rebuilt.stats;
+    let edges_inserted = rebuilt.edges_inserted;
+    let cycles = &rebuilt.cycles;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let summary = json!({
-                "root": map.root,
+                "root": rebuilt.root.display(),
+                "root_identity_sha256": rebuilt.root_identity_sha256,
+                "index_generation": rebuilt.index_generation,
+                "graph_generation": rebuilt.graph_generation,
+                "source_fingerprint_sha256": rebuilt.source_fingerprint_sha256,
                 "db_path": db_path.to_string_lossy(),
                 "files_inserted": stats.files_inserted,
                 "files_skipped_unchanged": stats.files_skipped_unchanged,
@@ -435,18 +437,21 @@ fn run_persist(
                 "cycles": cycles,
                 "prior_files_replaced": stats.prior_files_replaced,
                 "scan_report": {
-                    "total_files": map.report.total_files,
-                    "total_bytes": map.report.total_bytes,
-                    "total_loc": map.report.total_loc,
-                    "oversize_skipped": map.report.oversize_skipped,
-                    "truncated_at": map.report.truncated_at,
+                    "total_files": rebuilt.scan_report.total_files,
+                    "total_bytes": rebuilt.scan_report.total_bytes,
+                    "total_loc": rebuilt.scan_report.total_loc,
+                    "oversize_skipped": rebuilt.scan_report.oversize_skipped,
+                    "truncated_at": rebuilt.scan_report.truncated_at,
                 },
             });
-            println!("{}", serde_json::to_string_pretty(&summary)?);
+            print_json_value(&summary, jsonl)?;
         }
         OutputFormat::Table => {
             println!("# code-map persist");
-            println!("  root:                   {}", map.root);
+            println!("  root:                   {}", rebuilt.root.display());
+            println!("  root identity SHA-256:  {}", rebuilt.root_identity_sha256);
+            println!("  index generation:       {}", rebuilt.index_generation);
+            println!("  graph generation:       {}", rebuilt.graph_generation);
             println!("  db:                     {}", db_path.display());
             println!("  files inserted:         {}", stats.files_inserted);
             println!(
@@ -467,82 +472,8 @@ fn run_persist(
     Ok(())
 }
 
-/// Build and publish one index/graph pair from the exact bytes captured by the
-/// scan. `RepoMap` intentionally does not retain source bodies, so every file
-/// is re-read once; its SHA-256 must still match before either generation is
-/// advanced. A read failure or mismatch therefore leaves the prior persisted
-/// snapshot untouched instead of certifying a partial graph as current.
-fn persist_validated_snapshot<F>(
-    conn: &mut rusqlite::Connection,
-    map: &crate::code_map::RepoMap,
-    read_file: F,
-) -> Result<(
-    crate::code_map::persist::PersistStats,
-    usize,
-    Vec<Vec<String>>,
-)>
-where
-    F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
-{
-    let graph = build_graph_from_scan_snapshot(map, read_file)?;
-    let cycles = graph.find_cycles(50);
-    let (stats, edges_inserted) =
-        crate::code_map::persist::persist_map_and_edges(conn, map, graph.edges())
-            .context("atomically persist code-map index and call graph")?;
-    Ok((stats, edges_inserted, cycles))
-}
-
-fn build_graph_from_scan_snapshot<F>(
-    map: &crate::code_map::RepoMap,
-    mut read_file: F,
-) -> Result<crate::code_map::graph::CallGraph>
-where
-    F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
-{
-    use crate::code_map::graph::{CallGraph, FileInput};
-    use crate::code_map::walker::Language;
-
-    let root_dir = Path::new(&map.root);
-    let mut inputs = Vec::with_capacity(map.files.len());
-    for file in &map.files {
-        let absolute = root_dir.join(&file.path);
-        let raw = read_file(&absolute)
-            .with_context(|| format!("re-read scanned code-map file {}", absolute.display()))?;
-        let actual_sha256 = hex::encode(Sha256::digest(&raw));
-        if actual_sha256 != file.sha256 {
-            anyhow::bail!(
-                "code-map file {} changed after the scan (expected SHA-256 {}, got {}); \
-                 no index or graph generation was published",
-                file.path,
-                file.sha256,
-                actual_sha256
-            );
-        }
-        if file.symbols.is_empty() {
-            continue;
-        }
-
-        // The scanner used `from_utf8_lossy` on these exact bytes. Reuse its
-        // declaration set so graph endpoints and persisted symbols cannot
-        // drift through a second extraction pass.
-        let source = String::from_utf8_lossy(&raw).into_owned();
-        let input = match file.language {
-            Language::Python
-            | Language::Ruby
-            | Language::Shell
-            | Language::Toml
-            | Language::Yaml
-            | Language::Dockerfile => {
-                FileInput::hash_family(file.path.clone(), source, file.symbols.clone())
-            }
-            _ => FileInput::c_family(file.path.clone(), source, file.symbols.clone()),
-        };
-        inputs.push(input);
-    }
-    Ok(CallGraph::build(&inputs))
-}
-
 fn run_load(path: Option<PathBuf>, full: bool, output: OutputFormat) -> Result<()> {
+    let jsonl = matches!(&output, OutputFormat::Jsonl);
     let root_path = path
         .or_else(|| std::env::current_dir().ok())
         .ok_or_else(|| anyhow::anyhow!("cannot resolve load root: no path given + no cwd"))?;
@@ -562,7 +493,7 @@ fn run_load(path: Option<PathBuf>, full: bool, output: OutputFormat) -> Result<(
         Some(map) => match output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 if full {
-                    println!("{}", serde_json::to_string_pretty(&map)?);
+                    print_json_value(&map, jsonl)?;
                 } else {
                     let summary = json!({
                         "root": map.root,
@@ -573,7 +504,7 @@ fn run_load(path: Option<PathBuf>, full: bool, output: OutputFormat) -> Result<(
                             .map(|(l, n)| json!({ "language": l, "count": n }))
                             .collect::<Vec<_>>(),
                     });
-                    println!("{}", serde_json::to_string_pretty(&summary)?);
+                    print_json_value(&summary, jsonl)?;
                 }
             }
             OutputFormat::Table => {
@@ -602,14 +533,14 @@ fn run_load(path: Option<PathBuf>, full: bool, output: OutputFormat) -> Result<(
             let msg = format!("no persisted snapshot for root `{root_str}`");
             match output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&json!({
+                    print_json_value(
+                        &json!({
                             "root": root_str,
                             "found": false,
                             "hint": "run `neoth code-map persist` first",
-                        }))?
-                    );
+                        }),
+                        jsonl,
+                    )?;
                 }
                 OutputFormat::Table => {
                     println!("{msg}");
@@ -622,23 +553,52 @@ fn run_load(path: Option<PathBuf>, full: bool, output: OutputFormat) -> Result<(
 }
 
 fn run_search(name: String, output: OutputFormat) -> Result<()> {
+    let jsonl = matches!(&output, OutputFormat::Jsonl);
     let db_path = crate::code_map::persist::default_path();
     let conn = crate::code_map::persist::open(&db_path)
         .with_context(|| format!("open code_map db at {}", db_path.display()))?;
     // Containment before limiting (GOLD-R3-13): results are scoped to the
     // repository the caller is standing in. Without it a large unrelated
     // indexed repo can fill the result set and hide every local match — and
-    // falling back to another persisted root is the cross-repo leak
-    // `resolve_active_root` exists to close.
+    // falling back to another persisted root is the cross-repo leak the
+    // generation-bound resolver exists to close. Resolver failures remain
+    // visible instead of being collapsed into an unindexed-root response.
     let cwd = std::env::current_dir().context("resolve current directory for symbol search")?;
-    let Some(root) = crate::code_map::recall::resolve_active_root(&conn, &cwd) else {
+    let Some(snapshot) = crate::code_map::recall::resolve_active_root_snapshot(&conn, &cwd)? else {
         anyhow::bail!(
             "no indexed repository contains {} — run `neoth code-map persist` from inside \
              the repository you want to search",
             cwd.display()
         );
     };
-    let hits = crate::code_map::persist::search_symbol(&conn, &name, &root)?;
+    anyhow::ensure!(
+        snapshot.index_generation > 0,
+        "active code-map root has no published index generation; run `neoth code-map persist`"
+    );
+    anyhow::ensure!(
+        crate::code_map::persist::root_snapshot_complete(&conn, snapshot.root.display())?,
+        "active code-map root was published from a partial scan; rebuild without custom limits"
+    );
+    let initial_freshness =
+        crate::code_map::persist::index_freshness_receipt(&conn, snapshot.root.display())?;
+    anyhow::ensure!(
+        !initial_freshness.stale,
+        "active code-map snapshot is stale; run `neoth code-map persist`"
+    );
+    let hits = crate::code_map::persist::search_symbol(&conn, &name, snapshot.root.display())?;
+    let final_freshness =
+        crate::code_map::persist::index_freshness_receipt(&conn, snapshot.root.display())?;
+    anyhow::ensure!(
+        !final_freshness.stale
+            && final_freshness.filesystem_fingerprint == initial_freshness.filesystem_fingerprint,
+        "active code-map snapshot changed during symbol search; retry"
+    );
+    let after = crate::code_map::recall::resolve_active_root_snapshot(&conn, snapshot.root.path())?
+        .context("active code-map root disappeared during symbol search")?;
+    anyhow::ensure!(
+        after == snapshot,
+        "active code-map generation changed during symbol search; retry"
+    );
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -653,13 +613,13 @@ fn run_search(name: String, output: OutputFormat) -> Result<()> {
                     })
                 })
                 .collect();
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json!({
+            print_json_value(
+                &json!({
                     "name": name,
                     "hits": arr,
-                }))?
-            );
+                }),
+                jsonl,
+            )?;
         }
         OutputFormat::Table => {
             if hits.is_empty() {
@@ -683,6 +643,7 @@ fn run_relevant(
     check_stale: bool,
     output: OutputFormat,
 ) -> Result<()> {
+    let jsonl = matches!(&output, OutputFormat::Jsonl);
     let db_path = crate::code_map::persist::default_path();
     let conn = crate::code_map::persist::open(&db_path)
         .with_context(|| format!("open code_map db at {}", db_path.display()))?;
@@ -714,7 +675,7 @@ fn run_relevant(
                     max,
                     "requested path is not inside a persisted code-map root",
                 )?;
-                println!("{}", serde_json::to_string_pretty(&envelope)?);
+                print_json_value(&envelope, jsonl)?;
             }
             OutputFormat::Table => {
                 println!(
@@ -730,7 +691,7 @@ fn run_relevant(
         OutputFormat::Json | OutputFormat::Jsonl => {
             let envelope =
                 crate::code_map::recall_wire::RecallWireEnvelope::success(&prompt, max, &receipt)?;
-            println!("{}", serde_json::to_string_pretty(&envelope)?);
+            print_json_value(&envelope, jsonl)?;
         }
         OutputFormat::Table => {
             if receipt.stale == Some(true) {
@@ -742,7 +703,7 @@ fn run_relevant(
             }
             if receipt.truncated {
                 println!(
-                    "⚠ showing the first {max} ranked files; more matches exist in this repository"
+                    "⚠ repository recall hit a bounded work or result limit; the displayed context may be incomplete (requested max {max})"
                 );
             }
             if receipt.ranked_files.is_empty() {
@@ -754,6 +715,15 @@ fn run_relevant(
                 crate::code_map::recall::render_context_block(&receipt.ranked_files)
             );
         }
+    }
+    Ok(())
+}
+
+fn print_json_value<T: serde::Serialize>(value: &T, jsonl: bool) -> Result<()> {
+    if jsonl {
+        println!("{}", serde_json::to_string(value)?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(value)?);
     }
     Ok(())
 }
@@ -1164,69 +1134,6 @@ mod tests {
                 crate::code_map::persist::root_index_generation(&conn, &root).unwrap()
             );
         });
-    }
-
-    #[test]
-    fn changed_reread_preserves_prior_index_and_graph_generations() {
-        let repo = tempdir().unwrap();
-        let source_path = repo.path().join("lib.rs");
-        std::fs::write(&source_path, "pub fn before() {}\n").unwrap();
-        let initial_map = RepoMapBuilder::new(repo.path())
-            .with_symbols(true)
-            .scan()
-            .unwrap();
-        let db = tempdir().unwrap();
-        let mut conn = crate::code_map::persist::open(&db.path().join("code_map.db")).unwrap();
-        persist_validated_snapshot(&mut conn, &initial_map, |path| std::fs::read(path)).unwrap();
-
-        std::fs::write(&source_path, "pub fn candidate() {}\n").unwrap();
-        let map = RepoMapBuilder::new(repo.path())
-            .with_symbols(true)
-            .scan()
-            .unwrap();
-        std::fs::write(&source_path, "pub fn changed_after_scan() {}\n").unwrap();
-        let error =
-            persist_validated_snapshot(&mut conn, &map, |path| std::fs::read(path)).unwrap_err();
-
-        assert!(error.to_string().contains("changed after the scan"));
-        assert_eq!(
-            crate::code_map::persist::root_index_generation(&conn, &map.root).unwrap(),
-            Some(1)
-        );
-        assert_eq!(
-            crate::code_map::persist::root_graph_generation(&conn, &map.root).unwrap(),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn unreadable_reread_publishes_neither_index_nor_graph_generation() {
-        let repo = tempdir().unwrap();
-        std::fs::write(repo.path().join("lib.rs"), "pub fn scanned() {}\n").unwrap();
-        let map = RepoMapBuilder::new(repo.path())
-            .with_symbols(true)
-            .scan()
-            .unwrap();
-
-        let db = tempdir().unwrap();
-        let mut conn = crate::code_map::persist::open(&db.path().join("code_map.db")).unwrap();
-        let error = persist_validated_snapshot(&mut conn, &map, |_| {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "injected unreadable snapshot file",
-            ))
-        })
-        .unwrap_err();
-
-        assert!(format!("{error:#}").contains("injected unreadable snapshot file"));
-        assert_eq!(
-            crate::code_map::persist::root_index_generation(&conn, &map.root).unwrap(),
-            None
-        );
-        assert_eq!(
-            crate::code_map::persist::root_graph_generation(&conn, &map.root).unwrap(),
-            None
-        );
     }
 
     #[test]

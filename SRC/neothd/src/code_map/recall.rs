@@ -40,16 +40,32 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use regex::Regex;
 use rusqlite::{Connection, Transaction};
 
-use super::persist::SymbolHit;
 use super::root_identity::CanonicalRepoRoot;
 
-/// Maximum path-only candidates materialized, including one probe row beyond
-/// the public 200-file output ceiling so a receipt can disclose truncation.
-const MAX_PATH_SCAN_CANDIDATES: usize = 201;
+/// Hard budgets for untrusted prompt processing and candidate materialization.
+/// Candidate queries fetch one extra row as a truncation probe.
+const MAX_PROMPT_BYTES: usize = 64 * 1024;
+const MAX_IDENTIFIER_TERMS: usize = 64;
+const MAX_PATH_KEYWORD_TERMS: usize = 64;
+const MAX_TERM_BYTES: usize = 256;
+const MAX_SYMBOL_CANDIDATES: usize = 200;
+const MAX_PATH_CANDIDATES: usize = 200;
+
+#[derive(Debug)]
+struct TermExtraction {
+    terms: Vec<String>,
+    truncated: bool,
+}
+
+#[derive(Debug)]
+struct RankedCandidates {
+    files: Vec<RelevantFile>,
+    truncated: bool,
+}
 
 /// One entry in the relevance ranking. Carries enough metadata for
 /// the operator-facing CLI render + for the Phase 3c prompt-block
@@ -94,15 +110,15 @@ pub struct RecallReceipt {
     pub ranked_files: Vec<RelevantFile>,
     /// `None` means the caller deliberately skipped the filesystem scan.
     pub stale: Option<bool>,
-    /// More ranked files existed than the caller's output limit.
+    /// The result may be incomplete because an output ceiling or a bounded
+    /// prompt/term/candidate work budget was exhausted.
     pub truncated: bool,
 }
 
 /// Extract identifiers from `text` using a single combined regex
-/// (cached after first compile). Returns a deduplicated, lowercase-
-/// normalised list — `Foo`, `foo`, and `FOO` collapse to one entry
-/// because symbol search is case-sensitive at the SQL layer but the
-/// prompt's casing intent is noisy.
+/// (cached after first compile). Returns a deduplicated, case-preserving list;
+/// case variants stay distinct because persisted symbol lookup is exact and
+/// case-sensitive.
 ///
 /// Patterns:
 ///   - `CamelCase`-style: a leading uppercase letter followed by ≥2
@@ -113,23 +129,44 @@ pub struct RecallReceipt {
 /// Common English stop-words ("the", "is", "of", etc.) cannot match
 /// either pattern by construction — no allowlist needed.
 pub fn extract_identifiers(text: &str) -> Vec<String> {
+    extract_identifiers_bounded(text).terms
+}
+
+fn extract_identifiers_bounded(text: &str) -> TermExtraction {
+    let (text, mut truncated) = bounded_prompt(text);
     let camel = camel_regex();
     let snake = snake_regex();
     let mut out: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for caps in camel.find_iter(text) {
-        let s = caps.as_str();
+    for matched in camel.find_iter(text).chain(snake.find_iter(text)) {
+        let s = matched.as_str();
+        if s.len() > MAX_TERM_BYTES {
+            truncated = true;
+            continue;
+        }
         if seen.insert(s.to_string()) {
+            if out.len() == MAX_IDENTIFIER_TERMS {
+                truncated = true;
+                break;
+            }
             out.push(s.to_string());
         }
     }
-    for caps in snake.find_iter(text) {
-        let s = caps.as_str();
-        if seen.insert(s.to_string()) {
-            out.push(s.to_string());
-        }
+    TermExtraction {
+        terms: out,
+        truncated,
     }
-    out
+}
+
+fn bounded_prompt(text: &str) -> (&str, bool) {
+    if text.len() <= MAX_PROMPT_BYTES {
+        return (text, false);
+    }
+    let mut end = MAX_PROMPT_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&text[..end], true)
 }
 
 fn camel_regex() -> &'static Regex {
@@ -155,22 +192,38 @@ fn snake_regex() -> &'static Regex {
 /// ≥3 chars from the prompt. Used to bias the ranking toward files
 /// whose path contains those tokens. Returns a deduplicated set.
 pub fn extract_path_keywords(text: &str) -> Vec<String> {
+    extract_path_keywords_bounded(text).terms
+}
+
+fn extract_path_keywords_bounded(text: &str) -> TermExtraction {
+    let (text, mut truncated) = bounded_prompt(text);
     static CELL: OnceLock<Regex> = OnceLock::new();
     let re = CELL.get_or_init(|| Regex::new(r"[a-zA-Z][a-zA-Z0-9]{2,}").unwrap());
     let mut out: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for m in re.find_iter(text) {
         let lower = m.as_str().to_ascii_lowercase();
+        if lower.len() > MAX_TERM_BYTES {
+            truncated = true;
+            continue;
+        }
         // Filter out a tiny stop-list — bare English connectives that
         // would otherwise win every path containing the letter "f".
         if STOP_WORDS.contains(&lower.as_str()) {
             continue;
         }
         if seen.insert(lower.clone()) {
+            if out.len() == MAX_PATH_KEYWORD_TERMS {
+                truncated = true;
+                break;
+            }
             out.push(lower);
         }
     }
-    out
+    TermExtraction {
+        terms: out,
+        truncated,
+    }
 }
 
 /// Tiny stop-list. Kept short on purpose — every word here must be
@@ -212,39 +265,43 @@ pub fn relevant_files_for_prompt(
     active_root: &str,
     max_files: usize,
 ) -> Result<Vec<RelevantFile>> {
+    Ok(relevant_files_for_prompt_bounded(conn, prompt, active_root, max_files)?.files)
+}
+
+fn relevant_files_for_prompt_bounded(
+    conn: &Connection,
+    prompt: &str,
+    active_root: &str,
+    max_files: usize,
+) -> Result<RankedCandidates> {
     if max_files == 0 {
-        return Ok(Vec::new());
+        return Ok(RankedCandidates {
+            files: Vec::new(),
+            truncated: false,
+        });
     }
-    let identifiers = extract_identifiers(prompt);
-    let keywords = extract_path_keywords(prompt);
+    let identifiers = extract_identifiers_bounded(prompt);
+    let keywords = extract_path_keywords_bounded(prompt);
+    let mut truncated = identifiers.truncated || keywords.truncated;
+    let identifiers = identifiers.terms;
+    let keywords = keywords.terms;
 
     // Map (root, path) → aggregated metadata. Accumulating into a
     // HashMap keeps the algorithm O(symbol_hits) instead of O(files
     // × symbols).
     let mut by_path: HashMap<(String, String), RelevantFile> = HashMap::new();
 
-    for ident in &identifiers {
-        // search_symbol does a case-sensitive lookup; try the
-        // identifier verbatim. A future enhancement could also try
-        // `ident.to_lowercase()` for snake_case-only databases but
-        // case-sensitive is correct for now.
-        // GOLD-R3-13: containment is now part of the query, so an unrelated
-        // persisted root can never reach aggregation, ranking or truncation —
-        // and cannot consume a row budget the active repo needs.
-        let hits: Vec<SymbolHit> = super::persist::search_symbol(conn, ident, active_root)?;
-        for hit in hits {
-            let key = (hit.root.clone(), hit.path.clone());
-            let entry = by_path.entry(key).or_insert_with(|| RelevantFile {
-                root: hit.root.clone(),
-                path: hit.path.clone(),
-                identifier_hits: 0,
-                matched_symbols: Vec::new(),
-                path_keyword_overlap: 0,
-            });
-            entry.identifier_hits += 1;
-            if !entry.matched_symbols.contains(ident) {
-                entry.matched_symbols.push(ident.clone());
-            }
+    if !identifiers.is_empty() {
+        let symbol_candidates = scan_paths_by_symbols(
+            conn,
+            active_root,
+            &identifiers,
+            &keywords,
+            MAX_SYMBOL_CANDIDATES,
+        )?;
+        truncated |= symbol_candidates.truncated;
+        for hit in symbol_candidates.files {
+            by_path.insert((hit.root.clone(), hit.path.clone()), hit);
         }
     }
 
@@ -261,18 +318,19 @@ pub fn relevant_files_for_prompt(
         // Walk every persisted file with at least one keyword in its
         // path. Bounded by the keyword set, not the DB size — SQL
         // wildcard scan over indexed `path`.
-        let path_hits = scan_paths_by_keywords(conn, active_root, &keywords)?;
-        for (root, path) in path_hits {
-            let key = (root.clone(), path.clone());
+        let path_hits = scan_paths_by_keywords(conn, active_root, &keywords, MAX_PATH_CANDIDATES)?;
+        truncated |= path_hits.truncated;
+        for hit in path_hits.files {
+            let key = (hit.root.clone(), hit.path.clone());
             let entry = by_path.entry(key).or_insert_with(|| RelevantFile {
-                root,
-                path,
+                root: hit.root,
+                path: hit.path,
                 identifier_hits: 0,
                 matched_symbols: Vec::new(),
-                path_keyword_overlap: 0,
+                path_keyword_overlap: hit.path_keyword_overlap,
             });
             if entry.path_keyword_overlap == 0 {
-                entry.path_keyword_overlap = path_keyword_overlap(&entry.path, &keywords);
+                entry.path_keyword_overlap = hit.path_keyword_overlap;
             }
         }
     }
@@ -290,8 +348,14 @@ pub fn relevant_files_for_prompt(
             .then_with(|| a.root.cmp(&b.root))
             .then_with(|| a.path.cmp(&b.path))
     });
-    ranked.truncate(max_files);
-    Ok(ranked)
+    if ranked.len() > max_files {
+        truncated = true;
+        ranked.truncate(max_files);
+    }
+    Ok(RankedCandidates {
+        files: ranked,
+        truncated,
+    })
 }
 
 /// Resolve and rank one recall receipt from a single SQLite read transaction.
@@ -335,19 +399,52 @@ where
             .context("commit empty code-map recall read transaction")?;
         return Ok(None);
     };
-    after_snapshot();
-    let candidate_limit = max_files.saturating_add(1);
-    let mut ranked_files =
-        relevant_files_for_prompt(&tx, prompt, snapshot.root.display(), candidate_limit)?;
-    let truncated = ranked_files.len() > max_files;
-    ranked_files.truncate(max_files);
-    let stale = match staleness {
+    ensure!(
+        snapshot.index_generation > 0
+            && snapshot.graph_generation > 0
+            && snapshot.index_generation == snapshot.graph_generation,
+        "code-map recall requires one complete map/graph generation; run `neoth code-map persist`"
+    );
+    ensure!(
+        super::persist::root_snapshot_complete(&tx, snapshot.root.display())?,
+        "code-map root was published from a partial scan; rebuild without explicit limits before recall"
+    );
+    let initial_freshness = match staleness {
         RecallStaleness::Skip => None,
-        RecallStaleness::Check => Some(super::persist::is_index_stale(
+        RecallStaleness::Check => Some(super::persist::index_freshness_receipt_cached(
             &tx,
             snapshot.root.display(),
+            snapshot.index_generation,
         )?),
     };
+    after_snapshot();
+    let candidate_limit = max_files.saturating_add(1);
+    let candidates =
+        relevant_files_for_prompt_bounded(&tx, prompt, snapshot.root.display(), candidate_limit)?;
+    let mut ranked_files = candidates.files;
+    let truncated = candidates.truncated || ranked_files.len() > max_files;
+    ranked_files.truncate(max_files);
+    let stale = match initial_freshness {
+        None => None,
+        Some(initial) => {
+            let final_freshness = super::persist::index_freshness_receipt_cached(
+                &tx,
+                snapshot.root.display(),
+                snapshot.index_generation,
+            )?;
+            Some(
+                initial.stale
+                    || final_freshness.stale
+                    || initial.filesystem_fingerprint != final_freshness.filesystem_fingerprint,
+            )
+        }
+    };
+    let observed_root = CanonicalRepoRoot::discover(snapshot.root.path())
+        .context("re-verify physical code-map root before completing recall")?;
+    ensure!(
+        observed_root == snapshot.root,
+        "physical code-map root was replaced during recall"
+    );
     tx.commit()
         .context("commit atomic code-map recall read transaction")?;
     Ok(Some(RecallReceipt {
@@ -502,16 +599,110 @@ pub fn sole_persisted_root_snapshot(conn: &Connection) -> Result<Option<RootGene
     Ok(snapshot)
 }
 
-/// SQL helper — find every file whose `path` contains any of the
-/// supplied keywords. Returns `(root, path)` pairs. Skips when the
-/// keyword set is empty.
+/// Root-scoped symbol candidate query. One row per file avoids materializing
+/// every declaration of a common symbol. SQL ordering matches final ranking,
+/// and one probe row makes the safety cap visible to the caller.
+fn scan_paths_by_symbols(
+    conn: &Connection,
+    active_root: &str,
+    identifiers: &[String],
+    keywords: &[String],
+    max_candidates: usize,
+) -> Result<RankedCandidates> {
+    if identifiers.is_empty() || max_candidates == 0 {
+        return Ok(RankedCandidates {
+            files: Vec::new(),
+            truncated: false,
+        });
+    }
+
+    let identifier_params: Vec<String> = (2..identifiers.len() + 2)
+        .map(|index| format!("?{index}"))
+        .collect();
+    let keyword_start = identifiers.len() + 2;
+    let keyword_params: Vec<String> = (keyword_start..keyword_start + keywords.len())
+        .map(|index| format!("?{index}"))
+        .collect();
+    let path_overlap = if keyword_params.is_empty() {
+        "0".to_string()
+    } else {
+        keyword_params
+            .iter()
+            .map(|param| format!("CASE WHEN LOWER(f.path) LIKE {param} THEN 1 ELSE 0 END"))
+            .collect::<Vec<_>>()
+            .join(" + ")
+    };
+    let limit_param = keyword_start + keywords.len();
+    let sql = format!(
+        "SELECT f.root, f.path, COUNT(DISTINCT s.name) AS identifier_hits, \
+                GROUP_CONCAT(DISTINCT s.name) AS matched_symbols, \
+                ({path_overlap}) AS path_overlap \
+         FROM code_map_files f \
+         JOIN code_map_symbols s ON s.file_id = f.id \
+         WHERE f.root = ?1 AND s.name IN ({}) \
+         GROUP BY f.id, f.root, f.path \
+         ORDER BY identifier_hits DESC, path_overlap DESC, f.root ASC, f.path ASC \
+         LIMIT ?{limit_param}",
+        identifier_params.join(", ")
+    );
+
+    let mut params = Vec::with_capacity(identifiers.len() + keywords.len() + 2);
+    params.push(rusqlite::types::Value::from(active_root.to_string()));
+    params.extend(
+        identifiers
+            .iter()
+            .cloned()
+            .map(rusqlite::types::Value::from),
+    );
+    params.extend(
+        keywords
+            .iter()
+            .map(|keyword| rusqlite::types::Value::from(format!("%{keyword}%"))),
+    );
+    params.push(rusqlite::types::Value::from(
+        i64::try_from(max_candidates.saturating_add(1))
+            .context("convert symbol candidate probe limit")?,
+    ));
+
+    let mut stmt = conn
+        .prepare(&sql)
+        .context("prepare bounded root-scoped symbol candidate query")?;
+    let mut files: Vec<RelevantFile> = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            let matched: String = row.get(3)?;
+            let matched: std::collections::HashSet<&str> = matched.split(',').collect();
+            Ok(RelevantFile {
+                root: row.get(0)?,
+                path: row.get(1)?,
+                identifier_hits: row.get(2)?,
+                matched_symbols: identifiers
+                    .iter()
+                    .filter(|identifier| matched.contains(identifier.as_str()))
+                    .cloned()
+                    .collect(),
+                path_keyword_overlap: row.get(4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect bounded root-scoped symbol candidates")?;
+    let truncated = files.len() > max_candidates;
+    files.truncate(max_candidates);
+    Ok(RankedCandidates { files, truncated })
+}
+
+/// SQL helper — find files whose `path` contains any supplied keyword.
+/// Query is root-scoped, rank-aligned, and capped with a probe row.
 fn scan_paths_by_keywords(
     conn: &Connection,
     active_root: &str,
     keywords: &[String],
-) -> Result<Vec<(String, String)>> {
-    if keywords.is_empty() {
-        return Ok(Vec::new());
+    max_candidates: usize,
+) -> Result<RankedCandidates> {
+    if keywords.is_empty() || max_candidates == 0 {
+        return Ok(RankedCandidates {
+            files: Vec::new(),
+            truncated: false,
+        });
     }
     // Build `path LIKE ?1 OR path LIKE ?2 ...` dynamically. Bounded
     // by the keyword count (typically ≤10) so the dynamic SQL stays
@@ -545,14 +736,23 @@ fn scan_paths_by_keywords(
         .collect();
     params.push(rusqlite::types::Value::from(active_root.to_string()));
     params.push(rusqlite::types::Value::from(
-        i64::try_from(MAX_PATH_SCAN_CANDIDATES).context("convert path-scan candidate cap")?,
+        i64::try_from(max_candidates.saturating_add(1))
+            .context("convert path candidate probe limit")?,
     ));
-    let rows: Vec<(String, String)> = stmt
+    let mut files: Vec<RelevantFile> = stmt
         .query_map(rusqlite::params_from_iter(params.iter()), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok(RelevantFile {
+                root: row.get(0)?,
+                path: row.get(1)?,
+                identifier_hits: 0,
+                matched_symbols: Vec::new(),
+                path_keyword_overlap: row.get(2)?,
+            })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+    let truncated = files.len() > max_candidates;
+    files.truncate(max_candidates);
+    Ok(RankedCandidates { files, truncated })
 }
 
 /// Render the ranked list as the system-prompt block Phase 3c will
@@ -632,6 +832,8 @@ pub const ARCHITECTURE_SKILL_ID: &str = "improve_codebase_architecture";
 /// Hard cap on call cycles injected into one architecture prompt. The scan is
 /// local SQLite work, but the rendered result still consumes model context.
 pub const ARCHITECTURE_CYCLE_LIMIT: usize = 20;
+const ARCHITECTURE_EDGE_LIMIT: usize = 250_000;
+const ARCHITECTURE_EDGE_TEXT_BYTE_LIMIT: usize = 32 * 1024 * 1024;
 
 /// One cycle plus the persisted code-map root it came from. Roots stay separate
 /// during detection so equal symbol names in two repositories cannot form a
@@ -684,14 +886,28 @@ pub fn architecture_findings_for_skill(
     let mut cycles: Vec<ArchitectureCycleFinding> = Vec::new();
     let mut truncated = false;
 
-    let edges = super::persist::load_edges(conn, root)?;
+    let (edges, edge_limit_exceeded, _) =
+        super::persist::load_edges_for_root_bounded_with_text_limit(
+            conn,
+            root,
+            ARCHITECTURE_EDGE_LIMIT,
+            ARCHITECTURE_EDGE_TEXT_BYTE_LIMIT,
+        )?;
+    if edge_limit_exceeded {
+        anyhow::bail!(
+            "architecture recall refused more than {ARCHITECTURE_EDGE_LIMIT} edges for one root"
+        );
+    }
     let edges_scanned = edges.len();
     // Ask for one extra cycle so the rendered block can disclose that the
     // context cap hid additional findings rather than pretending complete
     // coverage. `find_cycles` is deterministic over persisted edge order.
     let probe_limit = max_cycles.saturating_add(1);
     let graph = super::graph::CallGraph::from_edges(edges);
-    for symbols in graph.find_cycles(probe_limit) {
+    for symbols in graph
+        .find_cycles(probe_limit)
+        .context("run bounded call-cycle analysis for architecture recall")?
+    {
         if cycles.len() == max_cycles {
             truncated = true;
             break;
@@ -1134,6 +1350,23 @@ mod tests {
     }
 
     #[test]
+    fn recall_receipt_rejects_unpaired_legacy_generation() {
+        let repo = tempdir().unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(repo.path())
+            .scan()
+            .unwrap();
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("code_map.db")).unwrap();
+        persist_map(&mut conn, &map).unwrap();
+
+        let error =
+            recall_receipt_for_prompt(&conn, repo.path(), "anything", 5, RecallStaleness::Skip)
+                .unwrap_err();
+
+        assert!(error.to_string().contains("complete map/graph generation"));
+    }
+
+    #[test]
     fn recall_receipt_binds_generations_and_preserves_empty_hits() {
         let repo = tempdir().unwrap();
         std::fs::create_dir_all(repo.path().join("src")).unwrap();
@@ -1192,6 +1425,169 @@ mod tests {
     }
 
     #[test]
+    fn recall_receipt_discloses_prompt_term_budget_exhaustion() {
+        let repo = tempdir().unwrap();
+        let root = std::fs::canonicalize(repo.path())
+            .unwrap()
+            .display()
+            .to_string();
+        let files: Vec<RepoFile> = (0..80)
+            .map(|index| RepoFile {
+                path: format!("src/item_{index:03}.rs"),
+                language: Language::Rust,
+                bytes: 1,
+                loc: 1,
+                sha256: String::new(),
+                mtime_ns: 0,
+                symbols: vec![Symbol {
+                    name: format!("term_{index:03}"),
+                    kind: SymbolKind::Function,
+                    line: 1,
+                }],
+            })
+            .collect();
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("code_map.db")).unwrap();
+        persist_map_and_edges(
+            &mut conn,
+            &RepoMap {
+                root,
+                files,
+                report: ScanReport::default(),
+            },
+            &[],
+        )
+        .unwrap();
+        let prompt = (0..80)
+            .map(|index| format!("term_{index:03}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let receipt =
+            recall_receipt_for_prompt(&conn, repo.path(), &prompt, 100, RecallStaleness::Skip)
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(receipt.ranked_files.len(), MAX_IDENTIFIER_TERMS);
+        assert_eq!(receipt.ranked_files[0].path, "src/item_000.rs");
+        assert_eq!(receipt.ranked_files[63].path, "src/item_063.rs");
+        assert!(
+            receipt.truncated,
+            "omitted prompt terms must make the receipt incomplete"
+        );
+    }
+
+    #[test]
+    fn common_symbol_candidate_cap_is_deterministic_and_disclosed() {
+        let repo = tempdir().unwrap();
+        let root = std::fs::canonicalize(repo.path())
+            .unwrap()
+            .display()
+            .to_string();
+        let files: Vec<RepoFile> = (0..250)
+            .map(|index| RepoFile {
+                path: format!("src/duplicate_{index:03}.rs"),
+                language: Language::Rust,
+                bytes: 1,
+                loc: 1,
+                sha256: String::new(),
+                mtime_ns: 0,
+                symbols: vec![Symbol {
+                    name: "shared_symbol".into(),
+                    kind: SymbolKind::Function,
+                    line: 1,
+                }],
+            })
+            .collect();
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("code_map.db")).unwrap();
+        persist_map_and_edges(
+            &mut conn,
+            &RepoMap {
+                root,
+                files,
+                report: ScanReport::default(),
+            },
+            &[],
+        )
+        .unwrap();
+
+        let first = recall_receipt_for_prompt(
+            &conn,
+            repo.path(),
+            "shared_symbol",
+            MAX_SYMBOL_CANDIDATES,
+            RecallStaleness::Skip,
+        )
+        .unwrap()
+        .unwrap();
+        let second = recall_receipt_for_prompt(
+            &conn,
+            repo.path(),
+            "shared_symbol",
+            MAX_SYMBOL_CANDIDATES,
+            RecallStaleness::Skip,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(first.ranked_files, second.ranked_files);
+        assert_eq!(first.ranked_files.len(), MAX_SYMBOL_CANDIDATES);
+        assert_eq!(first.ranked_files[0].path, "src/duplicate_000.rs");
+        assert_eq!(first.ranked_files[199].path, "src/duplicate_199.rs");
+        assert!(first.truncated && second.truncated);
+    }
+
+    #[test]
+    fn staleness_check_detects_edit_during_recall_query() {
+        let repo = tempdir().unwrap();
+        let file = repo.path().join("auth.rs");
+        std::fs::write(&file, "fn auth() {}\n").unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(repo.path())
+            .scan()
+            .unwrap();
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("code_map.db")).unwrap();
+        persist_map_and_edges(&mut conn, &map, &[]).unwrap();
+
+        let receipt = recall_receipt_for_prompt_with_hook(
+            &conn,
+            repo.path(),
+            "auth",
+            5,
+            RecallStaleness::Check,
+            || std::fs::write(&file, "fn auth() { changed(); }\n").unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(receipt.stale, Some(true));
+    }
+
+    #[test]
+    fn prompt_byte_budget_is_utf8_safe_and_explicit() {
+        let prompt = format!("KnownSymbol {}TailSymbol", "é".repeat(MAX_PROMPT_BYTES));
+        let extracted = extract_identifiers_bounded(&prompt);
+        assert_eq!(extracted.terms, vec!["KnownSymbol"]);
+        assert!(extracted.truncated);
+    }
+
+    #[test]
+    fn keyword_expression_budget_is_unique_and_explicit() {
+        let prompt = (0..80)
+            .flat_map(|index| [format!("keyword{index:03}"), format!("keyword{index:03}")])
+            .collect::<Vec<_>>()
+            .join(" ");
+        let extracted = extract_path_keywords_bounded(&prompt);
+        let unique: std::collections::HashSet<&str> =
+            extracted.terms.iter().map(String::as_str).collect();
+
+        assert_eq!(extracted.terms.len(), MAX_PATH_KEYWORD_TERMS);
+        assert_eq!(unique.len(), MAX_PATH_KEYWORD_TERMS);
+        assert!(extracted.truncated);
+    }
+
+    #[test]
     fn recall_read_transaction_cannot_mix_writer_generations() {
         let repo = tempdir().unwrap();
         let root = std::fs::canonicalize(repo.path())
@@ -1214,7 +1610,7 @@ mod tests {
             }],
             report: ScanReport::default(),
         };
-        persist_map(&mut setup, &make_map("old/auth.rs")).unwrap();
+        persist_map_and_edges(&mut setup, &make_map("old/auth.rs"), &[]).unwrap();
         let mut writer = open(&path).unwrap();
 
         let receipt = recall_receipt_for_prompt_with_hook(
@@ -1224,7 +1620,7 @@ mod tests {
             5,
             RecallStaleness::Skip,
             || {
-                persist_map(&mut writer, &make_map("new/auth.rs")).unwrap();
+                persist_map_and_edges(&mut writer, &make_map("new/auth.rs"), &[]).unwrap();
             },
         )
         .unwrap()

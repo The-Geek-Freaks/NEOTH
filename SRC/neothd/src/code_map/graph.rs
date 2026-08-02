@@ -20,9 +20,18 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use super::symbols::{Symbol, SymbolKind};
+
+pub const DEFAULT_MAX_GRAPH_EDGES: usize = 250_000;
+pub const DEFAULT_MAX_CYCLE_NODES: usize = 500_000;
+pub const DEFAULT_MAX_CYCLE_NODE_TEXT_BYTES: usize = 32 * 1024 * 1024;
+pub const DEFAULT_MAX_CYCLE_WORK_STEPS: usize = 2_000_000;
+pub const DEFAULT_MAX_CYCLE_WIDTH: usize = 4_096;
+pub const DEFAULT_MAX_CYCLE_MEMBERS: usize = 65_536;
+pub const DEFAULT_MAX_CYCLE_TEXT_BYTES: usize = 4 * 1024 * 1024;
 
 /// One typed edge between two symbols. `from` is the symbol that
 /// contains the reference; `to_name` is the bare identifier the
@@ -150,6 +159,18 @@ impl CallGraph {
     /// target — cross-file calls show up as edges from one file's
     /// symbol scope to another file's defined name.
     pub fn build(files: &[FileInput]) -> Self {
+        Self::build_with_edge_limit(files, None)
+            .expect("unbounded compatibility graph build cannot hit an edge limit")
+    }
+
+    /// Production graph build with a hard allocation/work ceiling. The limit
+    /// is checked before every push, so a dense corpus cannot materialize a
+    /// graph that persistence and recall would later reject anyway.
+    pub(crate) fn build_bounded(files: &[FileInput], max_edges: usize) -> Result<Self> {
+        Self::build_with_edge_limit(files, Some(max_edges))
+    }
+
+    fn build_with_edge_limit(files: &[FileInput], max_edges: Option<usize>) -> Result<Self> {
         let mut graph = Self::default();
         // Index every defined symbol by name first.
         let mut all_names: BTreeSet<String> = BTreeSet::new();
@@ -180,39 +201,47 @@ impl CallGraph {
                 CommentFamily::CFamily => strip_comments_and_strings_c_family(&f.source),
                 CommentFamily::HashFamily => strip_comments_and_strings_hash_family(&f.source),
             };
+            let line_offsets = line_start_offsets(&stripped_source);
+            let line_count = stripped_source.lines().count();
             for (i, s) in symbols_sorted.iter().enumerate() {
                 let start_line = s.line as usize;
                 let end_line = symbols_sorted
                     .get(i + 1)
                     .map(|n| n.line as usize)
-                    .unwrap_or_else(|| stripped_source.lines().count() + 1);
-                let body = file_slice(&stripped_source, start_line, end_line);
-                for name in &all_names {
+                    .unwrap_or(line_count + 1);
+                let body = file_slice(&stripped_source, &line_offsets, start_line, end_line);
+                for name in called_symbol_names(body, &all_names) {
                     // Skip self-edges — a fn that calls itself isn't a
                     // graph traversal anchor v0.1 cares about.
-                    if name == &s.name {
+                    if name == s.name {
                         continue;
                     }
-                    if is_called(&body, name) {
-                        let edge = CodeEdge {
-                            from_file: f.file_path.clone(),
-                            from_symbol: s.name.clone(),
-                            to_name: name.clone(),
-                            kind: EdgeKind::Calls,
-                        };
-                        let idx = graph.edges.len();
-                        graph.edges.push(edge);
-                        graph.by_callee.entry(name.clone()).or_default().push(idx);
-                        graph
-                            .by_source
-                            .entry((f.file_path.clone(), s.name.clone()))
-                            .or_default()
-                            .push(idx);
+                    if let Some(limit) = max_edges
+                        && graph.edges.len() >= limit
+                    {
+                        bail!(
+                            "native call graph exceeds bounded {}-edge work budget",
+                            limit
+                        );
                     }
+                    let edge = CodeEdge {
+                        from_file: f.file_path.clone(),
+                        from_symbol: s.name.clone(),
+                        to_name: name.clone(),
+                        kind: EdgeKind::Calls,
+                    };
+                    let idx = graph.edges.len();
+                    graph.edges.push(edge);
+                    graph.by_callee.entry(name).or_default().push(idx);
+                    graph
+                        .by_source
+                        .entry((f.file_path.clone(), s.name.clone()))
+                        .or_default()
+                        .push(idx);
                 }
             }
         }
-        graph
+        Ok(graph)
     }
 
     /// Reconstruct a graph directly from persisted [`CodeEdge`]s (the
@@ -304,36 +333,81 @@ impl CallGraph {
         out
     }
 
-    /// Detect cycles in the call graph using iterative DFS with
-    /// grey/black node colouring. Returns up to `limit` distinct
-    /// cycles, each represented as an ordered list of symbol names.
+    /// Detect cycles in the call graph using bounded iterative DFS with
+    /// grey/black node colouring. Returns up to `limit` distinct cycles,
+    /// each represented as an ordered list of symbol names.
     ///
     /// Each cycle is normalised by rotating it so its
     /// lexicographically-smallest member is first, then the full
     /// collection is deduplicated (same cycle reached from different
     /// entry-points appears only once). Self-edges are excluded by
     /// `CallGraph::build`, so all returned cycles have length ≥ 2.
-    pub fn find_cycles(&self, limit: usize) -> Vec<Vec<String>> {
+    pub fn find_cycles(&self, limit: usize) -> Result<Vec<Vec<String>>> {
+        self.find_cycles_bounded(
+            limit,
+            DEFAULT_MAX_CYCLE_NODES,
+            DEFAULT_MAX_CYCLE_NODE_TEXT_BYTES,
+            DEFAULT_MAX_CYCLE_WORK_STEPS,
+            DEFAULT_MAX_CYCLE_WIDTH,
+            DEFAULT_MAX_CYCLE_MEMBERS,
+            DEFAULT_MAX_CYCLE_TEXT_BYTES,
+        )
+    }
+
+    /// Resource-bounded cycle scan. Exceeding a traversal or materialization
+    /// budget is an explicit error so snapshot publication and architecture
+    /// recall never present a partial cycle analysis as complete.
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_cycles_bounded(
+        &self,
+        limit: usize,
+        max_nodes: usize,
+        max_node_text_bytes: usize,
+        max_work_steps: usize,
+        max_cycle_width: usize,
+        max_cycle_members: usize,
+        max_cycle_text_bytes: usize,
+    ) -> Result<Vec<Vec<String>>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        if self.edges.len() > max_work_steps {
+            bail!(
+                "call-cycle analysis refused {} edges above its {max_work_steps}-step work budget",
+                self.edges.len()
+            );
+        }
+
         // Build a name-level forward-adjacency map from the raw edges.
         // A symbol may be defined in multiple files; we merge all
         // outgoing edges by name so the cycle scan is file-agnostic.
         let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+        let mut names: BTreeSet<String> = BTreeSet::new();
+        let mut node_text_bytes = 0_usize;
         for edge in &self.edges {
             adj.entry(edge.from_symbol.clone())
                 .or_default()
                 .push(edge.to_name.clone());
+            for name in [&edge.from_symbol, &edge.to_name] {
+                if names.insert(name.clone()) {
+                    if names.len() > max_nodes {
+                        bail!("call-cycle analysis refused more than {max_nodes} distinct nodes");
+                    }
+                    node_text_bytes = node_text_bytes
+                        .checked_add(name.len())
+                        .ok_or_else(|| anyhow::anyhow!("call-cycle node text size overflow"))?;
+                    if node_text_bytes > max_node_text_bytes {
+                        bail!(
+                            "call-cycle analysis refused more than {max_node_text_bytes} bytes of distinct node text"
+                        );
+                    }
+                }
+            }
         }
         // Ensure every node that only appears as a callee is also
         // present as a key (with an empty adjacency list) so the DFS
         // visits it.
-        let all_nodes: Vec<String> = {
-            let mut names: std::collections::BTreeSet<String> = BTreeSet::new();
-            for edge in &self.edges {
-                names.insert(edge.from_symbol.clone());
-                names.insert(edge.to_name.clone());
-            }
-            names.into_iter().collect()
-        };
+        let all_nodes: Vec<String> = names.into_iter().collect();
 
         // Colouring: 0 = white (unseen), 1 = grey (on stack), 2 = black (done).
         let mut colour: HashMap<String, u8> = HashMap::new();
@@ -341,13 +415,28 @@ impl CallGraph {
         // We store the adjacency list locally so we can index it by position
         // without borrowing `adj` through the stack.
         let mut path: Vec<String> = Vec::new();
-        let mut found: std::collections::BTreeSet<Vec<String>> = std::collections::BTreeSet::new();
+        let mut path_positions: HashMap<String, usize> = HashMap::new();
+        let mut found: BTreeSet<Vec<String>> = BTreeSet::new();
         let mut result: Vec<Vec<String>> = Vec::new();
+        let mut work_steps = 0_usize;
+        let mut cycle_members_examined = 0_usize;
+        let mut cycle_text_examined = 0_usize;
+
+        let bump_work = |work_steps: &mut usize| -> Result<()> {
+            *work_steps = work_steps
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("call-cycle work counter overflow"))?;
+            if *work_steps > max_work_steps {
+                bail!("call-cycle analysis exceeded its {max_work_steps}-step work budget");
+            }
+            Ok(())
+        };
 
         for start in &all_nodes {
             if result.len() >= limit {
                 break;
             }
+            bump_work(&mut work_steps)?;
             if colour.get(start.as_str()).copied().unwrap_or(0) == 2 {
                 continue;
             }
@@ -356,9 +445,11 @@ impl CallGraph {
             let mut stack: Vec<(String, usize)> = Vec::new();
             stack.push((start.clone(), 0));
             colour.insert(start.clone(), 1);
+            path_positions.insert(start.clone(), path.len());
             path.push(start.clone());
 
             while let Some((node, child_idx)) = stack.last_mut() {
+                bump_work(&mut work_steps)?;
                 let node_name = node.clone();
                 let neighbours = adj.get(&node_name).map(|v| v.as_slice()).unwrap_or(&[]);
                 if *child_idx < neighbours.len() {
@@ -367,19 +458,54 @@ impl CallGraph {
                     let next_colour = colour.get(&next).copied().unwrap_or(0);
                     if next_colour == 1 {
                         // Back-edge: `next` is on the current path → cycle found.
-                        // Extract the cycle from `path` starting at `next`.
-                        if let Some(cycle_start) = path.iter().position(|n| n == &next) {
-                            let raw: Vec<String> = path[cycle_start..].to_vec();
-                            let normalised = rotate_to_min(raw);
-                            if found.insert(normalised.clone()) {
-                                result.push(normalised);
-                                if result.len() >= limit {
-                                    break;
-                                }
+                        // `path_positions` makes extraction O(cycle width), not
+                        // O(full DFS path) for every back-edge.
+                        let cycle_start = *path_positions.get(&next).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "call-cycle traversal lost grey-node path position for {next:?}"
+                            )
+                        })?;
+                        let cycle_width = path.len().saturating_sub(cycle_start);
+                        if cycle_width > max_cycle_width {
+                            bail!(
+                                "call-cycle analysis refused cycle width {cycle_width} above {max_cycle_width}"
+                            );
+                        }
+                        cycle_members_examined = cycle_members_examined
+                            .checked_add(cycle_width)
+                            .ok_or_else(|| anyhow::anyhow!("call-cycle member counter overflow"))?;
+                        if cycle_members_examined > max_cycle_members {
+                            bail!(
+                                "call-cycle analysis exceeded {max_cycle_members} examined cycle members"
+                            );
+                        }
+                        let cycle_text =
+                            path[cycle_start..]
+                                .iter()
+                                .try_fold(0_usize, |total, name| {
+                                    total.checked_add(name.len()).ok_or_else(|| {
+                                        anyhow::anyhow!("call-cycle text counter overflow")
+                                    })
+                                })?;
+                        cycle_text_examined = cycle_text_examined
+                            .checked_add(cycle_text)
+                            .ok_or_else(|| anyhow::anyhow!("call-cycle text counter overflow"))?;
+                        if cycle_text_examined > max_cycle_text_bytes {
+                            bail!(
+                                "call-cycle analysis exceeded {max_cycle_text_bytes} bytes of examined cycle text"
+                            );
+                        }
+                        let raw: Vec<String> = path[cycle_start..].to_vec();
+                        let normalised = rotate_to_min(raw);
+                        if found.insert(normalised.clone()) {
+                            result.push(normalised);
+                            if result.len() >= limit {
+                                break;
                             }
                         }
                     } else if next_colour == 0 {
                         colour.insert(next.clone(), 1);
+                        path_positions.insert(next.clone(), path.len());
                         path.push(next.clone());
                         stack.push((next, 0));
                     }
@@ -389,10 +515,11 @@ impl CallGraph {
                     colour.insert(node_name.clone(), 2);
                     stack.pop();
                     path.pop();
+                    path_positions.remove(&node_name);
                 }
             }
         }
-        result
+        Ok(result)
     }
 
     /// BFS forward: every symbol name that the scope (file_path,
@@ -468,14 +595,37 @@ fn rotate_to_min(cycle: Vec<String>) -> Vec<String> {
     out
 }
 
-/// Extract the line-range from `src` that covers `[start_line .. end_line)`
-/// (1-indexed). Tolerant of out-of-range indices.
-fn file_slice(src: &str, start_line: usize, end_line: usize) -> String {
-    src.lines()
-        .skip(start_line.saturating_sub(1))
-        .take(end_line.saturating_sub(start_line))
-        .collect::<Vec<_>>()
-        .join("\n")
+/// Byte offsets for each physical line start. Built once per source so slicing
+/// N symbol bodies remains O(source bytes + N), not O(N × source lines).
+fn line_start_offsets(src: &str) -> Vec<usize> {
+    let mut offsets = Vec::with_capacity(src.lines().count().saturating_add(1));
+    offsets.push(0);
+    for (index, byte) in src.bytes().enumerate() {
+        if byte == b'\n' && index + 1 < src.len() {
+            offsets.push(index + 1);
+        }
+    }
+    offsets
+}
+
+/// Extract `[start_line .. end_line)` using precomputed 1-indexed line starts.
+/// Out-of-range declarations yield an empty or tail slice without panicking.
+fn file_slice<'a>(
+    src: &'a str,
+    line_offsets: &[usize],
+    start_line: usize,
+    end_line: usize,
+) -> &'a str {
+    let start = line_offsets
+        .get(start_line.saturating_sub(1))
+        .copied()
+        .unwrap_or(src.len());
+    let end = line_offsets
+        .get(end_line.saturating_sub(1))
+        .copied()
+        .unwrap_or(src.len())
+        .max(start);
+    src.get(start..end).unwrap_or("")
 }
 
 /// QM-2 Phase 2: strip comments + string literals from `src` so the
@@ -661,30 +811,45 @@ pub fn strip_comments_and_strings_hash_family(src: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| src.to_string())
 }
 
-/// True when `body` contains `<name>(` as a callsite. Word-boundary
-/// is approximated by requiring the previous char (when present)
-/// to be a non-identifier char (so `foo_bar(` is matched but
-/// `myfoo(` is not when looking for `foo`).
+/// Extract defined identifiers immediately followed by `(`. One linear scan
+/// replaces the former symbols × bodies nested loop while retaining its exact
+/// ASCII identifier-boundary and deterministic-order semantics.
+fn called_symbol_names(body: &str, defined: &BTreeSet<String>) -> BTreeSet<String> {
+    let bytes = body.as_bytes();
+    let mut calls = BTreeSet::new();
+    for (open, byte) in bytes.iter().enumerate() {
+        if *byte != b'(' {
+            continue;
+        }
+        let mut start = open;
+        while start > 0 {
+            let previous = bytes[start - 1];
+            if previous.is_ascii_alphanumeric() || previous == b'_' {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+        if start == open {
+            continue;
+        }
+        let Some(name) = body.get(start..open) else {
+            continue;
+        };
+        if defined.contains(name) {
+            calls.insert(name.to_owned());
+        }
+    }
+    calls
+}
+
+/// Test adapter for the historical single-name boundary contract.
+#[cfg(test)]
 fn is_called(body: &str, name: &str) -> bool {
     if name.is_empty() {
         return false;
     }
-    let needle = format!("{name}(");
-    let mut pos = 0;
-    while let Some(idx) = body[pos..].find(&needle) {
-        let abs = pos + idx;
-        if abs == 0
-            || !body
-                .as_bytes()
-                .get(abs - 1)
-                .map(|b| b.is_ascii_alphanumeric() || *b == b'_')
-                .unwrap_or(false)
-        {
-            return true;
-        }
-        pos = abs + 1;
-    }
-    false
+    called_symbol_names(body, &BTreeSet::from([name.to_owned()])).contains(name)
 }
 
 #[cfg(test)]
@@ -998,6 +1163,24 @@ def caller():
     }
 
     #[test]
+    fn precomputed_line_offsets_slice_symbol_bodies_exactly() {
+        let source = "fn a() { b(); }\nfn b() { c(); }\nfn c() {}\n";
+        let offsets = line_start_offsets(source);
+
+        assert_eq!(file_slice(source, &offsets, 1, 2), "fn a() { b(); }\n");
+        assert_eq!(file_slice(source, &offsets, 2, 3), "fn b() { c(); }\n");
+        assert_eq!(file_slice(source, &offsets, 3, 4), "fn c() {}\n");
+    }
+
+    #[test]
+    fn bounded_graph_build_refuses_before_allocating_past_edge_cap() {
+        let source = "fn a() { b(); c(); }\nfn b() {}\nfn c() {}\n";
+        let error = CallGraph::build_bounded(&[rust_file("lib.rs", source)], 1).unwrap_err();
+
+        assert!(error.to_string().contains("bounded 1-edge work budget"));
+    }
+
+    #[test]
     fn callers_of_max_depth_zero_returns_empty() {
         let src = "fn x() {} fn y() { x(); }\n";
         let g = CallGraph::build(&[rust_file("a.rs", src)]);
@@ -1025,7 +1208,7 @@ fn d() { e(); }
 fn e() {}
 "#;
         let g = CallGraph::build(&[rust_file("three_cycle.rs", src)]);
-        let cycles = g.find_cycles(10);
+        let cycles = g.find_cycles(10).unwrap();
 
         // Exactly one cycle must be found.
         assert_eq!(cycles.len(), 1, "expected exactly 1 cycle, got: {cycles:?}");
@@ -1046,6 +1229,71 @@ fn e() {}
         assert!(
             cycles.iter().all(|c| !c.contains(&"e".to_string())),
             "acyclic node e must not appear in any cycle"
+        );
+    }
+
+    #[test]
+    fn bounded_cycle_scan_refuses_oversized_cycle_instead_of_partial_success() {
+        let graph = CallGraph::from_edges(vec![
+            CodeEdge {
+                from_file: "cycle.rs".into(),
+                from_symbol: "a".into(),
+                to_name: "b".into(),
+                kind: EdgeKind::Calls,
+            },
+            CodeEdge {
+                from_file: "cycle.rs".into(),
+                from_symbol: "b".into(),
+                to_name: "c".into(),
+                kind: EdgeKind::Calls,
+            },
+            CodeEdge {
+                from_file: "cycle.rs".into(),
+                from_symbol: "c".into(),
+                to_name: "a".into(),
+                kind: EdgeKind::Calls,
+            },
+        ]);
+
+        let error = graph
+            .find_cycles_bounded(10, 10, 1_024, 100, 2, 100, 1_024)
+            .unwrap_err();
+        assert!(error.to_string().contains("cycle width 3 above 2"));
+    }
+
+    #[test]
+    fn bounded_cycle_scan_refuses_node_and_work_budget_overflow() {
+        let graph = CallGraph::from_edges(vec![
+            CodeEdge {
+                from_file: "graph.rs".into(),
+                from_symbol: "a".into(),
+                to_name: "b".into(),
+                kind: EdgeKind::Calls,
+            },
+            CodeEdge {
+                from_file: "graph.rs".into(),
+                from_symbol: "c".into(),
+                to_name: "d".into(),
+                kind: EdgeKind::Calls,
+            },
+        ]);
+
+        let node_error = graph
+            .find_cycles_bounded(10, 3, 1_024, 100, 10, 100, 1_024)
+            .unwrap_err();
+        assert!(
+            node_error
+                .to_string()
+                .contains("more than 3 distinct nodes")
+        );
+
+        let work_error = graph
+            .find_cycles_bounded(10, 10, 1_024, 1, 10, 100, 1_024)
+            .unwrap_err();
+        assert!(
+            work_error
+                .to_string()
+                .contains("above its 1-step work budget")
         );
     }
 
@@ -1078,7 +1326,7 @@ fn c() { d(); }
 fn d() {}
 "#;
         let g = CallGraph::build(&[rust_file("cycle_test.rs", src)]);
-        let cycles = g.find_cycles(10);
+        let cycles = g.find_cycles(10).unwrap();
 
         // Exactly one cycle must be found.
         assert_eq!(cycles.len(), 1, "expected exactly 1 cycle, got: {cycles:?}");

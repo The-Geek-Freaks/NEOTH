@@ -135,8 +135,11 @@ impl RecallWireEnvelope {
                 if receipt.root.trim().is_empty() || receipt.root_identity.trim().is_empty() {
                     bail!("recall receipt has an invalid root identity");
                 }
-                if receipt.index_generation < 0 || receipt.graph_generation < 0 {
-                    bail!("recall receipt has a negative generation");
+                if receipt.index_generation <= 0 || receipt.graph_generation <= 0 {
+                    bail!("recall receipt requires positive index and graph generations");
+                }
+                if receipt.index_generation != receipt.graph_generation {
+                    bail!("recall receipt mixes different index and graph generations");
                 }
                 for hit in &receipt.hits {
                     if hit.root != receipt.root || hit.path.trim().is_empty() {
@@ -178,5 +181,24 @@ mod tests {
 
         let mismatched = r#"{"schema":"neoth.code_map.recall.v1","status":"ok","prompt":"q","max":5,"receipt":null}"#;
         assert!(RecallWireEnvelope::parse_json(mismatched).is_err());
+    }
+
+    #[test]
+    fn parser_rejects_zero_or_mixed_snapshot_generations() {
+        let zero = r#"{"schema":"neoth.code_map.recall.v1","status":"ok","prompt":"q","max":5,"receipt":{"root":"/repo","root_identity":"id","index_generation":1,"graph_generation":0,"stale":false,"truncated":false,"hits":[]}}"#;
+        assert!(
+            RecallWireEnvelope::parse_json(zero)
+                .unwrap_err()
+                .to_string()
+                .contains("requires positive index and graph generations")
+        );
+
+        let mixed = r#"{"schema":"neoth.code_map.recall.v1","status":"ok","prompt":"q","max":5,"receipt":{"root":"/repo","root_identity":"id","index_generation":2,"graph_generation":1,"stale":false,"truncated":false,"hits":[]}}"#;
+        assert!(
+            RecallWireEnvelope::parse_json(mixed)
+                .unwrap_err()
+                .to_string()
+                .contains("mixes different index and graph generations")
+        );
     }
 }

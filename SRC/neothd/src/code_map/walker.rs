@@ -19,6 +19,7 @@
 
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
+use std::{fs::File, io::Read};
 
 use anyhow::{Context, Result};
 use ignore::WalkBuilder;
@@ -200,7 +201,8 @@ pub struct ScanReport {
     pub by_language: Vec<(Language, u64)>,
     /// Files skipped because they exceeded `max_file_bytes`.
     pub oversize_skipped: u64,
-    /// Files skipped because the scan hit `max_files`.
+    /// Number of regular entries visited when the scan hit any aggregate work
+    /// ceiling (`max_files`, total source bytes, symbols, or metadata text).
     pub truncated_at: Option<u64>,
 }
 
@@ -223,14 +225,26 @@ pub const DEFAULT_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 /// 1M+ files would otherwise blow operator memory. Above this, scan
 /// truncates + sets `report.truncated_at`.
 pub const DEFAULT_MAX_FILES: u64 = 50_000;
+/// Aggregate bytes read by one scan. Files are processed sequentially, but a
+/// finite corpus budget prevents a valid-looking 50k × 2MiB tree from turning
+/// one persistence command into an unbounded CPU/I/O job.
+pub const DEFAULT_MAX_TOTAL_BYTES: u64 = 1024 * 1024 * 1024;
+/// Maximum declarations retained in one in-memory map before persistence.
+pub const DEFAULT_MAX_SYMBOLS: usize = 250_000;
+/// Maximum path/hash/declaration text retained in one in-memory map.
+pub const DEFAULT_MAX_METADATA_TEXT_BYTES: usize = 32 * 1024 * 1024;
 
 /// Build pipeline for a `RepoMap`. Bounded by file count + byte size.
 pub struct RepoMapBuilder {
     root: PathBuf,
     max_file_bytes: u64,
     max_files: u64,
+    max_total_bytes: u64,
+    max_symbols: usize,
+    max_metadata_text_bytes: usize,
     include_hidden: bool,
     with_symbols: bool,
+    strict_errors: bool,
 }
 
 impl RepoMapBuilder {
@@ -239,8 +253,12 @@ impl RepoMapBuilder {
             root: root.into(),
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_files: DEFAULT_MAX_FILES,
+            max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
+            max_symbols: DEFAULT_MAX_SYMBOLS,
+            max_metadata_text_bytes: DEFAULT_MAX_METADATA_TEXT_BYTES,
             include_hidden: false,
             with_symbols: false,
+            strict_errors: false,
         }
     }
 
@@ -254,6 +272,25 @@ impl RepoMapBuilder {
     /// Override the total-file cap. Default [`DEFAULT_MAX_FILES`].
     pub fn max_files(mut self, n: u64) -> Self {
         self.max_files = n;
+        self
+    }
+
+    /// Override the aggregate source-byte work cap. Primarily useful for
+    /// bounded diagnostics and regression tests.
+    pub fn max_total_bytes(mut self, n: u64) -> Self {
+        self.max_total_bytes = n;
+        self
+    }
+
+    /// Override the aggregate retained declaration cap.
+    pub fn max_symbols(mut self, n: usize) -> Self {
+        self.max_symbols = n;
+        self
+    }
+
+    /// Override the aggregate retained path/hash/declaration text cap.
+    pub fn max_metadata_text_bytes(mut self, n: usize) -> Self {
+        self.max_metadata_text_bytes = n;
         self
     }
 
@@ -275,6 +312,15 @@ impl RepoMapBuilder {
         self
     }
 
+    /// Fail the scan when the walker cannot enumerate, stat, or read a file.
+    /// Completion-producing snapshots enable this so an I/O omission cannot be
+    /// certified as a complete repository map. Interactive partial scans keep
+    /// the historical best-effort behaviour unless they opt in.
+    pub fn strict_errors(mut self, strict: bool) -> Self {
+        self.strict_errors = strict;
+        self
+    }
+
     /// Run the scan. Synchronous + sequential — fast enough for
     /// repos up to ~50k files. Phase 2 may switch to parallel walking
     /// via `ignore::WalkBuilder::threads(N)`.
@@ -290,7 +336,10 @@ impl RepoMapBuilder {
         let mut report = ScanReport::default();
         let mut by_lang: std::collections::HashMap<Language, u64> =
             std::collections::HashMap::new();
-        let mut counted: u64 = 0;
+        let mut visited_files: u64 = 0;
+        let mut scanned_source_bytes: u64 = 0;
+        let mut retained_symbols: usize = 0;
+        let mut retained_metadata_text_bytes: usize = root_str.len();
 
         let mut builder = WalkBuilder::new(&root_canonical);
         builder
@@ -302,35 +351,81 @@ impl RepoMapBuilder {
             .add_custom_ignore_filename(".neothignore")
             .follow_links(false);
 
+        let generated_root = root_canonical.clone();
+        builder.filter_entry(move |entry| {
+            entry
+                .path()
+                .strip_prefix(&generated_root)
+                .ok()
+                .and_then(|relative| relative.components().next())
+                .is_none_or(|component| component.as_os_str() != "graphify-out")
+        });
         for entry in builder.build() {
             let entry = match entry {
                 Ok(e) => e,
-                Err(_) => continue, // permission errors etc. — skip silently
+                Err(error) if self.strict_errors => {
+                    return Err(anyhow::anyhow!(error))
+                        .context("walk repository for complete code-map snapshot");
+                }
+                Err(_) => continue,
             };
             if !entry.file_type().is_some_and(|t| t.is_file()) {
                 continue;
             }
-            if counted >= self.max_files {
-                report.truncated_at = Some(counted);
+            if visited_files >= self.max_files {
+                report.truncated_at = Some(visited_files);
                 break;
             }
+            // The work bound applies to every regular entry, including files
+            // later rejected as oversized. Otherwise a tree containing only
+            // oversized files can bypass `max_files` and force an unbounded
+            // stat/read walk.
+            visited_files += 1;
             let path = entry.path();
             let meta = match path.metadata() {
                 Ok(m) => m,
+                Err(error) if self.strict_errors => {
+                    return Err(error).with_context(|| {
+                        format!("read metadata for code-map file {}", path.display())
+                    });
+                }
                 Err(_) => continue,
             };
-            let bytes = meta.len();
-            if bytes > self.max_file_bytes {
+            if meta.len() > self.max_file_bytes {
                 report.oversize_skipped += 1;
                 continue;
             }
 
-            // Single read — used for LOC, hash, and (if with_symbols) symbol
-            // extraction. Avoids double I/O when both are enabled.
-            let raw = match std::fs::read(path) {
-                Ok(b) => b,
+            // Single bounded read — used for LOC, hash, and (if with_symbols)
+            // symbol extraction. The actual byte count is authoritative: a
+            // file may grow after metadata or report a synthetic length.
+            let raw = match read_file_bounded(path, self.max_file_bytes) {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => {
+                    report.oversize_skipped += 1;
+                    continue;
+                }
+                Err(error) if self.strict_errors => {
+                    return Err(error)
+                        .with_context(|| format!("read code-map file {}", path.display()));
+                }
                 Err(_) => continue,
             };
+            let bytes = raw.len() as u64;
+            let next_source_bytes = scanned_source_bytes
+                .checked_add(bytes)
+                .context("code-map aggregate source-byte count overflow")?;
+            if next_source_bytes > self.max_total_bytes {
+                if self.strict_errors {
+                    anyhow::bail!(
+                        "code-map scan exceeds aggregate {}-byte source budget; refusing a partial completion snapshot",
+                        self.max_total_bytes
+                    );
+                }
+                report.truncated_at = Some(visited_files);
+                break;
+            }
+            scanned_source_bytes = next_source_bytes;
             let loc = count_lines_from_bytes(&raw);
 
             // mtime_ns: nanoseconds since UNIX epoch. Fallback 0 on error
@@ -370,6 +465,35 @@ impl RepoMapBuilder {
                 Vec::new()
             };
 
+            let next_symbol_count = retained_symbols
+                .checked_add(symbols.len())
+                .context("code-map aggregate symbol count overflow")?;
+            let mut next_metadata_text_bytes = retained_metadata_text_bytes
+                .checked_add(rel.len())
+                .and_then(|bytes| bytes.checked_add(sha256.len()))
+                .context("code-map aggregate metadata text-byte count overflow")?;
+            for symbol in &symbols {
+                next_metadata_text_bytes = next_metadata_text_bytes
+                    .checked_add(symbol.name.len())
+                    .and_then(|bytes| bytes.checked_add(symbol.kind.label().len()))
+                    .context("code-map aggregate declaration text-byte count overflow")?;
+            }
+            if next_symbol_count > self.max_symbols
+                || next_metadata_text_bytes > self.max_metadata_text_bytes
+            {
+                if self.strict_errors {
+                    anyhow::bail!(
+                        "code-map scan exceeds retained metadata budget (symbols {next_symbol_count}/{}, text bytes {next_metadata_text_bytes}/{}); refusing a partial completion snapshot",
+                        self.max_symbols,
+                        self.max_metadata_text_bytes
+                    );
+                }
+                report.truncated_at = Some(visited_files);
+                break;
+            }
+            retained_symbols = next_symbol_count;
+            retained_metadata_text_bytes = next_metadata_text_bytes;
+
             files.push(RepoFile {
                 path: rel,
                 language,
@@ -383,7 +507,6 @@ impl RepoMapBuilder {
             report.total_bytes += bytes;
             report.total_loc += loc;
             *by_lang.entry(language).or_insert(0) += 1;
-            counted += 1;
         }
 
         let mut by_language: Vec<_> = by_lang.into_iter().collect();
@@ -395,6 +518,21 @@ impl RepoMapBuilder {
             files,
             report,
         })
+    }
+}
+
+pub(crate) fn read_file_bounded(
+    path: &Path,
+    max_file_bytes: u64,
+) -> std::io::Result<Option<Vec<u8>>> {
+    let file = File::open(path)?;
+    let mut raw = Vec::new();
+    file.take(max_file_bytes.saturating_add(1))
+        .read_to_end(&mut raw)?;
+    if raw.len() as u64 > max_file_bytes {
+        Ok(None)
+    } else {
+        Ok(Some(raw))
     }
 }
 
@@ -584,6 +722,40 @@ mod tests {
     }
 
     #[test]
+    fn strict_scan_refuses_aggregate_source_budget_before_completion() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(dir.path().join("b.rs"), "fn b() {}\n").unwrap();
+
+        let error = RepoMapBuilder::new(dir.path())
+            .max_total_bytes(12)
+            .strict_errors(true)
+            .scan()
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("aggregate 12-byte source budget")
+        );
+    }
+
+    #[test]
+    fn strict_scan_refuses_aggregate_symbol_budget_before_completion() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("lib.rs"), "fn a() {}\nfn b() {}\n").unwrap();
+
+        let error = RepoMapBuilder::new(dir.path())
+            .with_symbols(true)
+            .max_symbols(1)
+            .strict_errors(true)
+            .scan()
+            .unwrap_err();
+
+        assert!(error.to_string().contains("symbols 2/1"));
+    }
+
+    #[test]
     fn scan_marks_oversize_files() {
         let dir = tempdir().unwrap();
         let big = vec![b'x'; 1024 * 1024];
@@ -596,6 +768,42 @@ mod tests {
         assert_eq!(map.report.oversize_skipped, 1);
         // small.txt still landed.
         assert!(map.files.iter().any(|f| f.path == "small.txt"));
+    }
+
+    #[test]
+    fn bounded_reader_rejects_file_that_grows_after_metadata() {
+        use std::io::Write as _;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("growing.txt");
+        std::fs::write(&path, "x").unwrap();
+        let before = std::fs::metadata(&path).unwrap();
+        assert_eq!(before.len(), 1);
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        file.write_all(&[b'x'; 32]).unwrap();
+
+        assert!(read_file_bounded(&path, 8).unwrap().is_none());
+    }
+
+    #[test]
+    fn max_files_bounds_oversize_entries_too() {
+        let dir = tempdir().unwrap();
+        for index in 0..8 {
+            std::fs::write(dir.path().join(format!("oversize-{index}.txt")), "xx").unwrap();
+        }
+
+        let map = RepoMapBuilder::new(dir.path())
+            .max_files(3)
+            .max_file_bytes(1)
+            .scan()
+            .unwrap();
+
+        assert_eq!(map.report.total_files, 0);
+        assert_eq!(map.report.oversize_skipped, 3);
+        assert_eq!(map.report.truncated_at, Some(3));
     }
 
     #[test]

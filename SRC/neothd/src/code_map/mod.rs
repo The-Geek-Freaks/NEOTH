@@ -27,6 +27,7 @@ pub mod recall_wire;
 pub mod repo_map;
 pub mod risk;
 pub mod root_identity;
+pub mod snapshot;
 pub mod symbols;
 pub mod walker;
 
@@ -60,6 +61,8 @@ pub use recall_wire::{
 pub use repo_map::{DEFAULT_TOKEN_BUDGET, RepoMapSummary, build_summary};
 #[allow(unused_imports)]
 pub use root_identity::{CanonicalRepoRoot, RootIdentity};
+#[allow(unused_imports)]
+pub use snapshot::{RebuildOptions, RebuildSnapshot, rebuild_snapshot};
 #[allow(unused_imports)]
 pub use symbols::{Symbol, SymbolKind, extract_symbols};
 #[allow(unused_imports)]

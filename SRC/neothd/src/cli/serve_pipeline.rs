@@ -2094,17 +2094,76 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 None
             };
 
-            let mut channel_repo_context = crate::cli::chat::maybe_repo_context_block(
-                config_for_handler.as_ref(),
-                &sanitized_text,
-                &instance_paths,
-                &channel_cwd,
-            );
-            if let Some(findings) = crate::cli::chat::maybe_architecture_findings_for_skill(
-                used_skill_id.as_deref(),
-                &instance_paths,
-                &channel_cwd,
-            ) {
+            // The daemon CWD is not a conversation repository, so a verified
+            // physical sole-root snapshot is allowed as the only fallback.
+            // Every adapter reaches this one seam before provider dispatch.
+            let channel_repo_context_recall =
+                match crate::cli::chat::maybe_repo_context_recall_async(
+                    config_for_handler.as_ref(),
+                    &sanitized_text,
+                    &instance_paths,
+                    &channel_cwd,
+                    true,
+                )
+                .await
+                {
+                    Ok(recall) => recall,
+                    Err(e) => {
+                        tracing::warn!(
+                            channel = channel_str,
+                            error = %e,
+                            "repository recall unavailable; channel turn blocked before provider dispatch"
+                        );
+                        let notice = format!(
+                            "[NEOTH] Repository context is unavailable: {e:#}. Rebuild the code map and retry."
+                        );
+                        return release_local_channel_notice(
+                            &writer,
+                            &neoth_home,
+                            &hooks,
+                            &autonomy_policy,
+                            &inbound,
+                            channel_str,
+                            &sender_hash,
+                            &notice,
+                            "code-map-recall-error",
+                            channel_asker.as_ref().map(Arc::clone),
+                            &session_fired_once,
+                        )
+                        .await;
+                    }
+                };
+            let mut channel_repo_context = channel_repo_context_recall
+                .as_ref()
+                .map(|recall| recall.block.clone());
+            let mut channel_architecture_recall =
+                crate::cli::chat::maybe_architecture_findings_for_skill_with_policy(
+                    used_skill_id.as_deref(),
+                    &instance_paths,
+                    &channel_cwd,
+                    true,
+                )
+                .await
+                .context("resolve architecture code-map context for channel turn")?;
+            if channel_architecture_recall.as_ref().is_some_and(|context| {
+                channel_repo_context_recall
+                    .as_ref()
+                    .is_some_and(|recall| recall.receipt.snapshot != context.snapshot)
+            }) {
+                tracing::warn!(
+                    channel = channel_str,
+                    repo_snapshot = ?channel_repo_context_recall
+                        .as_ref()
+                        .map(|recall| &recall.receipt.snapshot),
+                    architecture_snapshot = ?channel_architecture_recall
+                        .as_ref()
+                        .map(|context| &context.snapshot),
+                    "discarding architecture recall from a different code-map generation"
+                );
+                channel_architecture_recall = None;
+            }
+            if let Some(context) = channel_architecture_recall.as_ref() {
+                let findings = &context.findings;
                 info!(
                     channel = channel_str,
                     roots_scanned = findings.roots_scanned,
@@ -2113,10 +2172,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     truncated = findings.truncated,
                     "GRAPH-02: automatic architecture cycle findings injected (channel path)"
                 );
-                crate::cli::chat::emit_architecture_findings_audit(&writer, &findings, "channel")
-                    .await;
                 channel_repo_context =
-                    crate::cli::chat::append_architecture_findings(channel_repo_context, &findings);
+                    crate::cli::chat::append_architecture_findings(channel_repo_context, context);
             }
 
             // GOLD-FEAT-07 — moral core for channel turns too (position 0).
@@ -3104,6 +3161,39 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 effective_cap: request_token_cap,
                 ..
             } = budgeted;
+            if let Err(error) = crate::cli::chat::emit_retained_code_map_audits(
+                &writer,
+                channel_repo_context_recall.as_ref(),
+                channel_architecture_recall.as_ref(),
+                &sanitized_text,
+                system_override.as_deref(),
+                "channel",
+            )
+            .await
+            {
+                warn!(
+                    channel = channel_str,
+                    error = %error,
+                    "code-map context audit failed; channel provider dispatch refused before egress"
+                );
+                let notice = format!(
+                    "[NEOTH] Request blocked before sending: code-map audit could not be persisted: {error}"
+                );
+                return release_local_channel_notice(
+                    &writer,
+                    &neoth_home,
+                    &hooks,
+                    &autonomy_policy,
+                    &inbound,
+                    channel_str,
+                    &sender_hash,
+                    &notice,
+                    "code-map-audit-error",
+                    channel_asker.as_ref().map(Arc::clone),
+                    &session_fired_once,
+                )
+                .await;
+            }
             let req = Request {
                 prompt: final_prompt.clone(),
                 // `finalize_provider_request` injects the clarification protocol,

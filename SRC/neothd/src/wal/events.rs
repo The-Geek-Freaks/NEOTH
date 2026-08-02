@@ -242,6 +242,10 @@ pub enum ExtendedSubtype {
     /// turn. The payload contains only the typed resolver report, channel kind,
     /// sender digest and schema version; no operator text or raw identifier.
     SkillRouteResolved = 0x25,
+    /// GOLD-R3-13 — metadata-only proof that a root-bound code-map recall
+    /// receipt was injected before provider dispatch. Raw prompts, repository
+    /// paths, physical identities and symbol names never enter the payload.
+    CodeMapRecallResolved = 0x26,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -333,6 +337,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::MediaCallResult => "media_call_result",
             ExtendedSubtype::ChannelEgressArmed => "channel_egress_armed",
             ExtendedSubtype::SkillRouteResolved => "skill_route_resolved",
+            ExtendedSubtype::CodeMapRecallResolved => "code_map_recall_resolved",
         }
     }
 
@@ -376,6 +381,7 @@ impl ExtendedSubtype {
             0x23 => Some(ExtendedSubtype::MediaCallResult),
             0x24 => Some(ExtendedSubtype::ChannelEgressArmed),
             0x25 => Some(ExtendedSubtype::SkillRouteResolved),
+            0x26 => Some(ExtendedSubtype::CodeMapRecallResolved),
             _ => None,
         }
     }
@@ -421,6 +427,7 @@ impl ExtendedSubtype {
             Self::MediaCallResult,
             Self::ChannelEgressArmed,
             Self::SkillRouteResolved,
+            Self::CodeMapRecallResolved,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -3828,6 +3835,7 @@ mod tests {
             ExtendedSubtype::MediaCallResult,
             ExtendedSubtype::ChannelEgressArmed,
             ExtendedSubtype::SkillRouteResolved,
+            ExtendedSubtype::CodeMapRecallResolved,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

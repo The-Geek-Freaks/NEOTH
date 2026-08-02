@@ -17,8 +17,6 @@ use zeroize::Zeroizing;
 
 // ── GOLD-R3-13 — repository-local code-map recall ───────────────────────────
 
-pub const CODE_MAP_RECALL_SCHEMA: &str = neothd::code_map::RECALL_WIRE_SCHEMA;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodeMapRecallStatus {
     Ok,
@@ -6417,7 +6415,7 @@ mod tests {
                     "root":"C:/repo",
                     "root_identity":"sha256:abc",
                     "index_generation":7,
-                    "graph_generation":0,
+                    "graph_generation":7,
                     "stale":true,
                     "truncated":true,
                     "hits":[
@@ -6433,7 +6431,7 @@ mod tests {
         let receipt = parsed.receipt.unwrap();
         assert_eq!(receipt.root, "C:/repo");
         assert_eq!(receipt.root_identity, "sha256:abc");
-        assert_eq!((receipt.index_generation, receipt.graph_generation), (7, 0));
+        assert_eq!((receipt.index_generation, receipt.graph_generation), (7, 7));
         assert!(receipt.stale);
         assert!(receipt.truncated);
         assert_eq!(receipt.hits[0].path, "src/auth.rs");
@@ -6486,6 +6484,26 @@ mod tests {
             parse_code_map_recall(cross_root)
                 .unwrap_err()
                 .contains("not bound to the receipt root")
+        );
+
+        let zero_graph = r#"{
+            "schema":"neoth.code_map.recall.v1","status":"ok","prompt":"q","max":5,
+            "receipt":{"root":"/a","root_identity":"id","index_generation":1,"graph_generation":0,"stale":false,"truncated":false,"hits":[]}}
+        "#;
+        assert!(
+            parse_code_map_recall(zero_graph)
+                .unwrap_err()
+                .contains("requires positive index and graph generations")
+        );
+
+        let mixed_generation = r#"{
+            "schema":"neoth.code_map.recall.v1","status":"ok","prompt":"q","max":5,
+            "receipt":{"root":"/a","root_identity":"id","index_generation":2,"graph_generation":1,"stale":false,"truncated":false,"hits":[]}}
+        "#;
+        assert!(
+            parse_code_map_recall(mixed_generation)
+                .unwrap_err()
+                .contains("mixes different index and graph generations")
         );
     }
 

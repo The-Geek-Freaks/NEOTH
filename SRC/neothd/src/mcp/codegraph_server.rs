@@ -43,13 +43,22 @@
 //! are mutated. Safe to expose to any MCP client the operator's autonomy level
 //! allows.
 
-use std::path::{Path, PathBuf};
+use std::io::Read as _;
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::mcp::client::{McpContent, McpTool, ToolAnnotations, ToolCallResult};
+
+fn open_code_map_read_only(path: &Path) -> Result<rusqlite::Connection> {
+    let flags =
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    rusqlite::Connection::open_with_flags(path, flags)
+        .with_context(|| format!("open code-map DB read-only at {}", path.display()))
+}
 
 /// All codegraph tools are pure read-only queries over the local
 /// code-map (no mutation) — declare it so ADOPT-22 SmartApprove can
@@ -71,7 +80,9 @@ pub fn codegraph_tools() -> Vec<McpTool> {
                 "Return the top-N files from the local code-map most relevant to a prompt. \
                  Uses identifier-shape extraction + path-keyword overlap; ranks by \
                  symbol hits with path overlap as tie-break. Legacy response: JSON array. \
-                 Use codegraph_recall_v1 for the identity/generation receipt envelope."
+                 Only fresh, complete receipts can be represented safely; use \
+                 codegraph_recall_v1 for stale/truncated states and the full \
+                 identity/generation receipt envelope."
                     .into(),
             ),
             input_schema: serde_json::json!({
@@ -160,6 +171,7 @@ pub fn codegraph_tools() -> Vec<McpTool> {
                  that (directly or indirectly) reaches it within `depth` hops. \
                  Each row contains `file_path`, `symbol`, and `depth`. \
                  Results are sorted by (depth, file_path, symbol) for deterministic output. \
+                 Refuses stale, partial, generation-mismatched or over-budget snapshots. \
                  Useful for impact analysis: \"who calls this function?\""
                     .into(),
             ),
@@ -190,6 +202,7 @@ pub fn codegraph_tools() -> Vec<McpTool> {
                  function it (directly or indirectly) calls within `depth` hops. \
                  Each row contains `name` and `depth`. \
                  Results are sorted by (depth, name) for deterministic output. \
+                 Refuses stale, partial, generation-mismatched or over-budget snapshots. \
                  Useful for dependency tracing: \"what does this function call?\""
                     .into(),
             ),
@@ -291,9 +304,10 @@ pub fn codegraph_tools() -> Vec<McpTool> {
                  kind, start line, and estimated end line. \
                  Replaces reading the whole file to understand its shape — \
                  typical output is ~95% smaller than the raw source. \
-                 Language is inferred from the file extension. \
-                 Returns `[]` if the file cannot be read or the language has \
-                 no symbol patterns."
+                 Language is inferred from the file extension. The file must belong \
+                 to the fresh, complete active code-map generation; reads are \
+                 hash-bound, size-bounded and refuse symlink/reparse traversal. \
+                 Missing, stale and unreadable files are explicit errors."
                     .into(),
             ),
             input_schema: serde_json::json!({
@@ -429,7 +443,12 @@ fn tool_relevant_files(
             };
             match payload {
                 Ok(payload) => text_result(payload),
-                Err(error) => error_result(format!("serialize relevant_files result: {error:#}")),
+                Err(error) if versioned => {
+                    error_result(format!("serialize codegraph_recall_v1 result: {error:#}"))
+                }
+                Err(error) => error_result(format!(
+                    "codegraph_relevant_files refused unsafe legacy result: {error:#}"
+                )),
             }
         }
         Err(e) => error_result(format!("relevant_files failed: {e:#}")),
@@ -442,7 +461,10 @@ fn recall_v1_inner(
     limit: usize,
     cwd: &Path,
 ) -> Result<crate::code_map::recall_wire::RecallWireEnvelope> {
-    if !db_path.exists() {
+    if !db_path
+        .try_exists()
+        .with_context(|| format!("inspect code-map DB path {}", db_path.display()))?
+    {
         // Missing setup is a valid zero-result state, but it still uses the
         // same versioned envelope as a successful recall so clients never
         // have to infer whether an empty array carried a generation receipt.
@@ -453,14 +475,13 @@ fn recall_v1_inner(
             "code-map index is not built",
         );
     }
-    let conn = crate::code_map::persist::open(db_path)
-        .with_context(|| format!("open {}", db_path.display()))?;
+    let conn = open_code_map_read_only(db_path)?;
     let Some(receipt) = crate::code_map::recall::recall_receipt_for_prompt(
         &conn,
         cwd,
         prompt,
         limit,
-        crate::code_map::recall::RecallStaleness::Skip,
+        crate::code_map::recall::RecallStaleness::Check,
     )?
     else {
         return crate::code_map::recall_wire::RecallWireEnvelope::empty(
@@ -470,6 +491,16 @@ fn recall_v1_inner(
             "server working directory is not inside a persisted code-map root",
         );
     };
+    anyhow::ensure!(
+        receipt.snapshot.index_generation > 0 && receipt.snapshot.graph_generation > 0,
+        "code-map recall has no published positive generation; rebuild the code map"
+    );
+    anyhow::ensure!(
+        receipt.snapshot.index_generation == receipt.snapshot.graph_generation,
+        "code-map recall index generation {} does not match graph generation {}; rebuild the code map",
+        receipt.snapshot.index_generation,
+        receipt.snapshot.graph_generation
+    );
     crate::code_map::recall_wire::RecallWireEnvelope::success(prompt, limit, &receipt)
 }
 
@@ -479,6 +510,32 @@ fn legacy_relevant_files_json(
     let Some(receipt) = envelope.receipt.as_ref() else {
         return Ok("[]".into());
     };
+    match receipt.stale {
+        Some(false) => {}
+        Some(true) => anyhow::bail!(
+            "legacy codegraph_relevant_files refuses stale recall evidence; use \
+             codegraph_recall_v1 and inspect its receipt"
+        ),
+        None => anyhow::bail!(
+            "legacy codegraph_relevant_files refuses recall evidence with unknown freshness; use \
+             codegraph_recall_v1 and inspect its receipt"
+        ),
+    }
+    if receipt.truncated {
+        anyhow::bail!(
+            "legacy codegraph_relevant_files refuses truncated recall evidence; use \
+             codegraph_recall_v1 and inspect its receipt"
+        );
+    }
+    if receipt.index_generation <= 0
+        || receipt.graph_generation <= 0
+        || receipt.index_generation != receipt.graph_generation
+    {
+        anyhow::bail!(
+            "legacy codegraph_relevant_files refuses unpublished or mismatched generations; use \
+             codegraph_recall_v1 and inspect its receipt"
+        );
+    }
     let rows: Vec<serde_json::Value> = receipt
         .hits
         .iter()
@@ -542,14 +599,23 @@ fn tool_impact_radius(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> T
         Ok(parsed) => parsed,
         Err(error) => return error_result(format!("bad args: {error}")),
     };
-    if !db_path.exists() {
+    let db_exists = match db_path.try_exists() {
+        Ok(exists) => exists,
+        Err(error) => {
+            return error_result(format!(
+                "codegraph_impact_radius failed to inspect code-map DB {}: {error}",
+                db_path.display()
+            ));
+        }
+    };
+    if !db_exists {
         return error_result(format!(
             "codegraph_impact_radius failed: code-map DB {} does not exist; \
              run `neoth code-map persist` first",
             db_path.display()
         ));
     }
-    let conn = match crate::code_map::persist::open(db_path) {
+    let conn = match open_code_map_read_only(db_path) {
         Ok(conn) => conn,
         Err(error) => {
             return error_result(format!(
@@ -582,28 +648,162 @@ fn tool_impact_radius(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> T
     }
 }
 
-/// Load the call graph from the operator's persisted code-map DB. A
-/// missing DB yields an EMPTY graph (the operator hasn't built a code map
-/// yet → callers/callees return `[]`, never a hard error — same posture
-/// as `relevant_files`). Reconstructs the graph from the stored
-/// `code_map_edges` table via [`CallGraph::from_edges`] — no source rescan.
+const CALL_GRAPH_EDGE_LIMIT: usize = 250_000;
+const CALL_GRAPH_EDGE_TEXT_BYTE_LIMIT: usize = 32 * 1024 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+struct StoredGraphSnapshot {
+    root_identity: String,
+    index_generation: i64,
+    graph_generation: i64,
+    complete: bool,
+}
+
+fn stored_graph_snapshot(conn: &rusqlite::Connection, root: &str) -> Result<StoredGraphSnapshot> {
+    conn.query_row(
+        "SELECT root_identity, index_generation, graph_generation, \
+                oversize_skipped = 0 AND truncated_at IS NULL \
+         FROM code_map_roots WHERE root = ?1",
+        rusqlite::params![root],
+        |row| {
+            Ok(StoredGraphSnapshot {
+                root_identity: row.get(0)?,
+                index_generation: row.get(1)?,
+                graph_generation: row.get(2)?,
+                complete: row.get(3)?,
+            })
+        },
+    )
+    .with_context(|| format!("read call-graph snapshot metadata for {root:?}"))
+}
+
+fn validate_stored_graph_snapshot(
+    expected: &crate::code_map::recall::RootGenerationSnapshot,
+    stored: &StoredGraphSnapshot,
+) -> Result<()> {
+    anyhow::ensure!(
+        stored.root_identity == expected.root.identity().as_str(),
+        "code-map root identity changed before call-graph materialization; retry after rebuilding"
+    );
+    anyhow::ensure!(
+        stored.index_generation == expected.index_generation
+            && stored.graph_generation == expected.graph_generation,
+        "code-map generations changed before call-graph materialization; retry"
+    );
+    anyhow::ensure!(
+        stored.index_generation > 0 && stored.graph_generation > 0,
+        "code-map call graph has no published positive generation; rebuild the code map"
+    );
+    anyhow::ensure!(
+        stored.index_generation == stored.graph_generation,
+        "code-map index generation {} does not match graph generation {}; rebuild the code map",
+        stored.index_generation,
+        stored.graph_generation
+    );
+    anyhow::ensure!(
+        stored.complete,
+        "code-map root was published from a partial scan; rebuild without explicit limits before querying the call graph"
+    );
+    Ok(())
+}
+
+/// Load the call graph from one identity- and generation-bound code-map root.
+/// Missing or unmapped state is an explicit error, distinct from a certified
+/// snapshot that legitimately contains zero edges. Corrupt, partial, stale or
+/// over-budget snapshots also fail closed.
 fn graph_from_db(db_path: &Path, cwd: &Path) -> Result<crate::code_map::graph::CallGraph> {
-    if !db_path.exists() {
-        return Ok(crate::code_map::graph::CallGraph::default());
+    graph_from_db_with_limits(
+        db_path,
+        cwd,
+        CALL_GRAPH_EDGE_LIMIT,
+        CALL_GRAPH_EDGE_TEXT_BYTE_LIMIT,
+    )
+}
+
+fn graph_from_db_with_limits(
+    db_path: &Path,
+    cwd: &Path,
+    edge_limit: usize,
+    edge_text_byte_limit: usize,
+) -> Result<crate::code_map::graph::CallGraph> {
+    if !db_path
+        .try_exists()
+        .with_context(|| format!("inspect code-map DB path {}", db_path.display()))?
+    {
+        anyhow::bail!(
+            "code-map DB does not exist at {}; run `neoth code-map persist` first",
+            db_path.display()
+        );
     }
-    let conn = crate::code_map::persist::open(db_path)
-        .with_context(|| format!("open {}", db_path.display()))?;
-    // GOLD-R3-13 containment, same rule as `relevant_files`: answer only from
-    // the persisted root that contains this server's working directory. Loading
-    // every root's edges made `callers`/`callees` return symbols and file paths
-    // from repositories the client never asked about — inconsistent visibility
-    // across one tool surface, and exactly the cross-repo leak the containment
-    // was introduced to close. An unmapped CWD yields an empty graph, so the
-    // client sees "no results", never another repo's.
-    let Some(active_root) = crate::code_map::recall::resolve_active_root(&conn, cwd) else {
-        return Ok(crate::code_map::graph::CallGraph::default());
+    let conn = open_code_map_read_only(db_path)?;
+    // Typed resolution preserves canonicalization, SQLite and physical-identity
+    // failures. A genuine no-match is unavailable evidence, not an empty graph.
+    let Some(expected) = crate::code_map::recall::resolve_active_root_snapshot(&conn, cwd)? else {
+        anyhow::bail!(
+            "working directory {} is not inside a persisted code-map root",
+            cwd.display()
+        );
     };
-    let edges = crate::code_map::persist::load_edges_for_root(&conn, &active_root)?;
+    anyhow::ensure!(
+        expected.index_generation > 0 && expected.graph_generation > 0,
+        "code-map call graph has no published positive generation; rebuild the code map"
+    );
+    anyhow::ensure!(
+        expected.index_generation == expected.graph_generation,
+        "code-map index generation {} does not match graph generation {}; rebuild the code map",
+        expected.index_generation,
+        expected.graph_generation
+    );
+
+    // Root metadata, completeness and edges are read from one stable SQLite
+    // snapshot. The filesystem is observed on both sides of edge loading so a
+    // mid-query edit cannot be reported as fresh.
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin atomic call-graph read transaction")?;
+    let initial_stored = stored_graph_snapshot(&tx, expected.root.display())?;
+    validate_stored_graph_snapshot(&expected, &initial_stored)?;
+    let initial_freshness =
+        crate::code_map::persist::index_freshness_receipt(&tx, expected.root.display())?;
+    anyhow::ensure!(
+        !initial_freshness.stale,
+        "code-map call graph is stale; rebuild the code map before querying it"
+    );
+    let (edges, truncated, _) =
+        crate::code_map::persist::load_edges_for_root_bounded_with_text_limit(
+            &tx,
+            expected.root.display(),
+            edge_limit,
+            edge_text_byte_limit,
+        )?;
+    anyhow::ensure!(
+        !truncated,
+        "code-map call graph exceeds the per-root edge ceiling of {edge_limit}; narrow or rebuild the index"
+    );
+    let final_freshness =
+        crate::code_map::persist::index_freshness_receipt(&tx, expected.root.display())?;
+    anyhow::ensure!(
+        !final_freshness.stale
+            && initial_freshness.filesystem_fingerprint == final_freshness.filesystem_fingerprint,
+        "code-map root changed during call-graph materialization; rebuild and retry"
+    );
+    let final_stored = stored_graph_snapshot(&tx, expected.root.display())?;
+    validate_stored_graph_snapshot(&expected, &final_stored)?;
+    anyhow::ensure!(
+        final_stored == initial_stored,
+        "code-map snapshot changed during call-graph materialization; retry"
+    );
+    tx.commit()
+        .context("commit atomic call-graph read transaction")?;
+
+    // Close the window between the original active-root resolution and the
+    // completed read. A renamed/replaced root or a newer writer generation is
+    // never allowed to inherit this graph's answer.
+    let final_active = crate::code_map::recall::resolve_active_root_snapshot(&conn, cwd)?;
+    anyhow::ensure!(
+        final_active.as_ref() == Some(&expected),
+        "active code-map root or generation changed during call-graph materialization; retry"
+    );
     Ok(crate::code_map::graph::CallGraph::from_edges(edges))
 }
 
@@ -694,91 +894,386 @@ fn tool_outline(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> ToolCal
         Ok(p) => p,
         Err(e) => return error_result(format!("bad args: {e}")),
     };
-    let path = match resolve_indexed_outline_path(db_path, &parsed.path, cwd) {
-        Ok(path) => path,
-        Err(error) => return error_result(format!("outline access denied: {error:#}")),
+    let entries = match outline_from_db(db_path, &parsed.path, cwd) {
+        Ok(entries) => entries,
+        Err(error) => return error_result(format!("codegraph_outline failed: {error:#}")),
     };
-    let entries = crate::code_map::outline::outline_file(&path);
     match serde_json::to_string(&entries) {
         Ok(payload) => text_result(payload),
         Err(e) => error_result(format!("outline serialisation failed: {e}")),
     }
 }
 
-/// Resolve an outline request only when the canonical file is part of the
-/// persisted code-map. Relative paths must identify exactly one indexed root;
-/// callers can disambiguate duplicate repo-relative paths with an absolute path.
-/// Canonical root containment also rejects indexed symlinks/junctions that now
-/// escape their original repository.
-fn resolve_indexed_outline_path(db_path: &Path, requested: &str, cwd: &Path) -> Result<PathBuf> {
+const OUTLINE_MAX_FILE_BYTES: u64 = crate::code_map::walker::DEFAULT_MAX_FILE_BYTES;
+
+#[derive(Debug)]
+struct IndexedOutlineFile {
+    relative_path: String,
+    bytes: u64,
+    sha256: String,
+}
+
+fn outline_from_db(
+    db_path: &Path,
+    requested: &str,
+    cwd: &Path,
+) -> Result<Vec<crate::code_map::outline::OutlineEntry>> {
+    outline_from_db_with_hooks(db_path, requested, cwd, |_| {}, |_| {})
+}
+
+fn outline_from_db_with_hooks<BeforeRead, AfterRead>(
+    db_path: &Path,
+    requested: &str,
+    cwd: &Path,
+    before_read: BeforeRead,
+    after_read: AfterRead,
+) -> Result<Vec<crate::code_map::outline::OutlineEntry>>
+where
+    BeforeRead: FnOnce(&Path),
+    AfterRead: FnOnce(&Path),
+{
     let requested = requested.trim();
     if requested.is_empty() {
         anyhow::bail!("path is empty");
     }
-    if !db_path.exists() {
+    if !db_path
+        .try_exists()
+        .with_context(|| format!("inspect code-map DB path {}", db_path.display()))?
+    {
         anyhow::bail!("code-map database is missing; build it before requesting file outlines");
     }
-    let requested_path = Path::new(requested);
-    let requested_absolute = if requested_path.is_absolute() {
-        Some(
-            requested_path
-                .canonicalize()
-                .with_context(|| format!("canonicalize requested path `{requested}`"))?,
-        )
+
+    let conn = open_code_map_read_only(db_path)?;
+    let Some(expected) = crate::code_map::recall::resolve_active_root_snapshot(&conn, cwd)? else {
+        anyhow::bail!(
+            "working directory is not inside an indexed repository; build a code map before requesting outlines"
+        );
+    };
+    anyhow::ensure!(
+        expected.index_generation > 0 && expected.graph_generation > 0,
+        "code-map outline has no published positive generation; rebuild the code map"
+    );
+    anyhow::ensure!(
+        expected.index_generation == expected.graph_generation,
+        "code-map outline index generation {} does not match graph generation {}; rebuild the code map",
+        expected.index_generation,
+        expected.graph_generation
+    );
+    let relative = requested_outline_relative_path(expected.root.path(), Path::new(requested))?;
+
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin atomic codegraph-outline read transaction")?;
+    let initial_stored = stored_graph_snapshot(&tx, expected.root.display())?;
+    validate_stored_graph_snapshot(&expected, &initial_stored)?;
+    let initial_freshness =
+        crate::code_map::persist::index_freshness_receipt(&tx, expected.root.display())?;
+    anyhow::ensure!(
+        !initial_freshness.stale,
+        "code-map outline snapshot is stale; rebuild the code map before requesting outlines"
+    );
+    let indexed = indexed_outline_file(&tx, expected.root.display(), &relative)?;
+    let path = checked_outline_path(expected.root.path(), &indexed.relative_path)?;
+    before_read(&path);
+    let source = read_indexed_outline_source(expected.root.path(), &indexed)?;
+    after_read(&path);
+    let final_freshness =
+        crate::code_map::persist::index_freshness_receipt(&tx, expected.root.display())?;
+    anyhow::ensure!(
+        !final_freshness.stale
+            && initial_freshness.filesystem_fingerprint == final_freshness.filesystem_fingerprint,
+        "code-map root changed during outline read; rebuild and retry"
+    );
+    let final_stored = stored_graph_snapshot(&tx, expected.root.display())?;
+    validate_stored_graph_snapshot(&expected, &final_stored)?;
+    anyhow::ensure!(
+        final_stored == initial_stored,
+        "code-map snapshot changed during outline read; retry"
+    );
+    tx.commit()
+        .context("commit atomic codegraph-outline read transaction")?;
+
+    let final_active = crate::code_map::recall::resolve_active_root_snapshot(&conn, cwd)?;
+    anyhow::ensure!(
+        final_active.as_ref() == Some(&expected),
+        "active code-map root or generation changed during outline read; retry"
+    );
+    Ok(crate::code_map::outline::outline_source(
+        &source,
+        crate::code_map::walker::Language::from_path(&path),
+    ))
+}
+
+fn requested_outline_relative_path(root: &Path, requested: &Path) -> Result<String> {
+    let relative = if requested.is_absolute() {
+        match requested.strip_prefix(root) {
+            Ok(relative) => relative.to_path_buf(),
+            Err(_) => {
+                // Windows canonical roots commonly use an extended-length
+                // prefix while client arguments use the ordinary drive form.
+                // Canonicalisation is used only to map that spelling to the
+                // persisted relative key; the actual read is rebuilt from the
+                // trusted root and opened with no-follow semantics below.
+                let canonical = requested.canonicalize().with_context(|| {
+                    format!("canonicalize absolute outline path {}", requested.display())
+                })?;
+                canonical
+                    .strip_prefix(root)
+                    .with_context(|| {
+                        format!(
+                            "absolute outline path {} is outside active root {}",
+                            requested.display(),
+                            root.display()
+                        )
+                    })?
+                    .to_path_buf()
+            }
+        }
     } else {
-        None
+        requested.to_path_buf()
+    };
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => {
+                let part = part.to_str().context("outline path is not valid UTF-8")?;
+                anyhow::ensure!(
+                    !part.is_empty() && !part.contains('\\'),
+                    "outline path contains an ambiguous separator"
+                );
+                parts.push(part);
+            }
+            Component::CurDir
+            | Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => {
+                anyhow::bail!("outline path must be a normalized repository-relative file path")
+            }
+        }
+    }
+    anyhow::ensure!(!parts.is_empty(), "outline path is empty");
+    Ok(parts.join("/"))
+}
+
+fn indexed_outline_file(
+    conn: &rusqlite::Connection,
+    root: &str,
+    relative: &str,
+) -> Result<IndexedOutlineFile> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT path, bytes, sha256 FROM code_map_files \
+             WHERE root = ?1 AND path = ?2 LIMIT 2",
+        )
+        .context("prepare indexed-outline file query")?;
+    let rows = stmt
+        .query_map(rusqlite::params![root, relative], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .context("query indexed-outline file")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect indexed-outline file")?;
+    let [(relative_path, bytes, sha256)] = rows.as_slice() else {
+        anyhow::bail!("`{relative}` is not exactly one indexed code-map file");
+    };
+    let bytes = u64::try_from(*bytes).context("indexed outline file has a negative byte length")?;
+    anyhow::ensure!(
+        bytes <= OUTLINE_MAX_FILE_BYTES,
+        "indexed outline file exceeds the {OUTLINE_MAX_FILE_BYTES}-byte read ceiling"
+    );
+    anyhow::ensure!(
+        sha256.len() == 64 && sha256.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "indexed outline file has no valid SHA-256 binding; rebuild the code map"
+    );
+    Ok(IndexedOutlineFile {
+        relative_path: relative_path.clone(),
+        bytes,
+        sha256: sha256.clone(),
+    })
+}
+
+fn checked_outline_path(root: &Path, relative: &str) -> Result<PathBuf> {
+    let mut path = root.to_path_buf();
+    let components: Vec<&str> = relative.split('/').collect();
+    anyhow::ensure!(
+        !components.is_empty()
+            && components
+                .iter()
+                .all(|component| !component.is_empty() && *component != "." && *component != ".."),
+        "persisted outline path is not a normalized relative path"
+    );
+    for (index, component) in components.iter().enumerate() {
+        path.push(component);
+        let metadata = std::fs::symlink_metadata(&path).with_context(|| {
+            format!("inspect indexed outline path component {}", path.display())
+        })?;
+        anyhow::ensure!(
+            !metadata_is_link_or_reparse(&metadata),
+            "indexed outline path contains a symlink or reparse point: {}",
+            path.display()
+        );
+        if index + 1 == components.len() {
+            anyhow::ensure!(
+                metadata.file_type().is_file(),
+                "indexed outline path is not a regular file: {}",
+                path.display()
+            );
+        } else {
+            anyhow::ensure!(
+                metadata.file_type().is_dir(),
+                "indexed outline parent is not a directory: {}",
+                path.display()
+            );
+        }
+    }
+    Ok(path)
+}
+
+fn metadata_is_link_or_reparse(metadata: &std::fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+fn read_indexed_outline_source(root: &Path, indexed: &IndexedOutlineFile) -> Result<String> {
+    let path = checked_outline_path(root, &indexed.relative_path)?;
+    let before = std::fs::symlink_metadata(&path)
+        .with_context(|| format!("inspect indexed outline file {}", path.display()))?;
+    anyhow::ensure!(
+        before.file_type().is_file() && !metadata_is_link_or_reparse(&before),
+        "indexed outline path is not a regular non-reparse file: {}",
+        path.display()
+    );
+    let mut file = open_outline_file_no_follow(&path)?;
+    let opened = file
+        .metadata()
+        .with_context(|| format!("inspect opened outline file {}", path.display()))?;
+    anyhow::ensure!(
+        opened.file_type().is_file() && !metadata_is_link_or_reparse(&opened),
+        "opened outline path is not a regular non-reparse file: {}",
+        path.display()
+    );
+    let path_probe = open_outline_file_no_follow(&path)?;
+    anyhow::ensure!(
+        same_outline_file_identity(&file, &path_probe)?,
+        "indexed outline file changed identity while it was opened"
+    );
+    drop(path_probe);
+    anyhow::ensure!(
+        opened.len() == indexed.bytes && opened.len() <= OUTLINE_MAX_FILE_BYTES,
+        "indexed outline file length no longer matches its persisted snapshot"
+    );
+    let capacity = usize::try_from(indexed.bytes).context("convert outline allocation bound")?;
+    let mut raw = Vec::with_capacity(capacity);
+    file.by_ref()
+        .take(OUTLINE_MAX_FILE_BYTES.saturating_add(1))
+        .read_to_end(&mut raw)
+        .with_context(|| format!("read bounded indexed outline file {}", path.display()))?;
+    anyhow::ensure!(
+        u64::try_from(raw.len()).context("convert outline read length")? <= OUTLINE_MAX_FILE_BYTES,
+        "indexed outline file exceeded the {OUTLINE_MAX_FILE_BYTES}-byte read ceiling"
+    );
+    anyhow::ensure!(
+        u64::try_from(raw.len()).context("convert outline content length")? == indexed.bytes,
+        "indexed outline file changed length while it was read"
+    );
+    let actual_sha256 = format!("{:x}", Sha256::digest(&raw));
+    anyhow::ensure!(
+        actual_sha256 == indexed.sha256,
+        "indexed outline file content no longer matches its persisted SHA-256"
+    );
+    let after_path = checked_outline_path(root, &indexed.relative_path)?;
+    anyhow::ensure!(
+        after_path == path,
+        "indexed outline path changed while it was read"
+    );
+    let after_probe = open_outline_file_no_follow(&after_path)?;
+    anyhow::ensure!(
+        same_outline_file_identity(&file, &after_probe)?,
+        "indexed outline file changed identity while it was read"
+    );
+    String::from_utf8(raw).context("indexed outline file is not valid UTF-8")
+}
+
+fn open_outline_file_no_follow(path: &Path) -> Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.open(path).with_context(|| {
+        format!(
+            "open indexed outline file without following links {}",
+            path.display()
+        )
+    })
+}
+
+#[cfg(unix)]
+fn same_outline_file_identity(left: &std::fs::File, right: &std::fs::File) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt as _;
+    let left = left.metadata().context("inspect first outline handle")?;
+    let right = right.metadata().context("inspect second outline handle")?;
+    Ok(left.dev() == right.dev() && left.ino() == right.ino())
+}
+
+#[cfg(windows)]
+fn same_outline_file_identity(left: &std::fs::File, right: &std::fs::File) -> Result<bool> {
+    Ok(windows_outline_file_identity(left)? == windows_outline_file_identity(right)?)
+}
+
+#[cfg(windows)]
+fn windows_outline_file_identity(file: &std::fs::File) -> Result<(u32, u64)> {
+    use std::os::windows::io::AsRawHandle as _;
+
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
     };
 
-    let conn = crate::code_map::persist::open(db_path)
-        .with_context(|| format!("open {}", db_path.display()))?;
-    // Same containment as `relevant_files` and the call graph: a relative path
-    // that is unique only inside ANOTHER indexed repository used to resolve, and
-    // its outline was served. Membership is decided within the active root only.
-    let active_root = crate::code_map::recall::resolve_active_root(&conn, cwd)
-        .context("the working directory is not inside an indexed repository; build a code map for it before requesting file outlines")?;
-    let mut stmt = conn
-        .prepare("SELECT root, path FROM code_map_files WHERE root = ?1 ORDER BY path")
-        .context("prepare indexed-outline membership query")?;
-    let rows = stmt
-        .query_map([&active_root], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .context("query indexed-outline membership")?;
+    let handle: HANDLE = file.as_raw_handle().cast();
+    let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // SAFETY: `handle` comes from a live `std::fs::File`; `information` is
+    // correctly sized/aligned writable storage and is observed only after the
+    // Win32 call reports success.
+    if unsafe { GetFileInformationByHandle(handle, information.as_mut_ptr()) } == 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("identify opened outline file by Win32 handle");
+    }
+    // SAFETY: the successful Win32 call initialized the entire structure.
+    let information = unsafe { information.assume_init() };
+    let file_index =
+        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
+    Ok((information.dwVolumeSerialNumber, file_index))
+}
 
-    let mut matches = Vec::new();
-    for row in rows {
-        let (root, relative) = row.context("read indexed-outline membership row")?;
-        if requested_absolute.is_none() && Path::new(&relative) != requested_path {
-            continue;
-        }
-        let canonical_root = match Path::new(&root).canonicalize() {
-            Ok(path) => path,
-            Err(_) => continue,
-        };
-        let canonical_file = match canonical_root.join(&relative).canonicalize() {
-            Ok(path) => path,
-            Err(_) => continue,
-        };
-        if canonical_file.strip_prefix(&canonical_root).is_err() {
-            continue;
-        }
-        if requested_absolute
-            .as_ref()
-            .is_some_and(|absolute| absolute != &canonical_file)
-        {
-            continue;
-        }
-        matches.push(canonical_file);
-    }
-    matches.sort();
-    matches.dedup();
-    match matches.as_slice() {
-        [path] => Ok(path.clone()),
-        [] => anyhow::bail!("`{requested}` is not an indexed code-map file"),
-        _ => anyhow::bail!(
-            "relative path `{requested}` exists in multiple indexed roots; use an absolute path"
-        ),
-    }
+#[cfg(not(any(unix, windows)))]
+fn same_outline_file_identity(left: &std::fs::File, right: &std::fs::File) -> Result<bool> {
+    let left = left.metadata().context("inspect first outline handle")?;
+    let right = right.metadata().context("inspect second outline handle")?;
+    Ok(left.len() == right.len() && left.modified().ok() == right.modified().ok())
 }
 
 #[derive(Default)]
@@ -1217,6 +1712,68 @@ mod tests {
         assert_eq!(text_content(&r), "[]");
     }
 
+    fn legacy_recall_envelope(
+        stale: Option<bool>,
+        truncated: bool,
+    ) -> crate::code_map::recall_wire::RecallWireEnvelope {
+        crate::code_map::recall_wire::RecallWireEnvelope {
+            schema: crate::code_map::recall_wire::RECALL_WIRE_SCHEMA.to_owned(),
+            status: crate::code_map::recall_wire::RecallWireStatus::Ok,
+            prompt: "find AuthService".into(),
+            max: 5,
+            receipt: Some(crate::code_map::recall_wire::RecallWireReceipt {
+                root: "/repo".into(),
+                root_identity: "test-root".into(),
+                index_generation: 1,
+                graph_generation: 1,
+                stale,
+                truncated,
+                hits: vec![crate::code_map::recall_wire::RecallWireHit {
+                    root: "/repo".into(),
+                    path: "src/auth.rs".into(),
+                    identifier_hits: 1,
+                    matched_symbols: vec!["AuthService".into()],
+                    path_keyword_overlap: 1,
+                }],
+            }),
+            note: None,
+        }
+    }
+
+    #[test]
+    fn legacy_relevant_files_refuses_unverifiable_receipts() {
+        let mut zero_generation = legacy_recall_envelope(Some(false), false);
+        zero_generation.receipt.as_mut().unwrap().index_generation = 0;
+        let mut mismatched_generation = legacy_recall_envelope(Some(false), false);
+        mismatched_generation
+            .receipt
+            .as_mut()
+            .unwrap()
+            .graph_generation = 2;
+        for envelope in [
+            legacy_recall_envelope(Some(true), false),
+            legacy_recall_envelope(None, false),
+            legacy_recall_envelope(Some(false), true),
+            zero_generation,
+            mismatched_generation,
+        ] {
+            let error = legacy_relevant_files_json(&envelope).unwrap_err();
+            assert!(
+                error.to_string().contains("codegraph_recall_v1"),
+                "legacy rejection must direct the client to the receipt surface: {error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_relevant_files_keeps_fresh_complete_compatibility_shape() {
+        let json = legacy_relevant_files_json(&legacy_recall_envelope(Some(false), false)).unwrap();
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["path"], "src/auth.rs");
+        assert_eq!(rows[0]["index_generation"], 1);
+    }
+
     // ── GOLD-ADAPT-CBM-05: codegraph_callers / codegraph_callees ─────────
 
     #[test]
@@ -1302,28 +1859,54 @@ fn root() { middle(); }
     }
 
     #[test]
-    fn dispatch_codegraph_callers_empty_graph_returns_empty_array() {
-        // No source files → graph is empty → callers of anything = [].
+    fn dispatch_codegraph_callers_rejects_missing_snapshot() {
         let dir = tempdir().unwrap();
         let r = dispatch_codegraph_tool(
             &dir.path().join("code_map.db"),
             "codegraph_callers",
             &serde_json::json!({"symbol": "foo"}),
         );
-        assert!(!r.is_error);
-        assert_eq!(text_content(&r), "[]");
+        assert!(r.is_error);
+        assert!(text_content(&r).contains("code-map DB does not exist"));
     }
 
     #[test]
-    fn dispatch_codegraph_callees_empty_graph_returns_empty_array() {
+    fn dispatch_codegraph_callees_rejects_missing_snapshot() {
         let dir = tempdir().unwrap();
         let r = dispatch_codegraph_tool(
             &dir.path().join("code_map.db"),
             "codegraph_callees",
             &serde_json::json!({"symbol": "foo", "file": "a.rs"}),
         );
-        assert!(!r.is_error);
-        assert_eq!(text_content(&r), "[]");
+        assert!(r.is_error);
+        assert!(text_content(&r).contains("code-map DB does not exist"));
+    }
+
+    #[test]
+    fn dispatch_call_graph_distinguishes_certified_zero_edges_from_unavailable() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let db = dir.path().join("code_map.db");
+        let map = crate::code_map::walker::RepoMapBuilder::new(&repo)
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        let mut conn = crate::code_map::persist::open(&db).unwrap();
+        crate::code_map::persist::persist_map_and_edges(&mut conn, &map, &[]).unwrap();
+        drop(conn);
+
+        for (tool, args) in [
+            ("codegraph_callers", serde_json::json!({"symbol": "foo"})),
+            (
+                "codegraph_callees",
+                serde_json::json!({"symbol": "foo", "file": "a.rs"}),
+            ),
+        ] {
+            let result = dispatch_codegraph_tool_at(&db, tool, &args, &repo);
+            assert!(!result.is_error, "{tool} rejected certified empty graph");
+            assert_eq!(text_content(&result), "[]");
+        }
     }
 
     #[test]
@@ -1365,21 +1948,16 @@ fn root() { alpha(); beta(); }
     /// tools answer only from the root that contains the server's working
     /// directory, so a test has to say where the server is running.
     fn seed_code_map_db(db: &Path, root: &Path) {
+        std::fs::create_dir_all(root).unwrap();
+        let source = "fn leaf() {}\nfn middle() { leaf(); }\nfn root() { middle(); }\n";
+        std::fs::write(root.join("x.rs"), source).unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(root)
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        let g = graph_from_rust("x.rs", source);
         let mut conn = crate::code_map::persist::open(db).unwrap();
-        let root = root.canonicalize().unwrap().display().to_string();
-        // Edges FK into code_map_roots — seed the root row first.
-        conn.execute(
-            "INSERT INTO code_map_roots \
-             (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped) \
-             VALUES (?1, 0, 1, 0, 3, 0)",
-            rusqlite::params![root],
-        )
-        .unwrap();
-        let g = graph_from_rust(
-            "x.rs",
-            "fn leaf() {}\nfn middle() { leaf(); }\nfn root() { middle(); }\n",
-        );
-        crate::code_map::persist::persist_edges(&mut conn, &root, g.edges()).unwrap();
+        crate::code_map::persist::persist_map_and_edges(&mut conn, &map, g.edges()).unwrap();
     }
 
     #[test]
@@ -1389,12 +1967,13 @@ fn root() { alpha(); beta(); }
         // callers — not `[]` (the empty-graph stub the follow-up replaced).
         let dir = tempdir().unwrap();
         let db = dir.path().join("code_map.db");
-        seed_code_map_db(&db, dir.path());
+        let repo = dir.path().join("repo");
+        seed_code_map_db(&db, &repo);
         let r = dispatch_codegraph_tool_at(
             &db,
             "codegraph_callers",
             &serde_json::json!({"symbol": "leaf"}),
-            dir.path(),
+            &repo,
         );
         assert!(!r.is_error, "got: {}", text_content(&r));
         let rows: Vec<serde_json::Value> = serde_json::from_str(&text_content(&r)).unwrap();
@@ -1407,18 +1986,58 @@ fn root() { alpha(); beta(); }
     fn dispatch_codegraph_callees_reads_persisted_edges() {
         let dir = tempdir().unwrap();
         let db = dir.path().join("code_map.db");
-        seed_code_map_db(&db, dir.path());
+        let repo = dir.path().join("repo");
+        seed_code_map_db(&db, &repo);
         let r = dispatch_codegraph_tool_at(
             &db,
             "codegraph_callees",
             &serde_json::json!({"symbol": "root", "file": "x.rs"}),
-            dir.path(),
+            &repo,
         );
         assert!(!r.is_error, "got: {}", text_content(&r));
         let rows: Vec<serde_json::Value> = serde_json::from_str(&text_content(&r)).unwrap();
         let names: Vec<&str> = rows.iter().map(|x| x["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"middle"), "wiring broken — got: {names:?}");
         assert!(names.contains(&"leaf"), "wiring broken — got: {names:?}");
+    }
+
+    #[test]
+    fn call_graph_refuses_stale_or_over_budget_root_snapshots() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let repo = dir.path().join("repo");
+        seed_code_map_db(&db, &repo);
+
+        let edge_error = graph_from_db_with_limits(&db, &repo, 1, usize::MAX).unwrap_err();
+        assert!(edge_error.to_string().contains("edge ceiling"));
+        let byte_error =
+            graph_from_db_with_limits(&db, &repo, CALL_GRAPH_EDGE_LIMIT, 1).unwrap_err();
+        assert!(byte_error.to_string().contains("text bytes"));
+
+        std::fs::write(repo.join("x.rs"), "fn leaf() { changed(); }\n").unwrap();
+        let stale_error = graph_from_db(&db, &repo).unwrap_err();
+        assert!(stale_error.to_string().contains("stale"));
+    }
+
+    #[test]
+    fn call_graph_refuses_non_positive_mismatched_or_partial_generations() {
+        for mutation in [
+            "UPDATE code_map_roots SET graph_generation = 0",
+            "UPDATE code_map_roots SET graph_generation = index_generation + 1",
+            "UPDATE code_map_roots SET oversize_skipped = 1",
+        ] {
+            let dir = tempdir().unwrap();
+            let db = dir.path().join("code_map.db");
+            let repo = dir.path().join("repo");
+            seed_code_map_db(&db, &repo);
+            let conn = crate::code_map::persist::open(&db).unwrap();
+            conn.execute(mutation, []).unwrap();
+
+            assert!(
+                graph_from_db(&db, &repo).is_err(),
+                "invalid graph snapshot was accepted after {mutation}"
+            );
+        }
     }
 
     #[test]
@@ -1520,13 +2139,14 @@ fn root() { alpha(); beta(); }
         let indexed = tempdir().unwrap();
         let elsewhere = tempdir().unwrap();
         let db = indexed.path().join("code_map.db");
-        seed_code_map_db(&db, indexed.path());
+        let repo = indexed.path().join("repo");
+        seed_code_map_db(&db, &repo);
 
         let inside = dispatch_codegraph_tool_at(
             &db,
             "codegraph_callers",
             &serde_json::json!({"symbol": "leaf"}),
-            indexed.path(),
+            &repo,
         );
         let rows: Vec<serde_json::Value> = serde_json::from_str(&text_content(&inside)).unwrap();
         assert!(!rows.is_empty(), "inside the indexed root it must answer");
@@ -1537,32 +2157,37 @@ fn root() { alpha(); beta(); }
             &serde_json::json!({"symbol": "leaf"}),
             elsewhere.path(),
         );
-        let rows: Vec<serde_json::Value> = serde_json::from_str(&text_content(&outside)).unwrap();
+        assert!(outside.is_error);
         assert!(
-            rows.is_empty(),
-            "an unmapped working directory must not see another repo's symbols: {rows:?}"
+            text_content(&outside).contains("not inside a persisted code-map root"),
+            "unmapped state must remain distinct from a certified empty graph: {}",
+            text_content(&outside)
         );
     }
 
     // ── GOLD-ADAPT-CCS-04: codegraph_outline dispatch tests ───────────────
 
     fn seed_indexed_file(db: &Path, root: &Path, relative: &str) {
-        let conn = crate::code_map::persist::open(db).unwrap();
-        let root = root.canonicalize().unwrap().display().to_string();
-        conn.execute(
-            "INSERT INTO code_map_roots \
-             (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped) \
-             VALUES (?1, 0, 1, 0, 1, 0)",
-            rusqlite::params![root],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO code_map_files \
-             (root, path, language, bytes, loc, sha256, mtime_ns) \
-             VALUES (?1, ?2, 'rust', 0, 1, '', 0)",
-            rusqlite::params![root, relative],
-        )
-        .unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(root)
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        assert!(
+            map.files.iter().any(|file| file.path == relative),
+            "outline fixture {relative:?} was not scanned"
+        );
+        let mut conn = crate::code_map::persist::open(db).unwrap();
+        crate::code_map::persist::persist_map_and_edges(&mut conn, &map, &[]).unwrap();
+    }
+
+    fn seeded_outline_fixture(source: &[u8]) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        std::fs::write(repo.join("outline.rs"), source).unwrap();
+        let db = dir.path().join("code_map.db");
+        seed_indexed_file(&db, &repo, "outline.rs");
+        (dir, repo, db)
     }
 
     #[test]
@@ -1586,7 +2211,7 @@ fn root() { alpha(); beta(); }
             &serde_json::json!({"path": "/this/does/not/exist.rs"}),
         );
         assert!(r.is_error);
-        assert!(text_content(&r).contains("access denied"));
+        assert!(text_content(&r).contains("codegraph_outline failed"));
     }
 
     #[test]
@@ -1594,20 +2219,22 @@ fn root() { alpha(); beta(); }
         // Write a small Rust fixture, run the outline tool, verify the
         // structural result (names + line numbers).
         let dir = tempdir().unwrap();
-        let fixture = dir.path().join("fixture.rs");
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        let fixture = repo.join("fixture.rs");
         std::fs::write(
             &fixture,
             "pub struct Config {}\npub fn init() {}\npub fn run() {\n    // body\n}\n",
         )
         .unwrap();
         let db = dir.path().join("code_map.db");
-        seed_indexed_file(&db, dir.path(), "fixture.rs");
+        seed_indexed_file(&db, &repo, "fixture.rs");
 
         let r = dispatch_codegraph_tool_at(
             &db,
             "codegraph_outline",
             &serde_json::json!({"path": "fixture.rs"}),
-            dir.path(),
+            &repo,
         );
         assert!(!r.is_error, "got: {}", text_content(&r));
 
@@ -1634,16 +2261,18 @@ fn root() { alpha(); beta(); }
     #[test]
     fn dispatch_codegraph_outline_result_has_all_required_json_keys() {
         let dir = tempdir().unwrap();
-        let fixture = dir.path().join("keys.rs");
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        let fixture = repo.join("keys.rs");
         std::fs::write(&fixture, "fn one() {}\nfn two() {}\n").unwrap();
         let db = dir.path().join("code_map.db");
-        seed_indexed_file(&db, dir.path(), "keys.rs");
+        seed_indexed_file(&db, &repo, "keys.rs");
 
         let r = dispatch_codegraph_tool_at(
             &db,
             "codegraph_outline",
             &serde_json::json!({"path": fixture.to_str().unwrap()}),
-            dir.path(),
+            &repo,
         );
         assert!(!r.is_error);
         let entries: Vec<serde_json::Value> = serde_json::from_str(&text_content(&r)).unwrap();
@@ -1658,20 +2287,106 @@ fn root() { alpha(); beta(); }
     #[test]
     fn dispatch_codegraph_outline_cannot_read_unindexed_neighbor() {
         let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join("indexed.rs"), "fn allowed() {}\n").unwrap();
-        let secret = dir.path().join("secret.rs");
-        std::fs::write(&secret, "fn must_not_leak() {}\n").unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        std::fs::write(repo.join("indexed.rs"), "fn allowed() {}\n").unwrap();
         let db = dir.path().join("code_map.db");
-        seed_indexed_file(&db, dir.path(), "indexed.rs");
+        seed_indexed_file(&db, &repo, "indexed.rs");
+        let secret = repo.join("secret.rs");
+        std::fs::write(&secret, "fn must_not_leak() {}\n").unwrap();
 
         let denied = dispatch_codegraph_tool_at(
             &db,
             "codegraph_outline",
             &serde_json::json!({"path": secret}),
-            dir.path(),
+            &repo,
         );
         assert!(denied.is_error);
+        assert!(text_content(&denied).contains("stale"));
         assert!(!text_content(&denied).contains("must_not_leak"));
+    }
+
+    #[test]
+    fn outline_read_is_bound_to_persisted_hash_and_post_read_freshness() {
+        let (_dir, repo, db) = seeded_outline_fixture(b"fn old() {}\n");
+        let changed_before_read = outline_from_db_with_hooks(
+            &db,
+            "outline.rs",
+            &repo,
+            |path| std::fs::write(path, "fn new() {}\n").unwrap(),
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(changed_before_read.to_string().contains("SHA-256"));
+
+        let (_dir, repo, db) = seeded_outline_fixture(b"fn old() {}\n");
+        let changed_after_read = outline_from_db_with_hooks(
+            &db,
+            "outline.rs",
+            &repo,
+            |_| {},
+            |path| std::fs::write(path, "fn new() {}\n").unwrap(),
+        )
+        .unwrap_err();
+        assert!(
+            changed_after_read
+                .to_string()
+                .contains("changed during outline read")
+        );
+    }
+
+    #[test]
+    fn outline_refuses_invalid_snapshot_metadata_and_oversized_rows() {
+        for mutation in [
+            "UPDATE code_map_roots SET graph_generation = 0",
+            "UPDATE code_map_roots SET graph_generation = index_generation + 1",
+            "UPDATE code_map_roots SET oversize_skipped = 1",
+            "UPDATE code_map_files SET bytes = 2097153",
+        ] {
+            let (_dir, repo, db) = seeded_outline_fixture(b"fn outlined() {}\n");
+            let conn = crate::code_map::persist::open(&db).unwrap();
+            conn.execute(mutation, []).unwrap();
+            assert!(
+                outline_from_db(&db, "outline.rs", &repo).is_err(),
+                "invalid outline snapshot was accepted after {mutation}"
+            );
+        }
+    }
+
+    #[test]
+    fn outline_reports_invalid_utf8_and_rejects_path_aliases() {
+        let (_dir, repo, db) = seeded_outline_fixture(&[0xff, 0xfe, 0xfd]);
+        let invalid_utf8 = outline_from_db(&db, "outline.rs", &repo).unwrap_err();
+        assert!(invalid_utf8.to_string().contains("not valid UTF-8"));
+
+        let missing = outline_from_db(&db, "missing.rs", &repo).unwrap_err();
+        assert!(missing.to_string().contains("not exactly one indexed"));
+
+        let traversal = outline_from_db(&db, "../outline.rs", &repo).unwrap_err();
+        assert!(
+            traversal
+                .to_string()
+                .contains("normalized repository-relative")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn outline_reader_refuses_symlinks_without_following_them() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let source = b"fn target() {}\n";
+        std::fs::write(dir.path().join("target.rs"), source).unwrap();
+        symlink("target.rs", dir.path().join("outline.rs")).unwrap();
+        let indexed = IndexedOutlineFile {
+            relative_path: "outline.rs".into(),
+            bytes: source.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(source)),
+        };
+
+        let error = read_indexed_outline_source(dir.path(), &indexed).unwrap_err();
+        assert!(error.to_string().contains("symlink or reparse point"));
     }
 
     // ── Production stdio JSON-RPC wiring ─────────────────────────────────

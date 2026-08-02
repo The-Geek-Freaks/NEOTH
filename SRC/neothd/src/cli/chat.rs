@@ -366,6 +366,10 @@ struct PromptBundle {
     /// `loop: true` skill cannot silently degrade to a single CLI provider
     /// call after hooks, slash handling, or route resolution.
     skill_loop_trigger: bool,
+    /// Resolved code-map evidence is audited only after final token budgeting
+    /// proves the exact block survived into the provider request.
+    repo_recall_audit: Option<RepoContextRecall>,
+    architecture_recall_audit: Option<ArchitectureRecall>,
 }
 
 /// Typed reason why a non-Council turn must enter the loop engine.
@@ -1171,6 +1175,7 @@ struct PromptBuildContext<'a> {
     args: &'a ChatArgs,
     prompt_bundle_hash: &'a str,
     writer: &'a crate::wal::writer::WalWriterHandle,
+    current_path: &'a std::path::Path,
     attachment_contexts: Option<&'a crate::pipeline::AttachmentContextBatch>,
 }
 
@@ -1191,6 +1196,7 @@ async fn build_prompt_bundle(
         args,
         prompt_bundle_hash,
         writer,
+        current_path,
         attachment_contexts,
     } = context;
     let PromptBuildOptions {
@@ -1200,7 +1206,7 @@ async fn build_prompt_bundle(
         // B22-TWEAKS-MODEL-01 — pre-loaded fail-loud at the chat boundary.
         persona_override_from_tweaks,
     } = options;
-    let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
+    let cwd = current_path.to_path_buf();
     // GOLD-CCPARITY-SUBDIR-MD-01 — resolve extra_dirs from config; relative
     // paths are joined to cwd so operators can write `packages/core` in
     // freedom.yaml without needing absolute paths.
@@ -1639,29 +1645,58 @@ async fn build_prompt_bundle(
     };
 
     // ── K-Repo-Map Phase 3c — pre-compute the auto-context block ─────────
-    // Best-effort: any failure silently skips injection.
+    // A local CLI turn never falls back to another persisted repository when
+    // its CWD is outside every indexed root. The typed receipt stays attached
+    // until final budgeting proves the exact block survived into the request.
     let prompt_instance_paths = InstancePaths::for_home(&home);
-    let mut repo_context_block =
-        maybe_repo_context_block(&config, &prompt, &prompt_instance_paths, &cwd);
-    if let Some(findings) = maybe_architecture_findings_for_skill(
+    let repo_context_recall =
+        maybe_repo_context_recall_async(&config, &prompt, &prompt_instance_paths, &cwd, false)
+            .await
+            .context("resolve repository recall for CLI turn")?;
+    let mut repo_context_block = repo_context_recall
+        .as_ref()
+        .map(|recall| recall.block.clone());
+    let mut architecture_recall = None;
+    if let Some(context) = maybe_architecture_findings_for_skill(
         used_skill_id.as_deref(),
         &prompt_instance_paths,
         &cwd,
-    ) {
-        info!(
-            roots_scanned = findings.roots_scanned,
-            edges_scanned = findings.edges_scanned,
-            cycles_injected = findings.cycles_injected,
-            truncated = findings.truncated,
-            "GRAPH-02: automatic architecture cycle findings injected"
-        );
-        eprintln!(
-            "[neoth:code-map] architecture workflow: {} call cycle(s) injected \
+    )
+    .await
+    .context("resolve architecture code-map context for CLI turn")?
+    {
+        if repo_context_recall
+            .as_ref()
+            .is_some_and(|recall| recall.receipt.snapshot != context.snapshot)
+        {
+            warn!(
+                repo_snapshot = ?repo_context_recall
+                    .as_ref()
+                    .map(|recall| &recall.receipt.snapshot),
+                architecture_snapshot = ?context.snapshot,
+                "discarding architecture recall from a different code-map generation"
+            );
+            eprintln!(
+                "[neoth:code-map] architecture context changed while recall was assembled; \
+                 rebuild/retry before injecting mixed generations"
+            );
+        } else {
+            let findings = &context.findings;
+            info!(
+                roots_scanned = findings.roots_scanned,
+                edges_scanned = findings.edges_scanned,
+                cycles_injected = findings.cycles_injected,
+                truncated = findings.truncated,
+                "GRAPH-02: automatic architecture cycle findings injected"
+            );
+            eprintln!(
+                "[neoth:code-map] architecture workflow: {} call cycle(s) injected \
              ({} edges across {} root(s))",
-            findings.cycles_injected, findings.edges_scanned, findings.roots_scanned
-        );
-        emit_architecture_findings_audit(writer, &findings, "cli").await;
-        repo_context_block = append_architecture_findings(repo_context_block, &findings);
+                findings.cycles_injected, findings.edges_scanned, findings.roots_scanned
+            );
+            repo_context_block = append_architecture_findings(repo_context_block, &context);
+            architecture_recall = Some(context);
+        }
     }
 
     // ── GOLD-WIRE Block::D + GOLD-ADAPT-MEM-09 — auto-recall injection ────
@@ -1850,6 +1885,8 @@ async fn build_prompt_bundle(
             // GOLD-CCPARITY-EFFORT-03: thread the per-skill effort to dispatch_provider.
             resolved_effort: skill_effort,
             skill_loop_trigger,
+            repo_recall_audit: repo_context_recall,
+            architecture_recall_audit: architecture_recall,
         },
         config,
         prompt,
@@ -1911,6 +1948,18 @@ async fn drain_preflight_action_writer(
     writer_join
         .await
         .context("WAL writer task failed after a local preflight action")
+}
+
+async fn preserve_code_map_audit_and_writer_failure(
+    audit_error: anyhow::Error,
+    writer_join: tokio::task::JoinHandle<()>,
+) -> anyhow::Error {
+    match writer_join.await {
+        Ok(()) => audit_error,
+        Err(join_error) => audit_error.context(format!(
+            "WAL writer join also failed while draining the refused code-map audit: {join_error}"
+        )),
+    }
 }
 
 async fn finish_preflight_action(
@@ -6330,6 +6379,8 @@ async fn run_chat_with_consent(
     // it BEFORE the system-prompt assembly is mandatory — the parallel
     // load just shaves the serial cost off the front edge.
     let home = first_tour_home.clone();
+    let prompt_current_path = std::env::current_dir()
+        .context("resolve current working directory for repository-aware prompt assembly")?;
     // GOLD-CCPARITY-SKILLVIS-01 — determine slash-invocation BEFORE calling
     // build_prompt_bundle so the visibility pre-filter can gate NameOnly /
     // UserInvocableOnly skills. We parse the invocation here (before the slash
@@ -6350,6 +6401,8 @@ async fn run_chat_with_consent(
             // GOLD-CCPARITY-EFFORT-03: per-skill effort resolved in build_prompt_bundle.
             resolved_effort: skill_effort,
             skill_loop_trigger,
+            repo_recall_audit,
+            architecture_recall_audit,
         },
         config,
         prompt,
@@ -6362,6 +6415,7 @@ async fn run_chat_with_consent(
             args: &args,
             prompt_bundle_hash: &intent_bundle_hash,
             writer: &writer,
+            current_path: &prompt_current_path,
             attachment_contexts: attachment_contexts.as_ref(),
         },
         PromptBuildOptions {
@@ -6618,6 +6672,21 @@ async fn run_chat_with_consent(
         prompt_token_estimate,
         effective_cap: request_token_cap,
     } = budgeted;
+    if let Err(error) = emit_retained_code_map_audits(
+        &writer,
+        repo_recall_audit.as_ref(),
+        architecture_recall_audit.as_ref(),
+        &prompt,
+        final_system.as_deref(),
+        "cli",
+    )
+    .await
+    {
+        drop(writer);
+        let audit_error =
+            error.context("code-map context audit failed; provider dispatch refused before egress");
+        return Err(preserve_code_map_audit_and_writer_failure(audit_error, writer_join).await);
+    }
     // The actual 0x20 intent is emitted centrally for every concrete leaf,
     // after cost/permission approval and immediately before transport dispatch.
     // Carry the old turn-level business fields into those request-bound frames.
@@ -8526,64 +8595,123 @@ fn partial_refusal_prefix(outcome: &crate::council::CouncilDebate) -> Option<Str
     ))
 }
 
-/// K-Repo-Map Phase 3c (Session 14 Pick #26) — best-effort repo-
-/// context lookup. Returns `Some(block)` when:
+/// One repository-context block and the exact atomic snapshot that produced it.
+#[derive(Debug)]
+pub(crate) struct RepoContextRecall {
+    pub(crate) block: String,
+    pub(crate) receipt: crate::code_map::recall::RecallReceipt,
+}
+
+/// K-Repo-Map Phase 3c (Session 14 Pick #26) — repository-local context
+/// lookup. Returns a typed block + receipt when:
 ///   1. `config.code_map.auto_context_max_files > 0` (operator opted in)
 ///   2. `~/.neoth/code_map.db` exists + opens cleanly
 ///   3. The persisted map has at least one file matching `prompt`
 ///
-/// Every other condition silently returns `None` — the chat path must
-/// never block on code-map state. Operator who hasn't run
-/// `neoth code-map persist` yet sees their chat work normally.
+/// Missing/disabled/unmapped state is `Ok(None)`. Corrupt or unverifiable
+/// state is returned to the caller so operator surfaces can report it instead
+/// of silently pretending recall succeeded.
 ///
 /// Production resolves both stores from the selected runtime instance home;
-/// unit tests use a test-only explicit-path seam.
-pub(crate) fn maybe_repo_context_block(
+/// The alternate policy entry point is reserved for the daemon/channel path,
+/// whose process CWD does not identify the conversation's repository. The
+/// local CLI uses active-root containment; the channel path ignores daemon CWD
+/// completely and accepts only one unambiguous physical persisted root.
+#[cfg(test)]
+pub(crate) fn maybe_repo_context_recall(
     config: &FreedomConfig,
     prompt: &str,
     paths: &InstancePaths,
     current_path: &std::path::Path,
-) -> Option<String> {
+) -> Result<Option<RepoContextRecall>> {
+    maybe_repo_context_recall_with_policy(config, prompt, paths, current_path, false)
+}
+
+pub(crate) async fn maybe_repo_context_recall_async(
+    config: &FreedomConfig,
+    prompt: &str,
+    paths: &InstancePaths,
+    current_path: &std::path::Path,
+    sole_root_only: bool,
+) -> Result<Option<RepoContextRecall>> {
+    let config = config.clone();
+    let prompt = prompt.to_owned();
+    let paths = paths.clone();
+    let current_path = current_path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        maybe_repo_context_recall_with_policy(
+            &config,
+            &prompt,
+            &paths,
+            &current_path,
+            sole_root_only,
+        )
+    })
+    .await
+    .context("repository recall worker panicked")?
+}
+
+pub(crate) fn maybe_repo_context_recall_with_policy(
+    config: &FreedomConfig,
+    prompt: &str,
+    paths: &InstancePaths,
+    current_path: &std::path::Path,
+    sole_root_only: bool,
+) -> Result<Option<RepoContextRecall>> {
     if config.code_map.auto_context_max_files == 0 {
-        return None;
+        return Ok(None);
     }
-    if !paths.code_map.exists() {
-        return None;
+    if !paths
+        .code_map
+        .try_exists()
+        .with_context(|| format!("inspect code-map store {}", paths.code_map.display()))?
+    {
+        return Ok(None);
     }
-    // GOLD-R3-13: resolve the active repository (the persisted root that
-    // contains the working dir) so recall cannot inject an unrelated repo's
-    // files into this chat turn. None → the CWD is not inside a persisted
-    // repo; inject nothing rather than fall back to another root.
-    let active_root = {
-        let conn = crate::code_map::persist::open(&paths.code_map).ok()?;
-        match crate::code_map::recall::resolve_active_root(&conn, current_path) {
-            Some(root) => root,
-            // The daemon runs as a service: its process CWD is `/` or the
-            // service directory, never the indexed repo, so this arm is the
-            // NORMAL case on the channel path — where it silently disabled the
-            // repo-map auto-context entirely. A single persisted root is
-            // unambiguous (there is no other repo to confuse it with), so use
-            // it; with several indexed repos the choice would be a guess, and
-            // guessing is what the containment forbids.
-            None => match crate::code_map::recall::sole_persisted_root(&conn) {
-                Some(root) => root,
-                None => {
-                    tracing::debug!(
-                        cwd = %current_path.display(),
-                        "repo-map auto-context skipped: the working directory is not inside a \
-                         persisted code-map root and more than one root is indexed"
-                    );
-                    return None;
-                }
-            },
+    let conn = crate::code_map::persist::open(&paths.code_map)
+        .with_context(|| format!("open code-map store {}", paths.code_map.display()))?;
+    let max = config.code_map.auto_context_max_files as usize;
+    let receipt = if sole_root_only {
+        // A service CWD is ambient process state, not conversation authority.
+        // Ignore it even when it happens to sit inside an indexed repository.
+        match crate::code_map::recall::sole_persisted_root_snapshot(&conn)? {
+            Some(snapshot) => crate::code_map::recall::recall_receipt_for_prompt(
+                &conn,
+                snapshot.root.path(),
+                prompt,
+                max,
+                crate::code_map::recall::RecallStaleness::Check,
+            )?,
+            None => None,
         }
+    } else {
+        crate::code_map::recall::recall_receipt_for_prompt(
+            &conn,
+            current_path,
+            prompt,
+            max,
+            crate::code_map::recall::RecallStaleness::Check,
+        )?
     };
-    maybe_repo_context_block_at_paths(config, prompt, &paths.code_map, &paths.ccr, &active_root)
+    let Some(receipt) = receipt else {
+        return Ok(None);
+    };
+    if receipt.stale != Some(false) {
+        anyhow::bail!(
+            "repository recall refused stale or unverifiable snapshot for {} at generation {}",
+            receipt.snapshot.root.display(),
+            receipt.snapshot.index_generation
+        );
+    }
+    let Some(block) = render_repo_context_block(config, &paths.ccr, &receipt.ranked_files) else {
+        return Ok(None);
+    };
+    Ok(Some(RepoContextRecall { block, receipt }))
 }
 
 /// Test-friendly inner: resolve the code-map DB at an explicit path
 /// instead of through `HOME` / `USERPROFILE`. Same best-effort
-/// contract as [`maybe_repo_context_block`] — every failure path
+/// contract as the legacy best-effort renderer — every failure path
 /// produces `None`, never an error. Fake persisted roots ("/repo/test")
 /// are not real directories, so the active root is taken as the sole
 /// persisted root recorded in the seeded DB rather than resolved from a CWD.
@@ -8618,6 +8746,7 @@ pub(crate) fn maybe_repo_context_block_at(
     maybe_repo_context_block_at_paths(config, prompt, db_path, &ccr_dir, &active_root)
 }
 
+#[cfg(test)]
 fn maybe_repo_context_block_at_paths(
     config: &FreedomConfig,
     prompt: &str,
@@ -8643,11 +8772,22 @@ fn maybe_repo_context_block_at_paths(
             Ok(h) if !h.is_empty() => h,
             _ => return None,
         };
+    render_repo_context_block(config, ccr_dir, &hits)
+}
+
+fn render_repo_context_block(
+    config: &FreedomConfig,
+    ccr_dir: &std::path::Path,
+    hits: &[crate::code_map::recall::RelevantFile],
+) -> Option<String> {
+    if hits.is_empty() {
+        return None;
+    }
     // The code-map DB may predate current write validation or have been
     // imported from another installation. Sanitise before compression so the
     // persistent CCR store can never receive the unsafe original bytes.
     let block = crate::security::redact::sanitize_tool_output(
-        &crate::code_map::recall::render_context_block(&hits),
+        &crate::code_map::recall::render_context_block(hits),
     );
     if block.is_empty() {
         return None;
@@ -8672,141 +8812,284 @@ fn maybe_repo_context_block_at_paths(
 /// repo-context, this is skill-scoped rather than gated by
 /// `auto_context_max_files`: activating the architecture workflow is the
 /// explicit request to run its bounded local analysis.
-pub(crate) fn maybe_architecture_findings_for_skill(
+#[derive(Debug)]
+pub(crate) struct ArchitectureRecall {
+    pub(crate) findings: crate::code_map::recall::ArchitectureFindings,
+    pub(crate) snapshot: crate::code_map::recall::RootGenerationSnapshot,
+    /// Exact sanitized Block-D bytes appended to the provider system prompt.
+    /// Audit retention checks and hashes this value, never the raw repo text.
+    pub(crate) block: String,
+}
+
+pub(crate) async fn maybe_architecture_findings_for_skill(
     skill_id: Option<&str>,
     paths: &InstancePaths,
     current_path: &std::path::Path,
-) -> Option<crate::code_map::recall::ArchitectureFindings> {
-    maybe_architecture_findings_for_skill_at(skill_id, &paths.code_map, current_path)
+) -> Result<Option<ArchitectureRecall>> {
+    maybe_architecture_findings_for_skill_with_policy(skill_id, paths, current_path, false).await
+}
+
+pub(crate) async fn maybe_architecture_findings_for_skill_with_policy(
+    skill_id: Option<&str>,
+    paths: &InstancePaths,
+    current_path: &std::path::Path,
+    sole_root_only: bool,
+) -> Result<Option<ArchitectureRecall>> {
+    let skill_id = skill_id.map(str::to_owned);
+    let db_path = paths.code_map.clone();
+    let current_path = current_path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        maybe_architecture_findings_for_skill_at(
+            skill_id.as_deref(),
+            &db_path,
+            &current_path,
+            sole_root_only,
+        )
+    })
+    .await
+    .context("GRAPH-02 architecture recall worker failed")?
 }
 
 fn maybe_architecture_findings_for_skill_at(
     skill_id: Option<&str>,
     db_path: &std::path::Path,
     current_path: &std::path::Path,
-) -> Option<crate::code_map::recall::ArchitectureFindings> {
-    if skill_id != Some(crate::code_map::recall::ARCHITECTURE_SKILL_ID) || !db_path.exists() {
-        return None;
+    sole_root_only: bool,
+) -> Result<Option<ArchitectureRecall>> {
+    if skill_id != Some(crate::code_map::recall::ARCHITECTURE_SKILL_ID) {
+        return Ok(None);
     }
-    let conn = match crate::code_map::persist::open(db_path) {
-        Ok(conn) => conn,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                path = %db_path.display(),
-                "GRAPH-02: architecture code-map open failed; no cycle context injected"
-            );
-            return None;
-        }
+    anyhow::ensure!(
+        db_path.exists(),
+        "GRAPH-02 architecture workflow requires a code-map snapshot at {}; run `neoth code-map persist`",
+        db_path.display()
+    );
+    let conn = crate::code_map::persist::open(db_path)
+        .with_context(|| format!("open GRAPH-02 code-map at {}", db_path.display()))?;
+    let snapshot = if sole_root_only {
+        crate::code_map::recall::sole_persisted_root_snapshot(&conn)
+            .context("resolve GRAPH-02 sole-root snapshot")?
+    } else {
+        crate::code_map::recall::resolve_active_root_snapshot(&conn, current_path)
+            .context("resolve GRAPH-02 active physical root")?
     };
-    let canonical_path = match std::fs::canonicalize(current_path) {
-        Ok(path) => path,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                current_path = %current_path.display(),
-                "GRAPH-02: current repository path could not be canonicalized; refusing fallback"
-            );
-            return None;
-        }
-    };
-    let mut roots = match conn.prepare("SELECT root FROM code_map_roots ORDER BY root ASC") {
-        Ok(statement) => statement,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "GRAPH-02: persisted root lookup failed; no cycle context injected"
-            );
-            return None;
-        }
-    };
-    let persisted_root = match roots.query_map([], |row| row.get::<_, String>(0)) {
-        Ok(rows) => rows
-            .filter_map(|row| row.ok())
-            .filter(|root| canonical_path.starts_with(std::path::Path::new(root)))
-            .max_by_key(|root| std::path::Path::new(root).components().count()),
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "GRAPH-02: persisted root rows could not be read; no cycle context injected"
-            );
-            return None;
-        }
-    };
-    let Some(persisted_root) = persisted_root else {
-        tracing::debug!(
-            current_path = %canonical_path.display(),
-            "GRAPH-02: current path has no persisted code-map root; refusing cross-repo fallback"
-        );
-        return None;
-    };
-    match crate::code_map::recall::architecture_findings_for_skill(
+    let snapshot = snapshot.with_context(|| {
+        format!(
+            "GRAPH-02 architecture workflow has no unambiguous persisted root for {}",
+            current_path.display()
+        )
+    })?;
+    anyhow::ensure!(
+        snapshot.index_generation > 0
+            && snapshot.graph_generation > 0
+            && snapshot.index_generation == snapshot.graph_generation,
+        "GRAPH-02 architecture graph is not bound to a complete index generation"
+    );
+    anyhow::ensure!(
+        crate::code_map::persist::root_snapshot_complete(&conn, snapshot.root.display())?,
+        "GRAPH-02 architecture code-map came from a partial scan; rebuild without custom limits"
+    );
+    let initial_freshness = crate::code_map::persist::index_freshness_receipt_cached(
+        &conn,
+        snapshot.root.display(),
+        snapshot.index_generation,
+    )
+    .context("check GRAPH-02 architecture filesystem freshness")?;
+    anyhow::ensure!(
+        !initial_freshness.stale,
+        "GRAPH-02 architecture code-map is stale; run `neoth code-map persist`"
+    );
+    let findings = crate::code_map::recall::architecture_findings_for_skill(
         &conn,
         skill_id,
-        &persisted_root,
+        snapshot.root.display(),
         crate::code_map::recall::ARCHITECTURE_CYCLE_LIMIT,
-    ) {
-        Ok(findings) => findings,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "GRAPH-02: persisted cycle scan failed; no cycle context injected"
-            );
-            None
-        }
-    }
+    )
+    .context("scan persisted GRAPH-02 architecture cycles")?;
+    let Some(findings) = findings else {
+        return Ok(None);
+    };
+    let final_freshness = crate::code_map::persist::index_freshness_receipt_cached(
+        &conn,
+        snapshot.root.display(),
+        snapshot.index_generation,
+    )
+    .context("recheck GRAPH-02 architecture filesystem freshness")?;
+    anyhow::ensure!(
+        !final_freshness.stale
+            && final_freshness.filesystem_fingerprint == initial_freshness.filesystem_fingerprint,
+        "GRAPH-02 repository changed during architecture recall; retry"
+    );
+    let after = crate::code_map::recall::resolve_active_root_snapshot(&conn, snapshot.root.path())?
+        .context("GRAPH-02 active root disappeared during architecture recall")?;
+    anyhow::ensure!(
+        after == snapshot,
+        "GRAPH-02 code-map generation advanced during architecture recall; retry"
+    );
+    let block = crate::security::redact::sanitize_tool_output(&findings.block);
+    Ok(Some(ArchitectureRecall {
+        findings,
+        snapshot,
+        block,
+    }))
 }
 
 /// Append GRAPH-02 findings after ordinary relevant-file context. Keeping this
 /// as one seam prevents CLI and channel assembly from drifting on delimiters.
 pub(crate) fn append_architecture_findings(
     repo_context: Option<String>,
-    findings: &crate::code_map::recall::ArchitectureFindings,
+    context: &ArchitectureRecall,
 ) -> Option<String> {
     let combined = match repo_context {
-        Some(mut context) => {
-            if !context.ends_with('\n') {
-                context.push('\n');
+        Some(mut combined) => {
+            if !combined.ends_with('\n') {
+                combined.push('\n');
             }
-            context.push('\n');
-            context.push_str(&findings.block);
-            context
+            combined.push('\n');
+            combined.push_str(&context.block);
+            combined
         }
-        None => findings.block.clone(),
+        None => context.block.clone(),
     };
-    Some(crate::security::redact::sanitize_tool_output(&combined))
+    Some(combined)
+}
+
+/// Metadata-only proof that one repository-local recall receipt reached a
+/// prompt surface. Repository paths, identities, symbols and prompt bytes stay
+/// out of the WAL; stable digests bind the audit row to those local values.
+fn repo_context_recall_audit_payload(
+    receipt: &crate::code_map::recall::RecallReceipt,
+    prompt: &str,
+    block: &str,
+    surface: &'static str,
+) -> Result<Vec<u8>> {
+    let root_identity = crate::security::redact::bounded_audit_digest_bytes(
+        b"code-map-recall-root/v1",
+        &[receipt.snapshot.root.identity().as_str().as_bytes()],
+        false,
+    );
+    let query = crate::security::redact::bounded_audit_digest_bytes(
+        b"code-map-recall-query/v1",
+        &[prompt.as_bytes()],
+        false,
+    );
+    let context = crate::security::redact::bounded_audit_digest_bytes(
+        b"code-map-recall-context/v1",
+        &[block.as_bytes()],
+        false,
+    );
+    serde_json::to_vec(&serde_json::json!({
+        "schema": "neoth.code_map.recall.audit.v1",
+        "status": "retained_in_provider_request",
+        "surface": surface,
+        "root_identity_hash_sha256": root_identity.sha256,
+        "index_generation": receipt.snapshot.index_generation,
+        "graph_generation": receipt.snapshot.graph_generation,
+        "stale": receipt.stale,
+        "hit_count": receipt.ranked_files.len(),
+        "truncated": receipt.truncated,
+        "query_hash_sha256": query.sha256,
+        "query_hash_truncated": query.truncated,
+        "query_bytes": query.formatted_bytes,
+        "context_hash_sha256": context.sha256,
+        "context_hash_truncated": context.truncated,
+        "context_bytes": context.formatted_bytes,
+        "ts_unix": crate::time::now_unix_i64(),
+    }))
+    .context("serialize repository recall audit payload")
+}
+
+pub(crate) async fn emit_repo_context_recall_audit(
+    writer: &crate::wal::writer::WalWriterHandle,
+    receipt: &crate::code_map::recall::RecallReceipt,
+    prompt: &str,
+    block: &str,
+    surface: &'static str,
+) -> Result<()> {
+    let payload = repo_context_recall_audit_payload(receipt, prompt, block, surface)?;
+    let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8)
+        .build();
+    writer
+        .append(header, payload)
+        .await
+        .context("append repository recall audit WAL event")
+        .map(|_| ())
+}
+
+/// Emit only receipts whose exact context bytes survived routing and final
+/// token-budget degradation. A WAL failure blocks provider dispatch; a
+/// dropped/omitted degradable block produces no misleading injection event.
+pub(crate) async fn emit_retained_code_map_audits(
+    writer: &crate::wal::writer::WalWriterHandle,
+    repo_recall: Option<&RepoContextRecall>,
+    architecture_recall: Option<&ArchitectureRecall>,
+    prompt: &str,
+    final_system: Option<&str>,
+    surface: &'static str,
+) -> Result<()> {
+    let Some(final_system) = final_system else {
+        return Ok(());
+    };
+    if let Some(recall) = repo_recall
+        && final_system.contains(&recall.block)
+    {
+        emit_repo_context_recall_audit(writer, &recall.receipt, prompt, &recall.block, surface)
+            .await?;
+    }
+    if let Some(context) = architecture_recall
+        && final_system.contains(&context.block)
+    {
+        emit_architecture_findings_audit(writer, context, surface).await?;
+    }
+    Ok(())
 }
 
 /// Durable metadata-only proof that the automatic cycle evidence reached a
-/// prompt. Exact symbols/paths remain local; `context_hash_xxh3` binds the WAL
-/// row to the injected block without copying repository structure into audit.
+/// prompt. Exact symbols/paths remain local; a domain-separated SHA-256 digest
+/// binds the WAL row to the injected block without copying repository
+/// structure into audit.
 pub(crate) async fn emit_architecture_findings_audit(
     writer: &crate::wal::writer::WalWriterHandle,
-    findings: &crate::code_map::recall::ArchitectureFindings,
+    context: &ArchitectureRecall,
     surface: &'static str,
-) {
-    let payload = match serde_json::to_vec(&serde_json::json!({
+) -> Result<()> {
+    let findings = &context.findings;
+    let root_identity = crate::security::redact::bounded_audit_digest_bytes(
+        b"architecture-recall-root/v1",
+        &[context.snapshot.root.identity().as_str().as_bytes()],
+        false,
+    );
+    let context_digest = crate::security::redact::bounded_audit_digest_bytes(
+        b"architecture-recall-context/v1",
+        &[context.block.as_bytes()],
+        false,
+    );
+    let payload = serde_json::to_vec(&serde_json::json!({
         "skill_id": crate::code_map::recall::ARCHITECTURE_SKILL_ID,
+        "status": "retained_in_provider_request",
         "surface": surface,
+        "root_identity_hash_sha256": root_identity.sha256,
+        "index_generation": context.snapshot.index_generation,
+        "graph_generation": context.snapshot.graph_generation,
         "roots_scanned": findings.roots_scanned,
         "edges_scanned": findings.edges_scanned,
         "cycles_injected": findings.cycles_injected,
         "truncated": findings.truncated,
-        "context_hash_xxh3": xxhash_rust::xxh3::xxh3_64(findings.block.as_bytes()),
+        "context_hash_sha256": context_digest.sha256,
+        "context_hash_truncated": context_digest.truncated,
+        "context_bytes": context_digest.formatted_bytes,
         "ts_unix": crate::time::now_unix_i64(),
-    })) {
-        Ok(payload) => payload,
-        Err(e) => {
-            tracing::warn!(error = %e, "GRAPH-02: architecture audit payload failed");
-            return;
-        }
-    };
+    }))
+    .context("serialize architecture recall audit payload")?;
     let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::ArchitectureCyclesInjected as u8)
         .build();
-    if let Err(e) = writer.append(header, payload).await {
-        tracing::warn!(error = %e, "GRAPH-02: architecture audit WAL append failed");
-    }
+    writer
+        .append(header, payload)
+        .await
+        .context("append architecture recall audit WAL event")
+        .map(|_| ())
 }
 
 /// GOLD-ADAPT-MEM-12 — assemble a per-session "guidance" context block from the
@@ -8981,7 +9264,7 @@ fn render_guidance_block(
 ///
 /// Best-effort: Skip-tier / missing DB / query error / no hits → `None`, never
 /// fails the turn. Production resolves the episode store from the operator's
-/// HOME (mirrors [`maybe_repo_context_block`]); see [`maybe_recall_block_at`]
+/// HOME (mirrors [`maybe_repo_context_recall`]); see [`maybe_recall_block_at`]
 /// for the explicit-path test variant.
 async fn maybe_recall_block(prompt: &str, neoth_home: &std::path::Path) -> Option<String> {
     let db_path = neoth_home.join("views.db");
@@ -14908,6 +15191,244 @@ modes:
         );
     }
 
+    fn seed_physical_repo_recall(
+        home: &std::path::Path,
+        repo: &std::path::Path,
+    ) -> (FreedomConfig, InstancePaths, String) {
+        let source = repo.join("src/private_auth_marker.rs");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, "pub fn private_auth_marker() {}\n").unwrap();
+        let paths = InstancePaths::for_home(home);
+        let root = crate::code_map::CanonicalRepoRoot::discover(repo).unwrap();
+        crate::code_map::rebuild_snapshot(
+            &root,
+            &paths.code_map,
+            crate::code_map::RebuildOptions::default(),
+        )
+        .unwrap();
+        let mut config = FreedomConfig::default();
+        config.code_map.auto_context_max_files = 5;
+        (config, paths, root.display().to_owned())
+    }
+
+    #[test]
+    fn repo_context_cli_requires_active_root_but_channel_may_use_verified_sole_root() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let repo = dir.path().join("repo");
+        let unrelated = dir.path().join("unrelated");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&unrelated).unwrap();
+        let (config, paths, canonical) = seed_physical_repo_recall(&home, &repo);
+
+        assert!(
+            maybe_repo_context_recall(&config, "private_auth_marker", &paths, &unrelated)
+                .unwrap()
+                .is_none(),
+            "CLI recall must not jump from an unrelated CWD to the sole indexed repo"
+        );
+        let daemon = maybe_repo_context_recall_with_policy(
+            &config,
+            "private_auth_marker",
+            &paths,
+            &unrelated,
+            true,
+        )
+        .unwrap()
+        .expect("daemon may use one physically verified sole root");
+        assert_eq!(daemon.receipt.snapshot.root.display(), canonical);
+        assert!(daemon.block.contains("private_auth_marker"));
+
+        let active = maybe_repo_context_recall(&config, "private_auth_marker", &paths, &repo)
+            .unwrap()
+            .expect("active physical root must resolve for CLI recall");
+        assert_eq!(active.receipt.snapshot, daemon.receipt.snapshot);
+
+        let second = dir.path().join("second-repo");
+        std::fs::create_dir_all(&second).unwrap();
+        let second = std::fs::canonicalize(second)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let mut conn = crate::code_map::persist::open(&paths.code_map).unwrap();
+        crate::code_map::persist::persist_map(
+            &mut conn,
+            &crate::code_map::walker::RepoMap {
+                root: second,
+                files: Vec::new(),
+                report: crate::code_map::walker::ScanReport::default(),
+            },
+        )
+        .unwrap();
+        drop(conn);
+        assert!(
+            maybe_repo_context_recall_with_policy(
+                &config,
+                "private_auth_marker",
+                &paths,
+                &unrelated,
+                true,
+            )
+            .unwrap()
+            .is_none(),
+            "daemon fallback must not guess when multiple roots are indexed"
+        );
+        assert!(
+            maybe_repo_context_recall_with_policy(
+                &config,
+                "private_auth_marker",
+                &paths,
+                &repo,
+                true,
+            )
+            .unwrap()
+            .is_none(),
+            "daemon CWD inside one indexed root is ambient and must not select it"
+        );
+    }
+
+    #[test]
+    fn repo_context_stale_snapshot_is_a_visible_error_not_disabled_state() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        let (config, paths, _) = seed_physical_repo_recall(&home, &repo);
+        std::fs::write(
+            repo.join("src/private_auth_marker.rs"),
+            "pub fn private_auth_marker() { changed(); }\n",
+        )
+        .unwrap();
+
+        let error =
+            maybe_repo_context_recall(&config, "private_auth_marker", &paths, &repo).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("refused stale or unverifiable snapshot"),
+            "stale recall must remain distinguishable from disabled/no-match state: {error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn prompt_bundle_blocks_stale_repo_context_before_provider_boundary() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        let (config, _, _) = seed_physical_repo_recall(&home, &repo);
+        std::fs::write(
+            repo.join("src/private_auth_marker.rs"),
+            "pub fn private_auth_marker() { changed(); }\n",
+        )
+        .unwrap();
+        let args = ChatArgs {
+            attach: Vec::new(),
+            message: Some("private_auth_marker".to_string()),
+            model: None,
+            skill: None,
+            system: None,
+            edit: false,
+            config: None,
+            wal_segment: None,
+            stream: false,
+            gui_consent_token_stdin: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+            incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
+        };
+        let (writer, writer_join) = wal_spawn(home.join("prompt-build.wal")).unwrap();
+        let prompt_hash = "0".repeat(64);
+        let result = build_prompt_bundle(
+            config,
+            "private_auth_marker".to_string(),
+            home,
+            PromptBuildContext {
+                args: &args,
+                prompt_bundle_hash: &prompt_hash,
+                writer: &writer,
+                current_path: &repo,
+                attachment_contexts: None,
+            },
+            PromptBuildOptions {
+                slash_skill_name: None,
+                persona_override_from_tweaks: None,
+            },
+        )
+        .await;
+        drop(writer);
+        writer_join.await.unwrap();
+
+        let error = match result {
+            Ok(_) => panic!("stale repository context reached the provider-side prompt bundle"),
+            Err(error) => error,
+        };
+        assert!(
+            format!("{error:#}").contains("refused stale or unverifiable snapshot"),
+            "prompt boundary lost the stale recall cause: {error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn code_map_audit_failure_preserves_a_simultaneous_writer_join_failure() {
+        let writer_join = tokio::spawn(async {
+            panic!("intentional writer panic for combined-error regression");
+        });
+        let error = preserve_code_map_audit_and_writer_failure(
+            anyhow::anyhow!("repository recall audit append failed"),
+            writer_join,
+        )
+        .await;
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("repository recall audit append failed"));
+        assert!(rendered.contains("WAL writer join also failed"));
+        assert!(rendered.contains("intentional writer panic"));
+    }
+
+    #[test]
+    fn repo_context_audit_payload_contains_only_metadata_and_digests() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let repo = dir.path().join("secret-repo-name");
+        std::fs::create_dir_all(&home).unwrap();
+        let (config, paths, canonical) = seed_physical_repo_recall(&home, &repo);
+        let prompt = "find private_auth_marker for SECRET_QUERY_MARKER";
+        let recall = maybe_repo_context_recall(&config, prompt, &paths, &repo)
+            .unwrap()
+            .expect("physical recall");
+        let payload =
+            repo_context_recall_audit_payload(&recall.receipt, prompt, &recall.block, "cli")
+                .unwrap();
+        let payload_text = String::from_utf8(payload.clone()).unwrap();
+
+        for forbidden in [
+            prompt,
+            canonical.as_str(),
+            recall.receipt.snapshot.root.identity().as_str(),
+            "private_auth_marker",
+            "src/private_auth_marker.rs",
+        ] {
+            assert!(
+                !payload_text.contains(forbidden),
+                "raw recall data leaked into WAL payload: {payload_text}"
+            );
+        }
+        let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(value["schema"], "neoth.code_map.recall.audit.v1");
+        assert_eq!(value["surface"], "cli");
+        assert_eq!(value["hit_count"], 1);
+        assert!(value["root_identity_hash_sha256"].as_str().is_some());
+        assert!(value["query_hash_sha256"].as_str().is_some());
+        assert!(value["context_hash_sha256"].as_str().is_some());
+        assert_eq!(value["query_hash_truncated"], false);
+        assert_eq!(value["context_hash_truncated"], false);
+    }
+
     #[test]
     fn repo_context_is_sanitized_before_prompt_and_persistent_ccr() {
         use crate::code_map::persist::{open, persist_map};
@@ -15028,27 +15549,79 @@ modes:
                 Some("unrelated_skill"),
                 &db,
                 std::path::Path::new("/repo/test"),
+                false,
             )
+            .unwrap()
             .is_none()
         );
-        let findings = maybe_architecture_findings_for_skill_at(
+        let context = maybe_architecture_findings_for_skill_at(
             Some(crate::code_map::recall::ARCHITECTURE_SKILL_ID),
             &db,
             &repo_root,
+            false,
         )
+        .unwrap()
         .expect("active architecture workflow must consume persisted cycles");
-        let combined = append_architecture_findings(None, &findings).unwrap();
+        let findings = &context.findings;
+        let combined = append_architecture_findings(None, &context).unwrap();
 
         assert_eq!(findings.cycles_injected, 1);
+        assert_eq!(context.snapshot.root.display(), persisted_root);
         assert!(combined.contains("a -> b -> a"));
+        let unrelated_error = maybe_architecture_findings_for_skill_at(
+            Some(crate::code_map::recall::ARCHITECTURE_SKILL_ID),
+            &db,
+            &unrelated_root,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            unrelated_error
+                .to_string()
+                .contains("no unambiguous persisted root"),
+            "an unrelated cwd must fail visibly instead of receiving another repo: {unrelated_error:#}"
+        );
         assert!(
             maybe_architecture_findings_for_skill_at(
                 Some(crate::code_map::recall::ARCHITECTURE_SKILL_ID),
                 &db,
                 &unrelated_root,
+                true,
             )
-            .is_none(),
-            "an unrelated cwd must not receive cycles from the only persisted repo"
+            .unwrap()
+            .is_some(),
+            "channel policy may use one physically verified sole root"
+        );
+
+        let second_root = dir.path().join("second-repo");
+        std::fs::create_dir_all(&second_root).unwrap();
+        let second_root = std::fs::canonicalize(second_root)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let mut conn = open(&db).unwrap();
+        persist_map(
+            &mut conn,
+            &RepoMap {
+                root: second_root,
+                files: vec![],
+                report: ScanReport::default(),
+            },
+        )
+        .unwrap();
+        drop(conn);
+        let ambiguous_error = maybe_architecture_findings_for_skill_at(
+            Some(crate::code_map::recall::ARCHITECTURE_SKILL_ID),
+            &db,
+            &repo_root,
+            true,
+        )
+        .unwrap_err();
+        assert!(
+            ambiguous_error
+                .to_string()
+                .contains("no unambiguous persisted root"),
+            "channel daemon CWD must fail visibly when multiple roots exist: {ambiguous_error:#}"
         );
     }
 

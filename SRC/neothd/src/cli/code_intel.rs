@@ -24,6 +24,8 @@ const CODE_EXTENSIONS: &[&str] = &[
 /// with tens of thousands of tracked files making the `git log` fan-out
 /// unbearably slow.
 const FILE_CAP: usize = 2_000;
+const EDGE_CAP: usize = 250_000;
+const EDGE_TEXT_BYTE_CAP: usize = 32 * 1024 * 1024;
 
 #[derive(Args, Debug, Clone)]
 pub struct CodeIntelArgs {
@@ -36,16 +38,18 @@ pub struct CodeIntelArgs {
     pub top: usize,
 
     /// Also compute hidden co-change coupling pairs (slower: requires git
-    /// log of the full commit history). Reads `~/.neoth/code_map.db` for
-    /// the call-graph edge set; if the DB is absent only commit-frequency
-    /// coupling is suppressed by an empty graph.
+    /// log of the full commit history). Requires a fresh, complete, certified
+    /// call-graph snapshot for this exact physical repository root.
     #[arg(long)]
     pub coupling: bool,
 }
 
 /// Entry point called from the `Commands` dispatch match.
 pub async fn run_code_intel(args: CodeIntelArgs) -> Result<()> {
-    let repo = args.repo.canonicalize().unwrap_or(args.repo.clone());
+    let repo = args
+        .repo
+        .canonicalize()
+        .with_context(|| format!("canonicalize repository {}", args.repo.display()))?;
 
     // ── 1. Enumerate tracked source files ───────────────────────────────────
     let files = tracked_source_files(&repo)?;
@@ -136,31 +140,28 @@ pub async fn run_code_intel(args: CodeIntelArgs) -> Result<()> {
         println!();
         println!("  Computing hidden co-change coupling …");
 
-        let graph = load_graph_from_db();
-        match co_change::hidden_coupling(&repo, &graph, 3) {
-            Ok(pairs) if pairs.is_empty() => {
-                println!("  No hidden coupling pairs found (threshold: ≥3 co-changes).");
+        let graph = load_graph_from_db(&repo)
+            .context("load certified call graph for hidden-coupling analysis")?;
+        let pairs = co_change::hidden_coupling(&repo, &graph, 3)
+            .context("compute hidden coupling from git history and certified call graph")?;
+        if pairs.is_empty() {
+            println!("  No hidden coupling pairs found (threshold: ≥3 co-changes).");
+        } else {
+            let show = pairs.len().min(20);
+            println!();
+            println!("  Top {show} hidden coupling pairs (co-changed ≥3 times, no call edge):");
+            println!();
+            println!("  {:<50}  {:<50}  {:>10}", "File A", "File B", "Co-changes");
+            println!("  {}", "-".repeat(115));
+            for p in pairs.iter().take(show) {
+                println!(
+                    "  {:<50}  {:<50}  {:>10}",
+                    truncate_path(&p.a, 49),
+                    truncate_path(&p.b, 49),
+                    p.co_changes
+                );
             }
-            Ok(pairs) => {
-                let show = pairs.len().min(20);
-                println!();
-                println!("  Top {show} hidden coupling pairs (co-changed ≥3 times, no call edge):");
-                println!();
-                println!("  {:<50}  {:<50}  {:>10}", "File A", "File B", "Co-changes");
-                println!("  {}", "-".repeat(115));
-                for p in pairs.iter().take(show) {
-                    println!(
-                        "  {:<50}  {:<50}  {:>10}",
-                        truncate_path(&p.a, 49),
-                        truncate_path(&p.b, 49),
-                        p.co_changes
-                    );
-                }
-                println!();
-            }
-            Err(e) => {
-                println!("  Warning: co-change analysis failed: {e}");
-            }
+            println!();
         }
     }
 
@@ -206,35 +207,266 @@ fn is_code_file(path: &str) -> bool {
     CODE_EXTENSIONS.contains(&ext)
 }
 
-/// Open `~/.neoth/code_map.db` (if present), load all edges, and return a
-/// `CallGraph`. Falls back to an empty graph on any error (missing DB is
-/// not fatal for the coupling pass — it just means no edges are suppressed).
-fn load_graph_from_db() -> CallGraph {
+/// One root-scoped graph read with the generation metadata operators need to
+/// decide whether the persisted snapshot is the one they expected.
+enum RootGraphLoad {
+    Loaded {
+        graph: CallGraph,
+        root: String,
+        index_generation: i64,
+        graph_generation: i64,
+    },
+    Unavailable {
+        message: String,
+    },
+}
+
+/// Open `~/.neoth/code_map.db` (if present), resolve the physical repository
+/// selected by `repo`, and load only that root's certified edge set. An
+/// unavailable or unverifiable graph is an explicit error: treating it as an
+/// empty graph would falsely label co-change pairs as having no call edge.
+fn load_graph_from_db(repo: &Path) -> Result<CallGraph> {
     let db_path = persist::default_path();
-    if !db_path.exists() {
-        println!(
-            "  (code_map.db not found at {} — run `neoth code-map persist` to \
-             build the call-graph; coupling pairs are shown without edge suppression)",
-            db_path.display()
-        );
-        return CallGraph::from_edges(vec![]);
-    }
-    match persist::open(&db_path) {
-        Ok(conn) => match persist::load_all_edges(&conn) {
-            Ok(edges) => {
-                let n = edges.len();
-                println!("  (loaded {n} call-graph edges from {})", db_path.display());
-                CallGraph::from_edges(edges)
-            }
-            Err(e) => {
-                println!("  Warning: could not load edges from code_map.db: {e}");
-                CallGraph::from_edges(vec![])
-            }
-        },
-        Err(e) => {
-            println!("  Warning: could not open code_map.db: {e}");
-            CallGraph::from_edges(vec![])
+    match load_root_graph_from_path(repo, &db_path) {
+        RootGraphLoad::Loaded {
+            graph,
+            root,
+            index_generation,
+            graph_generation,
+        } => {
+            println!(
+                "  (loaded {} call-graph edges for root {}; index generation {}, graph generation {})",
+                graph.edges().len(),
+                root,
+                index_generation,
+                graph_generation
+            );
+            Ok(graph)
         }
+        RootGraphLoad::Unavailable { message } => anyhow::bail!(message),
+    }
+}
+
+fn load_root_graph_from_path(repo: &Path, db_path: &Path) -> RootGraphLoad {
+    load_root_graph_from_path_with_hook(repo, db_path, || {})
+}
+
+fn load_root_graph_from_path_with_hook<F>(
+    repo: &Path,
+    db_path: &Path,
+    before_recheck: F,
+) -> RootGraphLoad
+where
+    F: FnOnce(),
+{
+    match db_path.try_exists() {
+        Ok(true) => {}
+        Ok(false) => {
+            return RootGraphLoad::Unavailable {
+                message: format!(
+                    "code_map.db not found at {} — run `neoth code-map persist` in {}; \
+                     hidden-coupling analysis is unavailable",
+                    db_path.display(),
+                    repo.display()
+                ),
+            };
+        }
+        Err(error) => {
+            return RootGraphLoad::Unavailable {
+                message: format!(
+                    "could not inspect code_map.db at {}: {error}; hidden-coupling analysis refused",
+                    db_path.display()
+                ),
+            };
+        }
+    }
+
+    let conn = match persist::open(db_path) {
+        Ok(conn) => conn,
+        Err(error) => {
+            return RootGraphLoad::Unavailable {
+                message: format!("Warning: could not open code_map.db: {error}"),
+            };
+        }
+    };
+    let initial = match crate::code_map::resolve_active_root_snapshot(&conn, repo) {
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => {
+            return RootGraphLoad::Unavailable {
+                message: format!(
+                    "Warning: code_map.db has no physical root mapping for {}; run \
+                     `neoth code-map persist` there; hidden-coupling analysis refused",
+                    repo.display()
+                ),
+            };
+        }
+        Err(error) => {
+            return RootGraphLoad::Unavailable {
+                message: format!(
+                    "Warning: could not verify the code-map root for {}: {error}; \
+                     hidden-coupling analysis refused",
+                    repo.display()
+                ),
+            };
+        }
+    };
+
+    if initial.index_generation <= 0
+        || initial.graph_generation <= 0
+        || initial.index_generation != initial.graph_generation
+    {
+        return RootGraphLoad::Unavailable {
+            message: format!(
+                "Warning: code-map graph for root {} is not a current certified snapshot \
+                 (index generation {}, graph generation {}); run `neoth code-map persist`; \
+                 hidden-coupling analysis refused",
+                initial.root.display(),
+                initial.index_generation,
+                initial.graph_generation
+            ),
+        };
+    }
+    match persist::root_snapshot_complete(&conn, initial.root.display()) {
+        Ok(true) => {}
+        Ok(false) => {
+            return RootGraphLoad::Unavailable {
+                message: format!(
+                    "Warning: code-map graph for root {} came from a partial scan; run \
+                     `neoth code-map persist` without explicit limits; hidden-coupling analysis refused",
+                    initial.root.display()
+                ),
+            };
+        }
+        Err(error) => {
+            return RootGraphLoad::Unavailable {
+                message: format!(
+                    "Warning: could not verify code-map completeness for root {}: {error}; \
+                     hidden-coupling analysis refused",
+                    initial.root.display()
+                ),
+            };
+        }
+    }
+
+    let initial_freshness = match persist::index_freshness_receipt(&conn, initial.root.display()) {
+        Ok(freshness) => freshness,
+        Err(error) => {
+            return RootGraphLoad::Unavailable {
+                message: format!(
+                    "Warning: could not verify filesystem freshness for root {}: {error}; \
+                     hidden-coupling analysis refused",
+                    initial.root.display()
+                ),
+            };
+        }
+    };
+    if initial_freshness.stale {
+        return RootGraphLoad::Unavailable {
+            message: format!(
+                "Warning: code-map graph for root {} is stale against the repository; run \
+                 `neoth code-map persist`; hidden-coupling analysis refused",
+                initial.root.display()
+            ),
+        };
+    }
+
+    let edges = match persist::load_edges_for_root_bounded_with_text_limit(
+        &conn,
+        initial.root.display(),
+        EDGE_CAP,
+        EDGE_TEXT_BYTE_CAP,
+    ) {
+        Ok((edges, false, _)) => edges,
+        Ok((_edges, true, bytes)) => {
+            return RootGraphLoad::Unavailable {
+                message: format!(
+                    "Warning: code-map graph for root {} exceeds the bounded coupling read \
+                     (more than {EDGE_CAP} edges or {EDGE_TEXT_BYTE_CAP} text bytes; \
+                     observed {bytes} bytes); hidden-coupling analysis refused",
+                    initial.root.display()
+                ),
+            };
+        }
+        Err(error) => {
+            return RootGraphLoad::Unavailable {
+                message: format!(
+                    "Warning: could not load call-graph edges for root {} at index generation {} \
+                     / graph generation {}: {error}; hidden-coupling analysis refused",
+                    initial.root.display(),
+                    initial.index_generation,
+                    initial.graph_generation
+                ),
+            };
+        }
+    };
+
+    before_recheck();
+    let final_freshness = match persist::index_freshness_receipt(&conn, initial.root.display()) {
+        Ok(freshness) => freshness,
+        Err(error) => {
+            return RootGraphLoad::Unavailable {
+                message: format!(
+                    "Warning: could not re-verify filesystem freshness for root {}: {error}; \
+                     hidden-coupling analysis refused",
+                    initial.root.display()
+                ),
+            };
+        }
+    };
+    if final_freshness.stale
+        || final_freshness.filesystem_fingerprint != initial_freshness.filesystem_fingerprint
+    {
+        return RootGraphLoad::Unavailable {
+            message: format!(
+                "Warning: repository {} changed while its call graph was read; hidden-coupling \
+                 analysis refused",
+                initial.root.display()
+            ),
+        };
+    }
+    let final_snapshot = match crate::code_map::resolve_active_root_snapshot(&conn, repo) {
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => {
+            return RootGraphLoad::Unavailable {
+                message: format!(
+                    "Warning: code-map root mapping for {} disappeared while edges were read; \
+                     hidden-coupling analysis refused",
+                    repo.display()
+                ),
+            };
+        }
+        Err(error) => {
+            return RootGraphLoad::Unavailable {
+                message: format!(
+                    "Warning: could not re-verify the code-map root for {} after reading edges: \
+                     {error}; hidden-coupling analysis refused",
+                    repo.display()
+                ),
+            };
+        }
+    };
+
+    if final_snapshot.root != initial.root
+        || final_snapshot.index_generation != initial.index_generation
+        || final_snapshot.graph_generation != initial.graph_generation
+    {
+        return RootGraphLoad::Unavailable {
+            message: format!(
+                "Warning: code-map root or generation changed while reading edges for {} \
+                 (started at index generation {}, graph generation {}); retry after the writer \
+                 finishes; hidden-coupling analysis refused",
+                initial.root.display(),
+                initial.index_generation,
+                initial.graph_generation
+            ),
+        };
+    }
+
+    RootGraphLoad::Loaded {
+        graph: CallGraph::from_edges(edges),
+        root: initial.root.display().to_owned(),
+        index_generation: initial.index_generation,
+        graph_generation: initial.graph_generation,
     }
 }
 
@@ -261,6 +493,29 @@ fn truncate_path(path: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code_map::graph::{CodeEdge, EdgeKind};
+    use crate::code_map::{RepoMap, ScanReport};
+    use tempfile::tempdir;
+
+    fn empty_map(root: &Path) -> RepoMap {
+        RepoMap {
+            root: crate::code_map::CanonicalRepoRoot::discover(root)
+                .unwrap()
+                .display()
+                .to_owned(),
+            files: vec![],
+            report: ScanReport::default(),
+        }
+    }
+
+    fn edge(target: &str) -> CodeEdge {
+        CodeEdge {
+            from_file: "src/shared.rs".into(),
+            from_symbol: "same_caller".into(),
+            to_name: target.into(),
+            kind: EdgeKind::Calls,
+        }
+    }
 
     #[test]
     fn is_code_file_accepts_known_extensions() {
@@ -313,5 +568,95 @@ mod tests {
         let t = truncate_path(p, 10);
         assert!(t.starts_with('…'));
         assert_eq!(t.chars().count(), 10);
+    }
+
+    #[test]
+    fn coupling_graph_load_is_scoped_to_the_selected_physical_root() {
+        let temp = tempdir().unwrap();
+        let repo_a = temp.path().join("repo-a");
+        let repo_b = temp.path().join("repo-b");
+        std::fs::create_dir_all(&repo_a).unwrap();
+        std::fs::create_dir_all(&repo_b).unwrap();
+        let db_path = temp.path().join("code_map.db");
+        let mut conn = persist::open(&db_path).unwrap();
+        let map_a = empty_map(&repo_a);
+        let map_b = empty_map(&repo_b);
+        persist::persist_map_and_edges(&mut conn, &map_a, &[edge("only_a")]).unwrap();
+        persist::persist_map_and_edges(&mut conn, &map_b, &[edge("only_b")]).unwrap();
+        drop(conn);
+
+        let RootGraphLoad::Loaded { graph, root, .. } =
+            load_root_graph_from_path(&repo_a, &db_path)
+        else {
+            panic!("repo A must resolve to its persisted physical root");
+        };
+        assert_eq!(root, map_a.root);
+        assert_eq!(graph.edges(), &[edge("only_a")]);
+
+        let RootGraphLoad::Loaded { graph, root, .. } =
+            load_root_graph_from_path(&repo_b, &db_path)
+        else {
+            panic!("repo B must resolve to its persisted physical root");
+        };
+        assert_eq!(root, map_b.root);
+        assert_eq!(graph.edges(), &[edge("only_b")]);
+    }
+
+    #[test]
+    fn coupling_graph_load_discards_edges_when_generation_changes_during_read() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let db_path = temp.path().join("code_map.db");
+        let map = empty_map(&repo);
+        let mut conn = persist::open(&db_path).unwrap();
+        persist::persist_map_and_edges(&mut conn, &map, &[edge("before")]).unwrap();
+        drop(conn);
+
+        let writer_path = db_path.clone();
+        let replacement_map = map.clone();
+        let outcome = load_root_graph_from_path_with_hook(&repo, &db_path, move || {
+            let mut writer = persist::open(&writer_path).unwrap();
+            persist::persist_map_and_edges(&mut writer, &replacement_map, &[edge("after")])
+                .unwrap();
+        });
+
+        let RootGraphLoad::Unavailable { message } = outcome else {
+            panic!("a generation race must discard the already-read edge set");
+        };
+        assert!(message.contains("changed while reading edges"));
+        assert!(!message.contains("windows:"));
+        assert!(!message.contains("unix:"));
+    }
+
+    #[test]
+    fn coupling_graph_load_keeps_missing_snapshot_distinct_from_zero_edges() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let db_path = temp.path().join("missing-code-map.db");
+
+        let RootGraphLoad::Unavailable { message } = load_root_graph_from_path(&repo, &db_path)
+        else {
+            panic!("missing code-map DB must not become a successful empty graph");
+        };
+        assert!(message.contains("not found"));
+    }
+
+    #[test]
+    fn coupling_graph_load_accepts_certified_snapshot_with_zero_edges() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let db_path = temp.path().join("code_map.db");
+        let map = empty_map(&repo);
+        let mut conn = persist::open(&db_path).unwrap();
+        persist::persist_map_and_edges(&mut conn, &map, &[]).unwrap();
+        drop(conn);
+
+        let RootGraphLoad::Loaded { graph, .. } = load_root_graph_from_path(&repo, &db_path) else {
+            panic!("certified zero-edge snapshot must remain a valid graph");
+        };
+        assert!(graph.edges().is_empty());
     }
 }

@@ -92,25 +92,73 @@ pub struct CodeArgs {
     pub output: OutputFormat,
 }
 
-/// GOLD-ADAPT-AWE-AIDER-01 — best-effort repo-map context for the coding-intent
+#[derive(Debug)]
+struct BoundCodeMapContext {
+    text: String,
+    snapshot: crate::code_map::recall::RootGenerationSnapshot,
+}
+
+/// GOLD-ADAPT-AWE-AIDER-01 — generation-bound repo-map context for the coding-intent
 /// decomposer. Loads the indexed `code_map` for the current working directory
 /// and returns a token-budgeted [`crate::code_map::RepoMapSummary`] text
 /// (aider-style call-graph summary) to inject as the decomposer's
-/// `project_context`. Returns `None` when the repo isn't indexed (no
-/// `neoth code-map` run for this root), the db is missing/unreadable, or the
-/// summary is empty — the decomposer then proceeds context-free exactly as before.
-fn repo_map_context() -> Option<String> {
-    let conn = crate::code_map::persist::open(&crate::code_map::persist::default_path()).ok()?;
-    let cwd = std::env::current_dir().ok()?;
-    let before = crate::code_map::recall::resolve_active_root_snapshot(&conn, &cwd).ok()??;
-    let context = repo_map_context_from(&conn, before.root.display())?;
-    let after =
-        crate::code_map::recall::resolve_active_root_snapshot(&conn, before.root.path()).ok()??;
-    (before == after).then_some(context)
+/// `project_context`. A genuinely unindexed root or empty summary returns
+/// `Ok(None)`; DB, identity, completeness and freshness failures remain visible
+/// and block the explicit coding command instead of silently dropping context.
+fn repo_map_context() -> Result<Option<BoundCodeMapContext>> {
+    let db_path = crate::code_map::persist::default_path();
+    let conn = crate::code_map::persist::open(&db_path)
+        .with_context(|| format!("open code-map database at {}", db_path.display()))?;
+    let cwd = std::env::current_dir().context("resolve current directory for repo-map context")?;
+    let Some(before) = crate::code_map::recall::resolve_active_root_snapshot(&conn, &cwd)? else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        before.index_generation > 0
+            && before.graph_generation > 0
+            && before.index_generation == before.graph_generation,
+        "active code-map root has no complete map/graph generation; run `neoth code-map persist`"
+    );
+    anyhow::ensure!(
+        crate::code_map::persist::root_snapshot_complete(&conn, before.root.display())?,
+        "active code-map root was published from a partial scan; rebuild it without custom limits"
+    );
+    let initial_freshness =
+        crate::code_map::persist::index_freshness_receipt(&conn, before.root.display())?;
+    anyhow::ensure!(
+        !initial_freshness.stale,
+        "active code-map snapshot is stale; run `neoth code-map persist`"
+    );
+    let Some(map) = crate::code_map::persist::load_map(&conn, before.root.display())? else {
+        return Ok(None);
+    };
+    let summary = crate::code_map::build_summary(&map, crate::code_map::DEFAULT_TOKEN_BUDGET);
+    let context = summary.text.trim().to_string();
+    if context.is_empty() {
+        return Ok(None);
+    }
+    let final_freshness =
+        crate::code_map::persist::index_freshness_receipt(&conn, before.root.display())?;
+    anyhow::ensure!(
+        !final_freshness.stale
+            && final_freshness.filesystem_fingerprint == initial_freshness.filesystem_fingerprint,
+        "active code-map snapshot changed while repo context was assembled; retry"
+    );
+    let after = crate::code_map::recall::resolve_active_root_snapshot(&conn, before.root.path())?
+        .context("active code-map root disappeared while repo context was assembled")?;
+    anyhow::ensure!(
+        before == after,
+        "active code-map generation changed while repo context was assembled; retry"
+    );
+    Ok(Some(BoundCodeMapContext {
+        text: context,
+        snapshot: after,
+    }))
 }
 
 /// Testable core: build the repo-map context for `root` from an open code_map
 /// connection. `None` when the root isn't indexed or the summary is empty.
+#[cfg(test)]
 fn repo_map_context_from(conn: &rusqlite::Connection, root: &str) -> Option<String> {
     let map = crate::code_map::persist::load_map(conn, root).ok()??;
     let summary = crate::code_map::build_summary(&map, crate::code_map::DEFAULT_TOKEN_BUDGET);
@@ -124,47 +172,81 @@ fn repo_map_context_from(conn: &rusqlite::Connection, root: &str) -> Option<Stri
 const RECALL_CONTEXT_MAX_FILES: usize = 8;
 /// CRG-01 — depth-1 caller lines per matched symbol.
 const RECALL_CALLERS_PER_SYMBOL: usize = 3;
+const RECALL_EDGE_CAP: usize = 250_000;
+const RECALL_EDGE_TEXT_BYTE_CAP: usize = 32 * 1024 * 1024;
 
 /// CRG-01 — prompt-targeted code-map context: the files whose symbols the
-/// prompt names, plus depth-1 callers of those symbols. Best-effort like
-/// [`repo_map_context`]: `None` when the DB is missing/unreadable or nothing
-/// matches, and the decomposer proceeds exactly as before.
-fn prompt_recall_context(prompt: &str) -> Option<String> {
-    let conn = crate::code_map::persist::open(&crate::code_map::persist::default_path()).ok()?;
-    let cwd = std::env::current_dir().ok()?;
+/// prompt names, plus depth-1 callers of those symbols. Missing matches remain
+/// optional; integrity and freshness errors are explicit.
+fn prompt_recall_context(prompt: &str) -> Result<Option<BoundCodeMapContext>> {
+    let db_path = crate::code_map::persist::default_path();
+    let conn = crate::code_map::persist::open(&db_path)
+        .with_context(|| format!("open code-map database at {}", db_path.display()))?;
+    let cwd = std::env::current_dir().context("resolve current directory for targeted recall")?;
     let receipt = crate::code_map::recall::recall_receipt_for_prompt(
         &conn,
         &cwd,
         prompt,
         RECALL_CONTEXT_MAX_FILES,
-        crate::code_map::recall::RecallStaleness::Skip,
-    )
-    .ok()??;
-    prompt_recall_context_from_receipt(&conn, &receipt)
+        crate::code_map::recall::RecallStaleness::Check,
+    )?;
+    let Some(receipt) = receipt else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        receipt.stale == Some(false),
+        "active code-map snapshot is stale or unverifiable; run `neoth code-map persist`"
+    );
+    let Some(text) = prompt_recall_context_from_receipt(&conn, &receipt)? else {
+        return Ok(None);
+    };
+    Ok(Some(BoundCodeMapContext {
+        text,
+        snapshot: receipt.snapshot.clone(),
+    }))
 }
 
 fn prompt_recall_context_from_receipt(
     conn: &rusqlite::Connection,
     receipt: &crate::code_map::recall::RecallReceipt,
-) -> Option<String> {
+) -> Result<Option<String>> {
     if receipt.ranked_files.is_empty() {
-        return None;
+        return Ok(None);
     }
+    anyhow::ensure!(
+        receipt.snapshot.index_generation > 0
+            && receipt.snapshot.graph_generation > 0
+            && receipt.snapshot.index_generation == receipt.snapshot.graph_generation,
+        "targeted code-map receipt has no complete map/graph generation; rebuild the snapshot"
+    );
     let root = receipt.snapshot.root.display();
-    let edges = match crate::code_map::persist::load_edges(conn, root) {
-        Ok(edges) => edges,
-        Err(_) => return render_prompt_recall_context(&receipt.ranked_files, Vec::new()),
-    };
+    let (edges, truncated, _) =
+        crate::code_map::persist::load_edges_for_root_bounded_with_text_limit(
+            conn,
+            root,
+            RECALL_EDGE_CAP,
+            RECALL_EDGE_TEXT_BYTE_CAP,
+        )?;
+    anyhow::ensure!(
+        !truncated,
+        "active code-map graph exceeds the bounded coding-context limit; narrow or rebuild the snapshot"
+    );
+    let final_freshness = crate::code_map::persist::index_freshness_receipt(conn, root)?;
+    anyhow::ensure!(
+        !final_freshness.stale,
+        "active code-map snapshot became stale while targeted context was assembled; retry"
+    );
     // The receipt and its callers must describe one committed generation. If
     // a writer advanced either the file or graph snapshot between the atomic
     // recall and the edge read, discard the context instead of mixing epochs.
     let after =
-        crate::code_map::recall::resolve_active_root_snapshot(conn, receipt.snapshot.root.path())
-            .ok()??;
-    if after != receipt.snapshot {
-        return None;
-    }
-    render_prompt_recall_context(&receipt.ranked_files, edges)
+        crate::code_map::recall::resolve_active_root_snapshot(conn, receipt.snapshot.root.path())?
+            .context("active code-map root disappeared while targeted context was assembled")?;
+    anyhow::ensure!(
+        after == receipt.snapshot,
+        "active code-map generation changed while targeted context was assembled; retry"
+    );
+    Ok(render_prompt_recall_context(&receipt.ranked_files, edges))
 }
 
 /// Testable core (mirrors [`repo_map_context_from`]). `root` is the canonical
@@ -172,6 +254,7 @@ fn prompt_recall_context_from_receipt(
 /// truncation (GOLD-R3-13), so an unrelated persisted repo can never fill the
 /// top-k and hide the active repo's files. The callers section is
 /// independently best-effort — an edge-load failure never drops the file list.
+#[cfg(test)]
 fn prompt_recall_context_from(
     conn: &rusqlite::Connection,
     root: &str,
@@ -184,7 +267,15 @@ fn prompt_recall_context_from(
         RECALL_CONTEXT_MAX_FILES,
     )
     .ok()?;
-    let edges = crate::code_map::persist::load_edges(conn, root).unwrap_or_default();
+    let edges = crate::code_map::persist::load_edges_for_root_bounded_with_text_limit(
+        conn,
+        root,
+        RECALL_EDGE_CAP,
+        RECALL_EDGE_TEXT_BYTE_CAP,
+    )
+    .ok()
+    .and_then(|(edges, truncated, _)| (!truncated).then_some(edges))
+    .unwrap_or_default();
     render_prompt_recall_context(&files, edges)
 }
 
@@ -316,17 +407,30 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     // CRG-01 — prepend the prompt-targeted recall block (matched files +
     // depth-1 callers): `truncate_to_budget` keeps the context head when
     // space binds, so the targeted block survives over the generic summary.
-    let recall_ctx = prompt_recall_context(&prompt);
-    if recall_ctx.is_some() {
-        println!("injecting prompt-targeted code-map context …");
-    }
-    let repo_ctx = repo_map_context();
-    if repo_ctx.is_some() {
-        println!("injecting repo-map context (code_map summary) …");
-    }
+    let recall_ctx = prompt_recall_context(&prompt).context("resolve targeted code-map context")?;
+    let repo_ctx = repo_map_context().context("resolve repo-map context")?;
     let project_ctx = match (recall_ctx, repo_ctx) {
-        (Some(recall), Some(repo)) => Some(format!("{recall}\n\n{repo}")),
-        (recall, repo) => recall.or(repo),
+        (Some(recall), Some(repo)) if recall.snapshot == repo.snapshot => {
+            println!("injecting prompt-targeted and repo-map code context …");
+            Some(format!("{}\n\n{}", recall.text, repo.text))
+        }
+        (Some(recall), Some(repo)) => {
+            eprintln!(
+                "[neoth:code-map] generic repo map changed while targeted recall was assembled; \
+                 using only the generation-bound targeted context"
+            );
+            debug_assert_ne!(recall.snapshot, repo.snapshot);
+            Some(recall.text)
+        }
+        (Some(recall), None) => {
+            println!("injecting prompt-targeted code-map context …");
+            Some(recall.text)
+        }
+        (None, Some(repo)) => {
+            println!("injecting repo-map context (code_map summary) …");
+            Some(repo.text)
+        }
+        (None, None) => None,
     };
     let llm_phase: Result<Option<DecompositionResult>> = async {
         let result = decompose(

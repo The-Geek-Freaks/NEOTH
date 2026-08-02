@@ -78,7 +78,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use super::symbols::{Symbol, SymbolKind};
@@ -105,13 +105,11 @@ pub(crate) const MAX_FRESHNESS_FILES: usize = 250_000;
 const MAX_FRESHNESS_TEXT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_FRESHNESS_ROW_TEXT_BYTES: usize = 64 * 1024;
 
-/// `~/.neoth/code_map.db` resolved against HOME / USERPROFILE.
+/// Instance-default code-map path. `FreedomConfig::default_neoth_home()` is
+/// the shared authority and honours `NEOTH_HOME`; using raw HOME here split
+/// CLI writers from daemon/chat readers under custom instance homes.
 pub fn default_path() -> PathBuf {
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from))
-        .unwrap_or_else(|_| PathBuf::from("."));
-    home.join(".neoth").join("code_map.db")
+    crate::config::FreedomConfig::default_neoth_home().join("code_map.db")
 }
 
 /// Open or create the code-map database. Applies schema on first
@@ -568,6 +566,17 @@ pub struct PersistStats {
     pub files_skipped_unchanged: usize,
 }
 
+/// Exact publication metadata captured before the bound IMMEDIATE transaction
+/// commits. Returning these generations avoids a post-commit re-query that a
+/// concurrent writer could advance independently of the returned stats/edges.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BoundPersistResult {
+    pub(crate) stats: PersistStats,
+    pub(crate) edges_inserted: usize,
+    pub(crate) index_generation: i64,
+    pub(crate) graph_generation: i64,
+}
+
 /// Incrementally replace the snapshot for `map.root` (CBM-04).
 ///
 /// Pre-pass: query existing `(path, sha256, mtime_ns, symbols)` rows into a
@@ -583,7 +592,8 @@ pub fn persist_map(conn: &mut Connection, map: &RepoMap) -> Result<PersistStats>
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .context("begin persist-map transaction")?;
-    let stats = persist_map_in_transaction(&tx, map, SymbolComparisonMode::LegacyEmptyWildcard)?;
+    let stats =
+        persist_map_in_transaction(&tx, map, SymbolComparisonMode::LegacyEmptyWildcard, None)?;
     tx.commit().context("commit persist-map transaction")?;
     Ok(stats)
 }
@@ -599,43 +609,245 @@ enum SymbolComparisonMode {
     ExactSnapshot,
 }
 
+const PERSIST_PREPASS_FILE_CAP: i64 = 100_000;
+const PERSIST_PREPASS_SYMBOL_CAP: i64 = 250_000;
+const PERSIST_PREPASS_EDGE_CAP: usize = 250_000;
+const PERSIST_PREPASS_TEXT_BYTE_CAP: i64 = 32 * 1024 * 1024;
+const PERSIST_ROW_TEXT_BYTE_CAP: usize = MAX_FRESHNESS_ROW_TEXT_BYTES;
+
+fn add_incoming_text_bytes(
+    total: &mut usize,
+    bytes: usize,
+    limit: usize,
+    field: &str,
+) -> Result<()> {
+    *total = total
+        .checked_add(bytes)
+        .with_context(|| format!("incoming code-map {field} byte count overflow"))?;
+    ensure!(
+        *total <= limit,
+        "incoming code-map {field} text exceeds bounded publish cap of {limit} bytes"
+    );
+    Ok(())
+}
+
+fn enforce_incoming_map_bounds(map: &RepoMap) -> Result<()> {
+    ensure!(
+        map.root.len() <= PERSIST_ROW_TEXT_BYTE_CAP,
+        "incoming code-map root exceeds {PERSIST_ROW_TEXT_BYTE_CAP} bytes"
+    );
+    ensure!(
+        map.files.len() <= PERSIST_PREPASS_FILE_CAP as usize,
+        "incoming code-map snapshot for {:?} contains {} files; bounded publish cap is {PERSIST_PREPASS_FILE_CAP}",
+        map.root,
+        map.files.len()
+    );
+    let mut symbols = 0usize;
+    let mut text_bytes = 0usize;
+    let mut freshness_text_bytes = 0usize;
+    for file in &map.files {
+        let file_row_bytes = file
+            .path
+            .len()
+            .checked_add(file.sha256.len())
+            .context("incoming code-map file-row byte count overflow")?;
+        ensure!(
+            file_row_bytes <= PERSIST_ROW_TEXT_BYTE_CAP,
+            "incoming code-map file row exceeds {PERSIST_ROW_TEXT_BYTE_CAP} bytes"
+        );
+        add_incoming_text_bytes(
+            &mut freshness_text_bytes,
+            file_row_bytes,
+            MAX_FRESHNESS_TEXT_BYTES,
+            "freshness row",
+        )?;
+        add_incoming_text_bytes(
+            &mut text_bytes,
+            file.path.len(),
+            PERSIST_PREPASS_TEXT_BYTE_CAP as usize,
+            "path",
+        )?;
+        add_incoming_text_bytes(
+            &mut text_bytes,
+            file.sha256.len(),
+            PERSIST_PREPASS_TEXT_BYTE_CAP as usize,
+            "hash",
+        )?;
+        symbols = symbols
+            .checked_add(file.symbols.len())
+            .context("incoming code-map symbol count overflow")?;
+        ensure!(
+            symbols <= PERSIST_PREPASS_SYMBOL_CAP as usize,
+            "incoming code-map snapshot for {:?} contains more than {PERSIST_PREPASS_SYMBOL_CAP} symbols",
+            map.root
+        );
+        for symbol in &file.symbols {
+            let symbol_row_bytes = symbol
+                .name
+                .len()
+                .checked_add(symbol.kind.label().len())
+                .context("incoming code-map symbol-row byte count overflow")?;
+            ensure!(
+                symbol_row_bytes <= PERSIST_ROW_TEXT_BYTE_CAP,
+                "incoming code-map symbol row exceeds {PERSIST_ROW_TEXT_BYTE_CAP} bytes"
+            );
+            add_incoming_text_bytes(
+                &mut text_bytes,
+                symbol.name.len(),
+                PERSIST_PREPASS_TEXT_BYTE_CAP as usize,
+                "symbol name",
+            )?;
+            add_incoming_text_bytes(
+                &mut text_bytes,
+                symbol.kind.label().len(),
+                PERSIST_PREPASS_TEXT_BYTE_CAP as usize,
+                "symbol kind",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn enforce_incoming_edge_bounds(
+    root: &str,
+    edges: &[crate::code_map::graph::CodeEdge],
+) -> Result<()> {
+    ensure!(
+        edges.len() <= PERSIST_PREPASS_EDGE_CAP,
+        "incoming code-map graph for {root:?} contains {} edges; bounded publish cap is {PERSIST_PREPASS_EDGE_CAP}",
+        edges.len()
+    );
+    let mut text_bytes = 0usize;
+    for edge in edges {
+        let edge_row_bytes = edge
+            .from_file
+            .len()
+            .checked_add(edge.from_symbol.len())
+            .and_then(|bytes| bytes.checked_add(edge.to_name.len()))
+            .and_then(|bytes| bytes.checked_add(edge.kind.as_str().len()))
+            .context("incoming code-map edge-row byte count overflow")?;
+        ensure!(
+            edge_row_bytes <= PERSIST_ROW_TEXT_BYTE_CAP,
+            "incoming code-map edge row exceeds {PERSIST_ROW_TEXT_BYTE_CAP} bytes"
+        );
+        add_incoming_text_bytes(
+            &mut text_bytes,
+            edge.from_file.len(),
+            PERSIST_PREPASS_TEXT_BYTE_CAP as usize,
+            "edge source path",
+        )?;
+        add_incoming_text_bytes(
+            &mut text_bytes,
+            edge.from_symbol.len(),
+            PERSIST_PREPASS_TEXT_BYTE_CAP as usize,
+            "edge source symbol",
+        )?;
+        add_incoming_text_bytes(
+            &mut text_bytes,
+            edge.to_name.len(),
+            PERSIST_PREPASS_TEXT_BYTE_CAP as usize,
+            "edge target",
+        )?;
+        add_incoming_text_bytes(
+            &mut text_bytes,
+            edge.kind.as_str().len(),
+            PERSIST_PREPASS_TEXT_BYTE_CAP as usize,
+            "edge kind",
+        )?;
+    }
+    Ok(())
+}
+
+fn enforce_persist_prepass_bounds(conn: &Connection, root: &str) -> Result<()> {
+    let (file_count, file_text_bytes): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COALESCE(SUM(\
+                 LENGTH(CAST(path AS BLOB)) + LENGTH(CAST(sha256 AS BLOB))\
+             ), 0) FROM code_map_files WHERE root = ?1",
+            rusqlite::params![root],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .context("measure prior code-map file pre-pass")?;
+    let (symbol_count, symbol_text_bytes): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COALESCE(SUM(\
+                 LENGTH(CAST(s.name AS BLOB)) + LENGTH(CAST(s.kind AS BLOB))\
+             ), 0) \
+             FROM code_map_files f \
+             JOIN code_map_symbols s ON s.file_id = f.id \
+             WHERE f.root = ?1",
+            rusqlite::params![root],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .context("measure prior code-map symbol pre-pass")?;
+    ensure!(
+        (0..=PERSIST_PREPASS_FILE_CAP).contains(&file_count),
+        "prior code-map snapshot for {root:?} contains {file_count} files; bounded rebuild cap is {PERSIST_PREPASS_FILE_CAP}"
+    );
+    ensure!(
+        (0..=PERSIST_PREPASS_SYMBOL_CAP).contains(&symbol_count),
+        "prior code-map snapshot for {root:?} contains {symbol_count} symbols; bounded rebuild cap is {PERSIST_PREPASS_SYMBOL_CAP}"
+    );
+    let total_text_bytes = file_text_bytes
+        .checked_add(symbol_text_bytes)
+        .context("prior code-map pre-pass text-byte count overflow")?;
+    ensure!(
+        (0..=PERSIST_PREPASS_TEXT_BYTE_CAP).contains(&total_text_bytes),
+        "prior code-map snapshot for {root:?} contains {total_text_bytes} text bytes; bounded rebuild cap is {PERSIST_PREPASS_TEXT_BYTE_CAP}"
+    );
+    Ok(())
+}
+
 /// Bind a canonical display path to its physical directory before reading the
 /// prior snapshot. If the same directory moved, migrate its root key and child
 /// rows inside this writer transaction so generations remain monotonic.
-fn prepare_root_identity_for_persist(tx: &Transaction<'_>, root: &str) -> Result<Option<String>> {
-    let canonical = match super::root_identity::CanonicalRepoRoot::discover(Path::new(root)) {
-        Ok(root) => root,
-        Err(error) if !Path::new(root).exists() => {
-            // Compatibility for imported/synthetic legacy maps: an unreachable
-            // root may remain NULL, but it is never eligible for a typed recall
-            // receipt. Never let an unreachable write retain a previously
-            // certified physical identity.
-            let existing_identity: Option<Option<String>> = tx
-                .query_row(
-                    "SELECT root_identity FROM code_map_roots WHERE root = ?1",
-                    rusqlite::params![root],
-                    |row| row.get(0),
-                )
-                .optional()
-                .context("query existing root identity for unreachable map")?;
-            if existing_identity.flatten().is_some() {
-                return Err(error).with_context(|| {
+fn prepare_root_identity_for_persist(
+    tx: &Transaction<'_>,
+    root: &str,
+    expected_root: Option<&super::root_identity::CanonicalRepoRoot>,
+) -> Result<Option<String>> {
+    let identity = if let Some(expected) = expected_root {
+        ensure!(
+            expected.display() == root,
+            "bound code-map root {:?} does not match map root {root:?}",
+            expected.display()
+        );
+        expected.identity().as_str().to_owned()
+    } else {
+        let canonical = match super::root_identity::CanonicalRepoRoot::discover(Path::new(root)) {
+            Ok(root) => root,
+            Err(error) if !Path::new(root).exists() => {
+                // Compatibility for imported/synthetic legacy maps: an unreachable
+                // root may remain NULL, but it is never eligible for a typed recall
+                // receipt. Never let an unreachable write retain a previously
+                // certified physical identity.
+                let existing_identity: Option<Option<String>> = tx
+                    .query_row(
+                        "SELECT root_identity FROM code_map_roots WHERE root = ?1",
+                        rusqlite::params![root],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .context("query existing root identity for unreachable map")?;
+                if existing_identity.flatten().is_some() {
+                    return Err(error).with_context(|| {
                     format!(
                         "refuse to update identity-bound code-map root {root:?} while it is unreachable"
                     )
                 });
+                }
+                return Ok(None);
             }
-            return Ok(None);
+            Err(error) => return Err(error),
+        };
+        if canonical.display() != root {
+            bail!(
+                "code-map root {root:?} is not canonical; rebuild from {:?}",
+                canonical.display()
+            );
         }
-        Err(error) => return Err(error),
+        canonical.identity().as_str().to_owned()
     };
-    if canonical.display() != root {
-        bail!(
-            "code-map root {root:?} is not canonical; rebuild from {:?}",
-            canonical.display()
-        );
-    }
-    let identity = canonical.identity().as_str().to_owned();
     let prior_path: Option<String> = tx
         .query_row(
             "SELECT root FROM code_map_roots WHERE root_identity = ?1",
@@ -732,11 +944,14 @@ fn persist_map_in_transaction(
     tx: &Transaction<'_>,
     map: &RepoMap,
     symbol_comparison: SymbolComparisonMode,
+    expected_root: Option<&super::root_identity::CanonicalRepoRoot>,
 ) -> Result<PersistStats> {
     type StoredSymbols = Vec<(String, String, u32)>;
     type StoredFile = (String, i64, StoredSymbols);
 
-    let root_identity = prepare_root_identity_for_persist(tx, &map.root)?;
+    enforce_incoming_map_bounds(map)?;
+    let root_identity = prepare_root_identity_for_persist(tx, &map.root, expected_root)?;
+    enforce_persist_prepass_bounds(tx, &map.root)?;
 
     // ── Pre-pass: load existing file fingerprints + declarations ─────
     // Exact declaration comparison matters when an older snapshot was built
@@ -978,6 +1193,65 @@ pub fn persist_map_and_edges(
     persist_map_and_edges_with_hooks(conn, map, edges, || {}, || {}, || {})
 }
 
+/// Atomically publish a map/graph pair already scanned from `expected_root`.
+///
+/// Unlike the compatibility writer, this path never rediscovers and silently
+/// adopts a different directory identity at publication time. The expected
+/// identity is written into the snapshot, and a final physical check runs
+/// inside the IMMEDIATE transaction so a pre-commit replacement rolls back.
+pub(crate) fn persist_map_and_edges_bound(
+    conn: &mut Connection,
+    map: &RepoMap,
+    edges: &[crate::code_map::graph::CodeEdge],
+    expected_root: &super::root_identity::CanonicalRepoRoot,
+) -> Result<BoundPersistResult> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .context("begin bound atomic code-map snapshot transaction")?;
+    let stats = persist_map_in_transaction(
+        &tx,
+        map,
+        SymbolComparisonMode::ExactSnapshot,
+        Some(expected_root),
+    )?;
+    let inserted = replace_edges_in_transaction(&tx, &map.root, edges)?;
+    let observed = super::root_identity::CanonicalRepoRoot::discover(Path::new(&map.root))?;
+    ensure!(
+        observed == *expected_root,
+        "code-map repository root was replaced before bound snapshot commit"
+    );
+    let (stored_identity, index_generation, graph_generation) = tx
+        .query_row(
+            "SELECT root_identity, index_generation, graph_generation \
+             FROM code_map_roots WHERE root = ?1",
+            rusqlite::params![&map.root],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .context("read bound code-map publication generations")?;
+    ensure!(
+        stored_identity.as_deref() == Some(expected_root.identity().as_str()),
+        "bound code-map snapshot persisted a different physical root identity"
+    );
+    ensure!(
+        index_generation > 0 && index_generation == graph_generation,
+        "bound code-map snapshot published mismatched index/graph generations"
+    );
+    tx.commit()
+        .context("commit bound atomic code-map snapshot transaction")?;
+    Ok(BoundPersistResult {
+        stats,
+        edges_inserted: inserted,
+        index_generation,
+        graph_generation,
+    })
+}
+
 fn persist_map_and_edges_with_hooks<BeforeImmediate, AfterImmediate, AfterMap>(
     conn: &mut Connection,
     map: &RepoMap,
@@ -996,7 +1270,7 @@ where
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .context("begin atomic code-map snapshot transaction")?;
     after_immediate();
-    let stats = persist_map_in_transaction(&tx, map, SymbolComparisonMode::ExactSnapshot)?;
+    let stats = persist_map_in_transaction(&tx, map, SymbolComparisonMode::ExactSnapshot, None)?;
     after_map();
     let inserted = replace_edges_in_transaction(&tx, &map.root, edges)?;
     tx.commit()
@@ -1009,6 +1283,7 @@ fn replace_edges_in_transaction(
     root: &str,
     edges: &[crate::code_map::graph::CodeEdge],
 ) -> Result<usize> {
+    enforce_incoming_edge_bounds(root, edges)?;
     let index_generation = tx
         .query_row(
             "SELECT index_generation FROM code_map_roots WHERE root = ?1",
@@ -1270,6 +1545,7 @@ pub fn load_map(conn: &Connection, root: &str) -> Result<Option<RepoMap>> {
     else {
         return Ok(None);
     };
+    enforce_persist_prepass_bounds(conn, &root)?;
 
     // Pull all files for this root (v2: include sha256 + mtime_ns).
     let mut stmt = conn
@@ -1293,39 +1569,44 @@ pub fn load_map(conn: &Connection, root: &str) -> Result<Option<RepoMap>> {
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("collect code_map_files rows")?;
 
-    // Pull symbols + group by file_id.
+    // Pull only this root's bounded symbols and group them in one pass. The
+    // former global query loaded declarations for every persisted repository
+    // and then performed an O(files * symbols) filter.
     let mut sym_stmt = conn
         .prepare(
-            "SELECT file_id, name, kind, line FROM code_map_symbols \
-             ORDER BY file_id ASC, line ASC",
+            "SELECT s.file_id, s.name, s.kind, s.line \
+             FROM code_map_symbols s \
+             JOIN code_map_files f ON f.id = s.file_id \
+             WHERE f.root = ?1 \
+             ORDER BY s.file_id ASC, s.line ASC",
         )
         .context("prepare code_map_symbols SELECT")?;
-    let sym_rows: Vec<(i64, String, String, i64)> = sym_stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .context("collect code_map_symbols rows")?;
+    let mut sym_rows = sym_stmt
+        .query(rusqlite::params![&root])
+        .context("query root-scoped code_map_symbols")?;
+    let mut symbols_by_file: std::collections::HashMap<i64, Vec<Symbol>> =
+        std::collections::HashMap::new();
+    while let Some(row) = sym_rows
+        .next()
+        .context("advance root-scoped code_map_symbols row")?
+    {
+        let file_id: i64 = row.get(0).context("read code-map symbol file id")?;
+        let name: String = row.get(1).context("read code-map symbol name")?;
+        let kind_label: String = row.get(2).context("read code-map symbol kind")?;
+        let line: i64 = row.get(3).context("read code-map symbol line")?;
+        symbols_by_file.entry(file_id).or_default().push(Symbol {
+            name,
+            kind: symbol_kind_from_label(&kind_label).unwrap_or(SymbolKind::Function),
+            line: u32::try_from(line).context("invalid persisted code-map symbol line")?,
+        });
+    }
 
     let mut files: Vec<RepoFile> = Vec::with_capacity(file_rows.len());
     let mut by_lang: std::collections::HashMap<Language, u64> = std::collections::HashMap::new();
     for (file_id, path, lang_label, bytes, loc, sha256, mtime_ns) in file_rows {
         let language = language_from_label(&lang_label).unwrap_or(Language::Other);
         *by_lang.entry(language).or_insert(0) += 1;
-        let symbols: Vec<Symbol> = sym_rows
-            .iter()
-            .filter(|(fid, _, _, _)| *fid == file_id)
-            .map(|(_, name, kind_label, line)| Symbol {
-                name: name.clone(),
-                kind: symbol_kind_from_label(kind_label).unwrap_or(SymbolKind::Function),
-                line: *line as u32,
-            })
-            .collect();
+        let symbols = symbols_by_file.remove(&file_id).unwrap_or_default();
         files.push(RepoFile {
             path,
             language,
@@ -1381,6 +1662,21 @@ pub fn root_graph_generation(conn: &Connection, root: &str) -> Result<Option<i64
     .context("query code_map_roots graph_generation")
 }
 
+/// True only for a root generation whose scanner reported no file-count or
+/// per-file-size omissions. Prompt and architecture consumers refuse partial
+/// operator snapshots even when their index/graph generations match.
+pub(crate) fn root_snapshot_complete(conn: &Connection, root: &str) -> Result<bool> {
+    conn.query_row(
+        "SELECT oversize_skipped = 0 AND truncated_at IS NULL \
+         FROM code_map_roots WHERE root = ?1",
+        rusqlite::params![root],
+        |row| row.get::<_, bool>(0),
+    )
+    .optional()
+    .context("query code-map root completeness")
+    .map(|complete| complete.unwrap_or(false))
+}
+
 /// GOLD-R3-13 — is the persisted snapshot for `root` stale relative to the
 /// files currently on disk? Re-scans the root (no symbol extraction) with the
 /// same ignore rules and compares content hashes against the stored rows: a
@@ -1389,8 +1685,8 @@ pub fn root_graph_generation(conn: &Connection, root: &str) -> Result<Option<i64
 ///
 /// This re-reads the root's files to hash them, so it is an EXPLICIT, opt-in
 /// check (an operator command), never the hot chat-context path. A stored row
-/// with an empty hash (a pre-CBM-04 v1 row not yet re-scanned) is treated as
-/// unknown and does not by itself signal staleness. Both the persisted SELECT
+/// with an empty hash (a pre-CBM-04 v1 row not yet re-scanned) is unverifiable
+/// and therefore stale until rebuilt. Both the persisted SELECT
 /// and filesystem walk are capped by [`MAX_FRESHNESS_FILES`]; exceeding that
 /// ceiling is an explicit error, never a partial receipt reported as fresh.
 pub fn is_index_stale(conn: &Connection, root: &str) -> Result<bool> {
@@ -1403,6 +1699,26 @@ pub fn is_index_stale(conn: &Connection, root: &str) -> Result<bool> {
 pub(crate) struct IndexFreshnessReceipt {
     pub(crate) stale: bool,
     pub(crate) filesystem_fingerprint: Vec<(String, String)>,
+}
+
+/// Strict freshness check used by production recall paths.
+///
+/// This deliberately does not cache watcher silence: filesystem watcher
+/// delivery is asynchronous and therefore cannot prove that an edit preceding
+/// this call has already been observed. Every authorization-sensitive recall
+/// revalidates persisted hashes against a bounded filesystem scan. The
+/// generation parameter remains part of the call contract so a future cache
+/// can only be introduced with a synchronous, snapshot-bound proof.
+pub(crate) fn index_freshness_receipt_cached(
+    conn: &Connection,
+    root: &str,
+    generation: i64,
+) -> Result<IndexFreshnessReceipt> {
+    ensure!(
+        generation > 0,
+        "cannot verify a nonpositive code-map generation"
+    );
+    index_freshness_receipt(conn, root)
 }
 
 pub(crate) fn index_freshness_receipt(
@@ -1519,12 +1835,19 @@ where
     let scanned = super::walker::RepoMapBuilder::new(root)
         .max_files(walker_limit)
         .with_symbols(false)
+        .strict_errors(true)
         .scan()
         .with_context(|| format!("re-scan {root} for staleness check"))?;
     if scanned.report.truncated_at.is_some() {
         bail!(
             "code-map freshness refused a filesystem with more than {max_files} files; \
              persist a narrower repository or select a smaller code-map root"
+        );
+    }
+    if scanned.report.oversize_skipped > 0 {
+        bail!(
+            "code-map freshness skipped {} oversized filesystem file(s); freshness is unknown",
+            scanned.report.oversize_skipped
         );
     }
     let mut filesystem_fingerprint: Vec<(String, String)> = scanned
@@ -1535,15 +1858,16 @@ where
     filesystem_fingerprint.sort();
 
     // Added or removed files change the set size (both sides bounded by the
-    // same caps, so a stable tree yields equal counts).
+    // same caps, so a stable tree yields equal counts). Legacy rows without a
+    // content hash are unverifiable and therefore stale until rebuilt.
     let stale = scanned.files.len() != stored.len()
         || scanned.files.iter().any(|file| {
             // Any on-disk file that is new, or whose content hash differs from
             // the stored hash, means the index predates an edit. An empty
-            // stored hash is unknown and is not counted as a change.
+            // stored hash is unknown and must never be accepted as fresh.
             !matches!(
                 stored.get(&file.path),
-                Some(stored_sha) if stored_sha.is_empty() || *stored_sha == file.sha256
+                Some(stored_sha) if !stored_sha.is_empty() && *stored_sha == file.sha256
             )
         });
     Ok(IndexFreshnessReceipt {
@@ -2042,6 +2366,57 @@ mod tests {
         );
         assert_eq!(root_index_generation(&conn, root).unwrap(), Some(1));
         assert_eq!(root_graph_generation(&conn, root).unwrap(), Some(1));
+    }
+
+    #[test]
+    fn oversized_incoming_file_row_is_rejected_before_replacing_snapshot() {
+        let (_dir, mut conn) = temp_db();
+        let baseline = sample_map("/repo/a");
+        persist_map(&mut conn, &baseline).unwrap();
+        let mut oversized = baseline.clone();
+        oversized.files[0].path = "x".repeat(PERSIST_ROW_TEXT_BYTE_CAP + 1);
+
+        let error = persist_map(&mut conn, &oversized).unwrap_err();
+
+        assert!(error.to_string().contains("file row exceeds"));
+        let mut visible_paths = load_map(&conn, "/repo/a")
+            .unwrap()
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|file| file.path)
+            .collect::<Vec<_>>();
+        let mut baseline_paths = baseline
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<Vec<_>>();
+        visible_paths.sort();
+        baseline_paths.sort();
+        assert_eq!(visible_paths, baseline_paths);
+    }
+
+    #[test]
+    fn oversized_incoming_edge_row_is_rejected_before_replacing_graph() {
+        let (_dir, mut conn) = temp_db();
+        let baseline = sample_map("/repo/a");
+        persist_map(&mut conn, &baseline).unwrap();
+        let baseline_edge = crate::code_map::graph::CodeEdge {
+            from_file: "src/main.rs".into(),
+            from_symbol: "main".into(),
+            to_name: "target".into(),
+            kind: crate::code_map::graph::EdgeKind::Calls,
+        };
+        persist_edges(&mut conn, "/repo/a", std::slice::from_ref(&baseline_edge)).unwrap();
+        let oversized = crate::code_map::graph::CodeEdge {
+            to_name: "x".repeat(PERSIST_ROW_TEXT_BYTE_CAP + 1),
+            ..baseline_edge
+        };
+
+        let error = persist_edges(&mut conn, "/repo/a", &[oversized]).unwrap_err();
+
+        assert!(error.to_string().contains("edge row exceeds"));
+        assert_eq!(load_edges(&conn, "/repo/a").unwrap()[0].to_name, "target");
     }
 
     #[test]
@@ -2637,9 +3012,14 @@ mod tests {
     #[test]
     fn default_path_returns_neoth_home_code_map_db() {
         let p = default_path();
-        let s = p.to_string_lossy();
-        assert!(s.contains(".neoth"), "got: {s}");
-        assert!(s.ends_with("code_map.db"), "got: {s}");
+        assert_eq!(
+            p.parent(),
+            Some(crate::config::FreedomConfig::default_neoth_home().as_path())
+        );
+        assert_eq!(
+            p.file_name().and_then(|name| name.to_str()),
+            Some("code_map.db")
+        );
     }
 
     #[test]
@@ -2996,6 +3376,50 @@ mod tests {
             is_index_stale(&conn, &root).unwrap(),
             "a removed file must be detected"
         );
+    }
+
+    #[test]
+    fn legacy_empty_hash_is_never_reported_fresh() {
+        let repo = tempdir().unwrap();
+        std::fs::write(repo.path().join("legacy.rs"), "fn legacy() {}\n").unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(repo.path())
+            .with_symbols(false)
+            .scan()
+            .unwrap();
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("cm.db")).unwrap();
+        persist_map(&mut conn, &map).unwrap();
+        conn.execute(
+            "UPDATE code_map_files SET sha256 = '' WHERE root = ?1",
+            rusqlite::params![&map.root],
+        )
+        .unwrap();
+
+        assert!(
+            is_index_stale(&conn, &map.root).unwrap(),
+            "a legacy row without a content hash must require a rebuild"
+        );
+    }
+
+    #[test]
+    fn production_freshness_rechecks_an_immediate_edit_without_watcher_delay() {
+        let repo = tempdir().unwrap();
+        let source = repo.path().join("cached.rs");
+        std::fs::write(&source, "fn cached() {}\n").unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(repo.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("cm.db")).unwrap();
+        persist_map_and_edges(&mut conn, &map, &[]).unwrap();
+
+        let first = index_freshness_receipt_cached(&conn, &map.root, 1).unwrap();
+        assert!(!first.stale);
+        std::fs::write(&source, "fn cached() { changed(); }\n").unwrap();
+
+        let second = index_freshness_receipt_cached(&conn, &map.root, 1).unwrap();
+        assert!(second.stale);
     }
 
     #[test]
