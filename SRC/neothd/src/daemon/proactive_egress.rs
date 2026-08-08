@@ -3235,6 +3235,33 @@ pub(crate) async fn record_adapter_configuration_error_once(
 }
 
 #[cfg(test)]
+pub(crate) fn delivery_record_for_gui_test() -> ProactiveDeliveryRecord {
+    let item = ProactiveItem {
+        priority: 50,
+        dedup_key: "gui-proactive".to_string(),
+        channel: "telegram".to_string(),
+        source: "test".to_string(),
+        body: "operator notification".to_string(),
+        scheduled_for_unix: 0,
+        is_failure: false,
+        expires_unix: 0,
+    };
+    let mut claim = new_claim(item, "gui-generation", "telegram", "123456", 1_700_000_000)
+        .expect("build GUI proactive delivery fixture");
+    claim.phase = ProactiveEgressPhase::Armed;
+    claim.binding_sha256 = binding_hash(&claim);
+    let receipt = MessageId("provider-receipt".to_string());
+    let result = terminal_result(
+        &claim,
+        ProactiveEgressOutcome::Delivered,
+        Some(&receipt),
+        None,
+        1_700_000_001,
+    );
+    delivery_record(&claim, &result, "000001.wal").expect("build GUI proactive delivery record")
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
@@ -4916,31 +4943,4 @@ mod tests {
             EVENT_TYPE_EXTENDED
         ));
     }
-}
-
-#[cfg(test)]
-pub(crate) fn delivery_record_for_gui_test() -> ProactiveDeliveryRecord {
-    let item = ProactiveItem {
-        priority: 50,
-        dedup_key: "gui-proactive".to_string(),
-        channel: "telegram".to_string(),
-        source: "test".to_string(),
-        body: "operator notification".to_string(),
-        scheduled_for_unix: 0,
-        is_failure: false,
-        expires_unix: 0,
-    };
-    let mut claim = new_claim(item, "gui-generation", "telegram", "123456", 1_700_000_000)
-        .expect("build GUI proactive delivery fixture");
-    claim.phase = ProactiveEgressPhase::Armed;
-    claim.binding_sha256 = binding_hash(&claim);
-    let receipt = MessageId("provider-receipt".to_string());
-    let result = terminal_result(
-        &claim,
-        ProactiveEgressOutcome::Delivered,
-        Some(&receipt),
-        None,
-        1_700_000_001,
-    );
-    delivery_record(&claim, &result, "000001.wal").expect("build GUI proactive delivery record")
 }
