@@ -572,7 +572,7 @@ REPOW-01/02/03 — git-derived repo intelligence
 
 - `--repo <REPO>` — Path to the git repository root. Defaults to the current directory
 - `--top <TOP>` — Show the top N riskiest files
-- `--coupling` — Also compute hidden co-change coupling pairs (slower: requires git log of the full commit history). Reads `~/.neoth/code_map.db` for the call-graph edge set; if the DB is absent only commit-frequency coupling is suppressed by an empty graph
+- `--coupling` — Also compute hidden co-change coupling pairs (slower: requires git log of the full commit history). Requires a fresh, complete, certified call-graph snapshot for this exact physical repository root
 
 ## `neoth code-map`
 
@@ -610,6 +610,7 @@ Phase 3a (Session 14 Pick #22) — scan PATH (or cwd) and persist the resulting 
 Phase 3b (Session 14 Pick #25) — given a free-text PROMPT, query the persisted code map for files that look relevant. Ranks by identifier-symbol matches first, path-keyword overlap second. Use this to inspect what chat would inject as a `<repo-context>` block without firing a provider call
 
 - `<PROMPT>` — Free-text prompt to score against the persisted map
+- `--path <PATH>` — Repository path to bind the recall receipt to. Defaults to the current working directory for interactive CLI use. GUI, daemon and automation callers should always pass this explicitly
 - `--max <N>` — Max files to return. Default 5
 - `--check-stale` — Also report whether the persisted index is stale relative to the files on disk. Re-scans the active root (reads + hashes files), so it is opt-in and slower than a plain recall
 
@@ -626,7 +627,7 @@ Walk the repository at PATH (default: cwd), classify by language, count LOC + by
 
 ### `neoth code-map search`
 
-Phase 3a — find every persisted file that declares a symbol matching NAME exactly. Searches across every root the DB has snapshots for
+Phase 3a — find persisted files in the active repository that declare a symbol matching NAME exactly
 
 - `<NAME>` — Symbol name to look up
 
@@ -1282,12 +1283,12 @@ Show the active goal + grind (the default — also runs with no subcommand via t
 
 ## `neoth graph`
 
-GOLD-ADAPT-GRAPH-06 — run graphify on any user-supplied corpus and file the output into the Obsidian vault + wiki ground-truth so `neoth recall` can answer questions about the mapped repository
+GOLD-ADAPT-GRAPH-06 — map a corpus into a validated immutable Graphify generation and durable scope-bound recall transaction. `graphifyy==0.8.41` is the distribution; the isolated runtime invocation is `python -I -m graphify`
 
 - `<PATH>` — Root directory of the corpus to map. graphify's `update` is run with this as its working directory, so `graphify-out/` will appear directly inside it
 - `--subdir <NAME>` — Override the vault subdirectory name. Defaults to the last component of PATH (e.g. `mycorp` for `/home/user/projects/mycorp`). Must not be `NEOTH-Self` (reserved for the GRAPH-05 self-map cron). Only applies to the update (default) path; ignored by query sub-commands
-- `--dry-run` — Probe graphify and run `graphifyy update`, but skip the vault copy and groundtruth ingest. Useful to verify graphify runs before committing to the full pipeline. Update path only
-- `--no-ingest` — Copy GRAPH_REPORT.md + GRAPH_TREE.html into the vault but skip the groundtruth ingest pass. The files will be browsable in Obsidian but will not appear in `neoth recall` results. Update path only
+- `--dry-run` — Validate the Graphify update plan without running Graphify, publishing, ingesting, or changing the corpus. Update path only
+- `--no-ingest` — Publish a validated immutable generation, then atomically revoke the matching prior Graphify recall scope. The files remain browsable in Obsidian but no longer appear in `neoth recall`. Update path only
 - `--label` — GRAPH-07: after `graphify update`, also run `graphify label` to rename "Community N" placeholders to semantic names using the configured provider. Requires `obsidian_vault` AND a non-local provider (anthropic_api / openai_api / openai_compat / claude_cli) in freedom.yaml. Skip with a warning when a local candle provider is configured. Update path only
 
 ### `neoth graph affected`
@@ -1882,7 +1883,7 @@ Idempotently register the built-in codegraph stdio server in `~/.neoth/mcp_serve
 
 ### `neoth mcp codegraph-serve`
 
-Serve NEOTH's seven read-only codegraph tools over MCP stdio. Intended as a subprocess entrypoint for MCP hosts; stdout contains protocol messages only. Run `codegraph-install` to register it in NEOTH itself
+Serve NEOTH's eight read-only codegraph tools over MCP stdio. Intended as a subprocess entrypoint for MCP hosts; stdout contains protocol messages only. Run `codegraph-install` to register it in NEOTH itself
 
 - `--db <DB>` — Override the persisted code-map database path
 

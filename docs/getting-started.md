@@ -44,6 +44,13 @@ machine does not need Python, Graphify, or a separate model download to use it.
 Upgrades replace only that immutable baseline and preserve your NEOTH Wiki and
 `User Overlays`.
 
+That describes a future verified release artifact, not an assertion about the
+current source checkout. The pinned build input is `graphifyy==0.8.41`; its
+isolated runtime module is `python -I -m graphify`. Querying a packaged map is
+cross-platform and needs neither component. New map generation is currently
+fail-closed on Unix/macOS until the release has a bundled containment backend;
+the relevant v1.0 Gold acceptance tests remain open.
+
 The separate manual crates.io workflow publishes `neoth-plugin-sdk` first and
 allows `neoth` only after the exact SDK version is visible to Cargo.
 

@@ -150,22 +150,22 @@ already-gated release workflow itself.
 inside their already-open parent rollups and therefore are not added a second
 time to the WS-R4 top-level total.
 
-**Current count semantics (machine-recomputed 2026-08-01):** the
+**Current count semantics (machine-recomputed 2026-08-08):** the
 dashboard tracks broad/workstream rollups, whose current OPEN column sums to **230**
 (`1 + 6 + 14 + 116 + 28 + 65`). The release workflow uses a different and stricter
 contract: `packaging/roadmap_release_gate.py` counts every Markdown task outside
 fenced code, including mandatory child contracts. Its current whole-file result
-from `python packaging/roadmap_release_gate.py --summary-json` is **1,291 total
-/ 995 done / 294 open / 2 partial = 296 raw blockers**. A release tag therefore has **295
+from `python packaging/roadmap_release_gate.py --summary-json` is **1,298 total
+ / 997 done / 299 open / 2 partial = 301 raw blockers**. A release tag therefore has **300
 pre-tag blockers**, because only the single
 `GOLD-RELEASE-ARTIFACTS` task may remain open while that workflow creates its
-evidence. The values 230, 296 and 295 answer different questions and must not be
+evidence. The values 230, 301 and 300 answer different questions and must not be
 substituted for one another in release-readiness claims. The two partials are deliberate
 honesty states and still block release; notably A6 has a tested VAD primitive but no live
 Playback-Cancel consumer until A2/A7 exist. `ADOPT31-C3` uses the canonical open state
 instead of the invalid historical `[?]`, so the release gate can parse every task again.
 
-<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1292 complete=997 open=293 partial=2 raw_blockers=295 release_tag_blockers=294 release_generated_items=1 -->
+<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1298 complete=997 open=299 partial=2 raw_blockers=301 release_tag_blockers=300 release_generated_items=1 -->
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
 
@@ -2589,6 +2589,68 @@ parity, visible long-running progress, full Self-Improve proposal/review wiring,
 public Wiki publication, signed native-installer execution and exact-head
 clean-machine qualification remain completion gates under R4-01, R4-02, R4-04,
 R4-05, R4-06, R4-08 and R4-10.
+
+**Current Graphify runtime/recovery correction (2026-08-08; additive, all
+items remain v1.0 GOLD and are deliberately OPEN):** the current working-tree
+integration is not release evidence and does not make the historical Graphify
+checkboxes a completion claim. Its intended normal path holds one canonical-root
+lease across immutable generation staging, `CURRENT` publication, SQLite ingest
+and WAL finish; the receipt binds the exact graph payload, native snapshot and
+typed `GraphifyIngestScope`. Transaction IDs are scope-bound `v2` values. Crash
+recovery must first attest the already-persisted native snapshot read-only and
+must not rebuild it before interpreting the pending journal; a `--no-ingest`
+operation is a guarded, scope-bound revoke with a final current/native fence,
+not a broad delete. `graphifyy==0.8.41` is the pinned distribution name, while
+the isolated runtime entrypoint is exactly `python -I -m graphify` (not
+`graphifyy`). The optional label broker is transitional: it accepts only serial,
+no-replay `BudgetedBatches` (maximum 16 requests / 1,600 distinct decimal
+community IDs); deriving and sealing the exact batches from the immutable staged
+graph remains a separate required release proof. **Windows-local integrated
+evidence (2026-08-08):** `cargo check -p neoth --lib --tests`, strict
+`cargo clippy -p neoth --lib --tests -- -D warnings`, rustfmt and diff hygiene
+are green; the Graphify/Codegraph/Wiki/Doctor slice is **244/244**, SelfMap is
+**14/14**, provider cost authorization is **59/59**, provider core is **53/53**,
+the focused cloud/local adapter, fallback, compactor, RecursiveMAS and refusal
+filters are green, CLI doc drift is **1/1**, and release Self-Knowledge is
+**19/19**. This is not exact-pushed-head multi-platform CI/Security/CodeQL or
+clean-machine evidence, so every acceptance box below deliberately remains OPEN.
+
+- [ ] **GOLD-R3-13a Graphify durable publication/recovery:** prove immutable
+  generation + `CURRENT` journal + retained lease through SQLite/WAL, exact
+  receipt/native bindings, scope-v2 ID rejection across SelfMap/corpus, read-only
+  persisted attestation before recovery rebuild, and guarded `--no-ingest`
+  revoke. Exercise interruption at every durable phase and leave ambiguous v1
+  journals fail-closed.
+- [ ] **GOLD-R3-13b Codegraph/MCP current-surface truth:** preserve only the
+  trusted legacy generated registration during migration and reject lookalike or
+  widened custom configuration; the runtime registry and documentation must
+  agree on the current **eight** read-only codegraph tools, with no unknown or
+  duplicate builtin entry treated as ready.
+- [ ] **GOLD-R4-01g Cross-platform Graphify execution containment:** prove a
+  bundled, unescapable execution boundary before enabling generation outside
+  Windows. Windows uses a Job Object kill-on-close boundary and needs exact-head
+  process tests. Linux requires a transient `systemd --user`/cgroup-v2 bundled
+  supervisor; an optional single-process `pidfd` plus seccomp fallback needs a
+  separate verified assurance claim. macOS requires a signed App Sandbox/XPC
+  backend with an equally honest assurance statement. A Unix process-group
+  fallback is forbidden. Until those backends exist, Unix/macOS generation must
+  fail closed; packaged self-knowledge reading/querying remains cross-platform
+  and requires neither Python nor Graphify.
+- [ ] **GOLD-R4-05a SelfMap quiescence and surface truth:** make reload and
+  shutdown cooperatively wait for every stateful blocking phase before a
+  successor, WAL teardown or completion claim; publish bounded, truthful
+  progress/health and retain an interrupted transaction for recovery. Add CLI,
+  GUI and Buddy parity evidence rather than a log-only status.
+- [ ] **GOLD-R4-14a Provider output-ceiling authorization parity:** bind each
+  concrete provider leaf's per-request `max_output_tokens` to its advertised
+  capability, effective wire ceiling, cost authorization and WAL request binding;
+  unsupported leaves reject rather than silently drop a ceiling. Extend the same
+  explicit schema/status contract to n8n, Cron and Cluster callers, then run
+  whole-surface regression evidence.
+- [ ] **GOLD-R4-08g Graphify/Provider exact-head qualification:** run the
+  current integrated focused regressions, strict format/Clippy/compile gates and
+  supported-platform installer/runtime checks; exact-head CI, Security and
+  CodeQL must be green before any v1.0 tag claim.
 
 **Adaptive-communication, Mobile and Cluster truth correction (2026-07-16):**
 the first GOLD-R4-11 implementation slice now exists in the working tree. A

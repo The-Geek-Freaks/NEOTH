@@ -48,6 +48,22 @@ or Recipe controls are never downgraded: they fail before authorization.
 `neoth recipe run ... --dry-run` prints the resolved model and sampling
 overrides so automation can be reviewed without dispatching a provider call.
 
+## Output ceilings, authorization and current release gate
+
+The v1.0 contract under current integration carries an explicit per-request
+`max_output_tokens` value from the caller to the selected concrete provider
+leaf. The leaf must advertise output-token-limit support, resolve the effective
+wire ceiling, and bind that same ceiling to cost authorization and the WAL
+request record. A provider that cannot enforce the requested ceiling must reject
+the request; it may not silently omit the wire field or reuse an approval for a
+different ceiling.
+
+This is intentionally not yet a completion claim: the current source changes
+still need integrated regression and exact-head evidence. The remaining v1.0
+work also includes public n8n, Cron and Cluster schema/status parity, so those
+surfaces neither hide nor invent a ceiling. See `GOLD-R4-14a` in the
+[authoritative roadmap](../PLAN/ROAD_TO_1_0_GOLD.md).
+
 ## Role routing
 
 | Role | Typical model choice |

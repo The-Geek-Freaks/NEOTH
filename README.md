@@ -110,6 +110,16 @@ using it. Graphify and Python are build-time release inputs, not user
 dependencies. Only the
 explicitly headless musl server archive omits the GUI and the glibc-linked Keet
 companion.
+
+**Current release-truth note (2026-08-08):** the source-tree Graphify runtime
+hardening is still an open v1.0 Gold integration gate, not a released-artifact
+claim. The pinned package is `graphifyy==0.8.41`, but its isolated module entry
+is `python -I -m graphify`. Packaged, verified self-knowledge remains readable
+and queryable on every supported platform without Python. Generation on
+Unix/macOS currently fails closed while NEOTH completes a bundled unescapable
+containment backend; it will not fall back to an escapable process group. See
+the authoritative [Gold roadmap](PLAN/ROAD_TO_1_0_GOLD.md) for the remaining
+Graphify, SelfMap, provider-cap and exact-head acceptance gates.
 The future crates.io package installs only the `neoth`/`neothd` core package;
 use a release archive or source checkout for the companion executables.
 

@@ -36,6 +36,19 @@ These are unfinished v1 contracts, not accepted post-1.0 limitations:
 - **Release proof:** exact-head CI, Security and CodeQL, signed native-installer
   execution, clean-machine install/upgrade/repair/uninstall and complete
   release-feature packaging must be green before tagging.
+- **Graphify runtime/recovery:** the current source integration for immutable
+  generations, `CURRENT` journal recovery, scope-bound receipts and guarded
+  revocation is not yet release evidence. `graphifyy==0.8.41` is the package;
+  the isolated module is `python -I -m graphify`. Windows containment still
+  needs exact-head proof. Unix/macOS generation deliberately fails closed until
+  NEOTH ships a bundled unescapable containment backend; packaged map query and
+  recall remain cross-platform without Python. Exact staged label planning and
+  cooperative SelfMap quiescence are open Gold work.
+- **Output-token authorization:** each concrete provider leaf must bind its
+  requested output ceiling to the actual wire request, cost decision and WAL
+  record. The current worktree implementation and its n8n/Cron/Cluster
+  public-schema parity remain unverified v1.0 Gold work; unsupported leaves must
+  reject rather than silently drop a requested ceiling.
 - **Adaptive communication, Mobile and Cluster:** default-on local communication
   adaptation still needs subject isolation, non-diagnostic evidence/decay and
   prompt parity on every answer path. The current phone pairing preview has no
