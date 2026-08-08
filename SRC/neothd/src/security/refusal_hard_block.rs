@@ -304,6 +304,7 @@ pub fn classify_request(request: &Request) -> Option<RequestHardBlockEvidence> {
         sampling_seed: _,
         stop_sequences: _,
         thinking_budget: _,
+        max_output_tokens: _,
     } = request;
 
     let combined = match system.as_deref() {

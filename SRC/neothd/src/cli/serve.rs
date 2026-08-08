@@ -1658,13 +1658,32 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     plan_cron_fleet_reload(&running, &desired, &fp_changed)
                 };
 
-                // Abort tasks that are no longer desired (or whose spec changed).
+                // Stop tasks that are no longer desired (or whose spec changed).
+                // SelfMap is deliberately cooperative: if a blocking phase is
+                // still draining, the owner is put back and the replacement is
+                // suppressed until a later reconciliation can prove terminal
+                // quiescence.
+                let mut stopped = 0usize;
                 for key in &to_stop {
                     let handle = fleet.lock().expect("cron_fleet mutex poisoned").remove(key);
                     if let Some(handle) = handle {
-                        handle.stop().await;
+                        match handle.stop().await {
+                            crate::cli::serve_tasks::CronTaskStopOutcome::Stopped => {
+                                fp_map.remove(key);
+                                stopped += 1;
+                            }
+                            crate::cli::serve_tasks::CronTaskStopOutcome::TimedOut(handle) => {
+                                fleet
+                                    .lock()
+                                    .expect("cron_fleet mutex poisoned")
+                                    .insert(*key, handle);
+                                tracing::warn!(
+                                    key = ?key,
+                                    "cron replacement suppressed until prior SelfMap owner quiesces"
+                                );
+                            }
+                        }
                     }
-                    fp_map.remove(key);
                 }
                 // Start newly desired tasks (including spec-change restarts),
                 // counting only those that actually spawned — a desired key
@@ -1673,6 +1692,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 // forever without ever entering the fleet.
                 let mut started = 0usize;
                 for key in &to_start {
+                    if fleet
+                        .lock()
+                        .expect("cron_fleet mutex poisoned")
+                        .contains_key(key)
+                    {
+                        tracing::debug!(
+                            key = ?key,
+                            "cron start suppressed because prior owner remains live"
+                        );
+                        continue;
+                    }
                     if let Some(handle) =
                         spawn_cron_for_key(*key, Arc::clone(&live_accepted), &deps).await
                     {
@@ -1686,7 +1716,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 }
                 if !to_stop.is_empty() || started > 0 {
                     tracing::info!(
-                        stopped = to_stop.len(),
+                        stopped,
                         started,
                         wake = wake_label,
                         "ZF-06 cron fleet reconciled"
@@ -2424,10 +2454,11 @@ pub(crate) async fn emit_required_audit(
 /// supervisor to restart a task whose spec changed even though its `CronKey`
 /// is still in the desired set.
 ///
-/// Pure: no I/O, no locking, no side effects. Hashes only the sub-struct that
-/// the corresponding `spawn_cron_for_key` branch reads, so an unrelated config
-/// change (e.g. rotating the Telegram token) does NOT trigger spurious restarts
-/// of unrelated crons.
+/// No locking and no side effects. Hashes only the inputs that the corresponding
+/// `spawn_cron_for_key` branch captures, so an unrelated config change (e.g.
+/// rotating the Telegram token) does NOT trigger spurious restarts of unrelated
+/// crons. SelfMap additionally observes `NEOTH_SRC_DIR`, matching its effective
+/// config-field-first source-directory resolution at spawn time.
 pub(crate) fn cron_spec_fingerprint(
     key: crate::cli::serve_tasks::CronKey,
     cfg: &crate::config::FreedomConfig,
@@ -2501,15 +2532,232 @@ pub(crate) fn cron_spec_fingerprint(
             cfg.obsidian_wiki_source_dir.hash(&mut h);
         }
         SelfMap => {
-            cfg.self_map_source_dir.hash(&mut h);
+            cfg.obsidian_vault.hash(&mut h);
+            crate::cli::serve_tasks::effective_self_map_source_dir(cfg).hash(&mut h);
             cfg.self_map_interval_secs.hash(&mut h);
             cfg.self_map_subdir.hash(&mut h);
             cfg.self_map_label_enabled.hash(&mut h);
             cfg.self_map_label_model.hash(&mut h);
+            jh!(cfg.provider_kind);
+            cfg.provider_endpoint.hash(&mut h);
+
+            // Bind credential rotation without formatting, logging, or
+            // persisting the secret. `SecretString::expose()` is borrowed only
+            // for the in-memory hash operation and never leaves this function.
+            cfg.provider_key.is_some().hash(&mut h);
+            if let Some(provider_key) = cfg.provider_key.as_ref() {
+                provider_key.expose().hash(&mut h);
+            }
         }
     }
 
     h.finish()
+}
+
+#[cfg(test)]
+mod self_map_cron_fingerprint_tests {
+    use super::cron_spec_fingerprint;
+    use crate::cli::serve_tasks::CronKey;
+    use crate::config::FreedomConfig;
+    use crate::secret::SecretString;
+
+    fn fingerprint(config: &FreedomConfig) -> u64 {
+        cron_spec_fingerprint(CronKey::SelfMap, config)
+    }
+
+    fn configured_self_map() -> FreedomConfig {
+        let mut config = FreedomConfig::default();
+        config.obsidian_vault = Some("vault-a".to_owned());
+        config.self_map_source_dir = Some("source-a".to_owned());
+        config.self_map_interval_secs = Some(3_600);
+        config.self_map_subdir = Some("NEOTH-Self".to_owned());
+        config.self_map_label_enabled = true;
+        config.self_map_label_model = Some("label-model".to_owned());
+        config.provider_kind = Some(crate::cli::init::ProviderKind::OpenaiApi);
+        config.provider_endpoint = Some("https://provider-a.invalid/v1".to_owned());
+        config.provider_key = Some(SecretString::from("credential-a"));
+        config
+    }
+
+    type ConfigChange = fn(&mut FreedomConfig);
+
+    struct FingerprintChange {
+        name: &'static str,
+        prepare: ConfigChange,
+        change: ConfigChange,
+        env_before: &'static str,
+        env_after: &'static str,
+    }
+
+    fn unchanged(_: &mut FreedomConfig) {}
+
+    fn use_environment_source(config: &mut FreedomConfig) {
+        config.self_map_source_dir = None;
+    }
+
+    fn change_configured_source(config: &mut FreedomConfig) {
+        config.self_map_source_dir = Some("source-b".to_owned());
+    }
+
+    fn change_interval(config: &mut FreedomConfig) {
+        config.self_map_interval_secs = Some(60);
+    }
+
+    fn change_subdir(config: &mut FreedomConfig) {
+        config.self_map_subdir = Some("NEOTH-Other".to_owned());
+    }
+
+    fn disable_labeling(config: &mut FreedomConfig) {
+        config.self_map_label_enabled = false;
+    }
+
+    fn change_label_model(config: &mut FreedomConfig) {
+        config.self_map_label_model = Some("other-label-model".to_owned());
+    }
+
+    fn change_provider_kind(config: &mut FreedomConfig) {
+        config.provider_kind = Some(crate::cli::init::ProviderKind::AnthropicApi);
+    }
+
+    fn change_provider_key(config: &mut FreedomConfig) {
+        config.provider_key = Some(SecretString::from("credential-b"));
+    }
+
+    fn change_provider_endpoint(config: &mut FreedomConfig) {
+        config.provider_endpoint = Some("https://provider-b.invalid/v1".to_owned());
+    }
+
+    fn change_vault(config: &mut FreedomConfig) {
+        config.obsidian_vault = Some("vault-b".to_owned());
+    }
+
+    /// Restores NEOTH_SRC_DIR even when an assertion fails. Tests holding this
+    /// guard must take crate::test_env::lock() before mutating the environment.
+    struct EnvVarGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(value: &str) -> Self {
+            let previous = std::env::var_os("NEOTH_SRC_DIR");
+            // SAFETY: the enclosing test holds crate::test_env::lock(), which
+            // serializes all process-global environment mutation in this crate.
+            unsafe { std::env::set_var("NEOTH_SRC_DIR", value) };
+            Self { previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: the guard is dropped before the enclosing test releases
+            // crate::test_env::lock(), so this restoration cannot race a peer.
+            unsafe {
+                if let Some(value) = self.previous.as_ref() {
+                    std::env::set_var("NEOTH_SRC_DIR", value);
+                } else {
+                    std::env::remove_var("NEOTH_SRC_DIR");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn self_map_fingerprint_binds_every_spawn_input() {
+        let _env = crate::test_env::lock();
+        let _source_env = EnvVarGuard::set("ambient-source");
+        let cases = [
+            FingerprintChange {
+                name: "configured source directory",
+                prepare: unchanged,
+                change: change_configured_source,
+                env_before: "ignored-env-source-a",
+                env_after: "ignored-env-source-b",
+            },
+            FingerprintChange {
+                name: "environment source-directory fallback",
+                prepare: use_environment_source,
+                change: unchanged,
+                env_before: "env-source-a",
+                env_after: "env-source-b",
+            },
+            FingerprintChange {
+                name: "interval",
+                prepare: unchanged,
+                change: change_interval,
+                env_before: "ignored-env-source-a",
+                env_after: "ignored-env-source-a",
+            },
+            FingerprintChange {
+                name: "subdirectory",
+                prepare: unchanged,
+                change: change_subdir,
+                env_before: "ignored-env-source-a",
+                env_after: "ignored-env-source-a",
+            },
+            FingerprintChange {
+                name: "label-enabled flag",
+                prepare: unchanged,
+                change: disable_labeling,
+                env_before: "ignored-env-source-a",
+                env_after: "ignored-env-source-a",
+            },
+            FingerprintChange {
+                name: "label model",
+                prepare: unchanged,
+                change: change_label_model,
+                env_before: "ignored-env-source-a",
+                env_after: "ignored-env-source-a",
+            },
+            FingerprintChange {
+                name: "provider kind",
+                prepare: unchanged,
+                change: change_provider_kind,
+                env_before: "ignored-env-source-a",
+                env_after: "ignored-env-source-a",
+            },
+            FingerprintChange {
+                name: "provider key",
+                prepare: unchanged,
+                change: change_provider_key,
+                env_before: "ignored-env-source-a",
+                env_after: "ignored-env-source-a",
+            },
+            FingerprintChange {
+                name: "provider endpoint",
+                prepare: unchanged,
+                change: change_provider_endpoint,
+                env_before: "ignored-env-source-a",
+                env_after: "ignored-env-source-a",
+            },
+            FingerprintChange {
+                name: "vault",
+                prepare: unchanged,
+                change: change_vault,
+                env_before: "ignored-env-source-a",
+                env_after: "ignored-env-source-a",
+            },
+        ];
+
+        for case in cases {
+            let mut baseline = configured_self_map();
+            (case.prepare)(&mut baseline);
+            // SAFETY: this whole test holds crate::test_env::lock().
+            unsafe { std::env::set_var("NEOTH_SRC_DIR", case.env_before) };
+            let baseline_fingerprint = fingerprint(&baseline);
+
+            let mut changed = baseline;
+            (case.change)(&mut changed);
+            // SAFETY: this whole test holds crate::test_env::lock().
+            unsafe { std::env::set_var("NEOTH_SRC_DIR", case.env_after) };
+
+            assert_ne!(
+                baseline_fingerprint,
+                fingerprint(&changed),
+                "SelfMap fingerprint must change when its {} changes",
+                case.name
+            );
+        }
+    }
 }
 
 /// Pick #37 (Session 14, Agent #4 design-consensus): process a

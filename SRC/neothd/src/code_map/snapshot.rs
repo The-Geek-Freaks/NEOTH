@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use sha2::{Digest, Sha256};
 
 use super::graph::{CallGraph, DEFAULT_MAX_GRAPH_EDGES, FileInput};
@@ -72,8 +73,203 @@ pub struct RebuildSnapshot {
 pub(crate) struct ScopedRebuildSnapshot {
     snapshot: RebuildSnapshot,
     database_path: PathBuf,
+    options: RebuildOptions,
     included_relative_paths: Vec<PathBuf>,
     excluded_relative_paths: Vec<PathBuf>,
+}
+
+/// Read-only evidence for completing a pre-existing Graphify transaction.
+/// Unlike [`ScopedRebuildSnapshot`], constructing this value never opens a
+/// writable SQLite handle, applies a migration, or advances a generation.
+#[derive(Clone, Debug)]
+pub(crate) struct PersistedNativeSnapshotAttestation {
+    root: CanonicalRepoRoot,
+    database_path: PathBuf,
+    options: RebuildOptions,
+    root_identity_sha256: String,
+    source_fingerprint_sha256: String,
+    index_generation: i64,
+    graph_generation: i64,
+}
+
+/// Native evidence needed by Graphify's post-CURRENT coordinator.  Both a
+/// freshly rebuilt snapshot and a read-only persisted attestation implement
+/// this boundary, so recovery cannot be forced to create a new generation.
+pub(crate) trait CompanionSnapshotAttestation {
+    fn root(&self) -> &CanonicalRepoRoot;
+    fn root_identity_sha256(&self) -> &str;
+    fn source_fingerprint_sha256(&self) -> &str;
+    fn index_generation(&self) -> i64;
+    fn graph_generation(&self) -> i64;
+    fn revalidate_companion_publication(&self) -> Result<()>;
+}
+
+impl CompanionSnapshotAttestation for ScopedRebuildSnapshot {
+    fn root(&self) -> &CanonicalRepoRoot {
+        &self.snapshot.root
+    }
+    fn root_identity_sha256(&self) -> &str {
+        &self.snapshot.root_identity_sha256
+    }
+    fn source_fingerprint_sha256(&self) -> &str {
+        &self.snapshot.source_fingerprint_sha256
+    }
+    fn index_generation(&self) -> i64 {
+        self.snapshot.index_generation
+    }
+    fn graph_generation(&self) -> i64 {
+        self.snapshot.graph_generation
+    }
+    fn revalidate_companion_publication(&self) -> Result<()> {
+        ScopedRebuildSnapshot::revalidate_companion_publication(self)
+    }
+}
+
+impl CompanionSnapshotAttestation for PersistedNativeSnapshotAttestation {
+    fn root(&self) -> &CanonicalRepoRoot {
+        &self.root
+    }
+    fn root_identity_sha256(&self) -> &str {
+        &self.root_identity_sha256
+    }
+    fn source_fingerprint_sha256(&self) -> &str {
+        &self.source_fingerprint_sha256
+    }
+    fn index_generation(&self) -> i64 {
+        self.index_generation
+    }
+    fn graph_generation(&self) -> i64 {
+        self.graph_generation
+    }
+    fn revalidate_companion_publication(&self) -> Result<()> {
+        attest_existing_persisted_snapshot(
+            &self.root,
+            &self.database_path,
+            self.options,
+            self.source_fingerprint_sha256(),
+            self.index_generation,
+            self.graph_generation,
+        )
+        .map(|_| ())
+    }
+}
+
+/// Attest an already-persisted native generation for recovery without any
+/// writable DB side effect. The source digest is verified twice: from the
+/// persisted file rows and from a stable current filesystem scan. A missing
+/// database is a hard error, never an implicit create/migrate request.
+pub(crate) fn attest_existing_persisted_snapshot(
+    root: &CanonicalRepoRoot,
+    db_path: &Path,
+    options: RebuildOptions,
+    expected_source_fingerprint: &str,
+    expected_index_generation: i64,
+    expected_graph_generation: i64,
+) -> Result<PersistedNativeSnapshotAttestation> {
+    ensure!(
+        db_path.exists(),
+        "native code-map database is missing; recovery will not create it"
+    );
+    let metadata = std::fs::symlink_metadata(db_path)
+        .with_context(|| format!("inspect native code-map database {}", db_path.display()))?;
+    ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink(),
+        "native code-map database is not a regular file"
+    );
+    let database_path = std::fs::canonicalize(db_path).with_context(|| {
+        format!(
+            "canonicalize native code-map database {}",
+            db_path.display()
+        )
+    })?;
+    let observed_root = CanonicalRepoRoot::discover(root.path())
+        .context("revalidate physical repository root for persisted native attestation")?;
+    ensure!(
+        observed_root == *root,
+        "persisted native attestation repository identity changed"
+    );
+    let connection = Connection::open_with_flags(
+        &database_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| {
+        format!(
+            "open native code-map database read-only at {}",
+            database_path.display()
+        )
+    })?;
+    connection.pragma_update(None, "query_only", "ON")?;
+    let display = root.display();
+    let row: Option<(Option<String>, i64, i64, bool)> = connection.query_row(
+        "SELECT root_identity, index_generation, graph_generation, oversize_skipped = 0 AND truncated_at IS NULL FROM code_map_roots WHERE root = ?1",
+        rusqlite::params![display],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).optional().context("read persisted native generation for recovery")?;
+    let Some((stored_identity, index_generation, graph_generation, complete)) = row else {
+        bail!("persisted native code-map snapshot is absent for recovery root")
+    };
+    ensure!(
+        stored_identity.as_deref() == Some(root.identity().as_str()),
+        "persisted native code-map root identity does not match recovery root"
+    );
+    ensure!(complete, "persisted native code-map snapshot is incomplete");
+    ensure!(
+        index_generation == expected_index_generation
+            && graph_generation == expected_graph_generation
+            && index_generation > 0
+            && index_generation == graph_generation,
+        "persisted native generations do not match the recovery receipt"
+    );
+    let persisted_fingerprint = persisted_source_fingerprint(&connection, root)?;
+    ensure!(
+        persisted_fingerprint == expected_source_fingerprint,
+        "persisted native source fingerprint does not match the recovery receipt"
+    );
+    let observed_fingerprint = stable_source_fingerprint(root, options)?;
+    ensure!(
+        observed_fingerprint == expected_source_fingerprint,
+        "current source fingerprint does not match the recovery receipt"
+    );
+    Ok(PersistedNativeSnapshotAttestation {
+        root: root.clone(),
+        database_path,
+        options,
+        root_identity_sha256: root_identity_digest(root),
+        source_fingerprint_sha256: expected_source_fingerprint.to_owned(),
+        index_generation,
+        graph_generation,
+    })
+}
+
+fn persisted_source_fingerprint(
+    connection: &Connection,
+    root: &CanonicalRepoRoot,
+) -> Result<String> {
+    let mut stmt = connection.prepare(
+        "SELECT path, bytes, sha256 FROM code_map_files WHERE root = ?1 ORDER BY path ASC",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![root.display()], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut digest = Sha256::new();
+    digest.update(b"neoth.code-map.source-snapshot.v2\0");
+    digest.update(root.identity().as_str().as_bytes());
+    for row in rows {
+        let (path, bytes, sha256) = row?;
+        let bytes =
+            u64::try_from(bytes).context("persisted native source byte count is negative")?;
+        digest.update(b"\0");
+        digest.update(path.as_bytes());
+        digest.update(b"\0");
+        digest.update(bytes.to_le_bytes());
+        digest.update(b"\0");
+        digest.update(sha256.as_bytes());
+    }
+    Ok(hex::encode(digest.finalize()))
 }
 
 impl ScopedRebuildSnapshot {
@@ -91,6 +287,67 @@ impl ScopedRebuildSnapshot {
 
     pub(in crate::code_map) fn excluded_relative_paths(&self) -> &[PathBuf] {
         &self.excluded_relative_paths
+    }
+
+    /// Revalidate the exact filesystem scope and persisted DB generation which
+    /// minted this capability. Companion publishers call this immediately
+    /// before their own visibility boundary; a freely assembled
+    /// [`RebuildSnapshot`] is deliberately insufficient authority.
+    pub(crate) fn revalidate_companion_publication(&self) -> Result<()> {
+        let observed_root = CanonicalRepoRoot::discover(self.snapshot.root.path())
+            .context("revalidate scoped code-map physical repository root")?;
+        ensure!(
+            observed_root == self.snapshot.root,
+            "scoped code-map repository identity changed before companion publication"
+        );
+        let observed_database = std::fs::canonicalize(&self.database_path).with_context(|| {
+            format!(
+                "canonicalize scoped code-map database {} during companion publication",
+                self.database_path.display()
+            )
+        })?;
+        ensure!(
+            observed_database == self.database_path,
+            "scoped code-map database identity changed before companion publication"
+        );
+        let database_metadata =
+            std::fs::symlink_metadata(&self.database_path).with_context(|| {
+                format!(
+                    "inspect scoped code-map database {} during companion publication",
+                    self.database_path.display()
+                )
+            })?;
+        ensure!(
+            database_metadata.is_file() && !database_metadata.file_type().is_symlink(),
+            "scoped code-map database is no longer a regular file before companion publication"
+        );
+
+        let observed_fingerprint = stable_source_fingerprint_scoped(
+            &self.snapshot.root,
+            self.options,
+            &self.included_relative_paths,
+            &self.excluded_relative_paths,
+        )?;
+        ensure!(
+            observed_fingerprint == self.snapshot.source_fingerprint_sha256,
+            "source corpus changed after native code-map publication"
+        );
+
+        let connection = super::persist::open(&self.database_path).with_context(|| {
+            format!(
+                "open scoped code-map database {} during companion publication",
+                self.database_path.display()
+            )
+        })?;
+        let root = self.snapshot.root.display();
+        ensure!(
+            super::persist::root_index_generation(&connection, root)?
+                == Some(self.snapshot.index_generation)
+                && super::persist::root_graph_generation(&connection, root)?
+                    == Some(self.snapshot.graph_generation),
+            "native code-map generation changed before companion publication"
+        );
+        Ok(())
     }
 }
 
@@ -156,6 +413,7 @@ pub(crate) fn rebuild_snapshot_scoped(
     Ok(ScopedRebuildSnapshot {
         snapshot,
         database_path,
+        options,
         included_relative_paths,
         excluded_relative_paths,
     })
@@ -640,6 +898,43 @@ mod tests {
         std::fs::write(&source, "pub fn second() {}\n").unwrap();
         let changed = stable_source_fingerprint(&root, RebuildOptions::default()).unwrap();
         assert_ne!(changed, verified);
+    }
+
+    #[test]
+    fn persisted_recovery_attestation_is_read_only_and_never_creates_a_missing_db() {
+        let repo = tempdir().unwrap();
+        std::fs::write(repo.path().join("lib.rs"), "pub fn mapped() {}\n").unwrap();
+        let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let db_dir = tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
+        let rebuilt = rebuild_snapshot(&root, &db, RebuildOptions::default()).unwrap();
+        let before = std::fs::read(&db).unwrap();
+
+        let attestation = attest_existing_persisted_snapshot(
+            &root,
+            &db,
+            RebuildOptions::default(),
+            &rebuilt.source_fingerprint_sha256,
+            rebuilt.index_generation,
+            rebuilt.graph_generation,
+        )
+        .unwrap();
+        assert_eq!(attestation.index_generation(), rebuilt.index_generation);
+        assert_eq!(std::fs::read(&db).unwrap(), before);
+
+        let missing = db_dir.path().join("missing-code-map.db");
+        assert!(
+            attest_existing_persisted_snapshot(
+                &root,
+                &missing,
+                RebuildOptions::default(),
+                &rebuilt.source_fingerprint_sha256,
+                rebuilt.index_generation,
+                rebuilt.graph_generation,
+            )
+            .is_err()
+        );
+        assert!(!missing.exists());
     }
 
     #[test]

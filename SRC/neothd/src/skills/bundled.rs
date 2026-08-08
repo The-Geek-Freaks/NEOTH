@@ -1620,7 +1620,7 @@ mod tests {
         }
 
         // 3. Doctor probe smoke — must not panic.
-        let _installed: bool = crate::config::installer::is_graphify_installed();
+        let _importable: bool = crate::config::installer::is_graphify_module_importable();
     }
 
     /// GOLD-ADAPT-DRAW-03 (2026-06-29) — draw.io helper scripts + data files

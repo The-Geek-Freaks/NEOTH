@@ -86,6 +86,16 @@ impl CohereAdapter {
             http,
         })
     }
+
+    /// This exact value is bound by authorization and serialized as Cohere's
+    /// `max_tokens`. A request may narrow the configured limit but never
+    /// widen it, so authorization and the transport retain that reviewed
+    /// provider bound.
+    fn effective_output_token_cap(&self, req: &Request) -> u32 {
+        req.max_output_tokens
+            .map(|requested| requested.min(self.max_tokens))
+            .unwrap_or(self.max_tokens)
+    }
 }
 
 #[async_trait]
@@ -95,15 +105,15 @@ impl Provider for CohereAdapter {
     }
 
     fn request_controls(&self) -> ProviderRequestControls {
-        ProviderRequestControls::SAMPLING_MAX_ONE
+        ProviderRequestControls::SAMPLING_MAX_ONE.with_output_token_limit()
     }
 
     fn default_model(&self) -> Option<&str> {
         Some(&self.default_model)
     }
 
-    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
-        Some(self.max_tokens)
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        Some(self.effective_output_token_cap(req))
     }
 
     async fn complete_raw(
@@ -136,7 +146,7 @@ impl Provider for CohereAdapter {
                 stream: false,
                 model: model.clone(),
                 messages,
-                max_tokens: Some(self.max_tokens),
+                max_tokens: Some(self.effective_output_token_cap(&req)),
                 temperature: req.temperature,
                 p: req.top_p,
                 seed: req.sampling_seed,
@@ -362,6 +372,59 @@ mod tests {
         assert_eq!(controlled["p"].as_f64(), Some(f64::from(0.85_f32)));
         assert_eq!(controlled["seed"], 11);
         assert_eq!(controlled["stop_sequences"], serde_json::json!(["END"]));
+    }
+
+    #[test]
+    fn requested_output_cap_is_authorized_and_serialized_verbatim() {
+        let adapter = CohereAdapter::new(SecretString::from("co-test"), "command-test".into())
+            .expect("adapter constructs");
+        let req = Request {
+            max_output_tokens: Some(88),
+            ..Request::default()
+        };
+        assert!(adapter.request_controls().supports_max_output_tokens());
+        assert_eq!(adapter.output_token_ceiling(&req), Some(88));
+
+        let json = serde_json::to_value(CohereRequest {
+            stream: false,
+            model: "command-test".into(),
+            messages: vec![],
+            max_tokens: Some(adapter.effective_output_token_cap(&req)),
+            temperature: None,
+            p: None,
+            seed: None,
+            stop_sequences: None,
+        })
+        .expect("Cohere request serializes");
+        assert_eq!(json["max_tokens"], 88);
+    }
+
+    #[test]
+    fn requested_output_cap_cannot_widen_the_configured_cohere_ceiling() {
+        let adapter = CohereAdapter::build(
+            "https://api.cohere.com/v2".into(),
+            SecretString::from("co-test"),
+            "command-test".into(),
+            100,
+        )
+        .expect("adapter constructs");
+        let req = Request {
+            max_output_tokens: Some(crate::providers::MAX_REQUEST_OUTPUT_TOKENS),
+            ..Request::default()
+        };
+        assert_eq!(adapter.output_token_ceiling(&req), Some(100));
+        let json = serde_json::to_value(CohereRequest {
+            stream: false,
+            model: "command-test".into(),
+            messages: vec![],
+            max_tokens: Some(adapter.effective_output_token_cap(&req)),
+            temperature: None,
+            p: None,
+            seed: None,
+            stop_sequences: None,
+        })
+        .expect("Cohere request serializes");
+        assert_eq!(json["max_tokens"], 100);
     }
 
     fn build_adapter_against(server_uri: &str) -> CohereAdapter {

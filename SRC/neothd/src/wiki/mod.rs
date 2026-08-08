@@ -21,7 +21,13 @@ pub mod renderer;
 pub mod sources;
 pub mod writer;
 
-pub use ingest::{IngestStats, WIKI_SCOPE, ingest_sources};
+pub use ingest::{
+    GraphifyIngestRevocation, GraphifyIngestScope, IngestStats, WIKI_SCOPE,
+    ingest_graphify_generation_for_scope, ingest_sources, revoke_graphify_scope_for_no_ingest,
+};
+pub(crate) use ingest::{
+    ingest_graphify_generation_for_scope_guarded, revoke_graphify_scope_for_no_ingest_guarded,
+};
 pub use renderer::{INDEX_SLUG, render_index, render_page};
 pub use sources::{SourceCategory, WikiSource, discover_sources};
 pub use writer::{WikiBuildPlan, WikiBuildStats, build_wiki, plan_wiki, write_plan};

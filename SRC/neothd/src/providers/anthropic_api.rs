@@ -132,6 +132,14 @@ impl AnthropicAdapter {
             http,
         })
     }
+
+    /// Anthropic requires `max_tokens` on every message request. This is the
+    /// one source of truth for both that field and the authorization ceiling.
+    fn effective_output_token_limit(&self, req: &Request) -> u32 {
+        req.max_output_tokens
+            .unwrap_or(self.max_tokens)
+            .min(self.max_tokens)
+    }
 }
 
 #[async_trait]
@@ -141,7 +149,7 @@ impl Provider for AnthropicAdapter {
     }
 
     fn request_controls(&self) -> ProviderRequestControls {
-        ProviderRequestControls::SAMPLING_WITHOUT_SEED
+        ProviderRequestControls::SAMPLING_WITHOUT_SEED.with_output_token_limit()
     }
 
     fn validate_request_controls(&self, req: &Request) -> Result<()> {
@@ -154,8 +162,8 @@ impl Provider for AnthropicAdapter {
         Some(&self.default_model)
     }
 
-    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
-        Some(self.max_tokens)
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        Some(self.effective_output_token_limit(req))
     }
 
     async fn complete_raw(
@@ -180,7 +188,7 @@ impl Provider for AnthropicAdapter {
             // ~5 min and re-reads it at ~10% input cost on the next turn.
             let body = MessagesRequest {
                 model: model.clone(),
-                max_tokens: self.max_tokens,
+                max_tokens: self.effective_output_token_limit(&req),
                 system: req
                     .system
                     .as_deref()
@@ -442,6 +450,42 @@ mod tests {
         assert_eq!(a.name(), "anthropic_api");
         assert_eq!(a.endpoint, "https://api.anthropic.com/v1");
         assert_eq!(a.max_tokens, DEFAULT_MAX_TOKENS);
+    }
+
+    #[test]
+    fn requested_output_cap_is_the_exact_anthropic_wire_ceiling() {
+        let adapter = AnthropicAdapter::build(
+            "https://api.anthropic.com/v1".to_string(),
+            SecretString::from("sk-ant-test"),
+            "claude-sonnet-4-6".to_string(),
+            100,
+        )
+        .expect("construct");
+        let req = Request {
+            max_output_tokens: Some(88),
+            ..Request::default()
+        };
+        assert!(adapter.request_controls().supports_max_output_tokens());
+        assert_eq!(adapter.output_token_ceiling(&req), Some(88));
+        assert_eq!(adapter.effective_output_token_limit(&req), 88);
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-6".into(),
+            max_tokens: adapter.effective_output_token_limit(&req),
+            system: None,
+            messages: vec![],
+            temperature: None,
+            top_p: None,
+            stop_sequences: None,
+        };
+        assert_eq!(serde_json::to_value(body).unwrap()["max_tokens"], 88);
+        assert_eq!(
+            adapter.effective_output_token_limit(&Request {
+                max_output_tokens: Some(101),
+                ..Request::default()
+            }),
+            100,
+            "the reviewed Anthropic model cap remains a hard upper bound"
+        );
     }
 
     #[test]

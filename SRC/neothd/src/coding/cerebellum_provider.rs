@@ -55,6 +55,7 @@ impl DecomposerLlm for CerebellumDecomposer {
             sampling_seed: None,
             stop_sequences: vec![],
             thinking_budget: None,
+            max_output_tokens: None,
         };
         let completion = self
             .provider

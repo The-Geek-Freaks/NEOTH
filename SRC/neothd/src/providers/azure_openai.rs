@@ -167,7 +167,7 @@ impl Provider for AzureOpenAiAdapter {
     }
 
     fn request_controls(&self) -> ProviderRequestControls {
-        ProviderRequestControls::SAMPLING
+        ProviderRequestControls::SAMPLING.with_output_token_limit()
     }
 
     fn default_model(&self) -> Option<&str> {
@@ -181,8 +181,8 @@ impl Provider for AzureOpenAiAdapter {
         ))
     }
 
-    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
-        Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        Some(effective_output_token_limit(req))
     }
 
     async fn complete_raw(
@@ -226,7 +226,7 @@ impl Provider for AzureOpenAiAdapter {
                 model: deployment.clone(),
                 messages,
                 stream: false,
-                max_completion_tokens: super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING,
+                max_completion_tokens: effective_output_token_limit(&req),
                 temperature: req.temperature,
                 top_p: req.top_p,
                 seed: req.sampling_seed,
@@ -501,6 +501,14 @@ struct ChatRequest {
     stop: Option<Vec<String>>,
 }
 
+/// Azure's reviewed per-call maximum is both its cost ceiling and the exact
+/// `max_completion_tokens` field written to the request body.
+fn effective_output_token_limit(req: &Request) -> u32 {
+    req.max_output_tokens
+        .unwrap_or(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+        .min(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+}
+
 #[derive(Serialize, Deserialize)]
 struct ChatMessage {
     role: &'static str,
@@ -560,6 +568,38 @@ mod tests {
                 crate::cli::init::ProviderKind::AzureOpenAi,
                 Some("https://my-resource.openai.azure.com"),
             ))
+        );
+    }
+
+    #[test]
+    fn requested_output_cap_is_the_exact_azure_wire_ceiling() {
+        let adapter = AzureOpenAiAdapter::new(
+            "https://my-resource.openai.azure.com",
+            dummy_key(),
+            "gpt-5-prod",
+            None,
+        )
+        .expect("construct");
+        let req = Request {
+            max_output_tokens: Some(88),
+            ..Request::default()
+        };
+        assert!(adapter.request_controls().supports_max_output_tokens());
+        assert_eq!(adapter.output_token_ceiling(&req), Some(88));
+        assert_eq!(effective_output_token_limit(&req), 88);
+        let body = ChatRequest {
+            model: "gpt-5-prod".into(),
+            messages: vec![],
+            stream: false,
+            max_completion_tokens: effective_output_token_limit(&req),
+            temperature: None,
+            top_p: None,
+            seed: None,
+            stop: None,
+        };
+        assert_eq!(
+            serde_json::to_value(body).unwrap()["max_completion_tokens"],
+            88
         );
     }
 

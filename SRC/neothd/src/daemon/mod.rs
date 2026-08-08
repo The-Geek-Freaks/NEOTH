@@ -273,8 +273,8 @@ pub mod post_init_cron;
 pub mod quota;
 pub mod rate_limit;
 /// GOLD-ADAPT-GRAPH-05 — NEOTH self-map cron. Runs `graphify update` on the
-/// daemon source tree on a schedule, copies `GRAPH_REPORT.md` +
-/// `GRAPH_TREE.html` into `<vault>/NEOTH-Self/`, ingests the report into
+/// daemon source tree on a schedule, publishes a root-bound immutable Graphify
+/// generation below `<vault>/NEOTH-Self/`, ingests generation-bound pointers into
 /// `idx_groundtruth` (scope `neoth-self-map`), and emits `0xFB
 /// SELF_MAP_COMPLETE`. Gated by `freedom.yaml::obsidian_vault` +
 /// `self_map_source_dir` (or env `NEOTH_SRC_DIR`). Off by default.

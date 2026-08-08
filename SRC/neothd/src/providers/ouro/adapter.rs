@@ -382,6 +382,13 @@ fn clamp_max_new_tokens(requested: Option<u32>) -> u32 {
     }
 }
 
+/// Resolve the strict per-call generation budget. A request can only narrow
+/// the operator-configured local ceiling; the exact same value drives both
+/// the generation loop and the authorization-visible output ceiling.
+fn effective_max_new_tokens(configured: u32, req: &Request) -> u32 {
+    configured.min(req.max_output_tokens.unwrap_or(configured))
+}
+
 /// Build (or reuse) the LoadedOuro behind the adapter's mutex.
 /// First call mmaps weights + parses tokenizer/config; subsequent
 /// calls return immediately.
@@ -530,7 +537,7 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
     let device = loaded.model_device();
     let mut new_tokens: Vec<u32> = Vec::new();
     let sampling = adapter.sampling.merged_with_request(req);
-    let max_new = adapter.max_new_tokens;
+    let max_new = effective_max_new_tokens(adapter.max_new_tokens, req);
 
     // GOLD-ADAPT-KV-01 — cross-request prefix-KV reuse (opt-in). When a request
     // shares a system-prompt PREFIX with a cached one, restore that prefix's
@@ -740,7 +747,7 @@ fn run_ouro_stream(
 
     let device = loaded.model_device();
     let sampling = adapter.sampling.merged_with_request(req);
-    let max_new = adapter.max_new_tokens as usize;
+    let max_new = effective_max_new_tokens(adapter.max_new_tokens, req) as usize;
 
     // Full-prefill at offset 0 (default path — same as run_ouro_forward).
     loaded.model.clear_kv_cache();
@@ -907,11 +914,15 @@ impl Provider for LocalOuroAdapter {
     }
 
     fn request_controls(&self) -> ProviderRequestControls {
-        ProviderRequestControls::SAMPLING_WITHOUT_STOPS
+        ProviderRequestControls::SAMPLING_WITHOUT_STOPS.with_output_token_limit()
     }
 
     fn default_model(&self) -> Option<&str> {
         Some(&self.repo)
+    }
+
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        Some(effective_max_new_tokens(self.max_new_tokens, req))
     }
 
     async fn complete_raw(
@@ -1238,6 +1249,34 @@ mod tests {
     }
 
     #[test]
+    fn per_request_output_cap_only_narrows_ouro_generation_and_ceiling() {
+        let dir = tempdir().unwrap();
+        let adapter = LocalOuroAdapter::new_with_paths(
+            "test/ouro",
+            dir.path().to_path_buf(),
+            None,
+            SamplingConfig::default(),
+            Some(96),
+        );
+        let request = Request {
+            max_output_tokens: Some(37),
+            ..Request::default()
+        };
+        adapter
+            .validate_request_controls(&request)
+            .expect("Ouro advertises and enforces the requested output cap");
+        assert_eq!(
+            effective_max_new_tokens(adapter.max_new_tokens, &request),
+            37
+        );
+        assert_eq!(adapter.output_token_ceiling(&request), Some(37));
+        assert_eq!(
+            adapter.output_token_ceiling(&Request::default()),
+            Some(adapter.max_new_tokens)
+        );
+    }
+
+    #[test]
     fn default_constants_pinned() {
         assert_eq!(DEFAULT_OURO_REPO, "ByteDance/Ouro-1.4B-Thinking");
         assert_eq!(DEFAULT_MAX_NEW_TOKENS, 256);
@@ -1368,6 +1407,7 @@ mod tests {
             sampling_seed: None,
             stop_sequences: Vec::new(),
             thinking_budget: None,
+            max_output_tokens: None,
         };
         let resp = adapter.complete(req).await.expect("Ouro completion");
         assert!(!resp.text.is_empty(), "completion must produce text");
@@ -1403,6 +1443,7 @@ mod tests {
             sampling_seed: Some(7),
             stop_sequences: Vec::new(),
             thinking_budget: None,
+            max_output_tokens: None,
         };
         let resp = adapter.complete(req).await.expect("Ouro completion");
         let text = resp.text.trim();
@@ -1445,6 +1486,7 @@ mod tests {
             sampling_seed: Some(7),
             stop_sequences: Vec::new(),
             thinking_budget: None,
+            max_output_tokens: None,
         };
         // Baseline — full_resequence (default; ensure the var is unset).
         // Hold the env lock across the entire complete() call so no
@@ -1567,6 +1609,7 @@ mod tests {
             sampling_seed: None,
             stop_sequences: Vec::new(),
             thinking_budget: None,
+            max_output_tokens: None,
         };
         let mut stream = adapter.stream(req).await.expect("Ouro stream");
         let mut chunks = 0;

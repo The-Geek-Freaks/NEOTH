@@ -232,6 +232,11 @@ pub struct Request {
     /// (currently 10 000 tokens, set in `scrub_outbound_env`).
     /// Other adapters reject this control rather than ignoring it.
     pub thinking_budget: Option<u32>,
+    /// Maximum completion tokens for this single call. `None` leaves the
+    /// provider's reviewed default ceiling in effect. A concrete leaf may only
+    /// accept this when it both declares [`ProviderRequestControls::OUTPUT_TOKEN_LIMIT`]
+    /// and proves that the same value (or a stricter one) is enforced on wire.
+    pub max_output_tokens: Option<u32>,
 }
 
 /// Per-leaf request-control capability contract.
@@ -246,20 +251,23 @@ pub struct ProviderRequestControls {
     sampling_seed: bool,
     stop_sequences: bool,
     thinking_budget: bool,
+    max_output_tokens: bool,
 }
 
 impl ProviderRequestControls {
-    pub const NONE: Self = Self::new(None, false, false, false, false);
+    pub const NONE: Self = Self::new(None, false, false, false, false, false);
+    /// Per-call maximum completion-token limit only.
+    pub const OUTPUT_TOKEN_LIMIT: Self = Self::new(None, false, false, false, false, true);
     /// Temperature up to 2.0, top-p, seed, and stop sequences.
-    pub const SAMPLING: Self = Self::new(Some(2), true, true, true, false);
+    pub const SAMPLING: Self = Self::new(Some(2), true, true, true, false, false);
     /// Temperature up to 1.0, top-p, seed, and stop sequences.
-    pub const SAMPLING_MAX_ONE: Self = Self::new(Some(1), true, true, true, false);
+    pub const SAMPLING_MAX_ONE: Self = Self::new(Some(1), true, true, true, false, false);
     /// Temperature up to 1.0, top-p, and stop sequences; seed unsupported.
-    pub const SAMPLING_WITHOUT_SEED: Self = Self::new(Some(1), true, false, true, false);
+    pub const SAMPLING_WITHOUT_SEED: Self = Self::new(Some(1), true, false, true, false, false);
     /// Temperature up to 2.0, top-p, and seed; stop sequences unsupported.
-    pub const SAMPLING_WITHOUT_STOPS: Self = Self::new(Some(2), true, true, false, false);
+    pub const SAMPLING_WITHOUT_STOPS: Self = Self::new(Some(2), true, true, false, false, false);
     /// Per-call reasoning budget only (Claude CLI).
-    pub const THINKING_BUDGET: Self = Self::new(None, false, false, false, true);
+    pub const THINKING_BUDGET: Self = Self::new(None, false, false, false, true, false);
 
     const fn new(
         maximum_temperature: Option<u8>,
@@ -267,6 +275,7 @@ impl ProviderRequestControls {
         sampling_seed: bool,
         stop_sequences: bool,
         thinking_budget: bool,
+        max_output_tokens: bool,
     ) -> Self {
         Self {
             maximum_temperature,
@@ -274,7 +283,16 @@ impl ProviderRequestControls {
             sampling_seed,
             stop_sequences,
             thinking_budget,
+            max_output_tokens,
         }
+    }
+
+    /// Add the strict per-request output cap to an existing reviewed control
+    /// set. Concrete adapters use this instead of open-coding a new capability
+    /// constant for every sampling combination.
+    pub const fn with_output_token_limit(mut self) -> Self {
+        self.max_output_tokens = true;
+        self
     }
 
     pub const fn supports_thinking_budget(self) -> bool {
@@ -289,11 +307,15 @@ impl ProviderRequestControls {
         self.sampling_seed
     }
 
+    pub const fn supports_max_output_tokens(self) -> bool {
+        self.max_output_tokens
+    }
+
     /// Project controls onto a different provider leaf for an explicit
     /// cross-provider hop. Unsupported controls are removed and returned for
     /// audit; prompt, system, model, and supported controls remain unchanged.
     pub(crate) fn project_compatible_controls(self, req: &mut Request) -> Vec<&'static str> {
-        let mut dropped = Vec::with_capacity(5);
+        let mut dropped = Vec::with_capacity(6);
         if req.temperature.is_some_and(|temperature| {
             self.maximum_temperature
                 .is_none_or(|maximum| temperature > f32::from(maximum))
@@ -317,6 +339,10 @@ impl ProviderRequestControls {
             req.thinking_budget = None;
             dropped.push("thinking_budget");
         }
+        if req.max_output_tokens.is_some() && !self.max_output_tokens {
+            req.max_output_tokens = None;
+            dropped.push("max_output_tokens");
+        }
         dropped
     }
 
@@ -332,13 +358,14 @@ impl ProviderRequestControls {
             self.sampling_seed && other.sampling_seed,
             self.stop_sequences && other.stop_sequences,
             self.thinking_budget && other.thinking_budget,
+            self.max_output_tokens && other.max_output_tokens,
         )
     }
 
     pub fn validate(self, provider: &str, req: &Request) -> Result<()> {
         validate_portable_request_controls(provider, req)?;
 
-        let mut unsupported = Vec::with_capacity(5);
+        let mut unsupported = Vec::with_capacity(6);
         if req.temperature.is_some() && self.maximum_temperature.is_none() {
             unsupported.push("temperature");
         }
@@ -353,6 +380,9 @@ impl ProviderRequestControls {
         }
         if req.thinking_budget.is_some() && !self.thinking_budget {
             unsupported.push("thinking_budget");
+        }
+        if req.max_output_tokens.is_some() && !self.max_output_tokens {
+            unsupported.push("max_output_tokens");
         }
         if !unsupported.is_empty() {
             anyhow::bail!(
@@ -437,6 +467,13 @@ pub(crate) fn validate_portable_request_controls(provider: &str, req: &Request) 
             "provider `{provider}`: thinking_budget must be within [1, {MAX_THINKING_BUDGET}], got {thinking_budget}"
         );
     }
+    if let Some(max_output_tokens) = req.max_output_tokens
+        && (max_output_tokens == 0 || max_output_tokens > MAX_REQUEST_OUTPUT_TOKENS)
+    {
+        anyhow::bail!(
+            "provider `{provider}`: max_output_tokens must be within [1, {MAX_REQUEST_OUTPUT_TOKENS}], got {max_output_tokens}"
+        );
+    }
     Ok(())
 }
 
@@ -515,6 +552,11 @@ pub(crate) fn model_cache_component(repo: &str) -> String {
 /// output ceiling must return `None` from [`Provider::output_token_ceiling`]
 /// and dispatch uses the explicit unbounded paid-provider permission path.
 pub const DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING: u32 = 4096;
+
+/// Largest portable caller-requested completion budget. Providers can declare
+/// narrower model-specific limits, but no request may raise this conservative
+/// project-wide guardrail.
+pub const MAX_REQUEST_OUTPUT_TOKENS: u32 = 131_072;
 
 /// Capability required by every concrete provider transport. Its field and
 /// constructor are private to this module, so safe Rust outside the mandatory
@@ -976,7 +1018,7 @@ pub trait Provider: Send + Sync {
     ) -> Result<Completion> {
         self.validate_request_controls(&req)?;
         let identity = bind_wire_identity(self, &mut req)?;
-        let output_token_ceiling = self.output_token_ceiling(&req);
+        let output_token_ceiling = validated_output_token_ceiling(self, &req)?;
         let mut authorized = authorizer
             .authorize_leaf(self.name(), &req, call_scope, false, output_token_ceiling)
             .await?;
@@ -1025,7 +1067,7 @@ pub trait Provider: Send + Sync {
     ) -> Result<ChunkStream> {
         self.validate_request_controls(&req)?;
         let identity = bind_wire_identity(self, &mut req)?;
-        let output_token_ceiling = self.output_token_ceiling(&req);
+        let output_token_ceiling = validated_output_token_ceiling(self, &req)?;
         let streaming = self.streams_on_wire();
         let mut authorized = authorizer
             .authorize_leaf(
@@ -1178,6 +1220,37 @@ pub trait Provider: Send + Sync {
                 self.name()
             )
         }
+    }
+}
+
+/// Derive the output ceiling used at the authorization boundary and reject a
+/// leaf that claims to support a caller cap without proving it was narrowed on
+/// the exact outbound request. The adapter owns `output_token_ceiling` because
+/// only it knows the concrete wire field; this common guard prevents a
+/// capability declaration from becoming an advisory no-op.
+fn validated_output_token_ceiling<P: Provider + ?Sized>(
+    provider: &P,
+    req: &Request,
+) -> Result<Option<u32>> {
+    let ceiling = provider.output_token_ceiling(req);
+    match (req.max_output_tokens, ceiling) {
+        (Some(requested), Some(0)) => anyhow::bail!(
+            "provider `{}` returned an invalid zero output-token ceiling for requested max_output_tokens={requested}",
+            provider.name()
+        ),
+        (Some(requested), Some(effective)) if effective > requested => anyhow::bail!(
+            "provider `{}` accepted max_output_tokens={requested} but only proved output ceiling {effective}; adapter must enforce the requested cap on wire",
+            provider.name()
+        ),
+        (Some(requested), None) => anyhow::bail!(
+            "provider `{}` accepted max_output_tokens={requested} without a proven enforced output ceiling",
+            provider.name()
+        ),
+        (_, Some(0)) => anyhow::bail!(
+            "provider `{}` returned an invalid zero output-token ceiling",
+            provider.name()
+        ),
+        (_, ceiling) => Ok(ceiling),
     }
 }
 
@@ -2251,6 +2324,25 @@ mod tests {
         calls: AtomicUsize,
     }
 
+    struct OutputCapProvider {
+        ceiling: Option<u32>,
+    }
+
+    #[async_trait]
+    impl Provider for OutputCapProvider {
+        fn name(&self) -> &'static str {
+            "output_cap"
+        }
+
+        fn request_controls(&self) -> ProviderRequestControls {
+            ProviderRequestControls::OUTPUT_TOKEN_LIMIT
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            self.ceiling
+        }
+    }
+
     #[async_trait]
     impl Provider for NoControlProvider {
         fn name(&self) -> &'static str {
@@ -2430,6 +2522,70 @@ mod tests {
             )
             .expect_err("intersection must retain the narrower leaf range");
         assert!(error.to_string().contains("[0.0, 1.0]"));
+    }
+
+    #[test]
+    fn output_token_limit_is_strict_and_intersects_projects_and_validates() {
+        let requested = Request {
+            max_output_tokens: Some(512),
+            ..Request::default()
+        };
+        ProviderRequestControls::OUTPUT_TOKEN_LIMIT
+            .validate("capable", &requested)
+            .expect("capable leaf accepts a valid requested output cap");
+        let unsupported = ProviderRequestControls::SAMPLING
+            .validate("sampling-only", &requested)
+            .expect_err("leaf without output cap capability must reject it");
+        assert!(unsupported.to_string().contains("max_output_tokens"));
+
+        let common = ProviderRequestControls::SAMPLING
+            .with_output_token_limit()
+            .intersection(ProviderRequestControls::OUTPUT_TOKEN_LIMIT);
+        assert!(common.supports_max_output_tokens());
+        assert!(!common.supports_temperature());
+
+        let mut projected = Request {
+            temperature: Some(0.5),
+            max_output_tokens: Some(512),
+            ..Request::default()
+        };
+        assert_eq!(
+            ProviderRequestControls::OUTPUT_TOKEN_LIMIT.project_compatible_controls(&mut projected),
+            vec!["temperature"]
+        );
+        assert_eq!(projected.max_output_tokens, Some(512));
+
+        for invalid in [Some(0), Some(MAX_REQUEST_OUTPUT_TOKENS + 1)] {
+            let error = ProviderRequestControls::OUTPUT_TOKEN_LIMIT
+                .validate(
+                    "capable",
+                    &Request {
+                        max_output_tokens: invalid,
+                        ..Request::default()
+                    },
+                )
+                .expect_err("portable output caps must have a finite non-zero range");
+            assert!(error.to_string().contains("max_output_tokens"));
+        }
+    }
+
+    #[test]
+    fn requested_output_cap_requires_a_matching_proven_effective_ceiling() {
+        let request = Request {
+            max_output_tokens: Some(512),
+            ..Request::default()
+        };
+        assert_eq!(
+            validated_output_token_ceiling(&OutputCapProvider { ceiling: Some(512) }, &request,)
+                .unwrap(),
+            Some(512)
+        );
+        for ceiling in [Some(513), None] {
+            assert!(
+                validated_output_token_ceiling(&OutputCapProvider { ceiling }, &request).is_err(),
+                "requested cap must not become merely advisory"
+            );
+        }
     }
 
     #[test]

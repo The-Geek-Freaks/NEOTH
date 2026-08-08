@@ -973,14 +973,16 @@ pub enum Commands {
     /// `~/.neoth/code_map.db` SQLite for recall integration.
     CodeMap(code_map::CodeMapArgs),
 
-    /// GOLD-ADAPT-GRAPH-06 — run graphify on any user-supplied corpus and
-    /// file the output into the Obsidian vault + wiki ground-truth so
-    /// `neoth recall` can answer questions about the mapped repository.
+    /// GOLD-ADAPT-GRAPH-06 — map a corpus into a validated immutable Graphify
+    /// generation and durable scope-bound recall transaction. `graphifyy==0.8.41`
+    /// is the distribution; the isolated runtime invocation is
+    /// `python -I -m graphify`.
     ///
-    /// Runs `python -m graphifyy update` inside `<path>`, copies
-    /// `GRAPH_REPORT.md` + `GRAPH_TREE.html` into `<vault>/<corpus-name>/`,
-    /// and ingests the report into `idx_groundtruth` (per-corpus scope so
-    /// each mapped repo has its own independent revoke boundary).
+    /// The update runtime is currently Windows-only under a Job Object and
+    /// fails closed on Unix/macOS. The shipped self-knowledge snapshot query
+    /// remains cross-platform. `--no-ingest` publishes then atomically revokes
+    /// the matching prior Graphify recall scope; `--dry-run` publishes and
+    /// mutates nothing. Crash recovery rejects ambiguous legacy journals.
     ///
     /// `neoth graph <path> [--subdir NAME] [--dry-run] [--no-ingest]`
     Graph(graph::GraphArgs),
@@ -1875,7 +1877,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             args.output = global_output;
             code_map::run_code_map(args).await?;
         }
-        Commands::Graph(args) => {
+        Commands::Graph(mut args) => {
+            args.output = global_output;
             graph::run_graph(args).await?;
         }
         Commands::CodeIntel(args) => {

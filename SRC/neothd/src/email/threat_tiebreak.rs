@@ -205,6 +205,7 @@ pub async fn tiebreak_review_inbound(
         sampling_seed: None,
         stop_sequences: Vec::new(),
         thinking_budget: None,
+        max_output_tokens: None,
     };
     match provider.complete(req).await {
         Ok(completion) => {

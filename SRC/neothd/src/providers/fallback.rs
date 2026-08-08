@@ -800,8 +800,17 @@ mod tests {
             Some(self.default_model)
         }
 
-        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
-            Some(self.output_token_ceiling)
+        fn request_controls(&self) -> ProviderRequestControls {
+            ProviderRequestControls::OUTPUT_TOKEN_LIMIT
+        }
+
+        fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+            Some(
+                req.max_output_tokens
+                    .map_or(self.output_token_ceiling, |requested| {
+                        self.output_token_ceiling.min(requested)
+                    }),
+            )
         }
 
         async fn complete(&self, req: Request) -> Result<Completion> {
@@ -1525,6 +1534,7 @@ mod tests {
                 prompt: "same prompt".into(),
                 system: Some("same system".into()),
                 model: Some("caller-primary-model".into()),
+                max_output_tokens: Some(2048),
                 ..Request::default()
             })
             .await
@@ -1541,6 +1551,16 @@ mod tests {
             Some("fallback-config"),
             "a fallback must never inherit another provider's model"
         );
+        assert_eq!(
+            primary_requests.lock().unwrap()[0].max_output_tokens,
+            Some(2048),
+            "the primary must receive the caller's strict output cap"
+        );
+        assert_eq!(
+            fallback_requests.lock().unwrap()[0].max_output_tokens,
+            Some(2048),
+            "fallback must preserve the caller's strict output cap"
+        );
 
         drop(provider);
         drop(writer);
@@ -1549,10 +1569,12 @@ mod tests {
         assert_eq!(payloads.len(), 2);
         assert_eq!(payloads[0]["provider"], "primary_cloud");
         assert_eq!(payloads[0]["model"], "caller-primary-model");
-        assert_eq!(payloads[0]["output_tokens_est"], 4096);
+        assert_eq!(payloads[0]["output_tokens_est"], 2048);
+        assert_eq!(payloads[0]["requested_max_output_tokens"], 2048);
         assert_eq!(payloads[1]["provider"], "fallback_cloud");
         assert_eq!(payloads[1]["model"], "fallback-config");
-        assert_eq!(payloads[1]["output_tokens_est"], 10_000);
+        assert_eq!(payloads[1]["output_tokens_est"], 2048);
+        assert_eq!(payloads[1]["requested_max_output_tokens"], 2048);
 
         let quota_payloads =
             event_payloads(&seg, crate::wal::events::EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED);

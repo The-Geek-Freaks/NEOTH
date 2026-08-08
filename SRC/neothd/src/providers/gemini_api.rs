@@ -64,15 +64,15 @@ impl Provider for GeminiAdapter {
     }
 
     fn request_controls(&self) -> ProviderRequestControls {
-        ProviderRequestControls::SAMPLING
+        ProviderRequestControls::SAMPLING.with_output_token_limit()
     }
 
     fn default_model(&self) -> Option<&str> {
         Some(&self.default_model)
     }
 
-    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
-        Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        Some(effective_output_token_cap(req))
     }
 
     async fn complete_raw(
@@ -103,7 +103,7 @@ impl Provider for GeminiAdapter {
                     parts: vec![GeminiPart { text: s.clone() }],
                 }),
                 generation_config: GeminiGenerationConfig {
-                    max_output_tokens: super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING,
+                    max_output_tokens: effective_output_token_cap(&req),
                     temperature: req.temperature,
                     top_p: req.top_p,
                     seed: req.sampling_seed,
@@ -174,6 +174,16 @@ impl Provider for GeminiAdapter {
         })
         .await
     }
+}
+
+/// This exact value is bound by authorization and serialized to Gemini's
+/// `generationConfig.maxOutputTokens` field. A request may narrow the
+/// reviewed default but never widen it; request validation bounds malformed
+/// values before the adapter reaches transport.
+fn effective_output_token_cap(req: &Request) -> u32 {
+    req.max_output_tokens
+        .map(|requested| requested.min(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING))
+        .unwrap_or(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
 }
 
 fn completion_from_response(
@@ -439,6 +449,54 @@ mod tests {
         for field in ["temperature", "topP", "seed", "stopSequences"] {
             assert!(json["generationConfig"].get(field).is_none());
         }
+    }
+
+    #[test]
+    fn requested_output_cap_is_authorized_and_serialized_verbatim() {
+        let req = Request {
+            max_output_tokens: Some(88),
+            ..Request::default()
+        };
+        let adapter = GeminiAdapter::new(SecretString::from("AIza-test"), "gemini-test".into())
+            .expect("adapter constructs");
+        assert!(adapter.request_controls().supports_max_output_tokens());
+        assert_eq!(adapter.output_token_ceiling(&req), Some(88));
+
+        let json = serde_json::to_value(GeminiGenerationConfig {
+            max_output_tokens: effective_output_token_cap(&req),
+            temperature: None,
+            top_p: None,
+            seed: None,
+            stop_sequences: None,
+        })
+        .expect("generation config serializes");
+        assert_eq!(json["maxOutputTokens"], 88);
+    }
+
+    #[test]
+    fn requested_output_cap_cannot_widen_the_reviewed_gemini_ceiling() {
+        let req = Request {
+            max_output_tokens: Some(crate::providers::MAX_REQUEST_OUTPUT_TOKENS),
+            ..Request::default()
+        };
+        let adapter = GeminiAdapter::new(SecretString::from("AIza-test"), "gemini-test".into())
+            .expect("adapter constructs");
+        assert_eq!(
+            adapter.output_token_ceiling(&req),
+            Some(crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+        );
+        let json = serde_json::to_value(GeminiGenerationConfig {
+            max_output_tokens: effective_output_token_cap(&req),
+            temperature: None,
+            top_p: None,
+            seed: None,
+            stop_sequences: None,
+        })
+        .expect("generation config serializes");
+        assert_eq!(
+            json["maxOutputTokens"],
+            crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING
+        );
     }
 
     #[test]

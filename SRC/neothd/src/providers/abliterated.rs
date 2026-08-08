@@ -61,6 +61,10 @@ impl Provider for AbliteratedProvider {
         self.inner.resolve_model_for_wire(requested_model)
     }
 
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        self.inner.output_token_ceiling(req)
+    }
+
     /// Delegates to the inner adapter unchanged (its circuit breaker still
     /// fires on repeated local-inference failures).
     async fn complete_raw(

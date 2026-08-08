@@ -347,6 +347,18 @@ mod tests {
     }
 
     #[test]
+    fn explicit_output_cap_is_rejected_for_unbounded_sidecar_invocations() {
+        let request = Request {
+            max_output_tokens: Some(512),
+            ..Request::default()
+        };
+        let error = ProviderRequestControls::NONE
+            .validate("recursive_mas", &request)
+            .expect_err("the sidecar protocol has no verified output-cap wire field");
+        assert!(error.to_string().contains("max_output_tokens"));
+    }
+
+    #[test]
     fn parse_response_happy_error_and_malformed() {
         assert_eq!(
             parse_response_line("{\"response\":\"ok\"}\n").unwrap(),

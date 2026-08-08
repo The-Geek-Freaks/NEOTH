@@ -60,6 +60,12 @@ const PROSE_CHARS_PER_TOKEN: f64 = 3.7;
 /// Matches the legacy char/4 = 4.0 heuristic.
 const FALLBACK_CHARS_PER_TOKEN: f64 = 4.0;
 
+/// Compaction is an internal utility call with a deliberately small completion
+/// budget where the leaf can enforce it. It never inherits an operator
+/// request's output limit: that cap belongs to the final answer, while this
+/// call only produces a concise context summary.
+const COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS: u32 = 1_024;
+
 /// GOLD-PXP-04: estimate tokens from `text` using the content-type-aware
 /// chars-per-token constant. Falls back to the legacy char/4 estimate for
 /// unclassifiable content.  Returns `u32`, saturating at `u32::MAX`.
@@ -414,6 +420,14 @@ impl CompactingProvider {
         } else if let Some(util) = &self.utility {
             // GOLD-ADAPT-ODY-06: pass the Odysseus self-summary system prompt so
             // the utility provider receives the structured compaction persona.
+            // An output cap is strict, not advisory: only attach our internal
+            // budget when this exact utility leaf declares it can enforce the
+            // control. A leaf such as Claude CLI otherwise receives no cap and
+            // the authorization boundary records its truthful unbounded state.
+            let max_output_tokens = util
+                .request_controls()
+                .supports_max_output_tokens()
+                .then_some(COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS);
             let summary_req = Request {
                 prompt: format!(
                     "Summarise the following conversation history concisely, \
@@ -425,13 +439,15 @@ impl CompactingProvider {
                     .clone()
                     .or_else(|| util.default_model().map(str::to_owned)),
                 // The utility may be Claude CLI, which intentionally exposes
-                // no sampling knobs. Provider defaults are the only portable
-                // compaction contract; never attach a control a leaf may drop.
+                // no sampling knobs or output-limit capability. Provider
+                // defaults remain the portable compaction contract for those
+                // leaves; never attach a control a leaf may reject or drop.
                 temperature: None,
                 top_p: None,
                 sampling_seed: None,
                 stop_sequences: vec![],
                 thinking_budget: None,
+                max_output_tokens,
             };
             let summary_result = match authorization {
                 Some((authorizer, _)) => {
@@ -862,8 +878,17 @@ mod tests {
             Some(self.default_model)
         }
 
-        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
-            Some(self.output_token_ceiling)
+        fn request_controls(&self) -> ProviderRequestControls {
+            ProviderRequestControls::OUTPUT_TOKEN_LIMIT
+        }
+
+        fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+            Some(
+                req.max_output_tokens
+                    .map_or(self.output_token_ceiling, |requested| {
+                        self.output_token_ceiling.min(requested)
+                    }),
+            )
         }
 
         async fn complete(&self, req: Request) -> Result<Completion> {
@@ -872,6 +897,35 @@ mod tests {
                 termination: Default::default(),
                 text: self.reply.to_string(),
                 model: req.model.unwrap(),
+                latency: Duration::ZERO,
+                ..Completion::default()
+            })
+        }
+    }
+
+    /// Claude-CLI-shaped utility double: it has a concrete default model but
+    /// intentionally does not declare an output-token-limit capability or a
+    /// finite whole-invocation ceiling.
+    struct NoOutputCapUtilityProvider {
+        calls: Arc<Mutex<Vec<Request>>>,
+    }
+
+    #[async_trait]
+    impl Provider for NoOutputCapUtilityProvider {
+        fn name(&self) -> &'static str {
+            "claude_cli_like"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("claude-cli-utility")
+        }
+
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            self.calls.lock().unwrap().push(req.clone());
+            Ok(Completion {
+                termination: Default::default(),
+                text: "unbounded utility summary".to_owned(),
+                model: req.model.unwrap_or_else(|| "claude-cli-utility".to_owned()),
                 latency: Duration::ZERO,
                 ..Completion::default()
             })
@@ -951,6 +1005,10 @@ mod tests {
         let main_req = main_calls.lock().unwrap()[0].clone();
         assert_eq!(summary_req.model.as_deref(), Some("summary-model"));
         assert_eq!(
+            summary_req.max_output_tokens,
+            Some(COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS)
+        );
+        assert_eq!(
             summary_req.system.as_deref(),
             Some(crate::context::compactor::SELF_SUMMARY_SYSTEM_PROMPT)
         );
@@ -975,7 +1033,14 @@ mod tests {
         assert_eq!(payloads.len(), 2);
         assert_eq!(payloads[0]["provider"], "summary_cloud");
         assert_eq!(payloads[0]["model"], "summary-model");
-        assert_eq!(payloads[0]["output_tokens_est"], 2048);
+        assert_eq!(
+            payloads[0]["output_tokens_est"],
+            COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS
+        );
+        assert_eq!(
+            payloads[0]["requested_max_output_tokens"],
+            COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS
+        );
         assert_eq!(payloads[0]["streaming"], false);
         assert_eq!(
             payloads[0]["system_hash_xxh3"].as_u64().unwrap(),
@@ -999,6 +1064,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn authorized_compaction_omits_internal_cap_for_no_cap_utility() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("compactor-unbounded-utility.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let main_calls = Arc::new(Mutex::new(Vec::new()));
+        let utility_calls = Arc::new(Mutex::new(Vec::new()));
+        let compactor = CompactingProvider::new_with_utility_model(
+            Box::new(RequestRecordingProvider {
+                name: "main_cloud",
+                default_model: "main-model",
+                output_token_ceiling: 4096,
+                reply: "main reply",
+                calls: main_calls.clone(),
+            }),
+            Some(Box::new(NoOutputCapUtilityProvider {
+                calls: utility_calls.clone(),
+            })),
+            Some("claude-cli-utility".into()),
+            100,
+            0.8,
+            50,
+            Some(writer.clone()),
+        );
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+            Box::new(compactor),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+                crate::permissions::AutonomyLevel::Full,
+                Some(writer.clone()),
+                crate::config::TokensConfig::default_max_per_request(),
+            ),
+            None,
+            "compactor.no-cap-utility",
+        );
+
+        let result = provider
+            .complete(Request {
+                prompt: long_prompt(500),
+                ..Request::default()
+            })
+            .await
+            .expect("an output-cap-incompatible utility remains callable without the control");
+        assert_eq!(result.text, "main reply");
+
+        let utility_req = utility_calls.lock().unwrap()[0].clone();
+        assert_eq!(utility_req.max_output_tokens, None);
+        assert!(
+            main_calls.lock().unwrap()[0]
+                .prompt
+                .starts_with("[CONTEXT SUMMARY: unbounded utility summary]")
+        );
+
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        let payloads = cost_payloads(&seg);
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0]["provider"], "claude_cli_like");
+        assert!(payloads[0]["requested_max_output_tokens"].is_null());
+        assert!(payloads[0]["output_token_ceiling"].is_null());
+        assert_eq!(
+            payloads[0]["cost_bound_kind"],
+            "unbounded_provider_invocation"
+        );
+    }
+
+    #[tokio::test]
     async fn no_fire_when_under_threshold() {
         // 80 chars → 20 tokens → well under 80-token threshold
         let prompt = long_prompt(80);
@@ -1014,6 +1145,7 @@ mod tests {
             sampling_seed: None,
             stop_sequences: vec![],
             thinking_budget: None,
+            max_output_tokens: None,
         };
         let result = cp.complete(req).await.unwrap();
         assert_eq!(result.text, "inner_reply");
@@ -1039,6 +1171,7 @@ mod tests {
             sampling_seed: None,
             stop_sequences: vec![],
             thinking_budget: None,
+            max_output_tokens: None,
         };
         let result = cp.complete(req).await.unwrap();
         assert_eq!(result.text, "inner_reply");
@@ -1076,6 +1209,7 @@ mod tests {
             sampling_seed: None,
             stop_sequences: vec![],
             thinking_budget: None,
+            max_output_tokens: None,
         };
         cp.complete(req).await.unwrap();
         let forwarded = ic.lock().unwrap()[0].clone();
@@ -1161,6 +1295,7 @@ mod tests {
             sampling_seed: None,
             stop_sequences: vec![],
             thinking_budget: None,
+            max_output_tokens: None,
         };
         cp.complete(req).await.unwrap();
         let sys = captured_system.lock().unwrap().clone();
@@ -1199,6 +1334,7 @@ mod tests {
             sampling_seed: None,
             stop_sequences: vec![],
             thinking_budget: None,
+            max_output_tokens: None,
         };
         cp_under.complete(req_under.clone()).await.unwrap();
         {
@@ -1231,6 +1367,7 @@ mod tests {
             sampling_seed: None,
             stop_sequences: vec![],
             thinking_budget: None,
+            max_output_tokens: None,
         };
         cp_over.complete(req_over).await.unwrap();
         {
@@ -1293,6 +1430,7 @@ mod tests {
             sampling_seed: None,
             stop_sequences: vec![],
             thinking_budget: None,
+            max_output_tokens: None,
         };
         cp.complete(req).await.unwrap();
 
@@ -1549,6 +1687,7 @@ mod tests {
             sampling_seed: None,
             stop_sequences: vec![],
             thinking_budget: None,
+            max_output_tokens: None,
         };
         cp.complete(req1).await.unwrap();
 
@@ -1562,6 +1701,7 @@ mod tests {
             sampling_seed: None,
             stop_sequences: vec![],
             thinking_budget: None,
+            max_output_tokens: None,
         };
         cp.complete(req2).await.unwrap();
 

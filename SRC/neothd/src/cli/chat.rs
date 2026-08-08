@@ -2454,6 +2454,7 @@ async fn enforce_preflight(
                                     sampling_seed: args.sampling_seed,
                                     stop_sequences: Vec::new(),
                                     thinking_budget,
+                                    max_output_tokens: None,
                                 };
                                 provider.validate_request_controls(&request)?;
                                 crate::cli::bg_session::spawn_background_process(
@@ -3693,6 +3694,7 @@ async fn dispatch_provider(
         stop_sequences: Vec::new(),
         // GOLD-CCPARITY-EFFORT-03: per-call thinking-budget override.
         thinking_budget,
+        max_output_tokens: None,
     };
     let recovery_request = req.clone();
     let token_capped_provider =
@@ -6597,6 +6599,7 @@ async fn run_chat_with_consent(
         sampling_seed: args.sampling_seed,
         stop_sequences: Vec::new(),
         thinking_budget: route_thinking_budget,
+        max_output_tokens: None,
     };
     let TurnRouteResolution {
         route: chat_route,

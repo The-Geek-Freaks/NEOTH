@@ -356,6 +356,7 @@ pub async fn extract(
         sampling_seed,
         stop_sequences: vec![],
         thinking_budget: None,
+        max_output_tokens: None,
     };
     let completion = provider
         .complete(req)

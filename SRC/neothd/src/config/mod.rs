@@ -866,7 +866,7 @@ pub struct FreedomConfig {
     #[serde(default)]
     pub self_map_subdir: Option<String>,
     /// GOLD-ADAPT-GRAPH-07 — opt-in community naming via the configured provider.
-    /// When `true`, each self-map tick runs `python -m graphifyy label .` after
+    /// When `true`, each self-map tick runs `python -I -m graphify label .` after
     /// `update`, routing the LLM call through the operator's configured provider
     /// (AnthropicApi / OpenaiApi / OpenaiCompat / ClaudeCli). Local candle
     /// providers (LocalQwen / LocalOuro) expose no HTTP endpoint and are skipped

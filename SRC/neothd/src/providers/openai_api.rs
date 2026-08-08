@@ -347,15 +347,20 @@ impl OpenAiAdapter {
         req: &Request,
         provider_subject: Option<&crate::security::provider_subject::ProviderSubjectIdentifier>,
     ) -> ChatRequest {
+        // Keep the value proved to cost authorization and the value sent on
+        // the wire inseparable. OpenAI-compatible endpoints accept the legacy
+        // spelling while the OpenAI-native endpoint requires the newer field.
+        // Neither variant may turn a caller cap into an advisory hint.
+        let output_token_limit = effective_output_token_limit(req);
         let (max_completion_tokens, max_tokens) =
             if self.compat_profile.is_some() || self.name == "openai_api_custom" {
                 // Generic OpenAI-compatible servers (vLLM, LM Studio, Ollama,
                 // OpenRouter) consistently implement the legacy `max_tokens`
                 // field, while `max_completion_tokens` is an OpenAI/Azure-era
                 // extension that several of them reject as unknown.
-                (None, Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING))
+                (None, Some(output_token_limit))
             } else {
-                (Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING), None)
+                (Some(output_token_limit), None)
             };
         ChatRequest {
             model,
@@ -401,7 +406,7 @@ impl Provider for OpenAiAdapter {
     }
 
     fn request_controls(&self) -> ProviderRequestControls {
-        ProviderRequestControls::SAMPLING
+        ProviderRequestControls::SAMPLING.with_output_token_limit()
     }
 
     fn default_model(&self) -> Option<&str> {
@@ -420,8 +425,8 @@ impl Provider for OpenAiAdapter {
         ))
     }
 
-    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
-        Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        Some(effective_output_token_limit(req))
     }
 
     fn streams_on_wire(&self) -> bool {
@@ -1005,6 +1010,15 @@ struct ChatRequest {
     stop: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     safety_identifier: Option<String>,
+}
+
+/// The cloud default is a reviewed hard ceiling, not a suggested value. A
+/// per-call cap can narrow it, never raise it; this same resolver feeds both
+/// `Provider::output_token_ceiling` and the outbound request fields.
+fn effective_output_token_limit(req: &Request) -> u32 {
+    req.max_output_tokens
+        .unwrap_or(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+        .min(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1769,6 +1783,47 @@ mod tests {
             assert_eq!(compat_json["max_tokens"], 4096);
             assert!(compat_json.get("max_completion_tokens").is_none());
         }
+    }
+
+    #[test]
+    fn requested_output_cap_is_the_exact_native_and_compat_wire_ceiling() {
+        let native = OpenAiAdapter::new_openai(
+            "https://api.openai.com/v1".to_string(),
+            SecretString::from("sk-test"),
+            "gpt-5".to_string(),
+        )
+        .unwrap();
+        let compat = OpenAiAdapter::new_compat(
+            "http://localhost:8080/v1".to_string(),
+            SecretString::from(""),
+            "local-llama".to_string(),
+        )
+        .unwrap();
+        let req = Request {
+            max_output_tokens: Some(88),
+            ..Request::default()
+        };
+        let message = || {
+            vec![ChatMessage {
+                role: "user",
+                content: "ping".into(),
+            }]
+        };
+
+        assert!(native.request_controls().supports_max_output_tokens());
+        assert_eq!(native.output_token_ceiling(&req), Some(88));
+        let native =
+            serde_json::to_value(native.chat_request("gpt-5".into(), message(), false, &req))
+                .unwrap();
+        assert_eq!(native["max_completion_tokens"], 88);
+        assert!(native.get("max_tokens").is_none());
+
+        assert_eq!(compat.output_token_ceiling(&req), Some(88));
+        let compat =
+            serde_json::to_value(compat.chat_request("local-llama".into(), message(), false, &req))
+                .unwrap();
+        assert_eq!(compat["max_tokens"], 88);
+        assert!(compat.get("max_completion_tokens").is_none());
     }
 
     #[test]

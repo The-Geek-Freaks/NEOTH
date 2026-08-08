@@ -252,6 +252,13 @@ fn clamp_max_new_tokens(requested: Option<u32>) -> u32 {
     }
 }
 
+/// Resolve the strict per-call generation budget. The configured value is
+/// already clamped at construction; a caller may narrow it but never expand
+/// the local model's reviewed memory/latency ceiling.
+fn effective_max_new_tokens(configured: u32, req: &Request) -> u32 {
+    configured.min(req.max_output_tokens.unwrap_or(configured))
+}
+
 /// Greedy by default. Operators flip top-p / temperature on per deployment.
 /// `seed: None` uses a fresh RNG draw per call; setting a seed reproduces
 /// the same trajectory.
@@ -465,11 +472,15 @@ impl Provider for LocalQwenAdapter {
     }
 
     fn request_controls(&self) -> ProviderRequestControls {
-        ProviderRequestControls::SAMPLING
+        ProviderRequestControls::SAMPLING.with_output_token_limit()
     }
 
     fn default_model(&self) -> Option<&str> {
         Some(&self.repo)
+    }
+
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        Some(effective_max_new_tokens(self.max_new_tokens, req))
     }
 
     async fn complete_raw(
@@ -489,7 +500,7 @@ impl Provider for LocalQwenAdapter {
             let repo = self.repo.clone();
             let accelerator = self.accelerator;
             let sampling = self.sampling;
-            let max_new_tokens = self.max_new_tokens;
+            let max_new_tokens = effective_max_new_tokens(self.max_new_tokens, &req);
             // Everything below is CPU/GPU-bound + blocking (mmap + tensor ops);
             // run it on a blocking thread so we don't stall tokio's reactor.
             spawn_cancellable_generation(move |cancellation| -> Result<Completion> {
@@ -531,7 +542,7 @@ impl Provider for LocalQwenAdapter {
             let repo = self.repo.clone();
             let accelerator = self.accelerator;
             let sampling = self.sampling;
-            let max_new_tokens = self.max_new_tokens;
+            let max_new_tokens = effective_max_new_tokens(self.max_new_tokens, &req);
 
             // Bounded channel. 64 chunks of buffering is plenty for the
             // typical "model produces tokens faster than consumer drains"
@@ -1674,6 +1685,26 @@ mod tests {
         assert_eq!(
             clamp_max_new_tokens(Some(MAX_NEW_TOKENS_CEILING)),
             MAX_NEW_TOKENS_CEILING
+        );
+    }
+
+    #[test]
+    fn per_request_output_cap_only_narrows_local_generation_and_ceiling() {
+        let request = Request {
+            max_output_tokens: Some(37),
+            ..Request::default()
+        };
+        assert_eq!(effective_max_new_tokens(256, &request), 37);
+        assert_eq!(effective_max_new_tokens(32, &request), 32);
+        ProviderRequestControls::SAMPLING
+            .with_output_token_limit()
+            .validate("local_qwen", &request)
+            .expect("local Qwen advertises and enforces the requested output cap");
+        let adapter = synthetic_adapter_with_config(PathBuf::new());
+        assert_eq!(adapter.output_token_ceiling(&request), Some(37));
+        assert_eq!(
+            adapter.output_token_ceiling(&Request::default()),
+            Some(DEFAULT_MAX_NEW_TOKENS)
         );
     }
 

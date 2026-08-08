@@ -106,7 +106,7 @@ impl Provider for OllamaAdapter {
     }
 
     fn request_controls(&self) -> ProviderRequestControls {
-        ProviderRequestControls::SAMPLING
+        ProviderRequestControls::SAMPLING.with_output_token_limit()
     }
 
     fn default_model(&self) -> Option<&str> {
@@ -120,8 +120,8 @@ impl Provider for OllamaAdapter {
         ))
     }
 
-    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
-        Some(OUTPUT_TOKEN_CEILING)
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        effective_output_token_cap(req, self.is_loopback_endpoint)
     }
 
     fn streams_on_wire(&self) -> bool {
@@ -501,7 +501,7 @@ fn build_request(
             top_p: req.top_p,
             seed: req.sampling_seed,
             stop: req.stop_sequences.clone(),
-            num_predict: (!is_loopback_endpoint).then_some(OUTPUT_TOKEN_CEILING),
+            num_predict: effective_output_token_cap(req, is_loopback_endpoint),
         };
         // `num_predict` is mandatory for a remote endpoint: it is the
         // wire-enforced output ceiling used by paid-call authorization.
@@ -523,6 +523,21 @@ fn build_request(
         stream,
         options,
         keep_alive: None, // use Ollama server default
+    }
+}
+
+/// The exact wire-enforced Ollama output limit, if one exists.
+///
+/// Remote endpoints keep their reviewed default ceiling and only accept a
+/// narrower request limit. Loopback endpoints do not claim a ceiling for an
+/// unknown server default, but explicitly requested limits are serialized and
+/// therefore safe to report to authorization.
+fn effective_output_token_cap(req: &Request, is_loopback_endpoint: bool) -> Option<u32> {
+    match (req.max_output_tokens, is_loopback_endpoint) {
+        (Some(requested), true) => Some(requested),
+        (Some(requested), false) => Some(requested.min(OUTPUT_TOKEN_CEILING)),
+        (None, true) => None,
+        (None, false) => Some(OUTPUT_TOKEN_CEILING),
     }
 }
 
@@ -926,6 +941,74 @@ mod tests {
             .expect("sampling overrides still produce options");
         assert_eq!(opts.temperature, Some(0.5));
         assert_eq!(opts.num_predict, None);
+    }
+
+    #[test]
+    fn requested_output_cap_is_authorized_and_serialized_for_both_endpoint_kinds() {
+        let req = Request {
+            prompt: "bounded".into(),
+            max_output_tokens: Some(88),
+            ..Request::default()
+        };
+        let remote = OllamaAdapter::new("https://ollama.example".into(), "llama3.2".into())
+            .expect("remote adapter constructs");
+        let local = OllamaAdapter::new("http://127.0.0.1:11434".into(), "llama3.2".into())
+            .expect("loopback adapter constructs");
+        assert!(remote.request_controls().supports_max_output_tokens());
+        assert_eq!(remote.output_token_ceiling(&req), Some(88));
+        assert_eq!(local.output_token_ceiling(&req), Some(88));
+        assert_eq!(
+            build_request("llama3.2", &req, false, false)
+                .options
+                .expect("explicit cap makes options present")
+                .num_predict,
+            Some(88)
+        );
+        assert_eq!(
+            build_request("llama3.2", &req, false, true)
+                .options
+                .expect("explicit local cap makes options present")
+                .num_predict,
+            Some(88)
+        );
+
+        let unbounded_local = Request {
+            prompt: "server-default".into(),
+            ..Request::default()
+        };
+        assert_eq!(local.output_token_ceiling(&unbounded_local), None);
+    }
+
+    #[test]
+    fn remote_requested_output_cap_cannot_widen_the_reviewed_ceiling() {
+        let req = Request {
+            prompt: "bounded".into(),
+            max_output_tokens: Some(crate::providers::MAX_REQUEST_OUTPUT_TOKENS),
+            ..Request::default()
+        };
+        let remote = OllamaAdapter::new("https://ollama.example".into(), "llama3.2".into())
+            .expect("remote adapter constructs");
+        let local = OllamaAdapter::new("http://127.0.0.1:11434".into(), "llama3.2".into())
+            .expect("loopback adapter constructs");
+        assert_eq!(
+            remote.output_token_ceiling(&req),
+            Some(OUTPUT_TOKEN_CEILING)
+        );
+        assert_eq!(local.output_token_ceiling(&req), req.max_output_tokens);
+        assert_eq!(
+            build_request("llama3.2", &req, false, false)
+                .options
+                .expect("remote output cap makes options present")
+                .num_predict,
+            Some(OUTPUT_TOKEN_CEILING)
+        );
+        assert_eq!(
+            build_request("llama3.2", &req, false, true)
+                .options
+                .expect("explicit loopback output cap makes options present")
+                .num_predict,
+            req.max_output_tokens
+        );
     }
 
     // ── Response envelope bounds (GOLD-R4-15k1) ──────────────────────────────

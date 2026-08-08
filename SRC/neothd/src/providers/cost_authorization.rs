@@ -131,7 +131,7 @@ fn request_binding_sha256(
 ) -> String {
     let mut hasher = Sha256::new();
     let provider_subject = provider_subject.and_then(|subject| subject.wire_value_for(provider));
-    hash_binding_field(&mut hasher, "schema", b"neoth.provider-call-binding.v2");
+    hash_binding_field(&mut hasher, "schema", b"neoth.provider-call-binding.v3");
     hash_binding_field(&mut hasher, "call_scope", call_scope.as_bytes());
     hash_binding_field(&mut hasher, "provider", provider.as_bytes());
     hash_binding_field(&mut hasher, "model", model.as_bytes());
@@ -200,6 +200,16 @@ fn request_binding_sha256(
         &mut hasher,
         "thinking_budget_present",
         &[u8::from(req.thinking_budget.is_some())],
+    );
+    hash_binding_field(
+        &mut hasher,
+        "requested_max_output_tokens",
+        &req.max_output_tokens.unwrap_or_default().to_be_bytes(),
+    );
+    hash_binding_field(
+        &mut hasher,
+        "requested_max_output_tokens_present",
+        &[u8::from(req.max_output_tokens.is_some())],
     );
     hash_binding_field(
         &mut hasher,
@@ -425,6 +435,7 @@ struct ProviderCallAuditTicket {
     prompt_hash_xxh3: u64,
     system_bytes: usize,
     prompt_bytes: usize,
+    requested_max_output_tokens: Option<u32>,
     context: ProviderCallAuditContext,
     usage_home: Option<PathBuf>,
     usage_automated: bool,
@@ -459,6 +470,10 @@ impl ProviderCallAuditTicket {
             ("prompt_hash_xxh3".into(), self.prompt_hash_xxh3.into()),
             ("system_bytes".into(), self.system_bytes.into()),
             ("prompt_bytes".into(), self.prompt_bytes.into()),
+            (
+                "requested_max_output_tokens".into(),
+                self.requested_max_output_tokens.into(),
+            ),
             ("ts_unix".into(), crate::time::now_unix_secs().into()),
         ]);
         add_audit_context(&mut payload, &self.context);
@@ -1944,6 +1959,7 @@ impl ProviderCallAuthorizer {
                     prompt_hash_xxh3: prompt_hash,
                     system_bytes: req.system.as_deref().map_or(0, str::len),
                     prompt_bytes: req.prompt.len(),
+                    requested_max_output_tokens: req.max_output_tokens,
                     context: self.audit_context.clone(),
                     usage_home: self.usage_home.clone(),
                     usage_automated: current_usage_automated(self.usage_automated),
@@ -1976,6 +1992,7 @@ impl ProviderCallAuthorizer {
                         "streaming": streaming,
                         "system_hash_xxh3": system_hash,
                         "prompt_hash_xxh3": prompt_hash,
+                        "requested_max_output_tokens": req.max_output_tokens,
                         "cost_bound_kind": "wire_token_bounded_reviewed_price_estimate",
                         "input_bound_kind": "utf8_bytes_plus_request_message_overhead",
                         "input_tokens": estimate.input_tokens,
@@ -2011,6 +2028,7 @@ impl ProviderCallAuthorizer {
                         "streaming": streaming,
                         "system_hash_xxh3": system_hash,
                         "prompt_hash_xxh3": prompt_hash,
+                        "requested_max_output_tokens": req.max_output_tokens,
                         "cost_bound_kind": "token_bounded_unknown_pricing",
                         "input_bound_kind": "utf8_bytes_plus_request_message_overhead",
                         "input_tokens": input_token_upper_bound,
@@ -2043,6 +2061,7 @@ impl ProviderCallAuthorizer {
                         "streaming": streaming,
                         "system_hash_xxh3": system_hash,
                         "prompt_hash_xxh3": prompt_hash,
+                        "requested_max_output_tokens": req.max_output_tokens,
                         "cost_bound_kind": "unbounded_provider_invocation",
                         "input_bound_kind": "utf8_bytes_plus_request_message_overhead",
                         "input_tokens": input_token_upper_bound,
@@ -2114,6 +2133,7 @@ impl ProviderCallAuthorizer {
                 prompt_hash_xxh3: prompt_hash,
                 system_bytes: req.system.as_deref().map_or(0, str::len),
                 prompt_bytes: req.prompt.len(),
+                requested_max_output_tokens: req.max_output_tokens,
                 context: self.audit_context.clone(),
                 usage_home: self.usage_home.clone(),
                 usage_automated: current_usage_automated(self.usage_automated),
@@ -4922,6 +4942,7 @@ mod tests {
             sampling_seed: Some(42),
             stop_sequences: vec!["STOP".into()],
             thinking_budget: Some(256),
+            max_output_tokens: Some(1024),
         };
         let base = request_binding_sha256(
             "openai_api",
@@ -4945,6 +4966,21 @@ mod tests {
                 Some(4096),
                 None,
             )
+        );
+        let mut changed = req.clone();
+        changed.max_output_tokens = Some(1025);
+        assert_ne!(
+            base,
+            request_binding_sha256(
+                "openai_api",
+                "gpt-5",
+                &changed,
+                "test.binding",
+                false,
+                Some(4096),
+                None,
+            ),
+            "requested output cap must bind independently from the effective ceiling"
         );
         let mut changed = req.clone();
         changed.system = Some("bound system with communication profile".into());
@@ -5885,7 +5921,16 @@ mod tests {
             (
                 "email/threat_tiebreak.rs",
                 1,
-                "b9ae3baedab03664ec7fe49af17f5e17d3d5f2e64786b26068bf668701653c6b",
+                // Receiver/authority is unchanged; only the reviewed Request
+                // context gained explicit `max_output_tokens: None`.
+                "80529aee883e5d053d7e2380bb2b91404555f699b9b028db3b9dc97dc8745bd7",
+            ),
+            (
+                // The broker receives Arc<AuthorizedProvider>; `complete`
+                // therefore remains inside cost/WAL/permission authorization.
+                "graphify_label_broker.rs",
+                1,
+                "755e3bd600053dbb11852271b9ddb4bef16b59f2291549dcd5c57d1b34953449",
             ),
             (
                 "loop_engine/engine.rs",

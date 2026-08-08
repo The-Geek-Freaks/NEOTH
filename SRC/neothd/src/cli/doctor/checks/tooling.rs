@@ -490,31 +490,95 @@ pub(crate) fn check_pptmaster_python(_home: &Path) -> CheckOutcome {
     }
 }
 
-/// GOLD-ADAPT-GRAPH-04 — advisory gate for the `graphify` skill.
+/// The complete Graphify readiness result shown by `neoth doctor`.
 ///
-/// Probes whether graphifyy is importable on the operator's Python via
-/// `python -m graphifyy --version` (sync). The skill ALWAYS routes and loads
-/// regardless of this result — the gate is ADVISORY. When graphifyy is absent
-/// the skill's system_prompt instructs the LLM to surface the install hint.
-/// PASS when graphifyy is importable; WARN with install hint otherwise.
-pub(crate) fn check_graphify_python(_home: &Path) -> CheckOutcome {
-    let installed = crate::config::installer::is_graphify_installed();
+/// `Unavailable` is deliberately distinct from `NotReady`: installing a
+/// Python package can repair the latter, but can never create the required
+/// descendant-containment primitive on an unsupported platform.
+#[derive(Debug, PartialEq, Eq)]
+enum GraphifyDoctorReadiness {
+    Ready,
+    Unavailable(String),
+    NotReady(String),
+}
+
+/// Perform the same readiness discovery as production Graphify execution.
+///
+/// Doctor checks use a synchronous function-pointer registry, while
+/// [`crate::graphify_runner::GraphifyRuntime::discover`] is intentionally
+/// async because it runs a bounded contained process. A short-lived dedicated
+/// Tokio runtime bridges that shape without weakening the runtime contract or
+/// running a raw ambient `python` probe. The containment prerequisite is
+/// checked before creating that runtime, so unsupported platforms execute no
+/// Graphify subprocess and receive the exact central reason.
+fn graphify_runtime_readiness() -> GraphifyDoctorReadiness {
+    if let Err(error) = crate::graphify_runner::ensure_graphify_containment_supported() {
+        return GraphifyDoctorReadiness::Unavailable(format!("{error:#}"));
+    }
+
+    let worker = std::thread::Builder::new()
+        .name("neoth-doctor-graphify".to_owned())
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| format!("create Graphify readiness runtime: {error}"))?;
+            runtime
+                .block_on(crate::graphify_runner::GraphifyRuntime::discover("python"))
+                .map(|_| ())
+                .map_err(|error| format!("{error:#}"))
+        });
+
+    match worker {
+        Ok(worker) => match worker.join() {
+            Ok(Ok(())) => GraphifyDoctorReadiness::Ready,
+            Ok(Err(error)) => GraphifyDoctorReadiness::NotReady(error),
+            Err(_) => GraphifyDoctorReadiness::NotReady(
+                "Graphify readiness worker panicked before runtime verification".to_owned(),
+            ),
+        },
+        Err(error) => {
+            GraphifyDoctorReadiness::NotReady(format!("start Graphify readiness worker: {error}"))
+        }
+    }
+}
+
+fn graphify_readiness_outcome(readiness: GraphifyDoctorReadiness) -> CheckOutcome {
+    let (status, detail) = match readiness {
+        GraphifyDoctorReadiness::Ready => (
+            CheckStatus::Pass,
+            "Graphify runtime verified through NEOTH containment, canonical interpreter, and isolated module contract — `graphify` skill and `neoth graph` CLI ready".to_owned(),
+        ),
+        GraphifyDoctorReadiness::Unavailable(reason) => (
+            CheckStatus::Warn,
+            format!(
+                "Graphify runtime unavailable: {reason}. Package installation is not a fix on this platform."
+            ),
+        ),
+        GraphifyDoctorReadiness::NotReady(reason) => (
+            CheckStatus::Warn,
+            format!(
+                "Graphify runtime not ready: {reason}. On a supported platform, install with `{}` then rerun `neoth doctor`.",
+                crate::config::installer::GRAPHIFY_INSTALL_CMD
+            ),
+        ),
+    };
     CheckOutcome {
         name: "graphify python",
-        status: if installed {
-            CheckStatus::Pass
-        } else {
-            CheckStatus::Warn
-        },
-        detail: if installed {
-            "graphifyy importable — `graphify` skill and `neoth graph` CLI ready".to_string()
-        } else {
-            format!(
-                "graphifyy not found — install with `{}`; then `neoth graph <path>` works",
-                crate::config::installer::GRAPHIFY_INSTALL_CMD
-            )
-        },
+        status,
+        detail,
     }
+}
+
+/// GOLD-ADAPT-GRAPH-04 — advisory runtime gate for the `graphify` skill.
+///
+/// This verifies NEOTH-executable Graphify readiness, not merely whether the
+/// `graphifyy` distribution can be imported. The skill continues to route
+/// when unavailable, but Doctor never reports a command as ready unless the
+/// same containment, interpreter identity, isolated environment, deadline,
+/// output bounds, and module probe used by production have succeeded.
+pub(crate) fn check_graphify_python(_home: &Path) -> CheckOutcome {
+    graphify_readiness_outcome(graphify_runtime_readiness())
 }
 
 /// GOLD-ADAPT-DOC-04 — advisory gate for the `officecli_*` skill family (11 skills).
@@ -713,25 +777,29 @@ pub(crate) const DOCS: &[CheckDoc] = &[
     // GOLD-ADAPT-GRAPH-04 (2026-06-27) — graphify python gate.
     CheckDoc {
         name: "graphify python",
-        purpose: "GOLD-ADAPT-GRAPH-04 advisory gate for the `graphify` \
-                  bundled skill. Probes whether graphifyy is importable \
-                  on the operator's Python by running `python -m graphifyy \
-                  --version` (Windows) or `python3 -m graphifyy --version` \
-                  (Linux/macOS). PASS = graphifyy present, the `graphify` \
-                  skill is fully operational and `neoth graph` CLI works. \
-                  WARN = graphifyy absent, the skill still routes and the \
-                  LLM will surface the install hint in its reply. The gate \
-                  is ADVISORY: skill routing is never suppressed.",
-        common_failures: "Fresh Python install without graphifyy; \
-                         operator using a virtual environment that is not \
-                         active when the daemon probes; Python not on PATH \
-                         (Windows without system Python); graphifyy \
-                         installed as `graphify` (wrong package name — \
-                         the pip package is `graphifyy` with a double y).",
-        fix: "Run `pip install graphifyy` (or `pip3 install graphifyy` \
-              on Linux/macOS) in the Python environment the daemon uses. \
-              Restart `neoth doctor` to confirm PASS. If Python is not on \
-              PATH at all, install Python 3.10+ from python.org first.",
+        purpose: "GOLD-ADAPT-GRAPH-04 advisory runtime gate for the `graphify` \
+                  bundled skill. It first verifies the same descendant- \
+                  containment prerequisite as real Graphify execution, then \
+                  discovers NEOTH's canonical Python executable and runs the \
+                  bounded isolated `-I -m graphify --version` verification. \
+                  PASS means the `graphify` skill and `neoth graph` command \
+                  are executable through NEOTH's runtime contract. WARN means \
+                  either the containment platform is unavailable or the \
+                  supported runtime/module verification failed. The gate is \
+                  ADVISORY: skill routing is never suppressed.",
+        common_failures: "An unsupported platform where NEOTH deliberately \
+                         fails closed rather than allowing descendants to \
+                         escape containment; fresh supported-platform Python \
+                         without graphifyy; Python missing from PATH; or the \
+                         `graphify` module not exposed under isolated `-I` \
+                         execution. An installed graphifyy package alone is \
+                         not proof that NEOTH can run Graphify.",
+        fix: "If the detail says containment is unavailable, use a platform \
+              with a supported NEOTH Graphify runtime; installing Python or \
+              graphifyy cannot repair that condition. Otherwise, on the \
+              supported platform run `pip install graphifyy` in the Python \
+              environment NEOTH resolves and rerun `neoth doctor`. If Python \
+              is absent from PATH, install Python 3.10+ first.",
     },
     // GOLD-ADAPT-DOC-04 (2026-06-23) — officecli binary gate.
     CheckDoc {
@@ -761,6 +829,58 @@ pub(crate) const DOCS: &[CheckDoc] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graphify_unavailable_containment_never_suggests_package_install() {
+        let outcome = graphify_readiness_outcome(GraphifyDoctorReadiness::Unavailable(
+            "required containment unavailable".to_owned(),
+        ));
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("runtime unavailable"));
+        assert!(outcome.detail.contains("Package installation is not a fix"));
+        assert!(!outcome.detail.contains("pip install"));
+    }
+
+    #[test]
+    fn graphify_supported_runtime_contract_reports_pass_only_after_verification() {
+        let outcome = graphify_readiness_outcome(GraphifyDoctorReadiness::Ready);
+
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("containment"));
+        assert!(outcome.detail.contains("canonical interpreter"));
+        assert!(outcome.detail.contains("isolated module contract"));
+    }
+
+    #[test]
+    fn graphify_supported_runtime_failure_has_a_bounded_repair_hint() {
+        let outcome = graphify_readiness_outcome(GraphifyDoctorReadiness::NotReady(
+            "isolated module verification failed".to_owned(),
+        ));
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(
+            outcome
+                .detail
+                .contains(crate::config::installer::GRAPHIFY_INSTALL_CMD)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn graphify_check_is_unavailable_on_unix_before_any_python_probe() {
+        let home = tempfile::tempdir().unwrap();
+        let outcome = check_graphify_python(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(
+            outcome
+                .detail
+                .contains("Graphify runner is unavailable on Unix")
+        );
+        assert!(outcome.detail.contains("Package installation is not a fix"));
+        assert!(!outcome.detail.contains("pip install"));
+    }
 
     fn materialize_clip_cache(home: &Path) -> std::path::PathBuf {
         crate::providers::clip_engine::materialize_structural_test_cache(&home.join("models"))

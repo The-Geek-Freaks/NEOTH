@@ -205,15 +205,18 @@ impl Provider for CopilotAdapter {
     }
 
     fn request_controls(&self) -> ProviderRequestControls {
-        ProviderRequestControls::SAMPLING
+        // `complete_raw` and `stream_raw` delegate to OpenAiAdapter. Keep the
+        // public capability in lockstep with that exact leaf so a requested
+        // cap is validated, authorized, and serialized identically.
+        ProviderRequestControls::SAMPLING.with_output_token_limit()
     }
 
     fn default_model(&self) -> Option<&str> {
         Some(&self.model)
     }
 
-    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
-        Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        Some(effective_output_token_limit(req))
     }
 
     fn streams_on_wire(&self) -> bool {
@@ -239,6 +242,14 @@ impl Provider for CopilotAdapter {
         let inner = self.make_inner(token)?;
         inner.stream_raw(req, permit).await
     }
+}
+
+/// Copilot uses the OpenAI-compatible transport, whose reviewed cloud ceiling
+/// is an upper bound. This must match its delegated leaf's wire resolver.
+fn effective_output_token_limit(req: &Request) -> u32 {
+    req.max_output_tokens
+        .unwrap_or(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+        .min(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
 }
 
 // ── Wire types for the token endpoint ─────────────────────────────────────
@@ -337,6 +348,19 @@ mod tests {
             ..Request::default()
         };
         assert_eq!(adapter.output_token_ceiling(&req), Some(4096));
+    }
+
+    #[test]
+    fn requested_output_cap_delegates_to_the_openai_wire_ceiling() {
+        let adapter = CopilotAdapter::new(SecretString::from("ghp_test"), "gpt-5".to_string())
+            .expect("construct");
+        let req = Request {
+            max_output_tokens: Some(88),
+            ..Request::default()
+        };
+        assert!(adapter.request_controls().supports_max_output_tokens());
+        assert_eq!(adapter.output_token_ceiling(&req), Some(88));
+        assert_eq!(effective_output_token_limit(&req), 88);
     }
 
     #[test]

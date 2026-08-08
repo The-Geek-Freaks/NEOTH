@@ -2598,6 +2598,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn explicit_output_cap_is_rejected_without_claiming_a_fake_ceiling() {
+        let adapter = ClaudeCliAdapter::new_with_backend(
+            "claude".into(),
+            "claude-opus-4-7".into(),
+            ClaudeBackend::Subprocess,
+            10,
+        );
+        let request = Request {
+            max_output_tokens: Some(512),
+            ..Request::default()
+        };
+        let error = adapter
+            .validate_request_controls(&request)
+            .expect_err("Claude CLI cannot prove one cap for a multi-request invocation");
+        assert!(error.to_string().contains("max_output_tokens"));
+        assert_eq!(adapter.output_token_ceiling(&request), None);
+    }
+
     #[tokio::test]
     async fn sampling_control_is_rejected_before_claude_process_spawn() {
         let adapter = ClaudeCliAdapter::new(

@@ -127,6 +127,10 @@ pub mod domain_events;
 pub mod ecology;
 pub mod email;
 pub mod feedback;
+pub mod graphify_label_broker;
+pub mod graphify_publish;
+pub mod graphify_runner;
+pub mod graphify_transaction;
 pub mod hooks;
 /// GOLD-ADAPT-ODY-13 — hardware-fit model scorer (GPU-bandwidth → tok/s
 /// estimate + VRAM fit + ranking), surfaced via `neoth models fit`.

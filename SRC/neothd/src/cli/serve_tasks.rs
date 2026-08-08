@@ -190,7 +190,14 @@ pub(crate) fn desired_cron_keys(cfg: &FreedomConfig) -> std::collections::HashSe
             keys.insert(ObsidianVaultReader);
         }
         keys.insert(ObsidianWikiRebuild);
-        keys.insert(SelfMap);
+        // `tokio::time::interval(Duration::ZERO)` panics. Keep an explicitly
+        // invalid SelfMap cadence, or a missing effective source directory,
+        // out of the desired set. Otherwise the health reconciler would retry
+        // the same rejected spawn every 15 seconds. `None` remains valid and
+        // selects the daemon task's 24h default.
+        if cfg.self_map_interval_secs != Some(0) && effective_self_map_source_dir(cfg).is_some() {
+            keys.insert(SelfMap);
+        }
     }
     keys
 }
@@ -232,6 +239,30 @@ pub(crate) fn plan_cron_fleet_reload(
 enum CronTaskJoin {
     Unit(JoinHandle<()>),
     Result(JoinHandle<anyhow::Result<()>>),
+    SelfMap(crate::daemon::self_map_task::SelfMapTaskHandle),
+}
+
+/// A cooperative SelfMap stop that exceeded its bounded drain.  Ownership is
+/// returned to the fleet; callers must reinsert it and suppress replacement
+/// work until a later reconciliation observes a terminal join.
+pub(crate) enum CronTaskStopOutcome {
+    Stopped,
+    TimedOut(CronTaskHandle),
+}
+
+const SELF_MAP_RELOAD_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const SELF_MAP_SHUTDOWN_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Typed non-clean shutdown outcome.  Returning this is intentionally louder
+/// than an ordinary cron error: the WAL sender and SelfMap owner are retained
+/// for the process owner, because claiming a drained writer here would be
+/// false while a durable Graphify transaction is still live.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "SelfMap did not quiesce during shutdown (phase: {phase:?}); WAL drain is intentionally withheld"
+)]
+pub(crate) struct SelfMapShutdownTimeout {
+    pub(crate) phase: crate::daemon::self_map_task::SelfMapPhase,
 }
 
 /// Fleet-owned real task handle.
@@ -270,10 +301,18 @@ impl CronTaskHandle {
         }
     }
 
+    fn self_map(handle: crate::daemon::self_map_task::SelfMapTaskHandle) -> Self {
+        Self {
+            join: CronTaskJoin::SelfMap(handle),
+            dream_rail: None,
+        }
+    }
+
     pub(crate) fn is_finished(&self) -> bool {
         match &self.join {
             CronTaskJoin::Unit(handle) => handle.is_finished(),
             CronTaskJoin::Result(handle) => handle.is_finished(),
+            CronTaskJoin::SelfMap(handle) => handle.is_finished(),
         }
     }
 
@@ -283,7 +322,10 @@ impl CronTaskHandle {
     /// joined. Its accepted generation is retired before the join, preventing
     /// new commit leases and waiting for any already-started commit to finish.
     /// Other fleet tasks retain abort+join semantics.
-    pub(crate) async fn stop(self) {
+    pub(crate) async fn stop(self) -> CronTaskStopOutcome {
+        if matches!(&self.join, CronTaskJoin::SelfMap(_)) {
+            return self.stop_self_map(SELF_MAP_RELOAD_DRAIN_TIMEOUT).await;
+        }
         if let Some(effect_rail) = self.dream_rail.as_ref().map(Arc::clone) {
             let retire = Arc::clone(&effect_rail);
             if let Err(error) =
@@ -303,15 +345,20 @@ impl CronTaskHandle {
             match &self.join {
                 CronTaskJoin::Unit(handle) => handle.abort(),
                 CronTaskJoin::Result(handle) => handle.abort(),
+                CronTaskJoin::SelfMap(_) => unreachable!("SelfMap handled cooperatively above"),
             }
         }
         self.reap(true).await;
+        CronTaskStopOutcome::Stopped
     }
 
     /// Daemon-shutdown variant: permanently closes the controller's Dream
     /// runtime under the same lock used by config publication, so a concurrent
     /// reload cannot publish a fresh effect gate after shutdown retirement.
-    pub(crate) async fn shutdown(self) {
+    pub(crate) async fn shutdown(self) -> CronTaskStopOutcome {
+        if matches!(&self.join, CronTaskJoin::SelfMap(_)) {
+            return self.stop_self_map(SELF_MAP_SHUTDOWN_DRAIN_TIMEOUT).await;
+        }
         if let Some(effect_rail) = self.dream_rail.as_ref().map(Arc::clone) {
             let retire = Arc::clone(&effect_rail);
             if let Err(error) =
@@ -325,9 +372,33 @@ impl CronTaskHandle {
             match &self.join {
                 CronTaskJoin::Unit(handle) => handle.abort(),
                 CronTaskJoin::Result(handle) => handle.abort(),
+                CronTaskJoin::SelfMap(_) => unreachable!("SelfMap handled cooperatively above"),
             }
         }
         self.reap(true).await;
+        CronTaskStopOutcome::Stopped
+    }
+
+    async fn stop_self_map(mut self, timeout: std::time::Duration) -> CronTaskStopOutcome {
+        let CronTaskJoin::SelfMap(handle) = &mut self.join else {
+            unreachable!("only SelfMap may use its cooperative stop path");
+        };
+        handle.request_stop();
+        match handle.wait_stopped(timeout).await {
+            Ok(true) => CronTaskStopOutcome::Stopped,
+            Ok(false) => {
+                warn!(
+                    phase = ?handle.phase(),
+                    timeout_s = timeout.as_secs(),
+                    "SelfMap cron is still draining; retaining owner and suppressing replacement"
+                );
+                CronTaskStopOutcome::TimedOut(self)
+            }
+            Err(error) => {
+                warn!(%error, "SelfMap cron stopped with a terminal error");
+                CronTaskStopOutcome::Stopped
+            }
+        }
     }
 
     /// Join an already-finished task and surface its terminal state.
@@ -357,6 +428,15 @@ impl CronTaskHandle {
                 Err(error) if stopping && error.is_cancelled() => {}
                 Err(error) => warn!(%error, "fleet cron task panicked"),
             },
+            CronTaskJoin::SelfMap(mut handle) => {
+                match handle.wait_stopped(std::time::Duration::ZERO).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        warn!(phase = ?handle.phase(), "finished SelfMap handle unexpectedly remained live")
+                    }
+                    Err(error) => warn!(%error, "SelfMap cron returned an error"),
+                }
+            }
         }
     }
 }
@@ -374,6 +454,12 @@ impl IntoCronTaskHandle for Option<JoinHandle<()>> {
 impl IntoCronTaskHandle for Option<JoinHandle<anyhow::Result<()>>> {
     fn into_cron_task(self) -> Option<CronTaskHandle> {
         self.map(CronTaskHandle::result)
+    }
+}
+
+impl IntoCronTaskHandle for Option<crate::daemon::self_map_task::SelfMapTaskHandle> {
+    fn into_cron_task(self) -> Option<CronTaskHandle> {
+        self.map(CronTaskHandle::self_map)
     }
 }
 
@@ -468,7 +554,7 @@ pub(crate) async fn spawn_cron_for_key(
         ObsidianSync => spawn_obsidian_sync(cfg, home, w.clone()).into_cron_task(),
         ObsidianVaultReader => spawn_obsidian_vault_reader(cfg, home).into_cron_task(),
         ObsidianWikiRebuild => spawn_obsidian_wiki_rebuild(cfg, home, w).into_cron_task(),
-        SelfMap => spawn_self_map(cfg, home, w).into_cron_task(),
+        SelfMap => spawn_self_map(cfg, home, w, rc).await.into_cron_task(),
         Dream => {
             let cancellation = crate::cli::dreaming_task::DreamCancellation::new();
             let effect_rail = Arc::new(crate::cli::dreaming_task::DreamEffectRail::new(
@@ -826,39 +912,90 @@ pub(crate) fn spawn_obsidian_preload(
     Some(handle)
 }
 
+/// Resolve the exact source directory captured by the SelfMap task.
+///
+/// The config field deliberately wins over `NEOTH_SRC_DIR`. The cron
+/// fingerprint calls this same helper so env-backed source changes trigger the
+/// same restart semantics as config-backed changes.
+pub(crate) fn effective_self_map_source_dir(config: &FreedomConfig) -> Option<std::path::PathBuf> {
+    config
+        .self_map_source_dir
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("NEOTH_SRC_DIR").map(std::path::PathBuf::from))
+}
+
 /// GOLD-ADAPT-GRAPH-05 — NEOTH self-map cron. Spawned only when both
 /// `freedom.yaml::obsidian_vault` AND a source dir are configured (either
 /// `freedom.yaml::self_map_source_dir` or env `NEOTH_SRC_DIR`).
-/// `None` (no vault or no source dir) ⇒ no task. WAL-emitting (0xFB) —
-/// must be aborted BEFORE `drop(writer)` in shutdown.
-pub(crate) fn spawn_self_map(
+/// `None` (no vault or no source dir, or an explicit zero interval) ⇒ no task.
+/// WAL-emitting (0xFB) — must cooperatively quiesce BEFORE `drop(writer)` in
+/// shutdown.  Its returned owner is deliberately distinct from an abortable
+/// Tokio `JoinHandle` because it may be awaiting a blocking publication phase.
+pub(crate) async fn spawn_self_map(
     config: &FreedomConfig,
     home: &std::path::Path,
     writer: WalWriterHandle,
-) -> Option<JoinHandle<anyhow::Result<()>>> {
+    reload_controller: &Arc<ReloadController>,
+) -> Option<crate::daemon::self_map_task::SelfMapTaskHandle> {
+    // An explicit zero is invalid, not a request for the default cadence.
+    // Reject it before constructing the Tokio task: `time::interval(0)`
+    // panics, which would otherwise make the fleet health loop respawn it.
+    if config.self_map_interval_secs == Some(0) {
+        warn!(
+            "self-map cron disabled: self_map_interval_secs must be greater than zero or omitted"
+        );
+        return None;
+    }
+
     // Gate: vault must be configured.
     let vault_str = config.obsidian_vault.as_deref()?;
     let vault = std::path::PathBuf::from(vault_str);
 
     // Source dir: explicit config → env NEOTH_SRC_DIR → None (skip).
-    let source_dir = config
-        .self_map_source_dir
-        .as_deref()
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("NEOTH_SRC_DIR").map(std::path::PathBuf::from))?;
+    let source_dir = effective_self_map_source_dir(config)?;
 
     let interval = config
         .self_map_interval_secs
         .map(std::time::Duration::from_secs);
     let subdir = config.self_map_subdir.clone();
-    // GRAPH-07: extract label config + provider creds for community naming.
+    // GRAPH-07: provider credentials stay in the parent-owned adapter. The
+    // untrusted Graphify child receives only a broker capability URL/model.
     let label_enabled = config.self_map_label_enabled;
-    let label_model = config.self_map_label_model.clone();
-    let provider_kind = config.provider_kind;
-    // Expose the SecretString into a transient String for the subprocess env var.
-    // This is the ONLY consumer; it is not persisted or logged.
-    let provider_key = config.provider_key.as_ref().map(|s| s.expose().to_owned());
-    let provider_endpoint = config.provider_endpoint.clone();
+    let (label_provider, label_model) = if label_enabled {
+        let raw = match crate::providers::from_config_at(config, home).await {
+            Ok(provider) => provider,
+            Err(error) => {
+                warn!(%error, "self-map cron disabled: label provider construction failed");
+                return None;
+            }
+        };
+        let wire_model = config
+            .self_map_label_model
+            .as_deref()
+            .map(|model| raw.resolve_model_for_wire(model))
+            .or_else(|| crate::providers::provider_default_wire_model(raw.as_ref()))
+            .filter(|model| !model.trim().is_empty());
+        let Some(wire_model) = wire_model else {
+            warn!("self-map cron disabled: label provider has no final wire model");
+            return None;
+        };
+        let provider = Arc::new(
+            crate::providers::cost_authorization::AuthorizedProvider::from_box(
+                raw,
+                crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
+                    Arc::clone(reload_controller),
+                    Some(writer.clone()),
+                    home.to_path_buf(),
+                ),
+                Some(wire_model.clone()),
+                "self_map.graphify_label",
+            ),
+        );
+        (Some(provider), Some(wire_model))
+    } else {
+        (None, None)
+    };
     Some(crate::daemon::self_map_task::spawn(
         vault,
         source_dir,
@@ -867,9 +1004,7 @@ pub(crate) fn spawn_self_map(
         writer,
         label_enabled,
         label_model,
-        provider_kind,
-        provider_key,
-        provider_endpoint,
+        label_provider,
         home.join("views.db"),
     ))
 }
@@ -6827,15 +6962,34 @@ pub(crate) async fn shutdown_background_tasks(
         let mut wal = Vec::new();
         for key in WAL_EMITTING_CRON_KEYS {
             if let Some(handle) = fleet.remove(key) {
-                wal.push(handle);
+                wal.push((*key, handle));
             }
         }
         // Non-WAL crons: abort + await in any order.
-        let rest: Vec<_> = fleet.drain().map(|(_key, handle)| handle).collect();
+        let rest: Vec<_> = fleet.drain().collect();
         (wal, rest)
     };
-    for handle in wal_handles.into_iter().chain(rest_handles) {
-        handle.shutdown().await;
+    for (key, handle) in wal_handles.into_iter().chain(rest_handles) {
+        if let CronTaskStopOutcome::TimedOut(handle) = handle.shutdown().await {
+            let phase = match &handle.join {
+                CronTaskJoin::SelfMap(task) => task.phase(),
+                _ => unreachable!("only SelfMap can retain a shutdown owner"),
+            };
+            cron_fleet
+                .lock()
+                .expect("cron_fleet mutex poisoned")
+                .insert(key, handle);
+            // A return from this routine normally releases the last writer
+            // root and allows the caller to report a clean drain.  Keep both
+            // roots alive for process-level escalation instead: a live SelfMap
+            // owner may still be between its SQLite and WAL terminal phases.
+            // The serve entry point receives the explicit error below and must
+            // decide whether to escalate the process; this library layer must
+            // not call `process::exit` or abort the task behind its back.
+            std::mem::forget(Arc::clone(&cron_fleet));
+            std::mem::forget(writer);
+            return Err(SelfMapShutdownTimeout { phase }.into());
+        }
     }
 
     // GOLD-WIRE-07b: abort the HNSW snapshot auto-refresh cron. It writes no WAL
@@ -8103,11 +8257,61 @@ mod tests {
         });
         let owned = CronTaskHandle::result(inner);
         tokio::task::yield_now().await; // let the inner poll once
-        owned.stop().await;
+        let _ = owned.stop().await;
         tokio::time::timeout(std::time::Duration::from_secs(2), rx)
             .await
             .expect("inner task was not aborted within 2s")
             .expect("inner drop guard did not fire");
+    }
+
+    /// A SelfMap replacement must not be spawned just because the outer Tokio
+    /// future was asked to stop: an active blocking phase retains its owner
+    /// across the bounded reload timeout, then becomes terminal only after the
+    /// phase itself releases.
+    #[tokio::test]
+    async fn self_map_timeout_retains_owner_and_suppresses_replacement() {
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel::<()>();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let join = tokio::spawn(async move {
+            tokio::task::spawn_blocking(move || {
+                let _ = entered_tx.send(());
+                let _ = release_rx.blocking_recv();
+            })
+            .await
+            .expect("test blocking phase panicked");
+            Ok(())
+        });
+        let owned = CronTaskHandle::self_map(
+            crate::daemon::self_map_task::SelfMapTaskHandle::from_test_task(join),
+        );
+        entered_rx
+            .await
+            .expect("SelfMap blocking phase did not start");
+        let retained = match owned
+            .stop_self_map(std::time::Duration::from_millis(10))
+            .await
+        {
+            CronTaskStopOutcome::TimedOut(handle) => handle,
+            CronTaskStopOutcome::Stopped => {
+                panic!("live SelfMap must not falsely report quiescence")
+            }
+        };
+        let fleet: CronFleet = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        fleet.lock().unwrap().insert(CronKey::SelfMap, retained);
+        assert!(
+            fleet.lock().unwrap().contains_key(&CronKey::SelfMap),
+            "reconciliation must see the retained owner and suppress a successor"
+        );
+        let retained = fleet.lock().unwrap().remove(&CronKey::SelfMap).unwrap();
+        release_tx
+            .send(())
+            .expect("test release receiver disappeared");
+        assert!(matches!(
+            retained
+                .stop_self_map(std::time::Duration::from_secs(2))
+                .await,
+            CronTaskStopOutcome::Stopped
+        ));
     }
 
     /// Wave-4 regression: an inner task that returns Err must not hang or panic
@@ -8189,7 +8393,7 @@ mod tests {
 
         let replacements: Vec<_> = fleet.lock().unwrap().drain().map(|(_, h)| h).collect();
         for handle in replacements {
-            handle.stop().await;
+            let _ = handle.stop().await;
         }
     }
 
@@ -8306,6 +8510,47 @@ mod tests {
         assert!(
             handle.is_none(),
             "no obsidian_vault → spawn_obsidian_wiki_rebuild must return None"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_self_map_rejects_zero_interval_before_tokio_spawn() {
+        let mut cfg = FreedomConfig::default();
+        cfg.obsidian_vault = Some("/tmp/self-map-vault".to_owned());
+        cfg.self_map_source_dir = Some("/tmp/self-map-source".to_owned());
+        cfg.self_map_interval_secs = Some(0);
+
+        let wal_dir = tempfile::tempdir().unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn(wal_dir.path().join("neoth-000001.wal")).unwrap();
+        let reload = Arc::new(ReloadController::new(
+            cfg.clone(),
+            wal_dir.path().join("freedom.yaml"),
+        ));
+        assert!(
+            spawn_self_map(&cfg, wal_dir.path(), writer, &reload)
+                .await
+                .is_none(),
+            "an explicit zero cadence must fail closed before constructing the Tokio interval"
+        );
+        join.await.unwrap();
+    }
+
+    #[test]
+    fn effective_self_map_source_dir_matches_config_then_environment_precedence() {
+        let _env = crate::test_env::lock();
+        let mut cfg = FreedomConfig::default();
+        cfg.self_map_source_dir = Some("configured-self-map-source".to_owned());
+        assert_eq!(
+            effective_self_map_source_dir(&cfg),
+            Some(std::path::PathBuf::from("configured-self-map-source"))
+        );
+
+        cfg.self_map_source_dir = None;
+        assert_eq!(
+            effective_self_map_source_dir(&cfg),
+            std::env::var_os("NEOTH_SRC_DIR").map(std::path::PathBuf::from),
+            "without an explicit source, the resolver must exactly mirror NEOTH_SRC_DIR"
         );
     }
 
@@ -8760,9 +9005,49 @@ mod tests {
 // ── ZF-06 unit tests — pure functions, no I/O ─────────────────────────────
 #[cfg(test)]
 mod zf06_fleet_tests {
-    use super::{CronKey, desired_cron_keys, diff_cron_fleet};
+    use super::{CronKey, desired_cron_keys, diff_cron_fleet, plan_cron_fleet_reload};
     use crate::config::FreedomConfig;
     use std::collections::HashSet;
+
+    /// Restores the process-global source-directory environment variable even
+    /// if a test assertion panics. Callers must hold `crate::test_env::lock()`
+    /// before constructing this guard.
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            // SAFETY: all NEOTH_SRC_DIR mutation in this test is serialized by
+            // the crate-wide test_env lock acquired by the caller.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            // SAFETY: all NEOTH_SRC_DIR mutation in this test is serialized by
+            // the crate-wide test_env lock acquired by the caller.
+            unsafe { std::env::remove_var(key) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: the guard only exists while its caller holds the
+            // crate-wide test_env lock, so restoring cannot race another test.
+            unsafe {
+                if let Some(value) = self.previous.as_ref() {
+                    std::env::set_var(self.key, value);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
 
     #[test]
     fn diff_empty_running_returns_full_desired_as_to_start() {
@@ -8821,7 +9106,9 @@ mod zf06_fleet_tests {
 
     #[test]
     fn desired_cron_keys_gates_obsidian_on_vault() {
-        // Wave-3 regression: the four vault-gated keys must be ABSENT without a
+        let _env = crate::test_env::lock();
+        let _source_env = EnvVarGuard::remove("NEOTH_SRC_DIR");
+        // Wave-3 regression: the vault-gated keys must be ABSENT without a
         // vault (else a vault-clearing reload leaves the tasks running forever),
         // and PRESENT once a vault is configured. Counts are expressed as a
         // delta so they don't depend on which `.enabled` crons default on/off.
@@ -8829,7 +9116,6 @@ mod zf06_fleet_tests {
             CronKey::ObsidianSync,
             CronKey::ObsidianVaultReader,
             CronKey::ObsidianWikiRebuild,
-            CronKey::SelfMap,
         ];
 
         let no_vault = desired_cron_keys(&FreedomConfig::default());
@@ -8854,8 +9140,8 @@ mod zf06_fleet_tests {
         }
         assert_eq!(
             with_vault.len(),
-            no_vault.len() + 4,
-            "a vault (+ reader enabled) adds exactly the four obsidian/self-map keys"
+            no_vault.len() + 3,
+            "a vault (+ reader enabled) adds exactly the three source-independent Obsidian keys"
         );
 
         // Vault set but reader disabled → the reader key must be absent, so
@@ -8865,6 +9151,58 @@ mod zf06_fleet_tests {
         assert!(
             !desired_cron_keys(&reader_off).contains(&CronKey::ObsidianVaultReader),
             "reader-disabled must drop ObsidianVaultReader even with a vault"
+        );
+
+        let mut zero_self_map = cfg;
+        zero_self_map.self_map_source_dir = Some("/tmp/source".to_owned());
+        zero_self_map.self_map_interval_secs = Some(0);
+        assert!(
+            !desired_cron_keys(&zero_self_map).contains(&CronKey::SelfMap),
+            "an explicit zero cadence must remove SelfMap from the desired fleet"
+        );
+    }
+
+    #[test]
+    fn desired_cron_keys_requires_a_configured_or_environment_self_map_source() {
+        let _env = crate::test_env::lock();
+        let _source_env = EnvVarGuard::remove("NEOTH_SRC_DIR");
+
+        let mut cfg = FreedomConfig::default();
+        cfg.obsidian_vault = Some("/tmp/vault".to_owned());
+
+        assert!(
+            !desired_cron_keys(&cfg).contains(&CronKey::SelfMap),
+            "a vault without a config or NEOTH_SRC_DIR source must not desire SelfMap"
+        );
+
+        // SAFETY: serialized by the crate-wide test_env lock above.
+        unsafe { std::env::set_var("NEOTH_SRC_DIR", "/tmp/env-source") };
+        assert!(
+            desired_cron_keys(&cfg).contains(&CronKey::SelfMap),
+            "NEOTH_SRC_DIR must opt SelfMap into the desired fleet when config is absent"
+        );
+    }
+
+    #[test]
+    fn self_map_reload_to_zero_interval_stops_without_restarting() {
+        let _env = crate::test_env::lock();
+        let _source_env = EnvVarGuard::set("NEOTH_SRC_DIR", "/tmp/env-source");
+        let mut before = FreedomConfig::default();
+        before.obsidian_vault = Some("/tmp/vault".to_owned());
+        before.self_map_interval_secs = Some(60);
+        let running = desired_cron_keys(&before);
+        assert!(running.contains(&CronKey::SelfMap));
+
+        let mut after = before;
+        after.self_map_interval_secs = Some(0);
+        let desired = desired_cron_keys(&after);
+        let changed = HashSet::from([CronKey::SelfMap]);
+        let (to_stop, to_start) = plan_cron_fleet_reload(&running, &desired, &changed);
+
+        assert_eq!(to_stop, vec![CronKey::SelfMap]);
+        assert!(
+            to_start.is_empty(),
+            "a zero-interval reload must stop the running SelfMap task without a replacement"
         );
     }
 

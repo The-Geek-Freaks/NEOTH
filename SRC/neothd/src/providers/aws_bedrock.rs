@@ -206,7 +206,7 @@ impl Provider for AwsBedrockAdapter {
     }
 
     fn request_controls(&self) -> ProviderRequestControls {
-        ProviderRequestControls::SAMPLING_WITHOUT_SEED
+        ProviderRequestControls::SAMPLING_WITHOUT_SEED.with_output_token_limit()
     }
 
     fn default_model(&self) -> Option<&str> {
@@ -220,8 +220,8 @@ impl Provider for AwsBedrockAdapter {
         ))
     }
 
-    fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
-        Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+    fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+        Some(effective_output_token_limit(req))
     }
 
     async fn complete_raw(
@@ -495,7 +495,7 @@ fn validate_region(region: &str) -> Result<()> {
 
 fn build_converse_body(req: &Request) -> ConverseRequest {
     let mut inference_config = InferenceConfig {
-        max_tokens: Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING),
+        max_tokens: Some(effective_output_token_limit(req)),
         ..InferenceConfig::default()
     };
     if let Some(t) = req.temperature {
@@ -523,6 +523,15 @@ fn build_converse_body(req: &Request) -> ConverseRequest {
         system: system_text,
         inference_config: Some(inference_config),
     }
+}
+
+/// Bedrock Converse receives its cap inside `inferenceConfig`. Keep this
+/// exact resolver shared with `output_token_ceiling` so cost authorization
+/// cannot approve a wider request than the signed body enforces.
+fn effective_output_token_limit(req: &Request) -> u32 {
+    req.max_output_tokens
+        .unwrap_or(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+        .min(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
 }
 
 // ── Wire types ─────────────────────────────────────────────────────────
@@ -682,6 +691,29 @@ mod tests {
                 crate::cli::init::ProviderKind::AwsBedrock,
                 Some("https://bedrock-runtime.us-east-1.amazonaws.com"),
             ))
+        );
+    }
+
+    #[test]
+    fn requested_output_cap_is_the_exact_bedrock_wire_ceiling() {
+        let adapter = AwsBedrockAdapter::new(
+            "us-east-1",
+            dummy_creds(),
+            "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        )
+        .expect("construct");
+        let req = Request {
+            max_output_tokens: Some(88),
+            ..Request::default()
+        };
+        assert!(adapter.request_controls().supports_max_output_tokens());
+        assert_eq!(adapter.output_token_ceiling(&req), Some(88));
+        assert_eq!(
+            build_converse_body(&req)
+                .inference_config
+                .expect("present")
+                .max_tokens,
+            Some(88)
         );
     }
 

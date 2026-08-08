@@ -122,6 +122,11 @@ fn project_local_shadow_request(
     controls: crate::providers::ProviderRequestControls,
 ) -> anyhow::Result<LocalShadowProjection> {
     crate::providers::validate_portable_request_controls("cross-provider-shadow", original)?;
+    if original.max_output_tokens.is_some() && !controls.supports_max_output_tokens() {
+        anyhow::bail!(
+            "cross-provider shadow does not support requested max_output_tokens; refusing to drop the caller's output cap"
+        );
+    }
     let mut request = crate::providers::Request {
         prompt: original.prompt.clone(),
         system: original.system.clone(),
@@ -131,6 +136,7 @@ fn project_local_shadow_request(
         sampling_seed: original.sampling_seed,
         stop_sequences: original.stop_sequences.clone(),
         thinking_budget: original.thinking_budget,
+        max_output_tokens: original.max_output_tokens,
     };
     let dropped_controls = controls.project_compatible_controls(&mut request);
     Ok(LocalShadowProjection {
@@ -475,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn local_shadow_projection_preserves_sampling_and_drops_cloud_thinking_budget() {
+    fn local_shadow_projection_preserves_sampling_and_output_cap_and_drops_thinking_budget() {
         let original = Request {
             prompt: "operator request".into(),
             system: Some("operator system".into()),
@@ -485,12 +491,13 @@ mod tests {
             sampling_seed: Some(42),
             stop_sequences: vec!["END".into()],
             thinking_budget: Some(12_000),
+            max_output_tokens: Some(768),
         };
 
         let projection = project_local_shadow_request(
             &original,
             "local-abliterated".into(),
-            crate::providers::ProviderRequestControls::SAMPLING,
+            crate::providers::ProviderRequestControls::SAMPLING.with_output_token_limit(),
         )
         .unwrap();
         assert_eq!(projection.request.prompt, original.prompt);
@@ -500,8 +507,13 @@ mod tests {
         assert_eq!(projection.request.sampling_seed, original.sampling_seed);
         assert_eq!(projection.request.stop_sequences, original.stop_sequences);
         assert_eq!(projection.request.thinking_budget, None);
+        assert_eq!(
+            projection.request.max_output_tokens,
+            original.max_output_tokens
+        );
         assert_eq!(projection.dropped_controls, vec!["thinking_budget"]);
         assert_eq!(original.thinking_budget, Some(12_000));
+        assert_eq!(original.max_output_tokens, Some(768));
         assert_eq!(original.model.as_deref(), Some("claude-sonnet"));
     }
 
@@ -538,6 +550,11 @@ mod tests {
                 thinking_budget: Some(0),
                 ..Default::default()
             },
+            Request {
+                prompt: "operator request".into(),
+                max_output_tokens: Some(0),
+                ..Default::default()
+            },
         ];
 
         for request in invalid_requests {
@@ -550,6 +567,41 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn local_shadow_projection_preserves_supported_output_cap() {
+        let original = Request {
+            prompt: "operator request".into(),
+            max_output_tokens: Some(768),
+            ..Default::default()
+        };
+        let projection = project_local_shadow_request(
+            &original,
+            "local-abliterated".into(),
+            crate::providers::ProviderRequestControls::OUTPUT_TOKEN_LIMIT,
+        )
+        .expect("compatible output cap must survive cross-provider projection");
+
+        assert_eq!(projection.request.max_output_tokens, Some(768));
+        assert!(projection.dropped_controls.is_empty());
+    }
+
+    #[test]
+    fn local_shadow_projection_rejects_unsupported_output_cap() {
+        let original = Request {
+            prompt: "operator request".into(),
+            max_output_tokens: Some(768),
+            ..Default::default()
+        };
+        let error = project_local_shadow_request(
+            &original,
+            "local-abliterated".into(),
+            crate::providers::ProviderRequestControls::SAMPLING,
+        )
+        .err()
+        .expect("the caller output cap must never be silently dropped");
+        assert!(error.to_string().contains("max_output_tokens"));
     }
 
     fn request(prompt: &str) -> Request {

@@ -1598,6 +1598,7 @@ fn build_bg_request(prompt: &str, config: &FreedomConfig, system: Option<String>
         sampling_seed: None,
         stop_sequences: vec![],
         thinking_budget: None,
+        max_output_tokens: None,
     }
 }
 
@@ -2147,6 +2148,7 @@ mod tests {
             sampling_seed: Some(7),
             stop_sequences: vec!["STOP".to_owned()],
             thinking_budget: Some(1_024),
+            max_output_tokens: None,
         }
     }
 

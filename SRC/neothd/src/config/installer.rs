@@ -51,7 +51,8 @@ pub fn is_pptmaster_installed() -> bool {
 }
 
 /// `pip install graphifyy` install hint surfaced by `neoth doctor` for the
-/// `graphify` skill when graphifyy is not importable.
+/// `graphify` skill when the distribution's `graphify` module is not
+/// importable.
 ///
 /// ## GOLD-ADAPT-GRAPH-04 (2026-06-27)
 ///
@@ -60,20 +61,34 @@ pub fn is_pptmaster_installed() -> bool {
 /// system_prompt instructs the LLM to surface the install hint.
 pub const GRAPHIFY_INSTALL_CMD: &str = "pip install graphifyy";
 
-/// Returns `true` iff `python -m graphifyy --version` exits 0 — meaning
-/// graphifyy is importable in the operator's Python environment.
+/// Importable CLI module exposed by the `graphifyy` distribution.
+///
+/// The distribution intentionally has a double `y`, while its Python module
+/// and CLI entry point are named `graphify`. Keep this distinct from
+/// [`GRAPHIFY_INSTALL_CMD`] so operator guidance and runtime execution cannot
+/// drift apart again.
+pub const GRAPHIFY_MODULE: &str = "graphify";
+
+/// Returns `true` iff `python -I -m graphify --version` exits 0 — meaning the
+/// `graphify` module supplied by graphifyy is importable in the operator's
+/// isolated Python environment.
 ///
 /// Returns `false` on any error (Python not on PATH, graphifyy not installed,
-/// subprocess spawn failure). Never panics.
+/// module unavailable, subprocess spawn failure). Never panics. `-I` prevents
+/// an ambient `PYTHONPATH` or current-directory module from producing a false
+/// positive for importability.
 ///
-/// ## Sync vs async
+/// ## Importability is not runtime readiness
 ///
-/// `daemon/self_map_task::check_graphify_available` is the async equivalent
-/// used in the daemon cron path. This sync version mirrors the same argv but
-/// uses `std::process::Command` for the doctor's synchronous check surface.
-pub fn is_graphify_installed() -> bool {
+/// This intentionally answers only whether the package module can be imported.
+/// It does **not** prove that NEOTH can execute Graphify: execution additionally
+/// requires the containment platform and the verified runtime contract in
+/// [`crate::graphify_runner::GraphifyRuntime`]. In particular, callers must not
+/// use this probe as a readiness gate or claim that `neoth graph` is runnable.
+/// `neoth doctor` uses the central runtime discovery path instead.
+pub fn is_graphify_module_importable() -> bool {
     std::process::Command::new(python_bin())
-        .args(["-m", "graphifyy", "--version"])
+        .args(["-I", "-m", GRAPHIFY_MODULE, "--version"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -144,11 +159,12 @@ mod tests {
         assert_eq!(bin, "python3");
     }
 
-    /// GOLD-ADAPT-GRAPH-04: graphifyy probe must not panic regardless of
-    /// whether graphifyy is on PATH. CI runners may not have it.
+    /// GOLD-ADAPT-GRAPH-04: the isolated Graphify probe must not panic
+    /// regardless of whether graphifyy is installed. CI runners may not have
+    /// it.
     #[test]
-    fn graphify_probe_does_not_panic() {
-        let _ = is_graphify_installed();
+    fn graphify_importability_probe_does_not_panic() {
+        let _ = is_graphify_module_importable();
     }
 
     /// GOLD-ADAPT-GRAPH-04: the install command must be a pip install command.
@@ -158,6 +174,12 @@ mod tests {
             GRAPHIFY_INSTALL_CMD.starts_with("pip install"),
             "GRAPHIFY_INSTALL_CMD must be a pip install command, got: {GRAPHIFY_INSTALL_CMD}"
         );
+    }
+
+    #[test]
+    fn graphify_distribution_and_module_names_are_intentionally_distinct() {
+        assert_eq!(GRAPHIFY_MODULE, "graphify");
+        assert!(GRAPHIFY_INSTALL_CMD.contains("graphifyy"));
     }
 
     /// GOLD-ADAPT-DOC-04: officecli probe must not panic regardless of
