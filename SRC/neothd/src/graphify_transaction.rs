@@ -83,7 +83,7 @@ pub enum GraphifyRecoveryAction {
 /// needed to finish it. A state-only answer is intentionally unavailable for
 /// an active transaction.
 pub(crate) enum GraphifyRecoveryOpen {
-    NoPendingPublication(GraphifyPublicationLease),
+    NoPendingPublication(Box<GraphifyPublicationLease>),
     Pending(Box<PendingGraphifyRecovery>),
 }
 
@@ -466,7 +466,7 @@ pub(crate) fn open_graphify_transaction_recovery<S: CompanionSnapshotAttestation
     let Some(journal) = inspect_graphify_transaction_under_lease(&lease, corpus_dir)
         .context("inspect recovered Graphify publication journal under lease")?
     else {
-        return Ok(GraphifyRecoveryOpen::NoPendingPublication(lease));
+        return Ok(GraphifyRecoveryOpen::NoPendingPublication(Box::new(lease)));
     };
     let Some((generation_dir, receipt)) = load_current_graphify_generation_receipt(corpus_dir)
         .context("load strict current Graphify generation receipt for recovery")?

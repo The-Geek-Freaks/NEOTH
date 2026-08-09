@@ -392,7 +392,9 @@ async fn run_one_tick(
         );
         let Some(corpus_dir) = targets.into_iter().next() else {
             return Ok((
-                crate::graphify_transaction::GraphifyRecoveryOpen::NoPendingPublication(lease),
+                crate::graphify_transaction::GraphifyRecoveryOpen::NoPendingPublication(Box::new(
+                    lease,
+                )),
                 None,
             ));
         };
@@ -428,7 +430,7 @@ async fn run_one_tick(
     let (recovery_open, recovery_attestation) = recovery_open;
     stop_if_cancelled(cancel)?;
     let publication_lease = match recovery_open {
-        crate::graphify_transaction::GraphifyRecoveryOpen::NoPendingPublication(lease) => lease,
+        crate::graphify_transaction::GraphifyRecoveryOpen::NoPendingPublication(lease) => *lease,
         crate::graphify_transaction::GraphifyRecoveryOpen::Pending(recovery) => {
             let apply_snapshot =
                 recovery_attestation.context("self-map: missing native recovery attestation")?;

@@ -428,7 +428,9 @@ async fn run_graph_update(
         );
         let Some(corpus_dir) = targets.into_iter().next() else {
             return Ok((
-                crate::graphify_transaction::GraphifyRecoveryOpen::NoPendingPublication(lease),
+                crate::graphify_transaction::GraphifyRecoveryOpen::NoPendingPublication(Box::new(
+                    lease,
+                )),
                 None,
             ));
         };
@@ -463,7 +465,7 @@ async fn run_graph_update(
     .context("GRAPH-06: Graphify lease/recovery task panicked")??;
     let (recovery_open, recovery_attestation) = recovery_open;
     let publication_lease = match recovery_open {
-        crate::graphify_transaction::GraphifyRecoveryOpen::NoPendingPublication(lease) => lease,
+        crate::graphify_transaction::GraphifyRecoveryOpen::NoPendingPublication(lease) => *lease,
         crate::graphify_transaction::GraphifyRecoveryOpen::Pending(recovery) => {
             let apply_snapshot =
                 recovery_attestation.context("GRAPH-06: missing native recovery attestation")?;
