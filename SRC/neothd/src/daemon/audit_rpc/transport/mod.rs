@@ -97,9 +97,12 @@ pub(crate) fn endpoint_for_home(home: &Path, endpoint_nonce: &str) -> Result<Aud
 
     #[cfg(unix)]
     {
-        let runtime_name = unix::runtime_directory_name(&home_sha256, endpoint_nonce);
         Ok(AuditEndpointV2::UnixSocket {
-            path: canonical_home.join(runtime_name).join("audit.sock"),
+            // AF_UNIX pathname sockets have a small kernel address limit (104
+            // bytes on macOS).  Keep the endpoint out of an arbitrarily deep
+            // NEOTH home while retaining the canonical-home hash in both the
+            // endpoint record and the derived private runtime directory name.
+            path: unix::socket_path(&home_sha256, endpoint_nonce)?,
             endpoint_nonce: endpoint_nonce.to_owned(),
             home_sha256,
         })
@@ -128,6 +131,9 @@ pub(crate) async fn bind(
 
     #[cfg(unix)]
     {
+        let canonical_home = std::fs::canonicalize(home)
+            .with_context(|| format!("canonicalize NEOTH home {}", home.display()))?;
+        unix::ensure_private_home(&canonical_home)?;
         let listener = unix::Listener::bind(&endpoint)?;
         Ok((AuditListener { inner: listener }, endpoint))
     }
@@ -248,6 +254,14 @@ fn channel_hash(home_sha256: &str, endpoint_nonce: &str) -> String {
     hasher.update(home_sha256.as_bytes());
     hasher.update([0]);
     hasher.update(endpoint_nonce.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+#[cfg(unix)]
+fn home_namespace_hash(home_sha256: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"neoth-audit-rpc-v2-home-namespace\0");
+    hasher.update(home_sha256.as_bytes());
     hex::encode(hasher.finalize())
 }
 

@@ -141,6 +141,7 @@ pub struct PreparedGraphifyPublication {
 /// published result retains it until the caller records a terminal WAL state.
 pub(crate) struct GraphifyPublicationLease {
     vault_root: CanonicalRepoRoot,
+    vault_parent: CanonicalRepoRoot,
     corpus_id: String,
     // Rust drops fields in declaration order. Keep the OS lease first so
     // release is the inverse of acquisition: process-local → OS on acquire,
@@ -264,8 +265,8 @@ impl PreparedGraphifyPublication {
     /// Publish the staged immutable generation and atomically advance CURRENT.
     pub fn publish(self) -> Result<PublishedGraphifyPublication> {
         ensure_root_unchanged(&self.repository_root, "repository")?;
-        ensure_root_unchanged(&self.vault_root, "vault")?;
-        ensure_real_directory(&self.corpus_dir, "Graphify corpus directory")?;
+        ensure_secure_graphify_vault_namespace(&self._lease.vault_root, &self._lease.vault_parent)?;
+        ensure_secure_graphify_directory(&self.corpus_dir, "Graphify corpus directory")?;
         ensure_direct_child(
             &self.vault_root,
             &self.corpus_dir,
@@ -286,6 +287,10 @@ impl PreparedGraphifyPublication {
 
         match fs::symlink_metadata(&self.generation_dir) {
             Ok(_) => {
+                ensure_secure_graphify_directory(
+                    &self.generation_dir,
+                    "existing Graphify generation directory",
+                )?;
                 validate_published_generation(&self.generation_dir, &self.receipt)
                     .context("verify existing immutable Graphify generation")?;
                 make_generation_read_only(&self.generation_dir)
@@ -312,6 +317,12 @@ impl PreparedGraphifyPublication {
                 }
                 crate::util::atomic_write::sync_parent_directory_required(&self.generation_dir)
                     .context("durably publish Graphify generation directory entry")?;
+                ensure_secure_graphify_directory(
+                    &self.generation_dir,
+                    "published Graphify generation directory",
+                )?;
+                harden_published_generation_after_rename(&self.generation_dir)
+                    .context("harden published Graphify generation after atomic rename")?;
                 validate_published_generation(&self.generation_dir, &self.receipt)
                     .context("verify newly published immutable Graphify generation")?;
                 validate_generation_read_only(&self.generation_dir)?;
@@ -330,7 +341,28 @@ impl PreparedGraphifyPublication {
         // visibility boundary.  An orphan immutable generation is harmless;
         // a pointer to evidence from a replaced root is not.
         ensure_root_unchanged(&self.repository_root, "repository")?;
-        ensure_root_unchanged(&self.vault_root, "vault")?;
+        ensure_secure_graphify_vault_namespace(&self._lease.vault_root, &self._lease.vault_parent)?;
+        ensure_secure_graphify_directory(&self.corpus_dir, "Graphify corpus directory")?;
+        ensure_direct_child(
+            &self.vault_root,
+            &self.corpus_dir,
+            "Graphify corpus directory",
+        )?;
+        ensure_secure_graphify_directory(&generations_dir, "Graphify generations directory")?;
+        ensure_direct_path_child(
+            &self.corpus_dir,
+            &generations_dir,
+            "Graphify generations directory",
+        )?;
+        ensure_secure_graphify_directory(
+            &self.generation_dir,
+            "published Graphify generation directory",
+        )?;
+        ensure_direct_path_child(
+            &generations_dir,
+            &self.generation_dir,
+            "published Graphify generation directory",
+        )?;
         validate_corpus_binding(&self.corpus_dir, &self.binding)?;
         self.native_snapshot
             .revalidate_companion_publication()
@@ -464,6 +496,7 @@ impl PublishedGraphifyPublication {
             "Graphify transaction cannot finish before ingest is recorded or intentionally skipped"
         );
         self.advance(GraphifyTransactionPhase::Completed)?;
+        ensure_secure_graphify_corpus_under_lease(&self.lease, &self.corpus_dir)?;
         crate::util::atomic_write::durable_remove_file(&self.journal_path)
             .context("durably remove completed Graphify transaction journal")?;
         let _ = self.lease;
@@ -488,6 +521,7 @@ impl PublishedGraphifyPublication {
             )
         );
         ensure!(valid, "invalid Graphify transaction phase transition");
+        ensure_secure_graphify_corpus_under_lease(&self.lease, &self.corpus_dir)?;
         self.journal.phase = phase;
         write_transaction_journal(&self.journal_path, &self.journal)
     }
@@ -527,6 +561,7 @@ pub(crate) fn acquire_graphify_publication_lease(
         "Graphify lease repository identity changed"
     );
     let vault_root = discover_strict_directory(vault_root, "Graphify vault root")?;
+    let vault_parent = discover_protected_graphify_vault_parent(&vault_root)?;
     let corpus_id = corpus_id_for_root(repository_root);
     ensure!(
         corpus_id.starts_with("graphify-root-v1-")
@@ -535,7 +570,7 @@ pub(crate) fn acquire_graphify_publication_lease(
                 .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
         "Graphify corpus identifier is not a canonical opaque lock key"
     );
-    ensure_root_unchanged(&vault_root, "vault")?;
+    ensure_secure_graphify_vault_namespace(&vault_root, &vault_parent)?;
     let leases_dir = ensure_real_child_directory(
         vault_root.path(),
         LEASES_DIR_NAME,
@@ -552,6 +587,7 @@ pub(crate) fn acquire_graphify_publication_lease(
     reject_non_regular_existing_file(&lock_path, "Graphify publication lease")?;
     Ok(GraphifyPublicationLease {
         vault_root,
+        vault_parent,
         corpus_id,
         _file: file,
         _process: process,
@@ -623,6 +659,7 @@ pub(crate) fn prepare_graphify_publication(
         request.lease.vault_root == vault_root && request.lease.corpus_id == corpus_id,
         "Graphify publication lease is bound to a different vault or native corpus"
     );
+    ensure_secure_graphify_vault_namespace(&request.lease.vault_root, &request.lease.vault_parent)?;
     let requested_corpus_dir = vault_root.path().join(&friendly_subdir);
     ensure_unique_corpus_binding_under_lease(&request.lease, &requested_corpus_dir)?;
     let corpus_dir = ensure_real_child_directory(
@@ -691,7 +728,9 @@ pub(crate) fn prepare_graphify_publication(
         .prefix(".neoth-graphify-stage-")
         .tempdir_in(&corpus_dir)
         .with_context(|| format!("create private Graphify stage in {}", corpus_dir.display()))?;
-    ensure_real_directory(stage.path(), "Graphify staging directory")?;
+    ensure_secure_graphify_directory(stage.path(), "Graphify staging directory")?;
+    #[cfg(unix)]
+    ensure_new_graphify_directory_is_owner_private(stage.path(), "Graphify staging directory")?;
     ensure_direct_path_child(&corpus_dir, stage.path(), "Graphify staging directory")?;
 
     for artifact in &artifacts {
@@ -735,7 +774,7 @@ pub(crate) fn prepare_graphify_publication(
 pub fn read_current_graphify_pointer(
     corpus_dir: impl AsRef<Path>,
 ) -> Result<Option<CurrentGraphifyPointer>> {
-    ensure_real_directory(corpus_dir.as_ref(), "Graphify corpus directory")?;
+    ensure_secure_graphify_directory(corpus_dir.as_ref(), "Graphify corpus directory")?;
     read_current_pointer(corpus_dir.as_ref())
 }
 
@@ -748,7 +787,7 @@ pub fn read_current_graphify_pointer(
 pub(crate) fn load_current_graphify_generation_receipt(
     corpus_dir: &Path,
 ) -> Result<Option<(PathBuf, GraphifyGenerationReceipt)>> {
-    ensure_real_directory(corpus_dir, "Graphify corpus directory")?;
+    ensure_secure_graphify_directory(corpus_dir, "Graphify corpus directory")?;
     let Some(pointer) = read_current_pointer(corpus_dir)? else {
         return Ok(None);
     };
@@ -1030,7 +1069,7 @@ fn read_stable_artifact(path: &Path, name: &str, max_bytes: u64) -> Result<Stage
 }
 
 fn validate_staged_generation(stage: &Path, receipt: &GraphifyGenerationReceipt) -> Result<()> {
-    ensure_real_directory(stage, "Graphify staging directory")?;
+    ensure_secure_graphify_directory(stage, "Graphify staging directory")?;
     validate_generation_contents(stage, receipt)
 }
 
@@ -1199,7 +1238,7 @@ fn ensure_unique_corpus_binding_under_lease(
 fn scan_corpus_bindings_for_lease(
     lease: &GraphifyPublicationLease,
 ) -> Result<Vec<(PathBuf, CorpusBinding)>> {
-    ensure_root_unchanged(&lease.vault_root, "vault")?;
+    ensure_secure_graphify_vault_namespace(&lease.vault_root, &lease.vault_parent)?;
     let expected_vault_digest =
         physical_root_digest(b"neoth.graphify.vault-root.v1\0", &lease.vault_root);
     let mut bindings = Vec::new();
@@ -1220,21 +1259,27 @@ fn scan_corpus_bindings_for_lease(
         }
         ensure_direct_child(&lease.vault_root, &path, "Graphify vault corpus candidate")?;
         let binding_path = path.join(CORPUS_BINDING_NAME);
-        let binding = match fs::symlink_metadata(&binding_path) {
-            Ok(_) => {
-                let bytes = read_regular_bounded_no_follow(
-                    &binding_path,
-                    MAX_BINDING_BYTES,
-                    CORPUS_BINDING_NAME,
-                )?;
-                serde_json::from_slice::<CorpusBinding>(&bytes)
-                    .context("parse Graphify corpus binding during vault scan")?
-            }
+        let binding_metadata = match fs::symlink_metadata(&binding_path) {
+            Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
                 return Err(error).context("inspect Graphify corpus binding during vault scan");
             }
         };
+        ensure!(
+            binding_metadata.is_file() && !metadata_is_link_like(&binding_metadata),
+            "Graphify vault corpus binding is not a regular no-follow file {}",
+            binding_path.display()
+        );
+        // An unrelated unbound directory may intentionally be shared (for
+        // example, an operator's Attachments directory). Once a binding marker
+        // exists, however, this is a Graphify authority namespace and must be
+        // private before its bytes are trusted.
+        ensure_secure_graphify_directory(&path, "Graphify vault corpus candidate")?;
+        let bytes =
+            read_regular_bounded_no_follow(&binding_path, MAX_BINDING_BYTES, CORPUS_BINDING_NAME)?;
+        let binding = serde_json::from_slice::<CorpusBinding>(&bytes)
+            .context("parse Graphify corpus binding during vault scan")?;
         ensure!(
             binding.schema_version == GRAPHIFY_PUBLISH_SCHEMA
                 && binding.canonical_vault_root == lease.vault_root.display()
@@ -1356,25 +1401,99 @@ fn ensure_real_directory(path: &Path, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// Graphify publishes mutable lock, journal, pointer, and generation entries
+/// below the operator-selected vault. Existing namespace directories are never
+/// chmodded implicitly: an administrator must repair a shared or foreign-owned
+/// vault deliberately rather than having publication mutate its policy.
+fn ensure_secure_graphify_directory(path: &Path, label: &str) -> Result<()> {
+    ensure_real_directory(path, label)?;
+    crate::util::darwin_acl::verify_directory_has_no_extended_acl(path).with_context(|| {
+        format!(
+            "verify {label} has no macOS extended ACL authority {}",
+            path.display()
+        )
+    })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+        let metadata = fs::symlink_metadata(path)
+            .with_context(|| format!("inspect secure {label} {}", path.display()))?;
+        // SAFETY: `geteuid` has no preconditions and does not retain a pointer.
+        let effective_uid = unsafe { libc::geteuid() };
+        ensure!(
+            metadata.uid() == effective_uid,
+            "{label} is not owned by the effective user: {}",
+            path.display()
+        );
+        ensure!(
+            metadata.permissions().mode() & 0o022 == 0,
+            "{label} is group/world writable; Graphify publication namespace is unsafe: {}",
+            path.display()
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn ensure_new_graphify_directory_is_owner_private(path: &Path, label: &str) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+    ensure_secure_graphify_directory(path, label)?;
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("inspect newly created {label} {}", path.display()))?;
+    // SAFETY: `geteuid` has no preconditions and does not retain a pointer.
+    let effective_uid = unsafe { libc::geteuid() };
+    ensure!(
+        metadata.uid() == effective_uid && metadata.permissions().mode() & 0o7777 == 0o700,
+        "new {label} is not an owner-private mode-0700 directory: {}",
+        path.display()
+    );
+    Ok(())
+}
+
 fn ensure_real_child_directory(parent: &Path, name: &str, label: &str) -> Result<PathBuf> {
     validate_friendly_subdir(name)?;
-    ensure_real_directory(parent, "Graphify publication parent")?;
+    ensure_secure_graphify_directory(parent, "Graphify publication parent")?;
     let child = parent.join(name);
-    match fs::create_dir(&child) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+    let created = match create_owner_private_graphify_child_directory(&child) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
         Err(error) => {
             return Err(error).with_context(|| format!("create {label} {}", child.display()));
         }
-    }
-    ensure_real_directory(&child, label)?;
+    };
+    ensure_secure_graphify_directory(&child, label)?;
     ensure_direct_path_child(parent, &child, label)?;
+    #[cfg(not(unix))]
+    let _ = created;
+    #[cfg(unix)]
+    if created {
+        ensure_new_graphify_directory_is_owner_private(&child, label)?;
+    }
     Ok(child)
+}
+
+#[cfg(unix)]
+fn create_owner_private_graphify_child_directory(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt as _;
+
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(0o700);
+    builder.create(path)
+}
+
+#[cfg(not(unix))]
+fn create_owner_private_graphify_child_directory(path: &Path) -> std::io::Result<()> {
+    fs::create_dir(path)
 }
 
 fn existing_real_child_directory(parent: &Path, name: &str, label: &str) -> Result<PathBuf> {
     let child = parent.join(name);
-    ensure_real_directory(&child, label)?;
+    ensure_secure_graphify_directory(parent, "Graphify publication parent")?;
+    ensure_secure_graphify_directory(&child, label)?;
     ensure_direct_path_child(parent, &child, label)?;
     Ok(child)
 }
@@ -1403,6 +1522,85 @@ fn ensure_root_unchanged(expected: &CanonicalRepoRoot, label: &str) -> Result<()
         "physical {label} root changed during Graphify publication"
     );
     Ok(())
+}
+
+fn discover_protected_graphify_vault_parent(
+    vault_root: &CanonicalRepoRoot,
+) -> Result<CanonicalRepoRoot> {
+    let parent_path = vault_root.path().parent().with_context(|| {
+        format!(
+            "Graphify vault root has no parent namespace: {}",
+            vault_root.display()
+        )
+    })?;
+    let parent = CanonicalRepoRoot::discover(parent_path)
+        .context("resolve immediate Graphify vault parent namespace")?;
+    ensure_direct_child(&parent, vault_root.path(), "Graphify vault root")?;
+    ensure_protected_graphify_vault_parent(&parent)?;
+    Ok(parent)
+}
+
+fn ensure_protected_graphify_vault_parent(parent: &CanonicalRepoRoot) -> Result<()> {
+    ensure_real_directory(parent.path(), "immediate Graphify vault parent")?;
+    crate::util::darwin_acl::verify_directory_has_no_extended_acl(parent.path()).with_context(
+        || {
+            format!(
+                "verify immediate Graphify vault parent has no macOS extended ACL authority {}",
+                parent.display()
+            )
+        },
+    )?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+        let metadata = fs::symlink_metadata(parent.path()).with_context(|| {
+            format!(
+                "inspect immediate Graphify vault parent {}",
+                parent.display()
+            )
+        })?;
+        let mode = metadata.permissions().mode();
+        // SAFETY: `geteuid` has no preconditions and does not retain a pointer.
+        let effective_uid = unsafe { libc::geteuid() };
+        ensure!(
+            graphify_vault_parent_permissions_are_safe(mode, metadata.uid(), effective_uid),
+            "immediate Graphify vault parent is group/world writable without trusted sticky protection: {}",
+            parent.display()
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn graphify_vault_parent_permissions_are_safe(
+    mode: u32,
+    owner_uid: u32,
+    effective_uid: u32,
+) -> bool {
+    mode & 0o022 == 0 || (mode & 0o1000 != 0 && (owner_uid == effective_uid || owner_uid == 0))
+}
+
+fn ensure_secure_graphify_vault_namespace(
+    vault_root: &CanonicalRepoRoot,
+    vault_parent: &CanonicalRepoRoot,
+) -> Result<()> {
+    ensure_root_unchanged(vault_parent, "immediate Graphify vault parent")?;
+    ensure_root_unchanged(vault_root, "vault")?;
+    ensure_direct_child(vault_parent, vault_root.path(), "Graphify vault root")?;
+    ensure_protected_graphify_vault_parent(vault_parent)?;
+    ensure_secure_graphify_directory(vault_root.path(), "Graphify vault root")
+}
+
+fn ensure_secure_graphify_corpus_under_lease(
+    lease: &GraphifyPublicationLease,
+    corpus_dir: &Path,
+) -> Result<()> {
+    ensure_secure_graphify_vault_namespace(&lease.vault_root, &lease.vault_parent)?;
+    ensure_secure_graphify_directory(corpus_dir, "Graphify corpus directory")?;
+    ensure_direct_child(&lease.vault_root, corpus_dir, "Graphify corpus directory")
 }
 
 fn reject_non_regular_existing_file(path: &Path, label: &str) -> Result<()> {
@@ -1548,7 +1746,7 @@ fn directory_entry_names(directory: &Path) -> Result<BTreeSet<String>> {
     Ok(names)
 }
 
-fn make_generation_read_only(generation: &Path) -> Result<()> {
+fn make_generation_artifacts_read_only(generation: &Path) -> Result<()> {
     for entry in fs::read_dir(generation).context("enumerate published Graphify generation")? {
         let path = entry.context("read published Graphify entry")?.path();
         let metadata = fs::symlink_metadata(&path)
@@ -1562,21 +1760,109 @@ fn make_generation_read_only(generation: &Path) -> Result<()> {
         fs::set_permissions(&path, permissions)
             .with_context(|| format!("make Graphify artifact read-only {}", path.display()))?;
     }
+    Ok(())
+}
+
+fn make_generation_directory_read_only(generation: &Path) -> Result<()> {
     let mut permissions = fs::symlink_metadata(generation)?.permissions();
     permissions.set_readonly(true);
     fs::set_permissions(generation, permissions).context("make Graphify generation read-only")?;
     Ok(())
 }
 
-/// Permission hardening happens before rename. If it fails after changing a
-/// subset of files, restore writability so `TempDir` can deterministically
-/// clean the private stage rather than stranding a non-removable directory.
+fn make_generation_read_only(generation: &Path) -> Result<()> {
+    make_generation_artifacts_read_only(generation)?;
+    make_generation_directory_read_only(generation)
+}
+
+/// On Unix, artifact files are made immutable while the private staging
+/// directory retains owner write+search permission for the rename.  macOS can
+/// reject a directory rename after its source directory is made read-only.
+/// The destination directory is hardened immediately after the atomic rename,
+/// before a `CURRENT` intent or pointer becomes visible. Windows keeps its
+/// existing whole-tree pre-rename hardening semantics.
 fn harden_staged_generation(generation: &Path) -> Result<()> {
-    if let Err(error) = make_generation_read_only(generation) {
+    if let Err(error) = make_generation_artifacts_read_only(generation) {
         return combine_stage_permission_failure(generation, error);
     }
-    if let Err(error) = validate_generation_read_only(generation) {
+
+    #[cfg(unix)]
+    if let Err(error) = retain_stage_owner_write_search(generation) {
         return combine_stage_permission_failure(generation, error);
+    }
+
+    #[cfg(unix)]
+    if let Err(error) = validate_staged_generation_for_rename(generation) {
+        return combine_stage_permission_failure(generation, error);
+    }
+
+    #[cfg(not(unix))]
+    if let Err(error) = make_generation_directory_read_only(generation)
+        .and_then(|()| validate_generation_read_only(generation))
+    {
+        return combine_stage_permission_failure(generation, error);
+    }
+
+    Ok(())
+}
+
+/// Complete the two-phase permission transition after the private staging
+/// directory has been atomically moved into its final `generations/<id>` path.
+/// This must finish before the transaction journal or `CURRENT` are exposed.
+fn harden_published_generation_after_rename(generation: &Path) -> Result<()> {
+    make_generation_directory_read_only(generation)?;
+    validate_generation_read_only(generation)
+}
+
+#[cfg(unix)]
+fn retain_stage_owner_write_search(generation: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::symlink_metadata(generation)
+        .context("inspect staged Graphify directory before publication")?;
+    ensure!(
+        metadata.is_dir() && !metadata_is_link_like(&metadata),
+        "staged Graphify generation is not a real directory"
+    );
+    let mut permissions = metadata.permissions();
+    // The stage is a private TempDir. Keep its existing owner mode bits but
+    // guarantee the write+search access needed by `rename` and cleanup, and
+    // never retain or grant group/world write access.
+    permissions.set_mode((permissions.mode() & !0o022) | 0o300);
+    fs::set_permissions(generation, permissions)
+        .context("retain owner rename permission for staged Graphify generation")?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_staged_generation_for_rename(generation: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = fs::symlink_metadata(generation).with_context(|| {
+        format!(
+            "inspect staged Graphify generation {}",
+            generation.display()
+        )
+    })?;
+    ensure!(
+        directory.is_dir()
+            && !metadata_is_link_like(&directory)
+            && directory.permissions().mode() & 0o300 == 0o300
+            && directory.permissions().mode() & 0o022 == 0,
+        "staged Graphify generation does not retain safe owner rename permission"
+    );
+    for entry in fs::read_dir(generation).context("enumerate staged Graphify generation")? {
+        let path = entry
+            .context("read staged Graphify generation entry")?
+            .path();
+        let metadata = fs::symlink_metadata(&path)
+            .with_context(|| format!("inspect staged Graphify entry {}", path.display()))?;
+        ensure!(
+            metadata.is_file()
+                && !metadata_is_link_like(&metadata)
+                && metadata.permissions().mode() & 0o222 == 0,
+            "staged Graphify generation contains a writable or non-regular entry"
+        );
     }
     Ok(())
 }
@@ -1675,7 +1961,7 @@ pub(crate) fn recover_graphify_transaction_under_lease(
     lease: &GraphifyPublicationLease,
     corpus_dir: &Path,
 ) -> Result<GraphifyTransactionPhase> {
-    ensure_real_directory(corpus_dir, "Graphify corpus directory")?;
+    ensure_secure_graphify_corpus_under_lease(lease, corpus_dir)?;
     let journal_path = corpus_dir.join(GRAPHIFY_TRANSACTION_NAME);
     let Some(mut journal) = read_transaction_journal(&journal_path)? else {
         return Ok(GraphifyTransactionPhase::Completed);
@@ -1720,6 +2006,7 @@ pub(crate) fn inspect_graphify_transaction_under_lease(
     lease: &GraphifyPublicationLease,
     corpus_dir: &Path,
 ) -> Result<Option<GraphifyTransactionInspection>> {
+    ensure_secure_graphify_corpus_under_lease(lease, corpus_dir)?;
     let Some(journal) = read_transaction_journal(&corpus_dir.join(GRAPHIFY_TRANSACTION_NAME))?
     else {
         return Ok(None);
@@ -1748,6 +2035,7 @@ pub(crate) fn mark_recovered_graphify_ingest_phase_under_lease(
     corpus_dir: &Path,
     expected_transaction_id: &str,
 ) -> Result<GraphifyTransactionPhase> {
+    ensure_secure_graphify_corpus_under_lease(lease, corpus_dir)?;
     let journal_path = corpus_dir.join(GRAPHIFY_TRANSACTION_NAME);
     let mut journal =
         read_exact_active_journal_under_lease(lease, &journal_path, expected_transaction_id)?;
@@ -1777,6 +2065,7 @@ pub(crate) fn finish_recovered_transaction_under_lease(
     expected_transaction_id: &str,
     allowed_phases: &[GraphifyTransactionPhase],
 ) -> Result<()> {
+    ensure_secure_graphify_corpus_under_lease(lease, corpus_dir)?;
     ensure!(
         !allowed_phases.is_empty(),
         "recovered Graphify finish requires at least one expected phase"
@@ -1855,6 +2144,7 @@ pub(crate) fn rollback_graphify_transaction_under_lease(
     lease: &GraphifyPublicationLease,
     corpus_dir: &Path,
 ) -> Result<()> {
+    ensure_secure_graphify_corpus_under_lease(lease, corpus_dir)?;
     let journal_path = corpus_dir.join(GRAPHIFY_TRANSACTION_NAME);
     let Some(journal) = read_transaction_journal(&journal_path)? else {
         return Ok(());
@@ -2105,6 +2395,245 @@ mod tests {
     fn finish_without_ingest(mut published: PublishedGraphifyPublication) {
         published.mark_ingest_skipped().unwrap();
         published.finish().unwrap();
+    }
+
+    #[cfg(unix)]
+    fn set_unix_directory_mode(path: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_group_or_world_writable_vault_rejects_before_lease_entry_exists() {
+        for mode in [0o770, 0o777] {
+            let fixture = Fixture::new();
+            let snapshot = fixture.snapshot();
+            set_unix_directory_mode(fixture.vault.path(), mode);
+
+            let error =
+                acquire_graphify_publication_lease(fixture.vault.path(), &snapshot.snapshot().root)
+                    .err()
+                    .unwrap();
+            assert!(error.to_string().contains("group/world writable"));
+            assert!(
+                !fixture.vault.path().join(LEASES_DIR_NAME).exists(),
+                "unsafe vault must fail before a lease directory or lock is created"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_non_sticky_writable_vault_parent_rejects_before_lease_mutation() {
+        let fixture = Fixture::new();
+        let snapshot = fixture.snapshot();
+        let parent = crate::test_env::canonical_tempdir().unwrap();
+        let vault = parent.path().join("vault");
+        fs::create_dir(&vault).unwrap();
+        set_unix_directory_mode(&vault, 0o700);
+        set_unix_directory_mode(parent.path(), 0o777);
+
+        let error = acquire_graphify_publication_lease(&vault, &snapshot.snapshot().root)
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("group/world writable without trusted sticky protection")
+        );
+        assert!(
+            !vault.join(LEASES_DIR_NAME).exists(),
+            "unsafe parent must fail before a lease directory or lock is created"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_sticky_writable_vault_parent_is_accepted() {
+        let fixture = Fixture::new();
+        let snapshot = fixture.snapshot();
+        let parent = crate::test_env::canonical_tempdir().unwrap();
+        let vault = parent.path().join("vault");
+        fs::create_dir(&vault).unwrap();
+        set_unix_directory_mode(&vault, 0o700);
+        set_unix_directory_mode(parent.path(), 0o1777);
+
+        let lease = acquire_graphify_publication_lease(&vault, &snapshot.snapshot().root)
+            .expect("sticky shared parent may contain an owner-private Graphify vault");
+        assert!(vault.join(LEASES_DIR_NAME).is_dir());
+        drop(lease);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_attacker_owned_sticky_parent_policy_rejects_before_child_mutation() {
+        // This is deliberately a pure metadata-policy regression: ordinary CI
+        // users cannot `chown` a test directory to a second UID. It proves the
+        // branch that runs before `acquire_graphify_publication_lease` creates
+        // `.neoth-graphify-leases` or an advisory lock.
+        // SAFETY: `geteuid` has no preconditions and does not retain a pointer.
+        let effective_uid = unsafe { libc::geteuid() };
+        let attacker_uid = if effective_uid == u32::MAX {
+            effective_uid - 1
+        } else {
+            effective_uid + 1
+        };
+        assert!(
+            !graphify_vault_parent_permissions_are_safe(0o1777, attacker_uid, effective_uid),
+            "a sticky parent owned by another unprivileged UID may still delete vault children"
+        );
+        assert!(
+            graphify_vault_parent_permissions_are_safe(0o1777, effective_uid, effective_uid),
+            "the effective user's sticky namespace remains safe"
+        );
+        assert!(
+            graphify_vault_parent_permissions_are_safe(0o1777, 0, effective_uid),
+            "a root-owned sticky namespace such as /tmp remains safe"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_writable_preexisting_corpus_rejects_before_stage_or_visibility_files() {
+        let fixture = Fixture::new();
+        let snapshot = fixture.snapshot();
+        let corpus_dir = fixture.vault.path().join("Knowledge");
+        fs::create_dir(&corpus_dir).unwrap();
+        set_unix_directory_mode(&corpus_dir, 0o770);
+
+        let error = prepare_graphify_publication(GraphifyPublishRequest {
+            vault_root: fixture.vault.path(),
+            friendly_subdir: Some("Knowledge"),
+            native_snapshot: &snapshot,
+            ingest_mode: GraphifyPublicationIngestMode::SkippedAndRevoked,
+            ingest_scope: GraphifyIngestScope::Corpus,
+            lease: acquire_graphify_publication_lease(
+                fixture.vault.path(),
+                &snapshot.snapshot().root,
+            )
+            .unwrap(),
+        })
+        .err()
+        .unwrap();
+        assert!(error.to_string().contains("group/world writable"));
+        for name in [
+            CURRENT_POINTER_NAME,
+            GRAPHIFY_TRANSACTION_NAME,
+            GENERATIONS_DIR_NAME,
+        ] {
+            assert!(
+                !corpus_dir.join(name).exists(),
+                "unsafe corpus must fail before creating {name}"
+            );
+        }
+        assert!(
+            fs::read_dir(&corpus_dir).unwrap().next().is_none(),
+            "unsafe corpus must fail before a private staging directory is created"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_writable_preexisting_generations_rejects_before_journal_or_current_transition() {
+        let fixture = Fixture::new();
+        let first_snapshot = fixture.snapshot();
+        let first = fixture
+            .prepare(&first_snapshot, Some("Knowledge"))
+            .unwrap()
+            .publish()
+            .unwrap();
+        let corpus_dir = first.corpus_dir.clone();
+        let current_before = fs::read(&first.current_pointer).unwrap();
+        let generations_dir = corpus_dir.join(GENERATIONS_DIR_NAME);
+        let generation_count_before = fs::read_dir(&generations_dir).unwrap().count();
+        finish_without_ingest(first);
+
+        fs::write(fixture.repo.path().join("lib.rs"), "pub fn next() {}\n").unwrap();
+        fs::write(
+            fixture
+                .repo
+                .path()
+                .join("graphify-out")
+                .join(GRAPH_REPORT_NAME),
+            "# next\n",
+        )
+        .unwrap();
+        let second_snapshot = fixture.snapshot();
+        let prepared = fixture
+            .prepare(&second_snapshot, Some("Knowledge"))
+            .unwrap();
+        set_unix_directory_mode(&generations_dir, 0o777);
+
+        let error = prepared.publish().err().unwrap();
+        assert!(error.to_string().contains("group/world writable"));
+        assert_eq!(
+            fs::read(corpus_dir.join(CURRENT_POINTER_NAME)).unwrap(),
+            current_before
+        );
+        assert!(
+            !corpus_dir.join(GRAPHIFY_TRANSACTION_NAME).exists(),
+            "unsafe generations directory must fail before a new journal is written"
+        );
+        assert_eq!(
+            fs::read_dir(&generations_dir).unwrap().count(),
+            generation_count_before,
+            "unsafe generations directory must fail before a new generation is published"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_writable_preexisting_lease_directory_rejects_before_lock_file_exists() {
+        let fixture = Fixture::new();
+        let snapshot = fixture.snapshot();
+        let leases_dir = fixture.vault.path().join(LEASES_DIR_NAME);
+        fs::create_dir(&leases_dir).unwrap();
+        set_unix_directory_mode(&leases_dir, 0o770);
+
+        let error =
+            acquire_graphify_publication_lease(fixture.vault.path(), &snapshot.snapshot().root)
+                .err()
+                .unwrap();
+        assert!(error.to_string().contains("group/world writable"));
+        assert!(
+            fs::read_dir(&leases_dir).unwrap().next().is_none(),
+            "unsafe lease directory must fail before an advisory lock is created"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_unbound_shared_vault_child_does_not_block_safe_graphify_corpus() {
+        let fixture = Fixture::new();
+        let first_snapshot = fixture.snapshot();
+        let first = fixture
+            .prepare(&first_snapshot, Some("Knowledge"))
+            .unwrap()
+            .publish()
+            .unwrap();
+        finish_without_ingest(first);
+
+        let attachments = fixture.vault.path().join("Attachments");
+        fs::create_dir(&attachments).unwrap();
+        set_unix_directory_mode(&attachments, 0o775);
+        fs::write(fixture.repo.path().join("lib.rs"), "pub fn next() {}\n").unwrap();
+        fs::write(
+            fixture
+                .repo
+                .path()
+                .join("graphify-out")
+                .join(GRAPH_REPORT_NAME),
+            "# next\n",
+        )
+        .unwrap();
+        let second_snapshot = fixture.snapshot();
+
+        let prepared = fixture
+            .prepare(&second_snapshot, Some("Knowledge"))
+            .expect("unbound shared Attachments directory must be ignored by Graphify scan");
+        assert!(prepared.staged_generation_dir().is_dir());
     }
 
     #[test]
@@ -2422,6 +2951,64 @@ mod tests {
                 .unwrap()
                 .unwrap();
         assert_eq!(journal.phase, GraphifyTransactionPhase::CurrentPublished);
+        published.mark_ingest_skipped().unwrap();
+        published.finish().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_publish_keeps_stage_renameable_until_current_targets_immutable_generation() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = Fixture::new();
+        let snapshot = fixture.snapshot();
+        let prepared = fixture.prepare(&snapshot, Some("Knowledge")).unwrap();
+        let staged_generation = prepared.staged_generation_dir().to_owned();
+
+        harden_staged_generation(&staged_generation).unwrap();
+        let staged_mode = fs::symlink_metadata(&staged_generation)
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(
+            staged_mode & 0o300,
+            0o300,
+            "the private Unix stage must retain owner write+search until rename"
+        );
+        assert_eq!(
+            staged_mode & 0o022,
+            0,
+            "the private Unix stage must never grant group/world write"
+        );
+        for entry in fs::read_dir(&staged_generation).unwrap() {
+            assert_eq!(
+                entry.unwrap().metadata().unwrap().permissions().mode() & 0o222,
+                0,
+                "staged artifacts must already be immutable before rename"
+            );
+        }
+
+        let mut published = prepared.publish().unwrap();
+        let current = read_current_graphify_pointer(&published.corpus_dir)
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.generation_id, published.receipt.generation_id);
+        let published_mode = fs::symlink_metadata(&published.generation_dir)
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(
+            published_mode & 0o222,
+            0,
+            "CURRENT must not reference a writable generation directory"
+        );
+        for entry in fs::read_dir(&published.generation_dir).unwrap() {
+            assert_eq!(
+                entry.unwrap().metadata().unwrap().permissions().mode() & 0o222,
+                0,
+                "CURRENT must not reference writable generation artifacts"
+            );
+        }
         published.mark_ingest_skipped().unwrap();
         published.finish().unwrap();
     }

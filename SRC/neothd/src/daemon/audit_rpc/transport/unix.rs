@@ -13,9 +13,13 @@ use tokio::net::{UnixListener, UnixStream};
 
 use super::{AuditEndpointV2, AuditStream};
 
-const RUNTIME_DIRECTORY_PREFIX: &str = ".audit-rpc-v2-";
+const RUNTIME_DIRECTORY_PREFIX: &str = "c-";
+const HOME_NAMESPACE_PREFIX: &str = "h-";
+const RUNTIME_ROOT_PREFIX: &str = ".neoth-audit-rpc-v3-";
+const HOME_NAMESPACE_HEX_LEN: usize = 24;
+const CHANNEL_DIRECTORY_HEX_LEN: usize = 24;
 const SOCKET_FILE_NAME: &str = "audit.sock";
-const MAX_HOME_ENTRIES_FOR_STALE_CLEANUP: usize = 4096;
+const MAX_RUNTIME_ENTRIES_FOR_STALE_CLEANUP: usize = 4096;
 const MAX_STALE_DIRECTORY_ENTRIES: usize = 4;
 const STALE_CLEANUP_BUDGET: Duration = Duration::from_millis(100);
 
@@ -36,15 +40,71 @@ impl FileIdentity {
 
 pub(super) struct Listener {
     listener: Option<UnixListener>,
+    home_namespace: PathBuf,
     runtime_directory: PathBuf,
     socket_path: PathBuf,
+    home_namespace_identity: FileIdentity,
     runtime_identity: FileIdentity,
     socket_identity: FileIdentity,
 }
 
 pub(super) fn runtime_directory_name(home_sha256: &str, endpoint_nonce: &str) -> String {
     let digest = super::channel_hash(home_sha256, endpoint_nonce);
-    format!("{RUNTIME_DIRECTORY_PREFIX}{}", &digest[..32])
+    format!(
+        "{RUNTIME_DIRECTORY_PREFIX}{}",
+        &digest[..CHANNEL_DIRECTORY_HEX_LEN]
+    )
+}
+
+fn home_namespace_name(home_sha256: &str) -> String {
+    let digest = super::home_namespace_hash(home_sha256);
+    format!(
+        "{HOME_NAMESPACE_PREFIX}{}",
+        &digest[..HOME_NAMESPACE_HEX_LEN]
+    )
+}
+
+/// Return the short, private per-user root used for pathname Unix sockets.
+///
+/// `/tmp` is only a sticky system-owned ancestor. It never contains an
+/// audit-RPC socket directly: every endpoint lives below an exclusively
+/// created, same-UID, mode-0700 root. Keeping that root fixed and short avoids
+/// macOS's `sockaddr_un::sun_path` limit for deeply nested canonical homes.
+pub(super) fn private_runtime_root() -> Result<PathBuf> {
+    let temporary_parent = Path::new("/tmp");
+    let canonical_temporary_parent = std::fs::canonicalize(temporary_parent)
+        .context("canonicalize system temporary directory for audit-RPC")?;
+    let metadata = std::fs::symlink_metadata(&canonical_temporary_parent).with_context(|| {
+        format!(
+            "inspect system temporary directory {} for audit-RPC",
+            canonical_temporary_parent.display()
+        )
+    })?;
+    ensure!(
+        metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+        "audit-RPC system temporary directory is not a real directory"
+    );
+    ensure!(
+        metadata.mode() & 0o022 == 0 || metadata.mode() & libc::S_ISVTX != 0,
+        "audit-RPC system temporary directory is writable without sticky-bit protection"
+    );
+    // Keep the serialized/bound socket spelling at `/tmp/...`, even on macOS
+    // where `/tmp` resolves to `/private/tmp`: the fixed short spelling is
+    // what makes the address length independent of the canonical home path.
+    Ok(temporary_parent.join(format!("{RUNTIME_ROOT_PREFIX}{}", effective_uid())))
+}
+
+/// Derive the only Unix socket path accepted for a canonical-home hash and
+/// endpoint nonce. The hash and nonce are both fed into the directory digest;
+/// the full canonical-home hash remains serialized in `AuditEndpointV2` and is
+/// re-derived by `AuditEndpointV2::validate` before a sidecar is accepted.
+pub(super) fn socket_path(home_sha256: &str, endpoint_nonce: &str) -> Result<PathBuf> {
+    let path = private_runtime_root()?
+        .join(home_namespace_name(home_sha256))
+        .join(runtime_directory_name(home_sha256, endpoint_nonce))
+        .join(SOCKET_FILE_NAME);
+    validate_socket_path_length(&path)?;
+    Ok(path)
 }
 
 pub(super) fn validate_endpoint_shape(
@@ -62,26 +122,9 @@ pub(super) fn validate_endpoint_shape(
         path.file_name().and_then(|name| name.to_str()) == Some(SOCKET_FILE_NAME),
         "audit-RPC Unix socket has an invalid file name"
     );
-    let runtime_directory = path
-        .parent()
-        .context("audit-RPC Unix socket has no runtime directory")?;
     ensure!(
-        runtime_directory.file_name().and_then(|name| name.to_str())
-            == Some(runtime_directory_name(home_sha256, endpoint_nonce).as_str()),
-        "audit-RPC Unix runtime directory is not bound to home and endpoint nonce"
-    );
-    let home = runtime_directory
-        .parent()
-        .context("audit-RPC Unix runtime directory has no home parent")?;
-    let canonical_home = std::fs::canonicalize(home)
-        .with_context(|| format!("canonicalize audit-RPC home {}", home.display()))?;
-    ensure!(
-        canonical_home == home,
-        "audit-RPC Unix home path is not canonical"
-    );
-    ensure!(
-        super::canonical_home_sha256(&canonical_home) == home_sha256,
-        "audit-RPC Unix endpoint canonical-home hash mismatch"
+        path == socket_path(home_sha256, endpoint_nonce)?.as_path(),
+        "audit-RPC Unix socket path is not bound to canonical-home hash and endpoint nonce"
     );
     Ok(())
 }
@@ -99,26 +142,27 @@ impl Listener {
             .parent()
             .context("audit-RPC Unix socket has no runtime directory")?
             .to_path_buf();
-        ensure_private_home(
-            runtime_directory
-                .parent()
-                .context("audit-RPC runtime directory has no home parent")?,
-        )?;
-        cleanup_stale_runtime_directories(
-            runtime_directory
-                .parent()
-                .context("audit-RPC runtime directory has no home parent")?,
-            &runtime_directory,
-        )?;
+        let home_namespace = runtime_directory
+            .parent()
+            .context("audit-RPC runtime directory has no home namespace")?;
+        let home_namespace_metadata = ensure_private_home_namespace(home_namespace, home_sha256)?;
+        cleanup_stale_runtime_directories(home_namespace, &runtime_directory, home_sha256)?;
 
         let mut builder = std::fs::DirBuilder::new();
         builder.mode(0o700);
-        builder.create(&runtime_directory).with_context(|| {
-            format!(
-                "create exclusive audit-RPC runtime directory {}",
-                runtime_directory.display()
-            )
-        })?;
+        if let Err(error) = builder.create(&runtime_directory) {
+            remove_if_identity_matches(
+                home_namespace,
+                Some(FileIdentity::from_metadata(&home_namespace_metadata)),
+                false,
+            );
+            return Err(error).with_context(|| {
+                format!(
+                    "create exclusive audit-RPC runtime directory {}",
+                    runtime_directory.display()
+                )
+            });
+        }
 
         let result = (|| {
             let runtime_metadata =
@@ -136,8 +180,10 @@ impl Listener {
                 .with_context(|| format!("verify audit-RPC socket {}", path.display()))?;
             Ok(Self {
                 listener: Some(listener),
+                home_namespace: home_namespace.to_path_buf(),
                 runtime_directory: runtime_directory.clone(),
                 socket_path: path.clone(),
+                home_namespace_identity: FileIdentity::from_metadata(&home_namespace_metadata),
                 runtime_identity: FileIdentity::from_metadata(&runtime_metadata),
                 socket_identity: FileIdentity::from_metadata(&socket_metadata),
             })
@@ -146,6 +192,11 @@ impl Listener {
         if result.is_err() {
             remove_if_identity_matches(path, None, true);
             remove_if_identity_matches(&runtime_directory, None, false);
+            remove_if_identity_matches(
+                home_namespace,
+                Some(FileIdentity::from_metadata(&home_namespace_metadata)),
+                false,
+            );
         }
         result
     }
@@ -174,6 +225,11 @@ impl Drop for Listener {
         drop(self.listener.take());
         remove_if_identity_matches(&self.socket_path, Some(self.socket_identity), true);
         remove_if_identity_matches(&self.runtime_directory, Some(self.runtime_identity), false);
+        remove_if_identity_matches(
+            &self.home_namespace,
+            Some(self.home_namespace_identity),
+            false,
+        );
     }
 }
 
@@ -184,12 +240,12 @@ pub(super) async fn connect(endpoint: &AuditEndpointV2) -> Result<AuditStream> {
         home_sha256,
     } = endpoint;
     validate_endpoint_shape(path, endpoint_nonce, home_sha256)?;
-    let before = verify_endpoint_path(path)?;
+    let before = verify_endpoint_path(path, home_sha256)?;
     let stream = UnixStream::connect(path)
         .await
         .with_context(|| format!("connect audit-RPC Unix socket {}", path.display()))?;
     attest_same_effective_uid(&stream)?;
-    let after = verify_endpoint_path(path)?;
+    let after = verify_endpoint_path(path, home_sha256)?;
     ensure!(
         before == after,
         "audit-RPC Unix endpoint changed while connecting"
@@ -209,14 +265,14 @@ pub(super) fn exchange_blocking(
         home_sha256,
     } = endpoint;
     validate_endpoint_shape(path, endpoint_nonce, home_sha256)?;
-    let before = verify_endpoint_path(path)?;
+    let before = verify_endpoint_path(path, home_sha256)?;
     let deadline = Instant::now()
         .checked_add(timeout)
         .context("audit-RPC timeout overflow")?;
     let mut stream = connect_std_with_deadline(path, deadline)
         .with_context(|| format!("connect audit-RPC Unix socket {}", path.display()))?;
     attest_same_effective_uid(&stream)?;
-    let after = verify_endpoint_path(path)?;
+    let after = verify_endpoint_path(path, home_sha256)?;
     ensure!(
         before == after,
         "audit-RPC Unix endpoint changed while connecting"
@@ -272,17 +328,10 @@ fn remaining(deadline: Instant) -> Result<Duration> {
 /// `RawFdGuard` until all connect/poll/SO_ERROR checks have succeeded.
 fn connect_std_with_deadline(path: &Path, deadline: Instant) -> Result<StdUnixStream> {
     let path_bytes = path.as_os_str().as_bytes();
-    ensure!(
-        !path_bytes.contains(&0),
-        "audit-RPC Unix socket path contains an interior NUL"
-    );
+    validate_socket_path_length(path)?;
     let mut address = std::mem::MaybeUninit::<libc::sockaddr_un>::zeroed();
     // SAFETY: zeroed is a valid initial representation for sockaddr_un.
     let address = unsafe { address.assume_init_mut() };
-    ensure!(
-        path_bytes.len() < address.sun_path.len(),
-        "audit-RPC Unix socket path is too long for sockaddr_un"
-    );
     address.sun_family = libc::AF_UNIX as libc::sa_family_t;
     for (destination, source) in address.sun_path.iter_mut().zip(path_bytes) {
         *destination = *source as libc::c_char;
@@ -442,7 +491,24 @@ impl Drop for RawFdGuard {
     }
 }
 
-fn ensure_private_home(home: &Path) -> Result<()> {
+fn validate_socket_path_length(path: &Path) -> Result<()> {
+    let path_bytes = path.as_os_str().as_bytes();
+    ensure!(
+        !path_bytes.contains(&0),
+        "audit-RPC Unix socket path contains an interior NUL"
+    );
+    let address = std::mem::MaybeUninit::<libc::sockaddr_un>::zeroed();
+    // SAFETY: a zeroed sockaddr_un is a valid representation and reading the
+    // fixed array length does not inspect an uninitialized field.
+    let sun_path_length = unsafe { address.assume_init_ref() }.sun_path.len();
+    ensure!(
+        path_bytes.len() < sun_path_length,
+        "audit-RPC Unix socket path is too long for sockaddr_un"
+    );
+    Ok(())
+}
+
+pub(super) fn ensure_private_home(home: &Path) -> Result<()> {
     let metadata = std::fs::symlink_metadata(home)
         .with_context(|| format!("inspect NEOTH home {}", home.display()))?;
     ensure!(
@@ -457,20 +523,145 @@ fn ensure_private_home(home: &Path) -> Result<()> {
         metadata.mode() & 0o022 == 0,
         "NEOTH home is group/world writable; private audit-RPC endpoint is unsafe"
     );
+    crate::util::darwin_acl::verify_directory_has_no_extended_acl(home).with_context(|| {
+        format!(
+            "verify NEOTH home {} has no macOS extended ACL",
+            home.display()
+        )
+    })?;
     Ok(())
+}
+
+fn ensure_private_runtime_root(root: &Path) -> Result<()> {
+    let expected = private_runtime_root()?;
+    ensure!(
+        root == expected,
+        "audit-RPC runtime root is not the expected private same-user root"
+    );
+    let mut builder = std::fs::DirBuilder::new();
+    // `mkdir(2)` receives 0700 even if the caller's umask is permissive, so
+    // there is never a window where another user can enter a newly created
+    // root below the shared sticky ancestor.
+    builder.mode(0o700);
+    match builder.create(root) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("create private audit-RPC runtime root {}", root.display())
+            });
+        }
+    }
+    verify_private_runtime_root(root).map(|_| ())
+}
+
+pub(super) fn ensure_private_home_namespace(
+    namespace: &Path,
+    home_sha256: &str,
+) -> Result<std::fs::Metadata> {
+    let root = private_runtime_root()?;
+    ensure_private_runtime_root(&root)?;
+    let expected = root.join(home_namespace_name(home_sha256));
+    ensure!(
+        namespace == expected,
+        "audit-RPC home namespace is not bound to the canonical-home hash"
+    );
+    let mut builder = std::fs::DirBuilder::new();
+    builder.mode(0o700);
+    match builder.create(namespace) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "create private audit-RPC home namespace {}",
+                    namespace.display()
+                )
+            });
+        }
+    }
+    verify_private_home_namespace(namespace, home_sha256)
+}
+
+fn verify_private_runtime_root(path: &Path) -> Result<std::fs::Metadata> {
+    let expected = private_runtime_root()?;
+    ensure!(
+        path == expected,
+        "audit-RPC runtime root is not the expected private same-user root"
+    );
+    let metadata = std::fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+        "audit-RPC runtime root is not a real directory"
+    );
+    ensure!(
+        metadata.uid() == effective_uid(),
+        "audit-RPC runtime root is not owned by the effective user"
+    );
+    ensure!(
+        metadata.mode() & 0o777 == 0o700,
+        "audit-RPC runtime root mode is not 0700"
+    );
+    crate::util::darwin_acl::verify_directory_has_no_extended_acl(path).with_context(|| {
+        format!(
+            "verify audit-RPC runtime root {} has no macOS extended ACL",
+            path.display()
+        )
+    })?;
+    Ok(metadata)
+}
+
+fn verify_private_home_namespace(namespace: &Path, home_sha256: &str) -> Result<std::fs::Metadata> {
+    let root = private_runtime_root()?;
+    verify_private_runtime_root(&root)?;
+    ensure!(
+        namespace == root.join(home_namespace_name(home_sha256)),
+        "audit-RPC home namespace is not bound to the canonical-home hash"
+    );
+    let metadata = std::fs::symlink_metadata(namespace)?;
+    ensure!(
+        metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+        "audit-RPC home namespace is not a real directory"
+    );
+    ensure!(
+        metadata.uid() == effective_uid(),
+        "audit-RPC home namespace is not owned by the effective user"
+    );
+    ensure!(
+        metadata.mode() & 0o777 == 0o700,
+        "audit-RPC home namespace mode is not 0700"
+    );
+    crate::util::darwin_acl::verify_directory_has_no_extended_acl(namespace).with_context(
+        || {
+            format!(
+                "verify audit-RPC home namespace {} has no macOS extended ACL",
+                namespace.display()
+            )
+        },
+    )?;
+    Ok(metadata)
 }
 
 /// Remove only nonce directories that are provably ours and provably
 /// inactive.  The directory for the current nonce is always excluded so a
 /// pre-created current endpoint still makes bind fail closed.
-fn cleanup_stale_runtime_directories(home: &Path, current: &Path) -> Result<()> {
+fn cleanup_stale_runtime_directories(
+    home_namespace: &Path,
+    current: &Path,
+    home_sha256: &str,
+) -> Result<()> {
+    verify_private_home_namespace(home_namespace, home_sha256)?;
     let deadline = Instant::now()
         .checked_add(STALE_CLEANUP_BUDGET)
         .context("audit-RPC stale cleanup deadline overflow")?;
-    let entries = std::fs::read_dir(home)
-        .with_context(|| format!("scan NEOTH home {} for stale audit sockets", home.display()))?;
+    let entries = std::fs::read_dir(home_namespace).with_context(|| {
+        format!(
+            "scan private audit-RPC home namespace {} for stale audit sockets",
+            home_namespace.display()
+        )
+    })?;
     for (index, entry) in entries.enumerate() {
-        if index >= MAX_HOME_ENTRIES_FOR_STALE_CLEANUP || Instant::now() >= deadline {
+        if index >= MAX_RUNTIME_ENTRIES_FOR_STALE_CLEANUP || Instant::now() >= deadline {
             break;
         }
         let entry = match entry {
@@ -488,16 +679,9 @@ fn cleanup_stale_runtime_directories(home: &Path, current: &Path) -> Result<()> 
         if path == current {
             continue;
         }
-        let Ok(directory_metadata) = std::fs::symlink_metadata(&path) else {
+        let Ok(directory_metadata) = verify_runtime_directory(&path) else {
             continue;
         };
-        if !directory_metadata.file_type().is_dir()
-            || directory_metadata.file_type().is_symlink()
-            || directory_metadata.uid() != effective_uid()
-            || directory_metadata.mode() & 0o777 != 0o700
-        {
-            continue;
-        }
         let directory_identity = FileIdentity::from_metadata(&directory_metadata);
         let Ok(children) = std::fs::read_dir(&path) else {
             continue;
@@ -549,7 +733,7 @@ fn cleanup_stale_runtime_directories(home: &Path, current: &Path) -> Result<()> 
                 Err(_) => continue,
             }
         }
-        let Ok(rechecked_directory) = std::fs::symlink_metadata(&path) else {
+        let Ok(rechecked_directory) = verify_runtime_directory(&path) else {
             continue;
         };
         if FileIdentity::from_metadata(&rechecked_directory) != directory_identity {
@@ -573,7 +757,7 @@ fn is_runtime_directory_name(name: &str) -> bool {
     let Some(suffix) = name.strip_prefix(RUNTIME_DIRECTORY_PREFIX) else {
         return false;
     };
-    suffix.len() == 32
+    suffix.len() == CHANNEL_DIRECTORY_HEX_LEN
         && suffix
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
@@ -604,6 +788,12 @@ fn verify_runtime_directory(path: &Path) -> Result<std::fs::Metadata> {
         metadata.mode() & 0o777 == 0o700,
         "audit-RPC runtime directory mode is not 0700"
     );
+    crate::util::darwin_acl::verify_directory_has_no_extended_acl(path).with_context(|| {
+        format!(
+            "verify audit-RPC runtime directory {} has no macOS extended ACL",
+            path.display()
+        )
+    })?;
     Ok(metadata)
 }
 
@@ -624,10 +814,14 @@ fn verify_socket(path: &Path) -> Result<std::fs::Metadata> {
     Ok(metadata)
 }
 
-fn verify_endpoint_path(path: &Path) -> Result<(FileIdentity, FileIdentity)> {
+fn verify_endpoint_path(path: &Path, home_sha256: &str) -> Result<(FileIdentity, FileIdentity)> {
     let runtime_directory = path
         .parent()
         .context("audit-RPC Unix socket has no runtime directory")?;
+    let home_namespace = runtime_directory
+        .parent()
+        .context("audit-RPC Unix runtime directory has no home namespace")?;
+    verify_private_home_namespace(home_namespace, home_sha256)?;
     Ok((
         FileIdentity::from_metadata(&verify_runtime_directory(runtime_directory)?),
         FileIdentity::from_metadata(&verify_socket(path)?),

@@ -6,6 +6,7 @@
 //! (architecture debt) to kill copy-pasted variants.
 
 pub mod atomic_write;
+pub(crate) mod darwin_acl;
 pub mod hmac;
 pub mod locked_file;
 pub(crate) mod private_temp;

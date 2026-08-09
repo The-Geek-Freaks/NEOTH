@@ -170,13 +170,26 @@ fn verify_private_directory(dir: &PrivateTempDir) -> io::Result<()> {
     {
         use std::os::unix::fs::PermissionsExt as _;
 
-        let mode = std::fs::symlink_metadata(dir.path())?.permissions().mode() & 0o777;
+        let metadata = std::fs::symlink_metadata(dir.path())?;
+        if !metadata.file_type().is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "private temporary path is not a directory: {}",
+                    dir.path().display()
+                ),
+            ));
+        }
+
+        let mode = metadata.permissions().mode() & 0o777;
         if mode != 0o700 {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 format!("private temporary directory mode is {mode:#05o}, expected 0o700"),
             ));
         }
+
+        crate::util::darwin_acl::verify_directory_has_no_extended_acl(dir.path())?;
     }
     #[cfg(windows)]
     crate::wal::win_native::verify_private_directory_dacl(dir.path())?;
