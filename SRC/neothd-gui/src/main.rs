@@ -3594,8 +3594,8 @@ fn main() -> Result<()> {
             let _worker_lease = worker_lease;
             let body = zeroize::Zeroizing::new(body);
             // Chat-feel #3: live token streaming. `neoth chat --stream`
-            // prints raw reply deltas incrementally + a final
-            // {"neoth_stream":"done"} sentinel. We read stdout in chunks,
+            // prints raw reply deltas incrementally + an RS-prefixed,
+            // versioned control `done` record. We read stdout in chunks,
             // push the accumulated partial into the placeholder bubble on
             // each chunk (live "▋" cursor), then segment the final reply.
             // On a missing binary / spawn failure / truncated stream
@@ -14069,9 +14069,9 @@ fn main() -> Result<()> {
                         }
                         if !parsed.done {
                             return Err(with_chat_diagnostic(
-                                format!(
-                                    "Buddy chat stream ended before completion (exit {}).",
-                                    status.code().unwrap_or(-1)
+                                buddy_incomplete_stream_message(
+                                    status.code().unwrap_or(-1),
+                                    &parsed.text,
                                 ),
                                 &diagnostic,
                             ));
@@ -16916,6 +16916,18 @@ fn with_chat_diagnostic(base: impl Into<String>, diagnostic: &str) -> String {
         base
     } else {
         format!("{base}\n{diagnostic}")
+    }
+}
+
+/// Keep Buddy's EOF-without-`done` outcome as informative as the Main chat
+/// surface: the stream is still failed, but an already rendered provider body
+/// remains recoverable in the terminal error instead of being discarded.
+fn buddy_incomplete_stream_message(exit_code: i32, partial_reply: &str) -> String {
+    let base = format!("Buddy chat stream ended before completion (exit {exit_code}).");
+    if partial_reply.trim().is_empty() {
+        base
+    } else {
+        format!("{base} Partial reply:\n\n{partial_reply}")
     }
 }
 
@@ -21509,6 +21521,15 @@ fn new_stream_control_token() -> std::result::Result<zeroize::Zeroizing<String>,
 }
 
 const CHAT_STREAM_PROTOCOL_VERSION: u64 = 3;
+/// Any record inside this namespace is reserved for GUI control traffic. A
+/// future/unsupported version must fail closed rather than becoming assistant
+/// text or disappearing after a provider boundary.
+const CHAT_STREAM_CONTROL_NAMESPACE: &str = "\u{1e}NEOTH/";
+/// GUI-private stream controls are records, not provider text.  The leading
+/// ASCII RS plus this printable, versioned discriminator means a provider's
+/// ordinary JSON (including a partial JSON object without a newline) is
+/// rendered immediately instead of being mistaken for an incomplete control.
+const CHAT_STREAM_CONTROL_PREFIX: &str = "\u{1e}NEOTH/1 ";
 
 fn chat_stream_request_id(control_token: &str) -> String {
     use sha2::{Digest as _, Sha256};
@@ -21613,10 +21634,11 @@ fn terminal_skill_route_status(
 
 /// Chat-feel parity #3 (beat-openhuman): split the raw stdout of
 /// `neoth chat --stream` into `(reply_text, done)`. The CLI streams raw reply
-/// deltas, emits an authenticated `provider_done` boundary before post-reply
-/// pipelines, and emits an authenticated final `done` line only after those
-/// pipelines succeed. Control frames are never assistant text; a consumer can
-/// therefore distinguish Receiving, Finalizing, clean completion and a
+/// deltas, emits an authenticated RS-prefixed `provider_done` boundary before
+/// post-reply pipelines, and emits an authenticated final `done` record only
+/// after those pipelines succeed. The explicit record wire prevents ordinary
+/// provider JSON from being withheld as a possible control frame. A consumer
+/// can therefore distinguish Receiving, Finalizing, clean completion and a
 /// truncated/failed pipeline. Pure fn — unit-testable; called per stdout chunk
 /// and once at EOF.
 pub fn strip_stream_sentinel(raw: &str) -> (String, bool) {
@@ -21756,17 +21778,22 @@ struct IncrementalControlFrameGate {
 }
 
 impl IncrementalControlFrameGate {
-    /// Once an authenticated-frame-shaped line starts, JSON parsing waits for
-    /// its terminating newline. Core serialization escapes newlines inside
-    /// `text`, so a multi-megabyte notice is decoded exactly once rather than
-    /// reparsing the complete accumulated prefix for every 512-byte read.
+    /// Once the versioned control prefix starts, JSON parsing waits for its
+    /// terminating newline. Core serialization escapes newlines inside `text`,
+    /// so a multi-megabyte notice is decoded exactly once rather than reparsing
+    /// the complete accumulated prefix for every 512-byte read. Ordinary JSON
+    /// is never deferred merely because it starts with `{`.
     fn can_defer_without_decoding(&self, new_bytes: &[u8]) -> bool {
         self.awaiting_line_end && !new_bytes.contains(&b'\n')
     }
 
     fn observe_decoded_buffer(&mut self, raw: &str) {
         let tail = raw.rsplit_once('\n').map_or(raw, |(_, tail)| tail);
-        self.awaiting_line_end = is_incomplete_stream_control_tail(tail);
+        // Do not suppress an ordinary string that merely begins with a few
+        // prefix bytes: keep decoding until the complete discriminator is
+        // present. Once present, the rest of a large JSON frame can wait for
+        // its newline without repeated full-buffer decoding.
+        self.awaiting_line_end = has_stream_control_prefix(tail);
     }
 }
 
@@ -21850,10 +21877,46 @@ fn parse_chat_stream_protocol_with_mode(
         let segment_end = segment_start + segment.len();
         if !input_complete && !segment.ends_with('\n') && is_incomplete_stream_control_tail(segment)
         {
+            if is_unsupported_stream_control_candidate(segment) {
+                protocol_valid = false;
+            }
             segment_start = segment_end;
             continue;
         }
-        let line = segment.trim_end_matches(['\r', '\n']).trim();
+        let line = match classify_stream_control_line(segment) {
+            StreamControlLine::V1(line) => line,
+            StreamControlLine::ReservedUnsupported => {
+                // `RSNEOTH/` is an owned namespace. Never render or silently
+                // ignore an unsupported control version, including after a
+                // valid provider boundary; the request must fail closed.
+                protocol_valid = false;
+                segment_start = segment_end;
+                continue;
+            }
+            StreamControlLine::Ordinary => {
+                if provider_reply_open {
+                    // The emitter inserts one blank line before a control record
+                    // when a raw CLI delta did not end in a newline. It is a wire
+                    // delimiter, not a leading provider paragraph; retaining the
+                    // historical suppression also keeps compaction from leaving a
+                    // phantom newline before the first typed delta.
+                    let leading_control_delimiter = expected_control_token.is_some()
+                        && visible.is_empty()
+                        && !saw_provider_activity
+                        && !saw_untyped_reply
+                        && segment.trim().is_empty();
+                    if !leading_control_delimiter && !segment.trim().is_empty() {
+                        saw_untyped_reply = true;
+                    }
+                    if !leading_control_delimiter {
+                        visible.push_str(segment);
+                    }
+                }
+                segment_start = segment_end;
+                continue;
+            }
+        };
+        let line = line.trim();
         if is_authenticated_done_candidate(line, expected_control_token) {
             // The one valid terminal frame is removed from this prefix by
             // `final_stream_sentinel`. Any authenticated `done` that remains
@@ -21931,22 +21994,13 @@ fn parse_chat_stream_protocol_with_mode(
                                     ParsedProviderDoneFrame::InvalidAuthenticated => {
                                         protocol_valid = false;
                                     }
-                                    ParsedProviderDoneFrame::NotDone if provider_reply_open => {
-                                        let leading_control_delimiter = expected_control_token
-                                            .is_some()
-                                            && visible.is_empty()
-                                            && !saw_provider_activity
-                                            && !saw_untyped_reply
-                                            && segment.trim().is_empty();
-                                        if !leading_control_delimiter && !segment.trim().is_empty()
-                                        {
-                                            saw_untyped_reply = true;
-                                        }
-                                        if !leading_control_delimiter {
-                                            visible.push_str(segment);
-                                        }
+                                    // A complete RS-prefixed line that is not
+                                    // one of the authenticated frame types is
+                                    // a malformed/unknown control record. Do
+                                    // not let it enter the assistant reply.
+                                    ParsedProviderDoneFrame::NotDone => {
+                                        protocol_valid = false;
                                     }
-                                    ParsedProviderDoneFrame::NotDone => {}
                                 }
                             }
                         }
@@ -21992,17 +22046,64 @@ fn parse_chat_stream_protocol_with_mode(
 }
 
 fn is_incomplete_stream_control_tail(segment: &str) -> bool {
-    let candidate = segment.trim();
-    // The control protocol intentionally accepts JSON objects regardless of
-    // member order.  `serde_json::Value::to_string()` currently happens to
-    // put fields such as `content_hash` or `control_token` before
-    // `neoth_stream`, so recognizing only the literal `{"neoth_stream":`
-    // prefix leaks a split authenticated frame as assistant text (for example
-    // `{"c`).  Until the newline terminates a JSON-object line, it can still
-    // become any authenticated control frame and must stay out of the visible
-    // reply.  At EOF `input_complete` bypasses this gate, preserving ordinary
-    // user/provider JSON text that was not newline-terminated.
-    candidate.starts_with('{')
+    let candidate = segment.trim_end_matches(['\r', '\n']);
+    let whitespace_stripped = candidate.trim_start();
+    // Hold only a whole or byte-split reserved *wire namespace*. A short
+    // partial namespace is necessarily ambiguous for a few bytes; any ordinary
+    // JSON/text that diverges before `RSNEOTH/` stays visible immediately.
+    (!candidate.is_empty() && CHAT_STREAM_CONTROL_NAMESPACE.starts_with(candidate))
+        || has_reserved_stream_control_namespace(candidate)
+        || (whitespace_stripped.len() != candidate.len()
+            && !whitespace_stripped.is_empty()
+            && (CHAT_STREAM_CONTROL_NAMESPACE.starts_with(whitespace_stripped)
+                || has_reserved_stream_control_namespace(whitespace_stripped)))
+}
+
+fn has_reserved_stream_control_namespace(segment: &str) -> bool {
+    segment.starts_with(CHAT_STREAM_CONTROL_NAMESPACE)
+}
+
+fn has_stream_control_prefix(segment: &str) -> bool {
+    segment.starts_with(CHAT_STREAM_CONTROL_PREFIX)
+}
+
+fn is_unsupported_stream_control_candidate(segment: &str) -> bool {
+    let candidate = segment.trim_end_matches(['\r', '\n']);
+    let whitespace_stripped = candidate.trim_start();
+    // Once the complete v1 discriminator is present, an incomplete JSON
+    // payload necessarily extends the prefix. It must remain deferred until
+    // its newline instead of being mistaken for an unsupported version.
+    (has_reserved_stream_control_namespace(candidate)
+        && !candidate.starts_with(CHAT_STREAM_CONTROL_PREFIX)
+        && !CHAT_STREAM_CONTROL_PREFIX.starts_with(candidate))
+        || (whitespace_stripped.len() != candidate.len()
+            && has_reserved_stream_control_namespace(whitespace_stripped)
+            && !whitespace_stripped.starts_with(CHAT_STREAM_CONTROL_PREFIX)
+            && !CHAT_STREAM_CONTROL_PREFIX.starts_with(whitespace_stripped))
+}
+
+/// Classify one complete logical line without ever letting a reserved control
+/// namespace fall through to provider text. Unprefixed JSON remains ordinary
+/// text in GUI-owned streams; accepting it incrementally would reintroduce
+/// split-frame leakage.
+enum StreamControlLine<'a> {
+    V1(&'a str),
+    ReservedUnsupported,
+    Ordinary,
+}
+
+fn classify_stream_control_line(segment: &str) -> StreamControlLine<'_> {
+    let line = segment.trim_end_matches(['\r', '\n']);
+    if let Some(payload) = line.strip_prefix(CHAT_STREAM_CONTROL_PREFIX) {
+        StreamControlLine::V1(payload)
+    } else if has_reserved_stream_control_namespace(line)
+        || (line.trim_start().len() != line.len()
+            && has_reserved_stream_control_namespace(line.trim_start()))
+    {
+        StreamControlLine::ReservedUnsupported
+    } else {
+        StreamControlLine::Ordinary
+    }
 }
 
 fn authenticated_skill_route(
@@ -22259,9 +22360,20 @@ fn final_stream_sentinel(
     raw: &str,
     expected_control_token: Option<&str>,
 ) -> Option<(usize, serde_json::Value)> {
-    let trimmed = raw.trim_end();
-    let pos = trimmed.rfind('\n').map_or(0, |index| index + 1);
-    let line = trimmed[pos..].trim();
+    let line_ending_trimmed = raw.trim_end_matches(['\r', '\n']);
+    let pos = line_ending_trimmed.rfind('\n').map_or(0, |index| index + 1);
+    let wire_line = &line_ending_trimmed[pos..];
+    // GUI-owned subprocesses require the explicit v1 record discriminator at
+    // byte zero. The no-token public helper retains its terminal-only legacy
+    // whitespace normalization for ordinary CLI output, where no authenticated
+    // state is incrementally consumed.
+    let line = match expected_control_token {
+        Some(_) => wire_line.strip_prefix(CHAT_STREAM_CONTROL_PREFIX)?,
+        None => wire_line
+            .trim()
+            .strip_prefix(CHAT_STREAM_CONTROL_PREFIX)
+            .unwrap_or_else(|| wire_line.trim()),
+    };
     let sentinel: serde_json::Value = serde_json::from_str(line).ok()?;
     if sentinel
         .get("neoth_stream")
@@ -22508,38 +22620,45 @@ mod chat_subprocess_tests {
     }
 
     fn skill_route_frame(token: &str) -> String {
-        serde_json::json!({
+        control_frame(serde_json::json!({
             "neoth_stream": "skill_route",
             "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
             "request_id": chat_stream_request_id(token),
             "control_token": token,
             "report": skill_route_report(),
-        })
-        .to_string()
+        }))
     }
 
     fn provider_delta_frame(token: &str, sequence: u64, text: &str) -> String {
-        serde_json::json!({
+        control_frame(serde_json::json!({
             "neoth_stream": "provider_delta",
             "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
             "request_id": chat_stream_request_id(token),
             "control_token": token,
             "sequence": sequence,
             "text": text,
-        })
-        .to_string()
+        }))
     }
 
     fn provider_done_frame(token: &str, count: u64, text: &str) -> String {
-        serde_json::json!({
+        control_frame(serde_json::json!({
             "neoth_stream": "provider_done",
             "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
             "request_id": chat_stream_request_id(token),
             "control_token": token,
             "count": count,
             "content_hash": chat_stream_content_hash(text),
-        })
-        .to_string()
+        }))
+    }
+
+    fn control_frame(frame: serde_json::Value) -> String {
+        format!("{CHAT_STREAM_CONTROL_PREFIX}{frame}")
+    }
+
+    fn control_json(frame: &str) -> &str {
+        frame
+            .strip_prefix(CHAT_STREAM_CONTROL_PREFIX)
+            .expect("test control frame has the versioned wire prefix")
     }
 
     fn done_frame(token: &str, count: u64, text: &str) -> serde_json::Value {
@@ -22726,7 +22845,10 @@ mod chat_subprocess_tests {
             "kind": "kanban",
             "id": "7",
         }]);
-        let raw = format!("{route}\n{delta}\n{provider_done}\n{done}\n");
+        let raw = format!(
+            "{route}\n{delta}\n{provider_done}\n{}\n",
+            control_frame(done)
+        );
         let (_, done, _) = parse_stream_sentinel_with_token(&raw, "wrong");
         assert!(!done);
         assert!(parse_stream_links_with_token(&raw, "wrong").is_empty());
@@ -22794,7 +22916,8 @@ mod chat_subprocess_tests {
 
     #[test]
     fn skill_route_rejects_wrong_binding_malformed_duplicate_and_late_frames() {
-        let valid: serde_json::Value = serde_json::from_str(&skill_route_frame("right")).unwrap();
+        let valid: serde_json::Value =
+            serde_json::from_str(control_json(&skill_route_frame("right"))).unwrap();
         for (name, mut invalid) in [
             ("token", valid.clone()),
             ("request", valid.clone()),
@@ -22818,8 +22941,10 @@ mod chat_subprocess_tests {
                 }
                 _ => unreachable!(),
             }
-            let parsed =
-                parse_chat_stream_protocol_incremental(&format!("{invalid}\n"), Some("right"));
+            let parsed = parse_chat_stream_protocol_incremental(
+                &format!("{}\n", control_frame(invalid)),
+                Some("right"),
+            );
             assert!(!parsed.protocol_valid, "{name} must fail closed");
             assert_eq!(
                 parsed.text, "",
@@ -22829,7 +22954,7 @@ mod chat_subprocess_tests {
         }
 
         let malformed_json = parse_chat_stream_protocol_incremental(
-            "{\"neoth_stream\":\"skill_route\",}\n",
+            &format!("{CHAT_STREAM_CONTROL_PREFIX}{{\"neoth_stream\":\"skill_route\",}}\n"),
             Some("right"),
         );
         assert!(!malformed_json.protocol_valid);
@@ -22863,14 +22988,16 @@ mod chat_subprocess_tests {
             "durable": false,
         });
         let route = skill_route_frame("right");
-        let contiguous =
-            parse_chat_stream_protocol_incremental(&format!("{notice}\n{route}\n"), Some("right"));
+        let contiguous = parse_chat_stream_protocol_incremental(
+            &format!("{}\n{route}\n", control_frame(notice.clone())),
+            Some("right"),
+        );
         assert!(!contiguous.protocol_valid);
         assert!(contiguous.notices.is_empty());
         assert!(contiguous.route_report.is_none());
         assert_eq!(contiguous.text, "");
 
-        let mut accumulated = format!("{notice}\n").into_bytes();
+        let mut accumulated = format!("{}\n", control_frame(notice)).into_bytes();
         let before_route = parse_chat_stream_protocol_incremental(
             std::str::from_utf8(&accumulated).unwrap(),
             Some("right"),
@@ -22935,7 +23062,10 @@ mod chat_subprocess_tests {
             "text": "quality: PASS\nlooks good",
             "durable": false,
         });
-        let partial = format!("{route}\n{delta}\n{provider_done}\n{review}\n");
+        let partial = format!(
+            "{route}\n{delta}\n{provider_done}\n{}\n",
+            control_frame(review)
+        );
         let parsed = parse_chat_stream_protocol(&partial, Some("right"));
         assert_eq!(parsed.text, "reply");
         assert!(parsed.provider_done);
@@ -22945,7 +23075,10 @@ mod chat_subprocess_tests {
         assert_eq!(parsed.notices[0].kind, "review_result");
         assert!(parsed.notices[0].text.contains("looks good"));
 
-        let complete = format!("{partial}{}\n", done_frame("right", 1, "reply"));
+        let complete = format!(
+            "{partial}{}\n",
+            control_frame(done_frame("right", 1, "reply"))
+        );
         let parsed = parse_chat_stream_protocol(&complete, Some("right"));
         assert!(parsed.provider_done);
         assert!(parsed.done);
@@ -22979,8 +23112,8 @@ mod chat_subprocess_tests {
             "id": "0123456789abcdef",
             "text": "finished",
             "durable": true,
-        })
-        .to_string();
+        });
+        let notice = control_frame(notice);
         for split in 0..=notice.len() {
             let raw = format!("{route}\n{delta}\n{}", &notice[..split]);
             let parsed = parse_chat_stream_protocol_incremental(&raw, Some("right"));
@@ -22993,7 +23126,7 @@ mod chat_subprocess_tests {
         }
 
         let prefix = format!("{route}\n{delta}\n{provider_done}\n");
-        let done = done_frame("right", 1, "reply").to_string();
+        let done = control_frame(done_frame("right", 1, "reply"));
         for split in 0..=done.len() {
             let raw = format!("{prefix}{}", &done[..split]);
             let parsed = parse_chat_stream_protocol_incremental(&raw, Some("right"));
@@ -23014,7 +23147,7 @@ mod chat_subprocess_tests {
     }
 
     #[test]
-    fn byte_split_utf8_control_frames_are_delivered_once_and_compacted() {
+    fn byte_split_utf8_prefixed_control_frames_are_delivered_once_and_compacted() {
         let route = skill_route_frame("right");
         let notice = serde_json::json!({
             "neoth_stream": "notice",
@@ -23025,8 +23158,10 @@ mod chat_subprocess_tests {
             "id": "0123456789abcdef",
             "text": "Grüße 🌍",
             "durable": true,
-        })
-        .to_string();
+        });
+        let notice = control_frame(notice);
+        assert!(route.starts_with(CHAT_STREAM_CONTROL_PREFIX));
+        assert!(notice.starts_with(CHAT_STREAM_CONTROL_PREFIX));
 
         let mut accumulated = Vec::new();
         let mut gate = IncrementalControlFrameGate::default();
@@ -23064,16 +23199,48 @@ mod chat_subprocess_tests {
     }
 
     #[test]
-    fn incomplete_noncontrol_json_is_flushed_at_eof_without_leaking_controls() {
+    fn incomplete_noncontrol_json_streams_immediately_without_becoming_control() {
         let raw = "{\"content\":\"Grüße 🌍\"}";
 
         let incremental = parse_chat_stream_protocol_incremental(raw, Some("right"));
         assert!(incremental.protocol_valid);
-        assert_eq!(incremental.text, "");
+        assert_eq!(incremental.text, raw);
 
         let final_flush = parse_chat_stream_protocol_with_mode(raw, Some("right"), true, false);
         assert!(final_flush.protocol_valid);
         assert_eq!(final_flush.text, raw);
+
+        // A provider may emit text that begins with part of the private wire
+        // prefix. As soon as it diverges, it is provider text, not a control.
+        let prefix_lookalike = "\u{1e}NO ordinary provider text";
+        let parsed = parse_chat_stream_protocol_incremental(prefix_lookalike, Some("right"));
+        assert!(parsed.protocol_valid);
+        assert_eq!(parsed.text, prefix_lookalike);
+    }
+
+    #[test]
+    fn buddy_missing_done_preserves_the_visible_partial_reply_in_its_failure() {
+        // This is the same terminal decision reached by the Buddy worker after
+        // `parse_chat_stream_protocol_with_route_state`: no `done` means the
+        // request fails, but the already rendered text must not vanish.
+        let parsed = parse_chat_stream_protocol_with_route_state(
+            "partial Buddy answer",
+            Some("right"),
+            true,
+        );
+        assert!(parsed.protocol_valid);
+        assert!(!parsed.done);
+        assert_eq!(parsed.text, "partial Buddy answer");
+
+        let message = buddy_incomplete_stream_message(23, &parsed.text);
+        assert_eq!(
+            message,
+            "Buddy chat stream ended before completion (exit 23). Partial reply:\n\npartial Buddy answer"
+        );
+        assert_eq!(
+            buddy_incomplete_stream_message(23, " \n\t"),
+            "Buddy chat stream ended before completion (exit 23)."
+        );
     }
 
     #[test]
@@ -23093,7 +23260,7 @@ mod chat_subprocess_tests {
         let mut frame = Vec::with_capacity(MAX_BACKGROUND_RESULT_BYTES + 256);
         frame.extend_from_slice(
             format!(
-                "{{\"neoth_stream\":\"notice\",\"protocol_version\":{},\
+                "{CHAT_STREAM_CONTROL_PREFIX}{{\"neoth_stream\":\"notice\",\"protocol_version\":{},\
                   \"request_id\":\"{}\",\"control_token\":\"right\",\
                   \"kind\":\"background_result\",\"id\":\"0123456789abcdef\",\"text\":\"",
                 CHAT_STREAM_PROTOCOL_VERSION,
@@ -23177,7 +23344,7 @@ mod chat_subprocess_tests {
             "{}\n{}\n{}\n",
             skill_route_frame("right"),
             provider_delta_frame("right", 1, "reply"),
-            done_frame("right", 1, "reply")
+            control_frame(done_frame("right", 1, "reply"))
         );
         let parsed = parse_chat_stream_protocol(&raw, Some("right"));
         assert!(parsed.done);
@@ -23210,36 +23377,108 @@ mod chat_subprocess_tests {
         let delta = provider_delta_frame("right", 1, "reply");
         let provider_done = provider_done_frame("right", 1, "reply");
         let done = done_frame("right", 1, "reply");
-        let valid = format!("{route}\n{delta}\n{provider_done}\n{done}\n");
+        let valid = format!(
+            "{route}\n{delta}\n{provider_done}\n{}\n",
+            control_frame(done.clone())
+        );
         assert!(
             parse_chat_stream_protocol(&valid, Some("right")).protocol_valid,
-            "control fixture must prove the complete v3 contract"
+            "the exact accepted v1 record sequence must prove the complete v3 contract"
+        );
+        assert!(
+            !parse_chat_stream_protocol(&valid, Some("right"))
+                .text
+                .contains(CHAT_STREAM_CONTROL_NAMESPACE)
         );
 
-        let mut bad_delta: serde_json::Value = serde_json::from_str(&delta).unwrap();
+        let mut bad_delta: serde_json::Value = serde_json::from_str(control_json(&delta)).unwrap();
         bad_delta["sequence"] = serde_json::json!(2);
-        let bad_sequence = format!("{route}\n{bad_delta}\n{provider_done}\n{done}\n");
+        let bad_sequence = format!(
+            "{route}\n{}\n{provider_done}\n{}\n",
+            control_frame(bad_delta),
+            control_frame(done.clone())
+        );
         assert!(!parse_chat_stream_protocol(&bad_sequence, Some("right")).protocol_valid);
 
-        let mut bad_boundary: serde_json::Value = serde_json::from_str(&provider_done).unwrap();
+        let mut bad_boundary: serde_json::Value =
+            serde_json::from_str(control_json(&provider_done)).unwrap();
         bad_boundary["count"] = serde_json::json!(9);
-        let bad_count = format!("{route}\n{delta}\n{bad_boundary}\n{done}\n");
+        let bad_count = format!(
+            "{route}\n{delta}\n{}\n{}\n",
+            control_frame(bad_boundary),
+            control_frame(done.clone())
+        );
         assert!(!parse_chat_stream_protocol(&bad_count, Some("right")).protocol_valid);
 
-        let mut bad_hash: serde_json::Value = serde_json::from_str(&provider_done).unwrap();
+        let mut bad_hash: serde_json::Value =
+            serde_json::from_str(control_json(&provider_done)).unwrap();
         bad_hash["content_hash"] = serde_json::json!("0".repeat(64));
-        let bad_hash = format!("{route}\n{delta}\n{bad_hash}\n{done}\n");
+        let bad_hash = format!(
+            "{route}\n{delta}\n{}\n{}\n",
+            control_frame(bad_hash),
+            control_frame(done.clone())
+        );
         assert!(!parse_chat_stream_protocol(&bad_hash, Some("right")).protocol_valid);
 
         let mut bad_done = done.clone();
         bad_done["protocol_version"] = serde_json::json!(1);
-        let bad_version = format!("{route}\n{delta}\n{provider_done}\n{bad_done}\n");
+        let bad_version = format!(
+            "{route}\n{delta}\n{provider_done}\n{}\n",
+            control_frame(bad_done)
+        );
         assert!(!parse_chat_stream_protocol(&bad_version, Some("right")).protocol_valid);
 
         let mut bad_receipt = done;
         bad_receipt["finalization_receipt"] = serde_json::json!("0".repeat(64));
-        let bad_receipt = format!("{route}\n{delta}\n{provider_done}\n{bad_receipt}\n");
+        let bad_receipt = format!(
+            "{route}\n{delta}\n{provider_done}\n{}\n",
+            control_frame(bad_receipt)
+        );
         assert!(!parse_chat_stream_protocol(&bad_receipt, Some("right")).protocol_valid);
+    }
+
+    #[test]
+    fn reserved_control_namespace_never_renders_or_drops_unsupported_versions() {
+        let route = skill_route_frame("right");
+        let delta = provider_delta_frame("right", 1, "reply");
+        let boundary = provider_done_frame("right", 1, "reply");
+        let unsupported = format!(
+            "{CHAT_STREAM_CONTROL_NAMESPACE}2 {{\"neoth_stream\":\"done\",\"control_token\":\"right\"}}"
+        );
+
+        // The critical position is after an otherwise valid provider boundary:
+        // it must remain hidden and invalidate rather than silently vanish.
+        let raw = format!("{route}\n{delta}\n{boundary}\n{unsupported}\n");
+        let parsed = parse_chat_stream_protocol(&raw, Some("right"));
+        assert!(parsed.provider_done);
+        assert!(!parsed.protocol_valid);
+        assert_eq!(parsed.text, "reply");
+        assert!(!parsed.text.contains(CHAT_STREAM_CONTROL_NAMESPACE));
+
+        // The same wrong version fails as soon as it is distinguishable during
+        // incremental parsing, not only after its newline/EOF arrives.
+        let partial = format!("{route}\n{delta}\n{boundary}\n{unsupported}");
+        let parsed = parse_chat_stream_protocol_incremental(&partial, Some("right"));
+        assert!(parsed.provider_done);
+        assert!(!parsed.protocol_valid);
+        assert_eq!(parsed.text, "reply");
+
+        // Token-bound GUI grammar is byte-zero exact. Leading whitespace must
+        // not let either a future-version record or an otherwise valid v1 done
+        // bypass the reserved namespace check at finalization.
+        for framed in [
+            format!(" {unsupported}\n"),
+            format!(" {}\n", control_frame(done_frame("right", 1, "reply"))),
+        ] {
+            let parsed = parse_chat_stream_protocol(
+                &format!("{route}\n{delta}\n{boundary}\n{framed}"),
+                Some("right"),
+            );
+            assert!(parsed.provider_done);
+            assert!(!parsed.done);
+            assert!(!parsed.protocol_valid);
+            assert_eq!(parsed.text, "reply");
+        }
     }
 
     #[test]
@@ -23248,15 +23487,22 @@ mod chat_subprocess_tests {
         let delta = provider_delta_frame("right", 1, "reply");
         let provider_done = provider_done_frame("right", 1, "reply");
         let valid_done = done_frame("right", 1, "reply");
-        let duplicate = format!("{route}\n{delta}\n{provider_done}\n{valid_done}\n{valid_done}\n");
+        let duplicate = format!(
+            "{route}\n{delta}\n{provider_done}\n{}\n{}\n",
+            control_frame(valid_done.clone()),
+            control_frame(valid_done.clone())
+        );
         let parsed = parse_chat_stream_protocol(&duplicate, Some("right"));
         assert!(parsed.done);
         assert!(!parsed.protocol_valid);
 
         let mut malformed_first = valid_done.clone();
         malformed_first["count"] = serde_json::json!(999);
-        let shadowed =
-            format!("{route}\n{delta}\n{provider_done}\n{malformed_first}\n{valid_done}\n");
+        let shadowed = format!(
+            "{route}\n{delta}\n{provider_done}\n{}\n{}\n",
+            control_frame(malformed_first),
+            control_frame(valid_done)
+        );
         let parsed = parse_chat_stream_protocol(&shadowed, Some("right"));
         assert!(parsed.done);
         assert!(!parsed.protocol_valid);
@@ -23283,7 +23529,7 @@ mod chat_subprocess_tests {
             "text": "first line\nsecond line",
             "durable": true,
         });
-        let raw = format!("{route}\n{notice}\nreply");
+        let raw = format!("{route}\n{}\nreply", control_frame(notice));
         let parsed = parse_chat_stream_protocol(&raw, Some("right"));
 
         assert_eq!(parsed.text, "reply");
@@ -23328,7 +23574,11 @@ mod chat_subprocess_tests {
             "text": "result",
             "durable": true,
         });
-        let duplicate = format!("{route}\n{valid}\n{valid}\nreply");
+        let duplicate = format!(
+            "{route}\n{}\n{}\nreply",
+            control_frame(valid.clone()),
+            control_frame(valid)
+        );
         let parsed = parse_chat_stream_protocol(&duplicate, Some("right"));
         assert_eq!(parsed.text, "reply");
         assert_eq!(parsed.notices.len(), 1);
@@ -23344,8 +23594,10 @@ mod chat_subprocess_tests {
             "text": "result",
             "durable": true,
         });
-        let parsed =
-            parse_chat_stream_protocol(&format!("{route}\n{malformed}\nreply"), Some("right"));
+        let parsed = parse_chat_stream_protocol(
+            &format!("{route}\n{}\nreply", control_frame(malformed)),
+            Some("right"),
+        );
         assert_eq!(parsed.text, "reply");
         assert!(parsed.notices.is_empty());
         assert!(!parsed.protocol_valid);
@@ -23360,7 +23612,7 @@ mod chat_subprocess_tests {
             "text": "result",
         });
         let parsed = parse_chat_stream_protocol(
-            &format!("{route}\n{no_durable_receipt}\nreply"),
+            &format!("{route}\n{}\nreply", control_frame(no_durable_receipt)),
             Some("right"),
         );
         assert_eq!(parsed.text, "reply");
@@ -23377,8 +23629,10 @@ mod chat_subprocess_tests {
             "text": "result",
             "durable": false,
         });
-        let parsed =
-            parse_chat_stream_protocol(&format!("{route}\n{recoverable}\nreply"), Some("right"));
+        let parsed = parse_chat_stream_protocol(
+            &format!("{route}\n{}\nreply", control_frame(recoverable)),
+            Some("right"),
+        );
         assert_eq!(parsed.text, "reply");
         assert!(parsed.protocol_valid);
         assert_eq!(parsed.notices.len(), 1);

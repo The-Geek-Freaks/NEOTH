@@ -2922,6 +2922,12 @@ fn should_check_refusal_hard_block(
 }
 
 const CHAT_STREAM_PROTOCOL_VERSION: u8 = 3;
+/// The structured stream-control plane is deliberately distinguishable from
+/// provider text. `RS` is ASCII's record separator; the printable suffix makes
+/// the wire format inspectable in logs while the explicit version gives future
+/// readers a safe upgrade boundary. JSON alone is not a discriminator: a
+/// provider may legitimately stream JSON without a trailing newline.
+const CHAT_STREAM_CONTROL_PREFIX: &str = "\u{1e}NEOTH/1 ";
 
 fn stream_request_id(control_token: &str) -> String {
     use sha2::{Digest as _, Sha256};
@@ -3019,7 +3025,7 @@ fn write_provider_stream_delta(
     if let Some(control_token) = control_token {
         writeln!(
             output,
-            "{}",
+            "{CHAT_STREAM_CONTROL_PREFIX}{}",
             stream_provider_delta_line(control_token, sequence, text)?
         )?;
     } else {
@@ -3067,10 +3073,20 @@ fn stream_provider_done_line(
 
 fn write_stream_control_line(
     mut output: impl std::io::Write,
+    gui_control_token: Option<&str>,
     stream_control_line: &str,
 ) -> std::io::Result<()> {
     writeln!(output)?;
-    writeln!(output, "{stream_control_line}")?;
+    if gui_control_token.is_some() {
+        writeln!(output, "{CHAT_STREAM_CONTROL_PREFIX}{stream_control_line}")?;
+    } else {
+        // Public `neoth chat --stream` keeps its documented raw terminal JSON
+        // contract. The RS record wire is for the GUI's nonce-authenticated
+        // private control plane only; choosing it from the explicit launch
+        // token prevents a serialized-field-order heuristic from changing the
+        // CLI's JSONL surface.
+        writeln!(output, "{stream_control_line}")?;
+    }
     output.flush()
 }
 
@@ -3103,7 +3119,7 @@ fn write_skill_route_frame(
     report: &crate::skills::resolver::SkillRouteReport,
 ) -> std::io::Result<()> {
     let frame = skill_route_frame_line(control_token, report)?;
-    write_stream_control_line(&mut output, &frame)
+    write_stream_control_line(&mut output, Some(control_token), &frame)
 }
 
 fn write_authenticated_stream_notice(
@@ -3137,7 +3153,7 @@ fn write_authenticated_stream_notice(
         durable,
     })
     .map_err(std::io::Error::other)?;
-    write_stream_control_line(&mut output, &notice)
+    write_stream_control_line(&mut output, Some(control_token), &notice)
 }
 
 struct StreamDoneMetadata<'a> {
@@ -3225,7 +3241,7 @@ fn write_provider_done_and_build_stream_done_line(
         metadata.response_text,
         metadata.termination,
     ) {
-        write_stream_control_line(&mut output, &provider_done_line)?;
+        write_stream_control_line(&mut output, metadata.control_token, &provider_done_line)?;
     }
     Ok(build_stream_done_line(metadata))
 }
@@ -3337,7 +3353,7 @@ fn write_local_stream_completion_to(
             refusal_reason: None,
         })
         .map_err(std::io::Error::other)?;
-        write_stream_control_line(&mut output, &provider_done)?;
+        write_stream_control_line(&mut output, control_token, &provider_done)?;
     }
     let stream_done_line = serde_json::to_string(&LocalDone {
         neoth_stream: "done",
@@ -3358,7 +3374,15 @@ fn write_local_stream_completion_to(
         links: [],
     })
     .map_err(std::io::Error::other)?;
-    write_stream_control_line(&mut output, &stream_done_line)
+    if control_token.is_some() {
+        write_stream_control_line(&mut output, control_token, &stream_done_line)
+    } else {
+        // Local/preflight public streams contain no raw reply body, so retain
+        // a strict JSONL terminal instead of adding the separator needed by
+        // the provider's raw-text streaming path.
+        writeln!(output, "{stream_done_line}")?;
+        output.flush()
+    }
 }
 
 /// Human-facing turn notices belong to stderr while stdout is carrying the
@@ -5856,7 +5880,7 @@ async fn run_post_reply_pipelines(
         .context("WAL writer task failed after post-reply pipelines")?;
     if let Some(stream_done_line) = stream_plan.done_line {
         let stdout = std::io::stdout();
-        write_stream_control_line(stdout.lock(), &stream_done_line)
+        write_stream_control_line(stdout.lock(), stream_plan.control_token, &stream_done_line)
             .context("write authenticated stream completion marker")?;
     }
     Ok(())
@@ -11229,9 +11253,9 @@ mod tests {
         });
         let mut stdout = b"primary reply".to_vec();
 
-        write_stream_control_line(&mut stdout, &provider_done_line).unwrap();
+        write_stream_control_line(&mut stdout, Some(control_token), &provider_done_line).unwrap();
         stdout.extend_from_slice(b"\n-- review gate --\n  spec: PASS\n\n[spec]\nlooks good\n");
-        write_stream_control_line(&mut stdout, &stream_done_line).unwrap();
+        write_stream_control_line(&mut stdout, Some(control_token), &stream_done_line).unwrap();
 
         let stdout = String::from_utf8(stdout).unwrap();
         let provider_done_offset = stdout.find(&provider_done_line).unwrap();
@@ -11245,8 +11269,16 @@ mod tests {
             .rev()
             .find(|line| !line.trim().is_empty())
             .unwrap();
-        assert_eq!(final_non_empty, stream_done_line);
-        let sentinel: serde_json::Value = serde_json::from_str(final_non_empty).unwrap();
+        assert_eq!(
+            final_non_empty,
+            format!("{CHAT_STREAM_CONTROL_PREFIX}{stream_done_line}")
+        );
+        let sentinel: serde_json::Value = serde_json::from_str(
+            final_non_empty
+                .strip_prefix(CHAT_STREAM_CONTROL_PREFIX)
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(sentinel["neoth_stream"], "done");
         assert_eq!(
             sentinel["control_token"],
@@ -11451,10 +11483,10 @@ mod tests {
     }
 
     #[test]
-    fn stream_finalization_receipt_uses_the_canonical_wire_fixture() {
+    fn stream_finalization_receipt_v3_uses_the_canonical_wire_fixture() {
         assert_eq!(
             stream_finalization_receipt("fixture-request-v2", 7, "fixture-content-hash"),
-            "f29748caef33c551f3324f3f481e7afcd17de8c4452ca97e1bcc772d0c66c98f"
+            "8530bd506efb08270367d8bb8e4724f24beeed76967d7f1e965408311b210869"
         );
     }
 
@@ -11477,10 +11509,63 @@ mod tests {
                 .find(|line| !line.is_empty())
                 .unwrap()
                 .to_owned();
-            let frame: serde_json::Value = serde_json::from_str(&line).unwrap();
+            let frame: serde_json::Value =
+                serde_json::from_str(line.strip_prefix(CHAT_STREAM_CONTROL_PREFIX).unwrap())
+                    .unwrap();
             assert_eq!(frame["neoth_stream"], "notice");
             assert_eq!(frame["durable"], durable);
         }
+    }
+
+    #[test]
+    fn gui_private_stream_records_use_the_versioned_rs_wire_prefix() {
+        let control_token = "0123456789abcdef0123456789abcdef";
+        let mut output = Vec::new();
+
+        write_provider_stream_delta(&mut output, Some(control_token), 1, "hello").unwrap();
+        write_stream_control_line(
+            &mut output,
+            Some(control_token),
+            "{\"neoth_stream\":\"done\"}",
+        )
+        .unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let records = output
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(records.len(), 2);
+        assert!(
+            records
+                .iter()
+                .all(|record| record.starts_with(CHAT_STREAM_CONTROL_PREFIX))
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                records[0].strip_prefix(CHAT_STREAM_CONTROL_PREFIX).unwrap()
+            )
+            .unwrap()["neoth_stream"],
+            "provider_delta"
+        );
+    }
+
+    #[test]
+    fn public_local_stream_terminal_remains_raw_jsonl() {
+        let mut output = Vec::new();
+        write_local_stream_completion_to(&mut output, None, 1).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let lines = output.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines.len(),
+            1,
+            "public terminal output must be strict JSONL"
+        );
+        assert!(!lines[0].starts_with(CHAT_STREAM_CONTROL_PREFIX));
+        let terminal: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(terminal["neoth_stream"], "done");
+        assert!(terminal["control_token"].is_null());
     }
 
     #[test]
@@ -11513,7 +11598,7 @@ mod tests {
             }
         }
 
-        let error = write_stream_control_line(RejectWrites, "{}").unwrap_err();
+        let error = write_stream_control_line(RejectWrites, None, "{}").unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
 
         let report = crate::skills::resolver::SkillRouteReport {
@@ -11543,7 +11628,12 @@ mod tests {
             .unwrap()
             .lines()
             .filter(|line| !line.trim().is_empty())
-            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(
+                    line.strip_prefix(CHAT_STREAM_CONTROL_PREFIX).unwrap(),
+                )
+                .unwrap()
+            })
             .collect::<Vec<_>>();
         assert_eq!(frames.len(), 2);
         assert_eq!(frames[0]["neoth_stream"], "provider_done");
