@@ -108,9 +108,30 @@ fn skill_uninstall_receipt(report: &installer::UninstallReport) -> SkillUninstal
     }
 }
 
+/// Human-readable mutation status deliberately omits skill identifiers and
+/// filesystem locations. Structured output retains the explicit receipt for
+/// callers that require those fields.
+fn skill_install_status_message(report: &installer::InstallReport) -> &'static str {
+    if report.replaced_existing {
+        "Reinstalled skill."
+    } else {
+        "Installed skill."
+    }
+}
+
+/// Human-readable mutation status deliberately omits skill identifiers and
+/// filesystem locations. Structured output retains the explicit receipt for
+/// callers that require those fields.
+fn skill_uninstall_status_message(report: &installer::UninstallReport) -> &'static str {
+    if report.removed {
+        "Uninstalled skill."
+    } else {
+        "Skill was not installed; nothing to remove."
+    }
+}
+
 fn print_skill_uninstall_report(
     report: &installer::UninstallReport,
-    skills_dir: &Path,
     output: OutputFormat,
 ) -> Result<()> {
     match output {
@@ -121,15 +142,7 @@ fn print_skill_uninstall_report(
             );
         }
         OutputFormat::Table => {
-            if report.removed {
-                println!("Uninstalled `{}`", report.id);
-            } else {
-                println!(
-                    "Skill `{}` was not installed under {} — nothing to remove.",
-                    report.id,
-                    skills_dir.display()
-                );
-            }
+            println!("{}", skill_uninstall_status_message(report));
             print_operator_skill_warnings(&report.warnings);
         }
     }
@@ -858,16 +871,7 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                 );
             }
             OutputFormat::Table => {
-                let verb = if report.replaced_existing {
-                    "Reinstalled"
-                } else {
-                    "Installed"
-                };
-                println!(
-                    "{verb} `{}` at {}",
-                    report.id,
-                    report.installed_at.display()
-                );
+                println!("{}", skill_install_status_message(&report));
                 print_operator_skill_warnings(&report.warnings);
             }
         }
@@ -900,7 +904,7 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
         )?;
         let mut prepared = match preparation {
             installer::PreparedSkillRemovalOutcome::Unchanged(report) => {
-                print_skill_uninstall_report(&report, &skills_dir, args.output)?;
+                print_skill_uninstall_report(&report, args.output)?;
                 return Ok(());
             }
             installer::PreparedSkillRemovalOutcome::Prepared(prepared) => *prepared,
@@ -962,7 +966,7 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
         reconcile_pending_skill_mutation(&home, &skills_dir)
             .await
             .context("skill removal committed, but its correlated audit remains pending")?;
-        print_skill_uninstall_report(&report, &skills_dir, args.output)?;
+        print_skill_uninstall_report(&report, args.output)?;
         return Ok(());
     }
 
@@ -1820,6 +1824,56 @@ mod tests {
                 "d".repeat(64)
             )
         );
+    }
+
+    #[test]
+    fn human_mutation_statuses_are_static_and_do_not_disclose_skill_details() {
+        let skill_id = "private-finance-forecast";
+        let installed_at = PathBuf::from("C:\\Users\\alice\\.neoth\\skills").join(skill_id);
+        let install = installer::InstallReport {
+            id: skill_id.to_string(),
+            installed_at: installed_at.clone(),
+            replaced_existing: false,
+            source_manifest_sha256: "a".repeat(64),
+            source_generation_sha256: "b".repeat(64),
+            replaced_generation_sha256: None,
+            warnings: Vec::new(),
+        };
+        let reinstall = installer::InstallReport {
+            replaced_existing: true,
+            ..install.clone()
+        };
+        let removed = installer::UninstallReport {
+            id: skill_id.to_string(),
+            removed: true,
+            removed_generation_sha256: Some("c".repeat(64)),
+            warnings: Vec::new(),
+        };
+        let unchanged = installer::UninstallReport {
+            removed: false,
+            removed_generation_sha256: None,
+            ..removed.clone()
+        };
+
+        let statuses = [
+            skill_install_status_message(&install),
+            skill_install_status_message(&reinstall),
+            skill_uninstall_status_message(&removed),
+            skill_uninstall_status_message(&unchanged),
+        ];
+        assert_eq!(
+            statuses,
+            [
+                "Installed skill.",
+                "Reinstalled skill.",
+                "Uninstalled skill.",
+                "Skill was not installed; nothing to remove.",
+            ]
+        );
+        for status in statuses {
+            assert!(!status.contains(skill_id));
+            assert!(!status.contains(installed_at.to_string_lossy().as_ref()));
+        }
     }
 
     #[test]

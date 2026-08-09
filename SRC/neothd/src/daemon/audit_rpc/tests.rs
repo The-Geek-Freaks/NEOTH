@@ -12,7 +12,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::n8n_api::auth::AuthCooldown;
 
-const TEST_ENDPOINT_NONCE: &str = "00112233445566778899aabbccddeeff";
+fn test_endpoint_nonce() -> String {
+    let mut nonce = [0u8; 16];
+    getrandom::getrandom(&mut nonce)
+        .expect("OS CSPRNG must generate the audit-RPC test endpoint nonce");
+    hex::encode(nonce)
+}
 
 fn canonical_test_wal(home: &std::path::Path, namespace: &str) -> std::path::PathBuf {
     let wal_dir = home.join("wal");
@@ -23,10 +28,11 @@ fn canonical_test_wal(home: &std::path::Path, namespace: &str) -> std::path::Pat
 fn publish_test_endpoint(
     home: &std::path::Path,
     endpoint: &AuditEndpointV2,
+    endpoint_nonce: &str,
 ) -> crate::daemon::pidfile::PidGuard {
     let mut guard = crate::daemon::pidfile::acquire(&home.join("neothd.pid")).unwrap();
-    write_sidecar(home, endpoint, std::process::id(), TEST_ENDPOINT_NONCE).unwrap();
-    guard.publish_endpoint_nonce(TEST_ENDPOINT_NONCE).unwrap();
+    write_sidecar(home, endpoint, std::process::id(), endpoint_nonce).unwrap();
+    guard.publish_endpoint_nonce(endpoint_nonce).unwrap();
     guard
 }
 
@@ -272,18 +278,13 @@ fn token_round_trips_through_secure_write() {
 #[test]
 fn sidecar_round_trips_typed_endpoint_without_bearer_material() {
     let dir = tempdir().unwrap();
-    let endpoint = super::transport::endpoint_for_home(dir.path(), TEST_ENDPOINT_NONCE).unwrap();
-    write_sidecar(
-        dir.path(),
-        &endpoint,
-        std::process::id(),
-        TEST_ENDPOINT_NONCE,
-    )
-    .unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
+    let endpoint = super::transport::endpoint_for_home(dir.path(), &endpoint_nonce).unwrap();
+    write_sidecar(dir.path(), &endpoint, std::process::id(), &endpoint_nonce).unwrap();
     let record = read_sidecar(dir.path()).unwrap();
     assert_eq!(record.endpoint, endpoint);
     assert_eq!(record.pid, std::process::id());
-    assert_eq!(record.endpoint_nonce, TEST_ENDPOINT_NONCE);
+    assert_eq!(record.endpoint_nonce, endpoint_nonce);
     let raw = std::fs::read(sidecar_path(dir.path())).unwrap();
     assert!(!String::from_utf8_lossy(&raw).contains("supersecrettoken"));
 }
@@ -291,15 +292,10 @@ fn sidecar_round_trips_typed_endpoint_without_bearer_material() {
 #[test]
 fn sidecar_guard_removes_on_drop() {
     let dir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     init_rpc_token(dir.path()).unwrap();
-    let endpoint = super::transport::endpoint_for_home(dir.path(), TEST_ENDPOINT_NONCE).unwrap();
-    write_sidecar(
-        dir.path(),
-        &endpoint,
-        std::process::id(),
-        TEST_ENDPOINT_NONCE,
-    )
-    .unwrap();
+    let endpoint = super::transport::endpoint_for_home(dir.path(), &endpoint_nonce).unwrap();
+    write_sidecar(dir.path(), &endpoint, std::process::id(), &endpoint_nonce).unwrap();
     {
         let _g = SidecarGuard::new(dir.path().to_path_buf());
         assert!(sidecar_path(dir.path()).exists());
@@ -311,15 +307,10 @@ fn sidecar_guard_removes_on_drop() {
 #[tokio::test]
 async fn daemon_sidecar_guard_aborts_its_published_listener_on_early_return() {
     let dir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     init_rpc_token(dir.path()).unwrap();
-    let endpoint = super::transport::endpoint_for_home(dir.path(), TEST_ENDPOINT_NONCE).unwrap();
-    write_sidecar(
-        dir.path(),
-        &endpoint,
-        std::process::id(),
-        TEST_ENDPOINT_NONCE,
-    )
-    .unwrap();
+    let endpoint = super::transport::endpoint_for_home(dir.path(), &endpoint_nonce).unwrap();
+    write_sidecar(dir.path(), &endpoint, std::process::id(), &endpoint_nonce).unwrap();
     let task = tokio::spawn(std::future::pending::<()>());
     let guard = SidecarGuard::with_listener(dir.path().to_path_buf(), task.abort_handle());
     drop(guard);
@@ -334,6 +325,7 @@ async fn daemon_sidecar_guard_aborts_its_published_listener_on_early_return() {
 #[tokio::test]
 async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
     let segdir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let seg = canonical_test_wal(segdir.path(), "audit-idle-shutdown");
     let (writer, wal_join) = crate::wal::spawn_for_home(seg, segdir.path().to_path_buf()).unwrap();
     let cooldown = Arc::new(AuthCooldown::new());
@@ -346,7 +338,7 @@ async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
         .unwrap();
     let mut idle = super::transport::connect(&addr).await.unwrap();
@@ -374,6 +366,7 @@ async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
 async fn valid_token_appends_allowed_frame_and_emits_accept() {
     use crate::wal::events::EVENT_TYPE_OS_APP_LAUNCH;
     let segdir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let seg = canonical_test_wal(segdir.path(), "audit-valid");
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
@@ -386,7 +379,7 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
         .unwrap();
 
@@ -433,6 +426,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
 
     let home = tempdir().unwrap();
     let peer_home = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let seg = canonical_test_wal(home.path(), "audit-membership-rpc");
     let (writer, wal_join) = crate::wal::spawn_for_home(seg, home.path().to_path_buf()).unwrap();
     let store = MembershipStore::open(home.path()).unwrap();
@@ -449,7 +443,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         membership: Some(Arc::clone(&controller)),
         audit_routes_enabled: false,
     };
-    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
         .unwrap();
 
@@ -625,6 +619,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
 #[tokio::test]
 async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
     let segdir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let seg = canonical_test_wal(segdir.path(), "audit-subtype");
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
@@ -637,7 +632,7 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
         .unwrap();
     let subtype = crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8;
@@ -676,6 +671,7 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
 #[tokio::test]
 async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_disabled() {
     let home = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let source = home.path().join("incoming-internal-route");
     let skills_dir = home.path().join("skills");
     std::fs::create_dir_all(&source).unwrap();
@@ -703,10 +699,10 @@ async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_d
         membership: None,
         audit_routes_enabled: false,
     };
-    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
         .unwrap();
-    let _pid_guard = publish_test_endpoint(home.path(), &addr);
+    let _pid_guard = publish_test_endpoint(home.path(), &addr, &endpoint_nonce);
 
     assert_eq!(
         raw_post_path(&addr, "/health", Some(&token), "{}").await.0,
@@ -755,6 +751,7 @@ async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_d
 #[tokio::test]
 async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
     let segdir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let mut transitions =
         crate::skills::registry::subscribe_runtime_authority_transitions_for_test();
     let seg = canonical_test_wal(segdir.path(), "audit-skill-dedup");
@@ -769,7 +766,7 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
         .unwrap();
     let subtype = crate::wal::events::ExtendedSubtype::SkillInstallResult as u8;
@@ -846,6 +843,7 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
 #[tokio::test]
 async fn unauthenticated_authority_ingress_cannot_poison_unrelated_skill_scans() {
     let home = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let wal_dir = home.path().join("wal");
     std::fs::create_dir_all(&wal_dir).unwrap();
     crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key")).unwrap();
@@ -862,7 +860,7 @@ async fn unauthenticated_authority_ingress_cannot_poison_unrelated_skill_scans()
         membership: None,
         audit_routes_enabled: true,
     };
-    let (address, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+    let (address, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
         .unwrap();
     let subtype = crate::wal::events::ExtendedSubtype::SkillAuthorityDecision as u8;
@@ -1243,6 +1241,7 @@ async fn skill_mutation_singleflight_is_bounded_and_recovers_capacity() {
 #[tokio::test]
 async fn wrong_token_is_401_and_writes_no_frame() {
     let segdir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let seg = canonical_test_wal(segdir.path(), "audit-oversized");
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
@@ -1255,7 +1254,7 @@ async fn wrong_token_is_401_and_writes_no_frame() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
         .unwrap();
     let body = r#"{"event_type":168,"payload_b64":"e30="}"#;
@@ -1277,6 +1276,7 @@ async fn wrong_token_is_401_and_writes_no_frame() {
 #[tokio::test]
 async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
     let segdir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let seg = canonical_test_wal(segdir.path(), "audit-cooldown-reset");
     let (writer, wal_join) = crate::wal::spawn_for_home(seg, segdir.path().to_path_buf()).unwrap();
     let cooldown = Arc::new(AuthCooldown::new());
@@ -1294,7 +1294,7 @@ async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
         .unwrap();
 
@@ -1314,6 +1314,7 @@ async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
 async fn blocked_event_type_is_422_and_emits_reject() {
     use crate::wal::events::EVENT_TYPE_AUDIT_RPC_REJECT;
     let segdir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let seg = canonical_test_wal(segdir.path(), "audit-route");
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
@@ -1326,7 +1327,7 @@ async fn blocked_event_type_is_422_and_emits_reject() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
         .unwrap();
     // 0x10 (daemon lifecycle) is NOT forwardable.
@@ -1348,6 +1349,7 @@ async fn client_round_trips_against_a_live_listener() {
     use crate::wal::events::EVENT_TYPE_OS_FILE_READ;
     let home = tempdir().unwrap();
     let seg_dir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let seg = canonical_test_wal(seg_dir.path(), "audit-stale-endpoint");
     let token = init_rpc_token(home.path()).unwrap();
     let (writer, wal_join) =
@@ -1361,10 +1363,10 @@ async fn client_round_trips_against_a_live_listener() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
         .unwrap();
-    let _daemon_owner = publish_test_endpoint(home.path(), &addr);
+    let _daemon_owner = publish_test_endpoint(home.path(), &addr, &endpoint_nonce);
     assert!(
         is_reachable(home.path()),
         "live same-user IPC health probe must accept the exact response body"
@@ -1393,6 +1395,7 @@ async fn client_round_trips_against_a_live_listener() {
 async fn jobs_run_token_client_is_request_bound_and_single_use() {
     let home = tempdir().unwrap();
     let seg_dir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let seg = canonical_test_wal(seg_dir.path(), "audit-stale-nonce");
     let token = init_rpc_token(home.path()).unwrap();
     let (writer, wal_join) =
@@ -1406,10 +1409,10 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
         .unwrap();
-    let _daemon_owner = publish_test_endpoint(home.path(), &addr);
+    let _daemon_owner = publish_test_endpoint(home.path(), &addr, &endpoint_nonce);
     let binding = "ab".repeat(32);
     let approval = mint_jobs_run_token(home.path(), &binding)
         .await
@@ -1448,6 +1451,7 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
 async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
     let home = tempdir().unwrap();
     let seg_dir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let seg = canonical_test_wal(seg_dir.path(), "audit-dead-writer");
     let token = init_rpc_token(home.path()).unwrap();
     let (writer, wal_join) = crate::wal::spawn_for_home(seg, seg_dir.path().to_path_buf()).unwrap();
@@ -1463,10 +1467,10 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
         .unwrap();
-    let _daemon_owner = publish_test_endpoint(home.path(), &addr);
+    let _daemon_owner = publish_test_endpoint(home.path(), &addr, &endpoint_nonce);
 
     assert!(
         mint_jobs_run_token(home.path(), &"ab".repeat(32))
@@ -1481,6 +1485,7 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
 async fn subtype_client_round_trips_against_a_live_listener() {
     let home = tempdir().unwrap();
     let seg_dir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let seg = canonical_test_wal(seg_dir.path(), "audit-token-rotation");
     let token = init_rpc_token(home.path()).unwrap();
     let (writer, wal_join) =
@@ -1494,10 +1499,10 @@ async fn subtype_client_round_trips_against_a_live_listener() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
         .unwrap();
-    let _daemon_owner = publish_test_endpoint(home.path(), &addr);
+    let _daemon_owner = publish_test_endpoint(home.path(), &addr, &endpoint_nonce);
     let subtype = crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8;
 
     try_post_audit_frame_with_subtype(home.path(), 0x00, subtype, b"{}")
@@ -1528,12 +1533,13 @@ async fn client_rejects_stale_sidecar_with_dead_pid() {
     // an attacker could occupy the stale OS endpoint, and sending the bearer
     // token there would disclose it.
     let home = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     init_rpc_token(home.path()).unwrap();
     // 999_999_999 is above any OS pid_max (and stays positive as an i32
     // pid_t, so the unix `kill(pid,0)` check can't alias to the -1
     // "whole process group" sentinel) — reliably a dead pid on all OSes.
-    let endpoint = super::transport::endpoint_for_home(home.path(), TEST_ENDPOINT_NONCE).unwrap();
-    write_sidecar(home.path(), &endpoint, 999_999_999, TEST_ENDPOINT_NONCE).unwrap();
+    let endpoint = super::transport::endpoint_for_home(home.path(), &endpoint_nonce).unwrap();
+    write_sidecar(home.path(), &endpoint, 999_999_999, &endpoint_nonce).unwrap();
     let r = try_post_audit_frame(home.path(), 0xA8, b"{}").await;
     assert!(
         matches!(r, Err(AuditRpcClientError::Unavailable(ref m)) if m.contains("stale")),
@@ -1552,6 +1558,7 @@ async fn client_rejects_stale_sidecar_with_dead_pid() {
 async fn listener_serves_more_than_one_connection() {
     let home = tempdir().unwrap();
     let seg_dir = tempdir().unwrap();
+    let endpoint_nonce = test_endpoint_nonce();
     let seg = canonical_test_wal(seg_dir.path(), "audit-two-connections");
     let (writer, wal_join) = crate::wal::spawn_for_home(seg, seg_dir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
@@ -1563,7 +1570,7 @@ async fn listener_serves_more_than_one_connection() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+    let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
         .unwrap();
 

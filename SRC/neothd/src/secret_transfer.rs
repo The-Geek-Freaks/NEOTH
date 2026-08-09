@@ -1040,7 +1040,28 @@ mod tests {
         TransferAuthority::from_injected_key([0x42; 32]).unwrap()
     }
 
-    fn command(operation: TransferOperation, destination_id: &str, nonce: u8) -> OperatorCommand {
+    /// Mint a nonce from the operating system for each independent test command.
+    ///
+    /// A literal nonce makes the test fixture look like a production reuse to
+    /// static analysis, and can accidentally hide uniqueness regressions. Tests
+    /// that exercise replay protection explicitly retain and reuse the one
+    /// generated value they intend to replay.
+    fn fresh_nonce() -> TransferNonce {
+        let mut bytes = [0_u8; 32];
+        getrandom::getrandom(&mut bytes)
+            .expect("OS entropy source unavailable while minting test transfer nonce");
+        TransferNonce::new(bytes)
+    }
+
+    fn command(operation: TransferOperation, destination_id: &str) -> OperatorCommand {
+        command_with_nonce(operation, destination_id, fresh_nonce())
+    }
+
+    fn command_with_nonce(
+        operation: TransferOperation,
+        destination_id: &str,
+        nonce: TransferNonce,
+    ) -> OperatorCommand {
         OperatorCommand::new(
             OperatorPrincipal::new_metadata("admin:alex", "os-session:7").unwrap(),
             CommandOrigin::new("cli", "instance:desktop", "conversation:42").unwrap(),
@@ -1050,7 +1071,7 @@ mod tests {
             operation,
             NOW,
             NOW + 60,
-            TransferNonce::new([nonce; 32]),
+            nonce,
         )
         .unwrap()
     }
@@ -1059,7 +1080,7 @@ mod tests {
         let authority = authority();
         let mut ledger = PermitUseLedger::new();
         let mut execution = authority
-            .authorize(command(operation, "chat:123", 1))
+            .authorize(command(operation, "chat:123"))
             .unwrap()
             .into_execution();
         execution.begin(&authority, &mut ledger, NOW).unwrap();
@@ -1079,9 +1100,10 @@ mod tests {
     #[test]
     fn permit_rejects_any_destination_binding_mutation() {
         let authority = authority();
-        let original = command(TransferOperation::Copy, "chat:123", 3);
+        let nonce = fresh_nonce();
+        let original = command_with_nonce(TransferOperation::Copy, "chat:123", nonce);
         let plan = authority.authorize(original).unwrap();
-        let mutated = command(TransferOperation::Copy, "chat:999", 3);
+        let mutated = command_with_nonce(TransferOperation::Copy, "chat:999", nonce);
         assert_eq!(
             authority
                 .verify_permit(&plan.permit, &mutated, NOW)
@@ -1093,7 +1115,7 @@ mod tests {
     #[test]
     fn permit_binds_the_exact_turn_request_id() {
         let authority = authority();
-        let original = command(TransferOperation::Copy, "chat:123", 33);
+        let original = command(TransferOperation::Copy, "chat:123");
         let plan = authority.authorize(original.clone()).unwrap();
         let mut mutated = original;
         mutated.turn_request_id = "request:other-turn".to_owned();
@@ -1108,7 +1130,7 @@ mod tests {
     #[test]
     fn permit_expiry_is_exclusive_and_fail_closed() {
         let authority = authority();
-        let command = command(TransferOperation::Copy, "chat:123", 4);
+        let command = command(TransferOperation::Copy, "chat:123");
         let plan = authority.authorize(command.clone()).unwrap();
         assert_eq!(
             authority
@@ -1121,7 +1143,7 @@ mod tests {
     #[test]
     fn consumed_nonce_rejects_reissued_permit_replay() {
         let authority = authority();
-        let command = command(TransferOperation::Copy, "chat:123", 5);
+        let command = command(TransferOperation::Copy, "chat:123");
         let plan_one = authority.authorize(command.clone()).unwrap();
         let plan_two = authority.authorize(command).unwrap();
         let mut ledger = PermitUseLedger::new();
@@ -1151,7 +1173,7 @@ mod tests {
 
         let authority = authority();
         let mut execution = authority
-            .authorize(command(TransferOperation::Copy, "chat:123", 55))
+            .authorize(command(TransferOperation::Copy, "chat:123"))
             .unwrap()
             .into_execution();
         assert_eq!(
@@ -1167,7 +1189,7 @@ mod tests {
     fn illegal_state_transitions_are_rejected() {
         let authority = authority();
         let mut execution = authority
-            .authorize(command(TransferOperation::Copy, "chat:123", 6))
+            .authorize(command(TransferOperation::Copy, "chat:123"))
             .unwrap()
             .into_execution();
         assert_eq!(
@@ -1236,7 +1258,7 @@ mod tests {
             TransferOperation::Copy,
             NOW,
             NOW + 60,
-            TransferNonce::new([7; 32]),
+            fresh_nonce(),
         )
         .unwrap();
         let mut ledger = PermitUseLedger::new();

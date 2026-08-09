@@ -300,14 +300,17 @@ fn verify_named_pipe_current_user_dacl(handle: HANDLE) -> Result<()> {
         ace_start >= dacl_start && ace_header_end <= dacl_end,
         "audit-RPC named-pipe ACE header lies outside the validated ACL"
     );
-    // SAFETY: GetAce returned the sole ACE in the live descriptor and the
-    // complete, potentially unaligned header lies inside AclBytesInUse.
-    let header = unsafe { ace.cast::<ACE_HEADER>().read_unaligned() };
+    // SAFETY: GetAce returned the sole ACE in the live descriptor, and the
+    // preceding range check proved these exact header bytes lie inside
+    // AclBytesInUse. They are read as bytes because the ACE is not guaranteed
+    // to have Rust's alignment for a typed dereference.
+    let ace_header_bytes =
+        unsafe { std::slice::from_raw_parts(ace.cast::<u8>(), std::mem::size_of::<ACE_HEADER>()) };
+    let (ace_type, ace_flags, ace_size) = parse_ace_header(ace_header_bytes)?;
     ensure!(
-        header.AceType == 0 && u32::from(header.AceFlags) & INHERITED_ACE == 0,
+        ace_type == 0 && u32::from(ace_flags) & INHERITED_ACE == 0,
         "audit-RPC named-pipe DACL ACE is not one explicit allow entry"
     );
-    let ace_size = usize::from(header.AceSize);
     let ace_end = ace_start
         .checked_add(ace_size)
         .context("audit-RPC named-pipe ACE size overflows the address space")?;
@@ -315,9 +318,11 @@ fn verify_named_pipe_current_user_dacl(handle: HANDLE) -> Result<()> {
         ace_size >= std::mem::size_of::<ACCESS_ALLOWED_ACE>() && ace_end <= dacl_end,
         "audit-RPC named-pipe allow ACE is truncated"
     );
-    // SAFETY: the complete, potentially unaligned fixed ACE prefix lies inside
-    // the validated ACE extent. The variable SID is bounded separately below.
-    let allowed = unsafe { ace.cast::<ACCESS_ALLOWED_ACE>().read_unaligned() };
+    // SAFETY: the preceding size and range checks prove the complete ACE
+    // extent lies inside the live descriptor. Parsing this bounded byte slice
+    // avoids a potentially unaligned typed ACE dereference.
+    let ace_bytes = unsafe { std::slice::from_raw_parts(ace.cast::<u8>(), ace_size) };
+    let mask = parse_access_allowed_ace_mask(ace_bytes)?;
     // The SDDL below writes `GA` (GENERIC_ALL), but the kernel applies the
     // object's generic mapping when the descriptor lands on the pipe, so what
     // `GetSecurityInfo` reads back is always the mapped FILE_ALL_ACCESS —
@@ -332,10 +337,10 @@ fn verify_named_pipe_current_user_dacl(handle: HANDLE) -> Result<()> {
     // demands one explicit full-control ACE and nothing weaker.
     const MAPPED_FULL_CONTROL: u32 = FILE_ALL_ACCESS;
     ensure!(
-        allowed.Mask == MAPPED_FULL_CONTROL,
+        mask == MAPPED_FULL_CONTROL,
         "audit-RPC named-pipe allow ACE mask is {:#010x}; expected the mapped form of \
          GENERIC_ALL ({MAPPED_FULL_CONTROL:#010x})",
-        allowed.Mask
+        mask
     );
     let sid_offset = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
     const SID_FIXED_HEADER_BYTES: usize = 8;
@@ -343,10 +348,6 @@ fn verify_named_pipe_current_user_dacl(handle: HANDLE) -> Result<()> {
         ace_size >= sid_offset + SID_FIXED_HEADER_BYTES,
         "audit-RPC named-pipe allow ACE has a truncated SID header"
     );
-    // SAFETY: the ACE extent was proven to lie inside AclBytesInUse. Turning
-    // exactly that extent into bytes lets all variable-length SID inspection
-    // below use safe indexing instead of raw-pointer dereferences.
-    let ace_bytes = unsafe { std::slice::from_raw_parts(ace.cast::<u8>(), ace_size) };
     let sid_bytes = &ace_bytes[sid_offset..];
     let sub_authority_count = usize::from(sid_bytes[1]);
     let sid_size = SID_FIXED_HEADER_BYTES
@@ -375,6 +376,32 @@ fn verify_named_pipe_current_user_dacl(handle: HANDLE) -> Result<()> {
         "audit-RPC named-pipe DACL is not bound to the current TokenUser"
     );
     Ok(())
+}
+
+/// Decode the fixed `ACE_HEADER` fields without assuming pointer alignment.
+///
+/// Windows ACLs are little-endian on every supported target, so the encoded
+/// `ACE_HEADER::AceSize` is decoded explicitly rather than through a typed
+/// pointer supplied by `GetAce`.
+fn parse_ace_header(ace_bytes: &[u8]) -> Result<(u8, u8, usize)> {
+    const ACE_HEADER_BYTES: usize = std::mem::size_of::<ACE_HEADER>();
+    let header = ace_bytes
+        .get(..ACE_HEADER_BYTES)
+        .context("audit-RPC named-pipe ACE header is truncated")?;
+    let ace_size = usize::from(u16::from_le_bytes([header[2], header[3]]));
+    Ok((header[0], header[1], ace_size))
+}
+
+/// Decode the `ACCESS_ALLOWED_ACE::Mask` prefix without assuming alignment.
+fn parse_access_allowed_ace_mask(ace_bytes: &[u8]) -> Result<u32> {
+    const ACCESS_ALLOWED_ACE_MASK_END: usize = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
+    let mask_bytes = ace_bytes
+        .get(std::mem::size_of::<ACE_HEADER>()..ACCESS_ALLOWED_ACE_MASK_END)
+        .context("audit-RPC named-pipe allow ACE is truncated before its mask")?;
+    let mask: [u8; std::mem::size_of::<u32>()] = mask_bytes
+        .try_into()
+        .context("audit-RPC named-pipe allow ACE mask has an invalid width")?;
+    Ok(u32::from_le_bytes(mask))
 }
 
 struct CurrentUserSecurityDescriptor(*mut c_void);
@@ -783,6 +810,42 @@ fn remaining_millis(deadline: Instant) -> std::io::Result<u32> {
         ));
     }
     Ok(remaining.as_millis().clamp(1, u32::MAX as u128) as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_access_allowed_ace_mask, parse_ace_header};
+
+    #[test]
+    fn ace_header_parser_decodes_little_endian_fields() {
+        let (ace_type, ace_flags, ace_size) =
+            parse_ace_header(&[0, 0x10, 0x34, 0x12]).expect("complete ACE header");
+
+        assert_eq!(ace_type, 0);
+        assert_eq!(ace_flags, 0x10);
+        assert_eq!(ace_size, 0x1234);
+    }
+
+    #[test]
+    fn ace_header_parser_rejects_truncated_header() {
+        assert!(parse_ace_header(&[0, 0, 12]).is_err());
+    }
+
+    #[test]
+    fn access_allowed_ace_mask_parser_decodes_little_endian_mask() {
+        let mask = parse_access_allowed_ace_mask(&[
+            0, 0, 16, 0, // ACE_HEADER
+            0x78, 0x56, 0x34, 0x12, // ACCESS_ALLOWED_ACE::Mask
+        ])
+        .expect("complete fixed allow-ACE prefix");
+
+        assert_eq!(mask, 0x1234_5678);
+    }
+
+    #[test]
+    fn access_allowed_ace_mask_parser_rejects_truncated_prefix() {
+        assert!(parse_access_allowed_ace_mask(&[0; 7]).is_err());
+    }
 }
 
 #[repr(C)]

@@ -1235,12 +1235,7 @@ impl PreparedSkillRemovalOutcome {
     fn into_prepared_for_test(self) -> PreparedSkillRemoval {
         match self {
             Self::Prepared(prepared) => *prepared,
-            Self::Unchanged(report) => {
-                panic!(
-                    "expected prepared removal, got unchanged report for {}",
-                    report.id
-                )
-            }
+            Self::Unchanged(_) => panic!("expected prepared removal, got unchanged report"),
         }
     }
 }

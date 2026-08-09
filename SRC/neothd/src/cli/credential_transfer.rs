@@ -54,6 +54,8 @@ const LOCK_RETRY_EVERY: Duration = Duration::from_millis(25);
 const LOCK_GIVE_UP_AFTER: Duration = Duration::from_secs(5);
 const TRANSFER_AUTHORITY_KEY_NAME: &str = "authority.key";
 const TRANSFER_AUTHORITY_KEY_BYTES: usize = 32;
+const COPY_SUCCESS_WITH_DURABLE_NAMESPACE: &str = "Credential copy succeeded: destination data and namespace durability were live-verified; source preserved.";
+const COPY_SUCCESS_WITH_UNSUPPORTED_NAMESPACE: &str = "Credential copy succeeded: destination data were live-verified; this platform cannot confirm parent-directory power-loss durability; source preserved.";
 
 #[derive(Debug, Serialize)]
 struct FileTransferReport {
@@ -613,21 +615,22 @@ pub(crate) fn run_file_copy(source: &Path, destination: &Path, output: OutputFor
     )?;
 
     match output {
-        OutputFormat::Table => match report.namespace_durability {
-            NamespaceDurability::Confirmed => println!(
-                "Copied and live-verified {} byte(s); destination data and namespace durability confirmed; source preserved.",
-                report.byte_len
-            ),
-            NamespaceDurability::Unsupported => println!(
-                "Copied and live-verified {} byte(s); this platform cannot confirm parent-directory power-loss durability; source preserved.",
-                report.byte_len
-            ),
-        },
+        OutputFormat::Table => println!(
+            "{}",
+            human_copy_success_message(report.namespace_durability)
+        ),
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!("{}", serde_json::to_string(&report)?);
         }
     }
     Ok(())
+}
+
+fn human_copy_success_message(namespace_durability: NamespaceDurability) -> &'static str {
+    match namespace_durability {
+        NamespaceDurability::Confirmed => COPY_SUCCESS_WITH_DURABLE_NAMESPACE,
+        NamespaceDurability::Unsupported => COPY_SUCCESS_WITH_UNSUPPORTED_NAMESPACE,
+    }
 }
 
 fn execute_file_copy_with_clock(
@@ -1833,10 +1836,17 @@ mod tests {
         }
     }
 
-    fn permit_record(nonce: u8) -> PermitConsumptionRecord {
+    fn fresh_transfer_nonce() -> TransferNonce {
+        let mut bytes = [0_u8; 32];
+        getrandom::getrandom(&mut bytes)
+            .expect("OS entropy source unavailable while minting test transfer nonce");
+        TransferNonce::new(bytes)
+    }
+
+    fn permit_record(nonce: TransferNonce) -> PermitConsumptionRecord {
         PermitConsumptionRecord {
             plan_fingerprint: [0x11; 32],
-            nonce: TransferNonce::new([nonce; 32]),
+            nonce,
             principal_id: "local-os-user".to_owned(),
             origin_instance_id: "local:test".to_owned(),
             turn_request_id: "credential-copy:test".to_owned(),
@@ -1964,14 +1974,27 @@ mod tests {
     #[test]
     fn durable_permit_store_rejects_replay_across_instances() {
         let home = tempfile::tempdir().unwrap();
+        let nonce = fresh_transfer_nonce();
         let mut first = DurablePermitStore::open(home.path()).unwrap();
-        first.consume_once(&permit_record(7)).unwrap();
+        first.consume_once(&permit_record(nonce)).unwrap();
         drop(first);
 
         let mut reopened = DurablePermitStore::open(home.path()).unwrap();
         assert_eq!(
-            reopened.consume_once(&permit_record(7)),
+            reopened.consume_once(&permit_record(nonce)),
             Err(PermitConsumptionError::Replay)
+        );
+    }
+
+    #[test]
+    fn human_copy_success_messages_are_static_and_metadata_free() {
+        assert_eq!(
+            human_copy_success_message(NamespaceDurability::Confirmed),
+            "Credential copy succeeded: destination data and namespace durability were live-verified; source preserved."
+        );
+        assert_eq!(
+            human_copy_success_message(NamespaceDurability::Unsupported),
+            "Credential copy succeeded: destination data were live-verified; this platform cannot confirm parent-directory power-loss durability; source preserved."
         );
     }
 

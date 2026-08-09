@@ -372,12 +372,6 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     )
     .context("insert kanban session row")?;
 
-    println!(
-        "session #{} opened (channel={})",
-        session_id.raw(),
-        args.source_channel
-    );
-
     let provider = providers::from_config_for_role_at(
         &cfg,
         HemisphereRole::Cerebellum,
@@ -457,24 +451,15 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
             // session to Abandoned so it doesn't sit in Planning forever
             // unless the operator re-runs. Their next `neoth code "..."`
             // opens a fresh session.
-            store::archive_session(
-                &conn,
-                session_id,
-                SessionStatus::Abandoned,
-                result
-                    .clarifying_question
-                    .as_deref()
-                    .or(Some("decomposer produced no tasks")),
-                None,
-            )
-            .ok();
-            println!(
-                "(no tasks created — session #{} abandoned)",
-                session_id.raw()
-            );
+            println!("{}", abandon_empty_decomposition(&conn, session_id, &result));
             return Ok(None);
         }
 
+        println!(
+            "session #{} opened (channel={})",
+            session_id.raw(),
+            args.source_channel
+        );
         println!("decomposed into {} task(s):", result.task_ids.len());
 
         // GOLD-ADAPT-GRILL-02 — adversarial plan review on the decomposed plan
@@ -546,6 +531,36 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     // leaving the status alone. Operators ALSO see this via
     // `neoth kanban show <session>`.
     Ok(())
+}
+
+/// Archive an empty decomposition exactly as the CLI's historical best-effort
+/// path did, then return its table-only status. Keeping this decision separate
+/// ensures the abandoned path never formats the durable session identifier.
+fn abandon_empty_decomposition(
+    conn: &Connection,
+    session_id: KanbanSessionId,
+    result: &DecompositionResult,
+) -> &'static str {
+    debug_assert!(result.task_ids.is_empty());
+    store::archive_session(
+        conn,
+        session_id,
+        SessionStatus::Abandoned,
+        result
+            .clarifying_question
+            .as_deref()
+            .or(Some("decomposer produced no tasks")),
+        None,
+    )
+    .ok();
+    abandoned_session_notice()
+}
+
+/// Human-facing terminal status for an empty decomposition. The durable session
+/// identifier remains available to explicit machine/query paths, but must not
+/// be echoed in an abandoned-session status line.
+fn abandoned_session_notice() -> &'static str {
+    "(no tasks created — session abandoned)"
 }
 
 /// GOLD-ADAPT-GRILL-03 — persist the plan-review log produced by `review_plan`
@@ -1377,6 +1392,37 @@ mod tests {
         // no apply → never gated, regardless of the other flags.
         assert!(validate_apply_has_dispatch_path(false, false, false).is_ok());
         assert!(validate_apply_has_dispatch_path(false, false, true).is_ok());
+    }
+
+    #[test]
+    fn empty_decomposition_archives_without_human_session_identifier() {
+        let (_dir, conn) = fresh_db();
+        let session_id = store::insert_session(&conn, 1, "prompt", "hash", "cli", None).unwrap();
+        let result = DecompositionResult {
+            task_ids: Vec::new(),
+            clarifying_question: Some("Which repository should I change?".into()),
+            session_complexity: crate::coding::decomposer::SessionComplexity::Fast,
+            input_truncated: false,
+        };
+
+        let notice = abandon_empty_decomposition(&conn, session_id, &result);
+        assert_eq!(notice, "(no tasks created — session abandoned)");
+        assert!(
+            !notice.contains('#'),
+            "human-facing abandoned-session output must not include an ID: {notice}"
+        );
+        assert!(
+            !notice.contains(&session_id.raw().to_string()),
+            "human-facing abandoned-session output must not include the persistent ID: {notice}"
+        );
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM idx_kanban_session WHERE session_id = ?1",
+                [session_id.raw()],
+                |row| row.get(0),
+            )
+            .expect("read archived session status");
+        assert_eq!(status, "abandoned");
     }
 
     fn fresh_db() -> (tempfile::TempDir, Connection) {
