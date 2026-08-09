@@ -21992,11 +21992,17 @@ fn parse_chat_stream_protocol_with_mode(
 }
 
 fn is_incomplete_stream_control_tail(segment: &str) -> bool {
-    const CONTROL_PREFIX: &str = "{\"neoth_stream\":";
-
     let candidate = segment.trim();
-    !candidate.is_empty()
-        && (CONTROL_PREFIX.starts_with(candidate) || candidate.starts_with(CONTROL_PREFIX))
+    // The control protocol intentionally accepts JSON objects regardless of
+    // member order.  `serde_json::Value::to_string()` currently happens to
+    // put fields such as `content_hash` or `control_token` before
+    // `neoth_stream`, so recognizing only the literal `{"neoth_stream":`
+    // prefix leaks a split authenticated frame as assistant text (for example
+    // `{"c`).  Until the newline terminates a JSON-object line, it can still
+    // become any authenticated control frame and must stay out of the visible
+    // reply.  At EOF `input_complete` bypasses this gate, preserving ordinary
+    // user/provider JSON text that was not newline-terminated.
+    candidate.starts_with('{')
 }
 
 fn authenticated_skill_route(
@@ -23005,6 +23011,69 @@ mod chat_subprocess_tests {
         assert!(parsed.provider_done);
         assert!(parsed.done);
         assert!(parsed.protocol_valid);
+    }
+
+    #[test]
+    fn byte_split_utf8_control_frames_are_delivered_once_and_compacted() {
+        let route = skill_route_frame("right");
+        let notice = serde_json::json!({
+            "neoth_stream": "notice",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id("right"),
+            "control_token": "right",
+            "kind": "background_result",
+            "id": "0123456789abcdef",
+            "text": "Grüße 🌍",
+            "durable": true,
+        })
+        .to_string();
+
+        let mut accumulated = Vec::new();
+        let mut gate = IncrementalControlFrameGate::default();
+        let mut route_delivered = false;
+        let mut notice_deliveries = 0usize;
+
+        for byte in format!("{route}\n{notice}\n").bytes() {
+            accumulated.push(byte);
+            if gate.can_defer_without_decoding(&[byte]) {
+                continue;
+            }
+            let Ok(decoded) = std::str::from_utf8(&accumulated) else {
+                continue;
+            };
+            gate.observe_decoded_buffer(decoded);
+            let parsed = parse_chat_stream_protocol_incremental_with_route_state(
+                decoded,
+                Some("right"),
+                route_delivered,
+            );
+            assert!(parsed.protocol_valid);
+            assert_eq!(parsed.text, "");
+            if parsed.route_report.is_some() {
+                assert!(!route_delivered, "the route frame was delivered twice");
+                route_delivered = true;
+            }
+            notice_deliveries += parsed.notices.len();
+            compact_completed_control_frames(&mut accumulated, &parsed.completed_control_ranges)
+                .unwrap();
+        }
+
+        assert!(route_delivered);
+        assert_eq!(notice_deliveries, 1);
+        assert!(accumulated.is_empty());
+    }
+
+    #[test]
+    fn incomplete_noncontrol_json_is_flushed_at_eof_without_leaking_controls() {
+        let raw = "{\"content\":\"Grüße 🌍\"}";
+
+        let incremental = parse_chat_stream_protocol_incremental(raw, Some("right"));
+        assert!(incremental.protocol_valid);
+        assert_eq!(incremental.text, "");
+
+        let final_flush = parse_chat_stream_protocol_with_mode(raw, Some("right"), true, false);
+        assert!(final_flush.protocol_valid);
+        assert_eq!(final_flush.text, raw);
     }
 
     #[test]
