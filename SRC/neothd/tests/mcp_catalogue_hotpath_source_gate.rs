@@ -12,6 +12,17 @@ fn compact_region(source: &str, start: &str, end: &str) -> String {
     region.chars().filter(|ch| !ch.is_whitespace()).collect()
 }
 
+/// Extract a source region by stable Rust item names instead of an exact
+/// visibility/`async` spelling. The hot-path invariant is about boundaries,
+/// not whether a refactor adds `pub(crate)` or changes an implementation detail.
+fn compact_function_region(source: &str, function: &str, next_function: &str) -> String {
+    compact_region(
+        source,
+        &format!("fn {function}("),
+        &format!("fn {next_function}("),
+    )
+}
+
 #[test]
 fn catalogue_prompt_assembly_is_bound_to_the_exact_mcp_route() {
     let chat_catalogue = compact_region(
@@ -96,11 +107,34 @@ fn catalogue_prompt_assembly_is_bound_to_the_exact_mcp_route() {
 
 #[test]
 fn dispatch_consumes_the_preselected_route_without_recomputing_admission() {
-    let chat_dispatch = compact_region(
-        CHAT,
-        "async fn dispatch_provider(",
-        "async fn run_post_reply_pipelines(",
+    // The resolver is the only canonical boundary allowed to decide Council
+    // admission and MCP autorouting. The dispatcher consumes that typed route;
+    // it must never recreate one after catalogue/budget work has started.
+    let cli_resolver =
+        compact_function_region(CHAT, "resolve_chat_turn_route", "dispatch_provider");
+    let cli_admission = cli_resolver
+        .find("try_admit_convene(")
+        .expect("CLI Council admission");
+    let cli_autoroute = cli_resolver
+        .find("autoroute_decision(")
+        .expect("CLI MCP autoroute resolution");
+    let cli_selection = cli_resolver
+        .find("select_turn_dispatch_route(")
+        .expect("CLI typed route selection");
+    assert_eq!(cli_resolver.matches("try_admit_convene(").count(), 1);
+    assert_eq!(cli_resolver.matches("autoroute_decision(").count(), 1);
+    assert_eq!(
+        cli_resolver.matches("select_turn_dispatch_route(").count(),
+        1,
+        "CLI must select one immutable route after its policy decisions"
     );
+    assert!(
+        cli_admission < cli_selection && cli_autoroute < cli_selection,
+        "CLI must finish admission and autoroute resolution before selecting the typed route"
+    );
+
+    let chat_dispatch =
+        compact_function_region(CHAT, "dispatch_provider", "run_post_reply_pipelines");
     assert!(chat_dispatch.contains("route.uses_loop()"));
     assert!(chat_dispatch.contains("route.loop_trigger()"));
     assert!(chat_dispatch.contains("route.uses_mcp_catalogue()"));
@@ -109,30 +143,61 @@ fn dispatch_consumes_the_preselected_route_without_recomputing_admission() {
     assert!(chat_dispatch.contains("min_rounds:loop_trigger.minimum_rounds()"));
     assert!(!chat_dispatch.contains("autoroute_decision("));
     assert!(!chat_dispatch.contains("try_admit_convene("));
+    assert!(
+        !chat_dispatch.contains("select_turn_dispatch_route("),
+        "CLI dispatch must not replace the route already selected by its resolver"
+    );
 
-    let channel_after_catalogue = compact_region(
+    // Start immediately after the resolver result is bound. This data-flow
+    // boundary is durable even when catalogue comments change: every later
+    // channel branch must consume `channel_route`, never reopen policy.
+    let channel_after_route = compact_region(
         SERVE_PIPELINE,
-        "// ── Route-bound MCP catalogue (channel path)",
+        "let recovery_route_eligible = channel_route.supports_single_leaf_recovery();",
         "if !completion.identity.is_bound()",
     );
-    assert!(channel_after_catalogue.contains("channel_route.uses_loop()"));
-    assert!(channel_after_catalogue.contains("TurnDispatchRoute::McpDispatch"));
-    assert!(channel_after_catalogue.contains("McpServers::default()"));
-    assert!(channel_after_catalogue.contains("loop_cfg.min_rounds=loop_trigger.minimum_rounds()"));
-    assert!(!channel_after_catalogue.contains("autoroute_decision("));
-    assert!(!channel_after_catalogue.contains("try_admit_convene("));
+    assert!(channel_after_route.contains("channel_route.uses_loop()"));
+    assert!(channel_after_route.contains("TurnDispatchRoute::McpDispatch"));
+    assert!(channel_after_route.contains("McpServers::default()"));
+    assert!(channel_after_route.contains("loop_cfg.min_rounds=loop_trigger.minimum_rounds()"));
+    assert!(!channel_after_route.contains("autoroute_decision("));
+    assert!(!channel_after_route.contains("try_admit_convene("));
+    assert!(
+        !channel_after_route.contains("select_turn_dispatch_route("),
+        "channel dispatch must not replace the route already selected by its resolver"
+    );
 
-    let channel_resolver = compact_region(
+    let channel_resolver = compact_function_region(
         SERVE_PIPELINE,
-        "async fn resolve_channel_turn_route(",
-        "/// Build the per-channel pipeline handler closure.",
+        "resolve_channel_turn_route",
+        "build_pipeline_handler",
     );
     assert_eq!(channel_resolver.matches("try_admit_convene(").count(), 1);
+    assert_eq!(channel_resolver.matches("autoroute_decision(").count(), 1);
+    assert_eq!(
+        channel_resolver
+            .matches("select_turn_dispatch_route(")
+            .count(),
+        1
+    );
+    let channel_admission = channel_resolver
+        .find("try_admit_convene(")
+        .expect("channel Council admission");
+    let channel_autoroute = channel_resolver
+        .find("autoroute_decision(")
+        .expect("channel MCP autoroute resolution");
+    let channel_selection = channel_resolver
+        .find("select_turn_dispatch_route(")
+        .expect("channel typed route selection");
+    assert!(
+        channel_admission < channel_selection && channel_autoroute < channel_selection,
+        "channel must finish admission and autoroute resolution before selecting the typed route"
+    );
 
     let route_selector = compact_region(
         CHAT,
-        "pub(crate) fn select_turn_dispatch_route(",
-        "/// Stable position where the MCP A/D atomic pair belongs",
+        "fn select_turn_dispatch_route(",
+        "struct McpCatalogueSlot",
     );
     assert!(route_selector.contains("TurnDispatchRoute::RefineLoop"));
     assert!(
@@ -147,27 +212,26 @@ fn dispatch_consumes_the_preselected_route_without_recomputing_admission() {
     );
     assert!(prompt_bundle.contains("skill_loop_trigger:bool"));
 
-    let cli_resolver = compact_region(
-        CHAT,
-        "async fn resolve_chat_turn_route(",
-        "async fn dispatch_provider(",
-    );
     assert!(cli_resolver.contains("LoopRouteTrigger::new(skill_loop_trigger"));
     assert!(cli_resolver.contains("args.loop_mode"));
     assert!(cli_resolver.contains("!loop_trigger.is_active()"));
 
+    // The shared resolver now returns a single typed route for both a direct
+    // match and a mode-parent match. Anchor the check at that route binding,
+    // rather than at the former inline mode-registry setup.
     let channel_skill_route = compact_region(
         SERVE_PIPELINE,
-        "let mode_registry =",
-        "let channel_persona =",
+        "let selected_skill_route = match route_decision {",
+        "let channel_persona = channel_tweaks.persona_override.clone();",
     );
     assert_eq!(
         channel_skill_route
             .matches("routed_skill_loop_trigger(")
             .count(),
-        2,
-        "both a mode parent and a directly matched channel skill must preserve loop:true"
+        1,
+        "the single typed channel route must preserve its resolved parent or matched skill loop:true contract"
     );
+    assert!(channel_skill_route.contains("letskill=route.skill();"));
 
     let stop_gate = compact_region(
         LOOP_ENGINE,

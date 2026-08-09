@@ -549,7 +549,7 @@ fn try_acquire_store_lock(path: &Path) -> Result<Option<std::fs::File>> {
         if error.kind() == std::io::ErrorKind::WouldBlock {
             return Ok(None);
         }
-        return Err(error).with_context(|| format!("lock MCP tool pin store {}", path.display()));
+        Err(error).with_context(|| format!("lock MCP tool pin store {}", path.display()))
     }
     #[cfg(windows)]
     {

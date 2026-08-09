@@ -850,7 +850,7 @@ fn open_regular_claim_readonly(
     Ok((file, read_binding, is_private))
 }
 
-fn make_open_file_private(file: &cap_std::fs::File, display_path: &Path) -> Result<()> {
+fn make_open_file_private(file: &cap_std::fs::File, _display_path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use cap_std::fs::PermissionsExt as _;
@@ -865,7 +865,7 @@ fn make_open_file_private(file: &cap_std::fs::File, display_path: &Path) -> Resu
     }
     #[cfg(windows)]
     {
-        crate::wal::win_native::set_private_current_user_file_dacl_bound(display_path, file)
+        crate::wal::win_native::set_private_current_user_file_dacl_bound(_display_path, file)
             .context("make bound legacy proactive file DACL private and durable")?;
         let std_file = file
             .try_clone()
