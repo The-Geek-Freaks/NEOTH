@@ -331,7 +331,7 @@
       "repository": "https://github.com/bytecodealliance/wasmtime",
       "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
-    "cranelift-bitset\u00000.123.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "cranelift-bitset\u00000.123.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -341,9 +341,9 @@
       ],
       "path_in_vcs": "cranelift/bitset",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
-    "cranelift-isle\u00000.123.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "cranelift-isle\u00000.123.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -353,9 +353,9 @@
       ],
       "path_in_vcs": "cranelift/isle/isle",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
-    "cranelift-srcgen\u00000.123.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "cranelift-srcgen\u00000.123.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -365,7 +365,7 @@
       ],
       "path_in_vcs": "cranelift/srcgen",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
     "crc32c\u00000.6.8\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "crate_sha256": "3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47",
@@ -1020,7 +1020,7 @@
       "repository": "https://github.com/n0-computer/net-tools",
       "revision": "051ab8761006d7f2155e34a49f6bb881b582d5ab"
     },
-    "nostr\u00000.44.5\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "nostr\u00000.44.8\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -1030,7 +1030,7 @@
       ],
       "path_in_vcs": "crates/nostr",
       "repository": "https://github.com/rust-nostr/nostr",
-      "revision": "0e3a2ba2b49f906010fd826e7184886ac4d13ad9"
+      "revision": "a86ce27c3b4d0dcab186a707336237653a01b114"
     },
     "nostr-database\u00000.44.0\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
@@ -1056,7 +1056,7 @@
       "repository": "https://github.com/rust-nostr/nostr",
       "revision": "c1a24383cd361a408fc53eeac7c1708a3b589194"
     },
-    "nostr-relay-pool\u00000.44.1\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "nostr-relay-pool\u00000.44.3\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -1066,7 +1066,7 @@
       ],
       "path_in_vcs": "crates/nostr-relay-pool",
       "repository": "https://github.com/rust-nostr/nostr",
-      "revision": "94398c944cf58f7c4e8dd622cedd103e997e5b98"
+      "revision": "eac2a5af540374af2940ddb932c76d0e00b0bf99"
     },
     "nostr-sdk\u00000.44.1\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
@@ -1493,7 +1493,7 @@
       "repository": "https://github.com/aclysma/profiling",
       "revision": "8271551172eb6fa4cba47369aedd93790c623df9"
     },
-    "pulley-interpreter\u000036.0.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "pulley-interpreter\u000036.0.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -1503,9 +1503,9 @@
       ],
       "path_in_vcs": "pulley",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
-    "pulley-macros\u000036.0.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "pulley-macros\u000036.0.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -1515,7 +1515,7 @@
       ],
       "path_in_vcs": "pulley/macros",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
     "rc-box\u00001.3.0\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
@@ -1968,7 +1968,7 @@
       "repository": "https://github.com/bytecodealliance/wasm-tools",
       "revision": "9dd8df4fdc53597af7534b6a4d4c11d9065690d3"
     },
-    "wasmtime-internal-asm-macros\u000036.0.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "wasmtime-internal-asm-macros\u000036.0.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -1978,9 +1978,9 @@
       ],
       "path_in_vcs": "crates/asm-macros",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
-    "wasmtime-internal-jit-debug\u000036.0.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "wasmtime-internal-jit-debug\u000036.0.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -1990,9 +1990,9 @@
       ],
       "path_in_vcs": "crates/jit-debug",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
-    "wasmtime-internal-jit-icache-coherence\u000036.0.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "wasmtime-internal-jit-icache-coherence\u000036.0.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -2002,9 +2002,9 @@
       ],
       "path_in_vcs": "crates/jit-icache-coherence",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
-    "wasmtime-internal-math\u000036.0.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "wasmtime-internal-math\u000036.0.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -2014,9 +2014,9 @@
       ],
       "path_in_vcs": "crates/math",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
-    "wasmtime-internal-slab\u000036.0.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "wasmtime-internal-slab\u000036.0.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -2026,9 +2026,9 @@
       ],
       "path_in_vcs": "crates/slab",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
-    "wasmtime-internal-versioned-export-macros\u000036.0.9\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "wasmtime-internal-versioned-export-macros\u000036.0.13\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -2038,7 +2038,7 @@
       ],
       "path_in_vcs": "crates/versioned-export-macros",
       "repository": "https://github.com/bytecodealliance/wasmtime",
-      "revision": "c59270b180b43fb5fb523b0c25ff8a95cd5740b1"
+      "revision": "f65ae51bc2527490a5cd8fde805ea9754b81be1f"
     },
     "zune-inflate\u00000.2.54\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [

@@ -675,10 +675,10 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `noq 1.1.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/noq - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `noq-proto 1.1.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/noq - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `noq-udp 1.1.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/noq - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `nostr 0.44.6` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `nostr 0.44.8` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nostr-database 0.44.0` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nostr-gossip 0.44.0` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `nostr-relay-pool 0.44.1` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `nostr-relay-pool 0.44.3` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nostr-sdk 0.44.1` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `notify 8.2.0` - `CC0-1.0` - https://github.com/notify-rs/notify.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `notify-types 2.1.0` - `MIT OR Apache-2.0` - https://github.com/notify-rs/notify.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -1269,6 +1269,9 @@ These crate archives omit a standalone notice file. Their published `.cargo_vcs_
 - `const-field-offset-macro 0.2.0` - `MIT OR Apache-2.0` - revision `443908daeed77db500781670448d3688e4be0b9a` - https://github.com/slint-ui/slint
 - `cranelift-assembler-x64 0.123.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
 - `cranelift-assembler-x64-meta 0.123.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
+- `cranelift-bitset 0.123.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
+- `cranelift-isle 0.123.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
+- `cranelift-srcgen 0.123.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
 - `decancer 3.3.3` - `MIT` - revision `86c57aaf0048ca07577de9a79e488909b5001ad6` - https://github.com/null8626/decancer
 - `delegate-display 3.0.0` - `MIT` - revision `e44b916223894222d3ae82a9fbd3e3f7c5ca634a` - https://github.com/alorel/delegate-display-rs
 - `dispatch2 0.3.1` - `Zlib OR Apache-2.0 OR MIT` - revision `8852b424193ca41602281b3d7540d7c8ed51e49a` - https://github.com/madsmtm/objc2
@@ -1311,9 +1314,10 @@ These crate archives omit a standalone notice file. Their published `.cargo_vcs_
 - `n0-error-macros 1.0.0` - `MIT OR Apache-2.0` - revision `56019f01cd4c838edccd9f9b074953a45d87b6ef` - https://github.com/n0-computer/n0-error
 - `negentropy 0.5.0` - `MIT` - revision `94742ad2221e8350336fa0a40cf0fdb4a5228520` - https://github.com/rust-nostr/negentropy
 - `netwatch 0.19.1` - `MIT OR Apache-2.0` - revision `051ab8761006d7f2155e34a49f6bb881b582d5ab` - https://github.com/n0-computer/net-tools
+- `nostr 0.44.8` - `MIT` - revision `a86ce27c3b4d0dcab186a707336237653a01b114` - https://github.com/rust-nostr/nostr
 - `nostr-database 0.44.0` - `MIT` - revision `c1a24383cd361a408fc53eeac7c1708a3b589194` - https://github.com/rust-nostr/nostr
 - `nostr-gossip 0.44.0` - `MIT` - revision `c1a24383cd361a408fc53eeac7c1708a3b589194` - https://github.com/rust-nostr/nostr
-- `nostr-relay-pool 0.44.1` - `MIT` - revision `94398c944cf58f7c4e8dd622cedd103e997e5b98` - https://github.com/rust-nostr/nostr
+- `nostr-relay-pool 0.44.3` - `MIT` - revision `eac2a5af540374af2940ddb932c76d0e00b0bf99` - https://github.com/rust-nostr/nostr
 - `nostr-sdk 0.44.1` - `MIT` - revision `837df0fdcf34609abca444ad991dcc8345b3add6` - https://github.com/rust-nostr/nostr
 - `number_prefix 0.4.0` - `MIT` - revision `eb6ebd215d50df1b199737f0356b988bebaedc84` - https://github.com/ogham/rust-number-prefix
 - `oauth2-reqwest 0.1.0-alpha.3` - `MIT` - revision `72ce74401c26eb4dc85dcbfde587bbcfc149e3ae` - https://github.com/ramosbugs/oauth2-rs
@@ -1346,6 +1350,8 @@ These crate archives omit a standalone notice file. Their published `.cargo_vcs_
 - `portmapper 0.19.1` - `MIT OR Apache-2.0` - revision `051ab8761006d7f2155e34a49f6bb881b582d5ab` - https://github.com/n0-computer/net-tools
 - `profiling 1.0.18` - `MIT OR Apache-2.0` - revision `8271551172eb6fa4cba47369aedd93790c623df9` - https://github.com/aclysma/profiling
 - `profiling-procmacros 1.0.18` - `MIT OR Apache-2.0` - revision `8271551172eb6fa4cba47369aedd93790c623df9` - https://github.com/aclysma/profiling
+- `pulley-interpreter 36.0.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
+- `pulley-macros 36.0.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
 - `rc-box 1.3.0` - `MIT OR Apache-2.0` - revision `0fe399f8f7e519959224069360f3900189086683` - https://github.com/cad97/pointer-utils
 - `readlock 0.1.11` - `MPL-2.0` - revision `4c54a425444b826a7c8b687a53cad547a1b5f20b` - https://codeberg.org/jplatte/readlock
 - `readlock-tokio 0.1.6` - `MPL-2.0` - revision `4c54a425444b826a7c8b687a53cad547a1b5f20b` - https://codeberg.org/jplatte/readlock
@@ -1375,6 +1381,12 @@ These crate archives omit a standalone notice file. Their published `.cargo_vcs_
 - `wasm_evt_listener 0.1.0` - `MIT` - revision `34cbb35ed254df6f953ef7a11953b65ecbbe7a45` - https://github.com/alorel/wasm-evt-listener-rs
 - `wasmparser 0.236.1` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - revision `9dd8df4fdc53597af7534b6a4d4c11d9065690d3` - https://github.com/bytecodealliance/wasm-tools
 - `wasmprinter 0.236.1` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - revision `9dd8df4fdc53597af7534b6a4d4c11d9065690d3` - https://github.com/bytecodealliance/wasm-tools
+- `wasmtime-internal-asm-macros 36.0.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
+- `wasmtime-internal-jit-debug 36.0.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
+- `wasmtime-internal-jit-icache-coherence 36.0.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
+- `wasmtime-internal-math 36.0.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
+- `wasmtime-internal-slab 36.0.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
+- `wasmtime-internal-versioned-export-macros 36.0.13` - `Apache-2.0 WITH LLVM-exception` - revision `f65ae51bc2527490a5cd8fde805ea9754b81be1f` - https://github.com/bytecodealliance/wasmtime
 - `zune-inflate 0.2.54` - `MIT OR Apache-2.0 OR Zlib` - revision `69502ce83fdfecdd0beefd677e2abb3781b29d98` - https://github.com/etemesi254/zune-image
 
 ### Published manifest grants with pinned SPDX texts
@@ -1400,19 +1412,7 @@ These upstreams publish a license expression but no standalone notice in the loc
 
 These crate archives contain no standalone notice file, but another locked crate from the same canonical upstream repository publishes the repository-level text reproduced below. The crate's exact SPDX expression in the inventory remains authoritative; carrying a repository's additional text does not change that expression.
 
-- `cranelift-bitset 0.123.13` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `cranelift-isle 0.123.13` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/cranelift/isle
-- `cranelift-srcgen 0.123.13` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `nostr 0.44.6` - `MIT` - https://github.com/rust-nostr/nostr.git
-- `pulley-interpreter 36.0.13` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/pulley
-- `pulley-macros 36.0.13` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime/tree/main/pulley/macros
 - `selectors 0.38.0` - `MPL-2.0` - https://github.com/servo/stylo
-- `wasmtime-internal-asm-macros 36.0.13` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `wasmtime-internal-jit-debug 36.0.13` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `wasmtime-internal-jit-icache-coherence 36.0.13` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `wasmtime-internal-math 36.0.13` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `wasmtime-internal-slab 36.0.13` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
-- `wasmtime-internal-versioned-export-macros 36.0.13` - `Apache-2.0 WITH LLVM-exception` - https://github.com/bytecodealliance/wasmtime
 
 ### Published license and notice texts
 
@@ -25366,7 +25366,7 @@ limitations under the License.
 
 #### SHA-256 `a333d394b9f31b6ca64d08f3048a8a38125c181d68d3d376c4ddf988cffd12d2`
 
-Applies to: `nostr 0.44.6`, `nostr-database 0.44.0`, `nostr-gossip 0.44.0`, `nostr-relay-pool 0.44.1`, `nostr-sdk 0.44.1`
+Applies to: `nostr 0.44.8`, `nostr-database 0.44.0`, `nostr-gossip 0.44.0`, `nostr-relay-pool 0.44.3`, `nostr-sdk 0.44.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 MIT License

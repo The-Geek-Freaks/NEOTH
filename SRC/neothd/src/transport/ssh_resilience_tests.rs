@@ -274,12 +274,15 @@ impl LoopbackSshServer {
                                 result = server::run_stream(config, stream, handler) => result,
                                 _ = session_shutdown.changed() => return,
                             };
-                            let Ok(mut running) = started else {
+                            let Ok(running) = started else {
                                 return;
                             };
                             let handle = running.handle();
+                            let mut running_task = tokio::spawn(async move {
+                                let _ = running.await;
+                            });
                             tokio::select! {
-                                result = &mut running => {
+                                result = &mut running_task => {
                                     let _ = result;
                                 }
                                 changed = session_shutdown.changed() => {
@@ -294,7 +297,18 @@ impl LoopbackSshServer {
                                         )
                                         .await;
                                         let _ = control_stream.shutdown(Shutdown::Both);
-                                        let _ = running.await;
+                                        // A peer stalled inside a deliberately adversarial
+                                        // channel callback must not make test-server teardown
+                                        // unbounded. The socket is already shut down; give the
+                                        // russh session task a short grace period, then abort and
+                                        // reap it so no detached callback survives the harness.
+                                        if timeout(Duration::from_secs(1), &mut running_task)
+                                            .await
+                                            .is_err()
+                                        {
+                                            running_task.abort();
+                                            let _ = running_task.await;
+                                        }
                                     }
                                 }
                             }

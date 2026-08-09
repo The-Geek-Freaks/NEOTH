@@ -637,7 +637,7 @@ rand                = { version = "0.9", default-features = false, features = ["
 # TERMIX-01/02 (feature `ssh-tunnel`, default OFF). `ring` backend (NOT aws-lc-rs)
 # so it builds on Windows MSVC with no cmake/nasm. `russh::keys` (merged-in, no
 # separate russh-keys crate) supplies the ssh-key PublicKey/PrivateKey types.
-russh               = { version = "0.62.4", default-features = false, features = ["ring"], optional = true }
+russh               = { version = "0.62.5", default-features = false, features = ["ring"], optional = true }
 # D14b Phase 2c streaming: wrap a tokio mpsc::Receiver as a Stream.
 tokio-stream        = { version = "0.1", default-features = false }
 # Phase 5C streaming -- async-stream macro builds Stream impls from async {}

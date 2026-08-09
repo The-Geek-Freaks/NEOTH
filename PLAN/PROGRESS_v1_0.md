@@ -1,7 +1,24 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-08-01
+**Created:** 2026-05-24  **Last updated:** 2026-08-09
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
+>
+> **Current dependency-security correction 2026-08-09 (release evidence
+> pending):** the locked graph now uses direct optional `russh 0.62.5` for
+> GHSA-m65r-rprj-r5rg and resolves the retained optional Nostr channel through
+> `nostr 0.44.8` plus `nostr-relay-pool 0.44.3`, closing
+> RUSTSEC-2026-0224 through RUSTSEC-2026-0232 without an advisory ignore or
+> dismissal. The public `nostr-sdk = "0.44"` manifest contract is unchanged.
+> Exact distribution notices and version-keyed licence snapshots were
+> regenerated from the resolved release graph. Local evidence on the combined
+> tree is vulnerability-free `cargo audit` (one allowed unmaintained
+> `derivative` warning), all-feature locked `cargo deny` with
+> advisories/bans/licences/sources OK, and Nostr feature tests **20/20**. The
+> final SSH feature regression is **39/39**, including bounded adversarial
+> channel deadlines and owned `abort + await` session teardown. The current-tree
+> roadmap release gate remains **1,298 total / 997 complete / 299 open / 2
+> partial = 301 raw blockers and 300 pre-tag blockers**. Exact-head CI, Security
+> and CodeQL remain separate mandatory evidence before any v1.0.0 tag.
 >
 > **Gate state as of session end (head `b46cbf91`).** CI: zero failures across
 > every completed job — the three Unix-only defects (`cap_std` trait,
@@ -707,11 +724,11 @@
 > counts unchanged):** GitHub Dependabot #21-26 are three advisories duplicated
 > across `Cargo.toml` and `Cargo.lock` for direct optional `russh 0.61.2`:
 > GHSA-g9hv-x236-4qp3, GHSA-cqjc-rmpq-xprq and GHSA-5xvq-cp9x-6p6r.
-> The current worktree now declares the patched `russh 0.62.4` manifest and
+> The then-current worktree declared the patched `russh 0.62.4` manifest and
 > lock line, while `ssh-tunnel` remains default-off and absent from all stock
 > desktop/server release feature sets. A locked Ubuntu feature-matrix compile
 > and focused hermetic `ssh-tunnel` transport-test command are part of the
-> implementation contract, not evidence of a completed run. The review also
+> implementation contract, not evidence of a completed run. That review also
 > found an upstream password-secret defect: `russh 0.62.4` debug-logs the
 > encoded user-auth packet and retains its plain password method after success.
 > NEOTH therefore accepts existing password configuration only for
