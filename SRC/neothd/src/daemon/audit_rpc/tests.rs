@@ -1367,8 +1367,12 @@ async fn client_round_trips_against_a_live_listener() {
         .await
         .unwrap();
     let _daemon_owner = publish_test_endpoint(home.path(), &addr, &endpoint_nonce);
+    let health_home = home.path().to_path_buf();
+    let reachable = tokio::task::spawn_blocking(move || is_reachable(&health_home))
+        .await
+        .expect("health probe task must not panic");
     assert!(
-        is_reachable(home.path()),
+        reachable,
         "live same-user IPC health probe must accept the exact response body"
     );
 
