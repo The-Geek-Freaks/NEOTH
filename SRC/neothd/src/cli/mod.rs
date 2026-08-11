@@ -664,9 +664,10 @@ pub enum Commands {
     Security(security::SecurityArgs),
 
     /// GOLD-ADAPT-ODY-24 — `neoth companion pair-phone`: mint a one-time
-    /// phone-pairing invite (rendezvous topic + PSK) and show it as a QR code
-    /// with a URL fallback. With the default `cluster` feature it drives the
-    /// single-use Hyperswarm/Noise-XX P2P handshake; `--write-invite-for-serve`
+    /// phone-pairing invite (rendezvous topic + PSK) and show it as a server-side
+    /// QR/URL preview; NEOTH does not ship a phone client. With the default
+    /// `cluster` feature it drives the single-use HyperDHT/authenticated Noise-IK
+    /// P2P handshake; `--write-invite-for-serve`
     /// hands the invite to a configured running daemon for durable token use.
     Companion(companion::CompanionArgs),
 
@@ -1822,7 +1823,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Companion(args) => {
             // GOLD-COMPANION-P2P-01: mints invite, shows QR, and drives the
-            // Noise P2P listener until the phone pairs or the TTL expires.
+            // v2 HyperDHT / authenticated Noise-IK listener until a compatible
+            // client pairs or the TTL expires; the server owns its final drain.
             companion::run_companion(args, global_output).await?;
         }
         Commands::Profile(mut args) => {

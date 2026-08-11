@@ -43,6 +43,11 @@ zeroize    = { version = "1", features = ["zeroize_derive"] }
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
 
+[patch.crates-io]
+libudx = { path = "vendor/libudx" }
+peeroxide = { path = "vendor/peeroxide" }
+peeroxide-dht = { path = "vendor/peeroxide-dht" }
+
 # Cargo profiles must live at workspace root, not in member Cargo.toml.
 [profile.dev]
 opt-level = 0

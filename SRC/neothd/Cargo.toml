@@ -344,10 +344,11 @@ lzma-rs = "0.3"
 # R-7 unblock (Session 19, 2026-05-21): pure-Rust Hyperswarm port for
 # the cluster module's PeerLoadRegistry → live peer discovery. Was
 # Phase-3 dep-blocked while `hyperswarm-rs` lived in a half-broken
-# state on crates.io; `peeroxide` 1.3.x is the maintained pure-Rust
-# replacement that exposes the same topic-based discovery + hole-
-# punching primitives.
-peeroxide = { version = "1.3", optional = true }
+# state on crates.io; the audited NEOTH `peeroxide` local fork exposes the
+# same topic-based discovery + hole-punching primitives. The exact prerelease
+# prevents Cargo from silently selecting an upstream crate in place of this
+# security-fix fork; the workspace patch resolves it locally.
+peeroxide = { version = "=1.4.0-neoth.1", optional = true }
 
 # iroh 1.0 — QUIC transport with dial-by-NodeId, NAT-traversal + relay fallback.
 # Optional, pulled only by `cluster-iroh`: present in native desktop releases,
@@ -377,6 +378,11 @@ cap-fs-ext = "=4.0.2"
 # mDNS service announcer + listener. Pure-Rust, no system zeroconf
 # daemon required. Cross-platform (Windows / macOS / Linux).
 mdns-sd = "0.11"
+
+# Interface enumeration for companion LAN-IP discovery without an
+# application-created outbound Internet socket or external route probe. Pin the
+# already-resolved version so releases retain the reviewed API and behavior.
+if-addrs = "=0.13.4"
 
 # Pick #36 (Session 14, Agent #4 design-consensus): lock-free atomic
 # pointer swaps for hot-reloadable config. `FreedomConfig` lives
@@ -744,6 +750,8 @@ version = "0.8"
 optional = true
 
 [dev-dependencies]
+proc-macro2 = { version = "1", features = ["span-locations"] }
+syn          = { version = "2", features = ["full", "visit"] }
 tokio        = { version = "1", features = ["test-util", "macros", "rt-multi-thread", "fs", "io-util", "sync", "time"] }
 # tempfile moved to regular [dependencies] above for the V03-09
 # Phase 2b apply path. Dev-deps inherit the regular dep so existing

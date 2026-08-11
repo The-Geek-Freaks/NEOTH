@@ -1781,13 +1781,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     )
     .await;
 
-    // GOLD-ADAPT-ODY-24 — Companion LAN pairing server. Default OFF — opt-in
-    // via `companion.enabled: true`. Mints chat-scoped bearer tokens for phones
-    // that scan the QR code shown at `neoth init` step 6k. Loopback-only
-    // (127.0.0.1:9745). Emits `0x0B COMPANION_PAIRED` WAL audit frames.
+    // GOLD-ADAPT-ODY-24 — Companion server-side pairing surface. Default OFF —
+    // opt-in via `companion.enabled: true`. Its loopback browser endpoint and QR
+    // preview can mint chat-scoped bearer tokens for a compatible client; NEOTH
+    // does not ship a phone client. Emits `0x0B COMPANION_PAIRED` WAL audit frames.
     // ONE shared CompanionState (token store) wired into BOTH the loopback HTTP
-    // server AND the P2P/Noise coordinator below. A bearer token minted over
-    // either path is therefore valid on the other — the phone pairs over P2P
+    // server AND the v2 HyperDHT/authenticated Noise-IK coordinator below. A bearer
+    // token minted over either path is therefore valid on the other — a compatible
+    // client pairs over P2P
     // and then talks to the daemon over loopback HTTP with the SAME token.
     // (Previously the two paths each built their own CompanionState, so a
     // P2P-minted token was unknown to the HTTP auth check and vice-versa.)
@@ -1803,11 +1804,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         std::sync::Arc::clone(&companion_shutdown),
     );
 
-    // GOLD-COMPANION-P2P-01 — Companion P2P Noise pairing coordinator.
+    // GOLD-COMPANION-P2P-01 — Companion v2 HyperDHT / authenticated Noise-IK
+    // pairing coordinator.
     // Default OFF — opt-in via `companion.p2p_enabled: true`. When enabled,
     // runs a long-lived poll loop that picks up pending invites written by
     // `neoth companion pair-phone --write-invite-for-serve` and drives the
-    // Hyperswarm/Noise-XX accept loop for each one. Shares `companion_state`
+    // HyperDHT / authenticated Noise-IK accept loop for each one. It admits the
+    // topic-and-PSK-HKDF-derived expected client static key before allocation and
+    // retains the encrypted application PSK as defense in depth. Shares `companion_state`
     // above so P2P-minted tokens are valid on the loopback HTTP path. Emits
     // `0x0D COMPANION_P2P_PAIRED` / `0x0E COMPANION_P2P_REJECTED` WAL audit
     // frames. Requires the `cluster` feature.

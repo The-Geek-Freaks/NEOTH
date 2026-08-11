@@ -8,6 +8,14 @@
 > `permissions::evaluate(&action, &policy)`, and construct gates with
 > `Gate::for_policy(policy)`. `Gate::for_level` is test-only.
 >
+> **Peeroxide API supersession (2026-08-10):** references below to
+> `conn.peer`, `conn.peer.stream` or extracting/splitting the inner peer are
+> historical design notation. The reviewed local security fork deliberately
+> keeps `SwarmConnection.peer` private; production consumers use the wrapper's
+> immutable identity accessors and owned `read`/`write` methods so registration,
+> deduplication and close notification cannot be bypassed. Do not reintroduce
+> the old field access while implementing any retained transport idea.
+>
 > 4-lens senior-dev gremium, verified against the real cluster code. The build
 > order to make SL-01/SL-01b real (NOT deferred). Operator directive: FINISH.
 

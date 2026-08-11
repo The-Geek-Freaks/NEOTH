@@ -445,7 +445,7 @@ today:
 | `neoth adr extract` | Architecture Decision Records extracted from your sessions as structured files. |
 | `neoth okf export` | Your memory as an interlinked Obsidian knowledge graph. |
 | `neoth kanban watch --follow` | Live terminal feed of task progress, streamed from WAL frames. |
-| `neoth companion pair-phone` | QR-code phone pairing over Noise-XX P2P; no relay server. |
+| `neoth companion pair-phone` | Server-side QR/URL pairing preview for the v2 HyperDHT + authenticated Noise-IK transport; no NEOTH-hosted central relay and no shipped phone client yet. |
 
 ## Comparison
 

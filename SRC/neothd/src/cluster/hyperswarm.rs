@@ -41,6 +41,8 @@
 //!   topic, spawn the peer-acceptor loop. Returns the handle.
 //!   Callers always supply a cluster_key (the keyless convenience
 //!   wrapper was deleted — it had no consumer).
+//! - [`spawn_public_rendezvous`] — narrow one-shot public-bootstrap entry
+//!   point for an already-authorized protocol such as companion pairing.
 //!
 //! Peeroxide's public bootstrap set remains the discovery boundary; private
 //! bootstrap selection is intentionally not exposed as a half-wired option.
@@ -87,6 +89,10 @@ const MAX_CONCURRENT_PEER_SESSIONS: usize = 64;
 const SWARM_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const STARTUP_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const STARTUP_DESTROY_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+/// The runtime supervisor gives a carrier generation 45 seconds to start.
+/// Keep the final cleanup budget outside this local wait so cancellation never
+/// drops an owned DHT startup while the supervisor is still willing to retry.
+const SWARM_BOOTSTRAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(35);
 
 #[derive(Debug)]
 struct StartupTeardownUncertain(String);
@@ -160,6 +166,257 @@ pub struct SwarmHandle {
     /// Stable authenticated origin used by every local gossip frame: the
     /// peeroxide Noise static public key in lowercase hex.
     own_peer_id: String,
+}
+
+/// A short-lived, operator-triggered public Hyperswarm rendezvous.
+///
+/// This is deliberately narrower than [`SwarmHandle`]: it owns no cluster
+/// identity, protocol, or peer-accept task. It is for one-invite consumers such
+/// as companion pairing which need bounded sequential accepts behind the
+/// reviewed public-bootstrap boundary
+/// without being allowed to construct a second Peeroxide dialer themselves.
+/// The receiver yields the raw Noise connection because the caller owns its
+/// application protocol; bootstrap, spawn, join, leave, and task teardown stay
+/// in this module.
+pub(crate) struct PublicRendezvous {
+    peer_handle: Option<peeroxide::SwarmHandle>,
+    topic: [u8; 32],
+    swarm_task: Option<tokio::task::JoinHandle<()>>,
+    connections: tokio::sync::mpsc::Receiver<peeroxide::SwarmConnection>,
+}
+
+async fn public_start_shutdown_requested(shutdown: &mut tokio::sync::watch::Receiver<bool>) {
+    if *shutdown.borrow() {
+        return;
+    }
+    loop {
+        if shutdown.changed().await.is_err() || *shutdown.borrow() {
+            return;
+        }
+    }
+}
+
+enum BootstrapWait<T, E> {
+    Ready(std::result::Result<T, E>),
+    CancelledOrExpired,
+}
+
+/// Race a bootstrap future with the persistent pre-auth shutdown/deadline.
+///
+/// This is deliberately independent from Peeroxide so the cancellation order
+/// is hermetically testable. Its caller retains the `SwarmStartup` owner until
+/// it has either transferred ownership with `finish` or awaited `shutdown`.
+async fn wait_for_bootstrap_or_stop<T, E>(
+    bootstrap: impl std::future::Future<Output = std::result::Result<T, E>>,
+    shutdown: &mut tokio::sync::watch::Receiver<bool>,
+    deadline: tokio::time::Instant,
+) -> BootstrapWait<T, E> {
+    tokio::select! {
+        biased;
+        _ = public_start_shutdown_requested(shutdown) => BootstrapWait::CancelledOrExpired,
+        _ = tokio::time::sleep_until(deadline) => BootstrapWait::CancelledOrExpired,
+        result = bootstrap => BootstrapWait::Ready(result),
+    }
+}
+
+async fn shutdown_unfinished_swarm_start(
+    startup: peeroxide::SwarmStartup,
+    stage: &'static str,
+) -> Result<()> {
+    match tokio::time::timeout(STARTUP_CLEANUP_TIMEOUT, startup.shutdown()).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(uncertain_start_error(format!(
+            "peeroxide startup {stage} failed and owned DHT teardown returned an error: {error}"
+        ))),
+        Err(_) => Err(uncertain_start_error(format!(
+            "peeroxide startup {stage} exceeded the {} second teardown budget; DHT drain was not proven",
+            STARTUP_CLEANUP_TIMEOUT.as_secs()
+        ))),
+    }
+}
+
+/// Request actor destruction and wait for its join. The actor owns the nested
+/// `HyperDhtOwner` after `SwarmStartup::finish`, so its completed join is the
+/// proof that every DHT task drained. This normal path must never abort it.
+async fn shutdown_started_public_rendezvous(
+    peer_handle: peeroxide::SwarmHandle,
+    swarm_task: tokio::task::JoinHandle<()>,
+) -> Result<()> {
+    match tokio::time::timeout(STARTUP_DESTROY_REQUEST_TIMEOUT, peer_handle.destroy()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            warn!(%error, "public rendezvous destroy request failed; closing command channel")
+        }
+        Err(_) => warn!("public rendezvous destroy request timed out; closing command channel"),
+    }
+    drop(peer_handle);
+    swarm_task.await.map_err(|error| {
+        uncertain_start_error(format!(
+            "public rendezvous actor ended without proving nested DHT-owner drain: {error}"
+        ))
+    })
+}
+
+impl PublicRendezvous {
+    /// Receive the next encrypted connection for this rendezvous topic.
+    pub(crate) async fn recv(&mut self) -> Option<peeroxide::SwarmConnection> {
+        self.connections.recv().await
+    }
+
+    /// Stop advertising the topic, then release the control handle while a
+    /// caller consumes its authenticated Noise stream. No further dialing
+    /// authority remains once the invite reaches a terminal transition.
+    pub(crate) async fn leave(&mut self) -> Result<()> {
+        let Some(handle) = self.peer_handle.take() else {
+            anyhow::bail!("public rendezvous was already shut down");
+        };
+        let result =
+            match tokio::time::timeout(std::time::Duration::from_secs(2), handle.leave(self.topic))
+                .await
+            {
+                Ok(result) => result.context("peeroxide leave public rendezvous topic"),
+                Err(_) => Err(anyhow::anyhow!(
+                    "peeroxide leave public rendezvous topic timed out"
+                )),
+            };
+        drop(handle);
+        result
+    }
+
+    /// Gracefully destroy the Peeroxide actor and await its nested DHT owner.
+    ///
+    /// Dropping this value remains an abort-only last resort for panics, but
+    /// every normal listener terminal path reaches this explicit join.
+    pub(crate) async fn shutdown(mut self) {
+        match (self.peer_handle.take(), self.swarm_task.take()) {
+            (Some(handle), Some(task)) => {
+                if let Err(error) = shutdown_started_public_rendezvous(handle, task).await {
+                    error!(%error, "public rendezvous graceful teardown was not proven");
+                }
+            }
+            (None, Some(task)) => {
+                if let Err(error) = task.await {
+                    error!(%error, "public rendezvous actor ended without graceful teardown proof");
+                }
+            }
+            (Some(handle), None) => drop(handle),
+            (None, None) => {}
+        }
+    }
+}
+
+impl Drop for PublicRendezvous {
+    fn drop(&mut self) {
+        self.peer_handle = None;
+        if let Some(task) = self.swarm_task.take() {
+            task.abort();
+        }
+    }
+}
+
+/// Build server-only discovery options for an advertised companion invite.
+fn server_only_join_opts() -> peeroxide::JoinOpts {
+    // A companion invite is an advertised rendezvous for an incoming phone.
+    // Client mode would let the daemon initiate to any observer of the topic,
+    // consume the one-shot invite, and invert that trust direction.
+    let mut options = peeroxide::JoinOpts::default();
+    options.server = true;
+    options.client = false;
+    options
+}
+
+/// Build the fixed public-bootstrap configuration for a v2 pairing rendezvous.
+///
+/// Keeping this construction beside the sole spawn caller prevents an optional
+/// or keyless public rendezvous from being reintroduced by a future caller.
+fn public_rendezvous_config(expected_remote_static_key: [u8; 32]) -> peeroxide::SwarmConfig {
+    let mut config = peeroxide::SwarmConfig::with_public_bootstrap();
+    // Mandatory v2 companion admission: a public topic alone can never reserve
+    // a transport slot. Peeroxide verifies this static key during the responder
+    // Noise handshake, before reply, registration, stream establishment, or the
+    // bounded connection receiver.
+    config.server_expected_remote_static_key = Some(expected_remote_static_key);
+    config
+}
+
+/// Start a public-bootstrap, one-topic rendezvous for an explicit
+/// operator-triggered protocol. This is the only generic public Peeroxide
+/// construction boundary: consumers receive a typed owner rather than a
+/// dialer/configuration surface.
+pub(crate) async fn spawn_public_rendezvous(
+    topic: [u8; 32],
+    expected_remote_static_key: [u8; 32],
+    deadline: tokio::time::Instant,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<PublicRendezvous> {
+    // Reject persistent pre-cancellation / already-expired admission before
+    // constructing the public-bootstrap config.
+    if *shutdown.borrow() || tokio::time::Instant::now() >= deadline {
+        anyhow::bail!("public rendezvous cancelled or expired before bootstrap spawn");
+    }
+    let config = public_rendezvous_config(expected_remote_static_key);
+    let startup = peeroxide::spawn_starting(config)
+        .await
+        .context("peeroxide begin public rendezvous startup")?;
+
+    match wait_for_bootstrap_or_stop(startup.bootstrapped(), &mut shutdown, deadline).await {
+        BootstrapWait::Ready(Ok(())) => {}
+        BootstrapWait::Ready(Err(error)) => {
+            if let Err(cleanup_error) =
+                shutdown_unfinished_swarm_start(startup, "public rendezvous bootstrap").await
+            {
+                return Err(cleanup_error.context(format!(
+                    "peeroxide public rendezvous bootstrap failed: {error}"
+                )));
+            }
+            return Err(error).context("peeroxide bootstrap public rendezvous");
+        }
+        BootstrapWait::CancelledOrExpired => {
+            shutdown_unfinished_swarm_start(startup, "public rendezvous cancellation")
+                .await
+                .context("public rendezvous cancelled or expired while bootstrapping")?;
+            anyhow::bail!("public rendezvous cancelled or expired during bootstrap");
+        }
+    }
+
+    let (swarm_task, peer_handle, connections) = startup
+        .finish()
+        .await
+        .map_err(|error| {
+            uncertain_start_error(format!(
+                "peeroxide public rendezvous finish failed after bootstrap without retained cleanup ownership: {error}"
+            ))
+        })
+        .context("peeroxide finish public rendezvous startup")?;
+
+    let join_result = tokio::select! {
+        biased;
+        _ = public_start_shutdown_requested(&mut shutdown) => None,
+        _ = tokio::time::sleep_until(deadline) => None,
+        result = peer_handle.join(topic, server_only_join_opts()) => Some(result),
+    };
+    match join_result {
+        Some(Ok(())) => {}
+        Some(Err(error)) => {
+            shutdown_started_public_rendezvous(peer_handle, swarm_task)
+                .await
+                .context("public rendezvous join failure cleanup")?;
+            return Err(error).context("peeroxide join public rendezvous topic");
+        }
+        None => {
+            shutdown_started_public_rendezvous(peer_handle, swarm_task)
+                .await
+                .context("public rendezvous cancelled join cleanup")?;
+            anyhow::bail!("public rendezvous cancelled or expired during topic join");
+        }
+    }
+
+    Ok(PublicRendezvous {
+        peer_handle: Some(peer_handle),
+        topic,
+        swarm_task: Some(swarm_task),
+        connections,
+    })
 }
 
 impl SwarmHandle {
@@ -345,18 +602,60 @@ pub async fn spawn_discovery_with_wal(
         .context("load stable cluster node identity")?;
     let mut config = peeroxide::SwarmConfig::with_public_bootstrap();
     config.key_pair = Some(local_identity.peeroxide_key_pair());
-    let (swarm_task, handle, mut conn_rx) = match peeroxide::spawn(config).await {
-        Ok(parts) => parts,
+    // `spawn_starting` hands us the DHT owner before the potentially long
+    // public bootstrap wait. Keep ten seconds of the supervisor's 45-second
+    // generation budget available for a proved shutdown instead of letting an
+    // outer timeout cancel this future while the owner is still live.
+    let bootstrap_deadline = tokio::time::Instant::now() + SWARM_BOOTSTRAP_TIMEOUT;
+    let startup = match peeroxide::spawn_starting(config).await {
+        Ok(startup) => startup,
         Err(error) => {
             // peeroxide owns an internal DHT task but does not return its join
             // handle on `Err`; callers cannot prove teardown and must not retry
             // another carrier generation in this process.
             return Err(uncertain_start_error(format!(
-                "peeroxide::spawn failed before handing out cleanup ownership: {error}"
+                "peeroxide::spawn_starting failed before handing out cleanup ownership: {error}"
             )))
-            .context("peeroxide::spawn — bring up Hyperswarm");
+            .context("peeroxide::spawn_starting — begin Hyperswarm");
         }
     };
+    match tokio::time::timeout_at(bootstrap_deadline, startup.bootstrapped()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            if let Err(cleanup_error) =
+                shutdown_unfinished_swarm_start(startup, "cluster bootstrap").await
+            {
+                return Err(cleanup_error.context(format!(
+                    "peeroxide bootstrap for cluster `{cluster_name}` failed: {error}"
+                )));
+            }
+            return Err(error)
+                .with_context(|| format!("peeroxide bootstrap for cluster `{cluster_name}`"));
+        }
+        Err(_) => {
+            shutdown_unfinished_swarm_start(startup, "cluster bootstrap timeout")
+                .await
+                .with_context(|| {
+                    format!(
+                        "peeroxide bootstrap for cluster `{cluster_name}` timed out after {} seconds",
+                        SWARM_BOOTSTRAP_TIMEOUT.as_secs()
+                    )
+                })?;
+            anyhow::bail!(
+                "peeroxide bootstrap for cluster `{cluster_name}` timed out after {} seconds",
+                SWARM_BOOTSTRAP_TIMEOUT.as_secs()
+            );
+        }
+    }
+    let (swarm_task, handle, mut conn_rx) = startup.finish().await.map_err(|error| {
+        // `finish` consumes the explicit startup owner. The vendor performs
+        // its own shutdown on its only fallible pre-actor operation, but does
+        // not return an owner for us to await, so fail closed rather than let
+        // the runtime supervisor start another generation beside it.
+        uncertain_start_error(format!(
+            "peeroxide finish for cluster `{cluster_name}` failed after bootstrap without retained cleanup ownership: {error}"
+        ))
+    })?;
     // Our own Noise static pubkey — the same for every peer session. Bound
     // into the cluster_key proof so a captured proof can't be replayed.
     let own_noise_pk: [u8; 32] = handle.key_pair().public_key;
@@ -561,8 +860,6 @@ async fn handle_peeroxide_connection(
     // Peer's Noise static key from the authenticated channel — the identity
     // the cluster_key proof binds to (NOT anything from the frame payload).
     let peer_noise_pk: [u8; 32] = *conn.remote_public_key();
-    let stream = &mut conn.peer.stream;
-
     // SL-02b: start the handshake round-trip clock — the elapsed time from our
     // Hello write to the peer's validated Hello is recorded as this peer's RTT.
 
@@ -596,7 +893,7 @@ async fn handle_peeroxide_connection(
     let our_hello_bytes = heartbeat::encode_frame(&our_hello).context("encode our Hello")?;
     // SL-00(1b): bound the Hello write — a peer that accepts the connection but
     // stalls the read side must not pin this task indefinitely.
-    match tokio::time::timeout(HANDSHAKE_TIMEOUT, stream.write(&our_hello_bytes)).await {
+    match tokio::time::timeout(HANDSHAKE_TIMEOUT, conn.write(&our_hello_bytes)).await {
         Ok(r) => r.context("write Hello to peer")?,
         Err(_) => {
             emit_peer_rejected_wal(
@@ -612,7 +909,7 @@ async fn handle_peeroxide_connection(
     // SL-00(1b): bound the Hello read — the primary DoS guard. A peer that
     // connects but never sends a Hello is dropped after HANDSHAKE_TIMEOUT
     // instead of holding a session slot forever.
-    let peer_read = match tokio::time::timeout(HANDSHAKE_TIMEOUT, stream.read()).await {
+    let peer_read = match tokio::time::timeout(HANDSHAKE_TIMEOUT, conn.read()).await {
         Ok(r) => r,
         Err(_) => {
             emit_peer_rejected_wal(
@@ -873,7 +1170,7 @@ async fn handle_peeroxide_connection(
                                 "peeroxide membership generation cancelled before heartbeat write"
                             );
                         }
-                        result = stream.write(&b) => result,
+                        result = conn.write(&b) => result,
                     };
                     if let Err(e) = write {
                         heartbeat_permit.persist_indeterminate_if_cancelled(
@@ -941,7 +1238,7 @@ async fn handle_peeroxide_connection(
                                     "peeroxide membership generation cancelled before outbound write"
                                 );
                             }
-                            result = stream.write(&b) => result,
+                            result = conn.write(&b) => result,
                         };
                         if let Err(e) = write {
                             permit.persist_indeterminate_if_cancelled(
@@ -997,7 +1294,7 @@ async fn handle_peeroxide_connection(
                 };
                 anyhow::bail!(reason);
             }
-            result = stream.read() => result,
+            result = conn.read() => result,
         };
         let bytes = match read {
             Ok(Some(b)) => b,
@@ -1160,7 +1457,7 @@ async fn handle_peeroxide_connection(
                                     "peeroxide membership generation cancelled before durable gossip ACK"
                                 );
                             }
-                            result = stream.write(&encoded) => result,
+                            result = conn.write(&encoded) => result,
                         };
                         if let Err(error) = ack_write {
                             ack_permit.persist_indeterminate_if_cancelled(
@@ -2047,6 +2344,60 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_rendezvous_join_is_server_only() {
+        let options = server_only_join_opts();
+        assert!(options.server);
+        assert!(!options.client);
+    }
+
+    #[test]
+    fn public_rendezvous_requires_and_wires_the_expected_remote_static_key() {
+        let expected = [0x5au8; 32];
+        let config = public_rendezvous_config(expected);
+        assert_eq!(config.server_expected_remote_static_key, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn public_bootstrap_wait_returns_ready_without_constructing_a_dht() {
+        let (_shutdown_tx, mut shutdown) = tokio::sync::watch::channel(false);
+        let outcome = wait_for_bootstrap_or_stop(
+            async { Ok::<_, &'static str>("bootstrapped") },
+            &mut shutdown,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+        )
+        .await;
+
+        assert!(matches!(outcome, BootstrapWait::Ready(Ok("bootstrapped"))));
+    }
+
+    #[tokio::test]
+    async fn public_bootstrap_wait_prioritizes_persistent_shutdown_without_constructing_a_dht() {
+        let (shutdown_tx, mut shutdown) = tokio::sync::watch::channel(false);
+        shutdown_tx.send(true).expect("shutdown receiver is live");
+        let outcome = wait_for_bootstrap_or_stop(
+            std::future::pending::<std::result::Result<(), &'static str>>(),
+            &mut shutdown,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+        )
+        .await;
+
+        assert!(matches!(outcome, BootstrapWait::CancelledOrExpired));
+    }
+
+    #[tokio::test]
+    async fn public_bootstrap_wait_rejects_an_expired_deadline_without_constructing_a_dht() {
+        let (_shutdown_tx, mut shutdown) = tokio::sync::watch::channel(false);
+        let outcome = wait_for_bootstrap_or_stop(
+            std::future::pending::<std::result::Result<(), &'static str>>(),
+            &mut shutdown,
+            tokio::time::Instant::now() - std::time::Duration::from_millis(1),
+        )
+        .await;
+
+        assert!(matches!(outcome, BootstrapWait::CancelledOrExpired));
+    }
 
     #[tokio::test]
     async fn startup_cleanup_aborts_and_awaits_a_stuck_task() {

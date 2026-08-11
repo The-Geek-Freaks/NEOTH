@@ -8,8 +8,9 @@
 //! This is a **localhost** companion — it is accessible only from the same
 //! machine (loopback bind + peer-IP check). A phone does not connect to this
 //! HTTP listener: `companion::p2p` below provides the separate single-use
-//! Hyperswarm/Noise-XX phone-pairing path. Exposing this HTTP endpoint on a LAN
-//! interface remains deliberately unsupported.
+//! v2 HyperDHT / authenticated Noise-IK server-side pairing preview. NEOTH does
+//! not ship a phone client. Exposing this HTTP endpoint on a LAN interface
+//! remains deliberately unsupported.
 //!
 //! ## Sub-systems
 //!
@@ -23,7 +24,7 @@
 //!    requests whose `Origin` header is present but does not match the
 //!    loopback host. Returns `{token, session_id}` + `Set-Cookie` on success.
 //!
-//! 3. **LAN-IP UDP probe** (`detect_lan_ip`) — available for future use;
+//! 3. **LAN-IP interface discovery** (`detect_lan_ip`) — available for future use;
 //!    currently not called during server spawn because the bind is loopback-
 //!    only and the advertised pairing URL must match what the server actually
 //!    serves.
@@ -31,7 +32,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -43,7 +44,7 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Notify, RwLock, watch};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
@@ -163,28 +164,52 @@ fn mint_token() -> String {
 
 // ── LAN-IP detection ─────────────────────────────────────────────────────────
 
-/// Detect the operative LAN IP via the UDP connect trick.
+/// Select the deterministic RFC1918 address to advertise from IPv4 candidates.
 ///
-/// Calls `UdpSocket::connect("8.8.8.8:80")` — no packet is sent; the OS
-/// merely selects a route and [`local_addr`] returns the bound IP. Falls
-/// back to `127.0.0.1` when offline / behind a VPN / no default route.
+/// Link-local and loopback addresses cannot be used for LAN pairing. Restricting
+/// candidates to the three RFC1918 ranges also excludes public, shared, and
+/// documentation addresses. The minimum gives operators a stable choice when
+/// several private adapters (for example Ethernet and Wi-Fi) are active.
+fn select_lan_ipv4(candidates: impl IntoIterator<Item = Ipv4Addr>) -> Option<Ipv4Addr> {
+    candidates
+        .into_iter()
+        .filter(|ip| ip.is_private() && !ip.is_loopback() && !ip.is_link_local())
+        .min()
+}
+
+/// Detect an operative LAN IP without an application-created outbound Internet
+/// socket or an external route-selection probe.
+///
+/// Enumerates OS network interfaces in a blocking task, then deterministically
+/// selects the lowest RFC1918 non-loopback, non-link-local IPv4 address. Falls
+/// back to `127.0.0.1` when interface enumeration fails, the blocking task
+/// cannot be joined, or no eligible LAN address exists.
 pub async fn detect_lan_ip() -> IpAddr {
-    match tokio::net::UdpSocket::bind("0.0.0.0:0").await {
-        Ok(sock) => match sock.connect("8.8.8.8:80").await {
-            Ok(()) => match sock.local_addr() {
-                Ok(addr) => addr.ip(),
-                Err(e) => {
-                    warn!(error = %e, "companion: local_addr failed; falling back to 127.0.0.1");
-                    IpAddr::V4(Ipv4Addr::LOCALHOST)
-                }
-            },
-            Err(e) => {
-                warn!(error = %e, "companion: UDP connect failed (offline?); falling back to 127.0.0.1");
-                IpAddr::V4(Ipv4Addr::LOCALHOST)
-            }
-        },
-        Err(e) => {
-            warn!(error = %e, "companion: UDP bind failed; falling back to 127.0.0.1");
+    match tokio::task::spawn_blocking(|| {
+        if_addrs::get_if_addrs().map(|interfaces| {
+            select_lan_ipv4(
+                interfaces
+                    .into_iter()
+                    .filter_map(|interface| match interface.addr {
+                        if_addrs::IfAddr::V4(address) => Some(address.ip),
+                        if_addrs::IfAddr::V6(_) => None,
+                    }),
+            )
+        })
+    })
+    .await
+    {
+        Ok(Ok(Some(ip))) => IpAddr::V4(ip),
+        Ok(Ok(None)) => {
+            warn!("companion: no eligible RFC1918 IPv4 interface; falling back to 127.0.0.1");
+            IpAddr::V4(Ipv4Addr::LOCALHOST)
+        }
+        Ok(Err(error)) => {
+            warn!(error = %error, "companion: interface enumeration failed; falling back to 127.0.0.1");
+            IpAddr::V4(Ipv4Addr::LOCALHOST)
+        }
+        Err(error) => {
+            warn!(error = %error, "companion: interface discovery task failed; falling back to 127.0.0.1");
             IpAddr::V4(Ipv4Addr::LOCALHOST)
         }
     }
@@ -206,7 +231,7 @@ pub fn render_pairing_qr(url: &str) -> String {
             .light_color(unicode::Dense1x2::Light)
             .build(),
         Err(e) => {
-            warn!(error = %e, url = url, "companion: QR code generation failed");
+            warn!(error = %e, "companion: QR code generation failed");
             String::new()
         }
     }
@@ -221,6 +246,201 @@ pub const COMPANION_TOPIC_BYTES: usize = 32;
 /// PSK length — 16 bytes / 128 bits. Authenticates the one-shot, short-TTL
 /// pairing handshake, so it IS secret until consumed.
 pub const COMPANION_PSK_BYTES: usize = 16;
+
+/// Domain-separation label for the v2 pairing transport's deterministic phone
+/// Noise static identity.  The public topic is HKDF salt and the existing
+/// 16-byte pairing PSK is IKM, so this label is the versioned protocol boundary
+/// rather than an optional application hint.
+#[cfg(feature = "cluster")]
+const COMPANION_NOISE_STATIC_HKDF_INFO: &[u8] = b"NEOTH/companion/noise-static/v2";
+
+/// Derive the v2 companion phone's deterministic Noise-static seed.
+///
+/// This intentionally does not log, serialize, or otherwise expose the seed:
+/// possessing the pairing PSK is sufficient to reconstruct it.  HKDF expands
+/// the existing 128-bit PSK into the exact 32-byte `KeyPair::from_seed` input
+/// while binding it to this one public rendezvous topic and protocol version.
+#[cfg(feature = "cluster")]
+fn derive_companion_noise_static_seed(
+    topic: &[u8; COMPANION_TOPIC_BYTES],
+    psk: &[u8; COMPANION_PSK_BYTES],
+) -> [u8; 32] {
+    derive_companion_noise_static_seed_with_info(topic, psk, COMPANION_NOISE_STATIC_HKDF_INFO)
+}
+
+/// HKDF core kept separate so tests can prove the v2 domain label cannot
+/// accidentally collide with a future or historical protocol label.
+#[cfg(feature = "cluster")]
+fn derive_companion_noise_static_seed_with_info(
+    topic: &[u8; COMPANION_TOPIC_BYTES],
+    psk: &[u8; COMPANION_PSK_BYTES],
+    info: &[u8],
+) -> [u8; 32] {
+    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(topic), psk);
+    let mut seed = [0u8; 32];
+    hkdf.expand(info, &mut seed)
+        .expect("32-byte HKDF-SHA256 output is within the RFC 5869 output limit");
+    seed
+}
+
+/// Derive the only Noise static public key admitted for a v2 companion invite.
+#[cfg(feature = "cluster")]
+fn expected_companion_noise_static_key(
+    topic: &[u8; COMPANION_TOPIC_BYTES],
+    psk: &[u8; COMPANION_PSK_BYTES],
+) -> [u8; 32] {
+    peeroxide::KeyPair::from_seed(derive_companion_noise_static_seed(topic, psk)).public_key
+}
+
+/// The tiny, secret-bearing handoff record is deliberately much smaller than
+/// a general configuration file.  Keeping a hard cap makes its consumer safe
+/// even if the private home is accidentally populated by a hostile local file.
+pub const MAX_PENDING_INVITE_BYTES: u64 = 4096;
+
+/// Schema version for `companion_pending_invite.json`.
+pub const PENDING_INVITE_RECORD_VERSION: u8 = 1;
+
+/// Observable lifecycle of one owned P2P listener.
+///
+/// `Committing` is a point of no return: after this value is published, the
+/// valid PSK has passed the final cancellation/deadline gate and invite burn,
+/// WAL audit acknowledgement, token visibility, and response handling must
+/// drain. The audit does not persist the bearer token; an OS crash between its
+/// ACK and in-memory visibility deliberately consumes the invite fail-closed
+/// and requires a new pairing attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompanionP2pPhase {
+    Starting,
+    PreAuth,
+    Committing,
+    Finalizing,
+    Stopped,
+}
+
+/// Owns the actual listener task and its persistent cooperative cancellation.
+///
+/// Callers intentionally cannot obtain the inner [`JoinHandle`], so normal
+/// CLI/daemon lifecycle paths cannot abort a listener halfway through its
+/// admitted terminal sequence (invite burn, durable audit acknowledgement, and
+/// in-memory token publication). The audit never persists the bearer token. A
+/// timeout must use [`observe_grace`] and retain this value; it can then request
+/// stop and await the same owner to terminal.
+pub struct CompanionP2pTaskHandle {
+    task: JoinHandle<()>,
+    stop_tx: watch::Sender<bool>,
+    phase_rx: watch::Receiver<CompanionP2pPhase>,
+}
+
+impl CompanionP2pTaskHandle {
+    fn new(
+        task: JoinHandle<()>,
+        stop_tx: watch::Sender<bool>,
+        phase_rx: watch::Receiver<CompanionP2pPhase>,
+    ) -> Self {
+        Self {
+            task,
+            stop_tx,
+            phase_rx,
+        }
+    }
+
+    /// Persistently request a cooperative stop. Repeated requests are harmless.
+    pub fn request_stop(&self) {
+        let _ = self.stop_tx.send(true);
+    }
+
+    /// Current phase without waiting.
+    pub fn phase(&self) -> CompanionP2pPhase {
+        *self.phase_rx.borrow()
+    }
+
+    /// Subscribe to lifecycle changes for diagnostics and deterministic tests.
+    pub fn subscribe_phase(&self) -> watch::Receiver<CompanionP2pPhase> {
+        self.phase_rx.clone()
+    }
+
+    /// Observe a bounded grace period without relinquishing task ownership.
+    /// `None` means the listener remains owned and must later be awaited.
+    pub async fn observe_grace(
+        &mut self,
+        grace: std::time::Duration,
+    ) -> Option<Result<(), tokio::task::JoinError>> {
+        tokio::time::timeout(grace, &mut self.task).await.ok()
+    }
+
+    /// Retain and await the owned listener to its terminal state.
+    pub async fn await_terminal(&mut self) -> Result<(), tokio::task::JoinError> {
+        (&mut self.task).await
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.task.is_finished()
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PendingCompanionInviteV1 {
+    version: u8,
+    topic_hex: String,
+    psk_hex: String,
+    expires_at: u64,
+}
+
+fn require_lower_hex_exact(value: &str, expected_len: usize, label: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        value.len() == expected_len
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "invalid companion {label}"
+    );
+    Ok(())
+}
+
+/// Make the CLI producer's selected `NEOTH_HOME` a real private directory.
+/// This is a capability boundary: a pending invite contains its raw PSK.
+pub fn ensure_private_companion_home(home: &Path) -> anyhow::Result<()> {
+    match std::fs::symlink_metadata(home) {
+        Ok(metadata) => anyhow::ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "companion home must be a real directory"
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!("companion home does not exist")
+        }
+        Err(error) => return Err(error.into()),
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(home, std::fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(windows)]
+    crate::wal::win_native::set_private_current_user_directory_dacl(home)?;
+    verify_private_companion_home(home)
+}
+
+/// Verify only — the daemon must not silently relax or repair a suspicious
+/// home while consuming a capability written by another process.
+pub fn verify_private_companion_home(home: &Path) -> anyhow::Result<()> {
+    let metadata = std::fs::symlink_metadata(home)?;
+    anyhow::ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "companion home must be a real private directory"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        anyhow::ensure!(
+            metadata.permissions().mode() & 0o077 == 0,
+            "companion home permissions are not private"
+        );
+    }
+    #[cfg(windows)]
+    crate::wal::win_native::verify_private_directory_dacl(home)?;
+    Ok(())
+}
 
 /// One-time pairing invite minted by `neoth companion pair-phone`.
 ///
@@ -263,26 +483,52 @@ impl CompanionInvite {
         Self { topic_hex, psk_hex }
     }
 
-    /// Encode as `neoth://companion/pair?topic=<hex>&psk=<hex>&ttl=<secs>`.
-    /// Hex is URL-safe (`[0-9a-f]`), so no percent-encoding is needed.
+    /// Encode the mandatory v2 pairing URL as
+    /// `neoth://companion/pair?v=2&topic=<hex>&psk=<hex>&ttl=<secs>`.
+    ///
+    /// V1 pairing URLs are deliberately not emitted or accepted by the v2
+    /// transport: the phone must derive its deterministic Noise static identity
+    /// before it can consume a public-DHT connection slot. Hex is URL-safe
+    /// (`[0-9a-f]`), so no percent-encoding is needed.
     pub fn pairing_url(&self, ttl_secs: u64) -> String {
         format!(
-            "neoth://companion/pair?topic={}&psk={}&ttl={}",
+            "neoth://companion/pair?v=2&topic={}&psk={}&ttl={}",
             self.topic_hex, self.psk_hex, ttl_secs
         )
     }
 
-    /// Serialise to the on-disk pending-invite JSON consumed by the serve-side
-    /// P2P coordinator (`spawn_companion_p2p_listener_task` polls
-    /// `~/.neoth/companion_pending_invite.json`). Symmetric with [`from_hex`] —
-    /// the coordinator reads exactly these three keys. Keeps `psk_hex` private
-    /// (no broad getter) while enabling the CLI→daemon pairing handoff.
-    pub fn to_pending_invite_json(&self, ttl_secs: u64) -> serde_json::Value {
-        serde_json::json!({
-            "topic_hex": self.topic_hex,
-            "psk_hex": self.psk_hex,
-            "ttl_secs": ttl_secs,
+    /// Serialize the strict V1 on-disk handoff record consumed by `neoth serve`.
+    /// The expiry is absolute so a delayed daemon cannot accidentally grant a
+    /// fresh full TTL to an invite whose QR has already expired.
+    pub fn pending_invite_record(&self, expires_at: u64) -> anyhow::Result<Vec<u8>> {
+        anyhow::ensure!(expires_at > 0, "invalid companion invite expiry");
+        serde_json::to_vec(&PendingCompanionInviteV1 {
+            version: PENDING_INVITE_RECORD_VERSION,
+            topic_hex: self.topic_hex.clone(),
+            psk_hex: self.psk_hex.clone(),
+            expires_at,
         })
+        .map_err(Into::into)
+    }
+
+    /// Parse and validate a strict V1 handoff record without exposing its PSK
+    /// in errors or logs. The returned TTL is derived from the absolute expiry.
+    pub fn from_pending_invite_record(bytes: &[u8], now_unix: u64) -> anyhow::Result<(Self, u64)> {
+        anyhow::ensure!(
+            !bytes.is_empty() && bytes.len() as u64 <= MAX_PENDING_INVITE_BYTES,
+            "invalid companion invite record size"
+        );
+        let record: PendingCompanionInviteV1 = serde_json::from_slice(bytes)
+            .map_err(|_| anyhow::anyhow!("invalid companion invite record"))?;
+        anyhow::ensure!(
+            record.version == PENDING_INVITE_RECORD_VERSION,
+            "unsupported companion invite record version"
+        );
+        require_lower_hex_exact(&record.topic_hex, COMPANION_TOPIC_BYTES * 2, "invite topic")?;
+        require_lower_hex_exact(&record.psk_hex, COMPANION_PSK_BYTES * 2, "invite PSK")?;
+        anyhow::ensure!(record.expires_at > now_unix, "companion invite expired");
+        let ttl_secs = record.expires_at.saturating_sub(now_unix);
+        Ok((Self::from_hex(record.topic_hex, record.psk_hex), ttl_secs))
     }
 }
 
@@ -549,29 +795,41 @@ pub fn spawn_companion_server_loop(
 
 // ── P2P Noise pairing listener (GOLD-COMPANION-P2P-01) ───────────────────────
 //
-// Full phone-pairing over the existing Hyperswarm DHT + Noise-XX E2E mesh.
+// Full phone-pairing over the existing Hyperswarm DHT + Noise-IK-authenticated
+// transport mesh.
 // Feature-gated: only compiled when the `cluster` feature is present, which
 // pulls in `peeroxide`. In a build without `cluster` the public API surface
-// (`spawn_companion_p2p_listener`) returns a no-op `JoinHandle`.
+// (`spawn_companion_p2p_listener`) returns an owned no-op task handle.
 //
 // Protocol (single-use, TTL-bound):
 //   1. Caller mints a `CompanionInvite` (topic=32B CSPRNG, psk=16B CSPRNG).
-//   2. A peeroxide swarm is spawned and `handle.join(topic_bytes)` announces
-//      the topic on the public Hyperswarm DHT.
-//   3. The phone (companion app) finds the topic, connects via Noise-XX,
-//      and sends exactly 16 raw bytes (the PSK) immediately after connect.
-//   4. The daemon reads 16 bytes (`read()` over Noise → next plaintext
+//   2. The phone derives its v2 Noise static key from topic + PSK with the
+//      versioned HKDF above; the reviewed rendezvous boundary admits only its
+//      resulting public key before allocating a transport connection.
+//   3. The rendezvous boundary announces `topic_bytes` on the public
+//      Hyperswarm DHT.
+//   4. The phone finds the topic and sends exactly 16 raw bytes (the PSK)
+//      immediately after the authenticated encrypted connection opens.
+//   5. The daemon reads 16 bytes (`read()` over Noise → next plaintext
 //      message), compares with `constant_time_eq`, and either:
-//      - PASS: calls `CompanionState::get_or_mint(session_id)`, writes
-//        `{token, session_id}` as JSON, emits WAL 0x0D, burns the invite.
-//      - FAIL: drops the conn, emits WAL 0x0E, burns the invite.
-//   5. The topic is unannounced (`handle.leave(topic_bytes)`).
+//      - PASS: prepares an idempotent token under the shared token-store lock,
+//        writes and acknowledges a WAL 0x0D audit record, then makes the
+//        token visible, replies with `{token, session_id}`, and burns the
+//        invite. The WAL record intentionally contains no bearer token and is
+//        not a token-recovery transaction: a process crash after its ACK but
+//        before in-memory visibility consumes the invite fail-closed, so the
+//        operator must create a new invite and pair again.
+//      - FAIL: drops only that connection, emits a bounded WAL 0x0E audit,
+//        waits a short cooldown, and keeps the invite advertised.
+//   6. Valid-PSK admission, pre-auth TTL expiry, explicit shutdown, or
+//      transport closure consumes the invite and tears down the rendezvous.
 //
-// Only one connection is accepted per invite: the coordinator consumes exactly
-// one item from the one-shot connection receiver and then burns/leaves the
-// invite. A second phone scanning the same QR gets a closed connection.
+// Attempts are strictly sequential and cooldown-limited. A public-topic
+// observer therefore cannot burn the invite with the first unauthenticated
+// connection, while the fixed pre-auth deadline bounds unauthenticated work.
 //
-// IMPORTANT: the `conn.peer.stream` from peeroxide is a Noise SecretStream.
+// IMPORTANT: `SwarmConnection::read`/`write` keep peeroxide's Noise SecretStream
+// inside its lifecycle-bound wrapper. Each method operates on one Noise message.
 // Its `.read()` method returns the next decrypted Noise message as
 // `Result<Option<peeroxide::Bytes>>` — it is NOT a raw `AsyncRead`. Each
 // `.write(&bytes)` sends one Noise message. We use these message-framed
@@ -582,18 +840,23 @@ mod p2p {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use tokio::sync::{Notify, RwLock};
-    use tokio::task::JoinHandle;
+    use tokio::sync::{RwLock, watch};
     use tracing::{debug, info, warn};
 
-    use super::{COMPANION_PSK_BYTES, COMPANION_TOPIC_BYTES, CompanionInvite, CompanionState};
+    use super::{
+        COMPANION_PSK_BYTES, COMPANION_TOPIC_BYTES, CompanionInvite, CompanionP2pPhase,
+        CompanionState, TokenEntry, expected_companion_noise_static_key, mint_token,
+    };
     use crate::wal::builder::HeaderBuilder;
     use crate::wal::events::{EVENT_TYPE_COMPANION_P2P_PAIRED, EVENT_TYPE_COMPANION_P2P_REJECTED};
     use crate::wal::writer::WalWriterHandle;
 
-    /// One-connection TTL for the Noise accept loop. If no phone connects
-    /// within this window the invite is burned and the task exits cleanly.
-    const COMPANION_P2P_ACCEPT_TIMEOUT: Duration = Duration::from_secs(310);
+    const MIN_COMPANION_INVITE_TTL_SECS: u64 = 1;
+    const MAX_COMPANION_INVITE_TTL_SECS: u64 = 300;
+    const COMPANION_PSK_READ_TIMEOUT: Duration = Duration::from_secs(10);
+    const COMPANION_RESPONSE_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+    const COMPANION_RETRY_COOLDOWN: Duration = Duration::from_millis(500);
+    const MAX_DETAILED_REJECTION_AUDITS: u8 = 5;
 
     /// Held state for one P2P pairing session. Shared between the spawner and
     /// the accept loop via `Arc`.
@@ -604,331 +867,565 @@ mod p2p {
         pub pending_invite: RwLock<Option<CompanionInvite>>,
         /// WAL writer for emitting 0x0D / 0x0E audit frames.
         pub writer: WalWriterHandle,
-        /// Total TTL of the invite in seconds. The accept loop bails after
-        /// `COMPANION_P2P_ACCEPT_TIMEOUT` regardless.
+        /// Requested invite TTL. Runtime clamps this to the documented
+        /// 1..=300 second window and derives one pre-auth admission deadline.
         pub invite_ttl_secs: u64,
+    }
+
+    /// Companion pairing is strictly a server-side rendezvous: a returned
+    /// connection must have been initiated by the phone. Keep this predicate
+    /// separately testable so a future transport change cannot turn
+    /// `is_initiator` into observational-only metadata.
+    pub(super) const fn accepts_inbound_pairing_connection(is_initiator: bool) -> bool {
+        !is_initiator
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(super) enum AttemptRejection {
+        UnexpectedInitiator,
+        WrongFrameSize,
+        ClosedEarly,
+        ReadError,
+        ReadTimeout,
+        PskMismatch,
+    }
+
+    impl AttemptRejection {
+        const fn reason(self) -> &'static str {
+            match self {
+                Self::UnexpectedInitiator => "unexpected_initiator",
+                Self::WrongFrameSize => "psk_frame_wrong_size",
+                Self::ClosedEarly => "psk_closed_early",
+                Self::ReadError => "psk_read_error",
+                Self::ReadTimeout => "psk_read_timeout",
+                Self::PskMismatch => "psk_mismatch",
+            }
+        }
+
+        const fn detail(self) -> &'static str {
+            match self {
+                Self::UnexpectedInitiator => "server_only_rendezvous",
+                Self::WrongFrameSize => "wrong_psk_size",
+                Self::ClosedEarly => "connection_closed",
+                Self::ReadError => "io_error",
+                Self::ReadTimeout => "timeout",
+                Self::PskMismatch => "wrong_psk",
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(super) enum AttemptDecision {
+        Authenticated,
+        Retry(AttemptRejection),
+    }
+
+    pub(super) enum AttemptEvidence<'a> {
+        Initiated,
+        Frame(&'a [u8]),
+        Closed,
+        ReadFailed,
+        ReadTimedOut,
+    }
+
+    pub(super) fn decide_attempt(
+        evidence: AttemptEvidence<'_>,
+        expected_psk: &[u8; COMPANION_PSK_BYTES],
+    ) -> AttemptDecision {
+        let received = match evidence {
+            AttemptEvidence::Initiated => {
+                return AttemptDecision::Retry(AttemptRejection::UnexpectedInitiator);
+            }
+            AttemptEvidence::Frame(bytes) if bytes.len() == COMPANION_PSK_BYTES => bytes,
+            AttemptEvidence::Frame(_) => {
+                return AttemptDecision::Retry(AttemptRejection::WrongFrameSize);
+            }
+            AttemptEvidence::Closed => {
+                return AttemptDecision::Retry(AttemptRejection::ClosedEarly);
+            }
+            AttemptEvidence::ReadFailed => {
+                return AttemptDecision::Retry(AttemptRejection::ReadError);
+            }
+            AttemptEvidence::ReadTimedOut => {
+                return AttemptDecision::Retry(AttemptRejection::ReadTimeout);
+            }
+        };
+
+        let mut difference = 0u8;
+        for (actual, expected) in received.iter().zip(expected_psk) {
+            difference |= actual ^ expected;
+        }
+        if difference == 0 {
+            AttemptDecision::Authenticated
+        } else {
+            AttemptDecision::Retry(AttemptRejection::PskMismatch)
+        }
+    }
+
+    pub(super) const fn attempt_consumes_invite(decision: AttemptDecision) -> bool {
+        matches!(decision, AttemptDecision::Authenticated)
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(super) enum TerminalOutcome {
+        Paired,
+        Expired,
+        Shutdown,
+        TransportClosed,
+        DurableCommitFailed,
+    }
+
+    impl TerminalOutcome {
+        pub(super) const fn consumes_invite(self) -> bool {
+            true
+        }
+
+        const fn audit_reason(self) -> Option<&'static str> {
+            match self {
+                Self::Paired => None,
+                Self::Expired => Some("invite_expired"),
+                Self::Shutdown => Some("shutdown"),
+                Self::TransportClosed => Some("transport_closed"),
+                Self::DurableCommitFailed => Some("durable_pair_commit_failed"),
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(super) struct RejectionAccounting {
+        pub attempt: u64,
+        pub emit_detailed_audit: bool,
+    }
+
+    #[derive(Default)]
+    pub(super) struct RetryBudget {
+        attempts: u64,
+        detailed_audits: u8,
+    }
+
+    impl RetryBudget {
+        pub(super) fn record_rejection(&mut self) -> RejectionAccounting {
+            self.attempts = self.attempts.saturating_add(1);
+            let emit_detailed_audit = self.detailed_audits < MAX_DETAILED_REJECTION_AUDITS;
+            if emit_detailed_audit {
+                self.detailed_audits += 1;
+            }
+            RejectionAccounting {
+                attempt: self.attempts,
+                emit_detailed_audit,
+            }
+        }
+
+        fn attempts(&self) -> u64 {
+            self.attempts
+        }
+
+        fn suppressed_audits(&self) -> u64 {
+            self.attempts
+                .saturating_sub(u64::from(self.detailed_audits))
+        }
+    }
+
+    pub(super) const fn effective_invite_ttl_secs(requested: u64) -> u64 {
+        if requested < MIN_COMPANION_INVITE_TTL_SECS {
+            MIN_COMPANION_INVITE_TTL_SECS
+        } else if requested > MAX_COMPANION_INVITE_TTL_SECS {
+            MAX_COMPANION_INVITE_TTL_SECS
+        } else {
+            requested
+        }
+    }
+
+    pub(super) fn bounded_read_wait(remaining: Duration) -> Duration {
+        remaining.min(COMPANION_PSK_READ_TIMEOUT)
+    }
+
+    pub(super) async fn shutdown_requested(shutdown: &mut watch::Receiver<bool>) {
+        if *shutdown.borrow() {
+            return;
+        }
+        loop {
+            if shutdown.changed().await.is_err() || *shutdown.borrow() {
+                return;
+            }
+        }
+    }
+
+    pub(super) enum TimedRead<T> {
+        Ready(T),
+        Shutdown,
+        Expired,
+        ReadTimeout,
+    }
+
+    pub(super) async fn wait_for_attempt_read<F, T>(
+        shutdown: &mut watch::Receiver<bool>,
+        deadline: tokio::time::Instant,
+        read: F,
+    ) -> TimedRead<T>
+    where
+        F: std::future::Future<Output = T>,
+    {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let read_wait = bounded_read_wait(remaining);
+        tokio::select! {
+            biased;
+            _ = shutdown_requested(shutdown) => TimedRead::Shutdown,
+            _ = tokio::time::sleep_until(deadline) => TimedRead::Expired,
+            _ = tokio::time::sleep(read_wait) => TimedRead::ReadTimeout,
+            result = read => TimedRead::Ready(result),
+        }
+    }
+
+    async fn wait_retry_cooldown(
+        shutdown: &mut watch::Receiver<bool>,
+        deadline: tokio::time::Instant,
+    ) -> Option<TerminalOutcome> {
+        tokio::select! {
+            biased;
+            _ = shutdown_requested(shutdown) => Some(TerminalOutcome::Shutdown),
+            _ = tokio::time::sleep_until(deadline) => Some(TerminalOutcome::Expired),
+            _ = tokio::time::sleep(COMPANION_RETRY_COOLDOWN) => None,
+        }
+    }
+
+    async fn consume_pending_invite(state: &CompanionP2pState) -> bool {
+        state.pending_invite.write().await.take().is_some()
     }
 
     /// Run the Noise accept loop for one companion invite.
     ///
-    /// - Spawns a peeroxide swarm, joins `topic_bytes`.
-    /// - Waits for the first inbound Noise-XX connection.
-    /// - Reads 16 raw PSK bytes (one Noise message).
-    /// - On PSK match: writes JSON token, emits WAL 0x0D.
-    /// - On mismatch / timeout: emits WAL 0x0E.
-    /// - Burns the invite and leaves the topic in all branches.
+    /// - Starts a server-only rendezvous through the cluster/Hyperswarm
+    ///   boundary and announces `topic_bytes`.
+    /// - Admits only the invite-derived authenticated Noise-IK client static key
+    ///   before allocation, then evaluates its encrypted application PSK before
+    ///   the fixed pre-auth deadline; unauthenticated candidates never consume it.
+    /// - On PSK match: stops advertising, durably appends WAL 0x0D, then makes
+    ///   the token visible and writes the response.
+    /// - On mismatch / malformed frame / per-read timeout: emits one of at
+    ///   most five detailed WAL 0x0E frames, cooldowns, and resumes accepting.
+    /// - Valid-PSK admission, pre-auth expiry, persistent shutdown, or
+    ///   transport closure consumes the invite and tears down the actor.
     pub(super) async fn run_companion_p2p_listener(
         state: Arc<CompanionP2pState>,
-        shutdown: Arc<Notify>,
+        mut shutdown: watch::Receiver<bool>,
+        phase_tx: watch::Sender<CompanionP2pPhase>,
     ) {
-        // ── Atomic invite burn (swap-before-use) ─────────────────────────────
-        // Take the invite out of the RwLock NOW, before any network I/O.
-        // If two connections arrive simultaneously, only the first swap
-        // gets `Some`; the second sees `None` and is dropped immediately
-        // without calling get_or_mint.
-        let invite = {
-            let mut guard = state.pending_invite.write().await;
-            guard.take()
-        };
-        let invite = match invite {
-            Some(inv) => inv,
-            None => {
-                warn!("companion_p2p: invite already consumed — listener exiting");
-                return;
-            }
-        };
+        let ttl_secs = effective_invite_ttl_secs(state.invite_ttl_secs);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(ttl_secs);
 
-        // Decode the topic bytes (32 raw bytes from hex).
-        let topic_bytes: [u8; COMPANION_TOPIC_BYTES] = match hex::decode(&invite.topic_hex) {
-            Ok(v) if v.len() == COMPANION_TOPIC_BYTES => {
-                let mut arr = [0u8; COMPANION_TOPIC_BYTES];
-                arr.copy_from_slice(&v);
-                arr
-            }
-            Ok(_) | Err(_) => {
-                warn!("companion_p2p: invalid topic hex in invite — aborting");
-                return;
-            }
+        let decoded_invite = {
+            let guard = state.pending_invite.read().await;
+            guard.as_ref().and_then(|invite| {
+                let topic = hex::decode(&invite.topic_hex).ok()?;
+                let psk = hex::decode(&invite.psk_hex).ok()?;
+                if topic.len() != COMPANION_TOPIC_BYTES || psk.len() != COMPANION_PSK_BYTES {
+                    return None;
+                }
+                let mut topic_bytes = [0u8; COMPANION_TOPIC_BYTES];
+                topic_bytes.copy_from_slice(&topic);
+                let mut psk_bytes = [0u8; COMPANION_PSK_BYTES];
+                psk_bytes.copy_from_slice(&psk);
+                Some((topic_bytes, psk_bytes))
+            })
         };
-
-        let psk_bytes: [u8; COMPANION_PSK_BYTES] = match hex::decode(&invite.psk_hex) {
-            Ok(v) if v.len() == COMPANION_PSK_BYTES => {
-                let mut arr = [0u8; COMPANION_PSK_BYTES];
-                arr.copy_from_slice(&v);
-                arr
-            }
-            Ok(_) | Err(_) => {
-                warn!("companion_p2p: invalid psk hex in invite — aborting");
-                return;
-            }
-        };
-
-        let topic_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(&topic_bytes));
-
-        // ── Bring up peeroxide swarm ──────────────────────────────────────────
-        let config = peeroxide::SwarmConfig::with_public_bootstrap();
-        let (swarm_task, handle, mut conn_rx) = match peeroxide::spawn(config).await {
-            Ok(v) => v,
-            Err(e) => {
-                warn!(error = %e, "companion_p2p: peeroxide::spawn failed — invite abandoned");
-                return;
-            }
-        };
-
-        // Use raw topic bytes — NOT hashed through discovery_key(). The phone
-        // scans the QR and uses the same raw bytes. derive_topic() would hash
-        // again and produce a different rendez-vous id.
-        if let Err(e) = handle
-            .join(topic_bytes, peeroxide::JoinOpts::default())
-            .await
-        {
-            warn!(error = %e, "companion_p2p: peeroxide join failed — invite abandoned");
-            swarm_task.abort();
-            let _ = swarm_task.await;
+        let Some((topic_bytes, psk_bytes)) = decoded_invite else {
+            warn!("companion_p2p: missing or malformed pending invite — consuming it");
+            let _ = phase_tx.send(CompanionP2pPhase::Finalizing);
+            consume_pending_invite(&state).await;
+            emit_p2p_rejected(
+                &state.writer,
+                "(invalid)",
+                "(none)",
+                "invalid_invite",
+                "topic_or_psk_shape",
+                0,
+                true,
+                0,
+            );
             return;
-        }
-
-        info!(
-            topic_hash = %topic_hash,
-            ttl_secs = state.invite_ttl_secs,
-            "companion_p2p: DHT announced — waiting for phone to connect"
-        );
-
-        // ── Wait for the phone to connect ─────────────────────────────────────
-        let conn_result = tokio::select! {
-            biased;
-            _ = shutdown.notified() => {
-                info!("companion_p2p: shutdown signal — abandoning invite");
-                None
-            }
-            _ = tokio::time::sleep(COMPANION_P2P_ACCEPT_TIMEOUT) => {
-                warn!(
-                    timeout_s = COMPANION_P2P_ACCEPT_TIMEOUT.as_secs(),
-                    "companion_p2p: invite TTL expired — no connection received"
-                );
-                None
-            }
-            conn = conn_rx.recv() => conn,
         };
+        let topic_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(&topic_bytes));
+        let expected_phone_static_key =
+            expected_companion_noise_static_key(&topic_bytes, &psk_bytes);
 
-        // Unannounce from DHT before handling the connection so no further
-        // phones can find the topic (single-use).
-        if let Err(e) = handle.leave(topic_bytes).await {
-            warn!(error = %e, "companion_p2p: DHT leave failed (non-fatal)");
-        }
-        // Keep the handle alive until we've finished with the connection.
-        drop(handle);
+        // The listener has decoded its capability and now accepts only bounded
+        // pre-auth work. Shutdown/expiry still wins in every select below.
+        let _ = phase_tx.send(CompanionP2pPhase::PreAuth);
 
-        let mut conn = match conn_result {
-            None => {
-                // Timeout or shutdown — emit rejection WAL if an invite was pending.
+        let mut rendezvous = match crate::cluster::hyperswarm::spawn_public_rendezvous(
+            topic_bytes,
+            expected_phone_static_key,
+            deadline,
+            shutdown.clone(),
+        )
+        .await
+        {
+            Ok(rendezvous) => rendezvous,
+            Err(error) => {
+                let outcome = if *shutdown.borrow() {
+                    TerminalOutcome::Shutdown
+                } else if tokio::time::Instant::now() >= deadline {
+                    TerminalOutcome::Expired
+                } else {
+                    TerminalOutcome::TransportClosed
+                };
+                warn!(%error, ?outcome, "companion_p2p: public rendezvous did not start");
+                let _ = phase_tx.send(CompanionP2pPhase::Finalizing);
+                consume_pending_invite(&state).await;
                 emit_p2p_rejected(
                     &state.writer,
                     &topic_hash,
                     "(no connection)",
-                    "(none)",
-                    "ttl_expired_or_shutdown",
-                )
-                .await;
-                swarm_task.abort();
-                let _ = swarm_task.await;
+                    outcome.audit_reason().unwrap_or("transport_start_failed"),
+                    "rendezvous_start",
+                    0,
+                    true,
+                    0,
+                );
                 return;
             }
-            Some(c) => c,
         };
 
-        let peer_pk: [u8; 32] = *conn.remote_public_key();
-        let peer_pk_hex = hex::encode(peer_pk);
-
-        debug!(
-            peer = %peer_pk_hex,
+        info!(
             topic_hash = %topic_hash,
-            "companion_p2p: phone connected over Noise — reading PSK"
+            requested_ttl_secs = state.invite_ttl_secs,
+            effective_ttl_secs = ttl_secs,
+            "companion_p2p: server-only DHT rendezvous advertised"
         );
 
-        // ── Read exactly one Noise message as the PSK frame ──────────────────
-        // peeroxide's SecretStream message-frames over Noise, so `.read()` gives
-        // us one full decrypted message. We expect exactly 16 bytes (the PSK).
-        // Any other size or an error is treated as a mismatch.
-        let received_psk: [u8; COMPANION_PSK_BYTES] = {
-            let read_result =
-                tokio::time::timeout(Duration::from_secs(10), conn.peer.stream.read()).await;
+        let mut budget = RetryBudget::default();
+        let mut pending_consumed = false;
+        let mut advertising_stopped = false;
+        let outcome = loop {
+            let connection = tokio::select! {
+                biased;
+                _ = shutdown_requested(&mut shutdown) => break TerminalOutcome::Shutdown,
+                _ = tokio::time::sleep_until(deadline) => break TerminalOutcome::Expired,
+                connection = rendezvous.recv() => connection,
+            };
+            let Some(mut conn) = connection else {
+                break TerminalOutcome::TransportClosed;
+            };
 
-            match read_result {
-                Ok(Ok(Some(bytes))) if bytes.len() == COMPANION_PSK_BYTES => {
-                    let mut arr = [0u8; COMPANION_PSK_BYTES];
-                    arr.copy_from_slice(&bytes);
-                    arr
+            let peer_pk: [u8; 32] = *conn.remote_public_key();
+            let peer_pk_hex = hex::encode(peer_pk);
+            let decision = if !accepts_inbound_pairing_connection(conn.is_initiator) {
+                decide_attempt(AttemptEvidence::Initiated, &psk_bytes)
+            } else {
+                debug!(peer = %peer_pk_hex, topic_hash = %topic_hash,
+                    "companion_p2p: inbound phone candidate — reading PSK");
+                match wait_for_attempt_read(&mut shutdown, deadline, conn.read()).await {
+                    TimedRead::Shutdown => {
+                        drop(conn);
+                        break TerminalOutcome::Shutdown;
+                    }
+                    TimedRead::Expired => {
+                        drop(conn);
+                        break TerminalOutcome::Expired;
+                    }
+                    TimedRead::ReadTimeout => {
+                        decide_attempt(AttemptEvidence::ReadTimedOut, &psk_bytes)
+                    }
+                    TimedRead::Ready(Ok(Some(bytes))) => {
+                        decide_attempt(AttemptEvidence::Frame(&bytes), &psk_bytes)
+                    }
+                    TimedRead::Ready(Ok(None)) => {
+                        decide_attempt(AttemptEvidence::Closed, &psk_bytes)
+                    }
+                    TimedRead::Ready(Err(error)) => {
+                        warn!(peer = %peer_pk_hex, %error, "companion_p2p: candidate PSK read failed");
+                        decide_attempt(AttemptEvidence::ReadFailed, &psk_bytes)
+                    }
                 }
-                Ok(Ok(Some(bytes))) => {
+            };
+
+            match decision {
+                AttemptDecision::Retry(rejection) => {
+                    let accounting = budget.record_rejection();
                     warn!(
                         peer = %peer_pk_hex,
-                        got = bytes.len(),
-                        expected = COMPANION_PSK_BYTES,
-                        "companion_p2p: PSK frame wrong size — rejecting"
+                        attempt = accounting.attempt,
+                        reason = rejection.reason(),
+                        "companion_p2p: unauthenticated candidate rejected; invite remains active"
                     );
-                    emit_p2p_rejected(
-                        &state.writer,
-                        &topic_hash,
-                        &peer_pk_hex,
-                        "psk_frame_wrong_size",
-                        "wrong_psk_size",
-                    )
-                    .await;
-                    swarm_task.abort();
-                    let _ = swarm_task.await;
-                    return;
+                    drop(conn);
+                    if accounting.emit_detailed_audit {
+                        emit_p2p_rejected(
+                            &state.writer,
+                            &topic_hash,
+                            &peer_pk_hex,
+                            rejection.reason(),
+                            rejection.detail(),
+                            accounting.attempt,
+                            false,
+                            budget.suppressed_audits(),
+                        );
+                    }
+                    if let Some(terminal) = wait_retry_cooldown(&mut shutdown, deadline).await {
+                        break terminal;
+                    }
                 }
-                Ok(Ok(None)) => {
-                    warn!(peer = %peer_pk_hex, "companion_p2p: phone closed before PSK — rejecting");
-                    emit_p2p_rejected(
-                        &state.writer,
-                        &topic_hash,
-                        &peer_pk_hex,
-                        "psk_closed_early",
-                        "connection_closed",
+                AttemptDecision::Authenticated => {
+                    debug_assert!(attempt_consumes_invite(decision));
+                    // PRE-AUTH ADMISSION DEADLINE: shutdown/expiry may reject
+                    // the effect up to this exact point. Once a valid PSK has
+                    // passed this check, the authenticated terminal effect is
+                    // admitted and must drain atomically: consume invite,
+                    // bounded leave, durable WAL audit, in-memory token
+                    // publication, bounded reply.
+                    if *shutdown.borrow() {
+                        drop(conn);
+                        break TerminalOutcome::Shutdown;
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        drop(conn);
+                        break TerminalOutcome::Expired;
+                    }
+                    // This is the final pre-auth gate. Once Committing is
+                    // observable no normal lifecycle path may abort this
+                    // owner: invite burn, durable audit acknowledgement, and
+                    // in-memory token publication must run to their terminal
+                    // outcome. This is deliberately not a durable token
+                    // transaction: the WAL holds audit metadata, never the
+                    // bearer token. A process crash after the ACK but before
+                    // publication consumes the invite fail-closed; pair again.
+                    let _ = phase_tx.send(CompanionP2pPhase::Committing);
+                    pending_consumed = consume_pending_invite(&state).await;
+                    if !pending_consumed {
+                        drop(conn);
+                        break TerminalOutcome::TransportClosed;
+                    }
+
+                    advertising_stopped = true;
+                    if let Err(error) = rendezvous.leave().await {
+                        warn!(%error, "companion_p2p: DHT leave failed after valid PSK");
+                    }
+
+                    let session_id = hex::encode(&peer_pk[..8]);
+                    let mut token_guard = state.companion_state.tokens.write().await;
+
+                    let (token, insert_after_wal) = match token_guard.get(&session_id) {
+                        Some(entry) if !entry.is_expired() => (entry.token.clone(), false),
+                        _ => (mint_token(), true),
+                    };
+                    let token_hash =
+                        format!("{:016x}", xxhash_rust::xxh3::xxh3_64(token.as_bytes()));
+                    let payload = serde_json::json!({
+                        "topic_hash_xxh3": topic_hash,
+                        "peer_pk_hex": peer_pk_hex,
+                        "token_hash_xxh3": token_hash,
+                        "rejected_attempts": budget.attempts(),
+                        "ts_unix": crate::time::now_unix_secs(),
+                    });
+                    let payload_bytes = serde_json::to_vec(&payload).expect(
+                        "COMPANION_P2P_PAIRED payload contains only infallible JSON values",
+                    );
+                    let header =
+                        HeaderBuilder::new(EVENT_TYPE_COMPANION_P2P_PAIRED, &payload_bytes).build();
+                    // DURABLE AUDIT COMMITPOINT: `append` may already have
+                    // queued a write before it waits for fsync acknowledgement.
+                    // It must therefore never be raced against cancellation or
+                    // a timeout. A definite ACK/error is observed before token
+                    // visibility changes. The audit contains no bearer token,
+                    // so it cannot recover a token after a crash in this
+                    // window: the consumed invite must be re-paired.
+                    match state.writer.append(header, payload_bytes).await {
+                        Ok(_offset) => {
+                            if insert_after_wal {
+                                token_guard.retain(|_, entry| !entry.is_expired());
+                                token_guard
+                                    .insert(session_id.clone(), TokenEntry::new(token.clone()));
+                            }
+                        }
+                        Err(error) => {
+                            warn!(%error, "companion_p2p: durable paired WAL commit failed");
+                            drop(token_guard);
+                            drop(conn);
+                            break TerminalOutcome::DurableCommitFailed;
+                        }
+                    }
+                    drop(token_guard);
+
+                    let response = serde_json::to_vec(&serde_json::json!({
+                        "token": token,
+                        "session_id": session_id,
+                    }))
+                    .expect("companion pairing response contains only infallible JSON values");
+                    match tokio::time::timeout(
+                        COMPANION_RESPONSE_WRITE_TIMEOUT,
+                        conn.write(&response),
                     )
-                    .await;
-                    swarm_task.abort();
-                    let _ = swarm_task.await;
-                    return;
-                }
-                Ok(Err(e)) => {
-                    warn!(peer = %peer_pk_hex, error = %e, "companion_p2p: PSK read error — rejecting");
-                    emit_p2p_rejected(
-                        &state.writer,
-                        &topic_hash,
-                        &peer_pk_hex,
-                        "psk_read_error",
-                        "io_error",
-                    )
-                    .await;
-                    swarm_task.abort();
-                    let _ = swarm_task.await;
-                    return;
-                }
-                Err(_timeout) => {
-                    warn!(peer = %peer_pk_hex, "companion_p2p: PSK read timeout — rejecting");
-                    emit_p2p_rejected(
-                        &state.writer,
-                        &topic_hash,
-                        &peer_pk_hex,
-                        "psk_read_timeout",
-                        "timeout",
-                    )
-                    .await;
-                    swarm_task.abort();
-                    let _ = swarm_task.await;
-                    return;
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => warn!(peer = %peer_pk_hex, %error,
+                            "companion_p2p: committed token response write failed"),
+                        Err(_) => warn!(peer = %peer_pk_hex,
+                            "companion_p2p: committed token response write timed out"),
+                    }
+                    info!(peer = %peer_pk_hex, session_id = %session_id, topic_hash = %topic_hash,
+                        "companion_p2p: phone paired after durable audit commit");
+                    drop(conn);
+                    break TerminalOutcome::Paired;
                 }
             }
         };
 
-        // ── Constant-time PSK compare ─────────────────────────────────────────
-        // Use subtle::ConstantTimeEq (already in the dep tree via HMAC crates).
-        // Fallback: XOR all bytes + check if all-zero.  We use a manual
-        // constant-time fold — stable and dependency-free.
-        let psk_ok = {
-            let mut diff = 0u8;
-            for (a, b) in received_psk.iter().zip(psk_bytes.iter()) {
-                diff |= a ^ b;
-            }
-            diff == 0
-        };
-
-        if !psk_ok {
-            warn!(peer = %peer_pk_hex, "companion_p2p: PSK mismatch — rejecting");
+        let _ = phase_tx.send(CompanionP2pPhase::Finalizing);
+        if outcome.consumes_invite() && !pending_consumed {
+            pending_consumed = consume_pending_invite(&state).await;
+        }
+        if !advertising_stopped && let Err(error) = rendezvous.leave().await {
+            warn!(%error, ?outcome, "companion_p2p: terminal DHT leave failed");
+        }
+        if let Some(reason) = outcome.audit_reason() {
             emit_p2p_rejected(
                 &state.writer,
                 &topic_hash,
-                &peer_pk_hex,
-                "psk_mismatch",
-                "wrong_psk",
-            )
-            .await;
-            swarm_task.abort();
-            let _ = swarm_task.await;
-            return;
-        }
-
-        // ── PSK verified — mint token ─────────────────────────────────────────
-        // session_id = hex of first 8 bytes of the remote Noise public key.
-        // Stable, unguessable, and unique per peer Noise identity.
-        let session_id = hex::encode(&peer_pk[..8]);
-        let token = state.companion_state.get_or_mint(&session_id).await;
-
-        // Send JSON {token, session_id} over the Noise channel (one message).
-        let resp = serde_json::json!({
-            "token": token,
-            "session_id": session_id,
-        });
-        let resp_bytes = match serde_json::to_vec(&resp) {
-            Ok(b) => b,
-            Err(e) => {
-                warn!(error = %e, "companion_p2p: JSON serialize failed — token not delivered");
-                swarm_task.abort();
-                let _ = swarm_task.await;
-                return;
-            }
-        };
-
-        if let Err(e) = conn.peer.stream.write(&resp_bytes).await {
-            warn!(
-                peer = %peer_pk_hex,
-                error = %e,
-                "companion_p2p: token write failed — phone may not have received token"
+                "(terminal)",
+                reason,
+                "listener_terminal",
+                budget.attempts(),
+                true,
+                budget.suppressed_audits(),
             );
-            // Still emit paired WAL (token was minted; phone can retry via HTTP).
         }
-
-        // ── Emit WAL 0x0D COMPANION_P2P_PAIRED ───────────────────────────────
-        let token_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(token.as_bytes()));
-        let ts_unix = crate::time::now_unix_secs();
-        let payload = serde_json::json!({
-            "topic_hash_xxh3": topic_hash,
-            "peer_pk_hex": peer_pk_hex,
-            "token_hash_xxh3": token_hash,
-            "ts_unix": ts_unix,
-        });
-        let payload_bytes = serde_json::to_vec(&payload)
-            .expect("COMPANION_P2P_PAIRED payload contains only infallible JSON values");
-        let hdr = HeaderBuilder::new(EVENT_TYPE_COMPANION_P2P_PAIRED, &payload_bytes).build();
-        if let Err(e) = state.writer.append_no_ack(hdr, payload_bytes).await {
-            warn!(error = %e, "companion_p2p: WAL emit COMPANION_P2P_PAIRED failed (non-fatal)");
-        }
-
-        info!(
-            peer = %peer_pk_hex,
-            session_id = %session_id,
-            topic_hash = %topic_hash,
-            "companion_p2p: phone paired successfully over Noise"
+        debug!(
+            ?outcome,
+            pending_consumed, "companion_p2p: terminal teardown"
         );
-
-        // Drop the connection (Noise channel closes) + tear down the swarm.
-        drop(conn);
-        swarm_task.abort();
-        let _ = swarm_task.await;
+        rendezvous.shutdown().await;
     }
 
-    /// Emit WAL 0x0E COMPANION_P2P_REJECTED (best-effort, non-fatal).
-    async fn emit_p2p_rejected(
+    /// Emit a bounded, non-blocking WAL 0x0E rejection decision. Detailed
+    /// per-attempt calls are capped by [`RetryBudget`]; terminal calls add at
+    /// most one final aggregate frame.
+    fn emit_p2p_rejected(
         writer: &WalWriterHandle,
         topic_hash: &str,
         peer_pk_hex: &str,
         reason: &str,
-        _detail: &str,
+        detail: &str,
+        attempt: u64,
+        terminal: bool,
+        suppressed_audits: u64,
     ) {
         let ts_unix = crate::time::now_unix_secs();
         let payload = serde_json::json!({
             "topic_hash_xxh3": topic_hash,
             "peer_pk_hex": peer_pk_hex,
             "reason": reason,
+            "detail": detail,
+            "attempt": attempt,
+            "terminal": terminal,
+            "suppressed_audits": suppressed_audits,
             "ts_unix": ts_unix,
         });
         let payload_bytes = serde_json::to_vec(&payload)
             .expect("COMPANION_P2P_REJECTED payload contains only infallible JSON values");
         let hdr = HeaderBuilder::new(EVENT_TYPE_COMPANION_P2P_REJECTED, &payload_bytes).build();
-        if let Err(e) = writer.append_no_ack(hdr, payload_bytes).await {
+        if let Err(e) = writer.try_append_sync(hdr, payload_bytes) {
             warn!(error = %e, "companion_p2p: WAL emit COMPANION_P2P_REJECTED failed (non-fatal)");
         }
     }
@@ -939,45 +1436,51 @@ mod p2p {
     /// - `invite` — the one-time [`CompanionInvite`] to consume.
     /// - `companion_state` — the shared token store (shared with the HTTP server).
     /// - `writer` — WAL writer for 0x0D / 0x0E audit frames.
-    /// - `ttl_secs` — invite TTL; the task exits after
-    ///   `COMPANION_P2P_ACCEPT_TIMEOUT` regardless.
-    /// - `shutdown` — notified to abort the listener early (daemon shutdown /
-    ///   CLI TTL expiry).
+    /// - `ttl_secs` — requested invite TTL, clamped to 1..=300 seconds.
+    /// The returned owner retains both the real `JoinHandle` and a persistent
+    /// cooperative stop channel. It intentionally exposes no abort operation.
     pub(super) fn spawn(
         invite: CompanionInvite,
         companion_state: Arc<CompanionState>,
         writer: WalWriterHandle,
         ttl_secs: u64,
-        shutdown: Arc<Notify>,
-    ) -> JoinHandle<()> {
+    ) -> super::CompanionP2pTaskHandle {
         let p2p_state = Arc::new(CompanionP2pState {
             companion_state,
             pending_invite: RwLock::new(Some(invite)),
             writer,
             invite_ttl_secs: ttl_secs,
         });
-        tokio::spawn(run_companion_p2p_listener(p2p_state, shutdown))
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let (phase_tx, phase_rx) = watch::channel(CompanionP2pPhase::Starting);
+        let task = tokio::spawn(async move {
+            run_companion_p2p_listener(p2p_state, stop_rx, phase_tx.clone()).await;
+            let _ = phase_tx.send(CompanionP2pPhase::Stopped);
+        });
+        super::CompanionP2pTaskHandle::new(task, stop_tx, phase_rx)
     }
 }
 
 /// Spawn the companion P2P Noise pairing listener.
 ///
-/// Returns a [`JoinHandle`] that resolves when the listener exits (one
-/// successful pairing, PSK reject, TTL expiry, or shutdown signal).
+/// Returns a typed owner after a successful pairing, pre-auth TTL expiry,
+/// persistent shutdown, or transport closure. Once a valid PSK passes the
+/// admission check, bounded leave plus durable audit acknowledgement and token
+/// publication drain terminally even if the deadline or shutdown state changes
+/// during that sequence.
 ///
 /// # Feature gate
 ///
-/// When the `cluster` feature is NOT active, this is a no-op that returns a
-/// task that exits immediately and logs a warning.
+/// When the `cluster` feature is NOT active, this is an owned no-op task that
+/// exits immediately and logs a warning.
 #[cfg(feature = "cluster")]
 pub fn spawn_companion_p2p_listener(
     invite: CompanionInvite,
     companion_state: Arc<CompanionState>,
     writer: WalWriterHandle,
     ttl_secs: u64,
-    shutdown: Arc<Notify>,
-) -> JoinHandle<()> {
-    p2p::spawn(invite, companion_state, writer, ttl_secs, shutdown)
+) -> CompanionP2pTaskHandle {
+    p2p::spawn(invite, companion_state, writer, ttl_secs)
 }
 
 #[cfg(not(feature = "cluster"))]
@@ -986,12 +1489,17 @@ pub fn spawn_companion_p2p_listener(
     _companion_state: Arc<CompanionState>,
     _writer: WalWriterHandle,
     _ttl_secs: u64,
-    _shutdown: Arc<Notify>,
-) -> JoinHandle<()> {
+) -> CompanionP2pTaskHandle {
     warn!(
         "companion_p2p: `cluster` feature not enabled — P2P pairing unavailable; use loopback HTTP instead"
     );
-    tokio::spawn(async {})
+    let (stop_tx, _stop_rx) = watch::channel(false);
+    let (phase_tx, phase_rx) = watch::channel(CompanionP2pPhase::Starting);
+    let task = tokio::spawn(async move {
+        let _ = phase_tx.send(CompanionP2pPhase::Finalizing);
+        let _ = phase_tx.send(CompanionP2pPhase::Stopped);
+    });
+    CompanionP2pTaskHandle::new(task, stop_tx, phase_rx)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -999,6 +1507,35 @@ pub fn spawn_companion_p2p_listener(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{self, Write};
+    use std::sync::Mutex;
+
+    #[derive(Clone)]
+    struct CapturedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedLogGuard(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for CapturedLogGuard {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .expect("tracing capture mutex poisoned")
+                .extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogWriter {
+        type Writer = CapturedLogGuard;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedLogGuard(Arc::clone(&self.0))
+        }
+    }
 
     /// Spawn a real WAL writer against a temp segment file. Returns the handle
     /// and the join-handle; the test can drop the join-handle (the writer task
@@ -1190,14 +1727,82 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn detect_lan_ip_returns_an_ip() {
-        let ip = detect_lan_ip().await;
-        // Just assert we got a valid IP (127.0.0.1 or a real LAN IP).
-        assert!(
-            ip.is_ipv4() || ip.is_ipv6(),
-            "detect_lan_ip must return an IP address"
+    #[test]
+    fn render_pairing_qr_failure_does_not_log_v2_capability() {
+        // Synthetic v2-shaped capability whose data is deliberately beyond
+        // the QR encoder's maximum capacity. It exercises the real error log
+        // path without minting or exposing an operator's actual invite.
+        let psk = "feedfacecafebeef0123456789abcdef";
+        let url = format!(
+            "neoth://companion/pair?v=2&topic={}&psk={psk}&ttl=300&padding={}",
+            "a".repeat(COMPANION_TOPIC_BYTES * 2),
+            "x".repeat(4_096),
         );
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(CapturedLogWriter(Arc::clone(&captured)))
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(
+                render_pairing_qr(&url).is_empty(),
+                "oversized synthetic capability must force the QR failure path"
+            );
+        });
+
+        let log = String::from_utf8(
+            captured
+                .lock()
+                .expect("tracing capture mutex poisoned")
+                .clone(),
+        )
+        .expect("tracing output must be UTF-8");
+        assert!(
+            log.contains("companion: QR code generation failed"),
+            "expected the QR error event in captured tracing output: {log}"
+        );
+        assert!(
+            !log.contains(psk),
+            "QR failure log must not expose the pairing PSK: {log}"
+        );
+        assert!(
+            !log.contains(&url),
+            "QR failure log must not expose the full pairing capability URL: {log}"
+        );
+    }
+
+    #[test]
+    fn select_lan_ipv4_prefers_the_lowest_rfc1918_candidate() {
+        let selected = select_lan_ipv4([
+            Ipv4Addr::new(192, 168, 4, 1),
+            Ipv4Addr::new(172, 16, 0, 1),
+            Ipv4Addr::new(10, 42, 0, 9),
+            Ipv4Addr::new(10, 0, 0, 4),
+        ]);
+
+        assert_eq!(selected, Some(Ipv4Addr::new(10, 0, 0, 4)));
+    }
+
+    #[test]
+    fn select_lan_ipv4_rejects_non_rfc1918_and_unusable_addresses() {
+        let selected = select_lan_ipv4([
+            Ipv4Addr::LOCALHOST,
+            Ipv4Addr::new(169, 254, 10, 1),
+            Ipv4Addr::new(8, 8, 8, 8),
+            Ipv4Addr::new(100, 64, 0, 1),
+            Ipv4Addr::UNSPECIFIED,
+        ]);
+
+        assert_eq!(selected, None);
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn companion_p2p_accepts_only_inbound_peeroxide_connections() {
+        assert!(p2p::accepts_inbound_pairing_connection(false));
+        assert!(!p2p::accepts_inbound_pairing_connection(true));
     }
 
     #[test]
@@ -1263,9 +1868,10 @@ mod tests {
     fn companion_invite_pairing_url_format() {
         let inv = CompanionInvite::generate().unwrap();
         let url = inv.pairing_url(300);
-        assert!(url.starts_with("neoth://companion/pair?"));
-        assert!(url.contains("topic="));
-        assert!(url.contains("psk="));
+        assert!(url.starts_with("neoth://companion/pair?v=2&topic="));
+        assert_eq!(url_param(&url, "v"), "2");
+        assert!(url.contains("&topic="));
+        assert!(url.contains("&psk="));
         assert!(url.ends_with("ttl=300"));
     }
 
@@ -1285,6 +1891,80 @@ mod tests {
         let psk = url_param(&inv.pairing_url(300), "psk").to_string();
         assert!(dbg.contains("<redacted>"));
         assert!(!dbg.contains(&psk), "psk must not appear in Debug output");
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn companion_v2_kdf_published_synthetic_vector() {
+        // Public interoperability vector.  It uses synthetic ascending bytes,
+        // never a minted invite or an operator capability.
+        let topic: [u8; COMPANION_TOPIC_BYTES] = std::array::from_fn(|index| index as u8);
+        let psk: [u8; COMPANION_PSK_BYTES] =
+            std::array::from_fn(|index| 0xa0u8.wrapping_add(index as u8));
+
+        let seed = derive_companion_noise_static_seed(&topic, &psk);
+        let public_key = expected_companion_noise_static_key(&topic, &psk);
+
+        assert_eq!(
+            hex::encode(seed),
+            "5d1505b9be30bb2cacc51085a355b93838b29558628ca6d02048bd4b2738893a"
+        );
+        assert_eq!(
+            hex::encode(public_key),
+            "1db923ce1e8850ce4e535150b2e7e3c459111aa044c38593c9e5829fc888cc49"
+        );
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn companion_v2_kdf_is_stable_topic_and_psk_bound_and_domain_separated() {
+        let topic = [0x11u8; COMPANION_TOPIC_BYTES];
+        let psk = [0x22u8; COMPANION_PSK_BYTES];
+        let seed = derive_companion_noise_static_seed(&topic, &psk);
+        let public_key = expected_companion_noise_static_key(&topic, &psk);
+
+        assert_eq!(seed, derive_companion_noise_static_seed(&topic, &psk));
+        assert_eq!(
+            public_key,
+            expected_companion_noise_static_key(&topic, &psk),
+            "the same v2 invite must reproduce the same phone static key"
+        );
+
+        let mut changed_topic = topic;
+        changed_topic[0] ^= 1;
+        let mut changed_psk = psk;
+        changed_psk[0] ^= 1;
+        assert_ne!(
+            seed,
+            derive_companion_noise_static_seed(&changed_topic, &psk)
+        );
+        assert_ne!(
+            seed,
+            derive_companion_noise_static_seed(&topic, &changed_psk)
+        );
+        assert_ne!(
+            seed,
+            derive_companion_noise_static_seed_with_info(
+                &topic,
+                &psk,
+                b"NEOTH/companion/noise-static/v1"
+            ),
+            "v2 must remain domain-separated from a hypothetical legacy label"
+        );
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn companion_v2_debug_redacts_psk_and_derived_seed() {
+        let topic: [u8; COMPANION_TOPIC_BYTES] = std::array::from_fn(|index| index as u8);
+        let psk: [u8; COMPANION_PSK_BYTES] =
+            std::array::from_fn(|index| 0xa0u8.wrapping_add(index as u8));
+        let invite = CompanionInvite::from_hex(hex::encode(topic), hex::encode(psk));
+        let debug = format!("{invite:?}");
+        let seed = derive_companion_noise_static_seed(&topic, &psk);
+
+        assert!(!debug.contains(&hex::encode(psk)));
+        assert!(!debug.contains(&hex::encode(seed)));
     }
 
     // ── GOLD-COMPANION-P2P-01 — unit tests (no network) ─────────────────────
@@ -1311,12 +1991,12 @@ mod tests {
         assert_eq!(url1, url2, "from_hex must produce the same pairing URL");
     }
 
-    /// Invite TTL expiry: `spawn_companion_p2p_listener` notified at start
-    /// must exit without hanging. The listener spawns a peeroxide DHT swarm
-    /// (public bootstrap, real network) and then enters a select that checks
-    /// the shutdown notifier. Because the DHT bootstrap itself takes a few
-    /// seconds, we allow up to 60s for the task to exit cleanly after
-    /// `shutdown.notify_waiters()`.
+    /// A pre-auth stop request must reach the owned listener without hanging.
+    /// The listener spawns a peeroxide DHT swarm
+    /// (public bootstrap, real network) and checks the persistent shutdown
+    /// watch before topic join. Because DHT bootstrap itself can take a few
+    /// seconds before task ownership is returned, the test allows up to 60s
+    /// for cleanup after the pre-start cancellation state is recorded.
     ///
     /// Note: this test makes a real (outbound-only) UDP connection to the
     /// public Hyperswarm bootstrap nodes. It is skipped in offline CI via the
@@ -1328,65 +2008,149 @@ mod tests {
         let (writer, _wal_join, _dir) = temp_writer();
         let invite = CompanionInvite::generate().unwrap();
         let state = Arc::new(CompanionState::new(writer.clone(), 0));
-        let shutdown = Arc::new(Notify::new());
-
-        // Immediately notify shutdown to simulate TTL-0 expiry.
-        shutdown.notify_waiters();
-
-        let task = super::spawn_companion_p2p_listener(
-            invite,
-            Arc::clone(&state),
-            writer,
-            0,
-            Arc::clone(&shutdown),
-        );
+        let mut task = super::spawn_companion_p2p_listener(invite, Arc::clone(&state), writer, 0);
+        // Persist stop before the runtime reaches pre-auth. The typed owner
+        // carries that state even while public-bootstrap startup is in flight.
+        task.request_stop();
 
         // Must exit without hanging. 60s covers real DHT bootstrap round-trip.
-        let result = tokio::time::timeout(std::time::Duration::from_secs(60), task).await;
+        let result =
+            tokio::time::timeout(std::time::Duration::from_secs(60), task.await_terminal()).await;
         assert!(
             result.is_ok(),
             "listener must exit after shutdown is notified"
         );
     }
 
-    /// Single-use burn: after one `from_hex` invite is consumed by the listener
-    /// state, the pending slot becomes None.
     #[cfg(feature = "cluster")]
-    #[tokio::test]
-    async fn invite_single_use_burn() {
-        use super::p2p::CompanionP2pState;
-        use tokio::sync::RwLock;
-
-        let (writer, _wal_join, _dir) = temp_writer();
-        let state = Arc::new(CompanionState::new(writer.clone(), 0));
-        let invite = CompanionInvite::generate().unwrap();
-
-        let p2p_state = Arc::new(CompanionP2pState {
-            companion_state: Arc::clone(&state),
-            pending_invite: RwLock::new(Some(CompanionInvite::from_hex(
-                invite.topic_hex.clone(),
-                invite.psk_hex.clone(),
-            ))),
-            writer,
-            invite_ttl_secs: 300,
-        });
-
-        // Swap the invite out (simulating the atomic burn).
-        let taken = {
-            let mut guard = p2p_state.pending_invite.write().await;
-            guard.take()
+    #[test]
+    fn companion_retry_decisions_preserve_or_consume_invite() {
+        use super::p2p::{
+            AttemptDecision, AttemptEvidence, AttemptRejection, TerminalOutcome,
+            attempt_consumes_invite, decide_attempt,
         };
-        assert!(taken.is_some(), "first take must return Some(invite)");
 
-        // Second take must return None (invite burned).
-        let taken2 = {
-            let mut guard = p2p_state.pending_invite.write().await;
-            guard.take()
-        };
-        assert!(
-            taken2.is_none(),
-            "second take must return None (single-use)"
+        let expected = [7u8; COMPANION_PSK_BYTES];
+        for evidence in [
+            AttemptEvidence::Initiated,
+            AttemptEvidence::Frame(&[1, 2, 3]),
+            AttemptEvidence::Closed,
+            AttemptEvidence::ReadFailed,
+            AttemptEvidence::ReadTimedOut,
+            AttemptEvidence::Frame(&[8u8; COMPANION_PSK_BYTES]),
+        ] {
+            let decision = decide_attempt(evidence, &expected);
+            assert!(matches!(decision, AttemptDecision::Retry(_)));
+            assert!(!attempt_consumes_invite(decision));
+        }
+
+        let valid = decide_attempt(AttemptEvidence::Frame(&expected), &expected);
+        assert_eq!(valid, AttemptDecision::Authenticated);
+        assert!(attempt_consumes_invite(valid));
+        assert_eq!(
+            decide_attempt(AttemptEvidence::Initiated, &expected),
+            AttemptDecision::Retry(AttemptRejection::UnexpectedInitiator)
         );
+
+        for terminal in [
+            TerminalOutcome::Paired,
+            TerminalOutcome::Expired,
+            TerminalOutcome::Shutdown,
+            TerminalOutcome::TransportClosed,
+            TerminalOutcome::DurableCommitFailed,
+        ] {
+            assert!(terminal.consumes_invite());
+        }
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn companion_retry_budget_and_time_bounds_are_fixed() {
+        use super::p2p::{RetryBudget, bounded_read_wait, effective_invite_ttl_secs};
+
+        let mut budget = RetryBudget::default();
+        let decisions: Vec<_> = (0..12).map(|_| budget.record_rejection()).collect();
+        assert_eq!(
+            decisions.iter().filter(|d| d.emit_detailed_audit).count(),
+            5
+        );
+        assert_eq!(decisions.last().unwrap().attempt, 12);
+        assert_eq!(effective_invite_ttl_secs(0), 1);
+        assert_eq!(effective_invite_ttl_secs(30), 30);
+        assert_eq!(effective_invite_ttl_secs(u64::MAX), 300);
+        assert_eq!(
+            bounded_read_wait(std::time::Duration::from_secs(3)),
+            std::time::Duration::from_secs(3)
+        );
+        assert_eq!(
+            bounded_read_wait(std::time::Duration::from_secs(30)),
+            std::time::Duration::from_secs(10)
+        );
+    }
+
+    #[cfg(feature = "cluster")]
+    #[tokio::test(start_paused = true)]
+    async fn companion_read_wait_honors_persistent_shutdown_and_deadline() {
+        use super::p2p::{TimedRead, shutdown_requested, wait_for_attempt_read};
+
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+        shutdown_tx.send(true).unwrap();
+        shutdown_requested(&mut shutdown_rx).await;
+
+        let result = wait_for_attempt_read(
+            &mut shutdown_rx,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(60),
+            std::future::pending::<()>(),
+        )
+        .await;
+        assert!(matches!(result, TimedRead::Shutdown));
+
+        let (_tx, mut live_rx) = tokio::sync::watch::channel(false);
+        let expired = wait_for_attempt_read(
+            &mut live_rx,
+            tokio::time::Instant::now(),
+            std::future::pending::<()>(),
+        )
+        .await;
+        assert!(matches!(expired, TimedRead::Expired));
+    }
+
+    #[tokio::test]
+    async fn p2p_owner_retains_commit_task_after_grace_timeout() {
+        let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+        let (phase_tx, phase_rx) = tokio::sync::watch::channel(CompanionP2pPhase::Starting);
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _ = start_rx.await;
+            let _ = phase_tx.send(CompanionP2pPhase::Committing);
+            while !*stop_rx.borrow() {
+                if stop_rx.changed().await.is_err() {
+                    break;
+                }
+            }
+            let _ = phase_tx.send(CompanionP2pPhase::Finalizing);
+            let _ = phase_tx.send(CompanionP2pPhase::Stopped);
+        });
+        let mut owner = CompanionP2pTaskHandle::new(task, stop_tx, phase_rx);
+        assert_eq!(owner.phase(), CompanionP2pPhase::Starting);
+        let mut phases = owner.subscribe_phase();
+        start_tx.send(()).unwrap();
+        phases.changed().await.unwrap();
+        assert_eq!(*phases.borrow(), CompanionP2pPhase::Committing);
+
+        assert!(
+            owner
+                .observe_grace(std::time::Duration::from_millis(1))
+                .await
+                .is_none()
+        );
+        assert!(
+            !owner.is_finished(),
+            "a grace timeout must retain the still-live commit owner"
+        );
+        owner.request_stop();
+        owner.await_terminal().await.unwrap();
+        assert_eq!(owner.phase(), CompanionP2pPhase::Stopped);
     }
 
     /// `from_hex` with known hex strings produces the expected pairing URL.
@@ -1401,23 +2165,55 @@ mod tests {
         assert!(url.ends_with("ttl=300"));
     }
 
-    /// `to_pending_invite_json` emits exactly the three keys the serve-side P2P
-    /// coordinator reads back (`topic_hex` / `psk_hex` / `ttl_secs`) and
-    /// round-trips through `from_hex` — proves the `--write-invite-for-serve`
-    /// CLI→daemon handoff file is consumable by the poller in serve_tasks.rs.
+    /// The strict V1 pending record carries absolute expiry and exact lower-hex
+    /// fields, proving the CLI→daemon handoff cannot silently accept an older
+    /// loose JSON shape or extend a stale invite's TTL.
     #[test]
-    fn pending_invite_json_round_trips_to_from_hex() {
+    fn pending_invite_record_round_trips_with_absolute_expiry() {
         let inv = CompanionInvite::generate().unwrap();
-        let json = inv.to_pending_invite_json(300);
-        let topic_hex = json["topic_hex"].as_str().expect("topic_hex present");
-        let psk_hex = json["psk_hex"].as_str().expect("psk_hex present");
-        assert_eq!(json["ttl_secs"].as_u64(), Some(300));
-        assert_eq!(topic_hex.len(), 64, "32-byte topic as hex");
-        assert_eq!(psk_hex.len(), 32, "16-byte psk as hex");
-        // The poller reconstructs via from_hex(topic_hex, psk_hex); identical
-        // pairing URL ⇒ the daemon drives the very invite the CLI minted.
-        let rebuilt = CompanionInvite::from_hex(topic_hex.to_string(), psk_hex.to_string());
+        let now = 1_700_000_000;
+        let record = inv.pending_invite_record(now + 300).unwrap();
+        let (rebuilt, ttl) = CompanionInvite::from_pending_invite_record(&record, now).unwrap();
+        assert_eq!(ttl, 300);
         assert_eq!(inv.pairing_url(300), rebuilt.pairing_url(300));
+    }
+
+    #[test]
+    fn pending_invite_record_rejects_unknown_uppercase_or_expired_capabilities() {
+        let now = 1_700_000_000;
+        let valid = serde_json::json!({
+            "version": PENDING_INVITE_RECORD_VERSION,
+            "topic_hex": "a".repeat(COMPANION_TOPIC_BYTES * 2),
+            "psk_hex": "b".repeat(COMPANION_PSK_BYTES * 2),
+            "expires_at": now + 1,
+        });
+        let mut unknown = valid.clone();
+        unknown["extra"] = serde_json::json!(true);
+        assert!(
+            CompanionInvite::from_pending_invite_record(
+                &serde_json::to_vec(&unknown).unwrap(),
+                now,
+            )
+            .is_err()
+        );
+        let mut uppercase = valid.clone();
+        uppercase["psk_hex"] = serde_json::json!("B".repeat(COMPANION_PSK_BYTES * 2));
+        assert!(
+            CompanionInvite::from_pending_invite_record(
+                &serde_json::to_vec(&uppercase).unwrap(),
+                now,
+            )
+            .is_err()
+        );
+        let mut expired = valid;
+        expired["expires_at"] = serde_json::json!(now);
+        assert!(
+            CompanionInvite::from_pending_invite_record(
+                &serde_json::to_vec(&expired).unwrap(),
+                now,
+            )
+            .is_err()
+        );
     }
 
     // ── NEOTH-AUDIT-HTTP-BODY-LIMITS-01: Limited body cap ───────────────────────

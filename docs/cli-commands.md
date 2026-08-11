@@ -633,13 +633,13 @@ Phase 3a — find persisted files in the active repository that declare a symbol
 
 ## `neoth companion`
 
-GOLD-ADAPT-ODY-24 — `neoth companion pair-phone`: mint a one-time phone-pairing invite (rendezvous topic + PSK) and show it as a QR code with a URL fallback. With the default `cluster` feature it drives the single-use Hyperswarm/Noise-XX P2P handshake; `--write-invite-for-serve` hands the invite to a configured running daemon for durable token use
+GOLD-ADAPT-ODY-24 — `neoth companion pair-phone`: mint a one-time phone-pairing invite (rendezvous topic + PSK) and show it as a server-side QR/URL preview; NEOTH does not ship a phone client. With the default `cluster` feature it drives the single-use HyperDHT/authenticated Noise-IK P2P handshake; `--write-invite-for-serve` hands the invite to a configured running daemon for daemon-lifetime in-memory token use, never durable token storage or restart recovery
 
 ### `neoth companion pair-phone`
 
-Mint a one-time phone-pairing invite, show a QR code, and wait for the companion app to connect over the Hyperswarm P2P mesh. The invite is single-use and expires after a short TTL. Requires the `cluster` feature
+Preview a one-time v2 pairing QR/URL; NEOTH ships no phone client yet. The server-side HyperDHT / authenticated Noise-IK transport accepts only the topic-and-PSK-HKDF-derived client static key before allocation, then verifies the encrypted application PSK as defense in depth. The invite is single-use, short-lived, and requires the `cluster` feature
 
-- `--write-invite-for-serve` — Hand the invite to a RUNNING `neoth serve` daemon instead of driving the pairing in this short-lived CLI process. Writes the invite atomically to `~/.neoth/companion_pending_invite.json`, which the daemon's serve-side P2P coordinator (`companion.p2p_enabled: true`) polls every ~2s, consumes single-use, and completes the handshake — minting the token into the daemon's LONG-LIVED store so it is also valid on the loopback HTTP path. Without this flag the CLI drives a transient in-process listener whose token dies when the command exits
+- `--write-invite-for-serve` — Hand the invite to a RUNNING `neoth serve` daemon instead of driving the pairing in this short-lived CLI process. Writes the invite atomically to `~/.neoth/companion_pending_invite.json`, which the daemon's serve-side P2P coordinator (`companion.p2p_enabled: true`) polls every ~2s, consumes single-use, and completes the handshake — minting the token into the daemon-lifetime in-memory store so it is also valid on the loopback HTTP path while that daemon runs. Neither the token nor the pairing persists or recovers across a daemon restart; create a new invite and pair again. Without this flag the CLI drives a transient in-process listener whose token dies when the command exits
 
 ## `neoth completions`
 
