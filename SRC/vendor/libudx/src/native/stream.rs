@@ -305,7 +305,7 @@ impl StreamInner {
     /// Drain all pending writes with `StreamClosed`, mark the stream
     /// disconnected, and drop `notify_tx` so future sends fail fast.
     /// Idempotent — safe to call more than once.
-    fn terminate(&mut self) {
+    pub(super) fn terminate(&mut self) {
         self.connected = false;
         self.notify_tx = None;
         self.read_tx = None;
