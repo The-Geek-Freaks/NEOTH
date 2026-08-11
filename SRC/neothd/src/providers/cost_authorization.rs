@@ -6010,7 +6010,7 @@ mod tests {
             (
                 "sub_agents/runtime.rs",
                 2,
-                "d79a1dd97ccefa4848d6c439cb1997a24dfe14e2889f2abb4d74cc4859d5d03e",
+                "035fbf7d07b8e89ac9573251bbd55263b91d3d8c79500d9778039b03d068415c",
             ),
             (
                 "tools/deep_research.rs",
