@@ -1066,7 +1066,12 @@ mod tests {
         // The process-global environment must remain serialized until the
         // child has inherited it. Blocking on a test-owned runtime retains
         // that invariant without a direct await under the std mutex guard.
-        let output = runtime.block_on(command.output());
+        // Command::output consults Tokio's process reactor eagerly, so build
+        // it only after block_on has entered the test-owned runtime.
+        let output = runtime.block_on(async move {
+            let mut command = command;
+            command.output().await
+        });
         drop(restore_environment);
         let output = output.unwrap();
         let environment = String::from_utf8(output.stdout).unwrap();
