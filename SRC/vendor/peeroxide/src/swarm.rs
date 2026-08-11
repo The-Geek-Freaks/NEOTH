@@ -804,6 +804,15 @@ impl SwarmActor {
         mut connection_lifecycle_rx: mpsc::UnboundedReceiver<ConnectionLifecycleEvent>,
     ) {
         loop {
+            // Precompute select guards and the retry timer before any branch
+            // future mutably borrows one of the actor-owned task sets. Calling
+            // a `&self` helper inside the macro would otherwise overlap that
+            // field borrow for the lifetime of the generated select future.
+            let has_establishment_tasks = !self.establishment_tasks.is_empty();
+            let has_outbound_connect_tasks = !self.outbound_connect_tasks.is_empty();
+            let has_retries = !self.retries.is_empty();
+            let next_retry_deadline = self.next_retry_deadline();
+
             tokio::select! {
                 biased;
                 // Control and capacity-release events stay ahead of network
@@ -816,7 +825,7 @@ impl SwarmActor {
                         self.handle_connection_lifecycle(lifecycle);
                     }
                 }
-                result = self.establishment_tasks.join_next(), if !self.establishment_tasks.is_empty() => {
+                result = self.establishment_tasks.join_next(), if has_establishment_tasks => {
                     if let Some(Err(error)) = result {
                         tracing::warn!(%error, "server: stream establishment task panicked");
                     }
@@ -832,7 +841,7 @@ impl SwarmActor {
                         self.handle_server_event(event);
                     }
                 }
-                completion = self.outbound_connect_tasks.join_next(), if !self.outbound_connect_tasks.is_empty() => {
+                completion = self.outbound_connect_tasks.join_next(), if has_outbound_connect_tasks => {
                     if let Some(completion) = completion {
                         self.handle_outbound_connect_completion(completion);
                     }
@@ -840,7 +849,7 @@ impl SwarmActor {
                 _ = tokio::time::sleep_until(self.next_peer_gc) => {
                     self.gc_stale_peer_records();
                 }
-                _ = tokio::time::sleep_until(self.next_retry_deadline()), if !self.retries.is_empty() => {
+                _ = tokio::time::sleep_until(next_retry_deadline), if has_retries => {
                     self.activate_due_retries();
                 }
                 event = discovery_rx.recv() => {
