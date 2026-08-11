@@ -1829,6 +1829,18 @@ pub(crate) async fn drain_inbound_spool(cfg: &WebhookListenerConfig) {
 }
 
 async fn drain_inbound_spool_at(cfg: &WebhookListenerConfig, dir: &std::path::Path) {
+    drain_inbound_spool_at_with_batch_limit(cfg, dir, MAX_SPOOL_DRAIN_FILES).await;
+}
+
+async fn drain_inbound_spool_at_with_batch_limit(
+    cfg: &WebhookListenerConfig,
+    dir: &std::path::Path,
+    batch_limit: usize,
+) {
+    assert!(
+        batch_limit > 0,
+        "inbound spool batch limit must be positive"
+    );
     // WhatsApp and LINE listeners share the spool directory but own distinct
     // policies/pipelines. Each startup drains only its own decoder so a LINE
     // survivor can never run through WhatsApp's sender policy (or vice versa).
@@ -1843,10 +1855,10 @@ async fn drain_inbound_spool_at(cfg: &WebhookListenerConfig, dir: &std::path::Pa
     };
     let mut drained_total = 0usize;
     loop {
-        let mut paths = Vec::with_capacity(MAX_SPOOL_DRAIN_FILES);
+        let mut paths = Vec::with_capacity(batch_limit);
         let mut inspected = 0usize;
         let mut exhausted = false;
-        while inspected < MAX_SPOOL_DRAIN_FILES {
+        while inspected < batch_limit {
             match entries.next_entry().await {
                 Ok(Some(entry)) => {
                     inspected += 1;
@@ -1881,7 +1893,7 @@ async fn drain_inbound_spool_at(cfg: &WebhookListenerConfig, dir: &std::path::Pa
         }
         debug!(
             inspected,
-            cap = MAX_SPOOL_DRAIN_FILES,
+            cap = batch_limit,
             "inbound spool: recovery batch complete; yielding before continuation"
         );
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -4023,9 +4035,11 @@ mod tests {
 
     #[tokio::test]
     async fn spool_recovery_continues_past_the_first_bounded_batch() {
+        const TEST_BATCH_LIMIT: usize = 1;
+
         let home = tempfile::tempdir().unwrap();
         let spool_dir = inbound_spool_dir_at(home.path());
-        for index in 0..=MAX_SPOOL_DRAIN_FILES {
+        for index in 0..=TEST_BATCH_LIMIT {
             let message_id = format!("wamid.BATCH.{index:05}");
             let raw = format!(
                 r#"{{"object":"whatsapp_business_account","entry":[{{"id":"W","changes":[{{"field":"messages","value":{{"metadata":{{"phone_number_id":"PN","display_phone_number":"+49"}},"contacts":[{{"profile":{{"name":"S"}},"wa_id":"49"}}],"messages":[{{"from":"49","id":"{message_id}","timestamp":"1700000000","type":"text","text":{{"body":"hi"}}}}]}}}}]}}]}}"#
@@ -4056,10 +4070,10 @@ mod tests {
             dispatch_join: None,
         };
 
-        drain_inbound_spool_at(&cfg, &spool_dir).await;
+        drain_inbound_spool_at_with_batch_limit(&cfg, &spool_dir, TEST_BATCH_LIMIT).await;
         assert_eq!(
             count.load(std::sync::atomic::Ordering::SeqCst),
-            MAX_SPOOL_DRAIN_FILES + 1,
+            TEST_BATCH_LIMIT + 1,
             "every survivor must be replayed even when recovery needs multiple batches"
         );
         assert_eq!(std::fs::read_dir(&spool_dir).unwrap().count(), 0);
