@@ -668,7 +668,8 @@ pub enum Commands {
     /// QR/URL preview; NEOTH does not ship a phone client. With the default
     /// `cluster` feature it drives the single-use HyperDHT/authenticated Noise-IK
     /// P2P handshake; `--write-invite-for-serve`
-    /// hands the invite to a configured running daemon for durable token use.
+    /// hands the invite to a configured running daemon for daemon-lifetime
+    /// in-memory token use, never durable token storage or restart recovery.
     Companion(companion::CompanionArgs),
 
     /// Daemon-state snapshot — WAL bytes, tier counts, channels, autonomy.

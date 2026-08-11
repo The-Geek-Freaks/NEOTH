@@ -1095,9 +1095,8 @@ mod tests {
         std::fs::write(&outside, b"outside").unwrap();
         symlink(&outside, segment_rewrite_lock_path(&segment)).unwrap();
 
-        let error = lock_segment_for_rewrite(&segment)
-            .err()
-            .expect("rewrite lock symlink must fail closed");
+        let error =
+            lock_segment_for_rewrite(&segment).expect_err("rewrite lock symlink must fail closed");
         assert!(
             format!("{error:#}").contains("without following links")
                 || format!("{error:#}").contains("real regular file"),

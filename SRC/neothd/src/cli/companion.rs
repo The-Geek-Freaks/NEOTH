@@ -55,7 +55,8 @@ pub enum CompanionCommand {
         /// minting the token into the daemon-lifetime in-memory store so it is
         /// also valid on the loopback HTTP path while that daemon runs. Neither
         /// the token nor the pairing persists or recovers across a daemon
-        /// restart. Without this flag the CLI drives a transient in-process
+        /// restart. Create a new invite and pair again. Without this flag the
+        /// CLI drives a transient in-process
         /// listener whose token dies when the command exits.
         #[arg(long)]
         write_invite_for_serve: bool,
