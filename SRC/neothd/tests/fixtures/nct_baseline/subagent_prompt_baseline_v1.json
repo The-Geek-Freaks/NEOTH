@@ -1,0 +1,29 @@
+{
+  "schema": "neoth.nct-baseline-fixture-manifest.v1",
+  "fixture_id": "subagent_prompt_baseline_v1",
+  "purpose": "Frozen synthetic manifest for current NEXUS primary/QA/one-correction prompt-shape baselines.",
+  "raw_content_policy": "No raw prompts, candidates, QA verdicts, provider request IDs, hashes, or content-derived identifiers are stored in this fixture.",
+  "generator": {
+    "name": "nct_subagent_shape_recipe_v1",
+    "deterministic": true,
+    "seed": "nct-baseline-v1",
+    "recipe": [
+      "Generate ASCII-safe synthetic context, candidate, and QA-failure segments from fixed labels and fixed byte lengths.",
+      "Construct the existing primary, QA, and one-correction retry envelopes without changing their bytes.",
+      "Record numeric segment shapes and optional provider-native completion usage only."
+    ]
+  },
+  "splits": {
+    "train": ["nct-synth-train-001", "nct-synth-train-002"],
+    "validation": ["nct-synth-validation-001"],
+    "holdout": ["nct-synth-holdout-001", "nct-synth-holdout-002"]
+  },
+  "coverage": [
+    "primary_pass",
+    "qa_pass",
+    "qa_retriable_failure_then_one_correction",
+    "malformed_qa_blocks_without_retry",
+    "provider_usage_absent",
+    "provider_usage_zero_is_distinct"
+  ]
+}

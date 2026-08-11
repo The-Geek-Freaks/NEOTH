@@ -1,7 +1,25 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-08-09
+**Created:** 2026-05-24  **Last updated:** 2026-08-10
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
+>
+> **Current Prime/NCT + Companion v2 integration checkpoint 2026-08-10
+> (exact-head release evidence pending):** `GOLD-ADOPT-PRIME-01` is complete
+> as a pinned, evidence-backed adoption decision only. NEOTH does not embed the
+> Prime Agent runtime; `GOLD-NCT-01` remains OPEN. Its first behavior-neutral
+> NEXUS primary/QA/single-correction baseline is wired with content-free shape,
+> native usage/cache and latency metrics plus a frozen, strictly bound fixture;
+> Direct, Council, fallback, streaming, cluster, real-provider and train/holdout
+> coverage remain outstanding. Companion now emits mandatory v2 invites and
+> performs topic+PSK-HKDF-derived authenticated Noise-IK static-key admission
+> before transport allocation, retaining the encrypted application PSK check
+> and durable WAL-audit-before-token visibility. That WAL intentionally does
+> not persist a bearer token: a crash after its ACK but before in-memory token
+> visibility consumes the invite fail-closed and requires a new invite/pairing.
+> There is still no shipped phone client. The roadmap machine gate is now **1,299 total / 998 complete / 299
+> open / 2 partial = 301 raw blockers and 300 pre-tag blockers**. The CodeQL,
+> cross-platform CI and release-candidate gates remain independent mandatory
+> evidence; no local source/review result closes them.
 >
 > **Current dependency-security correction 2026-08-09 (release evidence
 > pending):** the locked graph now uses direct optional `russh 0.62.5` for
@@ -15,9 +33,10 @@
 > `derivative` warning), all-feature locked `cargo deny` with
 > advisories/bans/licences/sources OK, and Nostr feature tests **20/20**. The
 > final SSH feature regression is **39/39**, including bounded adversarial
-> channel deadlines and owned `abort + await` session teardown. The current-tree
-> roadmap release gate remains **1,298 total / 997 complete / 299 open / 2
-> partial = 301 raw blockers and 300 pre-tag blockers**. Exact-head CI, Security
+> channel deadlines and owned `abort + await` session teardown. At that
+> 2026-08-09 checkpoint the roadmap release gate was **1,298 total / 997
+> complete / 299 open / 2 partial = 301 raw blockers and 300 pre-tag blockers**;
+> the current count is reported by the checkpoint above. Exact-head CI, Security
 > and CodeQL remain separate mandatory evidence before any v1.0.0 tag.
 >
 > **Gate state as of session end (head `b46cbf91`).** CI: zero failures across
@@ -1917,7 +1936,7 @@ _Deferred: SA-MEM-01, ASYNC-REWAKE. Skipped (verify-first): LISTBDGT-01 (contrad
 
 - [x] **SEC-SSRF-WEBHOOK** Webhook SSRF hardening — ✅ DONE: `daemon/webhook_manager.rs` (1) P0-1: replaced hand-rolled `extract_host_port` with `url::Url::parse` — closes credential-embedded URL bypass (`https://attacker@192.168.1.1/` now correctly identifies host as `192.168.1.1` which hits the block-list); (2) P0-2: added `.redirect(reqwest::redirect::Policy::none())` to reqwest ClientBuilder — no redirects followed, 3xx surfaced as delivery failure; (3) P1: changed `SsrfCache` from `HashMap<String, Result<(), String>>` to `HashMap<String, Result<Vec<IpAddr>, String>>`, `ssrf_check` returns `Vec<IpAddr>` of allowed addresses, `deliver_to_endpoint` uses clean two-branch cache logic (Err=permanent block, missing=run check); `TODO(ssrf-dnsrebind)` comment with `resolve_to_addrs` migration path documented. 4 new tests (credential-embed URL, loopback credential-embed, redirect contract, private-IP ssrf_check block) + 1 `#[ignore]` online DNS test. 139 lib tests pass, clippy -D warnings EXIT_CODE=0.
 
-- [x] **GOLD-COMPANION-P2P-01** Companion phone-pairing over Hyperswarm/Noise-XX P2P — ✅ DONE: `daemon/companion.rs` `p2p::run_companion_p2p_listener` (Hyperswarm DHT announce, Noise-XX inbound, atomic invite burn, constant-time 16B PSK verify, JSON token delivery, WAL 0x0D/0x0E); `spawn_companion_p2p_listener` public API (#[cfg(feature="cluster")] + no-op fallback); `CompanionInvite::from_hex`; WAL `0x0D COMPANION_P2P_PAIRED` + `0x0E COMPANION_P2P_REJECTED` in `wal/events.rs` + EVENT_NAME_TABLE entries + band-guard assertions; `CompanionConfig.p2p_enabled: bool` in `config/automation.rs`; `cli/companion.rs` `run_companion`/`run_pair_phone` async (P2P listener + tokio::signal::ctrl_c); `cli/mod.rs` dispatch `.await`; `cli/serve_tasks.rs` `spawn_companion_p2p_listener_task` (serve-side invite-file poll coordinator) + `BackgroundHandles.companion_p2p_shutdown/companion_p2p_task` fields + drain block after companion HTTP drain; `cli/serve.rs` `companion_p2p_state` hoist + spawn call + `BackgroundHandles` wire; `docs/cli-commands.md` regenerated. 9340 tests pass, 0 failed, clippy workspace EXIT_CODE=0.
+- [x] **GOLD-COMPANION-P2P-01** Companion v2 server-side pairing preview over HyperDHT + authenticated Noise-IK P2P — ✅ DONE: `daemon/companion.rs` announces a topic through HyperDHT and admits only the topic-and-PSK-HKDF-derived expected client static key before transport allocation; the encrypted application-level constant-time 16B PSK check remains defense in depth. After admission, its typed owner drains bounded leave, WAL `0x0D` audit acknowledgement, in-memory token visibility, and reply rather than abandoning the task at startup, TTL, or shutdown. The audit deliberately contains no bearer token: a crash after its ACK but before visibility consumes the invite fail-closed and requires a new invite/pairing; it is not a crash-recoverable token transaction. `CompanionInvite::from_hex` emits v2 `neoth://companion/pair?v=2` URLs; WAL `0x0D COMPANION_P2P_PAIRED` + `0x0E COMPANION_P2P_REJECTED` remain in `wal/events.rs` + EVENT_NAME_TABLE entries + band-guard assertions; `CompanionConfig.p2p_enabled: bool` is in `config/automation.rs`; `cli/companion.rs` runs the listener; `cli/mod.rs` dispatches `.await`; `cli/serve_tasks.rs` owns the serve-side invite-file poll coordinator and ordered drain after the companion HTTP drain; `cli/serve.rs` hoists `companion_p2p_state` and wires `BackgroundHandles`; `docs/cli-commands.md` is generated. There is no shipped phone client: the server + QR/URL are a compatible-client preview. No NEOTH-hosted central relay is claimed. Historical 9340-test/clippy evidence belongs to the original shipment; exact-current verification is tracked separately.
 
 - [x] **GOLD-REVFIX-EXCERPTS-01** auto-extract structured tool-call digest — ✅ DONE: `ToolCallRecord` struct in `mcp/dispatch_loop.rs` accumulated per dispatch; `LoopOutcome.tool_call_records` threaded through `DispatchOutput.mcp_tool_records` → `run_post_reply_pipelines` → `maybe_extract_skill`; `build_tool_digest` in `skills/auto_extract.rs` formats `tool: server/tool args=… → ok|err` capped 1200 chars; digest replaces blind 512-char prefix when records present, falls back to truncate-to-512 for empty-records callers; prompt template label updated; wired into `cli/chat.rs:run_post_reply_pipelines`. 3 unit tests + 1 integration test green.
 

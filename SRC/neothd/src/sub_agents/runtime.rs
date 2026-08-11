@@ -13,7 +13,10 @@ use serde::{Deserialize, Serialize};
 
 use super::SubAgent;
 use super::parallel::SubAgentWorker;
-use super::schema::{SubAgentProviderCall, SubAgentRequest, SubAgentResult};
+use super::schema::{
+    SubAgentPromptBaseline, SubAgentPromptShape, SubAgentProviderCall, SubAgentRequest,
+    SubAgentResult,
+};
 use crate::council::qa_verdict::QaVerdict;
 use crate::providers::cost_authorization::AuthorizedProvider;
 use crate::providers::{Completion, Provider, Request};
@@ -30,7 +33,95 @@ const MAX_QA_RETRIES: u8 = 1;
 pub struct QaCallOutcome {
     pub verdict: std::result::Result<QaVerdict, String>,
     pub call: SubAgentProviderCall,
-    pub response_hash_xxh3: u64,
+}
+
+/// The private construction segments of one existing provider request.
+///
+/// NCT-01 measures this internal representation directly rather than parsing
+/// a rendered prompt. The strings remain transient: only numeric shape values
+/// are copied into a `SubAgentProviderCall` after completion.
+struct PromptSegments {
+    prompt_bytes: u64,
+    system_bytes: u64,
+    context_bytes: u64,
+    candidate_bytes: u64,
+    qa_failure_bytes: u64,
+    repeated_segment_bytes: u64,
+}
+
+impl PromptSegments {
+    fn primary(prompt: &str, system: &str, context: &str) -> Self {
+        Self {
+            prompt_bytes: prompt.len() as u64,
+            system_bytes: system.len() as u64,
+            context_bytes: context.len() as u64,
+            candidate_bytes: 0,
+            qa_failure_bytes: 0,
+            repeated_segment_bytes: 0,
+        }
+    }
+
+    fn qa(prompt: &str, system: &str, context: &str, candidate: &str) -> Self {
+        Self {
+            prompt_bytes: prompt.len() as u64,
+            system_bytes: system.len() as u64,
+            context_bytes: context.len() as u64,
+            candidate_bytes: candidate.len() as u64,
+            qa_failure_bytes: 0,
+            repeated_segment_bytes: (context.len() + candidate.len()) as u64,
+        }
+    }
+
+    fn with_retry_parts(
+        prompt: &str,
+        system: &str,
+        context: &str,
+        candidate: &str,
+        qa_failures: &str,
+    ) -> Self {
+        Self {
+            prompt_bytes: prompt.len() as u64,
+            system_bytes: system.len() as u64,
+            context_bytes: context.len() as u64,
+            candidate_bytes: candidate.len() as u64,
+            qa_failure_bytes: qa_failures.len() as u64,
+            repeated_segment_bytes: (context.len() + candidate.len() + qa_failures.len()) as u64,
+        }
+    }
+
+    fn shape(&self) -> SubAgentPromptShape {
+        SubAgentPromptShape {
+            prompt_bytes: self.prompt_bytes,
+            system_bytes: self.system_bytes,
+            context_bytes: self.context_bytes,
+            candidate_bytes: self.candidate_bytes,
+            qa_failure_bytes: self.qa_failure_bytes,
+            repeated_segment_bytes: self.repeated_segment_bytes,
+            // This is intentionally tokenizer-agnostic and conservative:
+            // one UTF-8 byte is the smallest possible token span.
+            prompt_tokens_upper_bound: self.prompt_bytes,
+            system_tokens_upper_bound: self.system_bytes,
+            context_tokens_upper_bound: self.context_bytes,
+            candidate_tokens_upper_bound: self.candidate_bytes,
+            qa_failure_tokens_upper_bound: self.qa_failure_bytes,
+            total_request_tokens_upper_bound: self.prompt_bytes.saturating_add(self.system_bytes),
+        }
+    }
+
+    fn baseline(&self, completion: &Completion) -> SubAgentPromptBaseline {
+        SubAgentPromptBaseline {
+            shape: self.shape(),
+            input_tokens: completion.input_tokens,
+            output_tokens: completion.output_tokens,
+            cache_creation_tokens: completion.cache_creation_tokens,
+            cache_read_tokens: completion.cache_read_tokens,
+            completion_latency_ms: completion
+                .latency
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
+        }
+    }
 }
 
 /// Run named provider-only agents through the real parallel controller.
@@ -72,21 +163,33 @@ impl SubAgentWorker for ProviderSubAgentWorker {
         validate_request(agent, &request)?;
 
         let mut prompt = request.context.clone();
+        let mut retry_parts: Option<(String, String, String)> = None;
         let mut provider_calls = Vec::with_capacity(4);
         let max_attempts = 1 + u8::from(self.retry_failed) * MAX_QA_RETRIES;
 
         for attempt in 1..=max_attempts {
+            let system = agent_system(agent);
+            let segments = match retry_parts.as_ref() {
+                Some((context, candidate, qa_failures)) => PromptSegments::with_retry_parts(
+                    &prompt,
+                    &system,
+                    context,
+                    candidate,
+                    qa_failures,
+                ),
+                None => PromptSegments::primary(&prompt, &system, &request.context),
+            };
             let completion = self
                 .provider
                 .complete(Request {
                     prompt: prompt.clone(),
-                    system: Some(agent_system(agent)),
+                    system: Some(system),
                     model: agent.model.clone(),
                     ..Request::default()
                 })
                 .await
                 .with_context(|| format!("sub-agent `{}` primary attempt {attempt}", agent.name))?;
-            let primary_call = provider_call("primary", attempt, &completion)?;
+            let primary_call = provider_call("primary", attempt, &completion, &segments)?;
             let output = completion.text;
             provider_calls.push(primary_call);
 
@@ -170,7 +273,9 @@ impl SubAgentWorker for ProviderSubAgentWorker {
             .await?;
 
             if verdict.is_retriable() && attempt < max_attempts {
-                prompt = retry_prompt(&request.context, &output, &verdict)?;
+                let retry = retry_prompt_parts(&request.context, &output, &verdict)?;
+                prompt = retry.prompt;
+                retry_parts = Some((retry.context, retry.candidate, retry.qa_failures));
                 continue;
             }
             return Ok(result(
@@ -220,6 +325,7 @@ fn provider_call(
     stage: &str,
     attempt: u8,
     completion: &Completion,
+    segments: &PromptSegments,
 ) -> Result<SubAgentProviderCall> {
     if !completion.identity.is_bound() {
         anyhow::bail!("provider returned a completion without a B22-bound leaf identity");
@@ -231,6 +337,7 @@ fn provider_call(
         wire_model: completion.identity.wire_model.clone(),
         input_tokens: completion.input_tokens,
         output_tokens: completion.output_tokens,
+        prompt_baseline: Some(segments.baseline(completion)),
     })
 }
 
@@ -278,6 +385,13 @@ or
 Pass only when every acceptance criterion is met. Fail means the candidate itself can be corrected. Blocked means external evidence or access is missing and retrying the same task cannot fix it."#
 }
 
+struct RetryPromptParts {
+    prompt: String,
+    context: String,
+    candidate: String,
+    qa_failures: String,
+}
+
 fn qa_prompt(request: &SubAgentRequest, candidate: &str) -> Result<String> {
     let contract = serde_json::to_string(&serde_json::json!({
         "task_id": request.task_id,
@@ -302,25 +416,23 @@ pub async fn request_qa_verdict(
     if candidate.len() > MAX_QA_CANDIDATE_BYTES {
         anyhow::bail!("candidate exceeds bounded QA limit");
     }
+    let prompt = qa_prompt(request, candidate)?;
+    let system = qa_system_prompt().to_string();
+    let segments = PromptSegments::qa(&prompt, &system, &request.context, candidate);
     let temperature = crate::providers::internal_temperature(provider, 0.0, "sub_agents.qa");
     let completion = provider
         .complete(Request {
-            prompt: qa_prompt(request, candidate)?,
-            system: Some(qa_system_prompt().to_string()),
+            prompt,
+            system: Some(system),
             model,
             temperature,
             ..Request::default()
         })
         .await
         .context("structured QA provider call")?;
-    let call = provider_call("qa", attempt, &completion)?;
-    let response_hash_xxh3 = xxhash_rust::xxh3::xxh3_64(completion.text.as_bytes());
+    let call = provider_call("qa", attempt, &completion, &segments)?;
     let verdict = parse_qa_verdict(&completion.text);
-    Ok(QaCallOutcome {
-        verdict,
-        call,
-        response_hash_xxh3,
-    })
+    Ok(QaCallOutcome { verdict, call })
 }
 
 pub fn parse_qa_verdict(text: &str) -> std::result::Result<QaVerdict, String> {
@@ -330,15 +442,25 @@ pub fn parse_qa_verdict(text: &str) -> std::result::Result<QaVerdict, String> {
     Ok(verdict)
 }
 
-fn retry_prompt(original: &str, candidate: &str, verdict: &QaVerdict) -> Result<String> {
+fn retry_prompt_parts(
+    original: &str,
+    candidate: &str,
+    verdict: &QaVerdict,
+) -> Result<RetryPromptParts> {
     debug_assert!(verdict.is_retriable());
     let failures = serde_json::to_string(verdict)?;
-    Ok(format!(
+    let prompt = format!(
         "Correct the previous answer once. Return a complete replacement, not a patch to the prose.\n\n\
          <operator_task>{original}</operator_task>\n\
          <previous_candidate>{candidate}</previous_candidate>\n\
          <qa_failures>{failures}</qa_failures>"
-    ))
+    );
+    Ok(RetryPromptParts {
+        prompt,
+        context: original.to_string(),
+        candidate: candidate.to_string(),
+        qa_failures: failures,
+    })
 }
 
 /// Content-free WAL event. `0x84` remains backward-compatible with the older
@@ -467,11 +589,41 @@ mod tests {
     use crate::sub_agents::parallel::dispatch_parallel;
     use crate::sub_agents::schema::HandoffPriority;
 
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct NctBaselineFixture {
+        schema: String,
+        fixture_id: String,
+        purpose: String,
+        raw_content_policy: String,
+        generator: NctBaselineGenerator,
+        splits: NctBaselineSplits,
+        coverage: Vec<String>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct NctBaselineGenerator {
+        name: String,
+        deterministic: bool,
+        seed: String,
+        recipe: Vec<String>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct NctBaselineSplits {
+        train: Vec<String>,
+        validation: Vec<String>,
+        holdout: Vec<String>,
+    }
+
     struct QaScriptProvider {
         calls: AtomicUsize,
         request_models: Mutex<Vec<(bool, Option<String>)>>,
         malformed: bool,
         always_fail: bool,
+        fail_qa: bool,
         fail_primary_system: Option<String>,
     }
 
@@ -514,6 +666,9 @@ mod tests {
                     .is_some_and(|needle| req.system.as_deref().is_some_and(|s| s.contains(needle)))
             {
                 anyhow::bail!("synthetic primary failure");
+            }
+            if is_qa && self.fail_qa {
+                anyhow::bail!("synthetic QA failure");
             }
             let text = if is_qa && self.malformed {
                 "VERDICT: PASS".to_string()
@@ -597,6 +752,7 @@ mod tests {
             request_models: Mutex::new(Vec::new()),
             malformed: false,
             always_fail: false,
+            fail_qa: false,
             fail_primary_system: None,
         });
         let worker = Arc::new(ProviderSubAgentWorker::new(
@@ -632,6 +788,61 @@ mod tests {
                     .iter()
                     .all(|call| call.provider == "openai_api" && call.wire_model == "wire-model-v1")
         }));
+        for (result, (name, system, task_id)) in report
+            .results
+            .iter()
+            .zip([("a", "agent a", "t-a"), ("b", "agent b", "t-b")])
+        {
+            let expected_request = request(name, task_id);
+            let calls = &result.provider_calls;
+            assert_eq!(
+                calls
+                    .iter()
+                    .map(|call| call.stage.as_str())
+                    .collect::<Vec<_>>(),
+                ["primary", "qa"]
+            );
+            assert_eq!(
+                calls.iter().map(|call| call.attempt).collect::<Vec<_>>(),
+                [1, 1]
+            );
+            let primary = calls[0].prompt_baseline.as_ref().unwrap();
+            assert_eq!(
+                primary.shape.prompt_bytes,
+                expected_request.context.len() as u64
+            );
+            assert_eq!(
+                primary.shape.system_bytes,
+                agent_system(&agent(name, system)).len() as u64
+            );
+            assert_eq!(
+                primary.shape.context_bytes,
+                expected_request.context.len() as u64
+            );
+            assert_eq!(primary.shape.candidate_bytes, 0);
+            assert_eq!(primary.shape.qa_failure_bytes, 0);
+            assert_eq!(primary.shape.repeated_segment_bytes, 0);
+            assert_eq!(primary.input_tokens, Some(10));
+            assert_eq!(primary.output_tokens, Some(5));
+
+            let qa = calls[1].prompt_baseline.as_ref().unwrap();
+            assert_eq!(
+                qa.shape.prompt_bytes,
+                qa_prompt(&expected_request, "candidate output")
+                    .unwrap()
+                    .len() as u64
+            );
+            assert_eq!(qa.shape.system_bytes, qa_system_prompt().len() as u64);
+            assert_eq!(
+                qa.shape.context_bytes,
+                expected_request.context.len() as u64
+            );
+            assert_eq!(qa.shape.candidate_bytes, "candidate output".len() as u64);
+            assert_eq!(
+                qa.shape.repeated_segment_bytes,
+                (expected_request.context.len() + "candidate output".len()) as u64
+            );
+        }
     }
 
     #[tokio::test]
@@ -642,6 +853,7 @@ mod tests {
             request_models: Mutex::new(Vec::new()),
             malformed: false,
             always_fail: false,
+            fail_qa: false,
             fail_primary_system: Some("FAIL_ME".into()),
         });
         let worker = Arc::new(ProviderSubAgentWorker::new(
@@ -671,6 +883,7 @@ mod tests {
             request_models: Mutex::new(Vec::new()),
             malformed: true,
             always_fail: false,
+            fail_qa: false,
             fail_primary_system: None,
         });
         let worker = Arc::new(ProviderSubAgentWorker::new(
@@ -685,6 +898,16 @@ mod tests {
         assert_eq!(report.blocked_count, 1);
         assert_eq!(report.results[0].attempts, 1);
         assert_eq!(raw.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(report.results[0].provider_calls.len(), 2);
+        assert_eq!(
+            report.results[0]
+                .provider_calls
+                .iter()
+                .map(|call| call.stage.as_str())
+                .collect::<Vec<_>>(),
+            ["primary", "qa"],
+            "malformed QA has a completed QA-call baseline but never a retry"
+        );
     }
 
     #[tokio::test]
@@ -695,6 +918,7 @@ mod tests {
             request_models: Mutex::new(Vec::new()),
             malformed: false,
             always_fail: true,
+            fail_qa: false,
             fail_primary_system: None,
         });
         let worker = Arc::new(ProviderSubAgentWorker::new(
@@ -709,6 +933,204 @@ mod tests {
         assert_eq!(report.fail_count, 1);
         assert_eq!(report.results[0].attempts, 2);
         assert_eq!(raw.calls.load(Ordering::SeqCst), 4);
+        let calls = &report.results[0].provider_calls;
+        assert_eq!(
+            calls
+                .iter()
+                .map(|call| call.stage.as_str())
+                .collect::<Vec<_>>(),
+            ["primary", "qa", "primary", "qa"]
+        );
+        assert_eq!(
+            calls.iter().map(|call| call.attempt).collect::<Vec<_>>(),
+            [1, 1, 2, 2]
+        );
+        let expected_request = request("a", "t");
+        let retry = retry_prompt_parts(
+            &expected_request.context,
+            "candidate output",
+            &report.results[0].verdict,
+        )
+        .unwrap();
+        let retry_primary = calls[2].prompt_baseline.as_ref().unwrap();
+        assert_eq!(retry_primary.shape.prompt_bytes, retry.prompt.len() as u64);
+        assert_eq!(
+            retry_primary.shape.context_bytes,
+            expected_request.context.len() as u64
+        );
+        assert_eq!(
+            retry_primary.shape.candidate_bytes,
+            "candidate output".len() as u64
+        );
+        assert_eq!(
+            retry_primary.shape.qa_failure_bytes,
+            retry.qa_failures.len() as u64
+        );
+        assert_eq!(
+            retry_primary.shape.repeated_segment_bytes,
+            (expected_request.context.len() + "candidate output".len() + retry.qa_failures.len())
+                as u64
+        );
+    }
+
+    #[tokio::test]
+    async fn qa_provider_error_has_no_absent_call_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw = Arc::new(QaScriptProvider {
+            calls: AtomicUsize::new(0),
+            request_models: Mutex::new(Vec::new()),
+            malformed: false,
+            always_fail: false,
+            fail_qa: true,
+            fail_primary_system: None,
+        });
+        let worker = Arc::new(ProviderSubAgentWorker::new(
+            authorized(Arc::clone(&raw)),
+            [agent("a", "agent")],
+            true,
+            audit_writer(&dir),
+        ));
+        let report = dispatch_parallel(worker, vec![request("a", "t")], Some(1), None)
+            .await
+            .unwrap();
+        assert_eq!(report.blocked_count, 1);
+        assert_eq!(raw.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(report.results[0].provider_calls.len(), 1);
+        assert_eq!(report.results[0].provider_calls[0].stage, "primary");
+        assert!(
+            report.results[0].provider_calls[0]
+                .prompt_baseline
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn prompt_baseline_keeps_optional_usage_latency_and_no_raw_segments() {
+        let raw_context = "NCT_RAW_CONTEXT_MUST_NOT_SERIALIZE";
+        let raw_candidate = "NCT_RAW_CANDIDATE_MUST_NOT_SERIALIZE";
+        let raw_failures = "NCT_RAW_FAILURE_MUST_NOT_SERIALIZE";
+        let raw_system = "NCT_RAW_SYSTEM_MUST_NOT_SERIALIZE";
+        let raw_prompt = "NCT_RAW_PROMPT_MUST_NOT_SERIALIZE";
+        let completion = Completion {
+            input_tokens: None,
+            output_tokens: Some(0),
+            cache_creation_tokens: Some(0),
+            cache_read_tokens: None,
+            latency: std::time::Duration::from_millis(17),
+            ..Completion::default()
+        };
+        let baseline = PromptSegments::with_retry_parts(
+            raw_prompt,
+            raw_system,
+            raw_context,
+            raw_candidate,
+            raw_failures,
+        )
+        .baseline(&completion);
+        assert_eq!(baseline.input_tokens, None);
+        assert_eq!(baseline.output_tokens, Some(0));
+        assert_eq!(baseline.cache_creation_tokens, Some(0));
+        assert_eq!(baseline.cache_read_tokens, None);
+        assert_eq!(baseline.completion_latency_ms, 17);
+        assert_eq!(
+            baseline.shape.prompt_tokens_upper_bound,
+            raw_prompt.len() as u64
+        );
+        assert_eq!(
+            baseline.shape.total_request_tokens_upper_bound,
+            (raw_prompt.len() + raw_system.len()) as u64
+        );
+        assert_eq!(
+            baseline.shape.repeated_segment_bytes,
+            (raw_context.len() + raw_candidate.len() + raw_failures.len()) as u64
+        );
+        let serialized = serde_json::to_string(&baseline).unwrap();
+        for raw in [
+            raw_prompt,
+            raw_system,
+            raw_context,
+            raw_candidate,
+            raw_failures,
+        ] {
+            assert!(!serialized.contains(raw));
+        }
+    }
+
+    #[test]
+    fn frozen_nct_fixture_matches_prompt_baseline_contract_and_metrics() {
+        let fixture: NctBaselineFixture = serde_json::from_str(include_str!(
+            "../../tests/fixtures/nct_baseline/subagent_prompt_baseline_v1.json"
+        ))
+        .expect("the frozen NCT manifest must match its typed v1 contract");
+
+        assert_eq!(fixture.schema, "neoth.nct-baseline-fixture-manifest.v1");
+        assert_eq!(fixture.fixture_id, "subagent_prompt_baseline_v1");
+        assert_eq!(
+            fixture.purpose,
+            "Frozen synthetic manifest for current NEXUS primary/QA/one-correction prompt-shape baselines."
+        );
+        assert_eq!(
+            fixture.raw_content_policy,
+            "No raw prompts, candidates, QA verdicts, provider request IDs, hashes, or content-derived identifiers are stored in this fixture."
+        );
+        assert_eq!(fixture.generator.name, "nct_subagent_shape_recipe_v1");
+        assert!(fixture.generator.deterministic);
+        assert_eq!(fixture.generator.seed, "nct-baseline-v1");
+        assert_eq!(fixture.generator.recipe.len(), 3);
+        assert_eq!(fixture.splits.train.len(), 2);
+        assert_eq!(fixture.splits.validation.len(), 1);
+        assert_eq!(fixture.splits.holdout.len(), 2);
+        assert_eq!(
+            fixture.coverage,
+            [
+                "primary_pass",
+                "qa_pass",
+                "qa_retriable_failure_then_one_correction",
+                "malformed_qa_blocks_without_retry",
+                "provider_usage_absent",
+                "provider_usage_zero_is_distinct",
+            ]
+        );
+        assert_eq!(MAX_FAN_OUT, 8);
+        assert_eq!(MAX_CONCURRENT, 4);
+        assert_eq!(MAX_PROMPT_BYTES, 64 * 1024);
+        assert_eq!(MAX_SYSTEM_BYTES, 64 * 1024);
+        assert_eq!(MAX_QA_CANDIDATE_BYTES, 128 * 1024);
+        assert_eq!(MAX_QA_RETRIES, 1);
+
+        let primary = PromptSegments::primary(&"p".repeat(23), &"s".repeat(7), &"c".repeat(23))
+            .baseline(&Completion {
+                input_tokens: None,
+                output_tokens: Some(0),
+                cache_creation_tokens: Some(0),
+                cache_read_tokens: None,
+                latency: std::time::Duration::from_millis(19),
+                ..Completion::default()
+            });
+        assert_eq!(
+            primary,
+            SubAgentPromptBaseline {
+                shape: SubAgentPromptShape {
+                    prompt_bytes: 23,
+                    system_bytes: 7,
+                    context_bytes: 23,
+                    candidate_bytes: 0,
+                    qa_failure_bytes: 0,
+                    repeated_segment_bytes: 0,
+                    prompt_tokens_upper_bound: 23,
+                    system_tokens_upper_bound: 7,
+                    context_tokens_upper_bound: 23,
+                    candidate_tokens_upper_bound: 0,
+                    qa_failure_tokens_upper_bound: 0,
+                    total_request_tokens_upper_bound: 30,
+                },
+                input_tokens: None,
+                output_tokens: Some(0),
+                cache_creation_tokens: Some(0),
+                cache_read_tokens: None,
+                completion_latency_ms: 19,
+            }
+        );
     }
 
     #[test]
