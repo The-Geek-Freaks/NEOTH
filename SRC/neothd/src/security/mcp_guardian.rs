@@ -882,10 +882,8 @@ impl McpGuardian {
 mod tests {
     use super::*;
     use crate::mcp::client::ToolAnnotations;
-    use tempfile::tempdir;
-
     fn home_with_key() -> tempfile::TempDir {
-        let dir = tempdir().unwrap();
+        let dir = crate::test_env::canonical_tempdir().unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
