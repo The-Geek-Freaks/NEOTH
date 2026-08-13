@@ -8,6 +8,8 @@ use neothd::media::{Asset, AssetKind, MediaExtractor, pdf::PdfExtractor};
 
 const WORKER_MODE_ENV: &str = "NEOTH_INTERNAL_PDF_WORKER_V1";
 const WORKER_JOB_ENV: &str = "NEOTH_INTERNAL_PDF_JOB";
+#[cfg(target_os = "macos")]
+const WORKER_PARENT_LIVENESS_FD_ENV: &str = "NEOTH_INTERNAL_PDF_PARENT_LIVENESS_FD";
 const INPUT_MAGIC: &[u8; 8] = b"NTHPDI01";
 
 fn neoth_bin() -> &'static str {
@@ -23,6 +25,8 @@ fn internal_worker_rejects_an_uncontained_direct_invocation() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(target_os = "macos")]
+    command.env_remove(WORKER_PARENT_LIVENESS_FD_ENV);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;
@@ -63,10 +67,8 @@ fn internal_worker_rejects_an_uncontained_direct_invocation() {
     );
     #[cfg(target_os = "macos")]
     assert!(
-        stderr.is_empty()
-            || stderr.contains("parent-liveness lease")
-            || stderr.contains("parse PDF"),
-        "unexpected private-worker error: {stderr}"
+        stderr.contains("parent-liveness lease"),
+        "direct macOS worker must reject the missing authenticated parent-liveness lease: {stderr}"
     );
 }
 

@@ -26,6 +26,10 @@ const MAX_PDF_TEXT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PDF_PATH_BYTES: usize = 32 * 1024;
 const PDF_WORKER_MODE_ENV: &str = "NEOTH_INTERNAL_PDF_WORKER_V1";
 const PDF_WORKER_PATH_ENV: &str = "NEOTH_INTERNAL_PDF_PATH";
+#[cfg(target_os = "macos")]
+const PDF_WORKER_PARENT_LIVENESS_FD_ENV: &str = "NEOTH_INTERNAL_PDF_PARENT_LIVENESS_FD";
+#[cfg(target_os = "macos")]
+const PDF_WORKER_PARENT_LIVENESS_FD: libc::c_int = 3;
 #[cfg(windows)]
 const PDF_WORKER_JOB_ENV: &str = "NEOTH_INTERNAL_PDF_JOB";
 const PDF_WORKER_MODE_VALUE: &str = "parse";
@@ -555,16 +559,7 @@ async fn write_pdf_worker_request(
     if let Asset::Bytes { data, .. } = asset {
         stdin.write_all(data).await?;
     }
-    #[cfg(target_os = "macos")]
-    {
-        // Keep the write end open as the worker's parent/task-lifetime lease.
-        // EOF is reserved for owner death or async cancellation.
-        stdin.flush().await
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        stdin.shutdown().await
-    }
+    stdin.shutdown().await
 }
 
 #[derive(Debug)]
@@ -804,10 +799,9 @@ impl PdfWorkerSupervisor {
 #[cfg(not(test))]
 impl Drop for PdfWorkerSupervisor {
     fn drop(&mut self) {
-        // Closing stdin first trips the macOS worker's parent/task-lifetime
-        // lease. The explicit process-group/Job termination is the independent
-        // second layer and covers cancellation before the worker arms its
-        // watchdog.
+        // Closing stdin aborts any in-flight request. The explicit
+        // process-group/Job termination is independent of the macOS lease and
+        // covers cancellation before the worker arms its watchdog.
         drop(self.stdin.take());
 
         let Some(budget) = self.budget.take() else {
@@ -820,6 +814,11 @@ impl Drop for PdfWorkerSupervisor {
             return;
         };
         let mut exit_status = self.exit_status.take();
+        // Drop cannot await the bounded proof/reap path below. Start best-
+        // effort termination immediately on every platform so a missing Tokio
+        // runtime or a failed detached cleanup cannot leave the worker alive.
+        // The detached cleanup still owns containment and performs the
+        // identity-safe terminal/empty-group proof before releasing budget.
         let _ = containment.terminate_tree(exit_status.is_some());
         if exit_status.is_none() {
             let _ = child.start_kill();
@@ -861,6 +860,20 @@ async fn cleanup_pdf_worker(
     exit_status: &mut Option<std::process::ExitStatus>,
     deadline: tokio::time::Instant,
 ) -> Result<(), String> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        // Keep an unreaped terminal leader as the PGID identity pin while the
+        // membership proof runs. If it is already terminal and no descendants
+        // remain, there is nothing left to signal. In every other state kill
+        // first, then retain the bounded proof/reap loop below.
+        let direct_child_terminal = pdf_worker_terminal_without_reap(containment.leader_pid())?;
+        let tree_empty =
+            direct_child_terminal && containment.process_tree_is_empty_except_leader()?;
+        if !(direct_child_terminal && tree_empty) {
+            containment.terminate_tree(false)?;
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     containment.terminate_tree(exit_status.is_some())?;
 
     loop {
@@ -964,9 +977,9 @@ fn pdf_worker_terminal_without_reap(child_pid: libc::pid_t) -> Result<bool, Stri
 ///
 /// This is intentionally environment-triggered instead of being a Clap
 /// subcommand: it is an implementation detail used only by the parent process,
-/// not a public CLI surface. The worker applies/verifies OS containment, waits
-/// for the parent's post-containment stdin handshake, and writes one bounded
-/// binary response to stdout.
+/// not a public CLI surface. The worker verifies and arms OS containment before
+/// lowering resource limits, then receives one bounded stdin request and writes
+/// one bounded binary response to stdout.
 pub fn run_internal_pdf_worker_if_requested() -> Option<Result<(), String>> {
     let mode = std::env::var_os(PDF_WORKER_MODE_ENV)?;
     if mode != std::ffi::OsStr::new(PDF_WORKER_MODE_VALUE) {
@@ -974,9 +987,14 @@ pub fn run_internal_pdf_worker_if_requested() -> Option<Result<(), String>> {
     }
 
     let result = (|| {
-        apply_pdf_worker_resource_limits()?;
-        let request = read_pdf_worker_request()?;
+        // Read and validate only the fixed-size envelope first. This proves
+        // the parent-installed liveness boundary before any resource-limit or
+        // attacker-controlled input work; payload allocation and path lookup
+        // remain strictly after the limits below.
+        let request_header = read_pdf_worker_request_header()?;
         arm_pdf_worker_parent_liveness_watchdog()?;
+        apply_pdf_worker_resource_limits()?;
+        let request = read_pdf_worker_request_payload(request_header)?;
         let bytes = request.into_bytes()?;
         let parsed =
             parse_pdf_bytes(bytes).map_err(|error| safe_worker_diagnostic(&error.to_string()))?;
@@ -998,6 +1016,11 @@ enum PdfWorkerRequest {
     Path(PathBuf),
 }
 
+struct PdfWorkerRequestHeader {
+    kind: u8,
+    payload_len: u64,
+}
+
 impl PdfWorkerRequest {
     fn into_bytes(self) -> Result<Vec<u8>, String> {
         match self {
@@ -1014,7 +1037,7 @@ impl PdfWorkerRequest {
     }
 }
 
-fn read_pdf_worker_request() -> Result<PdfWorkerRequest, String> {
+fn read_pdf_worker_request_header() -> Result<PdfWorkerRequestHeader, String> {
     let stdin = std::io::stdin();
     let mut stdin = stdin.lock();
     let mut header = [0_u8; PDF_WORKER_INPUT_HEADER_BYTES];
@@ -1036,11 +1059,19 @@ fn read_pdf_worker_request() -> Result<PdfWorkerRequest, String> {
     // attacker-controlled payload.
     verify_pdf_worker_containment()?;
 
-    let request = match kind {
+    Ok(PdfWorkerRequestHeader { kind, payload_len })
+}
+
+fn read_pdf_worker_request_payload(
+    header: PdfWorkerRequestHeader,
+) -> Result<PdfWorkerRequest, String> {
+    let stdin = std::io::stdin();
+    let mut stdin = stdin.lock();
+    let request = match header.kind {
         PDF_WORKER_INPUT_KIND_BYTES => {
-            enforce_pdf_byte_ceiling(payload_len)
+            enforce_pdf_byte_ceiling(header.payload_len)
                 .map_err(|error| safe_worker_diagnostic(&error.to_string()))?;
-            let payload_len = usize::try_from(payload_len)
+            let payload_len = usize::try_from(header.payload_len)
                 .map_err(|_| "internal PDF worker payload does not fit this platform")?;
             let mut bytes = vec![0_u8; payload_len];
             stdin
@@ -1049,7 +1080,7 @@ fn read_pdf_worker_request() -> Result<PdfWorkerRequest, String> {
             PdfWorkerRequest::Bytes(bytes)
         }
         PDF_WORKER_INPUT_KIND_PATH => {
-            if payload_len != 0 {
+            if header.payload_len != 0 {
                 return Err("internal PDF path request carried an unexpected payload".into());
             }
             let path = std::env::var_os(PDF_WORKER_PATH_ENV)
@@ -1080,11 +1111,11 @@ fn read_pdf_worker_request() -> Result<PdfWorkerRequest, String> {
 fn arm_pdf_worker_parent_liveness_watchdog() -> Result<(), String> {
     verify_pdf_worker_process_group()?;
 
-    // A fully written framed request leaves no readable bytes while the parent
-    // owns the stdin write end. EOF, trailing data, or a pipe error at this
-    // point means the lifetime lease is already invalid.
+    // The parent passes an inherited read end at a fixed descriptor and keeps
+    // the matching write end for the lifetime of this worker. EOF, data, or a
+    // pipe error means that authenticated parent-liveness lease is invalid.
     let mut readiness = libc::pollfd {
-        fd: libc::STDIN_FILENO,
+        fd: PDF_WORKER_PARENT_LIVENESS_FD,
         events: libc::POLLIN | libc::POLLHUP | libc::POLLERR,
         revents: 0,
     };
@@ -1110,14 +1141,19 @@ fn arm_pdf_worker_parent_liveness_watchdog() -> Result<(), String> {
         .name("neoth-pdf-parent-watch".into())
         .stack_size(256 * 1024)
         .spawn(move || {
-            let stdin = std::io::stdin();
-            let mut stdin = stdin.lock();
+            use std::os::fd::FromRawFd as _;
+
+            // SAFETY: containment verification established that this fixed
+            // descriptor is the parent-created lease and ownership transfers
+            // to the watchdog exactly once.
+            let mut parent_liveness_lease =
+                unsafe { std::fs::File::from_raw_fd(PDF_WORKER_PARENT_LIVENESS_FD) };
             if ready_tx.send(()).is_err() {
                 terminate_macos_pdf_worker_group(process_group);
             }
             let mut trailing = [0_u8; 1];
             loop {
-                match stdin.read(&mut trailing) {
+                match parent_liveness_lease.read(&mut trailing) {
                     Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                     // EOF is parent death/cancellation. Any byte is invalid
                     // trailing input. Every terminal condition fails closed.
@@ -1279,6 +1315,10 @@ impl PdfWorkerContainmentSetup {
 #[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
 struct PdfWorkerContainment {
     pgid: libc::pid_t,
+    #[cfg(target_os = "macos")]
+    // Held until cleanup/disarm (or Drop) so the worker sees EOF whenever the
+    // parent task is cancelled or exits unexpectedly.
+    _parent_liveness_lease: std::fs::File,
 }
 
 #[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
@@ -1391,21 +1431,54 @@ fn macos_pdf_process_group_is_empty_except_leader(leader_pid: libc::pid_t) -> Re
 }
 
 #[cfg(all(not(test), target_os = "macos"))]
-struct PdfWorkerContainmentSetup;
+struct PdfWorkerContainmentSetup {
+    // Keep both ends open across fork. The child pre-exec hook duplicates the
+    // read end onto the fixed, inherited lease descriptor; activation then
+    // drops this parent copy and retains only the write end in containment.
+    child_liveness_read_end: std::fs::File,
+    parent_liveness_lease: std::fs::File,
+}
 
 #[cfg(all(not(test), target_os = "macos"))]
 impl PdfWorkerContainmentSetup {
     fn configure(command: &mut tokio::process::Command) -> Result<Self, ExtractionError> {
+        use std::os::fd::AsRawFd as _;
         use std::os::unix::process::CommandExt as _;
 
+        let (child_liveness_read_end, parent_liveness_lease) =
+            create_macos_pdf_parent_liveness_lease().map_err(|error| ExtractionError::Backend {
+                backend: "pdf",
+                reason: format!("create isolated PDF worker parent-liveness lease: {error}"),
+            })?;
+        let child_liveness_read_fd = child_liveness_read_end.as_raw_fd();
         command.process_group(0);
-        Ok(Self)
+        command.env(
+            PDF_WORKER_PARENT_LIVENESS_FD_ENV,
+            PDF_WORKER_PARENT_LIVENESS_FD.to_string(),
+        );
+        // SAFETY: this post-fork hook uses only dup2/fcntl/close-compatible
+        // descriptor operations and returns an errno-backed io::Error.
+        unsafe {
+            command
+                .pre_exec(move || install_macos_pdf_parent_liveness_lease(child_liveness_read_fd));
+        }
+        Ok(Self {
+            child_liveness_read_end,
+            parent_liveness_lease,
+        })
     }
 
     fn activate(
         self,
         child: &tokio::process::Child,
     ) -> Result<PdfWorkerContainment, ExtractionError> {
+        let Self {
+            child_liveness_read_end,
+            parent_liveness_lease,
+        } = self;
+        // The child now owns its duplicated descriptor. Keeping this parent
+        // read end adds no liveness value, so close it before work begins.
+        drop(child_liveness_read_end);
         let pid = child.id().ok_or_else(|| ExtractionError::Backend {
             backend: "pdf",
             reason: "isolated PDF worker exited before process-group activation".into(),
@@ -1414,8 +1487,68 @@ impl PdfWorkerContainmentSetup {
             backend: "pdf",
             reason: "isolated PDF worker PID does not fit a POSIX process-group id".into(),
         })?;
-        Ok(PdfWorkerContainment { pgid })
+        Ok(PdfWorkerContainment {
+            pgid,
+            _parent_liveness_lease: parent_liveness_lease,
+        })
     }
+}
+
+#[cfg(all(not(test), target_os = "macos"))]
+fn create_macos_pdf_parent_liveness_lease() -> std::io::Result<(std::fs::File, std::fs::File)> {
+    use std::os::fd::FromRawFd as _;
+
+    let mut fds = [-1; 2];
+    // SAFETY: `fds` is writable storage for the two descriptors returned by
+    // pipe(2). Both descriptors are immediately wrapped for RAII cleanup.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: pipe(2) returned newly owned descriptors exactly once.
+    let read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    // SAFETY: pipe(2) returned newly owned descriptors exactly once.
+    let write_end = unsafe { std::fs::File::from_raw_fd(fds[1]) };
+    for fd in [fds[0], fds[1]] {
+        // SAFETY: fcntl reads flags from the live descriptor only.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if flags < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: fcntl updates descriptor-local close-on-exec flags only.
+        if unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok((read_end, write_end))
+}
+
+#[cfg(all(not(test), target_os = "macos"))]
+fn install_macos_pdf_parent_liveness_lease(read_fd: libc::c_int) -> std::io::Result<()> {
+    if read_fd != PDF_WORKER_PARENT_LIVENESS_FD
+        // SAFETY: dup2 duplicates the captured live pipe descriptor onto the
+        // exact descriptor that the worker verifies after exec.
+        && unsafe { libc::dup2(read_fd, PDF_WORKER_PARENT_LIVENESS_FD) } < 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: fcntl reads and updates the live fixed lease descriptor only.
+    let flags = unsafe { libc::fcntl(PDF_WORKER_PARENT_LIVENESS_FD, libc::F_GETFD) };
+    if flags < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // The fixed descriptor must survive exec; the original inherited
+    // descriptor remains close-on-exec and disappears in the worker.
+    if unsafe {
+        libc::fcntl(
+            PDF_WORKER_PARENT_LIVENESS_FD,
+            libc::F_SETFD,
+            flags & !libc::FD_CLOEXEC,
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// Arm the Linux kernel's exact parent-death boundary in the post-fork child.
@@ -1516,10 +1649,17 @@ fn apply_pdf_worker_resource_limits() -> Result<(), String> {
     }
 
     lower_limit!(libc::RLIMIT_CPU, PDF_WORKER_CPU_SECONDS, "CPU");
+    #[cfg(target_os = "linux")]
     lower_limit!(
         libc::RLIMIT_AS,
         PDF_WORKER_MEMORY_BYTES as u64,
         "address-space"
+    );
+    #[cfg(target_os = "macos")]
+    lower_limit!(
+        libc::RLIMIT_DATA,
+        PDF_WORKER_MEMORY_BYTES as u64,
+        "data-segment"
     );
     lower_limit!(libc::RLIMIT_CORE, 0_u64, "core-dump");
     lower_limit!(
@@ -1560,7 +1700,36 @@ fn verify_pdf_worker_containment() -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn verify_pdf_worker_containment() -> Result<(), String> {
-    verify_pdf_worker_process_group()
+    verify_pdf_worker_process_group()?;
+    let lease_fd = std::env::var(PDF_WORKER_PARENT_LIVENESS_FD_ENV)
+        .map_err(|_| "internal PDF worker parent-liveness lease is missing".to_string())?
+        .parse::<libc::c_int>()
+        .map_err(|_| {
+            "internal PDF worker parent-liveness lease descriptor is invalid".to_string()
+        })?;
+    if lease_fd != PDF_WORKER_PARENT_LIVENESS_FD {
+        return Err("internal PDF worker parent-liveness lease descriptor is invalid".into());
+    }
+    // SAFETY: fcntl/fstat query only the expected inherited lease descriptor
+    // and write to initialized local storage.
+    let flags = unsafe { libc::fcntl(lease_fd, libc::F_GETFD) };
+    if flags < 0 || flags & libc::FD_CLOEXEC != 0 {
+        return Err(format!(
+            "inspect internal PDF worker parent-liveness lease: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let mut metadata: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(lease_fd, &raw mut metadata) } != 0 {
+        return Err(format!(
+            "inspect internal PDF worker parent-liveness lease: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    if metadata.st_mode & libc::S_IFMT != libc::S_IFIFO {
+        return Err("internal PDF worker parent-liveness lease is not a pipe".into());
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
