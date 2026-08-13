@@ -12,6 +12,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::n8n_api::auth::AuthCooldown;
 
+const HEALTH_PROBE_CHILD_HOME_ENV: &str = "NEOTH_AUDIT_RPC_HEALTH_PROBE_CHILD_HOME";
+
 fn test_endpoint_nonce() -> String {
     let mut nonce = [0u8; 16];
     getrandom::getrandom(&mut nonce)
@@ -34,6 +36,39 @@ fn publish_test_endpoint(
     write_sidecar(home, endpoint, std::process::id(), endpoint_nonce).unwrap();
     guard.publish_endpoint_nonce(endpoint_nonce).unwrap();
     guard
+}
+
+/// Run only when the live-listener integration test launches this test binary
+/// as a one-shot client. The daemon PID lock is intentionally held by the
+/// parent process, just as it is in production. Probing it from the listener
+/// process itself is not portable: Darwin `flock` treats locks as belonging to
+/// files/processes rather than independently opened descriptors.
+#[test]
+#[ignore = "helper invoked by client_round_trips_against_a_live_listener"]
+fn health_probe_child_process_checks_live_listener() {
+    let Some(home) = std::env::var_os(HEALTH_PROBE_CHILD_HOME_ENV) else {
+        return;
+    };
+    assert!(
+        is_reachable(std::path::Path::new(&home)),
+        "one-shot child must accept the exact authenticated health response"
+    );
+}
+
+fn probe_health_from_oneshot_child(home: &std::path::Path) {
+    let status = std::process::Command::new(
+        std::env::current_exe().expect("locate the audit-RPC test binary"),
+    )
+    .arg("--ignored")
+    .arg("--exact")
+    .arg("daemon::audit_rpc::tests::health_probe_child_process_checks_live_listener")
+    .env(HEALTH_PROBE_CHILD_HOME_ENV, home)
+    .status()
+    .expect("launch one-shot health-probe child");
+    assert!(
+        status.success(),
+        "one-shot health probe must succeed against the live same-user listener"
+    );
 }
 
 async fn raw_post(addr: &AuditEndpointV2, token: Option<&str>, body: &str) -> u16 {
@@ -1368,13 +1403,9 @@ async fn client_round_trips_against_a_live_listener() {
         .unwrap();
     let _daemon_owner = publish_test_endpoint(home.path(), &addr, &endpoint_nonce);
     let health_home = home.path().to_path_buf();
-    let reachable = tokio::task::spawn_blocking(move || is_reachable(&health_home))
+    tokio::task::spawn_blocking(move || probe_health_from_oneshot_child(&health_home))
         .await
-        .expect("health probe task must not panic");
-    assert!(
-        reachable,
-        "live same-user IPC health probe must accept the exact response body"
-    );
+        .expect("one-shot health-probe task must not panic");
 
     // The CLIENT path: read sidecar+token, connect, POST.
     try_post_audit_frame(

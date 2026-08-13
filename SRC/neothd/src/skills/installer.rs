@@ -5889,6 +5889,30 @@ pub(crate) struct SkillMutationGuard {
     _file: std::fs::File,
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_SKILL_MUTATION_LOCK_OPEN_NOT_FOUND_REMAINING: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn fail_skill_mutation_lock_open_with_not_found_for_test(attempts: usize) {
+    TEST_SKILL_MUTATION_LOCK_OPEN_NOT_FOUND_REMAINING.with(|remaining| remaining.set(attempts));
+}
+
+#[cfg(test)]
+fn take_skill_mutation_lock_open_not_found_for_test() -> Option<std::io::Error> {
+    TEST_SKILL_MUTATION_LOCK_OPEN_NOT_FOUND_REMAINING.with(|remaining| {
+        let attempts = remaining.get();
+        if attempts == 0 {
+            None
+        } else {
+            remaining.set(attempts - 1);
+            Some(std::io::Error::from(std::io::ErrorKind::NotFound))
+        }
+    })
+}
+
 pub(crate) fn lock_skill_mutations(root: &BoundDirectory) -> Result<SkillMutationGuard> {
     let started = std::time::Instant::now();
     loop {
@@ -5904,7 +5928,17 @@ pub(crate) fn lock_skill_mutations(root: &BoundDirectory) -> Result<SkillMutatio
             const FILE_SHARE_READ: u32 = 0x0000_0001;
             options.share_mode(FILE_SHARE_READ);
         }
-        let file = match root.dir.open_with(SKILL_MUTATION_LOCK_FILE, &options) {
+        let opened = {
+            #[cfg(test)]
+            if let Some(error) = take_skill_mutation_lock_open_not_found_for_test() {
+                Err(error)
+            } else {
+                root.dir.open_with(SKILL_MUTATION_LOCK_FILE, &options)
+            }
+            #[cfg(not(test))]
+            root.dir.open_with(SKILL_MUTATION_LOCK_FILE, &options)
+        };
+        let file = match opened {
             Ok(file) => file,
             #[cfg(windows)]
             Err(error) if error.raw_os_error() == Some(32) => {
@@ -5914,6 +5948,18 @@ pub(crate) fn lock_skill_mutations(root: &BoundDirectory) -> Result<SkillMutatio
                         root.display_path.join(SKILL_MUTATION_LOCK_FILE).display()
                     );
                 }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                continue;
+            }
+            // On macOS, cap-std resolves this no-follow create one component
+            // at a time. A concurrent creator can transiently surface ENOENT
+            // even though this already-bound root remains live. Re-open only
+            // through that capability; no ambient path is re-resolved and the
+            // regular-file/no-follow verification below remains mandatory.
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && started.elapsed() < std::time::Duration::from_secs(5) =>
+            {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 continue;
             }
@@ -6193,6 +6239,27 @@ mod tests {
             "once released a second OS process must acquire the lock (stderr: {})",
             String::from_utf8_lossy(&acquired.stderr)
         );
+    }
+
+    #[test]
+    fn skill_mutation_lock_retries_a_transient_nofollow_open_not_found() {
+        let root = temp_skills_root();
+        let bound = open_or_create_bound_skills_root(root.path()).unwrap();
+
+        // cap-std's component-at-a-time no-follow resolver has surfaced this
+        // transient ENOENT under concurrent macOS creates. The existing bound
+        // root capability is still authoritative, so retrying the exact
+        // handle-relative open must acquire the same lock rather than fail a
+        // cooperating writer.
+        fail_skill_mutation_lock_open_with_not_found_for_test(1);
+        let _guard = lock_skill_mutations(&bound).unwrap();
+
+        let metadata = bound
+            .dir
+            .symlink_metadata(SKILL_MUTATION_LOCK_FILE)
+            .unwrap();
+        assert!(metadata.is_file());
+        assert!(!cap_metadata_is_link_like(&metadata));
     }
 
     #[test]

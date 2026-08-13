@@ -156,6 +156,16 @@ fn source_keeps_macos_parent_liveness_and_unsupported_bsd_fail_closed() {
         "macOS worker must arm its stdin parent-liveness watchdog"
     );
     assert!(
+        source.contains("macos_pdf_worker_address_space_ceiling")
+            && source.contains("libc::PROC_PIDTASKINFO")
+            && source.contains("libc::RLIMIT_AS"),
+        "macOS must use a measured total-address-space ceiling, not a fixed data-segment limit"
+    );
+    assert!(
+        !source.contains("libc::RLIMIT_DATA,\n        PDF_WORKER_MEMORY_BYTES as u64"),
+        "macOS must not reintroduce the fixed RLIMIT_DATA limit that XNU rejects after exec"
+    );
+    assert!(
         source.contains("Keep them explicitly fail-closed"),
         "unsupported BSD targets must retain an explicit fail-closed branch"
     );

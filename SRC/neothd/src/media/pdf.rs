@@ -1657,9 +1657,9 @@ fn apply_pdf_worker_resource_limits() -> Result<(), String> {
     );
     #[cfg(target_os = "macos")]
     lower_limit!(
-        libc::RLIMIT_DATA,
-        PDF_WORKER_MEMORY_BYTES as u64,
-        "data-segment"
+        libc::RLIMIT_AS,
+        macos_pdf_worker_address_space_ceiling()?,
+        "address-space"
     );
     lower_limit!(libc::RLIMIT_CORE, 0_u64, "core-dump");
     lower_limit!(
@@ -1673,6 +1673,59 @@ fn apply_pdf_worker_resource_limits() -> Result<(), String> {
         "process-count"
     );
     Ok(())
+}
+
+/// Return the total macOS VM-map limit which leaves the PDF worker exactly
+/// `work_budget` bytes of additional address-space headroom.
+///
+/// XNU validates a newly requested `RLIMIT_AS` (and `RLIMIT_DATA`) against
+/// mappings that already exist after `exec`. That immutable baseline includes
+/// the executable, dyld, and runtime mappings, so attempting to set a fixed
+/// total limit below it fails with `EINVAL` before the parser can run. A zero
+/// baseline or arithmetic overflow is a containment failure, never an excuse
+/// to run the worker without a memory limit.
+#[cfg(any(test, target_os = "macos"))]
+fn pdf_worker_address_space_ceiling(baseline: u64, work_budget: u64) -> Result<u64, String> {
+    if baseline == 0 {
+        return Err("internal PDF worker address-space baseline is zero".into());
+    }
+    baseline
+        .checked_add(work_budget)
+        .ok_or_else(|| "internal PDF worker address-space limit overflows".into())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_pdf_worker_address_space_ceiling() -> Result<u64, String> {
+    // `PROC_PIDTASKINFO` reports the current task's VM-map size. It is the
+    // same quantity XNU checks when lowering RLIMIT_AS, unlike RLIMIT_DATA's
+    // historical `sbrk`-oriented name. Ask before accepting any PDF payload;
+    // a failed or partial query keeps the worker fail-closed.
+    let mut task_info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let expected = libc::c_int::try_from(size_of::<libc::proc_taskinfo>())
+        .map_err(|_| "macOS PDF worker task-info buffer does not fit c_int".to_string())?;
+    // SAFETY: `task_info` is writable storage of exactly `expected` bytes and
+    // the query is limited to this process's numeric PID.
+    let received = unsafe {
+        libc::proc_pidinfo(
+            libc::getpid(),
+            libc::PROC_PIDTASKINFO,
+            0,
+            (&raw mut task_info).cast(),
+            expected,
+        )
+    };
+    if received != expected {
+        if received <= 0 {
+            return Err(format!(
+                "inspect internal PDF worker address-space baseline: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        return Err(format!(
+            "inspect internal PDF worker address-space baseline: received {received} bytes, expected {expected}"
+        ));
+    }
+    pdf_worker_address_space_ceiling(task_info.pti_virtual_size, PDF_WORKER_MEMORY_BYTES as u64)
 }
 
 #[cfg(target_os = "linux")]
@@ -2301,6 +2354,16 @@ mod tests {
             matches!(error, ExtractionError::Backend { backend: "pdf", .. }),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn macos_address_space_ceiling_preserves_the_full_parser_budget() {
+        assert_eq!(
+            pdf_worker_address_space_ceiling(1_024, 768).expect("valid VM baseline"),
+            1_792
+        );
+        assert!(pdf_worker_address_space_ceiling(0, 768).is_err());
+        assert!(pdf_worker_address_space_ceiling(u64::MAX, 1).is_err());
     }
 
     #[test]
