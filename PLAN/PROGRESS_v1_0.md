@@ -1,9 +1,24 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-08-10
+**Created:** 2026-05-24  **Last updated:** 2026-08-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
-> **Current Prime/NCT + Companion v2 integration checkpoint 2026-08-10
+> **Current Context-Connector adoption checkpoint 2026-08-13:** the reviewed
+> `PLAN/NEOTH_CONTEXT_CONNECTORS.md` is now the binding architecture/source
+> contract, backed by the SHA-256-identical immutable operator snapshot
+> `PLAN/NEOTH_Context_Connector_Masterplan_2026-08-13.md`, for a separate
+> Connector Control Plane, Context Evidence store and
+> People/Work projections. `GOLD-CC-00` is complete as a documentation and
+> provenance decision only; `GOLD-CC-01..12` remain OPEN. Agent-Reach is pinned
+> as a design/Doctor reference, not embedded or granted runtime, installer,
+> browser-cookie, credential or direct CLI/MCP authority. The first runtime
+> vertical is local read-only Import plus Obsidian; external account sync and
+> Action Sinks remain dependency-gated. The roadmap machine gate is now
+> **1,312 total / 999 complete / 311 open / 2 partial = 313 raw blockers and
+> 312 pre-tag blockers**. No connector runtime, account sync, Kin integration or
+> provider projection is claimed shipped by this checkpoint.
+>
+> **Previous Prime/NCT + Companion v2 integration checkpoint 2026-08-10
 > (exact-head release evidence pending):** `GOLD-ADOPT-PRIME-01` is complete
 > as a pinned, evidence-backed adoption decision only. NEOTH does not embed the
 > Prime Agent runtime; `GOLD-NCT-01` remains OPEN. Its first behavior-neutral
@@ -16,8 +31,9 @@
 > and durable WAL-audit-before-token visibility. That WAL intentionally does
 > not persist a bearer token: a crash after its ACK but before in-memory token
 > visibility consumes the invite fail-closed and requires a new invite/pairing.
-> There is still no shipped phone client. The roadmap machine gate is now **1,299 total / 998 complete / 299
-> open / 2 partial = 301 raw blockers and 300 pre-tag blockers**. The CodeQL,
+> There is still no shipped phone client. At that checkpoint the roadmap machine
+> gate was **1,299 total / 998 complete / 299 open / 2 partial = 301 raw
+> blockers and 300 pre-tag blockers**. The CodeQL,
 > cross-platform CI and release-candidate gates remain independent mandatory
 > evidence; no local source/review result closes them.
 >
