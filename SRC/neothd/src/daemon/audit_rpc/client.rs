@@ -14,6 +14,9 @@ use super::token::read_rpc_token;
 
 const MAX_RPC_RESPONSE_BYTES: usize = 1024 * 1024;
 const RPC_EXCHANGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Bound the entire local health exchange, including local connect, peer
+/// attestation, request write, response read, and scheduling delays.
+const HEALTH_CHECK_EXCHANGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuditRpcClientError {
@@ -50,7 +53,7 @@ pub fn is_reachable(home: &Path) -> bool {
         &sidecar.endpoint,
         request.as_bytes(),
         4096,
-        std::time::Duration::from_millis(250),
+        HEALTH_CHECK_EXCHANGE_TIMEOUT,
     ) else {
         return false;
     };
@@ -553,5 +556,13 @@ mod tests {
         ] {
             assert!(parse_rpc_response(malformed).is_err());
         }
+    }
+
+    #[test]
+    fn health_check_bounds_the_full_exchange_to_one_second() {
+        assert_eq!(
+            HEALTH_CHECK_EXCHANGE_TIMEOUT,
+            std::time::Duration::from_secs(1)
+        );
     }
 }
