@@ -9,6 +9,10 @@
 *.yaml text eol=lf
 *.yml  text eol=lf
 *.md   text eol=lf
+# Preserve the operator-supplied masterplan byte-for-byte, including its three
+# intentional Markdown hard breaks, while keeping normal whitespace checks on
+# every other Markdown file.
+PLAN/NEOTH_Context_Connector_Masterplan_2026-08-13.md whitespace=-trailing-space
 *.sh   text eol=lf
 *.slint text eol=lf
 *.json  text eol=lf
