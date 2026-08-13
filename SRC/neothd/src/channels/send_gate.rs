@@ -274,12 +274,7 @@ mod intent_tests {
     async fn a_dead_writer_yields_no_intent_so_the_caller_must_refuse_the_send() {
         // The callers turn this `None` into a refusal. Proving it here keeps
         // the contract testable without standing up a live channel.
-        let (writer, join, _home, _seg) =
-            crate::wal::writer::spawn_isolated_ready_test_writer("send-gate-dead-writer")
-                .await
-                .expect("start ready, isolated dead-writer WAL fixture");
-        join.abort();
-        let _ = join.await;
+        let writer = crate::wal::writer::closed_test_writer();
 
         let id = emit_egress_intent(&writer, "telegram", "chat-42", "hallo", 1_700_000_000).await;
         assert!(

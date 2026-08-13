@@ -1102,6 +1102,22 @@ pub(crate) async fn spawn_isolated_ready_test_writer(
     Ok((writer, join, home, segment))
 }
 
+/// Construct a writer handle whose receiver is already closed.
+///
+/// This gives fail-closed producer tests a deterministic `WriterClosed`
+/// boundary without spawning or aborting an asynchronous writer task.
+#[cfg(test)]
+pub(crate) fn closed_test_writer() -> WalWriterHandle {
+    let (tx, rx) = mpsc::channel(1);
+    drop(rx);
+    WalWriterHandle {
+        tx,
+        authentication_markers_enabled: false,
+        quota: None,
+        test_ack_gate: None,
+    }
+}
+
 /// Completion-owning readiness variant for short-lived callers.
 ///
 /// Unlike [`spawn_for_home_ready`], this retains the real `run_writer`
