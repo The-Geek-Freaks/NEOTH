@@ -611,23 +611,15 @@ mod tests {
         }
     }
 
-    fn test_writer() -> (
+    async fn test_writer() -> (
         WalWriterHandle,
-        tokio::task::JoinHandle<()>,
+        tokio::task::JoinHandle<Result<(), String>>,
         tempfile::TempDir,
+        std::path::PathBuf,
     ) {
-        let dir = tempfile::tempdir().unwrap();
-        // Keep HMAC/key-recovery state inside this test's temp home. Using
-        // `spawn()` would make independently executed nextest cases race on
-        // the runner's process-global ~/.neoth key state.
-        let wal_dir = dir.path().join("wal");
-        std::fs::create_dir_all(&wal_dir).unwrap();
-        let (writer, join) = crate::wal::writer::spawn_for_home(
-            wal_dir.join("live-delivery-test-000001.wal"),
-            dir.path().to_path_buf(),
-        )
-        .unwrap();
-        (writer, join, dir)
+        crate::wal::writer::spawn_isolated_ready_test_writer("live-delivery-test")
+            .await
+            .expect("start ready, isolated live-delivery WAL fixture")
     }
 
     fn count_channel_edit_frames(seg: &std::path::Path) -> usize {
@@ -675,7 +667,7 @@ mod tests {
             ChannelKind::Telegram,
             fast_config(),
         );
-        let (writer, join, _dir) = test_writer();
+        let (writer, join, _dir, _segment) = test_writer().await;
 
         assert!(!live.has_sent());
         let out = live.send_or_edit(&writer, "hello", false).await.unwrap();
@@ -685,7 +677,9 @@ mod tests {
         assert_eq!(ch.edits.load(Ordering::SeqCst), 0);
 
         drop(writer);
-        let _ = join.await;
+        join.await
+            .expect("live-delivery writer task must join")
+            .expect("live-delivery writer must complete successfully");
     }
 
     #[tokio::test]
@@ -693,8 +687,7 @@ mod tests {
         let ch = Arc::new(MockChannel::new(false));
         let mut live =
             LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Slack, fast_config());
-        let (writer, join, dir) = test_writer();
-        let seg = dir.path().join("wal").join("live-delivery-test-000001.wal");
+        let (writer, join, _dir, seg) = test_writer().await;
 
         let first = live.send_or_edit(&writer, "draft", false).await.unwrap();
         let second = live.send_or_edit(&writer, "final", true).await.unwrap();
@@ -706,7 +699,9 @@ mod tests {
         assert_eq!(ch.last_edit_text.lock().unwrap().as_deref(), Some("final"));
 
         drop(writer);
-        let _ = join.await;
+        join.await
+            .expect("live-delivery writer task must join")
+            .expect("live-delivery writer must complete successfully");
         assert_eq!(
             count_channel_edit_frames(&seg),
             1,
@@ -719,8 +714,7 @@ mod tests {
         let ch = Arc::new(MockChannel::new(true)); // edit → NotSupported
         let mut live =
             LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Discord, fast_config());
-        let (writer, join, dir) = test_writer();
-        let seg = dir.path().join("wal").join("live-delivery-test-000001.wal");
+        let (writer, join, _dir, seg) = test_writer().await;
 
         let first = live.send_or_edit(&writer, "one", false).await.unwrap();
         let second = live.send_or_edit(&writer, "two", false).await.unwrap();
@@ -737,7 +731,9 @@ mod tests {
         );
 
         drop(writer);
-        let _ = join.await;
+        join.await
+            .expect("live-delivery writer task must join")
+            .expect("live-delivery writer must complete successfully");
         assert_eq!(
             count_channel_edit_frames(&seg),
             0,
@@ -801,7 +797,7 @@ mod tests {
             ..fast_config()
         };
         let mut live = LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Telegram, cfg);
-        let (writer, join, _dir) = test_writer();
+        let (writer, join, _dir, _segment) = test_writer().await;
 
         // t=0: first send.
         let s = live
@@ -825,7 +821,9 @@ mod tests {
         assert_eq!(ch.edits.load(Ordering::SeqCst), 1, "final edit landed");
 
         drop(writer);
-        let _ = join.await;
+        join.await
+            .expect("live-delivery writer task must join")
+            .expect("live-delivery writer must complete successfully");
     }
 
     #[tokio::test]
@@ -837,7 +835,7 @@ mod tests {
             ..fast_config()
         };
         let mut live = LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Slack, cfg);
-        let (writer, join, _dir) = test_writer();
+        let (writer, join, _dir, _segment) = test_writer().await;
 
         let a = live.send_or_edit_at(&writer, 0, "a", false).await.unwrap();
         let b = live.send_or_edit_at(&writer, 1, "b", false).await.unwrap();
@@ -852,20 +850,23 @@ mod tests {
         );
 
         drop(writer);
-        let _ = join.await;
+        join.await
+            .expect("live-delivery writer task must join")
+            .expect("live-delivery writer must complete successfully");
     }
 
     #[tokio::test]
     async fn outbound_0x38_payload_shape() {
         let ch = Arc::new(MockChannel::new(false));
         let mut live = LiveDelivery::new(ch, "c1".into(), ChannelKind::Telegram, fast_config());
-        let (writer, join, dir) = test_writer();
-        let seg = dir.path().join("wal").join("live-delivery-test-000001.wal");
+        let (writer, join, _dir, seg) = test_writer().await;
 
         live.send_or_edit(&writer, "draft", false).await.unwrap();
         live.send_or_edit(&writer, "final", true).await.unwrap();
         drop(writer);
-        let _ = join.await;
+        join.await
+            .expect("live-delivery writer task must join")
+            .expect("live-delivery writer must complete successfully");
 
         // Decode the 0x38 frame + assert the field set matches the inbound-edit
         // contract (+ direction discriminator), text never present verbatim.
@@ -926,7 +927,7 @@ mod tests {
             Ok(chunk("hel", false)),
             Ok(chunk("lo", true)),
         ]));
-        let (writer, join, _dir) = test_writer();
+        let (writer, join, _dir, _segment) = test_writer().await;
 
         let result = collect_provider_stream(stream, live, &writer, 1024)
             .await
@@ -948,7 +949,9 @@ mod tests {
         assert_eq!(ch.last_edit_text.lock().unwrap().as_deref(), Some("hello"));
 
         drop(writer);
-        let _ = join.await;
+        join.await
+            .expect("live-delivery writer task must join")
+            .expect("live-delivery writer must complete successfully");
     }
 
     #[tokio::test]
@@ -963,7 +966,7 @@ mod tests {
             None,
         );
         let stream: ChunkStream = Box::pin(futures_util::stream::iter(vec![Ok(final_chunk)]));
-        let (writer, join, _dir) = test_writer();
+        let (writer, join, _dir, _segment) = test_writer().await;
 
         let result = collect_provider_stream(stream, live, &writer, 1024)
             .await
@@ -986,7 +989,9 @@ mod tests {
         );
 
         drop(writer);
-        let _ = join.await;
+        join.await
+            .expect("live-delivery writer task must join")
+            .expect("live-delivery writer must complete successfully");
     }
 
     #[tokio::test]
@@ -1002,8 +1007,7 @@ mod tests {
             Ok(chunk("partial secret", false)),
             Err(anyhow::anyhow!("upstream exposed detail")),
         ]));
-        let (writer, join, dir) = test_writer();
-        let seg = dir.path().join("wal").join("live-delivery-test-000001.wal");
+        let (writer, join, _dir, seg) = test_writer().await;
 
         let result = collect_provider_stream(stream, live, &writer, 1024)
             .await
@@ -1020,7 +1024,9 @@ mod tests {
         );
 
         drop(writer);
-        let _ = join.await;
+        join.await
+            .expect("live-delivery writer task must join")
+            .expect("live-delivery writer must complete successfully");
         let bytes = std::fs::read(&seg).unwrap();
         let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
         let mut cursor = header.header_len();
@@ -1052,7 +1058,7 @@ mod tests {
         let live = LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Slack, fast_config());
         let stream: ChunkStream =
             Box::pin(futures_util::stream::iter(vec![Ok(chunk("12345", false))]));
-        let (writer, join, _dir) = test_writer();
+        let (writer, join, _dir, _segment) = test_writer().await;
 
         let result = collect_provider_stream(stream, live, &writer, 4)
             .await
@@ -1068,6 +1074,8 @@ mod tests {
         );
 
         drop(writer);
-        let _ = join.await;
+        join.await
+            .expect("live-delivery writer task must join")
+            .expect("live-delivery writer must complete successfully");
     }
 }

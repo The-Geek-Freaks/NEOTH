@@ -1073,6 +1073,35 @@ pub(crate) fn spawn_for_home_ready(
     Ok((writer, wrap_writer_runtime_join(join, outcome), ready))
 }
 
+/// Start an isolated, home-bound WAL writer for an async test and wait until
+/// its segment is ready to accept producer work.
+///
+/// Keeping the HMAC/key-recovery state under a fresh [`tempfile::TempDir`]
+/// prevents independently scheduled tests from touching the runner's global
+/// `~/.neoth` state. The returned join handle carries the writer's completion
+/// outcome; callers must drop every handle and assert that outcome before
+/// inspecting `segment`.
+#[cfg(test)]
+pub(crate) async fn spawn_isolated_ready_test_writer(
+    fixture_name: &str,
+) -> Result<
+    (
+        WalWriterHandle,
+        tokio::task::JoinHandle<Result<(), String>>,
+        tempfile::TempDir,
+        PathBuf,
+    ),
+    WalError,
+> {
+    let home = tempfile::tempdir()?;
+    let wal_dir = home.path().join("wal");
+    std::fs::create_dir_all(&wal_dir)?;
+    let segment = wal_dir.join(format!("{fixture_name}-000001.wal"));
+    let (writer, join, ready) = spawn_for_home_ready(segment.clone(), home.path().to_path_buf())?;
+    ready.wait().await?;
+    Ok((writer, join, home, segment))
+}
+
 /// Completion-owning readiness variant for short-lived callers.
 ///
 /// Unlike [`spawn_for_home_ready`], this retains the real `run_writer`

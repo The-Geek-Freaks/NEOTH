@@ -220,21 +220,22 @@ mod intent_tests {
     use crate::wal::events::ExtendedSubtype;
     use crate::wal::frame::decode_frame;
     use crate::wal::segment_header::SEGMENT_HEADER_LEN;
-    use crate::wal::spawn as wal_spawn;
-    use tempfile::tempdir;
 
     #[tokio::test]
     async fn egress_intent_binds_the_message_by_hash_and_pairs_its_result() {
-        let dir = tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let (writer, join, _home, seg) =
+            crate::wal::writer::spawn_isolated_ready_test_writer("send-gate-intent")
+                .await
+                .expect("start ready, isolated send-gate WAL fixture");
 
         let id = emit_egress_intent(&writer, "telegram", "chat-42", "hallo", 1_700_000_000)
             .await
             .expect("intent must be recorded on a live writer");
         emit_egress_result(&writer, &id, "delivered", Some("msg-7"), 1_700_000_000).await;
         drop(writer);
-        join.await.unwrap();
+        join.await
+            .expect("send-gate writer task must join")
+            .expect("send-gate writer must complete successfully");
 
         let bytes = tokio::fs::read(&seg).await.unwrap();
         let mut frames = Vec::new();
@@ -273,9 +274,10 @@ mod intent_tests {
     async fn a_dead_writer_yields_no_intent_so_the_caller_must_refuse_the_send() {
         // The callers turn this `None` into a refusal. Proving it here keeps
         // the contract testable without standing up a live channel.
-        let dir = tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = wal_spawn(seg).unwrap();
+        let (writer, join, _home, _seg) =
+            crate::wal::writer::spawn_isolated_ready_test_writer("send-gate-dead-writer")
+                .await
+                .expect("start ready, isolated dead-writer WAL fixture");
         join.abort();
         let _ = join.await;
 

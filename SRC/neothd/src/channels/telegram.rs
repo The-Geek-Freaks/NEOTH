@@ -1174,10 +1174,16 @@ mod tests {
 
     #[tokio::test]
     async fn with_gate_writer_attaches_the_writer() {
-        let dir = tempfile::tempdir().unwrap();
-        let (writer, _join) = crate::wal::writer::spawn(dir.path().join("g.wal")).unwrap();
+        let (writer, join, _home, _seg) =
+            crate::wal::writer::spawn_isolated_ready_test_writer("telegram-gate-attach")
+                .await
+                .expect("start ready, isolated Telegram WAL fixture");
         let t = TelegramChannel::new(SecretString::from("dummy"), Some(1)).with_gate_writer(writer);
         assert!(t.gate_writer.is_some());
+        drop(t);
+        join.await
+            .expect("Telegram writer task must join")
+            .expect("Telegram writer must complete successfully");
     }
 
     #[tokio::test]
@@ -1187,10 +1193,15 @@ mod tests {
 
         // Some writer → exactly one 0x3B frame carrying the numeric sender
         // id + reason, NO message text.
-        let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("gate.wal");
-        let (writer, _join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let (writer, join, _home, seg) =
+            crate::wal::writer::spawn_isolated_ready_test_writer("telegram-gate-rejected")
+                .await
+                .expect("start ready, isolated Telegram WAL fixture");
         emit_gate_rejected(Some(&writer), 4242).await;
+        drop(writer);
+        join.await
+            .expect("Telegram writer task must join")
+            .expect("Telegram writer must complete successfully");
 
         let bytes = std::fs::read(&seg).unwrap();
         let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
@@ -1237,13 +1248,18 @@ mod tests {
         // Unlisted sender → blocked AND a single 0x3B frame for that id is
         // written. This is the seam both handle_one_message ("message") and
         // handle_edited_message ("edit") route through, so it guards both.
-        let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("gate.wal");
-        let (writer, _join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let (writer, join, _home, seg) =
+            crate::wal::writer::spawn_isolated_ready_test_writer("telegram-allowlist")
+                .await
+                .expect("start ready, isolated Telegram WAL fixture");
         assert!(
             sender_blocked_by_allowlist(Some(7), 13, Some(&writer), "edit").await,
             "a sender not on the allowlist must be blocked"
         );
+        drop(writer);
+        join.await
+            .expect("Telegram writer task must join")
+            .expect("Telegram writer must complete successfully");
 
         let bytes = std::fs::read(&seg).unwrap();
         let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
