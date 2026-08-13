@@ -250,6 +250,56 @@ pub struct SubAgentProviderCall {
     pub input_tokens: Option<u32>,
     #[serde(default)]
     pub output_tokens: Option<u32>,
+    /// Behavior-neutral NCT-01 measurement of the already-dispatched request
+    /// and completion. Absent on legacy records and on callers which do not
+    /// collect this bounded sub-agent baseline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_baseline: Option<SubAgentPromptBaseline>,
+}
+
+/// Content-free shape of one sub-agent provider request.
+///
+/// These are byte counts of known construction segments, not a reconstruction
+/// from a rendered prompt. Local token values are deliberately conservative
+/// upper bounds (`bytes`, because a UTF-8 token cannot consume fewer than one
+/// byte); provider-native usage, when reported, lives beside this shape in
+/// [`SubAgentPromptBaseline`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubAgentPromptShape {
+    pub prompt_bytes: u64,
+    pub system_bytes: u64,
+    pub context_bytes: u64,
+    pub candidate_bytes: u64,
+    pub qa_failure_bytes: u64,
+    /// Bytes carried again from an earlier current-path stage. This is a
+    /// duplication measure, not a content fingerprint.
+    pub repeated_segment_bytes: u64,
+    pub prompt_tokens_upper_bound: u64,
+    pub system_tokens_upper_bound: u64,
+    pub context_tokens_upper_bound: u64,
+    pub candidate_tokens_upper_bound: u64,
+    pub qa_failure_tokens_upper_bound: u64,
+    pub total_request_tokens_upper_bound: u64,
+}
+
+/// Behavior-neutral NCT-01 measurement attached to one existing provider
+/// call. It deliberately contains no prompt, candidate, verdict, request ID,
+/// hash, route, or content-derived identifier.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubAgentPromptBaseline {
+    pub shape: SubAgentPromptShape,
+    /// Provider-native usage is optional: `None` means it was not reported,
+    /// while `Some(0)` is a real reported zero.
+    #[serde(default)]
+    pub input_tokens: Option<u32>,
+    #[serde(default)]
+    pub output_tokens: Option<u32>,
+    #[serde(default)]
+    pub cache_creation_tokens: Option<u32>,
+    #[serde(default)]
+    pub cache_read_tokens: Option<u32>,
+    /// Wall-clock request-to-last-token duration reported by `Completion`.
+    pub completion_latency_ms: u64,
 }
 
 /// Response from a sub-agent back to its caller (typically Cerebellum)
@@ -608,5 +658,21 @@ mod tests {
         let r: SubAgentRequest = serde_json::from_str(minimal).unwrap();
         assert!(r.success_criteria.is_empty());
         assert!(r.evidence_required.is_empty());
+    }
+
+    #[test]
+    fn provider_call_baseline_is_backward_compatible_and_omits_none() {
+        let legacy = r#"{
+            "stage":"primary",
+            "attempt":1,
+            "provider":"openai_api",
+            "wire_model":"wire-model-v1",
+            "input_tokens":null,
+            "output_tokens":null
+        }"#;
+        let call: SubAgentProviderCall = serde_json::from_str(legacy).unwrap();
+        assert_eq!(call.prompt_baseline, None);
+        let encoded = serde_json::to_value(&call).unwrap();
+        assert!(encoded.get("prompt_baseline").is_none());
     }
 }

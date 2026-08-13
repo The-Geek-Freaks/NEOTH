@@ -1073,6 +1073,51 @@ pub(crate) fn spawn_for_home_ready(
     Ok((writer, wrap_writer_runtime_join(join, outcome), ready))
 }
 
+/// Start an isolated, home-bound WAL writer for an async test and wait until
+/// its segment is ready to accept producer work.
+///
+/// Keeping the HMAC/key-recovery state under a fresh [`tempfile::TempDir`]
+/// prevents independently scheduled tests from touching the runner's global
+/// `~/.neoth` state. The returned join handle carries the writer's completion
+/// outcome; callers must drop every handle and assert that outcome before
+/// inspecting `segment`.
+#[cfg(test)]
+pub(crate) async fn spawn_isolated_ready_test_writer(
+    fixture_name: &str,
+) -> Result<
+    (
+        WalWriterHandle,
+        tokio::task::JoinHandle<Result<(), String>>,
+        tempfile::TempDir,
+        PathBuf,
+    ),
+    WalError,
+> {
+    let home = tempfile::tempdir()?;
+    let wal_dir = home.path().join("wal");
+    std::fs::create_dir_all(&wal_dir)?;
+    let segment = wal_dir.join(format!("{fixture_name}-000001.wal"));
+    let (writer, join, ready) = spawn_for_home_ready(segment.clone(), home.path().to_path_buf())?;
+    ready.wait().await?;
+    Ok((writer, join, home, segment))
+}
+
+/// Construct a writer handle whose receiver is already closed.
+///
+/// This gives fail-closed producer tests a deterministic `WriterClosed`
+/// boundary without spawning or aborting an asynchronous writer task.
+#[cfg(test)]
+pub(crate) fn closed_test_writer() -> WalWriterHandle {
+    let (tx, rx) = mpsc::channel(1);
+    drop(rx);
+    WalWriterHandle {
+        tx,
+        authentication_markers_enabled: false,
+        quota: None,
+        test_ack_gate: None,
+    }
+}
+
 /// Completion-owning readiness variant for short-lived callers.
 ///
 /// Unlike [`spawn_for_home_ready`], this retains the real `run_writer`
@@ -1610,13 +1655,11 @@ fn cleanup_uncommitted_segment(
         cleanup_failures.push(format!("remove exact new leaf: {error}"));
     }
     #[cfg(unix)]
-    match parent.try_clone() {
-        Ok(directory) => {
-            if let Err(error) = directory.into_std_file().sync_all() {
-                cleanup_failures.push(format!("sync parent after rollback: {error}"));
-            }
-        }
-        Err(error) => cleanup_failures.push(format!("clone parent for rollback sync: {error}")),
+    if let Err(error) = crate::skills::store::sync_parent_directory(
+        parent,
+        display_path.parent().unwrap_or(display_path),
+    ) {
+        cleanup_failures.push(format!("sync parent after rollback: {error:#}"));
     }
 
     if cleanup_failures.is_empty() {
@@ -1883,7 +1926,14 @@ fn open_segment_capability_bound(
                 )));
             }
         }
-        root.dir.try_clone()?.into_std_file().sync_all()?;
+        crate::skills::store::sync_parent_directory(&root.dir, &root.display_path).map_err(
+            |error| {
+                WalError::Io(std::io::Error::other(format!(
+                    "sync published WAL parent {}: {error:#}",
+                    root.display_path.display()
+                )))
+            },
+        )?;
     }
 
     Ok((stage.into_std(), true))

@@ -724,8 +724,15 @@ pub(crate) fn prepare_graphify_publication(
     };
     receipt.generation_id = generation_id(&receipt);
 
-    let stage = tempfile::Builder::new()
-        .prefix(".neoth-graphify-stage-")
+    let mut stage_builder = tempfile::Builder::new();
+    stage_builder.prefix(".neoth-graphify-stage-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        stage_builder.permissions(fs::Permissions::from_mode(0o700));
+    }
+    let stage = stage_builder
         .tempdir_in(&corpus_dir)
         .with_context(|| format!("create private Graphify stage in {}", corpus_dir.display()))?;
     ensure_secure_graphify_directory(stage.path(), "Graphify staging directory")?;

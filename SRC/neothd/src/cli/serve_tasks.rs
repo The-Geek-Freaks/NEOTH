@@ -2081,7 +2081,10 @@ pub(crate) fn spawn_companion_server(
 ///
 /// When enabled, the task runs for the daemon's lifetime. It waits for an
 /// invite to be stored by `neoth companion pair-phone` and then drives the
-/// Noise-XX accept loop for that invite. After the invite is consumed (paired
+/// v2 HyperDHT / authenticated Noise-IK accept loop for that invite. It admits
+/// only the topic-and-PSK-HKDF-derived client static key before allocation and
+/// retains the encrypted application-PSK check as defense in depth. After the
+/// invite is consumed (paired
 /// or rejected), it waits for the next one. This allows the operator to
 /// repeatedly run `neoth companion pair-phone` without restarting the daemon.
 ///
@@ -2120,13 +2123,12 @@ pub(crate) fn spawn_companion_p2p_listener_task(
         // separate process) cannot directly notify this task. Instead, the
         // serve-side task polls a well-known invite file
         // (~/.neoth/companion_pending_invite.json) every 2s, and when it finds
-        // one, it loads + deletes the file then calls spawn_companion_p2p_listener.
+        // one, it validates + durably claims the file under the shared lock
+        // before calling spawn_companion_p2p_listener.
         //
         // This decoupled design avoids IPC complexity while the companion mobile
         // codebase is out of scope. It also means the daemon never holds an open
         // P2P swarm unless an invite is actually pending.
-        use crate::daemon::companion::CompanionInvite;
-
         let home = home.to_path_buf();
         let invite_path = home.join("companion_pending_invite.json");
         let shutdown_clone = std::sync::Arc::clone(&shutdown);
@@ -2150,75 +2152,48 @@ pub(crate) fn spawn_companion_p2p_listener_task(
                     _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {}
                 }
 
-                if !invite_path.exists() {
+                let Some((p2p_invite, ttl_secs)) = (match claim_pending_companion_invite(
+                    &home,
+                    &invite_path,
+                    crate::time::now_unix_secs(),
+                ) {
+                    Ok(claim) => claim,
+                    Err(error) => {
+                        // Never include record contents in logs: its PSK is a
+                        // bearer secret. A suspicious record stays unclaimed.
+                        warn!(error = %error, "companion_p2p: pending invite refused");
+                        continue;
+                    }
+                }) else {
                     continue;
-                }
-
-                // Load and immediately delete the file (atomic single-use).
-                let invite_json = match std::fs::read_to_string(&invite_path) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        warn!(error = %e, "companion_p2p: failed to read invite file");
-                        continue;
-                    }
                 };
-                // Delete before using so a second daemon loop or a race can't
-                // pick it up.
-                let _ = std::fs::remove_file(&invite_path);
-
-                let invite: serde_json::Value = match serde_json::from_str(&invite_json) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!(error = %e, "companion_p2p: invite file JSON parse failed");
-                        continue;
-                    }
-                };
-
-                let topic_hex = match invite["topic_hex"].as_str() {
-                    Some(s) => s.to_string(),
-                    None => {
-                        warn!("companion_p2p: invite file missing topic_hex");
-                        continue;
-                    }
-                };
-                let psk_hex = match invite["psk_hex"].as_str() {
-                    Some(s) => s.to_string(),
-                    None => {
-                        warn!("companion_p2p: invite file missing psk_hex");
-                        continue;
-                    }
-                };
-                let ttl_secs = invite["ttl_secs"].as_u64().unwrap_or(300);
-
-                // Reconstruct a CompanionInvite from the file.
-                let p2p_invite = CompanionInvite::from_hex(topic_hex, psk_hex);
-                let per_invite_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
 
                 info!("companion_p2p: serve-side coordinator picked up pending invite");
 
                 // Spawn the single-invite listener and await it (blocks the
                 // coordinator loop until the invite is consumed — by design,
                 // only one pairing is active at a time).
-                let sub_shutdown = std::sync::Arc::clone(&per_invite_shutdown);
                 let task = crate::daemon::companion::spawn_companion_p2p_listener(
                     p2p_invite,
                     std::sync::Arc::clone(&companion_state),
                     writer.clone(),
                     ttl_secs,
-                    sub_shutdown,
                 );
 
-                tokio::pin!(task);
+                let mut task = task;
                 tokio::select! {
                     biased;
                     _ = shutdown_clone.notified() => {
-                        per_invite_shutdown.notify_waiters();
-                        // Abort the in-flight invite listener and wait for it to stop.
-                        task.abort();
-                        let _ = task.await;
+                        task.request_stop();
+                        // A grace timeout retains the typed owner. There is no
+                        // successor invite listener until this exact task has
+                        // finished its accepted WAL/token transaction.
+                        if task.observe_grace(std::time::Duration::from_secs(5)).await.is_none() {
+                            let _ = task.await_terminal().await;
+                        }
                         break;
                     }
-                    _ = &mut task => {
+                    _ = task.await_terminal() => {
                         // Invite consumed; loop back and poll for the next one.
                     }
                 }
@@ -2227,6 +2202,126 @@ pub(crate) fn spawn_companion_p2p_listener_task(
 
         Some(task)
     }
+}
+
+/// Read a pending companion capability through one no-follow file handle.
+/// This function holds the companion handoff lock across the read and durable
+/// remove that claims it. A malformed or expired *private regular*
+/// record is consumed so it can never become valid later; a suspicious path
+/// (link, reparse point, non-private file, or oversized content) is left in
+/// place and is never followed or parsed.
+#[cfg(feature = "cluster")]
+fn claim_pending_companion_invite(
+    home: &std::path::Path,
+    invite_path: &std::path::Path,
+    now_unix: u64,
+) -> anyhow::Result<Option<(crate::daemon::companion::CompanionInvite, u64)>> {
+    crate::daemon::companion::verify_private_companion_home(home)?;
+    let _lock = crate::util::locked_file::lock_file_blocking(
+        &home.join("companion_pending_invite.lock"),
+        "companion pending invite",
+    )?;
+    let Some(bytes) = read_private_pending_companion_invite(invite_path)? else {
+        return Ok(None);
+    };
+
+    match crate::daemon::companion::CompanionInvite::from_pending_invite_record(&bytes, now_unix) {
+        Ok((invite, ttl_secs)) => {
+            crate::util::atomic_write::durable_remove_file(invite_path).with_context(|| {
+                format!(
+                    "durably claim pending companion invite {}",
+                    invite_path.display()
+                )
+            })?;
+            Ok(Some((invite, ttl_secs)))
+        }
+        Err(_) => {
+            // The source handle was private and regular, so unlinking this
+            // malformed/expired record is safe and prevents a later daemon
+            // from treating the same capability as fresh. Do not expose its
+            // parsing failure or contents in a log.
+            crate::util::atomic_write::durable_remove_file(invite_path).with_context(|| {
+                format!(
+                    "durably discard invalid companion invite {}",
+                    invite_path.display()
+                )
+            })?;
+            Ok(None)
+        }
+    }
+}
+
+#[cfg(feature = "cluster")]
+fn read_private_pending_companion_invite(
+    path: &std::path::Path,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    use std::io::Read;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).context("open pending companion invite without following links");
+        }
+    };
+    let metadata = file
+        .metadata()
+        .context("inspect pending companion invite handle")?;
+    anyhow::ensure!(
+        metadata.file_type().is_file() && !metadata.file_type().is_symlink(),
+        "pending companion invite is not a regular file"
+    );
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        anyhow::ensure!(
+            metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0,
+            "pending companion invite is a reparse point"
+        );
+        crate::wal::win_native::verify_private_file_handle(&file)
+            .context("verify private pending companion invite DACL")?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        anyhow::ensure!(
+            metadata.permissions().mode() & 0o777 == 0o600,
+            "pending companion invite permissions are not 0600"
+        );
+    }
+    anyhow::ensure!(
+        metadata.len() > 0 && metadata.len() <= crate::daemon::companion::MAX_PENDING_INVITE_BYTES,
+        "pending companion invite has invalid byte length"
+    );
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    (&mut file)
+        .take(crate::daemon::companion::MAX_PENDING_INVITE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .context("bounded read pending companion invite")?;
+    let after = file
+        .metadata()
+        .context("reinspect pending companion invite handle")?;
+    anyhow::ensure!(
+        bytes.len() as u64 == metadata.len()
+            && after.len() == metadata.len()
+            && bytes.len() as u64 <= crate::daemon::companion::MAX_PENDING_INVITE_BYTES,
+        "pending companion invite changed during bounded read"
+    );
+    Ok(Some(bytes))
 }
 
 /// GOLD-FEAT-09 — spawn the daemon watchdog / auto-recovery cron. `None` when
@@ -6776,7 +6871,7 @@ pub(crate) struct BackgroundHandles {
     pub companion_task: Option<JoinHandle<()>>,
     /// GOLD-COMPANION-P2P-01 — shutdown notifier for the companion P2P Noise
     /// pairing coordinator (serve-side long-running task). Notified to stop the
-    /// poll loop and abort any in-flight single-invite listener.
+    /// poll loop and cooperatively drain any in-flight single-invite listener.
     pub companion_p2p_shutdown: Arc<tokio::sync::Notify>,
     /// GOLD-COMPANION-P2P-01 — task handle for the companion P2P coordinator.
     /// `None` when `companion.p2p_enabled = false` (default) or `cluster`
@@ -7584,6 +7679,86 @@ pub(crate) fn bootstrap_plugin_invoker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn pending_companion_invites_are_exclusively_claimed_and_fail_closed() {
+        let home = tempfile::tempdir().unwrap();
+        crate::daemon::companion::ensure_private_companion_home(home.path()).unwrap();
+        let path = home.path().join("companion_pending_invite.json");
+        let now = 1_700_000_000;
+
+        let valid = crate::daemon::companion::CompanionInvite::generate()
+            .unwrap()
+            .pending_invite_record(now + 60)
+            .unwrap();
+        crate::util::atomic_write::write_private_create_new_durable(&path, &valid).unwrap();
+        assert!(
+            claim_pending_companion_invite(home.path(), &path, now)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            !path.exists(),
+            "a successful claim durably removes the capability before listener startup"
+        );
+        assert!(
+            claim_pending_companion_invite(home.path(), &path, now)
+                .unwrap()
+                .is_none()
+        );
+
+        let expired = crate::daemon::companion::CompanionInvite::generate()
+            .unwrap()
+            .pending_invite_record(now)
+            .unwrap();
+        crate::util::atomic_write::write_private_create_new_durable(&path, &expired).unwrap();
+        assert!(
+            claim_pending_companion_invite(home.path(), &path, now)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !path.exists(),
+            "expired capability must not remain claimable"
+        );
+
+        crate::util::atomic_write::write_private_create_new_durable(&path, b"{not-json").unwrap();
+        assert!(
+            claim_pending_companion_invite(home.path(), &path, now)
+                .unwrap()
+                .is_none()
+        );
+        assert!(!path.exists(), "malformed private record must fail closed");
+
+        crate::util::atomic_write::write_private_create_new_durable(&path, b"{}").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        #[cfg(unix)]
+        assert!(
+            claim_pending_companion_invite(home.path(), &path, now).is_err(),
+            "a non-private record must be left unclaimed"
+        );
+    }
+
+    #[cfg(all(feature = "cluster", unix))]
+    #[test]
+    fn pending_companion_invite_reader_refuses_a_symlink_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let home = tempfile::tempdir().unwrap();
+        crate::daemon::companion::ensure_private_companion_home(home.path()).unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), b"outside-sentinel").unwrap();
+        let path = home.path().join("companion_pending_invite.json");
+        symlink(outside.path(), &path).unwrap();
+
+        assert!(claim_pending_companion_invite(home.path(), &path, 1_700_000_000).is_err());
+        assert_eq!(std::fs::read(outside.path()).unwrap(), b"outside-sentinel");
+    }
 
     struct WriterOwningProvider {
         _writer: WalWriterHandle,

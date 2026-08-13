@@ -85,7 +85,7 @@ pub(super) fn private_runtime_root() -> Result<PathBuf> {
         "audit-RPC system temporary directory is not a real directory"
     );
     ensure!(
-        metadata.mode() & 0o022 == 0 || metadata.mode() & libc::S_ISVTX != 0,
+        metadata.mode() & 0o022 == 0 || u64::from(metadata.mode()) & u64::from(libc::S_ISVTX) != 0,
         "audit-RPC system temporary directory is writable without sticky-bit protection"
     );
     // Keep the serialized/bound socket spelling at `/tmp/...`, even on macOS

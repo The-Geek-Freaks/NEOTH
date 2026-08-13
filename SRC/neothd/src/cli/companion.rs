@@ -2,10 +2,10 @@
 //!
 //! Mints a one-time [`CompanionInvite`] (a fresh rendezvous topic + PSK) and:
 //!   1. Renders a `neoth://companion/pair` URL as a terminal QR code.
-//!   2. Spawns a Hyperswarm/Noise-XX P2P listener (when the `cluster` feature
-//!      is active) that announces the topic on the DHT, waits for the phone to
-//!      connect, verifies the PSK, and writes a JSON bearer token over the
-//!      encrypted channel.
+//!   2. Spawns the v2 HyperDHT rendezvous / authenticated Noise-IK listener
+//!      (when the `cluster` feature is active). The topic + PSK HKDF-derive
+//!      the only admitted client static key before connection allocation; the
+//!      encrypted application PSK remains a defense-in-depth confirmation.
 //!   3. Waits up to `PAIR_INVITE_TTL_SECS` seconds for a pairing to complete,
 //!      then exits whether or not a phone connected.
 //!
@@ -17,16 +17,17 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
-use tokio::sync::Notify;
 
 use crate::cli::OutputFormat;
 use crate::daemon::companion::{
-    CompanionInvite, CompanionState, render_pairing_qr, spawn_companion_p2p_listener,
+    CompanionInvite, CompanionState, ensure_private_companion_home, render_pairing_qr,
+    spawn_companion_p2p_listener,
 };
 
 /// Invite TTL advertised in the pairing URL, in seconds. 300s (5 min) is long
 /// enough to pick up the phone and scan, short enough that a leaked QR/URL
-/// expires quickly. Matches the `ttl=300` the companion app expects.
+/// expires quickly. It is part of the server-side v2 QR/URL preview contract;
+/// no NEOTH phone client is shipped yet.
 const PAIR_INVITE_TTL_SECS: u64 = 300;
 
 /// Extra grace period beyond the TTL before we cancel the listener task.
@@ -40,18 +41,23 @@ pub struct CompanionArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum CompanionCommand {
-    /// Mint a one-time phone-pairing invite, show a QR code, and wait for the
-    /// companion app to connect over the Hyperswarm P2P mesh. The invite is
-    /// single-use and expires after a short TTL. Requires the `cluster` feature.
+    /// Preview a one-time v2 pairing QR/URL; NEOTH ships no phone client yet.
+    /// The server-side HyperDHT / authenticated Noise-IK transport accepts only
+    /// the topic-and-PSK-HKDF-derived client static key before allocation, then
+    /// verifies the encrypted application PSK as defense in depth. The invite
+    /// is single-use, short-lived, and requires the `cluster` feature.
     PairPhone {
         /// Hand the invite to a RUNNING `neoth serve` daemon instead of driving
         /// the pairing in this short-lived CLI process. Writes the invite
         /// atomically to `~/.neoth/companion_pending_invite.json`, which the
         /// daemon's serve-side P2P coordinator (`companion.p2p_enabled: true`)
         /// polls every ~2s, consumes single-use, and completes the handshake —
-        /// minting the token into the daemon's LONG-LIVED store so it is also
-        /// valid on the loopback HTTP path. Without this flag the CLI drives a
-        /// transient in-process listener whose token dies when the command exits.
+        /// minting the token into the daemon-lifetime in-memory store so it is
+        /// also valid on the loopback HTTP path while that daemon runs. Neither
+        /// the token nor the pairing persists or recovers across a daemon
+        /// restart. Create a new invite and pair again. Without this flag the
+        /// CLI drives a transient in-process
+        /// listener whose token dies when the command exits.
         #[arg(long)]
         write_invite_for_serve: bool,
     },
@@ -80,6 +86,8 @@ async fn run_pair_phone(write_invite_for_serve: bool, output: OutputFormat) -> R
         let cfg = crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml"))
             .context("load companion configuration; run `neoth init` first")?;
         validate_serve_handoff_config(&cfg)?;
+        ensure_private_companion_home(&home)
+            .context("verify private NEOTH_HOME before writing companion invite")?;
         let pid = crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid"))
             .context("check whether `neoth serve` is running")?
             .ok_or_else(|| {
@@ -104,7 +112,8 @@ async fn run_pair_phone(write_invite_for_serve: bool, output: OutputFormat) -> R
             println!("{qr}");
         }
 
-        println!("Scan the QR above with the NEOTH companion app, or open this URL on your phone:");
+        println!("Server-side pairing preview (no NEOTH phone client is shipped yet):");
+        println!("Use this QR/URL with a compatible v2 client:");
         println!();
         println!("  {url}");
         println!();
@@ -115,31 +124,38 @@ async fn run_pair_phone(write_invite_for_serve: bool, output: OutputFormat) -> R
     // `--write-invite-for-serve`: hand the invite to a RUNNING daemon rather
     // than driving the pairing here. Write it to the well-known path the
     // serve-side P2P coordinator polls, then exit — the daemon owns the listener
-    // and mints the token into its long-lived store (so it is valid on the
-    // loopback HTTP path too). This is the daemon-backed flow; the transient
-    // in-process path below only fits a no-daemon one-shot.
+    // and mints the token into its daemon-lifetime in-memory store (so it is
+    // valid on the loopback HTTP path while the daemon runs). Neither the token
+    // nor the pairing survives or recovers across a daemon restart. This is the
+    // daemon-backed flow; the transient in-process path below only fits a
+    // no-daemon one-shot.
     if let Some((home, daemon_pid)) = serve_handoff {
         let invite_path = home.join("companion_pending_invite.json");
         let _lock = crate::util::locked_file::lock_file_blocking(
             &home.join("companion_pending_invite.lock"),
             "companion pending invite",
         )?;
-        if invite_path.exists() {
-            anyhow::bail!(
+        let expires_at = crate::time::now_unix_secs()
+            .checked_add(PAIR_INVITE_TTL_SECS)
+            .ok_or_else(|| anyhow::anyhow!("companion invite expiry overflow"))?;
+        let record = invite.pending_invite_record(expires_at)?;
+        match crate::util::atomic_write::write_private_create_new_durable(&invite_path, &record) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => anyhow::bail!(
                 "a companion invite is already pending at {}; wait for daemon pid {} \
                  to consume it or remove it after confirming that pairing has expired",
                 invite_path.display(),
                 daemon_pid
-            );
+            ),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "create pending companion invite {} (is `neoth serve` initialised?)",
+                        invite_path.display()
+                    )
+                });
+            }
         }
-        let json = serde_json::to_vec(&invite.to_pending_invite_json(PAIR_INVITE_TTL_SECS))
-            .map_err(|e| anyhow::anyhow!("serialise pending invite: {e}"))?;
-        crate::util::atomic_write::atomic_write(&invite_path, &json).map_err(|e| {
-            anyhow::anyhow!(
-                "write pending invite {} (is `neoth serve` initialised?): {e}",
-                invite_path.display()
-            )
-        })?;
         match output {
             OutputFormat::Json | OutputFormat::Jsonl => println!(
                 "{}",
@@ -154,7 +170,8 @@ async fn run_pair_phone(write_invite_for_serve: bool, output: OutputFormat) -> R
             OutputFormat::Table => println!(
                 "Invite handed to daemon pid {} at {}.\n\
                  The serve-side coordinator (companion.p2p_enabled: true) picks it up \
-                 within ~2s and completes the pairing into the daemon's token store.",
+                 within ~2s and completes the pairing into the daemon-lifetime in-memory \
+                 token store. A daemon restart requires a fresh invite and pairing.",
                 daemon_pid,
                 invite_path.display()
             ),
@@ -164,7 +181,7 @@ async fn run_pair_phone(write_invite_for_serve: bool, output: OutputFormat) -> R
 
     // Spawn a transient CompanionState (token store) and a transient WAL writer
     // for this standalone CLI invocation. The CLI runs outside of `neoth serve`,
-    // so it cannot share the daemon's long-lived state — it mints its own
+    // so it cannot share the daemon's live in-memory state — it mints its own
     // in-process token store that lives for the duration of this command.
     //
     // WAL: use an isolated temporary instance home. Its key/recovery namespace
@@ -182,28 +199,21 @@ async fn run_pair_phone(write_invite_for_serve: bool, output: OutputFormat) -> R
     // relevant for the HTTP companion server's CSRF check).
     let state = Arc::new(CompanionState::new(writer.clone(), 0));
 
-    let shutdown = Arc::new(Notify::new());
-
     // Spawn the P2P listener. Under `cluster` this drives the full Noise accept
     // loop; under non-cluster it exits immediately with a warning.
-    let mut task = spawn_companion_p2p_listener(
-        invite,
-        Arc::clone(&state),
-        writer,
-        PAIR_INVITE_TTL_SECS,
-        Arc::clone(&shutdown),
-    );
+    let mut task =
+        spawn_companion_p2p_listener(invite, Arc::clone(&state), writer, PAIR_INVITE_TTL_SECS);
 
     println!("Waiting for companion app to connect (up to {PAIR_INVITE_TTL_SECS}s)...");
     println!("(Press Ctrl-C to abort early)");
     println!();
 
-    // Wait for the listener to finish (paired / rejected / TTL expiry) OR for
+    // Wait for the listener to finish (paired / TTL expiry / transport close) OR for
     // the grace timeout. We do NOT simply `.await` the task in case the
     // listener stalls beyond the TTL due to a slow network teardown.
     let grace = tokio::time::Duration::from_secs(PAIR_INVITE_TTL_SECS + PAIR_INVITE_GRACE_SECS);
     let listener_finished = tokio::select! {
-        res = &mut task => {
+        res = task.await_terminal() => {
             match res {
                 Ok(()) => println!("Pairing complete (check daemon logs for details)."),
                 Err(e) => println!("Pairing listener exited with error: {e}"),
@@ -211,24 +221,24 @@ async fn run_pair_phone(write_invite_for_serve: bool, output: OutputFormat) -> R
             true
         }
         _ = tokio::time::sleep(grace) => {
-            shutdown.notify_waiters();
+            task.request_stop();
             println!("Invite expired — no companion connected within {PAIR_INVITE_TTL_SECS}s.");
             false
         }
         _ = tokio::signal::ctrl_c() => {
-            shutdown.notify_waiters();
+            task.request_stop();
             println!("Aborted by operator (Ctrl-C).");
             false
         }
     };
     if !listener_finished {
         let shutdown_grace = tokio::time::Duration::from_secs(PAIR_INVITE_GRACE_SECS);
-        if tokio::time::timeout(shutdown_grace, &mut task)
-            .await
-            .is_err()
-        {
-            task.abort();
-            let _ = task.await;
+        if task.observe_grace(shutdown_grace).await.is_none() {
+            // A timeout observes only the grace budget; it never transfers or
+            // drops ownership. Retain and await the same listener so its WAL
+            // audit acknowledgement and in-memory token publication reach a
+            // terminal state before the temporary writer/home are released.
+            let _ = task.await_terminal().await;
         }
     }
 
@@ -297,6 +307,35 @@ mod tests {
             crate::config::FreedomConfig::default_wal_dir(),
             "temporary pairing must not bind WAL state to the real operator home"
         );
+    }
+
+    #[test]
+    fn pending_invite_create_new_never_overwrites_an_existing_capability() {
+        let home = tempfile::tempdir().unwrap();
+        ensure_private_companion_home(home.path()).unwrap();
+        let path = home.path().join("companion_pending_invite.json");
+        let invite = CompanionInvite::generate().unwrap();
+        let record = invite.pending_invite_record(1_700_000_300).unwrap();
+
+        crate::util::atomic_write::write_private_create_new_durable(&path, &record).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let replacement = CompanionInvite::generate()
+            .unwrap()
+            .pending_invite_record(1_700_000_301)
+            .unwrap();
+        let error =
+            crate::util::atomic_write::write_private_create_new_durable(&path, &replacement)
+                .expect_err("a second producer must not replace a pending invite");
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
     }
 
     #[cfg(feature = "cluster")]

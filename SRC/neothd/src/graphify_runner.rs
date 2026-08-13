@@ -1040,13 +1040,21 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[tokio::test]
-    async fn runtime_environment_removes_inherited_python_injection_variables() {
+    #[test]
+    fn runtime_environment_removes_inherited_python_injection_variables() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build test runtime");
         let _environment = crate::test_env::lock();
-        let previous_path = std::env::var_os("PYTHONPATH");
-        let previous_home = std::env::var_os("PYTHONHOME");
-        let previous_virtual_env = std::env::var_os("VIRTUAL_ENV");
-        let previous_hostile = std::env::var_os("GRAPHIFY_TEST_HOSTILE_INHERIT");
+        // Declared after the lock so panic cleanup restores every variable
+        // before another environment-mutating test may acquire that lock.
+        let restore_environment = EnvironmentRestoreGuard {
+            python_path: std::env::var_os("PYTHONPATH"),
+            python_home: std::env::var_os("PYTHONHOME"),
+            virtual_env: std::env::var_os("VIRTUAL_ENV"),
+            hostile_inherit: std::env::var_os("GRAPHIFY_TEST_HOSTILE_INHERIT"),
+        };
         unsafe {
             std::env::set_var("PYTHONPATH", "attacker-path");
             std::env::set_var("PYTHONHOME", "attacker-home");
@@ -1055,11 +1063,16 @@ mod tests {
         }
         let mut command = Command::new("/usr/bin/env");
         GraphifyEnvironment::runtime().apply(&mut command);
-        let output = command.output().await;
-        restore_environment_variable("PYTHONPATH", previous_path);
-        restore_environment_variable("PYTHONHOME", previous_home);
-        restore_environment_variable("VIRTUAL_ENV", previous_virtual_env);
-        restore_environment_variable("GRAPHIFY_TEST_HOSTILE_INHERIT", previous_hostile);
+        // The process-global environment must remain serialized until the
+        // child has inherited it. Blocking on a test-owned runtime retains
+        // that invariant without a direct await under the std mutex guard.
+        // Command::output consults Tokio's process reactor eagerly, so build
+        // it only after block_on has entered the test-owned runtime.
+        let output = runtime.block_on(async move {
+            let mut command = command;
+            command.output().await
+        });
+        drop(restore_environment);
         let output = output.unwrap();
         let environment = String::from_utf8(output.stdout).unwrap();
         assert!(!environment.contains("PYTHONPATH="));
@@ -1126,6 +1139,27 @@ mod tests {
             !marker.exists(),
             "grandchild survived Windows Job Object abort"
         );
+    }
+
+    #[cfg(unix)]
+    struct EnvironmentRestoreGuard {
+        python_path: Option<OsString>,
+        python_home: Option<OsString>,
+        virtual_env: Option<OsString>,
+        hostile_inherit: Option<OsString>,
+    }
+
+    #[cfg(unix)]
+    impl Drop for EnvironmentRestoreGuard {
+        fn drop(&mut self) {
+            restore_environment_variable("PYTHONPATH", self.python_path.take());
+            restore_environment_variable("PYTHONHOME", self.python_home.take());
+            restore_environment_variable("VIRTUAL_ENV", self.virtual_env.take());
+            restore_environment_variable(
+                "GRAPHIFY_TEST_HOSTILE_INHERIT",
+                self.hostile_inherit.take(),
+            );
+        }
     }
 
     #[cfg(unix)]

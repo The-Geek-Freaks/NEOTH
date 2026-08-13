@@ -41,12 +41,15 @@ RELEASE_PROFILES = (
     ("x86_64-unknown-linux-musl", "release-server", False),
 )
 ROOT_PACKAGES = {"neoth", "neoth-migrate", "neoth-relay"}
+VENDOR_ROOT = WORKSPACE_ROOT / "vendor"
 NOTICE_NAME = re.compile(
     r"^(?:licen[cs]e|copying|copyright|notice|unlicense|authors?)(?:[._-].*)?$",
     re.IGNORECASE,
 )
 NOTICE_DIRECTORIES = {"license", "licenses", "licence", "licences"}
 MAX_NOTICE_BYTES = 2 * 1024 * 1024
+PUBLIC_REPOSITORY_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+POSIX_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def cargo_metadata(target: str, feature: str) -> dict[str, Any]:
@@ -70,7 +73,9 @@ def cargo_metadata(target: str, feature: str) -> dict[str, Any]:
             stderr=subprocess.PIPE,
         ).stdout
     except FileNotFoundError as error:
-        raise SystemExit("cargo is required to verify Rust distribution notices") from error
+        raise SystemExit(
+            "cargo is required to verify Rust distribution notices"
+        ) from error
     except subprocess.CalledProcessError as error:
         sys.stderr.buffer.write(error.stderr)
         raise SystemExit(
@@ -93,7 +98,9 @@ def distribution_packages(
     found_root_names = {packages_by_id[package_id]["name"] for package_id in roots}
     if found_root_names != root_names:
         missing = ", ".join(sorted(root_names - found_root_names))
-        raise SystemExit(f"Cargo metadata is missing release root package(s): {missing}")
+        raise SystemExit(
+            f"Cargo metadata is missing release root package(s): {missing}"
+        )
 
     reachable = set(roots)
     queue = list(roots)
@@ -118,13 +125,161 @@ def distribution_packages(
     for package_id in reachable:
         package = packages_by_id[package_id]
         source = package.get("source")
-        if source is None:
-            continue
-        identity = (package["name"], package["version"], source)
         package = dict(package)
+        if source is None:
+            # Cargo represents both workspace members and `[patch]` path
+            # dependencies with `source = null`.  NEOTH's release roots are
+            # first-party and intentionally excluded, but a dependency rooted
+            # below `SRC/vendor` is a shipped third-party fork.  Its source
+            # identity must not depend on this checkout's absolute path.
+            provenance = local_vendor_provenance(package)
+            if provenance is None:
+                continue
+            package["_local_vendor_provenance"] = provenance
+        identity = (package["name"], package["version"], package_source(package))
         package["_targets"] = {target}
         result[identity] = package
     return result
+
+
+def canonical_public_https_repository(repository: object) -> str | None:
+    """Return a canonical public HTTPS owner/repository URL or reject it.
+
+    This is intentionally narrower than `repository_key()`: local vendor
+    provenance becomes part of a generated Markdown artifact and needs a
+    single, public, checkout-independent representation.  Credentials,
+    ports, query strings, fragments, and nested/non-repository paths are not
+    provenance identities.
+    """
+
+    if (
+        not isinstance(repository, str)
+        or repository != repository.strip()
+        or contains_ascii_control(repository)
+    ):
+        return None
+    try:
+        parsed = urlsplit(repository)
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    path_parts = parsed.path.split("/")
+    if len(path_parts) != 3 or path_parts[0] or not all(path_parts[1:]):
+        return None
+    owner, repository_name = path_parts[1:]
+    if repository_name.endswith(".git"):
+        repository_name = repository_name[:-4]
+    if not all(
+        PUBLIC_REPOSITORY_SEGMENT.fullmatch(segment)
+        for segment in (owner, repository_name)
+    ):
+        return None
+    return (
+        f"https://{parsed.hostname.lower()}/{owner.lower()}/{repository_name.lower()}"
+    )
+
+
+def unchanged_posix_relative_path(value: object) -> str | None:
+    """Accept only a safe, unmodified POSIX relative path for Markdown output."""
+
+    if not isinstance(value, str) or not value or "\\" in value:
+        return None
+    if contains_ascii_control(value):
+        return None
+    parts = value.split("/")
+    if not all(POSIX_PATH_SEGMENT.fullmatch(part) for part in parts):
+        return None
+    return value
+
+
+def contains_ascii_control(value: str) -> bool:
+    """Return whether a value contains a C0 control or DEL character."""
+
+    return any(ord(character) < 32 or ord(character) == 127 for character in value)
+
+
+def local_vendor_provenance(package: dict[str, Any]) -> dict[str, str] | None:
+    """Return checked, stable provenance for a locally vended third-party crate.
+
+    A local `path+file://...` Cargo identity is host-specific, so it cannot be
+    used for a reproducible distribution notice.  The vendored crate instead
+    carries the exact upstream revision and its path in the upstream VCS in
+    `.cargo_vcs_info.json`.  Both values, plus the repository URL from the
+    manifest, form the stable identity recorded in the generated notices.
+    """
+
+    manifest = Path(package["manifest_path"])
+    package_root = manifest.parent.resolve()
+    try:
+        local_path = unchanged_posix_relative_path(
+            package_root.relative_to(VENDOR_ROOT.resolve()).as_posix()
+        )
+    except ValueError:
+        return None
+    if local_path is None:
+        raise SystemExit(
+            f"locally vended {package_label(package)} has an unsafe local vendor path"
+        )
+
+    repository = package.get("repository")
+    normalized_repository = canonical_public_https_repository(repository)
+    if normalized_repository is None:
+        raise SystemExit(
+            f"locally vended {package_label(package)} has no canonical upstream repository"
+        )
+
+    provenance_path = package_root / ".cargo_vcs_info.json"
+    if not provenance_path.is_file():
+        raise SystemExit(
+            f"locally vended {package_label(package)} has no .cargo_vcs_info.json"
+        )
+    try:
+        data = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(
+            f"cannot read local vendor provenance for {package_label(package)}: {error}"
+        ) from error
+
+    revision = data.get("git", {}).get("sha1")
+    path_in_vcs = unchanged_posix_relative_path(data.get("path_in_vcs"))
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise SystemExit(
+            f"locally vended {package_label(package)} has no exact upstream Git revision"
+        )
+    if path_in_vcs is None:
+        raise SystemExit(
+            f"locally vended {package_label(package)} has invalid upstream VCS path"
+        )
+
+    return {
+        "identity": f"vendor+{normalized_repository}@{revision}#{path_in_vcs}",
+        "local_path": f"SRC/vendor/{local_path}",
+        "repository": normalized_repository,
+        "revision": revision,
+        "path_in_vcs": path_in_vcs,
+    }
+
+
+def package_source(package: dict[str, Any]) -> str:
+    """Return a stable source identity for registry and local-vendor crates."""
+
+    provenance = package.get("_local_vendor_provenance")
+    if provenance is not None:
+        return provenance["identity"]
+    source = package.get("source")
+    if not isinstance(source, str):
+        raise SystemExit(f"{package_label(package)} has no stable package source")
+    return source
 
 
 def notice_paths(package: dict[str, Any]) -> list[Path]:
@@ -142,7 +297,9 @@ def notice_paths(package: dict[str, Any]) -> list[Path]:
     try:
         children = list(package_root.iterdir())
     except OSError as error:
-        raise SystemExit(f"cannot inspect crate directory {package_root}: {error}") from error
+        raise SystemExit(
+            f"cannot inspect crate directory {package_root}: {error}"
+        ) from error
 
     for child in children:
         if child.is_file() and NOTICE_NAME.match(child.name):
@@ -191,16 +348,20 @@ def package_label(package: dict[str, Any]) -> str:
 
 
 def package_identity_key(package: dict[str, Any]) -> str:
-    return "\0".join((package["name"], package["version"], package["source"]))
+    return "\0".join((package["name"], package["version"], package_source(package)))
 
 
 def package_url(package: dict[str, Any]) -> str:
+    provenance = package.get("_local_vendor_provenance")
+    if provenance is not None:
+        return provenance["identity"]
     repository = package.get("repository")
     if repository:
         return repository
-    if str(package["source"]).startswith("registry+"):
+    source = package_source(package)
+    if source.startswith("registry+"):
         return f"https://crates.io/crates/{package['name']}/{package['version']}"
-    return str(package["source"])
+    return source
 
 
 def repository_key(package: dict[str, Any]) -> str | None:
@@ -238,7 +399,7 @@ def resolved_release_packages() -> list[dict[str, Any]]:
         key=lambda package: (
             package["name"].lower(),
             package["version"],
-            package["source"],
+            package_source(package),
         ),
     )
 
@@ -252,8 +413,9 @@ def load_license_snapshots() -> dict[str, Any]:
     return data["packages"]
 
 
-def generate() -> str:
-    ordered_packages = resolved_release_packages()
+def generate(ordered_packages: list[dict[str, Any]] | None = None) -> str:
+    if ordered_packages is None:
+        ordered_packages = resolved_release_packages()
     snapshots = load_license_snapshots()
     texts: dict[str, dict[str, Any]] = {}
     repository_texts: dict[str, set[str]] = {}
@@ -336,6 +498,33 @@ def generate() -> str:
             f"{package_url(package)} - targets: {targets}"
         )
 
+    local_vendor_packages = [
+        package for package in ordered_packages if "_local_vendor_provenance" in package
+    ]
+    if local_vendor_packages:
+        lines.extend(
+            [
+                "",
+                "### Locally vended third-party forks",
+                "",
+                (
+                    "Cargo marks both workspace members and local patches as `source = null`. "
+                    "The packages below are deliberately included because their manifests live "
+                    "under `SRC/vendor/`, not as NEOTH workspace crates. Their stable source "
+                    "identities bind the local fork to the upstream repository, exact Git revision, "
+                    "and upstream crate path recorded in `.cargo_vcs_info.json`. Their license texts "
+                    "are read directly from the corresponding local vendor directories."
+                ),
+                "",
+            ]
+        )
+        for package in local_vendor_packages:
+            provenance = package["_local_vendor_provenance"]
+            lines.append(
+                f"- `{package_label(package)}` - local `{provenance['local_path']}` - "
+                f"source `{provenance['identity']}` - upstream {provenance['repository']}"
+            )
+
     if vcs_snapshot_packages:
         lines.extend(
             [
@@ -417,7 +606,8 @@ def generate() -> str:
             [
                 f"#### SHA-256 `{digest}`",
                 "",
-                "Applies to: " + ", ".join(f"`{label}`" for label in sorted(entry["packages"])),
+                "Applies to: "
+                + ", ".join(f"`{label}`" for label in sorted(entry["packages"])),
                 "",
                 "----- BEGIN UPSTREAM LICENSE OR NOTICE -----",
                 entry["text"].rstrip("\n"),
@@ -439,7 +629,13 @@ def replace_generated_section(current: str, generated: str) -> str:
         insertion = current.find(keet_marker)
         if insertion == -1:
             return current.rstrip() + "\n\n" + generated
-        return current[:insertion].rstrip() + "\n\n" + generated + "\n" + current[insertion:]
+        return (
+            current[:insertion].rstrip()
+            + "\n\n"
+            + generated
+            + "\n"
+            + current[insertion:]
+        )
     end += len(MARKER_END)
     return current[:start] + generated.rstrip() + current[end:]
 

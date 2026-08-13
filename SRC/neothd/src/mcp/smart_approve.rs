@@ -699,7 +699,7 @@ mod tests {
     // ---- ADOPT31-C4a: a re-declared tool loses its auto-approval ----------
 
     fn home_with_key() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_env::canonical_tempdir().unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

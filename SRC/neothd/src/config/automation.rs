@@ -1351,9 +1351,10 @@ impl Default for OaiServeConfig {
 
 /// GOLD-ADAPT-ODY-24 — `freedom.yaml::companion` shape.
 ///
-/// Companion LAN pairing server. A phone scans a QR code displayed at
-/// `neoth init` or via `neoth companion qr`, connects to the loopback-only
-/// HTTP server, and mints a chat-scoped bearer token.
+/// Companion server-side pairing surfaces. The loopback-only HTTP server is
+/// the local browser path; the QR/URL is a v2 pairing preview, not a shipped
+/// phone client, and it can mint a chat-scoped bearer token for a compatible
+/// client.
 ///
 /// Default OFF (`enabled: false`) — opt-in via `companion.enabled: true`
 /// in freedom.yaml or via the wizard step. Port defaults to 9745 (no
@@ -1367,12 +1368,16 @@ pub struct CompanionConfig {
     /// Loopback port the hyper server binds. Default 9745. Override only
     /// when 9745 collides with another local service.
     pub port: u16,
-    /// GOLD-COMPANION-P2P-01 — enable the Hyperswarm/Noise P2P pairing listener.
+    /// GOLD-COMPANION-P2P-01 — enable the v2 HyperDHT / authenticated Noise-IK
+    /// P2P pairing listener.
     ///
     /// When `true`, `neoth serve` spawns a long-running background task that
     /// waits for invites to be stored (via `neoth companion pair-phone`) and
-    /// drives the Noise-XX accept loop for each one. Default `false` — the
-    /// P2P listener is opt-in because it requires the `cluster` feature
+    /// drives the authenticated Noise-IK accept loop for each one. Admission
+    /// derives the expected client static key from the invite topic + PSK before
+    /// allocation; the encrypted application PSK is retained as defense in
+    /// depth. Default `false` — the P2P listener is opt-in because it requires
+    /// the `cluster` feature
     /// (peeroxide) and makes an outbound DHT connection.
     ///
     /// `neoth companion pair-phone` drives the P2P listener inline regardless

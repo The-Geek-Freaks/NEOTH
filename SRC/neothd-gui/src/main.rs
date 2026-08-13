@@ -21951,9 +21951,7 @@ fn parse_chat_stream_protocol_with_mode(
                     StreamNoticeFrame::Valid(notice) => {
                         let route_precedes_notice = route_report_count == 1;
                         saw_route_blocking_notice = true;
-                        if !route_precedes_notice {
-                            protocol_valid = false;
-                        } else if !notice_ids.insert(notice.id.clone()) {
+                        if !route_precedes_notice || !notice_ids.insert(notice.id.clone()) {
                             protocol_valid = false;
                         } else {
                             notices.push(notice);

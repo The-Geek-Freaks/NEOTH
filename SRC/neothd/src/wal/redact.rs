@@ -199,7 +199,7 @@ fn try_lock_segment_rewrite_once(lock_path: &Path) -> Result<Option<std::fs::Fil
         Err(error) => {
             return Err(error).with_context(|| {
                 format!(
-                    "open capability-bound WAL rewrite lock {}",
+                    "open capability-bound WAL rewrite lock without following links: {}",
                     lock_path.display()
                 )
             });
@@ -1095,12 +1095,10 @@ mod tests {
         std::fs::write(&outside, b"outside").unwrap();
         symlink(&outside, segment_rewrite_lock_path(&segment)).unwrap();
 
-        let error = lock_segment_for_rewrite(&segment)
-            .err()
-            .expect("rewrite lock symlink must fail closed");
+        let error =
+            lock_segment_for_rewrite(&segment).expect_err("rewrite lock symlink must fail closed");
         assert!(
-            format!("{error:#}").contains("without following links")
-                || format!("{error:#}").contains("real regular file"),
+            format!("{error:#}").contains("without following links"),
             "unexpected no-follow refusal: {error:#}"
         );
         assert_eq!(std::fs::read(&outside).unwrap(), b"outside");

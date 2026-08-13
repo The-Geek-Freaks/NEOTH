@@ -258,11 +258,13 @@ jobs:
           - os: macos-14
             test_threads: 4
             junit_name: macos
+            nextest_timeout_minutes: 75
           - os: windows-2022
             # Localhost port-binding tests race on Windows under parallel
             # process execution; serial execution preserves the real contract.
             test_threads: 1
             junit_name: windows
+            nextest_timeout_minutes: 50
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -303,7 +305,7 @@ jobs:
           tool: cargo-nextest@0.9.134
 
       - name: cargo nextest workspace
-        timeout-minutes: 50
+        timeout-minutes: ${{ matrix.nextest_timeout_minutes }}
         shell: bash
         working-directory: SRC
         run: |

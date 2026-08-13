@@ -248,6 +248,11 @@ mod tests {
         std::fs::create_dir(home.path().join("identity")).unwrap();
         let key_path = home.path().join("identity").join(KEY_FILE);
         std::fs::write(&key_path, b"short").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
         #[cfg(windows)]
         crate::wal::win_native::set_private_current_user_dacl(&key_path).unwrap();
         let before = std::fs::read(&key_path).unwrap();

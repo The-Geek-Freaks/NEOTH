@@ -1829,6 +1829,18 @@ pub(crate) async fn drain_inbound_spool(cfg: &WebhookListenerConfig) {
 }
 
 async fn drain_inbound_spool_at(cfg: &WebhookListenerConfig, dir: &std::path::Path) {
+    drain_inbound_spool_at_with_batch_limit(cfg, dir, MAX_SPOOL_DRAIN_FILES).await;
+}
+
+async fn drain_inbound_spool_at_with_batch_limit(
+    cfg: &WebhookListenerConfig,
+    dir: &std::path::Path,
+    batch_limit: usize,
+) {
+    assert!(
+        batch_limit > 0,
+        "inbound spool batch limit must be positive"
+    );
     // WhatsApp and LINE listeners share the spool directory but own distinct
     // policies/pipelines. Each startup drains only its own decoder so a LINE
     // survivor can never run through WhatsApp's sender policy (or vice versa).
@@ -1843,10 +1855,10 @@ async fn drain_inbound_spool_at(cfg: &WebhookListenerConfig, dir: &std::path::Pa
     };
     let mut drained_total = 0usize;
     loop {
-        let mut paths = Vec::with_capacity(MAX_SPOOL_DRAIN_FILES);
+        let mut paths = Vec::with_capacity(batch_limit);
         let mut inspected = 0usize;
         let mut exhausted = false;
-        while inspected < MAX_SPOOL_DRAIN_FILES {
+        while inspected < batch_limit {
             match entries.next_entry().await {
                 Ok(Some(entry)) => {
                     inspected += 1;
@@ -1881,7 +1893,7 @@ async fn drain_inbound_spool_at(cfg: &WebhookListenerConfig, dir: &std::path::Pa
         }
         debug!(
             inspected,
-            cap = MAX_SPOOL_DRAIN_FILES,
+            cap = batch_limit,
             "inbound spool: recovery batch complete; yielding before continuation"
         );
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -2934,9 +2946,7 @@ mod tests {
 
     #[tokio::test]
     async fn whatsapp_sender_gate_blocks_mismatch_audits_and_passes_exact_match() {
-        let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let (writer, join, _home, seg) = isolated_test_writer("webhook-whatsapp-gate").await;
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let cfg = counting_listener_cfg(
             "491709999999",
@@ -2950,7 +2960,7 @@ mod tests {
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         drop(cfg);
         drop(writer);
-        let _ = join.await;
+        assert_test_writer_completed(join).await;
         assert_eq!(
             read_first_frame(&seg).0,
             crate::wal::events::EVENT_TYPE_CHANNEL_GATE_REJECTED
@@ -2968,9 +2978,7 @@ mod tests {
 
     #[tokio::test]
     async fn line_sender_gate_blocks_mismatch_audits_and_passes_exact_match() {
-        let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let (writer, join, _home, seg) = isolated_test_writer("webhook-line-gate").await;
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let mut cfg = counting_listener_cfg(
             "Uother",
@@ -2989,7 +2997,7 @@ mod tests {
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         drop(cfg);
         drop(writer);
-        let _ = join.await;
+        assert_test_writer_completed(join).await;
         assert_eq!(
             read_first_frame(&seg).0,
             crate::wal::events::EVENT_TYPE_CHANNEL_GATE_REJECTED
@@ -3068,6 +3076,27 @@ mod tests {
         }
     }
 
+    async fn isolated_test_writer(
+        fixture_name: &str,
+    ) -> (
+        crate::wal::writer::WalWriterHandle,
+        tokio::task::JoinHandle<std::result::Result<(), String>>,
+        tempfile::TempDir,
+        std::path::PathBuf,
+    ) {
+        crate::wal::writer::spawn_isolated_ready_test_writer(fixture_name)
+            .await
+            .expect("start ready, isolated webhook WAL fixture")
+    }
+
+    async fn assert_test_writer_completed(
+        join: tokio::task::JoinHandle<std::result::Result<(), String>>,
+    ) {
+        join.await
+            .expect("webhook WAL writer task must join")
+            .expect("webhook WAL writer must complete successfully");
+    }
+
     /// Decode the first WAL frame → (event_type, owned payload bytes).
     fn read_first_frame(seg: &std::path::Path) -> (u8, Vec<u8>) {
         let bytes = std::fs::read(seg).unwrap();
@@ -3086,9 +3115,7 @@ mod tests {
         // we machine-assert the server saw ZERO requests (the "skips API" half).
         use wiremock::MockServer;
         let server = MockServer::start().await;
-        let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let (writer, join, _home, seg) = isolated_test_writer("webhook-p0-denied").await;
         let cfg = gated_cfg(
             SendGovernance {
                 wal_writer: Some(writer.clone()),
@@ -3105,7 +3132,7 @@ mod tests {
         // gone. (Production never joins: the daemon owns the writer for life.)
         drop(cfg);
         drop(writer);
-        let _ = join.await;
+        assert_test_writer_completed(join).await;
         assert!(
             server.received_requests().await.unwrap().is_empty(),
             "Deny verdict must not hit the WhatsApp Graph API"
@@ -3129,9 +3156,7 @@ mod tests {
         // Machine-verified: the wiremock server receives ZERO requests.
         use wiremock::MockServer;
         let server = MockServer::start().await;
-        let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let (writer, join, _home, seg) = isolated_test_writer("webhook-p0-dry-run").await;
         let cfg = gated_cfg(
             SendGovernance {
                 wal_writer: Some(writer.clone()),
@@ -3145,7 +3170,7 @@ mod tests {
         dispatch_messages(&cfg, vec![inbound_fixture()]).await;
         drop(cfg);
         drop(writer);
-        let _ = join.await;
+        assert_test_writer_completed(join).await;
         assert!(
             server.received_requests().await.unwrap().is_empty(),
             "dry-run must not hit the WhatsApp Graph API"
@@ -3177,9 +3202,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let (writer, join, _home, seg) = isolated_test_writer("webhook-p0-send").await;
         let cfg = gated_cfg(
             SendGovernance {
                 wal_writer: Some(writer.clone()),
@@ -3193,7 +3216,7 @@ mod tests {
         dispatch_messages(&cfg, vec![inbound_fixture()]).await;
         drop(cfg);
         drop(writer);
-        let _ = join.await;
+        assert_test_writer_completed(join).await;
         // Exactly one Graph API POST landed (also enforced by `.expect(1)`).
         let reqs = server.received_requests().await.unwrap();
         assert_eq!(
@@ -3265,9 +3288,7 @@ mod tests {
         // ZERO requests (the "skips API" half).
         use wiremock::MockServer;
         let server = MockServer::start().await;
-        let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let (writer, join, _home, seg) = isolated_test_writer("webhook-line-denied").await;
         let cfg = gated_line_cfg(
             SendGovernance {
                 wal_writer: Some(writer.clone()),
@@ -3281,7 +3302,7 @@ mod tests {
         dispatch_line_messages(&cfg, vec![inbound_fixture()]).await;
         drop(cfg);
         drop(writer);
-        let _ = join.await;
+        assert_test_writer_completed(join).await;
         assert!(
             server.received_requests().await.unwrap().is_empty(),
             "Deny verdict must not hit the LINE push API"
@@ -3316,9 +3337,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let (writer, join, _home, seg) = isolated_test_writer("webhook-line-send").await;
         let cfg = gated_line_cfg(
             SendGovernance {
                 wal_writer: Some(writer.clone()),
@@ -3332,7 +3351,7 @@ mod tests {
         dispatch_line_messages(&cfg, vec![inbound_fixture()]).await;
         drop(cfg);
         drop(writer);
-        let _ = join.await;
+        assert_test_writer_completed(join).await;
         let reqs = server.received_requests().await.unwrap();
         assert_eq!(
             reqs.len(),
@@ -4023,9 +4042,11 @@ mod tests {
 
     #[tokio::test]
     async fn spool_recovery_continues_past_the_first_bounded_batch() {
+        const TEST_BATCH_LIMIT: usize = 1;
+
         let home = tempfile::tempdir().unwrap();
         let spool_dir = inbound_spool_dir_at(home.path());
-        for index in 0..=MAX_SPOOL_DRAIN_FILES {
+        for index in 0..=TEST_BATCH_LIMIT {
             let message_id = format!("wamid.BATCH.{index:05}");
             let raw = format!(
                 r#"{{"object":"whatsapp_business_account","entry":[{{"id":"W","changes":[{{"field":"messages","value":{{"metadata":{{"phone_number_id":"PN","display_phone_number":"+49"}},"contacts":[{{"profile":{{"name":"S"}},"wa_id":"49"}}],"messages":[{{"from":"49","id":"{message_id}","timestamp":"1700000000","type":"text","text":{{"body":"hi"}}}}]}}}}]}}]}}"#
@@ -4056,10 +4077,10 @@ mod tests {
             dispatch_join: None,
         };
 
-        drain_inbound_spool_at(&cfg, &spool_dir).await;
+        drain_inbound_spool_at_with_batch_limit(&cfg, &spool_dir, TEST_BATCH_LIMIT).await;
         assert_eq!(
             count.load(std::sync::atomic::Ordering::SeqCst),
-            MAX_SPOOL_DRAIN_FILES + 1,
+            TEST_BATCH_LIMIT + 1,
             "every survivor must be replayed even when recovery needs multiple batches"
         );
         assert_eq!(std::fs::read_dir(&spool_dir).unwrap().count(), 0);
@@ -4109,9 +4130,7 @@ mod tests {
         // pipeline writes a unique marker frame; after the listener stops, drain
         // the JoinSet — it must yield >=1 joined task (the dispatch was tracked,
         // not detached) and the marker frame must be durable in the WAL.
-        let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let (writer, join, _wal_home, seg) = isolated_test_writer("webhook-cor34").await;
 
         let writer_for_pipeline = writer.clone();
         let pipeline: PipelineHandler = Box::new(move |_inbound| {
@@ -4185,7 +4204,7 @@ mod tests {
         );
 
         drop(writer);
-        let _ = join.await;
+        assert_test_writer_completed(join).await;
         let bytes = std::fs::read(&seg).unwrap();
         assert!(
             bytes
