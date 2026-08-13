@@ -1639,13 +1639,11 @@ fn cleanup_uncommitted_segment(
         cleanup_failures.push(format!("remove exact new leaf: {error}"));
     }
     #[cfg(unix)]
-    match parent.try_clone() {
-        Ok(directory) => {
-            if let Err(error) = directory.into_std_file().sync_all() {
-                cleanup_failures.push(format!("sync parent after rollback: {error}"));
-            }
-        }
-        Err(error) => cleanup_failures.push(format!("clone parent for rollback sync: {error}")),
+    if let Err(error) = crate::skills::store::sync_parent_directory(
+        parent,
+        display_path.parent().unwrap_or(display_path),
+    ) {
+        cleanup_failures.push(format!("sync parent after rollback: {error:#}"));
     }
 
     if cleanup_failures.is_empty() {
@@ -1912,7 +1910,14 @@ fn open_segment_capability_bound(
                 )));
             }
         }
-        root.dir.try_clone()?.into_std_file().sync_all()?;
+        crate::skills::store::sync_parent_directory(&root.dir, &root.display_path).map_err(
+            |error| {
+                WalError::Io(std::io::Error::other(format!(
+                    "sync published WAL parent {}: {error:#}",
+                    root.display_path.display()
+                )))
+            },
+        )?;
     }
 
     Ok((stage.into_std(), true))
