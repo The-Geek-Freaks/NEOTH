@@ -3926,26 +3926,54 @@ fn append_authority_wal_payload_blocking(home: &Path, payload: Vec<u8>) -> Resul
                     .context("create Skill authority WAL directory")?;
                 let segment =
                     crate::wal::writer::unique_standalone_segment_path(&wal_dir, "skill-authority");
-                let (writer, join) =
-                    crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
-                        .context("spawn home-bound Skill authority WAL writer")?;
+                let (writer, completion, ready) =
+                    crate::wal::writer::spawn_for_home_ready_with_completion(
+                        segment,
+                        home.to_path_buf(),
+                    )
+                    .context("spawn home-bound Skill authority WAL writer")?;
+                if let Err(startup) = ready.wait().await {
+                    drop(writer);
+                    let finalization = completion.wait().await;
+                    return match finalization {
+                        Ok(()) => {
+                            Err(startup).context("initialize home-bound Skill authority WAL writer")
+                        }
+                        Err(finalization) => Err(anyhow::anyhow!(
+                            "initialize home-bound Skill authority WAL writer: {startup:#}; \
+                             additionally failed to finalize home-bound Skill \
+                             authority WAL writer: {finalization:#}"
+                        )),
+                    };
+                }
                 let header = crate::wal::HeaderBuilder::new(
                     crate::wal::events::EVENT_TYPE_EXTENDED,
                     &payload,
                 )
                 .event_subtype(subtype)
                 .build();
-                writer
-                    .append(header, payload)
-                    .await
-                    .context("append authenticated Skill authority WAL head")?;
-                super::registry::notify_runtime_authority_transition(
-                    &home,
-                    super::registry::RuntimeAuthorityTransitionKind::AuthorityDecision,
-                );
+                let append = writer.append(header, payload).await;
                 drop(writer);
-                let _ = join.await;
-                Ok(())
+                let finalization = completion.wait().await;
+                match (append, finalization) {
+                    (Ok(_), Ok(())) => {
+                        super::registry::notify_runtime_authority_transition(
+                            &home,
+                            super::registry::RuntimeAuthorityTransitionKind::AuthorityDecision,
+                        );
+                        Ok(())
+                    }
+                    (Err(append), Ok(())) => {
+                        Err(append).context("append authenticated Skill authority WAL head")
+                    }
+                    (Ok(_), Err(finalization)) => Err(finalization)
+                        .context("finalize authenticated Skill authority WAL writer"),
+                    (Err(append), Err(finalization)) => Err(anyhow::anyhow!(
+                        "append authenticated Skill authority WAL head: {append:#}; \
+                         additionally failed to finalize authenticated Skill \
+                         authority WAL writer: {finalization:#}"
+                    )),
+                }
             })
         })
         .context("spawn Skill authority WAL transaction thread")?
