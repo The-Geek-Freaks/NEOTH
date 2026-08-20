@@ -611,9 +611,7 @@ impl ContextImportOperationLease {
             // `PoisonError<MutexGuard<_>>` is not Send, so never carry its
             // guard into anyhow. The owned domain error preserves fail-closed
             // behavior without leaking poisoned-lock internals.
-            .map_err(|_| {
-                anyhow::Error::from(ConnectorControlPlaneError::AuthorityPoisoned)
-            })?;
+            .map_err(|_| anyhow::Error::from(ConnectorControlPlaneError::AuthorityPoisoned))?;
         if !state.accepting_leases
             || state.generation != self.generation
             || !state.active_operation_ids.contains(&self.operation_id)
@@ -1263,10 +1261,7 @@ mod tests {
         let gate = Arc::clone(&lease.gate);
         assert!(
             std::thread::spawn(move || {
-                let _guard = gate
-                    .state
-                    .lock()
-                    .expect("fresh test gate must lock");
+                let _guard = gate.state.lock().expect("fresh test gate must lock");
                 panic!("deliberately poison the account gate");
             })
             .join()
