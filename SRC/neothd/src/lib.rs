@@ -117,6 +117,8 @@ pub mod code_map;
 pub mod coding;
 pub mod computer_use;
 pub mod config;
+/// GOLD-CC-01 — typed, fail-closed connector control-plane contracts.
+pub mod connectors;
 pub mod consent;
 pub mod context;
 pub mod council;
