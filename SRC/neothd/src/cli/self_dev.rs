@@ -846,6 +846,15 @@ fn read_source_edit_path_nofollow(
                     "source-edit leaf {:?} is not a regular file",
                     name
                 );
+                // This is an early, metadata-only refusal for oversized leaves.
+                // The nofollow-opened-handle check below remains authoritative
+                // against a concurrent replacement or growth race.
+                anyhow::ensure!(
+                    named.len() <= max_bytes,
+                    "source-edit leaf {:?} exceeds the {}-byte bounded evidence cap",
+                    name,
+                    max_bytes
+                );
                 return read_source_edit_regular_leaf(&current, name, max_bytes).map(Some);
             }
             anyhow::ensure!(

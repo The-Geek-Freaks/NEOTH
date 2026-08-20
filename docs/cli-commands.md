@@ -3244,6 +3244,7 @@ GOLD-FEAT-05 — propose a source-code edit against NEOTH's own source tree. Fiv
 - `--dry-run` — Evaluate all five gates but do NOT apply the diff to the live tree
 - `--yes` — Acknowledge the self-edit before applying. REQUIRED at Elevated/Full autonomy — the permission gate (Layer 3) refuses a self-source edit without this explicit ack (policy: never auto-apply, even at Full). Not needed for `--dry-run`, which never applies to the live tree
 - `--expect-hash <SHA256>` — Expected SHA-256 hex digest of the diff file (TOCTOU guard)
+- `--proposal-id <ID>` — Bind this live apply to the exact pending self-development SourceEdit proposal. `--expect-hash` is mandatory with this option and must equal both the reviewed proposal hash and the bytes passed to the gate. Proposal-bound edits cannot be dry-runs
 
 ## `neoth self-improve`
 
