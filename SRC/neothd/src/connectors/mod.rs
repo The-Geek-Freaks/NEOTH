@@ -292,23 +292,23 @@ pub enum ConnectorRole {
 pub struct ConnectorRoles(u8);
 
 impl ConnectorRoles {
-    const AGENT_CHANNEL: u8 = 1 << 0;
-    const CONTEXT_SOURCE: u8 = 1 << 1;
-    const RESEARCH_BACKEND: u8 = 1 << 2;
-    const ACTION_SINK: u8 = 1 << 3;
+    const AGENT_CHANNEL_MASK: u8 = 1 << 0;
+    const CONTEXT_SOURCE_MASK: u8 = 1 << 1;
+    const RESEARCH_BACKEND_MASK: u8 = 1 << 2;
+    const ACTION_SINK_MASK: u8 = 1 << 3;
 
     pub const NONE: Self = Self(0);
-    pub const CHANNEL: Self = Self(Self::AGENT_CHANNEL);
-    pub const CONTEXT_SOURCE: Self = Self(Self::CONTEXT_SOURCE);
-    pub const RESEARCH_BACKEND: Self = Self(Self::RESEARCH_BACKEND);
-    pub const ACTION_SINK: Self = Self(Self::ACTION_SINK);
+    pub const CHANNEL: Self = Self(Self::AGENT_CHANNEL_MASK);
+    pub const CONTEXT_SOURCE: Self = Self(Self::CONTEXT_SOURCE_MASK);
+    pub const RESEARCH_BACKEND: Self = Self(Self::RESEARCH_BACKEND_MASK);
+    pub const ACTION_SINK: Self = Self(Self::ACTION_SINK_MASK);
 
     pub const fn contains(self, role: ConnectorRole) -> bool {
         let bit = match role {
-            ConnectorRole::AgentChannel => Self::AGENT_CHANNEL,
-            ConnectorRole::ContextSource => Self::CONTEXT_SOURCE,
-            ConnectorRole::ResearchBackend => Self::RESEARCH_BACKEND,
-            ConnectorRole::ActionSink => Self::ACTION_SINK,
+            ConnectorRole::AgentChannel => Self::AGENT_CHANNEL_MASK,
+            ConnectorRole::ContextSource => Self::CONTEXT_SOURCE_MASK,
+            ConnectorRole::ResearchBackend => Self::RESEARCH_BACKEND_MASK,
+            ConnectorRole::ActionSink => Self::ACTION_SINK_MASK,
         };
         self.0 & bit != 0
     }
@@ -906,7 +906,7 @@ pub enum ConnectorConfigurationError {
     EgressNotAllowed(ConnectorId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConnectorAdmissionError {
     #[error("connector configuration is not admissible: {0}")]
     Configuration(ConnectorConfigurationError),
