@@ -1,0 +1,6 @@
+export component BadNested inherits Rectangle {
+    color: root.is-alert ? #ABCDEF : Theme.text-primary;
+    font-family: root.is-alert ? "Comic Sans MS" : Theme.font-sans;
+    font-size: root.is-alert ? 12px : Theme.font-size-sm;
+    border-radius: root.is-alert ? 8px : Theme.radius-sm;
+}

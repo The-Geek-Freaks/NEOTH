@@ -1,0 +1,12 @@
+export component AllowedThemeAndCompatibility inherits Rectangle {
+    background: Theme.surface-1;
+    color: Theme.text-primary;
+    font-family: Theme.font-mono;
+    font-size: Theme.font-size-xs;
+    border-radius: Theme.radius-sm;
+    drop-shadow-color: #00000040;
+    text: "escaped quote: \\\"// ; still text";
+    Text { font-size: 9px; }
+    Rectangle { border-radius: 3.5px; }
+    Rectangle { border-radius: 1.7 * root.u; }
+}

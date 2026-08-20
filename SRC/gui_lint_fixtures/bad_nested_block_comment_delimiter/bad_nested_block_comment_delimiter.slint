@@ -1,0 +1,10 @@
+export component BadNestedBlockCommentDelimiter inherits Rectangle {
+    color: /* outer /* inner */ ; still outer */
+        #ABCDEF;
+    font-family: /* outer /* inner */ ; still outer */
+        "Comic Sans MS";
+    font-size: /* outer /* inner */ ; still outer */
+        12px;
+    border-radius: /* outer /* inner */ ; still outer */
+        8px;
+}

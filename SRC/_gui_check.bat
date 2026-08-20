@@ -5,6 +5,16 @@ if "%~1"=="" (
     echo GUI_GATE_EXIT=2
     exit /b 2
 )
+call "%~dp0_gui_lint.bat" --self-test
+if errorlevel 1 (
+    echo GUI_GATE_EXIT=1
+    exit /b 1
+)
+call "%~dp0_gui_lint.bat"
+if errorlevel 1 (
+    echo GUI_GATE_EXIT=1
+    exit /b 1
+)
 call "%~dp0_msvc_env.bat"
 if errorlevel 1 (
     echo GUI_GATE_EXIT=1

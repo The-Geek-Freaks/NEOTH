@@ -166,6 +166,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      # ADOPT31-G2 is deliberately independent of cargo: token drift must
+      # fail the PR gate even if the GUI crate is not rebuilt by a fast path.
+      - name: GUI token-drift contract and source gate
+        shell: pwsh
+        run: |
+          ./SRC/_gui_lint.ps1 -SelfTest
+          ./SRC/_gui_lint.ps1
+
       - name: Setup Rust 1.91
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
