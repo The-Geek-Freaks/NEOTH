@@ -10,25 +10,33 @@
 //! 100% offline: it scores grade FILES — no live legacy-AI, no LLM, no grading
 //! here (the grading is the operator's run; the file format is the contract).
 
-use std::path::PathBuf;
+use std::{collections::BTreeSet, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::cli::OutputFormat;
-use crate::recall::goldset::{GraderGrade, load_goldset, load_grades};
+use crate::recall::goldset::{
+    GraderGrade, GoldsetEntry, load_grader_config, load_goldset, load_grades,
+};
 use crate::recall::parity_run::{ParityRunResult, compute_parity_run};
 
 #[derive(Args, Debug, Clone)]
 pub struct RecallScoreArgs {
     /// Grader-sheet JSONL file(s) (each line a GraderGrade: query_id, grader_id,
-    /// system, 5×Likert). Pass one per grader; all are merged. Need ≥ 2 graders.
+    /// system, 5×Likert). Supply no more files than configured graders; all
+    /// records are merged. Every configured grader must cover every query/system.
     #[arg(long = "grades", required = true, num_args = 1..)]
     pub grades: Vec<PathBuf>,
-    /// Optional goldset JSONL — validated + its query count reported (the
-    /// scoring runs off the grades, not the goldset).
-    #[arg(long)]
-    pub goldset: Option<PathBuf>,
+    /// Versioned grader roster JSON. Required: binds submitted grader IDs to
+    /// validated provider/family/model metadata and requires an independent
+    /// external family. This is metadata only, not provenance evidence.
+    #[arg(long, required = true, value_name = "PATH")]
+    pub grader_config: PathBuf,
+    /// Goldset JSONL. Required: exactly 100 unique canonical query IDs must
+    /// match submitted grade query IDs; partial or extra grading fails.
+    #[arg(long, required = true, value_name = "PATH")]
+    pub goldset: PathBuf,
     /// Don't emit `0x3E` WAL frames (dry scoring; the report still prints).
     #[arg(long)]
     pub no_audit: bool,
@@ -37,55 +45,55 @@ pub struct RecallScoreArgs {
 }
 
 pub async fn run_recall_score(args: RecallScoreArgs) -> Result<()> {
+    let grader_config = load_grader_config(&args.grader_config)
+        .with_context(|| format!("load --grader-config {}", args.grader_config.display()))?;
+    let goldset_entries = load_goldset(&args.goldset)
+        .with_context(|| format!("load --goldset {}", args.goldset.display()))?;
+    validate_goldset_query_ids(&goldset_entries)?;
+
+    if args.grades.len() > grader_config.graders().len() {
+        anyhow::bail!(
+            "received {} --grades file(s), but the validated grader roster has only {} grader(s)",
+            args.grades.len(),
+            grader_config.graders().len(),
+        );
+    }
+    let expected_observations = goldset_entries
+        .len()
+        .checked_mul(grader_config.graders().len())
+        .and_then(|count| count.checked_mul(2))
+        .context("goldset/roster observation count overflow")?;
+
     let mut all_grades: Vec<GraderGrade> = Vec::new();
     for path in &args.grades {
         let g = load_grades(path).with_context(|| format!("load grades {}", path.display()))?;
+        let aggregate_count = all_grades
+            .len()
+            .checked_add(g.len())
+            .context("grade observation count overflow")?;
+        if aggregate_count > expected_observations {
+            anyhow::bail!(
+                "grade observations exceed the exact goldset/roster matrix: {} received, {} maximum",
+                aggregate_count,
+                expected_observations,
+            );
+        }
         all_grades.extend(g);
     }
 
-    // Goldset coverage gate (fail-closed): if a goldset is supplied, EVERY one
-    // of its queries must be graded for BOTH systems — otherwise the gate would
-    // silently score a subset and a missing-coverage hole could mask a failing
-    // query (review HIGH). No goldset ⇒ score whatever grades cover.
-    if let Some(gs) = &args.goldset {
-        let entries = load_goldset(gs).with_context(|| "load --goldset")?;
-        let graded: std::collections::BTreeSet<(&str, bool)> = all_grades
-            .iter()
-            .map(|g| {
-                (
-                    g.query_id.as_str(),
-                    matches!(g.system, crate::recall::goldset::GradedSystem::Neoth),
-                )
-            })
-            .collect();
-        let missing: Vec<&str> = entries
-            .iter()
-            .filter(|e| {
-                !graded.contains(&(e.query_id.as_str(), true))
-                    || !graded.contains(&(e.query_id.as_str(), false))
-            })
-            .map(|e| e.query_id.as_str())
-            .collect();
-        if !missing.is_empty() {
-            anyhow::bail!(
-                "goldset coverage incomplete: {} of {} queries lack grades for both systems (e.g. {}). \
-                 The gate refuses to score a subset.",
-                missing.len(),
-                entries.len(),
-                missing
-                    .iter()
-                    .take(5)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
-        if matches!(args.output, OutputFormat::Table) {
-            println!("# goldset: {} queries, full coverage", entries.len());
-        }
+    // The scorer repeats this identity binding as a defense-in-depth invariant;
+    // retain it at the CLI boundary too, so malformed inputs cannot arrive at
+    // the scoring implementation under a different caller in the future.
+    validate_goldset_query_binding(&goldset_entries, &all_grades)?;
+    if matches!(args.output, OutputFormat::Table) {
+        println!(
+            "# goldset: {} queries, exact grade-query binding",
+            goldset_entries.len()
+        );
     }
 
-    let result = compute_parity_run(&all_grades).context("compute parity run")?;
+    let result = compute_parity_run(&grader_config, &goldset_entries, &all_grades)
+        .context("compute parity run")?;
 
     let mut audit_incomplete = false;
     if !args.no_audit && !result.critical_queries.is_empty() {
@@ -122,6 +130,71 @@ pub async fn run_recall_score(args: RecallScoreArgs) -> Result<()> {
     Ok(())
 }
 
+/// Bind the mandatory canonical goldset to the grade corpus without silently
+/// widening or shrinking the query set. Grade-observation uniqueness and
+/// per-grader/system completeness are separate scorer invariants; this helper
+/// owns only the supplied-goldset query identity contract.
+fn validate_goldset_query_binding(entries: &[GoldsetEntry], grades: &[GraderGrade]) -> Result<()> {
+    let goldset_query_ids = validate_goldset_query_ids(entries)?;
+    let grade_query_ids: BTreeSet<&str> =
+        grades.iter().map(|grade| grade.query_id.as_str()).collect();
+    if grade_query_ids.iter().any(|query_id| query_id.trim().is_empty()) {
+        anyhow::bail!("grades contain an empty query_id; exact goldset binding is impossible");
+    }
+
+    let missing_count = goldset_query_ids.difference(&grade_query_ids).count();
+    let missing: Vec<&str> = goldset_query_ids
+        .difference(&grade_query_ids)
+        .take(5)
+        .copied()
+        .collect();
+    let extra_count = grade_query_ids.difference(&goldset_query_ids).count();
+    let extra: Vec<&str> = grade_query_ids
+        .difference(&goldset_query_ids)
+        .take(5)
+        .copied()
+        .collect();
+    if !missing.is_empty() || !extra.is_empty() {
+        anyhow::bail!(
+            "goldset/grade query IDs differ: {} goldset query(s) missing from grades (e.g. {}); \
+             {} grade query(s) absent from goldset (e.g. {}). The gate refuses partial or widened \
+             corpora.",
+            missing_count,
+            display_query_examples(&missing),
+            extra_count,
+            display_query_examples(&extra),
+        );
+    }
+    Ok(())
+}
+
+/// Validate the mandatory goldset's own identity set before it defines the
+/// expected grade-matrix size. A duplicate would make the declared corpus and
+/// its exact cardinality ambiguous even before any grade file is read.
+fn validate_goldset_query_ids(entries: &[GoldsetEntry]) -> Result<BTreeSet<&str>> {
+    let mut goldset_query_ids = BTreeSet::new();
+    for entry in entries {
+        if entry.query_id.trim().is_empty() {
+            anyhow::bail!("goldset contains an empty query_id; exact binding is impossible");
+        }
+        if !goldset_query_ids.insert(entry.query_id.as_str()) {
+            anyhow::bail!(
+                "goldset contains duplicate query_id {:?}; exact binding is ambiguous",
+                entry.query_id
+            );
+        }
+    }
+    Ok(goldset_query_ids)
+}
+
+fn display_query_examples(query_ids: &[&str]) -> String {
+    if query_ids.is_empty() {
+        "none".to_owned()
+    } else {
+        query_ids.join(", ")
+    }
+}
+
 fn render(r: &ParityRunResult, output: &OutputFormat) {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -131,6 +204,15 @@ fn render(r: &ParityRunResult, output: &OutputFormat) {
                 "mean_kappa": r.mean_kappa,
                 "passed": r.verdict.passed,
                 "critical_count": r.verdict.critical_count,
+                "independent_external_family_gate_met": r.independent_external_family_gate_met,
+                "participating_graders": r.participating_graders.iter()
+                    .map(|grader| serde_json::json!({
+                        "grader_id": grader.grader_id.as_str(),
+                        "provider": grader.provider,
+                        "family": grader.family,
+                        "model_id": grader.model_id.as_str(),
+                    }))
+                    .collect::<Vec<_>>(),
                 "dimension_kappas": r.dimension_kappas.iter()
                     .map(|(d, k)| serde_json::json!({ "dimension": d.as_str(), "kappa": k }))
                     .collect::<Vec<_>>(),
@@ -173,6 +255,17 @@ fn render(r: &ParityRunResult, output: &OutputFormat) {
                 "  mean kappa    : {:.4}  (>= 0.60 reliability: {})",
                 r.mean_kappa, r.verdict.kappa_gate_met
             );
+            println!(
+                "  independent external family gate: {}",
+                r.independent_external_family_gate_met
+            );
+            println!("  participating graders (validated metadata):");
+            for grader in &r.participating_graders {
+                println!(
+                    "    id={} provider={:?} family={:?} model={}",
+                    grader.grader_id, grader.provider, grader.family, grader.model_id
+                );
+            }
             println!("  absolute floors met: {}", r.verdict.absolute_floors_met);
             println!("  CRITICAL      : {}", r.verdict.critical_count);
             println!("  per dimension :");
@@ -309,4 +402,110 @@ async fn emit_critical_divergences(r: &ParityRunResult) -> bool {
 
 fn now_unix() -> i64 {
     crate::time::now_unix_i64()
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+
+    use super::*;
+    use crate::cli::{Cli, Commands};
+    use crate::recall::goldset::GoldsetCategory;
+
+    fn entry(query_id: &str) -> GoldsetEntry {
+        GoldsetEntry {
+            query_id: query_id.to_owned(),
+            query_text: "fixture".to_owned(),
+            category: GoldsetCategory::Recall,
+            expected_sources: Vec::new(),
+            expected_response: String::new(),
+        }
+    }
+
+    fn grade(query_id: &str) -> GraderGrade {
+        GraderGrade {
+            query_id: query_id.to_owned(),
+            grader_id: "A".to_owned(),
+            system: crate::recall::goldset::GradedSystem::Neoth,
+            factual: 5,
+            completeness: 5,
+            on_tone: 5,
+            usefulness: 5,
+            brevity: 5,
+        }
+    }
+
+    #[test]
+    fn supplied_goldset_requires_exact_grade_query_ids() {
+        let entries = vec![entry("q1"), entry("q2")];
+        assert!(
+            validate_goldset_query_binding(&entries, &[grade("q1"), grade("q2")]).is_ok()
+        );
+        assert!(validate_goldset_query_binding(&entries, &[grade("q1")]).is_err());
+        assert!(validate_goldset_query_binding(&entries, &[grade("q1"), grade("q2"), grade("q3")])
+            .is_err());
+    }
+
+    #[test]
+    fn supplied_goldset_rejects_duplicate_or_empty_query_ids() {
+        assert!(validate_goldset_query_binding(&[entry("q1"), entry("q1")], &[grade("q1")])
+            .is_err());
+        assert!(validate_goldset_query_binding(&[entry(" ")], &[grade("q1")]).is_err());
+        assert!(validate_goldset_query_binding(&[entry("q1")], &[grade(" ")]).is_err());
+    }
+
+    #[test]
+    fn recall_score_requires_grader_config_at_clap_boundary() {
+        assert!(Cli::try_parse_from([
+            "neoth",
+            "recall-score",
+            "--goldset",
+            "eval/goldset.jsonl",
+            "--grades",
+            "a.jsonl",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn recall_score_requires_goldset_at_clap_boundary() {
+        assert!(Cli::try_parse_from([
+            "neoth",
+            "recall-score",
+            "--grader-config",
+            "eval/grader-config.json",
+            "--grades",
+            "a.jsonl",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn recall_score_parses_valid_mixed_input_paths() {
+        let cli = Cli::try_parse_from([
+            "neoth",
+            "recall-score",
+            "--grader-config",
+            "eval/grader-config.json",
+            "--goldset",
+            "eval/goldset.jsonl",
+            "--grades",
+            "eval/grades-a.jsonl",
+            "--grades",
+            "eval/grades-d.jsonl",
+        ])
+        .expect("P1-07 recall-score surface must parse complete inputs");
+        let Commands::RecallScore(args) = cli.command else {
+            panic!("expected recall-score command");
+        };
+        assert_eq!(args.grader_config, PathBuf::from("eval/grader-config.json"));
+        assert_eq!(args.goldset, PathBuf::from("eval/goldset.jsonl"));
+        assert_eq!(
+            args.grades,
+            vec![
+                PathBuf::from("eval/grades-a.jsonl"),
+                PathBuf::from("eval/grades-d.jsonl"),
+            ]
+        );
+    }
 }
