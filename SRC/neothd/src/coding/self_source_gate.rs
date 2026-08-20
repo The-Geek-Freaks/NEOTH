@@ -255,7 +255,7 @@ pub struct SelfEditOutcome {
 /// - `source_edit_pre_apply_plan`: only proposal-bound callers populate this;
 ///   Git's Layer-4b plan and a final no-follow base-image snapshot must both
 ///   match before live mutation.
-pub async fn run_gate_stack(
+pub(crate) async fn run_gate_stack(
     diff_text: &str,
     cfg: &FreedomConfig,
     dry_run: bool,
@@ -464,17 +464,17 @@ pub async fn run_gate_stack(
     // lightweight unified-diff parser—is the final authority after worktree
     // application, so reject additions, removals, renames and mode-smuggled
     // paths HERE, before Layer 5 or the live `git apply` sink can run.
-    if let Some(plan) = source_edit_pre_apply_plan {
-        if !exact_authoritative_path_set(plan.target_paths(), &real_paths) {
-            let reason = format!(
-                "proposal-bound source edit path mismatch: reviewed {:?}, git resolved {:?}",
-                plan.target_paths(),
-                real_paths
-            );
-            audit.layer2_allowlist = LayerOutcome::Fail(reason.clone());
-            let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &audit).await;
-            return Err(GateError::Allowlist(reason));
-        }
+    if let Some(plan) = source_edit_pre_apply_plan
+        && !exact_authoritative_path_set(plan.target_paths(), &real_paths)
+    {
+        let reason = format!(
+            "proposal-bound source edit path mismatch: reviewed {:?}, git resolved {:?}",
+            plan.target_paths(),
+            real_paths
+        );
+        audit.layer2_allowlist = LayerOutcome::Fail(reason.clone());
+        let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &audit).await;
+        return Err(GateError::Allowlist(reason));
     }
 
     // ── Layer 3b: autonomy permission re-check on git-truth paths ─────────────

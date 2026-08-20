@@ -634,7 +634,7 @@ fn ensure_source_edit_single_hard_link(file: &std::fs::File) -> Result<()> {
             links == 1,
             "source-edit leaf has {links} hard links; exactly one is required"
         );
-        return Ok(());
+        Ok(())
     }
     #[cfg(windows)]
     {
@@ -1798,13 +1798,6 @@ pub(crate) async fn begin_source_edit_apply(
 }
 
 impl SourceEditApplyTransaction {
-    /// The immutable reviewed path plan. The gate consumes this before its
-    /// live mutation boundary and compares it with Git's authoritative path
-    /// differential; callers cannot substitute a parser-only superset.
-    pub(crate) fn reviewed_target_paths(&self) -> &[String] {
-        &self.contract.target_paths
-    }
-
     /// Clone the opaque reviewed source plan for the gate's final no-follow
     /// preimage recheck immediately before the live git sink.
     pub(crate) fn pre_apply_plan(&self) -> SourceEditPreApplyPlan {

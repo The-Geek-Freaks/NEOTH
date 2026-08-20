@@ -1240,7 +1240,7 @@ fn parse_frontmatter(text: &str) -> Result<ParsedFrontmatter, ObsidianPlanError>
         .map_err(|_| ObsidianPlanError::MalformedFrontmatter)?;
     let managed = match yaml {
         YamlValue::Null => false,
-        YamlValue::Mapping(mapping) => match mapping.get(&YamlValue::String("source".to_owned())) {
+        YamlValue::Mapping(mapping) => match mapping.get(YamlValue::String("source".to_owned())) {
             None => false,
             Some(YamlValue::String(source)) => {
                 let source = source.trim().to_ascii_lowercase();
