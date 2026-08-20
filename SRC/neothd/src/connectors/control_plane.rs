@@ -584,7 +584,8 @@ fn validate_successor_config(
         let candidate = next.account(&instance);
         match candidate {
             Some(candidate) => {
-                let policy_changed = previous.configuration.policy != candidate.configuration.policy;
+                let policy_changed =
+                    previous.configuration.policy != candidate.configuration.policy;
                 let configuration_changed = previous.configuration != candidate.configuration;
                 let lifecycle_changed = previous.lifecycle != candidate.lifecycle;
                 if (configuration_changed || lifecycle_changed)
@@ -602,7 +603,9 @@ fn validate_successor_config(
                     && !lifecycle_changed
                     && candidate.lifecycle_revision != previous.lifecycle_revision
                 {
-                    return Err(ConnectorControlPlaneError::UnexpectedLifecycleRevision { instance });
+                    return Err(ConnectorControlPlaneError::UnexpectedLifecycleRevision {
+                        instance,
+                    });
                 }
             }
             None if previous.lifecycle != ConnectorLifecycle::Revoked => {
@@ -718,7 +721,9 @@ mod tests {
     fn only_matching_authenticated_subject_receives_live_authority() {
         let plane = plane(ConnectorLifecycle::Active);
         let instance = instance();
-        let authority = plane.authorize_context_import(&session(), &instance).unwrap();
+        let authority = plane
+            .authorize_context_import(&session(), &instance)
+            .unwrap();
         authority.ensure_live().unwrap();
         assert!(authority.binding_matches(&instance, &SubjectId::new("operator").unwrap(), 7, 11));
 
@@ -735,7 +740,9 @@ mod tests {
     fn operation_lease_is_exactly_bound_and_retirement_invalidates_it() {
         let plane = plane(ConnectorLifecycle::Active);
         let instance = instance();
-        let authority = plane.authorize_context_import(&session(), &instance).unwrap();
+        let authority = plane
+            .authorize_context_import(&session(), &instance)
+            .unwrap();
         let lease = authority.acquire_context_import_operation_lease().unwrap();
         assert!(lease.binding_matches(&instance, &SubjectId::new("operator").unwrap(), 7, 11));
         assert!(lease.ensure_live().is_ok());
@@ -752,7 +759,9 @@ mod tests {
     fn transition_blocks_new_leases_then_drains_existing_leases() {
         let plane = Arc::new(plane(ConnectorLifecycle::Active));
         let instance = instance();
-        let authority = plane.authorize_context_import(&session(), &instance).unwrap();
+        let authority = plane
+            .authorize_context_import(&session(), &instance)
+            .unwrap();
         let lease = authority.acquire_context_import_operation_lease().unwrap();
         let mut next = config(ConnectorLifecycle::Paused);
         next.registered_accounts[0].lifecycle_revision = 12;
@@ -770,7 +779,10 @@ mod tests {
         ) {
             std::thread::yield_now();
         }
-        assert!(matches!(lease.ensure_live(), Err(ConnectorControlPlaneError::AuthorityRetired)));
+        assert!(matches!(
+            lease.ensure_live(),
+            Err(ConnectorControlPlaneError::AuthorityRetired)
+        ));
         drop(lease);
         let transition = transition.join().unwrap();
         drop(transition);
@@ -778,14 +790,21 @@ mod tests {
         // Publication did not happen, so Drop restores only fresh authorities
         // from the former durable config; the stale authority remains dead.
         assert!(authority.ensure_live().is_err());
-        assert!(plane.authorize_context_import(&session(), &instance).is_ok());
+        assert!(
+            plane
+                .authorize_context_import(&session(), &instance)
+                .is_ok()
+        );
     }
 
     #[test]
     fn stale_revision_and_unrevoked_removal_are_rejected_before_transition() {
         let plane = plane(ConnectorLifecycle::Active);
         let mut stale_policy = config(ConnectorLifecycle::Active);
-        stale_policy.registered_accounts[0].configuration.policy.revision = 6;
+        stale_policy.registered_accounts[0]
+            .configuration
+            .policy
+            .revision = 6;
         stale_policy.registered_accounts[0].lifecycle_revision = 12;
         assert!(matches!(
             plane.begin_durable_transition(stale_policy),
@@ -822,7 +841,11 @@ mod tests {
             Err(ConnectorControlPlaneError::TransitionInProgress)
         ));
         drop(transition);
-        assert!(plane.authorize_context_import(&session(), &instance).is_ok());
+        assert!(
+            plane
+                .authorize_context_import(&session(), &instance)
+                .is_ok()
+        );
     }
 
     #[test]

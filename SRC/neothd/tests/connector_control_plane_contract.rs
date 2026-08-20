@@ -35,7 +35,10 @@ fn control_plane_exposes_no_public_capability_mint_or_effect_surface() {
 fn operation_lease_and_durable_transition_stay_private_and_fail_closed() {
     assert!(CONTROL_PLANE.contains("pub(crate) struct ContextImportOperationLease"));
     assert!(!CONTROL_PLANE.contains("impl Clone for ContextImportOperationLease"));
-    assert!(!CONTROL_PLANE.contains("#[derive(Clone, Debug)]\npub(crate) struct ContextImportOperationLease"));
+    assert!(
+        !CONTROL_PLANE
+            .contains("#[derive(Clone, Debug)]\npub(crate) struct ContextImportOperationLease")
+    );
     assert!(CONTROL_PLANE.contains("live_leases: usize"));
     assert!(CONTROL_PLANE.contains("fn retire_and_drain"));
     assert!(CONTROL_PLANE.contains("ProjectionFailedClosed"));
