@@ -533,9 +533,10 @@ fn open_approved_root(path: &Path) -> Result<ApprovedImportRoot, LocalImportErro
 
     // Darwin has no `openat2(RESOLVE_BENEATH)`.  Build the approved root one
     // component at a time from a pinned handle for `/` instead.  Every open
-    // has both `O_NOFOLLOW` and Darwin's `O_NOFOLLOW_ANY`: a kernel without
-    // the latter is deliberately unsupported rather than silently accepting
-    // a weaker path-resolution contract.
+    // has Darwin's whole-path `O_NOFOLLOW_ANY`; XNU rejects combining it with
+    // the weaker final-component-only `O_NOFOLLOW`. A kernel without the
+    // stronger flag is deliberately unsupported rather than silently
+    // accepting a weaker path-resolution contract.
     let mut current = open_macos_absolute_root()?;
     ensure_macos_local_filesystem(&current)?;
     for component in path.components() {
@@ -736,21 +737,17 @@ fn openat_raw(
 }
 
 #[cfg(target_os = "macos")]
-const MACOS_O_NOFOLLOW_ANY: libc::c_int = 0x2000_0000;
-
-#[cfg(target_os = "macos")]
 fn macos_directory_open_flags() -> libc::c_int {
     libc::O_RDONLY
         | libc::O_DIRECTORY
-        | libc::O_NOFOLLOW
-        | MACOS_O_NOFOLLOW_ANY
+        | libc::O_NOFOLLOW_ANY
         | libc::O_NONBLOCK
         | libc::O_CLOEXEC
 }
 
 #[cfg(target_os = "macos")]
 fn macos_leaf_open_flags() -> libc::c_int {
-    libc::O_RDONLY | libc::O_NOFOLLOW | MACOS_O_NOFOLLOW_ANY | libc::O_NONBLOCK | libc::O_CLOEXEC
+    libc::O_RDONLY | libc::O_NOFOLLOW_ANY | libc::O_NONBLOCK | libc::O_CLOEXEC
 }
 
 #[cfg(target_os = "macos")]
@@ -790,9 +787,9 @@ fn openat_macos_raw(
 #[cfg(target_os = "macos")]
 fn map_macos_resolution_error(error: std::io::Error) -> LocalImportError {
     match error.raw_os_error() {
-        // `O_NOFOLLOW` / `O_NOFOLLOW_ANY` report a link-like path component
-        // with ELOOP. This includes the Darwin firmlink/symlink resolution
-        // cases which must never escape the handle-relative traversal.
+        // `O_NOFOLLOW_ANY` reports a link-like path component with ELOOP.
+        // This includes Darwin firmlink/symlink resolution cases which must
+        // never escape the handle-relative traversal.
         Some(libc::ELOOP) => LocalImportError::SymlinkOrReparsePoint,
         Some(libc::EXDEV) => LocalImportError::MountBoundaryCrossed,
         // `O_NOFOLLOW_ANY` is a required Darwin capability. Older kernels or
@@ -1661,11 +1658,11 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_resolution_contract_requires_whole_path_nofollow_and_local_filesystems() {
-        assert_ne!(MACOS_O_NOFOLLOW_ANY, 0);
-        assert_ne!(macos_directory_open_flags() & libc::O_NOFOLLOW, 0);
-        assert_ne!(macos_directory_open_flags() & MACOS_O_NOFOLLOW_ANY, 0);
-        assert_ne!(macos_leaf_open_flags() & libc::O_NOFOLLOW, 0);
-        assert_ne!(macos_leaf_open_flags() & MACOS_O_NOFOLLOW_ANY, 0);
+        assert_ne!(libc::O_NOFOLLOW_ANY, 0);
+        assert_ne!(macos_directory_open_flags() & libc::O_NOFOLLOW_ANY, 0);
+        assert_ne!(macos_leaf_open_flags() & libc::O_NOFOLLOW_ANY, 0);
+        assert_eq!(macos_directory_open_flags() & libc::O_NOFOLLOW, 0);
+        assert_eq!(macos_leaf_open_flags() & libc::O_NOFOLLOW, 0);
         assert!(is_explicitly_local_macos_filesystem_name(b"apfs"));
         for forbidden in [
             b"hfs".as_slice(),
