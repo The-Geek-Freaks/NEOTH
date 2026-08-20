@@ -523,38 +523,6 @@ fn wait_for_read(fd: RawFd, deadline: Instant) -> Result<()> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::{Read as _, Write as _};
-    use std::os::fd::AsRawFd as _;
-
-    #[test]
-    fn read_poll_accepts_response_data_without_socket_read_timeouts() {
-        let (mut reader, mut writer) = StdUnixStream::pair().unwrap();
-        let writer_task = std::thread::spawn(move || {
-            writer.write_all(b"ok").unwrap();
-        });
-
-        wait_for_read(reader.as_raw_fd(), Instant::now() + Duration::from_secs(1)).unwrap();
-        let mut response = [0_u8; 2];
-        reader.read_exact(&mut response).unwrap();
-        assert_eq!(&response, b"ok");
-        writer_task.join().unwrap();
-    }
-
-    #[test]
-    fn read_poll_fails_closed_when_the_absolute_deadline_expires() {
-        let (reader, _writer) = StdUnixStream::pair().unwrap();
-        let deadline = Instant::now() + Duration::from_millis(10);
-        let error = wait_for_read(reader.as_raw_fd(), deadline).unwrap_err();
-        assert!(
-            error.to_string().contains("timed out"),
-            "read readiness must fail closed at the exchange deadline: {error:#}"
-        );
-    }
-}
-
 struct RawFdGuard(RawFd);
 
 impl Drop for RawFdGuard {
@@ -993,4 +961,34 @@ fn peer_uid(fd: std::os::fd::RawFd) -> Result<libc::uid_t> {
 )))]
 fn peer_uid(_fd: std::os::fd::RawFd) -> Result<libc::uid_t> {
     anyhow::bail!("same-user Unix peer credentials are unsupported on this platform")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_poll_accepts_response_data_without_socket_read_timeouts() {
+        let (mut reader, mut writer) = StdUnixStream::pair().unwrap();
+        let writer_task = std::thread::spawn(move || {
+            writer.write_all(b"ok").unwrap();
+        });
+
+        wait_for_read(reader.as_raw_fd(), Instant::now() + Duration::from_secs(1)).unwrap();
+        let mut response = [0_u8; 2];
+        reader.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"ok");
+        writer_task.join().unwrap();
+    }
+
+    #[test]
+    fn read_poll_fails_closed_when_the_absolute_deadline_expires() {
+        let (reader, _writer) = StdUnixStream::pair().unwrap();
+        let deadline = Instant::now() + Duration::from_millis(10);
+        let error = wait_for_read(reader.as_raw_fd(), deadline).unwrap_err();
+        assert!(
+            error.to_string().contains("timed out"),
+            "read readiness must fail closed at the exchange deadline: {error:#}"
+        );
+    }
 }
