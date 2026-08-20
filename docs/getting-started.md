@@ -47,9 +47,17 @@ Upgrades replace only that immutable baseline and preserve your NEOTH Wiki and
 That describes a future verified release artifact, not an assertion about the
 current source checkout. The pinned build input is `graphifyy==0.8.41`; its
 isolated runtime module is `python -I -m graphify`. Querying a packaged map is
-cross-platform and needs neither component. New map generation is currently
-fail-closed on Unix/macOS until the release has a bundled containment backend;
-the relevant v1.0 Gold acceptance tests remain open.
+cross-platform and needs neither component. New map generation is fail-closed
+on macOS until the release has a bundled containment backend. On Linux it is
+admitted only through a trusted `systemd --user` manager with cgroup-v2: each
+invocation has an owner-only `graphify-out` write capability, bounded
+CPU/RAM/PIDs/runtime/output, private temporary files and no network. A
+NEOTH guardian inside the transient service proves those effective cgroup,
+namespace, socket and write boundaries before it can exec Python; a missing
+or ineffective primitive rejects the invocation. A
+same-UID hostile host process is outside that boundary. Linux Graphify labeling
+is deliberately unavailable there until its loopback broker has an equally
+contained bridge; the relevant v1.0 Gold acceptance tests remain open.
 
 The separate manual crates.io workflow publishes `neoth-plugin-sdk` first and
 allows `neoth` only after the exact SDK version is visible to Cargo.

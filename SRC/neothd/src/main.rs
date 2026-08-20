@@ -26,6 +26,14 @@ use anyhow::{Context, Result};
 const MAIN_STACK_BYTES: usize = 32 * 1024 * 1024;
 
 fn main() -> Result<()> {
+    // The Graphify guardian is a private, transient-service-only pre-exec
+    // verifier. It must run before Clap and Tokio so untrusted Python cannot
+    // start until its effective Linux boundary has been attested.
+    #[cfg(target_os = "linux")]
+    if let Some(exit_code) = neothd::graphify_runner::run_linux_graphify_containment_guard_if_requested() {
+        std::process::exit(exit_code);
+    }
+
     // Private media-worker modes must run before Clap or the long-lived Tokio
     // runtime is constructed. They are intentionally absent from the public
     // command tree and exit immediately after one resource-bounded operation.
