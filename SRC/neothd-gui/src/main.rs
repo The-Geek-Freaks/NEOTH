@@ -23726,6 +23726,150 @@ mod chat_subprocess_tests {
     }
 
     #[test]
+    fn lf_p2_26a_post_provider_gate_round_trips_through_main_and_buddy_consumers() {
+        use neothd::cli::chat::{
+            emit_deferred_post_provider_stream_to, emit_deferred_stream_done_to,
+            emit_stream_finalization_error_to,
+        };
+        use neothd::hooks::dispatcher::StageOutcome;
+        use neothd::hooks::schema::{HookAction, HookDef, HookMatcher};
+        use neothd::hooks::{HookStage, run_stage};
+
+        const TOKEN: &str = "lf-p2-26a-gui-token";
+        const SECRET: &str = "sk-lf-p2-26a-gui-never-visible";
+        let provider_chunks = ["first chunk ", SECRET, " third chunk"];
+        let provider_body = provider_chunks.concat();
+        let make_hook = |action| HookDef {
+            name: "lf-p2-26a-gui-post-provider".to_owned(),
+            stage: HookStage::PostProviderCall,
+            enabled: Some(true),
+            priority: None,
+            matcher: Some(HookMatcher {
+                pattern: SECRET.to_owned(),
+            }),
+            action,
+            status_message: None,
+            once: false,
+            fail_fast: false,
+        };
+
+        let blocked = run_stage(
+            HookStage::PostProviderCall,
+            &provider_body,
+            &[make_hook(HookAction::Block {
+                reason: "synthetic secret must remain private".to_owned(),
+            })],
+        )
+        .expect("real post-provider dispatcher blocks the fixture");
+        assert!(matches!(blocked, StageOutcome::Block { .. }));
+
+        let accepted = run_stage(
+            HookStage::PostProviderCall,
+            &provider_body,
+            &[make_hook(HookAction::Replace {
+                template: "[REDACTED]".to_owned(),
+            })],
+        )
+        .expect("real post-provider dispatcher replaces the fixture");
+        let accepted_body = match accepted {
+            StageOutcome::Continue { body, .. } => body,
+            StageOutcome::Block { .. } => panic!("replace hook must continue"),
+        };
+        assert!(!accepted_body.contains(SECRET));
+
+        let mut identity = neothd::providers::CompletionIdentity::default();
+        identity.provider = "lf-p2-gui-fixture".to_owned();
+        identity.wire_model = "lf-p2-gui-model".to_owned();
+        let completion = neothd::providers::Completion {
+            identity,
+            model: "lf-p2-gui-model".to_owned(),
+            input_tokens: Some(13),
+            output_tokens: Some(8),
+            latency: std::time::Duration::from_millis(17),
+            ..Default::default()
+        };
+        let mut producer = Vec::new();
+        let pending = emit_deferred_post_provider_stream_to(
+            &mut producer,
+            Some(TOKEN),
+            256,
+            &completion,
+            &accepted_body,
+        )
+        .expect("real producer emits only the accepted body and boundary");
+        emit_deferred_stream_done_to(&mut producer, Some(TOKEN), &pending.done_line)
+            .expect("real producer commits success after finalization");
+        let wire = format!(
+            "{}\n{}",
+            skill_route_frame(TOKEN),
+            String::from_utf8(producer).expect("producer emits UTF-8 protocol bytes")
+        );
+        assert!(!wire.contains(SECRET));
+
+        // Main and Buddy have different UI workers, but both hand their owned
+        // child stdout to this exact authenticated parser.  Parse independently
+        // to prove each consumer receives one replacement-only completion with
+        // matching provider boundary, hash/count, request id, receipt, and
+        // terminal success ordering.
+        for consumer in ["Main", "Buddy"] {
+            let parsed = parse_chat_stream_protocol(&wire, Some(TOKEN));
+            assert!(parsed.provider_done, "{consumer} must see the boundary");
+            assert!(parsed.done, "{consumer} must see terminal success");
+            assert!(parsed.protocol_valid, "{consumer} must verify the receipt");
+            assert_eq!(parsed.text, accepted_body, "{consumer} visible body");
+            assert_eq!(parsed.stats.used_tokens, 21, "{consumer} token count");
+            assert_eq!(parsed.stats.input_tokens, 13, "{consumer} input count");
+            assert_eq!(parsed.stats.output_tokens, 8, "{consumer} output count");
+            assert_eq!(parsed.stats.limit_tokens, 256, "{consumer} token limit");
+            assert_eq!(parsed.stats.model, "lf-p2-gui-model", "{consumer} model");
+        }
+
+        let mut failed_producer = Vec::new();
+        let _pending = emit_deferred_post_provider_stream_to(
+            &mut failed_producer,
+            Some(TOKEN),
+            256,
+            &completion,
+            &accepted_body,
+        )
+        .expect("provider boundary is emitted before a later finalization failure");
+        emit_stream_finalization_error_to(
+            &mut failed_producer,
+            TOKEN,
+            "synthetic finalizer failed after provider boundary",
+        )
+        .expect("real producer surfaces an authenticated finalization failure");
+        let failed_wire = format!(
+            "{}\n{}",
+            skill_route_frame(TOKEN),
+            String::from_utf8(failed_producer).expect("producer emits UTF-8 protocol bytes")
+        );
+        for consumer in ["Main", "Buddy"] {
+            let parsed = parse_chat_stream_protocol(&failed_wire, Some(TOKEN));
+            assert!(
+                parsed.provider_done,
+                "{consumer} still sees provider boundary"
+            );
+            assert!(!parsed.done, "{consumer} must not receive false success");
+            assert!(
+                !(parsed.done && parsed.protocol_valid),
+                "{consumer} must never classify finalization failure as success"
+            );
+            assert_eq!(
+                parsed.text, accepted_body,
+                "{consumer} retains accepted body"
+            );
+            assert_eq!(parsed.notices.len(), 1, "{consumer} sees the error notice");
+            assert_eq!(parsed.notices[0].kind, "finalization_error");
+            assert!(
+                parsed.notices[0]
+                    .text
+                    .contains("synthetic finalizer failed")
+            );
+        }
+    }
+
+    #[test]
     fn gui_chat_skill_args_precede_flag_terminator_with_automatic_omitting_flag() {
         let mut explicit = std::process::Command::new("neoth");
         explicit.arg("chat").arg("--stream");

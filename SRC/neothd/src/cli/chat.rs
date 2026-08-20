@@ -3176,6 +3176,92 @@ struct PostReplyStreamPlan<'a> {
     limit_tokens: u32,
 }
 
+/// The two artifacts the deferred post-provider stream path is allowed to
+/// retain before the durable finalization succeeds.
+///
+/// A configured `PostProviderCall` hook owns the reply boundary: raw provider
+/// chunks remain private until it returns `Continue`.  This small framing seam
+/// is shared by the live pipeline and its black-box contract tests so a future
+/// refactor cannot accidentally expose pre-hook bytes or forge a terminal
+/// success record.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferredPostProviderStream {
+    /// The one accepted logical delta, or zero for an accepted empty reply.
+    pub chunk_count: u32,
+    /// The authenticated `done` frame, deliberately not yet written.
+    pub done_line: String,
+}
+
+/// Emit the accepted post-provider body and its authenticated provider
+/// boundary, but intentionally do **not** emit the terminal `done` frame.
+///
+/// The caller must write [`emit_deferred_stream_done_to`] only after every
+/// durable post-reply finalizer has succeeded.  Keeping that ordering in one
+/// real production seam means a failure can be represented visibly without
+/// ever claiming a successful completion.
+#[doc(hidden)]
+pub fn emit_deferred_post_provider_stream_to(
+    mut output: impl std::io::Write,
+    control_token: Option<&str>,
+    limit_tokens: u32,
+    completion: &crate::providers::Completion,
+    accepted_body: &str,
+) -> std::io::Result<DeferredPostProviderStream> {
+    let chunk_count = u32::from(!accepted_body.is_empty());
+    write_provider_stream_delta(&mut output, control_token, chunk_count, accepted_body)?;
+    let done_line = write_provider_done_and_build_stream_done_line(
+        &mut output,
+        StreamDoneMetadata {
+            control_token,
+            chunk_count,
+            input_tokens: completion.input_tokens,
+            output_tokens: completion.output_tokens,
+            limit_tokens,
+            elapsed_ms: completion.latency.as_millis().min(u128::from(u64::MAX)) as u64,
+            model: &completion.identity.wire_model,
+            response_text: accepted_body,
+            termination: &completion.termination,
+        },
+    )?;
+    Ok(DeferredPostProviderStream {
+        chunk_count,
+        done_line,
+    })
+}
+
+/// Commit a deferred terminal frame only after finalization has succeeded.
+#[doc(hidden)]
+pub fn emit_deferred_stream_done_to(
+    output: impl std::io::Write,
+    control_token: Option<&str>,
+    done_line: &str,
+) -> std::io::Result<()> {
+    write_stream_control_line(output, control_token, done_line)
+}
+
+/// Surface a post-provider finalization failure on the authenticated GUI wire.
+///
+/// This intentionally has no `done` counterpart.  A caller returning an error
+/// after this notice therefore cannot be mistaken by Main or Buddy for a clean
+/// terminal completion.
+#[doc(hidden)]
+pub fn emit_stream_finalization_error_to(
+    output: impl std::io::Write,
+    control_token: &str,
+    message: &str,
+) -> std::io::Result<()> {
+    let request_id = stream_request_id(control_token);
+    write_authenticated_stream_notice(
+        output,
+        control_token,
+        "finalization_error",
+        &request_id[..16],
+        message,
+        false,
+    )
+}
+
 fn build_stream_done_line(metadata: StreamDoneMetadata<'_>) -> String {
     #[derive(serde::Serialize)]
     struct DoneFrame<'a, T> {
@@ -5311,36 +5397,17 @@ async fn run_post_reply_pipelines(
         // body as one logical delta, then publish a boundary bound to exactly
         // those bytes. A later durability/review failure leaves provider_done
         // without done and is surfaced as a typed finalization_error event.
-        stream_plan.provider_chunk_count = u32::from(!response_text.is_empty());
         let stdout = std::io::stdout();
-        let mut stdout_lock = stdout.lock();
-        write_provider_stream_delta(
-            &mut stdout_lock,
+        let emitted = emit_deferred_post_provider_stream_to(
+            stdout.lock(),
             stream_plan.control_token,
-            stream_plan.provider_chunk_count,
+            stream_plan.limit_tokens,
+            &refusal_completion,
             &response_text,
         )
-        .context("write post-provider-gated reply")?;
-        stream_plan.done_line = Some(
-            write_provider_done_and_build_stream_done_line(
-                &mut stdout_lock,
-                StreamDoneMetadata {
-                    control_token: stream_plan.control_token,
-                    chunk_count: stream_plan.provider_chunk_count,
-                    input_tokens: refusal_completion.input_tokens,
-                    output_tokens: refusal_completion.output_tokens,
-                    limit_tokens: stream_plan.limit_tokens,
-                    elapsed_ms: refusal_completion
-                        .latency
-                        .as_millis()
-                        .min(u128::from(u64::MAX)) as u64,
-                    model: &refusal_completion.identity.wire_model,
-                    response_text: &response_text,
-                    termination: &refusal_completion.termination,
-                },
-            )
-            .context("write post-provider-gated completion boundary")?,
-        );
+        .context("write post-provider-gated reply and completion boundary")?;
+        stream_plan.provider_chunk_count = emitted.chunk_count;
+        stream_plan.done_line = Some(emitted.done_line);
     } else if !args.stream {
         println!("{response_text}");
     }
@@ -5880,7 +5947,7 @@ async fn run_post_reply_pipelines(
         .context("WAL writer task failed after post-reply pipelines")?;
     if let Some(stream_done_line) = stream_plan.done_line {
         let stdout = std::io::stdout();
-        write_stream_control_line(stdout.lock(), stream_plan.control_token, &stream_done_line)
+        emit_deferred_stream_done_to(stdout.lock(), stream_plan.control_token, &stream_done_line)
             .context("write authenticated stream completion marker")?;
     }
     Ok(())
@@ -6831,18 +6898,11 @@ async fn run_chat_with_consent(
     .await;
     if let Err(error) = post_reply_result {
         if let Some(control_token) = stream_control_token_ref {
-            let request_id = stream_request_id(control_token);
-            let notice_id = request_id[..16].to_string();
             let message = crate::security::redact::sanitize_tool_output(&format!("{error:#}"));
             let stdout = std::io::stdout();
-            if let Err(write_error) = write_authenticated_stream_notice(
-                stdout.lock(),
-                control_token,
-                "finalization_error",
-                &notice_id,
-                &message,
-                false,
-            ) {
+            if let Err(write_error) =
+                emit_stream_finalization_error_to(stdout.lock(), control_token, &message)
+            {
                 tracing::warn!(
                     %write_error,
                     "authenticated finalization-error event could not be written"
