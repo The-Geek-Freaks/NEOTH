@@ -176,10 +176,8 @@ pub fn compute_parity_run(
         .iter()
         .map(|entry| entry.query_id.as_str())
         .collect();
-    let grade_query_ids: BTreeSet<&str> = grades
-        .iter()
-        .map(|grade| grade.query_id.as_str())
-        .collect();
+    let grade_query_ids: BTreeSet<&str> =
+        grades.iter().map(|grade| grade.query_id.as_str()).collect();
     for query_id in &grade_query_ids {
         if !goldset_query_ids.contains(query_id) {
             return Err(ParityRunError::GradeQueryAbsentFromGoldset {
@@ -595,7 +593,11 @@ mod tests {
             grade.on_tone = 4;
             grade.usefulness = 4;
             grade.brevity = 4;
-            grade.factual = if grade.system == GradedSystem::Neoth { 1 } else { 5 };
+            grade.factual = if grade.system == GradedSystem::Neoth {
+                1
+            } else {
+                5
+            };
         }
         let r = run(&grades, &["A", "B"]).unwrap();
         assert!(!r.verdict.passed);
@@ -658,11 +660,16 @@ mod tests {
             vec!["A", "B"],
             "report ordering must not depend on the persisted roster order"
         );
-        assert!(result
-            .participating_graders
-            .iter()
-            .any(|grader| grader.family == GraderFamily::IndependentExternal));
-        assert!(result.verdict.passed, "family gate is bound into the verdict");
+        assert!(
+            result
+                .participating_graders
+                .iter()
+                .any(|grader| grader.family == GraderFamily::IndependentExternal)
+        );
+        assert!(
+            result.verdict.passed,
+            "family gate is bound into the verdict"
+        );
     }
 
     #[test]

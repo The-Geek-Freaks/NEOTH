@@ -724,21 +724,11 @@ mod tests {
             entries[0].query_id = invalid.into();
             assert!(validate_goldset_contract(&entries).is_err());
 
-            let mut invalid_query = grade(
-                "query",
-                "grader",
-                GradedSystem::Neoth,
-                [LIKERT_MAX; 5],
-            );
+            let mut invalid_query = grade("query", "grader", GradedSystem::Neoth, [LIKERT_MAX; 5]);
             invalid_query.query_id = invalid.into();
             assert!(invalid_query.validate().is_err());
 
-            let mut invalid_grader = grade(
-                "query",
-                "grader",
-                GradedSystem::Neoth,
-                [LIKERT_MAX; 5],
-            );
+            let mut invalid_grader = grade("query", "grader", GradedSystem::Neoth, [LIKERT_MAX; 5]);
             invalid_grader.grader_id = invalid.into();
             assert!(invalid_grader.validate().is_err());
         }
@@ -751,8 +741,7 @@ mod tests {
         assert!(oversized_query.validate().is_err());
 
         let mut oversized_response = goldset_entries(1).remove(0);
-        oversized_response.expected_response =
-            "r".repeat(MAX_GOLDSET_EXPECTED_RESPONSE_BYTES + 1);
+        oversized_response.expected_response = "r".repeat(MAX_GOLDSET_EXPECTED_RESPONSE_BYTES + 1);
         assert!(oversized_response.validate().is_err());
 
         let mut too_many_sources = goldset_entries(1).remove(0);
@@ -768,10 +757,8 @@ mod tests {
 
         let mut oversized_decoded_total = goldset_entries(1).remove(0);
         oversized_decoded_total.query_text = "q".repeat(MAX_GOLDSET_QUERY_TEXT_BYTES);
-        oversized_decoded_total.expected_response =
-            "r".repeat(MAX_GOLDSET_EXPECTED_RESPONSE_BYTES);
-        oversized_decoded_total.expected_sources =
-            vec!["s".repeat(MAX_GOLDSET_SOURCE_BYTES); 49];
+        oversized_decoded_total.expected_response = "r".repeat(MAX_GOLDSET_EXPECTED_RESPONSE_BYTES);
+        oversized_decoded_total.expected_sources = vec!["s".repeat(MAX_GOLDSET_SOURCE_BYTES); 49];
         assert!(oversized_decoded_total.validate().is_err());
     }
 
@@ -779,11 +766,7 @@ mod tests {
     fn goldset_and_grades_enforce_file_byte_bounds() {
         let dir = tempfile::tempdir().unwrap();
         let goldset_path = dir.path().join("oversized-goldset.jsonl");
-        std::fs::write(
-            &goldset_path,
-            vec![b' '; MAX_GOLDSET_BYTES as usize + 1],
-        )
-        .unwrap();
+        std::fs::write(&goldset_path, vec![b' '; MAX_GOLDSET_BYTES as usize + 1]).unwrap();
         assert!(load_goldset(&goldset_path).is_err());
 
         let grades_path = dir.path().join("oversized-grades.jsonl");
@@ -1108,7 +1091,9 @@ mod tests {
     #[test]
     fn grader_config_requires_both_independence_families() {
         let mut shared_only = valid_grader_config();
-        shared_only.graders.retain(|grader| !grader.is_independent_external());
+        shared_only
+            .graders
+            .retain(|grader| !grader.is_independent_external());
         assert!(matches!(
             shared_only.into_validated(),
             Err(GraderConfigError::MissingIndependentExternalFamily)

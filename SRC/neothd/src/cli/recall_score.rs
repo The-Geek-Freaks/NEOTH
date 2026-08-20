@@ -17,7 +17,7 @@ use clap::Args;
 
 use crate::cli::OutputFormat;
 use crate::recall::goldset::{
-    GraderGrade, GoldsetEntry, load_grader_config, load_goldset, load_grades,
+    GoldsetEntry, GraderGrade, load_goldset, load_grader_config, load_grades,
 };
 use crate::recall::parity_run::{ParityRunResult, compute_parity_run};
 
@@ -138,7 +138,10 @@ fn validate_goldset_query_binding(entries: &[GoldsetEntry], grades: &[GraderGrad
     let goldset_query_ids = validate_goldset_query_ids(entries)?;
     let grade_query_ids: BTreeSet<&str> =
         grades.iter().map(|grade| grade.query_id.as_str()).collect();
-    if grade_query_ids.iter().any(|query_id| query_id.trim().is_empty()) {
+    if grade_query_ids
+        .iter()
+        .any(|query_id| query_id.trim().is_empty())
+    {
         anyhow::bail!("grades contain an empty query_id; exact goldset binding is impossible");
     }
 
@@ -442,42 +445,49 @@ mod tests {
             validate_goldset_query_binding(&entries, &[grade("q1"), grade("q2")]).is_ok()
         );
         assert!(validate_goldset_query_binding(&entries, &[grade("q1")]).is_err());
-        assert!(validate_goldset_query_binding(&entries, &[grade("q1"), grade("q2"), grade("q3")])
-            .is_err());
+        assert!(
+            validate_goldset_query_binding(&entries, &[grade("q1"), grade("q2"), grade("q3")])
+                .is_err()
+        );
     }
 
     #[test]
     fn supplied_goldset_rejects_duplicate_or_empty_query_ids() {
-        assert!(validate_goldset_query_binding(&[entry("q1"), entry("q1")], &[grade("q1")])
-            .is_err());
+        assert!(
+            validate_goldset_query_binding(&[entry("q1"), entry("q1")], &[grade("q1")]).is_err()
+        );
         assert!(validate_goldset_query_binding(&[entry(" ")], &[grade("q1")]).is_err());
         assert!(validate_goldset_query_binding(&[entry("q1")], &[grade(" ")]).is_err());
     }
 
     #[test]
     fn recall_score_requires_grader_config_at_clap_boundary() {
-        assert!(Cli::try_parse_from([
-            "neoth",
-            "recall-score",
-            "--goldset",
-            "eval/goldset.jsonl",
-            "--grades",
-            "a.jsonl",
-        ])
-        .is_err());
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "recall-score",
+                "--goldset",
+                "eval/goldset.jsonl",
+                "--grades",
+                "a.jsonl",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
     fn recall_score_requires_goldset_at_clap_boundary() {
-        assert!(Cli::try_parse_from([
-            "neoth",
-            "recall-score",
-            "--grader-config",
-            "eval/grader-config.json",
-            "--grades",
-            "a.jsonl",
-        ])
-        .is_err());
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "recall-score",
+                "--grader-config",
+                "eval/grader-config.json",
+                "--grades",
+                "a.jsonl",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

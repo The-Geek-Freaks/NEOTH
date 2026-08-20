@@ -536,11 +536,7 @@ mod tests {
             writer.write_all(b"ok").unwrap();
         });
 
-        wait_for_read(
-            reader.as_raw_fd(),
-            Instant::now() + Duration::from_secs(1),
-        )
-        .unwrap();
+        wait_for_read(reader.as_raw_fd(), Instant::now() + Duration::from_secs(1)).unwrap();
         let mut response = [0_u8; 2];
         reader.read_exact(&mut response).unwrap();
         assert_eq!(&response, b"ok");
