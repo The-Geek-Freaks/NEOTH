@@ -1,0 +1,130 @@
+{
+  "schema": "neoth.nct-baseline-corpus.v2",
+  "corpus_id": "nct-baseline-holdout-v2",
+  "split": "holdout",
+  "raw_content_policy": "content_free_v1",
+  "cases": [
+    {
+      "case_id": "nct-holdout-fallback-blocked",
+      "route": "fallback",
+      "prompt_baseline": {
+        "shape": {
+          "prompt_bytes": 130,
+          "system_bytes": 44,
+          "context_bytes": 88,
+          "candidate_bytes": 0,
+          "qa_failure_bytes": 0,
+          "repeated_segment_bytes": 88,
+          "prompt_tokens_upper_bound": 130,
+          "system_tokens_upper_bound": 44,
+          "context_tokens_upper_bound": 88,
+          "candidate_tokens_upper_bound": 0,
+          "qa_failure_tokens_upper_bound": 0,
+          "total_request_tokens_upper_bound": 174
+        },
+        "input_tokens": 115,
+        "output_tokens": null,
+        "cache_creation_tokens": null,
+        "cache_read_tokens": null,
+        "completion_latency_ms": 173
+      },
+      "outcome": {
+        "total_cost_microunits": 900,
+        "repair_attempts": 0,
+        "quality": "blocked",
+        "failure": "provider"
+      }
+    },
+    {
+      "case_id": "nct-holdout-streaming-pass",
+      "route": "streaming",
+      "prompt_baseline": {
+        "shape": {
+          "prompt_bytes": 156,
+          "system_bytes": 56,
+          "context_bytes": 112,
+          "candidate_bytes": 0,
+          "qa_failure_bytes": 0,
+          "repeated_segment_bytes": 0,
+          "prompt_tokens_upper_bound": 156,
+          "system_tokens_upper_bound": 56,
+          "context_tokens_upper_bound": 112,
+          "candidate_tokens_upper_bound": 0,
+          "qa_failure_tokens_upper_bound": 0,
+          "total_request_tokens_upper_bound": 212
+        },
+        "input_tokens": 142,
+        "output_tokens": 72,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 24,
+        "completion_latency_ms": 19
+      },
+      "outcome": {
+        "total_cost_microunits": 2100,
+        "repair_attempts": 0,
+        "quality": "pass"
+      }
+    },
+    {
+      "case_id": "nct-holdout-sub-agent-pass",
+      "route": "sub_agent",
+      "prompt_baseline": {
+        "shape": {
+          "prompt_bytes": 160,
+          "system_bytes": 50,
+          "context_bytes": 128,
+          "candidate_bytes": 0,
+          "qa_failure_bytes": 0,
+          "repeated_segment_bytes": 0,
+          "prompt_tokens_upper_bound": 160,
+          "system_tokens_upper_bound": 50,
+          "context_tokens_upper_bound": 128,
+          "candidate_tokens_upper_bound": 0,
+          "qa_failure_tokens_upper_bound": 0,
+          "total_request_tokens_upper_bound": 210
+        },
+        "input_tokens": 151,
+        "output_tokens": 27,
+        "cache_creation_tokens": null,
+        "cache_read_tokens": null,
+        "completion_latency_ms": 91
+      },
+      "outcome": {
+        "total_cost_microunits": 1800,
+        "repair_attempts": 0,
+        "quality": "pass"
+      }
+    },
+    {
+      "case_id": "nct-holdout-cluster-worker-fail",
+      "route": "cluster_worker",
+      "prompt_baseline": {
+        "shape": {
+          "prompt_bytes": 220,
+          "system_bytes": 72,
+          "context_bytes": 99,
+          "candidate_bytes": 0,
+          "qa_failure_bytes": 0,
+          "repeated_segment_bytes": 99,
+          "prompt_tokens_upper_bound": 220,
+          "system_tokens_upper_bound": 72,
+          "context_tokens_upper_bound": 99,
+          "candidate_tokens_upper_bound": 0,
+          "qa_failure_tokens_upper_bound": 0,
+          "total_request_tokens_upper_bound": 292
+        },
+        "input_tokens": null,
+        "output_tokens": null,
+        "cache_creation_tokens": null,
+        "cache_read_tokens": null,
+        "completion_latency_ms": 304
+      },
+      "outcome": {
+        "total_cost_microunits": 0,
+        "repair_attempts": 0,
+        "quality": "fail",
+        "failure": "transport"
+      }
+    }
+  ]
+}

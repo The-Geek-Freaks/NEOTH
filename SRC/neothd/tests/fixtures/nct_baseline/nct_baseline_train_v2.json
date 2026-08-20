@@ -1,0 +1,129 @@
+{
+  "schema": "neoth.nct-baseline-corpus.v2",
+  "corpus_id": "nct-baseline-train-v2",
+  "split": "train",
+  "raw_content_policy": "content_free_v1",
+  "cases": [
+    {
+      "case_id": "nct-train-direct-pass",
+      "route": "direct",
+      "prompt_baseline": {
+        "shape": {
+          "prompt_bytes": 120,
+          "system_bytes": 40,
+          "context_bytes": 96,
+          "candidate_bytes": 0,
+          "qa_failure_bytes": 0,
+          "repeated_segment_bytes": 0,
+          "prompt_tokens_upper_bound": 120,
+          "system_tokens_upper_bound": 40,
+          "context_tokens_upper_bound": 96,
+          "candidate_tokens_upper_bound": 0,
+          "qa_failure_tokens_upper_bound": 0,
+          "total_request_tokens_upper_bound": 160
+        },
+        "input_tokens": 104,
+        "output_tokens": 19,
+        "cache_creation_tokens": null,
+        "cache_read_tokens": null,
+        "completion_latency_ms": 48
+      },
+      "outcome": {
+        "total_cost_microunits": 1200,
+        "repair_attempts": 0,
+        "quality": "pass"
+      }
+    },
+    {
+      "case_id": "nct-train-nexus-pass",
+      "route": "nexus",
+      "prompt_baseline": {
+        "shape": {
+          "prompt_bytes": 180,
+          "system_bytes": 60,
+          "context_bytes": 110,
+          "candidate_bytes": 0,
+          "qa_failure_bytes": 0,
+          "repeated_segment_bytes": 0,
+          "prompt_tokens_upper_bound": 180,
+          "system_tokens_upper_bound": 60,
+          "context_tokens_upper_bound": 110,
+          "candidate_tokens_upper_bound": 0,
+          "qa_failure_tokens_upper_bound": 0,
+          "total_request_tokens_upper_bound": 240
+        },
+        "input_tokens": null,
+        "output_tokens": null,
+        "cache_creation_tokens": null,
+        "cache_read_tokens": null,
+        "completion_latency_ms": 85
+      },
+      "outcome": {
+        "total_cost_microunits": 0,
+        "repair_attempts": 0,
+        "quality": "pass"
+      }
+    },
+    {
+      "case_id": "nct-train-council-pass",
+      "route": "council",
+      "prompt_baseline": {
+        "shape": {
+          "prompt_bytes": 260,
+          "system_bytes": 80,
+          "context_bytes": 148,
+          "candidate_bytes": 20,
+          "qa_failure_bytes": 0,
+          "repeated_segment_bytes": 148,
+          "prompt_tokens_upper_bound": 260,
+          "system_tokens_upper_bound": 80,
+          "context_tokens_upper_bound": 148,
+          "candidate_tokens_upper_bound": 20,
+          "qa_failure_tokens_upper_bound": 0,
+          "total_request_tokens_upper_bound": 340
+        },
+        "input_tokens": 207,
+        "output_tokens": 31,
+        "cache_creation_tokens": 16,
+        "cache_read_tokens": 0,
+        "completion_latency_ms": 126
+      },
+      "outcome": {
+        "total_cost_microunits": 3400,
+        "repair_attempts": 0,
+        "quality": "pass"
+      }
+    },
+    {
+      "case_id": "nct-train-retry-fail",
+      "route": "retry",
+      "prompt_baseline": {
+        "shape": {
+          "prompt_bytes": 300,
+          "system_bytes": 64,
+          "context_bytes": 100,
+          "candidate_bytes": 150,
+          "qa_failure_bytes": 40,
+          "repeated_segment_bytes": 290,
+          "prompt_tokens_upper_bound": 300,
+          "system_tokens_upper_bound": 64,
+          "context_tokens_upper_bound": 100,
+          "candidate_tokens_upper_bound": 150,
+          "qa_failure_tokens_upper_bound": 40,
+          "total_request_tokens_upper_bound": 364
+        },
+        "input_tokens": 298,
+        "output_tokens": 44,
+        "cache_creation_tokens": null,
+        "cache_read_tokens": 12,
+        "completion_latency_ms": 219
+      },
+      "outcome": {
+        "total_cost_microunits": 5200,
+        "repair_attempts": 1,
+        "quality": "fail",
+        "failure": "qa"
+      }
+    }
+  ]
+}

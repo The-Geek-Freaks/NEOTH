@@ -302,6 +302,962 @@ pub struct SubAgentPromptBaseline {
     pub completion_latency_ms: u64,
 }
 
+/// Fixed on-disk schema for the content-free NCT-01 baseline corpus.
+///
+/// This corpus is an evaluation artifact only. It is intentionally separate
+/// from provider requests, routing receipts, WAL identity, and private run
+/// records so collecting a baseline cannot change a dispatch decision.
+pub const NCT_BASELINE_CORPUS_SCHEMA_V2: &str = "neoth.nct-baseline-corpus.v2";
+pub const NCT_BASELINE_TRAIN_FIXTURE_PATH: &str =
+    "tests/fixtures/nct_baseline/nct_baseline_train_v2.json";
+pub const NCT_BASELINE_HOLDOUT_FIXTURE_PATH: &str =
+    "tests/fixtures/nct_baseline/nct_baseline_holdout_v2.json";
+pub const NCT_BASELINE_MEMBERSHIP_VERSION: &str = "neoth.nct-baseline-membership.v1";
+pub const NCT_BASELINE_MEMBERSHIP_SHA256: &str =
+    "e60dabbe0f227c22eee803da19d2de5547c2cf8a6fbe78c24293813a4e93778d";
+pub const NCT_BASELINE_CANONICAL_CORPUS_VERSION: &str = "neoth.nct-baseline-canonical-json.v1";
+pub const NCT_BASELINE_TRAIN_CORPUS_SHA256: &str =
+    "0ddae3251624b615ff3099d4f68743c734953bd4610ee2d782440fd71496c0ef";
+pub const NCT_BASELINE_HOLDOUT_CORPUS_SHA256: &str =
+    "a311b0989da51e4c7193db6af8d24278d31540355f0d5215129b3c41740fa311";
+pub const NCT_BASELINE_CONTENT_FREE_POLICY_V1: &str = "content_free_v1";
+pub const NCT_BASELINE_MAX_FIXTURE_BYTES: usize = 256 * 1024;
+pub const NCT_BASELINE_TRAIN_CASE_IDS: [&str; 4] = [
+    "nct-train-direct-pass",
+    "nct-train-nexus-pass",
+    "nct-train-council-pass",
+    "nct-train-retry-fail",
+];
+pub const NCT_BASELINE_HOLDOUT_CASE_IDS: [&str; 4] = [
+    "nct-holdout-fallback-blocked",
+    "nct-holdout-streaming-pass",
+    "nct-holdout-sub-agent-pass",
+    "nct-holdout-cluster-worker-fail",
+];
+
+const NCT_BASELINE_MEMBERSHIP_MANIFEST: &str = concat!(
+    "neoth.nct-baseline-membership.v1\n",
+    "train:nct-train-direct-pass\n",
+    "train:nct-train-nexus-pass\n",
+    "train:nct-train-council-pass\n",
+    "train:nct-train-retry-fail\n",
+    "holdout:nct-holdout-fallback-blocked\n",
+    "holdout:nct-holdout-streaming-pass\n",
+    "holdout:nct-holdout-sub-agent-pass\n",
+    "holdout:nct-holdout-cluster-worker-fail",
+);
+
+const NCT_FORBIDDEN_RAW_FRAGMENTS: &[&[u8]] = &[
+    b"NCT_RAW_",
+    b"sk-",
+    b"ghp_",
+    b"xoxb-",
+    b"xapp-",
+    b"AKIA",
+    b"Bearer ",
+    b"-----BEGIN",
+];
+
+const NCT_FORBIDDEN_JSON_FIELDS: &[&str] = &[
+    "prompt",
+    "system",
+    "context",
+    "candidate",
+    "qa_failures",
+    "raw_prompt",
+    "raw_system",
+    "raw_context",
+    "raw_candidate",
+    "operator_data",
+    "operator_task",
+    "secret",
+    "api_key",
+    "provider_error",
+    "request_id",
+    "content_hash",
+    "remote_payload",
+];
+
+/// Closed current-path label used by the NCT-01 corpus.
+///
+/// It is deliberately a route family rather than a provider, model, task,
+/// user, request, or content-derived identifier. The `nexus` row contains
+/// the existing NEXUS primary/QA envelope; it does not introduce a new
+/// dispatch path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NctRouteIdentity {
+    Direct,
+    Nexus,
+    Council,
+    Retry,
+    Fallback,
+    Streaming,
+    SubAgent,
+    ClusterWorker,
+}
+
+impl NctRouteIdentity {
+    pub const ALL: [Self; 8] = [
+        Self::Direct,
+        Self::Nexus,
+        Self::Council,
+        Self::Retry,
+        Self::Fallback,
+        Self::Streaming,
+        Self::SubAgent,
+        Self::ClusterWorker,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Nexus => "nexus",
+            Self::Council => "council",
+            Self::Retry => "retry",
+            Self::Fallback => "fallback",
+            Self::Streaming => "streaming",
+            Self::SubAgent => "sub_agent",
+            Self::ClusterWorker => "cluster_worker",
+        }
+    }
+}
+
+/// Mutually exclusive fixture partitions. A holdout case must never become a
+/// train case under the same corpus version.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NctFixtureSplit {
+    Train,
+    Holdout,
+}
+
+/// Closed fixture identity. Arbitrary, overlong, path-like, or cross-split
+/// corpus identifiers cannot deserialize into this type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NctCorpusId {
+    #[serde(rename = "nct-baseline-train-v2")]
+    TrainV2,
+    #[serde(rename = "nct-baseline-holdout-v2")]
+    HoldoutV2,
+}
+
+impl NctCorpusId {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TrainV2 => "nct-baseline-train-v2",
+            Self::HoldoutV2 => "nct-baseline-holdout-v2",
+        }
+    }
+
+    pub const fn split(self) -> NctFixtureSplit {
+        match self {
+            Self::TrainV2 => NctFixtureSplit::Train,
+            Self::HoldoutV2 => NctFixtureSplit::Holdout,
+        }
+    }
+}
+
+/// Closed declaration that the corpus carries measurements only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NctRawContentPolicy {
+    #[serde(rename = "content_free_v1")]
+    ContentFreeV1,
+}
+
+impl NctRawContentPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ContentFreeV1 => NCT_BASELINE_CONTENT_FREE_POLICY_V1,
+        }
+    }
+}
+
+/// Content-free terminal-quality classification for a frozen baseline case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NctQualityOutcome {
+    Pass,
+    Fail,
+    Blocked,
+}
+
+/// Closed reason class for a baseline failure. No provider error, prompt,
+/// secret, operator text, or remote payload is retained here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NctFailureClass {
+    Provider,
+    Qa,
+    Policy,
+    Timeout,
+    Transport,
+}
+
+/// NCT-fixture-specific prompt shape. It mirrors the established
+/// [`SubAgentPromptShape`] measurements but is strict at every nested JSON
+/// boundary, so an unknown raw-content field cannot be silently discarded.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct NctPromptShape {
+    prompt_bytes: u64,
+    system_bytes: u64,
+    context_bytes: u64,
+    candidate_bytes: u64,
+    qa_failure_bytes: u64,
+    repeated_segment_bytes: u64,
+    prompt_tokens_upper_bound: u64,
+    system_tokens_upper_bound: u64,
+    context_tokens_upper_bound: u64,
+    candidate_tokens_upper_bound: u64,
+    qa_failure_tokens_upper_bound: u64,
+    total_request_tokens_upper_bound: u64,
+}
+
+impl NctPromptShape {
+    pub const fn prompt_bytes(&self) -> u64 {
+        self.prompt_bytes
+    }
+
+    pub const fn system_bytes(&self) -> u64 {
+        self.system_bytes
+    }
+
+    pub const fn context_bytes(&self) -> u64 {
+        self.context_bytes
+    }
+
+    pub const fn candidate_bytes(&self) -> u64 {
+        self.candidate_bytes
+    }
+
+    pub const fn qa_failure_bytes(&self) -> u64 {
+        self.qa_failure_bytes
+    }
+
+    pub const fn repeated_segment_bytes(&self) -> u64 {
+        self.repeated_segment_bytes
+    }
+
+    pub const fn prompt_tokens_upper_bound(&self) -> u64 {
+        self.prompt_tokens_upper_bound
+    }
+
+    pub const fn system_tokens_upper_bound(&self) -> u64 {
+        self.system_tokens_upper_bound
+    }
+
+    pub const fn context_tokens_upper_bound(&self) -> u64 {
+        self.context_tokens_upper_bound
+    }
+
+    pub const fn candidate_tokens_upper_bound(&self) -> u64 {
+        self.candidate_tokens_upper_bound
+    }
+
+    pub const fn qa_failure_tokens_upper_bound(&self) -> u64 {
+        self.qa_failure_tokens_upper_bound
+    }
+
+    pub const fn total_request_tokens_upper_bound(&self) -> u64 {
+        self.total_request_tokens_upper_bound
+    }
+}
+
+impl From<&SubAgentPromptShape> for NctPromptShape {
+    fn from(shape: &SubAgentPromptShape) -> Self {
+        Self {
+            prompt_bytes: shape.prompt_bytes,
+            system_bytes: shape.system_bytes,
+            context_bytes: shape.context_bytes,
+            candidate_bytes: shape.candidate_bytes,
+            qa_failure_bytes: shape.qa_failure_bytes,
+            repeated_segment_bytes: shape.repeated_segment_bytes,
+            prompt_tokens_upper_bound: shape.prompt_tokens_upper_bound,
+            system_tokens_upper_bound: shape.system_tokens_upper_bound,
+            context_tokens_upper_bound: shape.context_tokens_upper_bound,
+            candidate_tokens_upper_bound: shape.candidate_tokens_upper_bound,
+            qa_failure_tokens_upper_bound: shape.qa_failure_tokens_upper_bound,
+            total_request_tokens_upper_bound: shape.total_request_tokens_upper_bound,
+        }
+    }
+}
+
+/// Strict NCT fixture measurement using the same absence-versus-reported-zero
+/// usage semantics as [`SubAgentPromptBaseline`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct NctPromptBaseline {
+    shape: NctPromptShape,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    cache_creation_tokens: Option<u32>,
+    cache_read_tokens: Option<u32>,
+    completion_latency_ms: u64,
+}
+
+impl NctPromptBaseline {
+    pub const fn shape(&self) -> &NctPromptShape {
+        &self.shape
+    }
+
+    pub const fn input_tokens(&self) -> Option<u32> {
+        self.input_tokens
+    }
+
+    pub const fn output_tokens(&self) -> Option<u32> {
+        self.output_tokens
+    }
+
+    pub const fn cache_creation_tokens(&self) -> Option<u32> {
+        self.cache_creation_tokens
+    }
+
+    pub const fn cache_read_tokens(&self) -> Option<u32> {
+        self.cache_read_tokens
+    }
+
+    pub const fn completion_latency_ms(&self) -> u64 {
+        self.completion_latency_ms
+    }
+}
+
+impl From<&SubAgentPromptBaseline> for NctPromptBaseline {
+    fn from(baseline: &SubAgentPromptBaseline) -> Self {
+        Self {
+            shape: NctPromptShape::from(&baseline.shape),
+            input_tokens: baseline.input_tokens,
+            output_tokens: baseline.output_tokens,
+            cache_creation_tokens: baseline.cache_creation_tokens,
+            cache_read_tokens: baseline.cache_read_tokens,
+            completion_latency_ms: baseline.completion_latency_ms,
+        }
+    }
+}
+
+/// Bounded result metadata paired with one NCT baseline measurement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct NctBaselineOutcome {
+    /// Aggregate billed cost in micro-units from the frozen fixture, never a
+    /// provider receipt or account identifier.
+    total_cost_microunits: u64,
+    /// Existing current-path correction attempts consumed by the case.
+    repair_attempts: u8,
+    quality: NctQualityOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure: Option<NctFailureClass>,
+}
+
+impl NctBaselineOutcome {
+    pub const fn total_cost_microunits(&self) -> u64 {
+        self.total_cost_microunits
+    }
+
+    pub const fn repair_attempts(&self) -> u8 {
+        self.repair_attempts
+    }
+
+    pub const fn quality(&self) -> NctQualityOutcome {
+        self.quality
+    }
+
+    pub const fn failure(&self) -> Option<NctFailureClass> {
+        self.failure
+    }
+}
+
+/// One frozen, content-free current-path observation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct NctBaselineCase {
+    /// Synthetic fixture-only label. It is not a task, request, subject,
+    /// provider, model, hash, or operator identifier.
+    case_id: String,
+    route: NctRouteIdentity,
+    /// Reuses the sub-agent baseline's numeric semantics through an
+    /// NCT-specific, deny-unknown-fields representation.
+    prompt_baseline: NctPromptBaseline,
+    outcome: NctBaselineOutcome,
+}
+
+impl NctBaselineCase {
+    pub fn case_id(&self) -> &str {
+        &self.case_id
+    }
+
+    pub const fn route(&self) -> NctRouteIdentity {
+        self.route
+    }
+
+    pub const fn prompt_baseline(&self) -> &NctPromptBaseline {
+        &self.prompt_baseline
+    }
+
+    pub const fn outcome(&self) -> &NctBaselineOutcome {
+        &self.outcome
+    }
+}
+
+/// A strict single-split NCT-01 corpus fixture.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct NctBaselineCorpus {
+    schema: String,
+    corpus_id: NctCorpusId,
+    split: NctFixtureSplit,
+    raw_content_policy: NctRawContentPolicy,
+    cases: Vec<NctBaselineCase>,
+}
+
+impl NctBaselineCorpus {
+    pub fn schema(&self) -> &str {
+        &self.schema
+    }
+
+    pub const fn corpus_id(&self) -> NctCorpusId {
+        self.corpus_id
+    }
+
+    pub const fn split(&self) -> NctFixtureSplit {
+        self.split
+    }
+
+    pub const fn raw_content_policy(&self) -> NctRawContentPolicy {
+        self.raw_content_policy
+    }
+
+    pub fn cases(&self) -> &[NctBaselineCase] {
+        &self.cases
+    }
+}
+
+/// Private wire-only types keep `Deserialize` behind
+/// [`parse_nct_baseline_fixture`]. Every nested object is strict so no field
+/// can disappear between the lossless `Value` review and the validated,
+/// opaque public corpus.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NctPromptShapeWire {
+    prompt_bytes: u64,
+    system_bytes: u64,
+    context_bytes: u64,
+    candidate_bytes: u64,
+    qa_failure_bytes: u64,
+    repeated_segment_bytes: u64,
+    prompt_tokens_upper_bound: u64,
+    system_tokens_upper_bound: u64,
+    context_tokens_upper_bound: u64,
+    candidate_tokens_upper_bound: u64,
+    qa_failure_tokens_upper_bound: u64,
+    total_request_tokens_upper_bound: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NctPromptBaselineWire {
+    shape: NctPromptShapeWire,
+    #[serde(default)]
+    input_tokens: Option<u32>,
+    #[serde(default)]
+    output_tokens: Option<u32>,
+    #[serde(default)]
+    cache_creation_tokens: Option<u32>,
+    #[serde(default)]
+    cache_read_tokens: Option<u32>,
+    completion_latency_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NctBaselineOutcomeWire {
+    total_cost_microunits: u64,
+    repair_attempts: u8,
+    quality: NctQualityOutcome,
+    #[serde(default)]
+    failure: Option<NctFailureClass>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NctBaselineCaseWire {
+    case_id: String,
+    route: NctRouteIdentity,
+    prompt_baseline: NctPromptBaselineWire,
+    outcome: NctBaselineOutcomeWire,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NctBaselineCorpusWire {
+    schema: String,
+    corpus_id: NctCorpusId,
+    split: NctFixtureSplit,
+    raw_content_policy: NctRawContentPolicy,
+    cases: Vec<NctBaselineCaseWire>,
+}
+
+impl From<NctPromptShapeWire> for NctPromptShape {
+    fn from(shape: NctPromptShapeWire) -> Self {
+        Self {
+            prompt_bytes: shape.prompt_bytes,
+            system_bytes: shape.system_bytes,
+            context_bytes: shape.context_bytes,
+            candidate_bytes: shape.candidate_bytes,
+            qa_failure_bytes: shape.qa_failure_bytes,
+            repeated_segment_bytes: shape.repeated_segment_bytes,
+            prompt_tokens_upper_bound: shape.prompt_tokens_upper_bound,
+            system_tokens_upper_bound: shape.system_tokens_upper_bound,
+            context_tokens_upper_bound: shape.context_tokens_upper_bound,
+            candidate_tokens_upper_bound: shape.candidate_tokens_upper_bound,
+            qa_failure_tokens_upper_bound: shape.qa_failure_tokens_upper_bound,
+            total_request_tokens_upper_bound: shape.total_request_tokens_upper_bound,
+        }
+    }
+}
+
+impl From<NctPromptBaselineWire> for NctPromptBaseline {
+    fn from(baseline: NctPromptBaselineWire) -> Self {
+        Self {
+            shape: baseline.shape.into(),
+            input_tokens: baseline.input_tokens,
+            output_tokens: baseline.output_tokens,
+            cache_creation_tokens: baseline.cache_creation_tokens,
+            cache_read_tokens: baseline.cache_read_tokens,
+            completion_latency_ms: baseline.completion_latency_ms,
+        }
+    }
+}
+
+impl From<NctBaselineOutcomeWire> for NctBaselineOutcome {
+    fn from(outcome: NctBaselineOutcomeWire) -> Self {
+        Self {
+            total_cost_microunits: outcome.total_cost_microunits,
+            repair_attempts: outcome.repair_attempts,
+            quality: outcome.quality,
+            failure: outcome.failure,
+        }
+    }
+}
+
+impl From<NctBaselineCaseWire> for NctBaselineCase {
+    fn from(case: NctBaselineCaseWire) -> Self {
+        Self {
+            case_id: case.case_id,
+            route: case.route,
+            prompt_baseline: case.prompt_baseline.into(),
+            outcome: case.outcome.into(),
+        }
+    }
+}
+
+impl From<NctBaselineCorpusWire> for NctBaselineCorpus {
+    fn from(corpus: NctBaselineCorpusWire) -> Self {
+        Self {
+            schema: corpus.schema,
+            corpus_id: corpus.corpus_id,
+            split: corpus.split,
+            raw_content_policy: corpus.raw_content_policy,
+            cases: corpus.cases.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// Stable, deterministic summary of the two required corpus partitions.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct NctBaselineCoverageReport {
+    pub schema: String,
+    pub membership_version: String,
+    pub membership_sha256: String,
+    pub canonical_corpus_version: String,
+    pub train_corpus_sha256: String,
+    pub holdout_corpus_sha256: String,
+    pub train_fixture_path: String,
+    pub holdout_fixture_path: String,
+    pub train_case_count: u32,
+    pub holdout_case_count: u32,
+    /// Sorted route labels and counts; a map is used instead of encounter
+    /// order so the report is reproducible across fixture ordering changes.
+    pub route_case_counts: std::collections::BTreeMap<String, u32>,
+}
+
+struct NctNoDuplicateValueSeed;
+
+impl<'de> serde::de::DeserializeSeed<'de> for NctNoDuplicateValueSeed {
+    type Value = serde_json::Value;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(NctNoDuplicateValueVisitor)
+    }
+}
+
+struct NctNoDuplicateValueVisitor;
+
+impl<'de> serde::de::Visitor<'de> for NctNoDuplicateValueVisitor {
+    type Value = serde_json::Value;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a JSON value without duplicate object keys")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+        Ok(serde_json::Value::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+        Ok(serde_json::Value::Number(value.into()))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+        Ok(serde_json::Value::Number(value.into()))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        serde_json::Number::from_f64(value)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| E::custom("non-finite number in NCT fixture"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+        Ok(serde_json::Value::String(value.to_string()))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+        Ok(serde_json::Value::String(value))
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(serde_json::Value::Null)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(serde_json::Value::Null)
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        serde::de::DeserializeSeed::deserialize(NctNoDuplicateValueSeed, deserializer)
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        let mut values = Vec::with_capacity(sequence.size_hint().unwrap_or(0));
+        while let Some(value) = sequence.next_element_seed(NctNoDuplicateValueSeed)? {
+            values.push(value);
+        }
+        Ok(serde_json::Value::Array(values))
+    }
+
+    fn visit_map<A>(self, mut object: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut values = serde_json::Map::new();
+        while let Some(key) = object.next_key::<String>()? {
+            if values.contains_key(&key) {
+                return Err(serde::de::Error::custom(
+                    "duplicate JSON object key in NCT fixture",
+                ));
+            }
+            let value = object.next_value_seed(NctNoDuplicateValueSeed)?;
+            values.insert(key, value);
+        }
+        Ok(serde_json::Value::Object(values))
+    }
+}
+
+fn parse_nct_json_value(raw: &[u8]) -> Result<serde_json::Value, String> {
+    use serde::de::DeserializeSeed as _;
+
+    let mut deserializer = serde_json::Deserializer::from_slice(raw);
+    let value = NctNoDuplicateValueSeed
+        .deserialize(&mut deserializer)
+        .map_err(|error| {
+            if error
+                .to_string()
+                .contains("duplicate JSON object key in NCT fixture")
+            {
+                "invalid NCT fixture JSON: duplicate object key".to_string()
+            } else {
+                format!("invalid NCT fixture JSON: {error}")
+            }
+        })?;
+    deserializer
+        .end()
+        .map_err(|error| format!("invalid NCT fixture JSON: {error}"))?;
+    Ok(value)
+}
+
+/// Inspect raw bytes and the lossless JSON value before strict typed
+/// deserialization. Sensitive fragments and forbidden content-bearing field
+/// names are rejected without echoing their values into an error.
+pub fn parse_nct_baseline_fixture(raw: &[u8]) -> Result<NctBaselineCorpus, String> {
+    if raw.len() > NCT_BASELINE_MAX_FIXTURE_BYTES {
+        return Err("NCT fixture exceeds the byte limit".to_string());
+    }
+    reject_nct_raw_fragments(raw)?;
+    let value = parse_nct_json_value(raw)?;
+    validate_nct_fixture_value(&value)?;
+    verify_nct_membership_pin()?;
+    let wire: NctBaselineCorpusWire = serde_json::from_value(value).map_err(|error| {
+        let error = error.to_string();
+        if error.contains("unknown field") {
+            "invalid NCT fixture schema: unknown field".to_string()
+        } else if error.contains("unknown variant") {
+            "invalid NCT fixture schema: value is outside a closed set".to_string()
+        } else {
+            "invalid NCT fixture schema".to_string()
+        }
+    })?;
+    let corpus: NctBaselineCorpus = wire.into();
+    validate_nct_corpus(&corpus, corpus.corpus_id.split())?;
+    verify_nct_corpus_pin(&corpus)?;
+    Ok(corpus)
+}
+
+/// Validate the two disjoint fixture partitions and return a stable coverage
+/// report. This function is intentionally pure: it neither opens files nor
+/// calls providers, changes routing, or records anything.
+pub fn nct_baseline_coverage_report(
+    train: &NctBaselineCorpus,
+    holdout: &NctBaselineCorpus,
+) -> Result<NctBaselineCoverageReport, String> {
+    verify_nct_membership_pin()?;
+    validate_nct_corpus(train, NctFixtureSplit::Train)?;
+    validate_nct_corpus(holdout, NctFixtureSplit::Holdout)?;
+    verify_nct_corpus_pin(train)?;
+    verify_nct_corpus_pin(holdout)?;
+    if train.corpus_id == holdout.corpus_id {
+        return Err("NCT train and holdout corpus ids must differ".to_string());
+    }
+
+    let mut case_ids = std::collections::BTreeSet::new();
+    let mut route_case_counts = std::collections::BTreeMap::new();
+    for corpus in [train, holdout] {
+        for case in &corpus.cases {
+            if !case_ids.insert(case.case_id.as_str()) {
+                return Err("NCT case id appears in both splits".to_string());
+            }
+            *route_case_counts
+                .entry(case.route.as_str().to_string())
+                .or_insert(0) += 1;
+        }
+    }
+    for route in NctRouteIdentity::ALL {
+        if !route_case_counts.contains_key(route.as_str()) {
+            return Err(format!(
+                "NCT corpus does not cover route: {}",
+                route.as_str()
+            ));
+        }
+    }
+
+    Ok(NctBaselineCoverageReport {
+        schema: NCT_BASELINE_CORPUS_SCHEMA_V2.to_string(),
+        membership_version: NCT_BASELINE_MEMBERSHIP_VERSION.to_string(),
+        membership_sha256: NCT_BASELINE_MEMBERSHIP_SHA256.to_string(),
+        canonical_corpus_version: NCT_BASELINE_CANONICAL_CORPUS_VERSION.to_string(),
+        train_corpus_sha256: NCT_BASELINE_TRAIN_CORPUS_SHA256.to_string(),
+        holdout_corpus_sha256: NCT_BASELINE_HOLDOUT_CORPUS_SHA256.to_string(),
+        train_fixture_path: NCT_BASELINE_TRAIN_FIXTURE_PATH.to_string(),
+        holdout_fixture_path: NCT_BASELINE_HOLDOUT_FIXTURE_PATH.to_string(),
+        train_case_count: train.cases.len().try_into().unwrap_or(u32::MAX),
+        holdout_case_count: holdout.cases.len().try_into().unwrap_or(u32::MAX),
+        route_case_counts,
+    })
+}
+
+fn validate_nct_corpus(
+    corpus: &NctBaselineCorpus,
+    expected_split: NctFixtureSplit,
+) -> Result<(), String> {
+    if corpus.schema != NCT_BASELINE_CORPUS_SCHEMA_V2 {
+        return Err("unsupported NCT corpus schema".to_string());
+    }
+    if corpus.split != expected_split {
+        return Err(format!(
+            "NCT fixture split mismatch: expected {:?}, got {:?}",
+            expected_split, corpus.split
+        ));
+    }
+    if corpus.corpus_id.split() != expected_split {
+        return Err(format!(
+            "NCT corpus id {} belongs to the wrong split",
+            corpus.corpus_id.as_str()
+        ));
+    }
+    if corpus.raw_content_policy != NctRawContentPolicy::ContentFreeV1 {
+        return Err("NCT corpus content policy is not the reviewed closed policy".to_string());
+    }
+    if corpus.cases.is_empty() {
+        return Err("NCT corpus must contain at least one case".to_string());
+    }
+    let (expected_id, expected_prefix, expected_cases): (NctCorpusId, &str, &[&str]) =
+        match expected_split {
+            NctFixtureSplit::Train => (
+                NctCorpusId::TrainV2,
+                "nct-train-",
+                &NCT_BASELINE_TRAIN_CASE_IDS,
+            ),
+            NctFixtureSplit::Holdout => (
+                NctCorpusId::HoldoutV2,
+                "nct-holdout-",
+                &NCT_BASELINE_HOLDOUT_CASE_IDS,
+            ),
+        };
+    if corpus.corpus_id != expected_id {
+        return Err(format!(
+            "NCT corpus id does not match its frozen split: {}",
+            corpus.corpus_id.as_str()
+        ));
+    }
+    for (case_index, case) in corpus.cases.iter().enumerate() {
+        if case.case_id.is_empty()
+            || case.case_id.len() > 80
+            || !case
+                .case_id
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        {
+            return Err(format!(
+                "invalid synthetic NCT case id at index {case_index}"
+            ));
+        }
+        if !case.case_id.starts_with(expected_prefix) {
+            return Err(format!(
+                "NCT case id has the wrong split prefix at index {case_index}"
+            ));
+        }
+        validate_nct_prompt_baseline(case_index, &case.prompt_baseline)?;
+        if case.outcome.repair_attempts > 1 {
+            return Err(format!(
+                "NCT case at index {case_index} exceeds the current one-correction bound"
+            ));
+        }
+        match (case.outcome.quality, case.outcome.failure) {
+            (NctQualityOutcome::Pass, None)
+            | (NctQualityOutcome::Fail, Some(_))
+            | (NctQualityOutcome::Blocked, Some(_)) => {}
+            (NctQualityOutcome::Pass, Some(_)) => {
+                return Err(format!(
+                    "passing NCT case at index {case_index} has failure metadata"
+                ));
+            }
+            (NctQualityOutcome::Fail | NctQualityOutcome::Blocked, None) => {
+                return Err(format!(
+                    "failed NCT case at index {case_index} lacks failure metadata"
+                ));
+            }
+        }
+    }
+    let actual_cases = corpus
+        .cases
+        .iter()
+        .map(|case| case.case_id.as_str())
+        .collect::<Vec<_>>();
+    if actual_cases.as_slice() != expected_cases {
+        return Err(format!(
+            "NCT {} membership differs from the reviewed manifest",
+            corpus.corpus_id.as_str()
+        ));
+    }
+    Ok(())
+}
+
+fn validate_nct_prompt_baseline(
+    case_index: usize,
+    baseline: &NctPromptBaseline,
+) -> Result<(), String> {
+    let shape = &baseline.shape;
+    let exact_upper_bounds = shape.prompt_tokens_upper_bound == shape.prompt_bytes
+        && shape.system_tokens_upper_bound == shape.system_bytes
+        && shape.context_tokens_upper_bound == shape.context_bytes
+        && shape.candidate_tokens_upper_bound == shape.candidate_bytes
+        && shape.qa_failure_tokens_upper_bound == shape.qa_failure_bytes
+        && shape.total_request_tokens_upper_bound
+            == shape.prompt_bytes.saturating_add(shape.system_bytes);
+    if !exact_upper_bounds {
+        return Err(format!(
+            "NCT prompt-shape upper bounds drifted at case index {case_index}"
+        ));
+    }
+    let repeatable_bytes = shape
+        .context_bytes
+        .saturating_add(shape.candidate_bytes)
+        .saturating_add(shape.qa_failure_bytes);
+    if shape.repeated_segment_bytes > repeatable_bytes {
+        return Err(format!(
+            "NCT repeated-context bytes exceed known segments at case index {case_index}"
+        ));
+    }
+    Ok(())
+}
+
+fn reject_nct_raw_fragments(raw: &[u8]) -> Result<(), String> {
+    if NCT_FORBIDDEN_RAW_FRAGMENTS.iter().any(|fragment| {
+        raw.windows(fragment.len())
+            .any(|window| window == *fragment)
+    }) {
+        return Err("NCT fixture contains a forbidden raw-content fragment".to_string());
+    }
+    Ok(())
+}
+
+fn validate_nct_fixture_value(value: &serde_json::Value) -> Result<(), String> {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (field, child) in fields {
+                if NCT_FORBIDDEN_JSON_FIELDS.contains(&field.as_str()) {
+                    return Err(format!(
+                        "NCT fixture contains forbidden content-bearing field: {field}"
+                    ));
+                }
+                validate_nct_fixture_value(child)?;
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for child in values {
+                validate_nct_fixture_value(child)?;
+            }
+        }
+        serde_json::Value::String(text) => reject_nct_raw_fragments(text.as_bytes())?,
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+    Ok(())
+}
+
+fn verify_nct_corpus_pin(corpus: &NctBaselineCorpus) -> Result<(), String> {
+    let canonical = serde_json::to_vec(corpus)
+        .map_err(|_| "failed to canonicalize the NCT corpus".to_string())?;
+    let expected = match corpus.corpus_id {
+        NctCorpusId::TrainV2 => NCT_BASELINE_TRAIN_CORPUS_SHA256,
+        NctCorpusId::HoldoutV2 => NCT_BASELINE_HOLDOUT_CORPUS_SHA256,
+    };
+    if nct_sha256_hex(&canonical) != expected {
+        return Err("NCT canonical corpus digest drifted".to_string());
+    }
+    Ok(())
+}
+
+fn verify_nct_membership_pin() -> Result<(), String> {
+    let digest = nct_sha256_hex(NCT_BASELINE_MEMBERSHIP_MANIFEST.as_bytes());
+    if digest != NCT_BASELINE_MEMBERSHIP_SHA256 {
+        return Err("NCT reviewed membership manifest digest drifted".to_string());
+    }
+    Ok(())
+}
+
+fn nct_sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+
+    hex::encode(sha2::Sha256::digest(bytes))
+}
+
 /// Response from a sub-agent back to its caller (typically Cerebellum)
 /// or forward to the next sub-agent in the chain. The verdict field
 /// carries the structured PASS/FAIL/BLOCKED outcome from QM-6
