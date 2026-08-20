@@ -40,6 +40,10 @@ use crate::secret::SecretString;
 /// Combined scope for one token: pull/ack the subscription + send as the app.
 const SCOPES: &str =
     "https://www.googleapis.com/auth/pubsub https://www.googleapis.com/auth/chat.bot";
+/// Google service-account keys use this OAuth token endpoint. A signed
+/// JWT-bearer assertion is replayable for its short lifetime, so accepting an
+/// arbitrary HTTPS endpoint from a key file would disclose it to that host.
+const GOOGLE_TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
 /// Refresh the cached token when less than this much lifetime remains.
 const TOKEN_SLACK: Duration = Duration::from_secs(60);
 /// Messages per pull request.
@@ -57,7 +61,7 @@ struct ServiceAccountKey {
 }
 
 fn default_token_uri() -> String {
-    "https://oauth2.googleapis.com/token".to_string()
+    GOOGLE_TOKEN_URI.to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,7 +77,7 @@ struct SubscriptionResponse {
     name: String,
 }
 
-fn validate_subscription_resource(subscription: &str) -> Result<String> {
+pub(crate) fn validate_subscription_resource(subscription: &str) -> Result<String> {
     let value = subscription.trim();
     let parts: Vec<_> = value.split('/').collect();
     if parts.len() != 4
@@ -92,6 +96,73 @@ fn validate_subscription_resource(subscription: &str) -> Result<String> {
         );
     }
     Ok(value.to_string())
+}
+
+/// Validate the exact Google Chat space resource accepted as an outbound
+/// destination.  In particular, this is not a URL or a message/thread name:
+/// callers may only supply the operator-configured `spaces/<id>` resource.
+pub(crate) fn validate_space_resource(space: &str) -> Result<String> {
+    let value = space.trim();
+    let parts: Vec<_> = value.split('/').collect();
+    if value != space
+        || parts.len() != 2
+        || parts[0] != "spaces"
+        || parts[1].is_empty()
+        || value.chars().any(|character| {
+            character.is_control()
+                || character.is_whitespace()
+                || matches!(character, '?' | '#' | '\\')
+        })
+    {
+        anyhow::bail!("gchat space must be the canonical `spaces/<space>` resource name");
+    }
+    Ok(value.to_string())
+}
+
+/// Validate the exact Google-asserted sender resource used for the inbound
+/// allowlist.  The proactive route requires it too, so an installation cannot
+/// accidentally send while its inbound identity boundary is open or malformed.
+pub(crate) fn validate_allowed_sender_resource(sender: &str) -> Result<String> {
+    let value = sender.trim();
+    let parts: Vec<_> = value.split('/').collect();
+    if value != sender
+        || parts.len() != 2
+        || parts[0] != "users"
+        || parts[1].is_empty()
+        || value.chars().any(|character| {
+            character.is_control()
+                || character.is_whitespace()
+                || matches!(character, '?' | '#' | '\\')
+        })
+    {
+        anyhow::bail!("gchat allowed sender must be the canonical `users/<user>` resource name");
+    }
+    Ok(value.to_string())
+}
+
+fn message_receipt_from_response(value: &serde_json::Value) -> Result<MessageId, ChannelError> {
+    let Some(name) = value.get("name").and_then(|field| field.as_str()) else {
+        return Err(ChannelError::Transport(
+            "gchat message response omitted the provider message resource name".to_string(),
+        ));
+    };
+    let parts: Vec<_> = name.split('/').collect();
+    if parts.len() != 4
+        || parts[0] != "spaces"
+        || parts[1].is_empty()
+        || parts[2] != "messages"
+        || parts[3].is_empty()
+        || name.chars().any(|character| {
+            character.is_control()
+                || character.is_whitespace()
+                || matches!(character, '?' | '#' | '\\')
+        })
+    {
+        return Err(ChannelError::Transport(
+            "gchat message response carried an invalid provider message resource name".to_string(),
+        ));
+    }
+    Ok(MessageId(name.to_string()))
 }
 
 /// Google Chat adapter. Construction parses the key file (fail fast on a bad
@@ -125,12 +196,13 @@ impl GChatChannel {
         })?;
         let key: ServiceAccountKey =
             serde_json::from_str(&raw).context("parse gchat service-account JSON key")?;
-        // The signed JWT assertion is POSTed to token_uri — never let a
-        // tampered key file point that at a plaintext/internal endpoint.
-        if !key.token_uri.starts_with("https://") {
+        // The signed JWT assertion is POSTed to token_uri. Pin Google's exact
+        // endpoint rather than merely requiring HTTPS: a poisoned key could
+        // otherwise direct a replayable assertion to an attacker-controlled
+        // HTTPS host (including a userinfo/host parsing lookalike).
+        if key.token_uri != GOOGLE_TOKEN_URI {
             anyhow::bail!(
-                "gchat: token_uri in the service-account key must be an https:// URL \
-                 (got a non-https value)"
+                "gchat: token_uri in the service-account key must be the official Google OAuth endpoint"
             );
         }
         // Security: never follow redirects — a redirect would forward the
@@ -331,12 +403,7 @@ impl GChatChannel {
         let val: serde_json::Value = resp.json().await.map_err(|error| {
             ChannelError::Transport(format!("gchat message response parse: {error}"))
         })?;
-        let name = val
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("sent")
-            .to_string();
-        Ok(MessageId(name))
+        message_receipt_from_response(&val)
     }
 }
 
@@ -451,7 +518,9 @@ impl Channel for GChatChannel {
         chat_id: &str,
         text: &str,
     ) -> std::result::Result<MessageId, ChannelError> {
-        self.post_text(chat_id, text).await
+        let space = validate_space_resource(chat_id)
+            .map_err(|_| ChannelError::Transport("gchat send requires a canonical space".to_string()))?;
+        self.post_text(&space, text).await
     }
 
     /// Proactive = same app-credential send path; `chat_id` is the operator's
@@ -461,7 +530,10 @@ impl Channel for GChatChannel {
         chat_id: &str,
         text: &str,
     ) -> std::result::Result<MessageId, ChannelError> {
-        self.post_text(chat_id, text).await
+        let space = validate_space_resource(chat_id).map_err(|_| {
+            ChannelError::Transport("gchat proactive send requires a canonical space".to_string())
+        })?;
+        self.post_text(&space, text).await
     }
 }
 
@@ -497,7 +569,7 @@ mod tests {
         // never contacted.
         std::fs::write(
             &key,
-            r#"{"client_email":"bot@p.iam.gserviceaccount.com","private_key":"not-a-pem","token_uri":"https://127.0.0.1:1/token"}"#,
+            r#"{"client_email":"bot@p.iam.gserviceaccount.com","private_key":"not-a-pem","token_uri":"https://oauth2.googleapis.com/token"}"#,
         )
         .unwrap();
         let ch = GChatChannel::new(&key, "projects/p/subscriptions/s").unwrap();
@@ -511,20 +583,32 @@ mod tests {
     }
 
     #[test]
-    fn new_rejects_non_https_token_uri() {
-        // Security review: a tampered key file must not point the signed JWT
-        // assertion at a plaintext/internal endpoint.
+    fn new_pins_the_google_token_uri_against_key_file_endpoint_poisoning() {
+        // A tampered key file must not direct the signed JWT assertion to an
+        // arbitrary HTTPS host, an internal host, or a URL parsing lookalike.
         let dir = tempfile::tempdir().unwrap();
-        let key = dir.path().join("sa.json");
-        std::fs::write(
-            &key,
-            r#"{"client_email":"b@p","private_key":"x","token_uri":"http://169.254.169.254/token"}"#,
-        )
-        .unwrap();
-        let Err(err) = GChatChannel::new(&key, "projects/p/subscriptions/s") else {
-            panic!("non-https token_uri must be rejected");
-        };
-        assert!(err.to_string().contains("https://"), "{err}");
+        for (index, token_uri) in [
+            "http://169.254.169.254/token",
+            "https://127.0.0.1/token",
+            "https://oauth2.googleapis.com@evil.invalid/token",
+            "https://oauth2.googleapis.com/token?redirect=evil",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let key = dir.path().join(format!("poisoned-{index}.json"));
+            std::fs::write(
+                &key,
+                format!(
+                    r#"{{"client_email":"b@p","private_key":"x","token_uri":"{token_uri}"}}"#
+                ),
+            )
+            .unwrap();
+            let Err(err) = GChatChannel::new(&key, "projects/p/subscriptions/s") else {
+                panic!("poisoned token URI must be rejected: {token_uri}");
+            };
+            assert!(err.to_string().contains("official Google OAuth"), "{err}");
+        }
     }
 
     #[test]
@@ -570,5 +654,41 @@ mod tests {
             .to_string()
             .contains("cannot read")
         );
+    }
+
+    #[test]
+    fn space_and_sender_resources_require_canonical_identity_names() {
+        assert_eq!(validate_space_resource("spaces/AAAA").unwrap(), "spaces/AAAA");
+        assert_eq!(
+            validate_allowed_sender_resource("users/12345").unwrap(),
+            "users/12345"
+        );
+        for invalid in [
+            " spaces/AAAA",
+            "spaces/",
+            "spaces/AAAA/messages/BBBB",
+            "spaces/AAAA?redirect=https://evil.invalid",
+        ] {
+            assert!(validate_space_resource(invalid).is_err(), "{invalid}");
+        }
+        for invalid in [" users/12345", "users/", "users/123/extra", "users/123#x"] {
+            assert!(validate_allowed_sender_resource(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn message_receipt_preserves_only_the_provider_resource_name() {
+        let receipt = message_receipt_from_response(&serde_json::json!({
+            "name": "spaces/AAAA/messages/BBBB"
+        }))
+        .unwrap();
+        assert_eq!(receipt.0, "spaces/AAAA/messages/BBBB");
+        for response in [
+            serde_json::json!({}),
+            serde_json::json!({"name": "sent"}),
+            serde_json::json!({"name": "spaces/AAAA/messages/BBBB?x=1"}),
+        ] {
+            assert!(message_receipt_from_response(&response).is_err());
+        }
     }
 }

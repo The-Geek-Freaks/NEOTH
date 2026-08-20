@@ -132,6 +132,11 @@ pub(crate) enum DeliveryRoute {
     /// operator-configured room. Room policy and E2EE are re-applied at send.
     #[cfg(feature = "matrix-channel")]
     Matrix { room_id: String },
+    /// Google Chat is feature-gated but constructible on demand from its
+    /// service-account key and Pub/Sub subscription; the receive-loop
+    /// instance is deliberately not reused as delivery authority.
+    #[cfg(feature = "gchat-channel")]
+    GoogleChat { space: String },
 }
 
 /// G-01 / GOLD-FEAT-13 — decide how (and whether) to deliver an item whose
@@ -147,10 +152,10 @@ pub(crate) enum DeliveryRoute {
 /// every channel. A channel with no token or no configured destination →
 /// `SidecarOnly` (the operator still sees it in the ledger). Wired:
 /// Telegram/Slack/Discord/WhatsApp + B9 Signal/LINE/Mattermost/iMessage and,
-/// when compiled, Matrix. Matrix restores its persistent SDK session lazily;
-/// remaining connection-bound adapters (IRC/Twitch/Nostr/GoogleChat) stay
-/// `SidecarOnly` until their live adapter is shared with the tick. Keet is
-/// constructible on demand through its authenticated local companion.
+/// when compiled, Matrix and Google Chat. Matrix restores its persistent SDK
+/// session lazily; Google Chat constructs a fresh short-lived adapter from its
+/// complete operator configuration. IRC/Twitch/Nostr remain `SidecarOnly`.
+/// Keet is constructible on demand through its authenticated local companion.
 pub(crate) fn plan_delivery(
     channel: &str,
     policy: impl crate::permissions::PolicyArgument,
@@ -285,6 +290,28 @@ pub(crate) fn plan_delivery(
         }
         #[cfg(not(feature = "matrix-channel"))]
         "matrix" => DeliveryRoute::SidecarOnly,
+        #[cfg(feature = "gchat-channel")]
+        "gchat" | "google_chat" => {
+            let service_account = credentials
+                .gchat_service_account_json
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty());
+            let subscription = credentials
+                .gchat_subscription
+                .as_deref()
+                .and_then(|value| crate::channels::gchat::validate_subscription_resource(value).ok());
+            let allowed_sender = credentials
+                .gchat_allowed_sender
+                .as_deref()
+                .and_then(|value| crate::channels::gchat::validate_allowed_sender_resource(value).ok());
+            let space = dest.and_then(|value| crate::channels::gchat::validate_space_resource(value).ok());
+            match (service_account, subscription, allowed_sender, space) {
+                (true, Some(_), Some(_), Some(space)) => DeliveryRoute::GoogleChat { space },
+                _ => DeliveryRoute::SidecarOnly,
+            }
+        }
+        #[cfg(not(feature = "gchat-channel"))]
+        "gchat" | "google_chat" => DeliveryRoute::SidecarOnly,
         "keet" => {
             let complete = credentials
                 .keet_bridge_url
@@ -312,11 +339,8 @@ pub(crate) fn plan_delivery(
             }
         }
         // B9 — remaining connection-bound adapters (live socket / relay pool):
-        // the tick can't construct them on demand, so routing destinations are
-        // stored but delivery stays ledger-only until the daemon adapter is shared.
-        // gchat additionally sits behind the `gchat-channel` cargo feature,
-        // which this always-compiled tick can't assume.
-        "irc" | "twitch" | "nostr" | "gchat" | "google_chat" => DeliveryRoute::SidecarOnly,
+        // their routing destinations are stored but delivery stays ledger-only.
+        "irc" | "twitch" | "nostr" => DeliveryRoute::SidecarOnly,
         _ => DeliveryRoute::SidecarOnly,
     }
 }
@@ -631,6 +655,66 @@ async fn deliver_live_route(
                 ),
             );
             execute!(&room_id, channel)
+        }
+        #[cfg(feature = "gchat-channel")]
+        DeliveryRoute::GoogleChat { space } => {
+            let service_account = credentials
+                .gchat_service_account_json
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    LiveRouteError::AdapterConfiguration(
+                        "Google Chat proactive route lost its service-account key path".to_string(),
+                    )
+                })?;
+            let subscription = credentials
+                .gchat_subscription
+                .as_deref()
+                .ok_or_else(|| {
+                    LiveRouteError::AdapterConfiguration(
+                        "Google Chat proactive route lost its subscription".to_string(),
+                    )
+                })
+                .and_then(|value| {
+                    crate::channels::gchat::validate_subscription_resource(value).map_err(|_| {
+                        LiveRouteError::AdapterConfiguration(
+                            "Google Chat proactive route has an invalid subscription".to_string(),
+                        )
+                    })
+                })?;
+            let allowed_sender = credentials
+                .gchat_allowed_sender
+                .as_deref()
+                .ok_or_else(|| {
+                    LiveRouteError::AdapterConfiguration(
+                        "Google Chat proactive route lost its sender allowlist".to_string(),
+                    )
+                })
+                .and_then(|value| {
+                    crate::channels::gchat::validate_allowed_sender_resource(value).map_err(|_| {
+                        LiveRouteError::AdapterConfiguration(
+                            "Google Chat proactive route has an invalid sender allowlist".to_string(),
+                        )
+                    })
+                })?;
+            let space = crate::channels::gchat::validate_space_resource(&space).map_err(|_| {
+                LiveRouteError::AdapterConfiguration(
+                    "Google Chat proactive route has an invalid space destination".to_string(),
+                )
+            })?;
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
+                crate::channels::gchat::GChatChannel::new(
+                    Path::new(service_account),
+                    subscription,
+                )
+                .map_err(|_| {
+                    LiveRouteError::AdapterConfiguration(
+                        "construct Google Chat proactive adapter: rejected".to_string(),
+                    )
+                })?
+                .with_allowlist(Some(allowed_sender), writer.clone()),
+            );
+            execute!(&space, channel)
         }
     }
 }
@@ -1635,21 +1719,85 @@ mod tests {
 
     #[test]
     fn plan_delivery_b9_connection_bound_channels_are_sidecar_only() {
-        // IRC/Twitch/Nostr/GChat remain connection-bound — destinations are
-        // stored but the tick can't construct their adapters on demand.
+        // IRC/Twitch/Nostr retain their live socket/relay ownership and are
+        // therefore ledger-only even when destinations are configured.
         let cfg = cfg_with_telegram(AutonomyLevel::Full);
         let mut rt = default_rt();
         rt.destinations.irc_channel = Some("#neoth".to_string());
         rt.destinations.twitch_channel = Some("#chan".to_string());
         rt.destinations.nostr_recipient = Some("npub1x".to_string());
-        rt.destinations.gchat_space = Some("spaces/AAAA".to_string());
-        for ch in ["irc", "twitch", "nostr", "gchat", "google_chat"] {
+        for ch in ["irc", "twitch", "nostr"] {
             assert_eq!(
                 plan_delivery(ch, AutonomyLevel::Full, &cfg, &rt, &default_creds()),
                 DeliveryRoute::SidecarOnly,
                 "{ch} is connection-bound → sidecar-only"
             );
         }
+    }
+
+    #[cfg(not(feature = "gchat-channel"))]
+    #[test]
+    fn plan_delivery_gchat_feature_off_is_sidecar_only_for_both_aliases() {
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let mut rt = default_rt();
+        rt.destinations.gchat_space = Some("spaces/AAAA".to_string());
+        let creds = crate::config::credentials::Credentials {
+            gchat_service_account_json: Some("C:/operator/gchat-sa.json".to_string()),
+            gchat_subscription: Some("projects/p/subscriptions/chat".to_string()),
+            gchat_allowed_sender: Some("users/12345".to_string()),
+            ..Default::default()
+        };
+        for channel in ["gchat", "google_chat"] {
+            assert_eq!(
+                plan_delivery(channel, AutonomyLevel::Full, &cfg, &rt, &creds),
+                DeliveryRoute::SidecarOnly,
+                "{channel} must not arm transport without gchat-channel"
+            );
+        }
+    }
+
+    #[cfg(feature = "gchat-channel")]
+    #[test]
+    fn plan_delivery_gchat_feature_on_requires_complete_canonical_config() {
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        let mut rt = default_rt();
+        rt.destinations.gchat_space = Some("spaces/AAAA".to_string());
+        let complete = crate::config::credentials::Credentials {
+            gchat_service_account_json: Some("C:/operator/gchat-sa.json".to_string()),
+            gchat_subscription: Some("projects/p/subscriptions/chat".to_string()),
+            gchat_allowed_sender: Some("users/12345".to_string()),
+            ..Default::default()
+        };
+        for channel in ["gchat", "google_chat"] {
+            assert_eq!(
+                plan_delivery(channel, AutonomyLevel::Full, &cfg, &rt, &complete),
+                DeliveryRoute::GoogleChat {
+                    space: "spaces/AAAA".to_string()
+                },
+                "{channel} aliases must select the identical GChat route"
+            );
+        }
+
+        let mut incomplete = complete.clone();
+        incomplete.gchat_allowed_sender = Some("users/12345/extra".to_string());
+        assert_eq!(
+            plan_delivery("gchat", AutonomyLevel::Full, &cfg, &rt, &incomplete),
+            DeliveryRoute::SidecarOnly,
+            "a malformed sender allowlist must never arm GChat"
+        );
+        let mut invalid_destination = rt;
+        invalid_destination.destinations.gchat_space = Some("spaces/AAAA/messages/BBBB".to_string());
+        assert_eq!(
+            plan_delivery(
+                "google_chat",
+                AutonomyLevel::Full,
+                &cfg,
+                &invalid_destination,
+                &complete
+            ),
+            DeliveryRoute::SidecarOnly,
+            "a non-space destination must never arm GChat"
+        );
     }
 
     #[cfg(feature = "matrix-channel")]
