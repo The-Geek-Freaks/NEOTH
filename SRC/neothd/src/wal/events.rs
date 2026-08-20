@@ -4084,7 +4084,14 @@ mod tests {
         let base: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
 
         for forbidden in [
-            "path", "source", "plan", "content", "account", "db_row", "cursor", "raw_id",
+            "path",
+            "source",
+            "plan",
+            "content",
+            "account",
+            "db_row",
+            "cursor",
+            "raw_id",
             "unreviewed_future_field",
         ] {
             let mut rejected = base.clone();
@@ -4105,7 +4112,9 @@ mod tests {
 
         let mut wrong_schema = base.clone();
         wrong_schema["schema_version"] = serde_json::json!(2);
-        assert!(ContextEvidenceReceipt::decode(&serde_json::to_vec(&wrong_schema).unwrap()).is_err());
+        assert!(
+            ContextEvidenceReceipt::decode(&serde_json::to_vec(&wrong_schema).unwrap()).is_err()
+        );
 
         let mut wrong_kind = base.clone();
         wrong_kind["receipt_kind"] = serde_json::json!("provider_action");
@@ -4113,7 +4122,9 @@ mod tests {
 
         let mut raw_identifier = base;
         raw_identifier["receipt_handle"] = serde_json::json!("C:/users/shadow/source-item-42");
-        assert!(ContextEvidenceReceipt::decode(&serde_json::to_vec(&raw_identifier).unwrap()).is_err());
+        assert!(
+            ContextEvidenceReceipt::decode(&serde_json::to_vec(&raw_identifier).unwrap()).is_err()
+        );
 
         let oversized = vec![b' '; MAX_CONTEXT_EVIDENCE_RECEIPT_BYTES + 1];
         assert!(ContextEvidenceReceipt::decode(&oversized).is_err());
@@ -4127,7 +4138,10 @@ mod tests {
 
         assert!(!debug.contains(&"a3".repeat(32)));
         assert_eq!(redacted.receipt_handle, "[redacted]");
-        assert_eq!(redacted.receipt_kind, ContextEvidenceReceiptKind::LocalImport);
+        assert_eq!(
+            redacted.receipt_kind,
+            ContextEvidenceReceiptKind::LocalImport
+        );
         assert_eq!(redacted.policy_revision, 17);
         assert_eq!(redacted.lifecycle_revision, 29);
         assert_eq!(redacted.observed_minute, 28_400_000);
