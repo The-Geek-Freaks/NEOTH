@@ -17,7 +17,6 @@
 use super::compaction::{maybe_unwrap_dpapi, write_key_securely};
 use super::crypto::{INFO_CONFIG, INFO_WAL_SEGMENT, WalMasterKey, WalSegmentKey, derive_subkey};
 use anyhow::{Context, Result};
-#[cfg(any(test, feature = "wasm-plugin-host"))]
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -25,7 +24,6 @@ use std::sync::OnceLock;
 /// Raw keys are 32 bytes and a DPAPI envelope for that input is small. Keep a
 /// hard ceiling so a capture/read path never follows an unbounded `master.key`
 /// allocation controlled by the filesystem.
-#[cfg(any(test, feature = "wasm-plugin-host"))]
 const MAX_STORED_MASTER_KEY_BYTES: usize = 4 * 1024;
 
 /// Default master-key path: `<home>/wal/master.key`.
@@ -79,7 +77,29 @@ pub(crate) fn segment_key_at_checked(home: &Path) -> Result<Option<WalSegmentKey
         .map(Some)
 }
 
-#[cfg(any(test, feature = "wasm-plugin-host"))]
+/// Load an existing master key through the capability-bound, no-follow WAL
+/// namespace. This is intentionally *not* an initialization path: a missing
+/// directory or `master.key`, a link/reparse point, an oversized body, DPAPI
+/// failure, or malformed key all fail closed and leave the filesystem untouched.
+///
+/// Context Connector recovery may call this before it is allowed to open its
+/// encrypted store. It must never turn a missing encryption identity into a new
+/// one just by probing for it.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn load_existing_master_key_at(home: &Path) -> Result<WalMasterKey> {
+    load_master_key_at_checked(home)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "existing WAL master key is absent at {}",
+            master_key_path(home).display()
+        )
+    })
+}
+
+/// Shared capability-relative read primitive. The compatibility reader needs
+/// to distinguish a genuinely absent key (encryption was never enabled) from
+/// an existing but invalid key; new security-sensitive callers should use
+/// [`load_existing_master_key_at`] and receive a strict error for both.
+#[cfg_attr(not(test), allow(dead_code))]
 fn load_master_key_at_checked(home: &Path) -> Result<Option<WalMasterKey>> {
     let wal_dir = home.join("wal");
     let Some(parent) =
@@ -236,6 +256,51 @@ mod tests {
     }
 
     #[test]
+    fn existing_only_load_returns_the_exact_persisted_master_key() {
+        let home = tempfile::tempdir().unwrap();
+        let created = load_or_init_master_key(&master_key_path(home.path())).unwrap();
+
+        let loaded = load_existing_master_key_at(home.path()).unwrap();
+
+        assert_eq!(loaded.expose(), created.expose());
+    }
+
+    #[test]
+    fn existing_only_load_refuses_absence_without_creating_wal_state() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+
+        let error = load_existing_master_key_at(home.path())
+            .expect_err("a read-only key probe must fail when no key exists");
+
+        assert!(format!("{error:#}").contains("absent"));
+        assert!(
+            !wal_dir.exists(),
+            "existing-only key load must not create the WAL directory"
+        );
+    }
+
+    #[test]
+    fn existing_only_load_rejects_malformed_key_without_replacing_it() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir(&wal_dir).unwrap();
+        let path = wal_dir.join("master.key");
+        let malformed = [0x5au8; 31];
+        std::fs::write(&path, malformed).unwrap();
+
+        let error = load_existing_master_key_at(home.path())
+            .expect_err("a malformed existing key must fail closed");
+
+        assert!(format!("{error:#}").contains("malformed"));
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            malformed,
+            "existing-only key load must not replace malformed key material"
+        );
+    }
+
+    #[test]
     fn backup_then_restore_round_trips() {
         let dir = tempfile::tempdir().unwrap();
         let key_path = master_key_path(dir.path());
@@ -286,7 +351,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn checked_segment_key_read_rejects_symlink_leaf() {
+    fn existing_only_load_rejects_symlink_leaf() {
         let home = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         let wal_dir = home.path().join("wal");
@@ -295,7 +360,7 @@ mod tests {
         std::fs::write(&target, [0x5au8; 32]).unwrap();
         std::os::unix::fs::symlink(&target, wal_dir.join("master.key")).unwrap();
 
-        let error = segment_key_at_checked(home.path())
+        let error = load_existing_master_key_at(home.path())
             .expect_err("master.key symlink must not be followed");
         assert!(
             format!("{error:#}").contains("without following links"),
@@ -305,7 +370,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn checked_segment_key_read_rejects_wal_directory_junction() {
+    fn existing_only_load_rejects_wal_directory_junction() {
         let home = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         std::fs::write(outside.path().join("master.key"), [0x5au8; 32]).unwrap();
@@ -321,7 +386,7 @@ mod tests {
             .expect("spawn mklink /J");
         assert!(status.success(), "mklink /J must create test junction");
 
-        let result = segment_key_at_checked(home.path());
+        let result = load_existing_master_key_at(home.path());
         std::fs::remove_dir(&junction).expect("remove test junction without following it");
         let error = result.expect_err("WAL directory junction must not redirect master.key read");
         assert!(

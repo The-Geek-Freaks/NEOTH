@@ -246,6 +246,11 @@ pub enum ExtendedSubtype {
     /// receipt was injected before provider dispatch. Raw prompts, repository
     /// paths, physical identities and symbol names never enter the payload.
     CodeMapRecallResolved = 0x26,
+    /// CC-RUNTIME-P0 reservation — a content-free Context Connector import
+    /// receipt. The subtype and closed payload codec are deliberately
+    /// registered before any daemon path emits it; later wiring must not create
+    /// an ad-hoc audit schema or accidentally put imported evidence in the WAL.
+    ContextEvidenceReceipt = 0x27,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -338,6 +343,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::ChannelEgressArmed => "channel_egress_armed",
             ExtendedSubtype::SkillRouteResolved => "skill_route_resolved",
             ExtendedSubtype::CodeMapRecallResolved => "code_map_recall_resolved",
+            ExtendedSubtype::ContextEvidenceReceipt => "context_evidence_receipt",
         }
     }
 
@@ -382,6 +388,7 @@ impl ExtendedSubtype {
             0x24 => Some(ExtendedSubtype::ChannelEgressArmed),
             0x25 => Some(ExtendedSubtype::SkillRouteResolved),
             0x26 => Some(ExtendedSubtype::CodeMapRecallResolved),
+            0x27 => Some(ExtendedSubtype::ContextEvidenceReceipt),
             _ => None,
         }
     }
@@ -428,9 +435,163 @@ impl ExtendedSubtype {
             Self::ChannelEgressArmed,
             Self::SkillRouteResolved,
             Self::CodeMapRecallResolved,
+            Self::ContextEvidenceReceipt,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
+    }
+}
+
+/// Schema version for the closed `ContextEvidenceReceipt` payload.
+///
+/// This is independent of the WAL frame schema. A future reader must refuse a
+/// payload version it does not understand rather than silently accepting a new
+/// content-bearing field under the same extended subtype.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const CONTEXT_EVIDENCE_RECEIPT_SCHEMA_VERSION: u8 = 1;
+
+/// Hard upper bound for a serialized Context Connector receipt payload.
+///
+/// The current v1 shape is far smaller; this ceiling is an allocation and
+/// parser boundary for future on-disk WAL readers, not permission to add fields.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const MAX_CONTEXT_EVIDENCE_RECEIPT_BYTES: usize = 256;
+
+#[cfg_attr(not(test), allow(dead_code))]
+const CONTEXT_EVIDENCE_RECEIPT_HANDLE_HEX_LEN: usize = 64;
+
+/// Closed allowlist for a content-free Context Connector receipt.
+///
+/// The P0 runtime may only record that an already-authorized local import
+/// committed. Network providers, actions, MCP, GroundTruth and arbitrary
+/// connector names are intentionally not representable here.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ContextEvidenceReceiptKind {
+    LocalImport,
+}
+
+/// Content-free extended-WAL payload reserved for the Context Connector P0
+/// import outbox (`ExtendedSubtype::ContextEvidenceReceipt`).
+///
+/// This is deliberately un-emitted and un-wired in this slice. It records only
+/// a fixed-width opaque SHA-256 receipt handle, an allowlisted kind, two
+/// authority revisions, and a coarse Unix minute. In particular, it has no
+/// path, source, plan, content, account, database-row, cursor, or raw external
+/// identifier field. `deny_unknown_fields` makes that boundary fail closed on
+/// decode as well as at the Rust type surface.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ContextEvidenceReceipt {
+    schema_version: u8,
+    receipt_handle: String,
+    receipt_kind: ContextEvidenceReceiptKind,
+    policy_revision: u64,
+    lifecycle_revision: u64,
+    observed_minute: u64,
+}
+
+/// Safe operator-facing rendering of a Context Connector receipt. The opaque
+/// handle is still a correlator and must not escape through logs or diagnostics.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RedactedContextEvidenceReceipt {
+    pub(crate) schema_version: u8,
+    pub(crate) receipt_handle: &'static str,
+    pub(crate) receipt_kind: ContextEvidenceReceiptKind,
+    pub(crate) policy_revision: u64,
+    pub(crate) lifecycle_revision: u64,
+    pub(crate) observed_minute: u64,
+}
+
+impl std::fmt::Debug for ContextEvidenceReceipt {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.redacted().fmt(formatter)
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl ContextEvidenceReceipt {
+    /// Construct the only v1 receipt shape. `receipt_handle` must be a
+    /// lower-case SHA-256 hex digest, so raw imported identifiers cannot be
+    /// smuggled into the append-only WAL under an "opaque" label.
+    pub(crate) fn new(
+        receipt_handle: String,
+        receipt_kind: ContextEvidenceReceiptKind,
+        policy_revision: u64,
+        lifecycle_revision: u64,
+        observed_minute: u64,
+    ) -> anyhow::Result<Self> {
+        let receipt = Self {
+            schema_version: CONTEXT_EVIDENCE_RECEIPT_SCHEMA_VERSION,
+            receipt_handle,
+            receipt_kind,
+            policy_revision,
+            lifecycle_revision,
+            observed_minute,
+        };
+        receipt.validate()?;
+        Ok(receipt)
+    }
+
+    /// Strict bounded encoding for the future WAL append boundary.
+    pub(crate) fn encode(&self) -> anyhow::Result<Vec<u8>> {
+        self.validate()?;
+        let encoded = serde_json::to_vec(self)
+            .map_err(|error| anyhow::anyhow!("encode Context Evidence receipt: {error}"))?;
+        anyhow::ensure!(
+            encoded.len() <= MAX_CONTEXT_EVIDENCE_RECEIPT_BYTES,
+            "Context Evidence receipt exceeds {} bytes",
+            MAX_CONTEXT_EVIDENCE_RECEIPT_BYTES
+        );
+        Ok(encoded)
+    }
+
+    /// Strict bounded decoding for WAL inspection/recovery. Unknown fields,
+    /// unsupported schema versions, non-opaque handles, and oversize bodies are
+    /// all rejected before a caller can treat the receipt as evidence.
+    pub(crate) fn decode(encoded: &[u8]) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            encoded.len() <= MAX_CONTEXT_EVIDENCE_RECEIPT_BYTES,
+            "Context Evidence receipt exceeds {} bytes",
+            MAX_CONTEXT_EVIDENCE_RECEIPT_BYTES
+        );
+        let receipt: Self = serde_json::from_slice(encoded)
+            .map_err(|error| anyhow::anyhow!("decode Context Evidence receipt: {error}"))?;
+        receipt.validate()?;
+        Ok(receipt)
+    }
+
+    #[must_use]
+    pub(crate) fn redacted(&self) -> RedactedContextEvidenceReceipt {
+        RedactedContextEvidenceReceipt {
+            schema_version: self.schema_version,
+            receipt_handle: "[redacted]",
+            receipt_kind: self.receipt_kind,
+            policy_revision: self.policy_revision,
+            lifecycle_revision: self.lifecycle_revision,
+            observed_minute: self.observed_minute,
+        }
+    }
+
+    fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.schema_version == CONTEXT_EVIDENCE_RECEIPT_SCHEMA_VERSION,
+            "unsupported Context Evidence receipt schema version {}",
+            self.schema_version
+        );
+        anyhow::ensure!(
+            self.receipt_handle.len() == CONTEXT_EVIDENCE_RECEIPT_HANDLE_HEX_LEN
+                && self
+                    .receipt_handle
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "Context Evidence receipt handle must be a {}-character lower-case SHA-256 hex digest",
+            CONTEXT_EVIDENCE_RECEIPT_HANDLE_HEX_LEN
+        );
+        Ok(())
     }
 }
 
@@ -3836,6 +3997,7 @@ mod tests {
             ExtendedSubtype::ChannelEgressArmed,
             ExtendedSubtype::SkillRouteResolved,
             ExtendedSubtype::CodeMapRecallResolved,
+            ExtendedSubtype::ContextEvidenceReceipt,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");
@@ -3881,6 +4043,94 @@ mod tests {
         let bytes = header.to_le_bytes();
         assert_eq!(bytes[2], 0x00);
         assert_eq!(bytes[3], ExtendedSubtype::LocalSnapshot as u8);
+    }
+
+    fn test_context_evidence_receipt() -> ContextEvidenceReceipt {
+        ContextEvidenceReceipt::new(
+            "a3".repeat(32),
+            ContextEvidenceReceiptKind::LocalImport,
+            17,
+            29,
+            28_400_000,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn context_evidence_receipt_is_closed_versioned_and_round_trips() {
+        let receipt = test_context_evidence_receipt();
+        let encoded = receipt.encode().unwrap();
+
+        assert!(encoded.len() <= MAX_CONTEXT_EVIDENCE_RECEIPT_BYTES);
+        assert_eq!(
+            ContextEvidenceReceipt::decode(&encoded).unwrap(),
+            receipt,
+            "the exact v1 content-free receipt must round-trip"
+        );
+        assert_eq!(
+            ExtendedSubtype::ContextEvidenceReceipt as u8,
+            0x27,
+            "the P0 outbox receipt subtype is append-only"
+        );
+        assert_eq!(
+            ExtendedSubtype::ContextEvidenceReceipt.name(),
+            "context_evidence_receipt"
+        );
+    }
+
+    #[test]
+    fn context_evidence_receipt_rejects_unknown_and_forbidden_fields() {
+        let encoded = test_context_evidence_receipt().encode().unwrap();
+        let base: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+
+        for forbidden in [
+            "path", "source", "plan", "content", "account", "db_row", "cursor", "raw_id",
+            "unreviewed_future_field",
+        ] {
+            let mut rejected = base.clone();
+            rejected[forbidden] = serde_json::json!("must-not-enter-wal");
+            let error = ContextEvidenceReceipt::decode(&serde_json::to_vec(&rejected).unwrap())
+                .expect_err("closed receipt schema must reject every extra field");
+            assert!(
+                format!("{error:#}").contains("unknown field"),
+                "unexpected rejection for forbidden {forbidden}: {error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn context_evidence_receipt_rejects_schema_kind_handle_and_size_violations() {
+        let encoded = test_context_evidence_receipt().encode().unwrap();
+        let base: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+
+        let mut wrong_schema = base.clone();
+        wrong_schema["schema_version"] = serde_json::json!(2);
+        assert!(ContextEvidenceReceipt::decode(&serde_json::to_vec(&wrong_schema).unwrap()).is_err());
+
+        let mut wrong_kind = base.clone();
+        wrong_kind["receipt_kind"] = serde_json::json!("provider_action");
+        assert!(ContextEvidenceReceipt::decode(&serde_json::to_vec(&wrong_kind).unwrap()).is_err());
+
+        let mut raw_identifier = base;
+        raw_identifier["receipt_handle"] = serde_json::json!("C:/users/shadow/source-item-42");
+        assert!(ContextEvidenceReceipt::decode(&serde_json::to_vec(&raw_identifier).unwrap()).is_err());
+
+        let oversized = vec![b' '; MAX_CONTEXT_EVIDENCE_RECEIPT_BYTES + 1];
+        assert!(ContextEvidenceReceipt::decode(&oversized).is_err());
+    }
+
+    #[test]
+    fn context_evidence_receipt_redacts_opaque_handle_from_diagnostics() {
+        let receipt = test_context_evidence_receipt();
+        let debug = format!("{receipt:?}");
+        let redacted = receipt.redacted();
+
+        assert!(!debug.contains(&"a3".repeat(32)));
+        assert_eq!(redacted.receipt_handle, "[redacted]");
+        assert_eq!(redacted.receipt_kind, ContextEvidenceReceiptKind::LocalImport);
+        assert_eq!(redacted.policy_revision, 17);
+        assert_eq!(redacted.lifecycle_revision, 29);
+        assert_eq!(redacted.observed_minute, 28_400_000);
     }
 
     /// Every published event-code must be unique. Catches accidental
