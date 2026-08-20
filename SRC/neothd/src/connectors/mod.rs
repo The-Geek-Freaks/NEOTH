@@ -11,6 +11,12 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+// GOLD-CC-01 — deliberately non-effectful until a future authenticated local
+// control transport can own session issuance and atomic config replacement.
+#[allow(dead_code)]
+pub(crate) mod control_plane;
+pub mod control_state;
+
 // GOLD-CC-04 — hardened, effect-free import planners.  These remain private
 // implementation substrates until a later control-plane slice can issue their
 // module-private authority.  In particular, this declaration does not expose

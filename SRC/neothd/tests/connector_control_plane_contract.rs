@@ -1,0 +1,66 @@
+//! GOLD-CC-01 source contract for the private runtime-control substrate.
+//!
+//! Functional authority tests remain next to the private implementation. This
+//! public-facing gate ensures future wiring cannot make config presence or a
+//! caller-supplied subject string into a connector capability.
+
+const CONTROL_PLANE: &str = include_str!("../src/connectors/control_plane.rs");
+const CONTROL_STATE: &str = include_str!("../src/connectors/control_state.rs");
+const CONNECTORS: &str = include_str!("../src/connectors/mod.rs");
+const CONFIG: &str = include_str!("../src/config/mod.rs");
+
+#[test]
+fn control_plane_exposes_no_public_capability_mint_or_effect_surface() {
+    assert!(!CONTROL_PLANE.contains("pub struct AuthenticatedControlSession"));
+    assert!(!CONTROL_PLANE.contains("pub struct AccountAuthority"));
+    assert!(!CONTROL_PLANE.contains("AuthenticatedControlSessionIssuer"));
+    assert!(!CONTROL_PLANE.contains("pub fn authorize_context_import"));
+    assert!(!CONTROL_PLANE.contains("pub async fn"));
+    for forbidden in [
+        "use crate::context_graph",
+        "pub fn plan_import",
+        "pub fn execute",
+        "pub fn dispatch_mcp",
+    ] {
+        assert!(
+            !CONTROL_PLANE.contains(forbidden),
+            "control plane must not wire {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn durable_control_schema_stays_default_off_and_content_free() {
+    assert!(CONTROL_STATE.contains("pub enabled: bool"));
+    assert!(CONTROL_STATE.contains("enabled: false"));
+    assert!(CONTROL_STATE.contains("pub registered_accounts: Vec<RegisteredConnectorAccount>"));
+    assert!(CONTROL_STATE.contains("const MAX_REGISTERED_CONNECTOR_ACCOUNTS: usize = 64"));
+    assert!(!CONTROL_STATE.contains("String content"));
+    assert!(!CONTROL_STATE.contains("SecretString"));
+    assert!(
+        CONFIG.contains(
+            "pub context_connectors: crate::connectors::control_state::ConnectorControlConfig"
+        )
+    );
+    assert!(CONFIG.contains("invalid context_connectors config"));
+}
+
+#[test]
+fn only_cc01_admission_can_precede_context_import_authority() {
+    let start = CONTROL_PLANE
+        .find("pub(crate) fn authorize_context_import(")
+        .expect("control plane must retain the context-import admission method");
+    let body = &CONTROL_PLANE[start..];
+    let body = &body[..body
+        .find("\n    /// Retires only the in-memory authority")
+        .expect("authorize_context_import body must end before retirement")];
+    let admission = body
+        .find("admit_entry_point(")
+        .expect("authority issuance must re-run CC-01 admission");
+    let authority = body
+        .find("Ok(AccountAuthority")
+        .expect("control plane must issue only a private authority");
+    assert!(admission < authority);
+    assert!(CONNECTORS.contains("pub fn admit_entry_point("));
+    assert!(CONNECTORS.contains("ConnectorEntryPoint::ContextImport"));
+}

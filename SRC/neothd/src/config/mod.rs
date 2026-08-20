@@ -640,6 +640,12 @@ pub enum SecretsBackend {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct FreedomConfig {
+    /// GOLD-CC-01 — default-off, durable connector account control state.
+    ///
+    /// This is policy/configuration only: a present record never starts a
+    /// connector and never grants a runtime capability by itself.
+    #[serde(default)]
+    pub context_connectors: crate::connectors::control_state::ConnectorControlConfig,
     /// D003-KEYCHAIN-01 — secrets backend selection. Default `file`;
     /// set to `keychain` after running `neoth credential migrate --to keychain`.
     #[serde(default)]
@@ -2231,6 +2237,9 @@ impl FreedomConfig {
     }
 
     fn validate_public_sections(&self) -> Result<()> {
+        self.context_connectors
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid context_connectors config: {error}"))?;
         self.media
             .vad
             .validate()
