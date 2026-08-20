@@ -1426,8 +1426,23 @@ mod tests {
             const { RefCell::new(Vec::new()) };
     }
 
+    #[cfg(not(windows))]
     fn test_tempdir() -> tempfile::TempDir {
         crate::test_env::canonical_tempdir().expect("create canonical test directory")
+    }
+
+    #[cfg(windows)]
+    fn test_tempdir() -> tempfile::TempDir {
+        // `canonicalize` deliberately returns a verbatim (`\\?\\C:\\...`) path
+        // on Windows. That is correct for symlink-sensitive Unix/macOS fixtures,
+        // but this connector intentionally admits only ordinary local drive paths
+        // at its ambient-capability boundary. Let tempfile retain the normal
+        // Win32 spelling so positive planner tests exercise that supported path;
+        // namespace-rejection tests below still cover verbatim/UNC/device paths.
+        tempfile::Builder::new()
+            .prefix("neoth-test-")
+            .tempdir()
+            .expect("create native-drive test directory")
     }
 
     fn configuration() -> ConnectorConfiguration {
@@ -1803,6 +1818,21 @@ mod tests {
         assert_eq!(
             plan_import(approved(vault.path()), ObsidianImportLimits::default()),
             Err(ObsidianPlanError::ChangedDuringPlanning)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn positive_fixture_uses_supported_native_drive_namespace() {
+        let vault = test_tempdir();
+        assert!(validate_root_path_form(vault.path()).is_ok());
+        assert!(
+            matches!(
+                vault.path().components().next(),
+                Some(Component::Prefix(prefix)) if matches!(prefix.kind(), std::path::Prefix::Disk(_))
+            ),
+            "positive Obsidian fixture must use an ordinary local drive path: {}",
+            vault.path().display()
         );
     }
 
