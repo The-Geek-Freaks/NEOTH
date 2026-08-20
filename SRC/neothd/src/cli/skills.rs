@@ -2144,6 +2144,45 @@ mod tests {
         .unwrap();
     }
 
+    fn installed_authority_expectation(
+        home: &Path,
+        id: &str,
+    ) -> crate::skills::authority::InstalledSkillDecisionExpectation {
+        let generation = installer::inspect_current_install(&home.join("skills"), id)
+            .expect("installed Skill fixture")
+            .generation_sha256;
+        let install_proof =
+            mutation_lifecycle::authenticate_current_install_incarnation(home, id, &generation)
+                .expect("installed Skill fixture has a durable incarnation receipt");
+        crate::skills::authority::InstalledSkillDecisionExpectation::new(
+            generation,
+            install_proof.install_incarnation(),
+            install_proof.terminal_receipt_sha256().to_string(),
+        )
+        .expect("installed Skill fixture has a valid decision expectation")
+    }
+
+    fn authority_fixture_manifest(
+        id: &str,
+        system_prompt: &str,
+        tool: &str,
+        delegate_to: &str,
+        model: &str,
+        source: &str,
+    ) -> String {
+        format!(
+            "id: {id}\n\
+             description: installed authority lifecycle fixture\n\
+             enabled: true\n\
+             system_prompt: {system_prompt:?}\n\
+             trigger_keywords: [authority-lifecycle]\n\
+             tool_allowlist: [{tool:?}]\n\
+             delegate_to: {delegate_to:?}\n\
+             model: {model:?}\n\
+             source: {source:?}\n"
+        )
+    }
+
     #[tokio::test]
     async fn installed_toggle_roundtrip_publishes_exact_authority_before_runtime_success() {
         let home = tempfile::tempdir().unwrap();
@@ -2254,6 +2293,234 @@ mod tests {
         );
         assert!(revoked.reload_requested);
         assert!(Path::new(&revoked.reload_sentinel).is_file());
+    }
+
+    #[tokio::test]
+    async fn buddy_rejects_stale_authority_after_replace_claim_drift_and_rollback() {
+        // GUI/Buddy consent is a three-part capability (package generation,
+        // install incarnation, terminal install receipt), not a mutable Skill
+        // id or a UI selection. Exercise a real on-disk package lifecycle:
+        // v1 activates through Buddy, replacements change every behavior
+        // claim one at a time, then an exact-byte rollback returns to v1 under
+        // a new incarnation. In all cases a stale Buddy revoke must be a
+        // no-op before policy or authority mutation.
+        let home = tempfile::tempdir().unwrap();
+        let id = "buddy-stale-authority";
+        let skill_dir = home.path().join("skills").join(id);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let config_path = home.path().join("freedom.yaml");
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
+        install_authority_test_wal_key(home.path());
+
+        let generation_n_manifest = authority_fixture_manifest(
+            id,
+            "AUTHORITY-N",
+            "fetch",
+            "research-helper",
+            "provider/model-n",
+            "https://example.test/skills/n",
+        );
+        std::fs::write(skill_dir.join("skill.yaml"), &generation_n_manifest).unwrap();
+        record_authority_test_install(home.path(), id);
+        let stale_n = installed_authority_expectation(home.path(), id);
+
+        let active = set_skill_authority_at_config_with_expectation(
+            home.path(),
+            &config_path,
+            id,
+            SkillAuthorityTarget::Enabled,
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorBuddy,
+            Some(stale_n.clone()),
+        )
+        .await
+        .expect("Buddy uses the same exact-generation activation path as GUI");
+        let active_receipt = active.authority.expect("installed active receipt");
+        assert_eq!(
+            active_receipt.decision_source(),
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorBuddy
+        );
+        let original_authority = active_receipt.record_sha256().to_string();
+        let original_generation = active_receipt.package_generation_sha256().to_string();
+
+        let variants = [
+            (
+                "manifest",
+                authority_fixture_manifest(
+                    id,
+                    "AUTHORITY-N-CHANGED-MANIFEST",
+                    "fetch",
+                    "research-helper",
+                    "provider/model-n",
+                    "https://example.test/skills/n",
+                ),
+            ),
+            (
+                "source",
+                authority_fixture_manifest(
+                    id,
+                    "AUTHORITY-N",
+                    "fetch",
+                    "research-helper",
+                    "provider/model-n",
+                    "https://example.test/skills/n-plus-one",
+                ),
+            ),
+            (
+                "model",
+                authority_fixture_manifest(
+                    id,
+                    "AUTHORITY-N",
+                    "fetch",
+                    "research-helper",
+                    "provider/model-n-plus-one",
+                    "https://example.test/skills/n",
+                ),
+            ),
+            (
+                "delegation",
+                authority_fixture_manifest(
+                    id,
+                    "AUTHORITY-N",
+                    "fetch",
+                    "research-helper-plus-one",
+                    "provider/model-n",
+                    "https://example.test/skills/n",
+                ),
+            ),
+            (
+                "allowlist",
+                authority_fixture_manifest(
+                    id,
+                    "AUTHORITY-N",
+                    "channel-send",
+                    "research-helper",
+                    "provider/model-n",
+                    "https://example.test/skills/n",
+                ),
+            ),
+        ];
+
+        for (claim, replacement) in variants {
+            std::fs::write(skill_dir.join("skill.yaml"), replacement).unwrap();
+            record_authority_test_install(home.path(), id);
+            let current_generation =
+                installer::inspect_current_install(&home.path().join("skills"), id)
+                    .expect("replaced installed Skill fixture")
+                    .generation_sha256;
+            assert_ne!(
+                current_generation, original_generation,
+                "{claim} replacement must change the package generation"
+            );
+            let replacement_reload = crate::config::reload::ReloadController::new(
+                FreedomConfig::load_from_path(&config_path).unwrap(),
+                config_path.clone(),
+            );
+            assert_eq!(
+                crate::skills::authority::validate_installed_authority(
+                    home.path(),
+                    id,
+                    &replacement_reload,
+                )
+                .inactive_reason(),
+                Some(crate::skills::authority::SkillAuthorityInactiveReason::PackageGenerationMismatch),
+                "{claim} replacement must remove the old runtime authority before Buddy acts"
+            );
+
+            let config_before = std::fs::read(&config_path).unwrap();
+            let error = set_skill_authority_at_config_with_expectation(
+                home.path(),
+                &config_path,
+                id,
+                SkillAuthorityTarget::Revoked,
+                crate::skills::authority::SkillAuthorityDecisionSource::OperatorBuddy,
+                Some(stale_n.clone()),
+            )
+            .await
+            .expect_err("Buddy must not revoke a different generation than the one it showed");
+            assert!(
+                format!("{error:#}").contains("changed after operator consent"),
+                "{claim} replacement returned an unrelated error: {error:#}"
+            );
+            assert_eq!(std::fs::read(&config_path).unwrap(), config_before);
+            assert_eq!(
+                crate::skills::authority::inspect_current_authority(home.path(), id)
+                    .unwrap()
+                    .expect("original authority remains readable after rejected stale action")
+                    .record_sha256(),
+                original_authority,
+                "{claim} stale Buddy action must not publish a replacement authority"
+            );
+        }
+
+        // Restore the exact v1 bytes. The generation matches N again, but the
+        // durable mutation lifecycle mints a new incarnation (the ABA case).
+        std::fs::write(skill_dir.join("skill.yaml"), &generation_n_manifest).unwrap();
+        record_authority_test_install(home.path(), id);
+        let rolled_back_generation =
+            installer::inspect_current_install(&home.path().join("skills"), id)
+                .expect("rolled-back installed Skill fixture")
+                .generation_sha256;
+        let rolled_back_proof = mutation_lifecycle::authenticate_current_install_incarnation(
+            home.path(),
+            id,
+            &rolled_back_generation,
+        )
+        .expect("rolled-back installed Skill fixture has a durable incarnation receipt");
+        assert_eq!(
+            rolled_back_generation, original_generation,
+            "rollback fixture must restore byte-identical package generation"
+        );
+        assert_ne!(
+            rolled_back_proof.install_incarnation(),
+            active_receipt.install_incarnation(),
+            "byte-identical rollback must still receive a fresh incarnation"
+        );
+        let rollback_reload = crate::config::reload::ReloadController::new(
+            FreedomConfig::load_from_path(&config_path).unwrap(),
+            config_path.clone(),
+        );
+        assert_eq!(
+            crate::skills::authority::validate_installed_authority(
+                home.path(),
+                id,
+                &rollback_reload
+            )
+            .inactive_reason(),
+            Some(
+                crate::skills::authority::SkillAuthorityInactiveReason::InstallIncarnationMismatch
+            ),
+            "byte-identical rollback must not resurrect N authority before a fresh decision"
+        );
+        let config_before_rollback_revoke = std::fs::read(&config_path).unwrap();
+        let error = set_skill_authority_at_config_with_expectation(
+            home.path(),
+            &config_path,
+            id,
+            SkillAuthorityTarget::Revoked,
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorBuddy,
+            Some(stale_n),
+        )
+        .await
+        .expect_err("Buddy must reject an ABA rollback under the stale installation receipt");
+        assert!(
+            format!("{error:#}").contains("changed after operator consent"),
+            "rollback returned an unrelated error: {error:#}"
+        );
+        assert_eq!(
+            std::fs::read(&config_path).unwrap(),
+            config_before_rollback_revoke
+        );
+        assert_eq!(
+            crate::skills::authority::inspect_current_authority(home.path(), id)
+                .unwrap()
+                .expect("original authority remains readable after rejected rollback action")
+                .record_sha256(),
+            original_authority
+        );
     }
 
     #[tokio::test]

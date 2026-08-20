@@ -2234,6 +2234,103 @@ system_prompt: test
     }
 
     #[tokio::test]
+    async fn running_registry_adopts_only_the_freshly_authorized_generation() {
+        // This is the daemon-side N -> N+1 boundary: a registry which is
+        // already live must first remove the old installed capability after a
+        // replacement, then admit only the newly authorized incarnation after
+        // its fresh decision and rebuild. Existing Arc snapshots deliberately
+        // remain valid for already-started turns; every newly acquired runtime
+        // snapshot must carry the N+1 proof.
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let id = "authority-generation-adoption";
+        write_skill(
+            &skills_dir,
+            id,
+            "id: authority-generation-adoption\n\
+             description: generation adoption fixture\n\
+             system_prompt: AUTHORITY-GENERATION-N\n\
+             trigger_keywords: [authority-generation]\n\
+             enabled: true\n",
+        )
+        .await;
+        install_test_authority_key(home.path());
+        record_test_install_incarnation(home.path(), id);
+        let reload = test_reload_controller(home.path(), crate::config::FreedomConfig::default());
+        let generation_n = activate_test_skill(home.path(), id, reload.as_ref());
+        let registry = SkillRegistry::load_with_reload_controller(&skills_dir, Arc::clone(&reload))
+            .await
+            .unwrap();
+        let in_flight_n = registry.authority_bound_snapshot().unwrap();
+        let initial = in_flight_n
+            .skills()
+            .iter()
+            .find(|skill| skill.id() == id)
+            .expect("N authority must be active before replacement");
+        assert_eq!(
+            initial.authority_record_sha256(),
+            Some(generation_n.record_sha256())
+        );
+        assert_eq!(initial.system_prompt(), "AUTHORITY-GENERATION-N");
+
+        // Simulate a completed installer/updater replacement, including its
+        // durable mutation-life-cycle receipt. This is intentionally not a
+        // source-level mock: the registry reopens the package and validates
+        // the live authority store just as a separate daemon does.
+        write_skill(
+            &skills_dir,
+            id,
+            "id: authority-generation-adoption\n\
+             description: generation adoption fixture\n\
+             system_prompt: AUTHORITY-GENERATION-N-PLUS-ONE\n\
+             trigger_keywords: [authority-generation]\n\
+             enabled: true\n",
+        )
+        .await;
+        record_test_install_incarnation(home.path(), id);
+
+        registry.reload_now().await.unwrap();
+        assert!(
+            registry.snapshot().iter().all(|skill| skill.id() != id),
+            "a replacement cannot retain N authority while N+1 awaits a fresh decision"
+        );
+
+        let generation_n_plus_one = activate_test_skill(home.path(), id, reload.as_ref());
+        assert_ne!(
+            generation_n.package_generation_sha256(),
+            generation_n_plus_one.package_generation_sha256(),
+            "the replacement fixture must actually change package generation"
+        );
+        assert_ne!(
+            generation_n.install_incarnation(),
+            generation_n_plus_one.install_incarnation(),
+            "a completed replacement must mint a new authority incarnation"
+        );
+        registry.reload_now().await.unwrap();
+
+        let adopted = registry.authority_bound_snapshot().unwrap();
+        let active = adopted
+            .skills()
+            .iter()
+            .find(|skill| skill.id() == id)
+            .expect("only a fresh N+1 authority may re-enter the live registry");
+        assert_eq!(
+            active.authority_record_sha256(),
+            Some(generation_n_plus_one.record_sha256())
+        );
+        assert_eq!(
+            active.install_incarnation(),
+            Some(generation_n_plus_one.install_incarnation())
+        );
+        assert_eq!(active.system_prompt(), "AUTHORITY-GENERATION-N-PLUS-ONE");
+        assert_ne!(
+            active.authority_record_sha256(),
+            Some(generation_n.record_sha256()),
+            "a new registry acquisition must not expose the stale N receipt"
+        );
+    }
+
+    #[tokio::test]
     async fn malformed_active_generation_is_quarantined_and_dropped_on_reload() {
         let home = tempdir().unwrap();
         let skills_dir = home.path().join("skills");
