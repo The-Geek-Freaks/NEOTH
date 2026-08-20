@@ -696,30 +696,6 @@ async fn run_child_bounded(
     .await
 }
 
-/// Run an auxiliary ffmpeg operation through the owned video supervisor.
-///
-/// Callers outside this module must not create a competing child lifecycle:
-/// this retains the process-wide one-worker bound and its fail-closed cleanup
-/// rule when a child cannot be proven reaped.
-pub(crate) async fn run_auxiliary_ffmpeg_bounded(
-    command: Command,
-    operation: &'static str,
-    timeout: Duration,
-    max_stdout_bytes: u64,
-    missing_binary_reason: &'static str,
-) -> Result<Vec<u8>, ExtractionError> {
-    let permit = acquire_auxiliary_video_work_permit().await?;
-    run_auxiliary_ffmpeg_bounded_with_permit(
-        command,
-        operation,
-        timeout,
-        max_stdout_bytes,
-        missing_binary_reason,
-        &permit,
-    )
-    .await
-}
-
 /// Run one child under a caller-held auxiliary video reservation. The caller
 /// must retain `permit` through every related child and private snapshot.
 pub(crate) async fn run_auxiliary_ffmpeg_bounded_with_permit(

@@ -2003,12 +2003,11 @@ fn validate_batch(batch: &CommitBatch, permits_context_evidence_receipt: bool) -
                 {
                     bail!("provenance reference must contain 1..={MAX_PROVENANCE_BYTES} bytes");
                 }
-                if *receipt != AuditReceipt::RevisionStored {
-                    if *receipt != AuditReceipt::ContextEvidenceStored
-                        || !permits_context_evidence_receipt
-                    {
-                        bail!("revision mutations require RevisionStored receipt");
-                    }
+                if *receipt != AuditReceipt::RevisionStored
+                    && (*receipt != AuditReceipt::ContextEvidenceStored
+                        || !permits_context_evidence_receipt)
+                {
+                    bail!("revision mutations require RevisionStored receipt");
                 }
             }
             ContextOperation::Tombstone {
