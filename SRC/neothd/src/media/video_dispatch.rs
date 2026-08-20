@@ -6,10 +6,50 @@
 //! only — the prompt is hashed, the frame pixels are NEVER in the WAL).
 
 use super::Asset;
-use super::frame_decoder::FrameDecoder;
+use super::frame_decoder::{DecodedVideoFrame, FrameDecoder};
 use super::multimodal_synth::MultimodalSynthesizer;
-use super::video_frames::{FrameFormat, MultimodalProvider, MultimodalRequest};
+use super::video_frames::{Frame, FrameFormat, MultimodalProvider, MultimodalRequest};
 use crate::wal::writer::WalWriterHandle;
+
+const PERCEPTUAL_SAMPLE_COUNT: usize = 16 * 16;
+const PERCEPTUAL_MEAN_ABSOLUTE_DIFFERENCE_MAX: u16 = 2;
+
+/// Compare mean absolute difference without rounding it down first.
+fn mean_absolute_difference_is_at_most(
+    left: &[u8; PERCEPTUAL_SAMPLE_COUNT],
+    right: &[u8; PERCEPTUAL_SAMPLE_COUNT],
+) -> bool {
+    let total: u16 = left
+        .iter()
+        .zip(right)
+        .map(|(left, right)| left.abs_diff(*right) as u16)
+        .sum();
+    total
+        <= PERCEPTUAL_MEAN_ABSOLUTE_DIFFERENCE_MAX * PERCEPTUAL_SAMPLE_COUNT as u16
+}
+
+/// Drop only consecutive frames whose decoder-provided 16×16 greyscale grids
+/// are perceptually equivalent. The first frame in each visual run remains, so
+/// request order and temporal revisits (A → B → A) are preserved. The input is
+/// already provider-capped; this moves frames into a vector of at most the same
+/// length and never decodes or allocates image-sized copies here.
+fn dedup_frames(frames: Vec<DecodedVideoFrame>) -> Vec<Frame> {
+    let mut deduped = Vec::with_capacity(frames.len());
+    let mut previous_signature = None;
+    for decoded in frames {
+        let signature = decoded.grayscale_signature;
+        let duplicate = matches!(
+            (&previous_signature, &signature),
+            (Some(previous), Some(current))
+                if mean_absolute_difference_is_at_most(previous, current)
+        );
+        if !duplicate {
+            previous_signature = signature;
+            deduped.push(decoded.frame);
+        }
+    }
+    deduped
+}
 
 /// Build the `0xC9 VIDEO_FRAME_SYNTHESIZED` audit payload. Metadata only: the
 /// prompt is xxh3-64 HASHED (never verbatim), pixels never included. PURE.
@@ -70,14 +110,22 @@ pub async fn dispatch_video_analysis(
         return Err("no frame timestamps to analyse".into());
     }
 
-    let mut frames = Vec::with_capacity(chosen.len());
-    for ts in chosen {
-        let f = decoder
-            .decode_frame(asset, ts, format)
-            .await
-            .map_err(|e| format!("decode {ts}ms: {e}"))?;
-        frames.push(f);
+    let frames = decoder
+        .decode_frames_with_perceptual_signatures(asset, &chosen, format)
+        .await
+        .map_err(|e| format!("decode capped video frame batch: {e}"))?;
+    if frames.len() != chosen.len()
+        || frames
+            .iter()
+            .zip(&chosen)
+            .any(|(decoded, timestamp)| decoded.frame.ts_ms != *timestamp)
+    {
+        return Err(
+            "video decoder returned frames that do not exactly match the provider-capped timestamp order"
+                .into(),
+        );
     }
+    let frames = dedup_frames(frames);
     let frame_count = frames.len();
     let req = MultimodalRequest::new(prompt, frames, max_tokens).map_err(|e| e.to_string())?;
 
@@ -179,8 +227,20 @@ async fn emit_synthesized(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::video_frames::Frame;
     use async_trait::async_trait;
+
+    fn decoded_frame(ts_ms: u64, luminance: Option<u8>) -> DecodedVideoFrame {
+        DecodedVideoFrame {
+            frame: Frame {
+                ts_ms,
+                width: 0,
+                height: 0,
+                format: FrameFormat::Jpeg,
+                pixels: vec![7; 3],
+            },
+            grayscale_signature: luminance.map(|value| [value; PERCEPTUAL_SAMPLE_COUNT]),
+        }
+    }
 
     struct MockDecoder {
         calls: std::sync::atomic::AtomicUsize,
@@ -204,6 +264,70 @@ mod tests {
                 format,
                 pixels: vec![1, 2, 3],
             })
+        }
+    }
+
+    struct PerceptualMockDecoder {
+        calls: std::sync::atomic::AtomicUsize,
+        signature_calls: std::sync::atomic::AtomicUsize,
+    }
+    #[async_trait]
+    impl FrameDecoder for PerceptualMockDecoder {
+        fn name(&self) -> &'static str {
+            "perceptual-mock"
+        }
+        async fn decode_frame(
+            &self,
+            _asset: &Asset,
+            ts_ms: u64,
+            format: FrameFormat,
+        ) -> Result<Frame, crate::media::ExtractionError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(Frame {
+                ts_ms,
+                width: 0,
+                height: 0,
+                format,
+                pixels: vec![1, 2, 3],
+            })
+        }
+        async fn decode_perceptual_signature(
+            &self,
+            _asset: &Asset,
+            ts_ms: u64,
+        ) -> Result<Option<[u8; PERCEPTUAL_SAMPLE_COUNT]>, crate::media::ExtractionError> {
+            self.signature_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(Some([if ts_ms < 1_000 { 10 } else { 40 }; PERCEPTUAL_SAMPLE_COUNT]))
+        }
+    }
+
+    struct InvalidBatchDecoder {
+        frames: Vec<DecodedVideoFrame>,
+    }
+    #[async_trait]
+    impl FrameDecoder for InvalidBatchDecoder {
+        fn name(&self) -> &'static str {
+            "invalid-batch"
+        }
+        async fn decode_frame(
+            &self,
+            _asset: &Asset,
+            _ts_ms: u64,
+            _format: FrameFormat,
+        ) -> Result<Frame, crate::media::ExtractionError> {
+            Err(crate::media::ExtractionError::Backend {
+                backend: "video",
+                reason: "dispatch must use this decoder's batch override".into(),
+            })
+        }
+        async fn decode_frames_with_perceptual_signatures(
+            &self,
+            _asset: &Asset,
+            _timestamps_ms: &[u64],
+            _format: FrameFormat,
+        ) -> Result<Vec<DecodedVideoFrame>, crate::media::ExtractionError> {
+            Ok(self.frames.clone())
         }
     }
 
@@ -235,6 +359,129 @@ mod tests {
         crate::config::MediaConfig {
             video_frame_upload_enabled: true,
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn dedup_frames_keeps_the_first_of_equal_perceptual_frames() {
+        let deduped = dedup_frames(vec![decoded_frame(10, Some(42)), decoded_frame(20, Some(42))]);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].ts_ms, 10);
+    }
+
+    #[test]
+    fn dedup_frames_honours_the_exact_mean_absolute_difference_boundary() {
+        let at_boundary = dedup_frames(vec![
+            decoded_frame(10, Some(42)),
+            decoded_frame(20, Some(44)),
+        ]);
+        assert_eq!(at_boundary.len(), 1, "MAD 2.0 must deduplicate");
+
+        let beyond_boundary = dedup_frames(vec![
+            decoded_frame(10, Some(42)),
+            decoded_frame(20, Some(45)),
+        ]);
+        assert_eq!(beyond_boundary.len(), 2, "MAD above 2.0 must remain");
+    }
+
+    #[test]
+    fn dedup_frames_keeps_perceptually_different_frames() {
+        let deduped = dedup_frames(vec![decoded_frame(10, Some(0)), decoded_frame(20, Some(255))]);
+        assert_eq!(
+            deduped.iter().map(|frame| frame.ts_ms).collect::<Vec<_>>(),
+            vec![10, 20]
+        );
+    }
+
+    #[test]
+    fn dedup_frames_preserves_temporal_order_and_nonconsecutive_revisits() {
+        let deduped = dedup_frames(vec![
+            decoded_frame(10, Some(10)),
+            decoded_frame(20, Some(10)),
+            decoded_frame(30, Some(40)),
+            decoded_frame(40, Some(40)),
+            decoded_frame(50, Some(10)),
+        ]);
+        assert_eq!(
+            deduped.iter().map(|frame| frame.ts_ms).collect::<Vec<_>>(),
+            vec![10, 30, 50]
+        );
+    }
+
+    #[test]
+    fn dedup_frames_preserves_ineligible_encoded_frames_in_order() {
+        let deduped = dedup_frames(vec![decoded_frame(10, None), decoded_frame(20, None)]);
+        assert_eq!(
+            deduped.iter().map(|frame| frame.ts_ms).collect::<Vec<_>>(),
+            vec![10, 20]
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_dedups_preprocessed_frames_before_the_multimodal_request() {
+        let decoder = PerceptualMockDecoder {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            signature_calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let synth = MockSynth {
+            provider: MultimodalProvider::AnthropicClaude,
+            answer: "ok".into(),
+            seen_frames: std::sync::Mutex::new(0),
+        };
+        dispatch_video_analysis(
+            &decoder,
+            &synth,
+            &asset(),
+            &[0, 500, 1_000],
+            FrameFormat::Jpeg,
+            "p",
+            64,
+            None,
+            &frames_on(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(decoder.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(
+            decoder
+                .signature_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            3
+        );
+        assert_eq!(*synth.seen_frames.lock().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn dispatch_rejects_decoder_batches_that_break_cap_or_timestamp_order() {
+        for invalid in [
+            vec![
+                decoded_frame(0, Some(10)),
+                decoded_frame(500, Some(10)),
+                decoded_frame(1_000, Some(10)),
+            ],
+            vec![decoded_frame(500, Some(10)), decoded_frame(0, Some(10))],
+        ] {
+            let decoder = InvalidBatchDecoder { frames: invalid };
+            let synth = MockSynth {
+                provider: MultimodalProvider::AnthropicClaude,
+                answer: "must not reach provider".into(),
+                seen_frames: std::sync::Mutex::new(0),
+            };
+            let error = dispatch_video_analysis(
+                &decoder,
+                &synth,
+                &asset(),
+                &[0, 500],
+                FrameFormat::Jpeg,
+                "p",
+                64,
+                None,
+                &frames_on(),
+            )
+            .await
+            .unwrap_err();
+            assert!(error.contains("provider-capped timestamp order"));
+            assert_eq!(*synth.seen_frames.lock().unwrap(), 0);
         }
     }
 
@@ -392,8 +639,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatch_caps_frames_to_provider_max() {
-        // OpenAI's documented cap is 10; feeding 15 timestamps must truncate.
+    async fn dispatch_caps_frames_to_provider_max_before_perceptual_dedup() {
+        // OpenAI's documented cap is 10; feeding 15 timestamps must truncate
+        // before decode/dedup. Mock JPEG frames are intentionally ineligible
+        // for raw-RGB perceptual sampling, so the request must still see 10.
         let decoder = MockDecoder {
             calls: std::sync::atomic::AtomicUsize::new(0),
         };

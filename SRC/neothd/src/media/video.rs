@@ -68,6 +68,11 @@ struct VideoWorkPermit {
     _lease: std::sync::Arc<VideoWorkLease>,
 }
 
+/// A caller-owned reservation of the global video worker. Auxiliary ffmpeg
+/// batches acquire this before snapshotting untrusted input and retain it until
+/// every child and private-file cleanup has completed.
+pub(crate) struct AuxiliaryVideoWorkPermit(VideoWorkPermit);
+
 async fn acquire_video_work_permit() -> Result<VideoWorkPermit, ExtractionError> {
     if VIDEO_WORKER_BUDGET_POISONED.load(Ordering::Acquire) {
         return Err(video_budget_poisoned_error());
@@ -88,11 +93,25 @@ async fn acquire_video_work_permit() -> Result<VideoWorkPermit, ExtractionError>
     })
 }
 
+pub(crate) async fn acquire_auxiliary_video_work_permit(
+) -> Result<AuxiliaryVideoWorkPermit, ExtractionError> {
+    Ok(AuxiliaryVideoWorkPermit(acquire_video_work_permit().await?))
+}
+
 fn video_budget_poisoned_error() -> ExtractionError {
     ExtractionError::Backend {
         backend: "video",
         reason: "video worker budget is fail-closed because a prior detached request did not prove private-media cleanup".into(),
     }
+}
+
+/// Permanently reject further video work after a private-media cleanup failure.
+/// A caller that cannot prove its snapshot was removed must never allow a new
+/// ffmpeg child to accumulate alongside it.
+pub(crate) fn poison_video_worker_budget_after_private_cleanup_failure() {
+    VIDEO_WORKER_BUDGET_POISONED.store(true, Ordering::Release);
+    VIDEO_WORKER_BUDGET.close();
+    tracing::error!("video worker budget closed after private input cleanup failure");
 }
 
 enum OwnedVideoInput {
@@ -440,6 +459,17 @@ async fn snapshot_owned_private_input_async(
     }
 }
 
+/// Take one bounded, no-follow private snapshot for auxiliary ffmpeg consumers.
+///
+/// The returned guard must outlive every child that uses its path. This makes
+/// multiple ffmpeg passes observe the same immutable video bytes rather than
+/// reopening an ambient path between passes.
+pub(crate) async fn snapshot_video_input_for_auxiliary_ffmpeg(
+    asset: &Asset,
+) -> Result<tempfile::NamedTempFile, ExtractionError> {
+    snapshot_owned_private_input_async(own_video_input(asset)?, ".neoth-video-frame-").await
+}
+
 #[cfg(test)]
 fn write_private_temp_input_with_limit(
     data: &[u8],
@@ -666,6 +696,53 @@ async fn run_child_bounded(
     .await
 }
 
+/// Run an auxiliary ffmpeg operation through the owned video supervisor.
+///
+/// Callers outside this module must not create a competing child lifecycle:
+/// this retains the process-wide one-worker bound and its fail-closed cleanup
+/// rule when a child cannot be proven reaped.
+pub(crate) async fn run_auxiliary_ffmpeg_bounded(
+    command: Command,
+    operation: &'static str,
+    timeout: Duration,
+    max_stdout_bytes: u64,
+    missing_binary_reason: &'static str,
+) -> Result<Vec<u8>, ExtractionError> {
+    let permit = acquire_auxiliary_video_work_permit().await?;
+    run_auxiliary_ffmpeg_bounded_with_permit(
+        command,
+        operation,
+        timeout,
+        max_stdout_bytes,
+        missing_binary_reason,
+        &permit,
+    )
+    .await
+}
+
+/// Run one child under a caller-held auxiliary video reservation. The caller
+/// must retain `permit` through every related child and private snapshot.
+pub(crate) async fn run_auxiliary_ffmpeg_bounded_with_permit(
+    command: Command,
+    operation: &'static str,
+    timeout: Duration,
+    max_stdout_bytes: u64,
+    missing_binary_reason: &'static str,
+    permit: &AuxiliaryVideoWorkPermit,
+) -> Result<Vec<u8>, ExtractionError> {
+    run_child_bounded(
+        command,
+        ChildLimits {
+            operation,
+            timeout,
+            max_stdout_bytes,
+            missing_binary_reason,
+        },
+        &permit.0,
+    )
+    .await
+}
+
 async fn run_child_to_temp_bounded(
     command: Command,
     limits: ChildLimits,
@@ -846,7 +923,7 @@ async fn terminate_child_fail_closed(
         // A child whose exit cannot be proven must never be followed by a new
         // ffmpeg request. Closing the semaphore wakes queued callers with an
         // error and prevents orphan accumulation even after this lease drops.
-        VIDEO_WORKER_BUDGET.close();
+        poison_video_worker_budget_after_private_cleanup_failure();
         ExtractionError::Backend {
             backend: "video",
             reason: format!(
