@@ -604,16 +604,14 @@ impl ContextImportOperationLease {
         &self,
         commit: impl FnOnce() -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
-        let state = self
-            .gate
-            .state
-            .lock()
-            .map_err(anyhow::Error::from)?;
+        let state = self.gate.state.lock().map_err(anyhow::Error::from)?;
         if !state.accepting_leases
             || state.generation != self.generation
             || !state.active_operation_ids.contains(&self.operation_id)
         {
-            return Err(anyhow::Error::from(ConnectorControlPlaneError::AuthorityRetired));
+            return Err(anyhow::Error::from(
+                ConnectorControlPlaneError::AuthorityRetired,
+            ));
         }
         let result = commit();
         drop(state);
@@ -1211,12 +1209,7 @@ mod tests {
         let binding = authority.acquire_context_import_runtime().unwrap();
         let lease = binding.acquire_context_import_operation_lease().unwrap();
 
-        assert!(binding.binding_matches(
-            &instance,
-            &SubjectId::new("operator").unwrap(),
-            7,
-            11,
-        ));
+        assert!(binding.binding_matches(&instance, &SubjectId::new("operator").unwrap(), 7, 11,));
         assert!(binding.matches_operation_lease(&lease));
         let capability_binding = binding.capability_binding();
         assert!(capability_binding.matches_runtime_binding(&binding));
@@ -1224,9 +1217,11 @@ mod tests {
         let evidence_binding = capability_binding.for_evidence();
         assert!(evidence_binding.matches_runtime_binding(&binding));
         assert!(evidence_binding.matches_operation_lease(&lease));
-        assert!(lease
-            .with_context_import_commit_permit(|| -> anyhow::Result<()> { Ok(()) })
-            .is_ok());
+        assert!(
+            lease
+                .with_context_import_commit_permit(|| -> anyhow::Result<()> { Ok(()) })
+                .is_ok()
+        );
 
         let independently_acquired = authority.acquire_context_import_operation_lease().unwrap();
         assert!(
@@ -1307,7 +1302,9 @@ mod tests {
             .with_context_import_commit_permit(|| -> anyhow::Result<()> {
                 let retire_plane = Arc::clone(&probe_plane);
                 std::thread::spawn(move || {
-                    retired_tx.send(retire_plane.retire_account(&probe_instance)).unwrap();
+                    retired_tx
+                        .send(retire_plane.retire_account(&probe_instance))
+                        .unwrap();
                 });
                 while !matches!(
                     probe_plane.authorize_context_import(&session(), &instance),

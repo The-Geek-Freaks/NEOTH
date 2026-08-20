@@ -806,9 +806,7 @@ impl LinuxGraphifyUnit {
         limits: &GraphifyRunLimits,
     ) -> Result<(::tokio::process::Command, Self)> {
         if !environment.overrides.is_empty() {
-            return ::std::result::Result::Err(::anyhow::Error::msg(
-                LINUX_GRAPHIFY_NETWORK_ERROR,
-            ));
+            return ::std::result::Result::Err(::anyhow::Error::msg(LINUX_GRAPHIFY_NETWORK_ERROR));
         }
         Self::ensure_manager_available()?;
         let systemd_run = trusted_linux_systemd_tool("systemd-run")?;
@@ -1533,13 +1531,8 @@ fn verify_linux_network_denied() -> Result<()> {
 fn verify_linux_graphify_address_family_denied(name: &str, domain: ::libc::c_int) -> Result<()> {
     // SAFETY: socket receives a reviewed address-family constant, fixed stream
     // flags, and protocol zero. A successful descriptor is closed immediately.
-    let descriptor = unsafe {
-        ::libc::socket(
-            domain,
-            ::libc::SOCK_STREAM | ::libc::SOCK_CLOEXEC,
-            0,
-        )
-    };
+    let descriptor =
+        unsafe { ::libc::socket(domain, ::libc::SOCK_STREAM | ::libc::SOCK_CLOEXEC, 0) };
     if descriptor >= 0 {
         // SAFETY: a non-negative socket return is an owned descriptor. This
         // process exits the guardian path after the containment failure.
@@ -1581,10 +1574,7 @@ fn verify_linux_write_boundary(working_directory: &Path, staging: &Path) -> Resu
                 ));
             }
             Err(error)
-                if ::std::matches!(
-                    error.raw_os_error(),
-                    Some(libc::EACCES | libc::EROFS)
-                ) => {}
+                if ::std::matches!(error.raw_os_error(), Some(libc::EACCES | libc::EROFS)) => {}
             Err(error) => return Err(error).context("prove host working-directory write denial"),
         }
     }

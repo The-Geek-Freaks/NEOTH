@@ -334,7 +334,9 @@ fn no_direct_pre_expansion_network_construction_outside_reviewed_boundaries() {
     let graphify_launch_contract = match graphify_module_and_binary_contract(&src_root) {
         Ok(()) => true,
         Err(error) => {
-            violations.push(format!("Graphify module/binary launch contract failed: {error}"));
+            violations.push(format!(
+                "Graphify module/binary launch contract failed: {error}"
+            ));
             false
         }
     };
@@ -1365,10 +1367,7 @@ fn command(
 "#;
 
 const GRAPHIFY_CONTRACT_FUNCTIONS: [(&str, &str); 12] = [
-    (
-        "run_contained_process",
-        GRAPHIFY_CONTAINED_PROCESS_CONTRACT,
-    ),
+    ("run_contained_process", GRAPHIFY_CONTAINED_PROCESS_CONTRACT),
     (
         "run_linux_graphify_containment_guard_if_requested",
         GRAPHIFY_FLAG_DISPATCH_CONTRACT,
@@ -1378,10 +1377,7 @@ const GRAPHIFY_CONTRACT_FUNCTIONS: [(&str, &str); 12] = [
         GRAPHIFY_GUARD_MAIN_CONTRACT,
     ),
     ("next_guard_argument", GRAPHIFY_NEXT_ARGUMENT_CONTRACT),
-    (
-        "verify_linux_guardian_boundary",
-        GRAPHIFY_BOUNDARY_CONTRACT,
-    ),
+    ("verify_linux_guardian_boundary", GRAPHIFY_BOUNDARY_CONTRACT),
     ("read_linux_namespace", GRAPHIFY_NAMESPACE_READER_CONTRACT),
     (
         "current_linux_unified_cgroup",
@@ -1417,15 +1413,10 @@ fn graphify_contract_fixture() -> String {
     )
 }
 
-fn reviewed_graphify_libc_probe_contract(
-    file: &syn::File,
-    content: &str,
-) -> Option<Range<usize>> {
+fn reviewed_graphify_libc_probe_contract(file: &syn::File, content: &str) -> Option<Range<usize>> {
     let mut counts = GraphifyContractFunctionCounter::default();
     counts.visit_file(file);
-    if counts.counts.iter().any(|count| *count != 1)
-        || !graphify_macro_environment_is_exact(file)
-    {
+    if counts.counts.iter().any(|count| *count != 1) || !graphify_macro_environment_is_exact(file) {
         return None;
     }
 
@@ -1436,7 +1427,8 @@ fn reviewed_graphify_libc_probe_contract(
             _ => None,
         });
         let function = matches.next()?;
-        if matches.next().is_some() || !graphify_function_tokens_match(content, function, expected) {
+        if matches.next().is_some() || !graphify_function_tokens_match(content, function, expected)
+        {
             return None;
         }
         if name == "verify_linux_graphify_address_family_denied" {
@@ -1473,21 +1465,9 @@ fn graphify_macro_environment_is_exact(file: &syn::File) -> bool {
     }
     security_bindings.sort_by(|left, right| left.2.cmp(&right.2));
     let expected_security_bindings = vec![
-        (
-            true,
-            true,
-            vec!["anyhow".to_owned(), "Context".to_owned()],
-        ),
-        (
-            true,
-            true,
-            vec!["anyhow".to_owned(), "Result".to_owned()],
-        ),
-        (
-            true,
-            true,
-            vec!["anyhow".to_owned(), "bail".to_owned()],
-        ),
+        (true, true, vec!["anyhow".to_owned(), "Context".to_owned()]),
+        (true, true, vec!["anyhow".to_owned(), "Result".to_owned()]),
+        (true, true, vec!["anyhow".to_owned(), "bail".to_owned()]),
     ];
     if has_top_level_glob || security_bindings != expected_security_bindings {
         return false;
@@ -1520,7 +1500,10 @@ fn collect_named_use_bindings(
             prefix.pop();
         }
         UseTree::Name(name)
-            if matches!(name.ident.to_string().as_str(), "Context" | "Result" | "bail") =>
+            if matches!(
+                name.ident.to_string().as_str(),
+                "Context" | "Result" | "bail"
+            ) =>
         {
             let mut target = prefix.clone();
             target.push(name.ident.to_string());
@@ -1571,11 +1554,7 @@ impl<'ast> Visit<'ast> for BailMacroDefinitionVisitor {
     }
 }
 
-fn graphify_function_tokens_match(
-    content: &str,
-    function: &syn::ItemFn,
-    expected: &str,
-) -> bool {
+fn graphify_function_tokens_match(content: &str, function: &syn::ItemFn, expected: &str) -> bool {
     let start = function
         .attrs
         .iter()
@@ -1637,7 +1616,10 @@ fn graphify_systemd_command_contract_is_exact(file: &syn::File, content: &str) -
                         &*implementation.self_ty,
                         Type::Path(path)
                             if path.qself.is_none() && path.path.is_ident("LinuxGraphifyUnit")
-                    ) => Some(implementation),
+                    ) =>
+            {
+                Some(implementation)
+            }
             _ => None,
         })
         .flat_map(|implementation| implementation.items.iter())
@@ -4729,19 +4711,13 @@ fn ast_network_gate_rejects_graphify_probe_cfg_decoys_and_unwired_callers() {
         "an early success before the address-family probes must invalidate the exception",
     );
 
-    let nested_decoy = format!(
-        "{complete}\nfn decoy() {{\n{GRAPHIFY_SOCKET_HELPER_CONTRACT}\n}}"
-    );
+    let nested_decoy = format!("{complete}\nfn decoy() {{\n{GRAPHIFY_SOCKET_HELPER_CONTRACT}\n}}");
     assert_rejected(
         &nested_decoy,
         "a nested same-name decoy must not satisfy the unique top-level contract",
     );
 
-    let unwired_boundary = complete.replacen(
-        "    verify_linux_network_denied()?;",
-        "",
-        1,
-    );
+    let unwired_boundary = complete.replacen("    verify_linux_network_denied()?;", "", 1);
     assert_rejected(
         &unwired_boundary,
         "removing the real boundary call must invalidate the exception",
@@ -4809,11 +4785,7 @@ fn ast_network_gate_rejects_graphify_probe_semantic_weakening() {
     };
 
     assert_rejected(
-        &complete.replacen(
-            "        unsafe { ::libc::close(descriptor) };",
-            "",
-            1,
-        ),
+        &complete.replacen("        unsafe { ::libc::close(descriptor) };", "", 1),
         "a permitted socket must still be closed before the guardian fails",
     );
     assert_rejected(
@@ -4836,7 +4808,7 @@ fn ast_network_gate_rejects_graphify_probe_semantic_weakening() {
     );
     assert_rejected(
         &wrong_family,
-        "AF_INET, AF_INET6, and AF_UNIX must each be probed exactly once"
+        "AF_INET, AF_INET6, and AF_UNIX must each be probed exactly once",
     );
 
     for property in [

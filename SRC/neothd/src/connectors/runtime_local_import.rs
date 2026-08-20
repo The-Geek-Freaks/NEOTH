@@ -13,7 +13,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Result, anyhow, bail};
 use crate::{
     connectors::{
         control_plane::{ContextImportOperationLease, ContextImportRuntimeBinding},
@@ -28,6 +27,7 @@ use crate::{
     },
     wal::events::{ContextEvidenceReceipt, ContextEvidenceReceiptKind},
 };
+use anyhow::{Result, anyhow, bail};
 
 const MAX_RETAINED_PLANS: usize = 64;
 const DEFAULT_PLAN_TTL: Duration = Duration::from_secs(5 * 60);
@@ -158,11 +158,8 @@ impl RuntimeLocalImport {
         let evidence = UntrustedExternalEvidenceBatch::from_local_import_plan(&retained.plan)?;
         // ContextStore takes the short-lived lease's final commit permit
         // around the whole SQLite transaction.
-        self.store.commit_local_import_evidence(
-            &self.runtime_binding,
-            &lease,
-            evidence,
-        )
+        self.store
+            .commit_local_import_evidence(&self.runtime_binding, &lease, evidence)
     }
 
     /// Drain durable, content-free receipt rows to the supplied WAL adapter.
@@ -177,9 +174,7 @@ impl RuntimeLocalImport {
             .store
             .reserve_local_import_audit(&self.runtime_binding, &reserve_lease)?;
         drop(reserve_lease);
-        let mut adapter = ReceiptWalAdapter {
-            wal,
-        };
+        let mut adapter = ReceiptWalAdapter { wal };
         let mut delivered = 0;
         for entry in entries {
             // WAL is explicitly outside the account gate. If retirement wins
@@ -203,7 +198,9 @@ impl RuntimeLocalImport {
             .acquire_context_import_operation_lease()
             .map_err(|error| anyhow!(error))?;
         if !self.runtime_binding.matches_operation_lease(&lease)
-            || !self.capability.binding_matches(&self.runtime_binding, &lease)
+            || !self
+                .capability
+                .binding_matches(&self.runtime_binding, &lease)
         {
             bail!("local-import runtime requires an exact live context-import lease binding");
         }
@@ -232,7 +229,10 @@ impl AuditReceiptSink for ReceiptWalAdapter<'_> {
             ContextEvidenceReceiptKind::LocalImport,
             policy_revision,
             lifecycle_revision,
-            entry.occurred_at_unix_minute.try_into().map_err(|_| anyhow!("negative audit receipt minute"))?,
+            entry
+                .occurred_at_unix_minute
+                .try_into()
+                .map_err(|_| anyhow!("negative audit receipt minute"))?,
         )?;
         self.wal
             .append_context_evidence_receipt_once(entry.handle.as_bytes(), receipt)
@@ -288,13 +288,8 @@ mod tests {
 
     fn runtime(root: &Path) -> RuntimeLocalImport {
         let (instance, subject) = identity();
-        let binding = test_context_import_runtime_fixture(
-            instance.clone(),
-            subject.clone(),
-            7,
-            11,
-        )
-        .unwrap();
+        let binding =
+            test_context_import_runtime_fixture(instance.clone(), subject.clone(), 7, 11).unwrap();
         let capability = issue_operator_import_capability(
             approve_import_root(root).unwrap(),
             [42; 32],
@@ -367,20 +362,9 @@ mod tests {
         let root = crate::test_env::canonical_tempdir().unwrap();
         std::fs::write(root.path().join("selected.txt"), "cross lease").unwrap();
         let (instance, subject) = identity();
-        let first_binding = test_context_import_runtime_fixture(
-            instance.clone(),
-            subject.clone(),
-            7,
-            11,
-        )
-        .unwrap();
-        let second_binding = test_context_import_runtime_fixture(
-            instance,
-            subject,
-            7,
-            11,
-        )
-        .unwrap();
+        let first_binding =
+            test_context_import_runtime_fixture(instance.clone(), subject.clone(), 7, 11).unwrap();
+        let second_binding = test_context_import_runtime_fixture(instance, subject, 7, 11).unwrap();
         let capability = issue_operator_import_capability(
             approve_import_root(root.path()).unwrap(),
             [42; 32],

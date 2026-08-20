@@ -15,12 +15,18 @@ fn runtime_is_private_plan_bound_and_effectively_one_shot() {
     assert!(RUNTIME.contains("plan_id != confirm_plan_id"));
     assert!(RUNTIME.contains("source changed after planning"));
     assert!(RUNTIME.contains("purge_expired"));
-    assert!(RUNTIME.contains("LocalImportPlanId(<redacted>)") || LOCAL_IMPORT.contains("LocalImportPlanId(<redacted>)"));
+    assert!(
+        RUNTIME.contains("LocalImportPlanId(<redacted>)")
+            || LOCAL_IMPORT.contains("LocalImportPlanId(<redacted>)")
+    );
     assert!(RUNTIME.contains("runtime_binding: ContextImportRuntimeBinding"));
     assert!(!RUNTIME.contains("lease: ContextImportOperationLease"));
     assert!(RUNTIME.contains("acquire_context_import_operation_lease"));
     assert!(RUNTIME.contains("matches_operation_lease(&lease)"));
-    assert!(RUNTIME.contains("LocalImportPolicy::default_bounded(self.runtime_binding.policy_revision())"));
+    assert!(
+        RUNTIME
+            .contains("LocalImportPolicy::default_bounded(self.runtime_binding.policy_revision())")
+    );
     assert!(RUNTIME.contains("self.capability.binding_matches("));
     assert!(LOCAL_IMPORT.contains("runtime_binding: Option<ContextImportCapabilityBinding>"));
     assert!(LOCAL_IMPORT.contains("runtime_binding: Some(runtime_binding)"));
@@ -29,11 +35,25 @@ fn runtime_is_private_plan_bound_and_effectively_one_shot() {
 #[test]
 fn runtime_has_no_public_or_legacy_effect_surface() {
     for forbidden in [
-        "pub fn", "pub struct", "pub async", "GroundTruth", "ObjectKind::Memory",
-        "ObjectKind::Note", "Provider", "Mcp", "obsidian", "std::fs::read",
-        "tokio::", "dispatch", "channel", "credential",
+        "pub fn",
+        "pub struct",
+        "pub async",
+        "GroundTruth",
+        "ObjectKind::Memory",
+        "ObjectKind::Note",
+        "Provider",
+        "Mcp",
+        "obsidian",
+        "std::fs::read",
+        "tokio::",
+        "dispatch",
+        "channel",
+        "credential",
     ] {
-        assert!(!RUNTIME.contains(forbidden), "runtime must not expose {forbidden}");
+        assert!(
+            !RUNTIME.contains(forbidden),
+            "runtime must not expose {forbidden}"
+        );
     }
     assert!(LOCAL_IMPORT.contains("read_bound_source"));
     assert!(LOCAL_IMPORT.contains("PlatformUnsupported"));

@@ -24,8 +24,7 @@ fn mean_absolute_difference_is_at_most(
         .zip(right)
         .map(|(left, right)| left.abs_diff(*right) as u16)
         .sum();
-    total
-        <= PERCEPTUAL_MEAN_ABSOLUTE_DIFFERENCE_MAX * PERCEPTUAL_SAMPLE_COUNT as u16
+    total <= PERCEPTUAL_MEAN_ABSOLUTE_DIFFERENCE_MAX * PERCEPTUAL_SAMPLE_COUNT as u16
 }
 
 /// Drop only consecutive frames whose decoder-provided 16×16 greyscale grids
@@ -298,7 +297,9 @@ mod tests {
         ) -> Result<Option<[u8; PERCEPTUAL_SAMPLE_COUNT]>, crate::media::ExtractionError> {
             self.signature_calls
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(Some([if ts_ms < 1_000 { 10 } else { 40 }; PERCEPTUAL_SAMPLE_COUNT]))
+            Ok(Some(
+                [if ts_ms < 1_000 { 10 } else { 40 }; PERCEPTUAL_SAMPLE_COUNT],
+            ))
         }
     }
 
@@ -364,7 +365,10 @@ mod tests {
 
     #[test]
     fn dedup_frames_keeps_the_first_of_equal_perceptual_frames() {
-        let deduped = dedup_frames(vec![decoded_frame(10, Some(42)), decoded_frame(20, Some(42))]);
+        let deduped = dedup_frames(vec![
+            decoded_frame(10, Some(42)),
+            decoded_frame(20, Some(42)),
+        ]);
         assert_eq!(deduped.len(), 1);
         assert_eq!(deduped[0].ts_ms, 10);
     }
@@ -386,7 +390,10 @@ mod tests {
 
     #[test]
     fn dedup_frames_keeps_perceptually_different_frames() {
-        let deduped = dedup_frames(vec![decoded_frame(10, Some(0)), decoded_frame(20, Some(255))]);
+        let deduped = dedup_frames(vec![
+            decoded_frame(10, Some(0)),
+            decoded_frame(20, Some(255)),
+        ]);
         assert_eq!(
             deduped.iter().map(|frame| frame.ts_ms).collect::<Vec<_>>(),
             vec![10, 20]

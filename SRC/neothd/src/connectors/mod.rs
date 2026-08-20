@@ -30,9 +30,9 @@ pub(crate) mod local_import;
 // CC-RUNTIME-P0 remains crate-private until an authenticated same-user RPC
 // can own session issuance, durable config publication, and recovery startup.
 #[allow(dead_code)]
-pub(crate) mod runtime_local_import;
-#[allow(dead_code)]
 mod obsidian;
+#[allow(dead_code)]
+pub(crate) mod runtime_local_import;
 
 pub const CONNECTOR_REGISTRY_SCHEMA_VERSION: u32 = 1;
 const MAX_ID_LEN: usize = 64;

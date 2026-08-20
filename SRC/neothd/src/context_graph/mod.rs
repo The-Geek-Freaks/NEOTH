@@ -24,9 +24,6 @@ use rusqlite::OpenFlags;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 
-#[cfg(not(windows))]
-use crate::wal::crypto::derive_subkey;
-use crate::wal::crypto::{WalMasterKey, WalSegmentKey, decrypt_blob, encrypt_blob};
 use crate::connectors::{
     ConnectorId, ConnectorInstanceId, SubjectId,
     control_plane::{
@@ -34,6 +31,9 @@ use crate::connectors::{
     },
     local_import::LocalImportPlan,
 };
+#[cfg(not(windows))]
+use crate::wal::crypto::derive_subkey;
+use crate::wal::crypto::{WalMasterKey, WalSegmentKey, decrypt_blob, encrypt_blob};
 
 #[cfg(not(windows))]
 const APPLICATION_ID: i64 = 0x4e43_5432; // "NCT2"
@@ -361,8 +361,9 @@ pub struct AuditOutboxEntry {
 
 impl AuditOutboxEntry {
     pub(crate) fn context_evidence_revisions(&self) -> Result<(u64, u64)> {
-        self.authority_revisions
-            .ok_or_else(|| anyhow!("Context Evidence audit receipt lacks committed authority revisions"))
+        self.authority_revisions.ok_or_else(|| {
+            anyhow!("Context Evidence audit receipt lacks committed authority revisions")
+        })
     }
 }
 
@@ -483,7 +484,9 @@ impl ContextStore {
         evidence: UntrustedExternalEvidenceBatch,
     ) -> Result<()> {
         let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
-        if !evidence.evidence_binding.matches_runtime_binding(runtime_binding)
+        if !evidence
+            .evidence_binding
+            .matches_runtime_binding(runtime_binding)
             || !evidence.evidence_binding.matches_operation_lease(lease)
         {
             bail!("local-import evidence is not bound to this runtime pair");
@@ -560,7 +563,8 @@ impl ContextStore {
                     entry.row_id,
                     receipt_code(AuditReceipt::ContextEvidenceStored),
                 ],
-            )? != 1 {
+            )? != 1
+            {
                 bail!("local-import audit outbox entry changed before acknowledged replay");
             }
             Ok(())
@@ -573,7 +577,9 @@ impl ContextStore {
         batch: &CommitBatch,
         limits: StoreLimits,
     ) -> Result<()> {
-        self.commit_batch_with_limits_and_context_evidence_receipt(account, batch, limits, false, None)
+        self.commit_batch_with_limits_and_context_evidence_receipt(
+            account, batch, limits, false, None,
+        )
     }
 
     fn commit_batch_with_limits_and_context_evidence_receipt(
@@ -849,10 +855,15 @@ impl ContextStore {
                 handle: audit_receipt_handle(&self.lookup_key, &scope, &mutation_key),
                 receipt: receipt_from_code(row.get::<_, i64>(1)?)?,
                 occurred_at_unix_minute: row.get::<_, i64>(2)?.div_euclid(60_000),
-                authority_revisions: match (row.get::<_, Option<i64>>(4)?, row.get::<_, Option<i64>>(5)?) {
+                authority_revisions: match (
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
+                ) {
                     (Some(policy), Some(lifecycle)) => Some((
-                        u64::try_from(policy).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(4, policy))?,
-                        u64::try_from(lifecycle).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(5, lifecycle))?,
+                        u64::try_from(policy)
+                            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(4, policy))?,
+                        u64::try_from(lifecycle)
+                            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(5, lifecycle))?,
                     )),
                     (None, None) => None,
                     _ => return Err(rusqlite::Error::InvalidQuery),
@@ -876,7 +887,8 @@ impl ContextStore {
             if self.conn.execute(
                 "DELETE FROM audit_outbox WHERE scope_key=?1 AND event_id=?2",
                 params![self.scope(account).key.as_slice(), entry.row_id],
-            )? != 1 {
+            )? != 1
+            {
                 bail!("context audit outbox entry changed during acknowledged replay");
             }
             delivered += 1;
@@ -1442,8 +1454,14 @@ fn append_event(
     let (policy_revision, lifecycle_revision) = authority_revisions
         .map(|(policy, lifecycle)| {
             Ok((
-                Some(i64::try_from(policy).map_err(|_| anyhow!("policy revision exceeds SQLite integer range"))?),
-                Some(i64::try_from(lifecycle).map_err(|_| anyhow!("lifecycle revision exceeds SQLite integer range"))?),
+                Some(
+                    i64::try_from(policy)
+                        .map_err(|_| anyhow!("policy revision exceeds SQLite integer range"))?,
+                ),
+                Some(
+                    i64::try_from(lifecycle)
+                        .map_err(|_| anyhow!("lifecycle revision exceeds SQLite integer range"))?,
+                ),
             ))
         })
         .transpose()?
@@ -2270,8 +2288,17 @@ mod tests {
         .unwrap();
         validate_or_initialize_schema(&conn, true).unwrap();
         validate_schema(&conn).unwrap();
-        assert_eq!(conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), SCHEMA_VERSION);
-        assert_eq!(conn.query_row("SELECT COUNT(*) FROM audit_outbox", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            SCHEMA_VERSION
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM audit_outbox", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
         assert_eq!(
             conn.query_row(
                 "SELECT policy_revision IS NULL AND lifecycle_revision IS NULL FROM audit_outbox WHERE event_id=?1",
@@ -2291,9 +2318,17 @@ mod tests {
         conn.execute_batch("DROP TABLE audit_outbox; CREATE TABLE audit_outbox (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL);")
             .unwrap();
         assert!(validate_or_initialize_schema(&conn, true).is_err());
-        assert_eq!(conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), SCHEMA_VERSION - 1);
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            SCHEMA_VERSION - 1
+        );
         let sql: String = conn
-            .query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='audit_outbox'", [], |row| row.get(0))
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='audit_outbox'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert!(!sql.contains("policy_revision"));
     }
@@ -2302,7 +2337,9 @@ mod tests {
     fn audit_outbox_enforces_context_receipt_revision_pairs() {
         let mut store = store();
         let scope = store.scope(&account());
-        for (receipt, policy, lifecycle) in [(4_i64, None, None), (1_i64, Some(7_i64), Some(11_i64))] {
+        for (receipt, policy, lifecycle) in
+            [(4_i64, None, None), (1_i64, Some(7_i64), Some(11_i64))]
+        {
             store.conn.execute(
                 "INSERT INTO events(scope_key,mutation_key,object_key,revision,receipt_code,occurred_at_ms) VALUES(?1,?2,NULL,NULL,?3,0)",
                 params![scope.key.as_slice(), [receipt as u8; 32].as_slice(), receipt],

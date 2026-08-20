@@ -60,15 +60,20 @@ fn operation_lease_and_durable_transition_stay_private_and_fail_closed() {
     assert!(CONTROL_PLANE.contains("active_operation_ids.remove(&self.operation_id)"));
     assert!(CONTROL_PLANE.contains("self.runtime_id == lease.runtime_id"));
     assert!(CONTROL_PLANE.contains("fn acquire_context_import_operation_lease("));
-    assert!(CONTROL_PLANE.contains("fn capability_binding(&self) -> ContextImportCapabilityBinding"));
+    assert!(
+        CONTROL_PLANE.contains("fn capability_binding(&self) -> ContextImportCapabilityBinding")
+    );
     assert!(CONTROL_PLANE.contains("fn for_evidence(&self) -> Self"));
-    assert!(CONTROL_PLANE.contains("fn matches_runtime_binding(&self, binding: &ContextImportRuntimeBinding)"));
+    assert!(
+        CONTROL_PLANE
+            .contains("fn matches_runtime_binding(&self, binding: &ContextImportRuntimeBinding)")
+    );
     assert!(CONTROL_PLANE.contains("struct GateRestore"));
     assert!(CONTROL_PLANE.contains("restore.gate.reopen(restore.accepting_leases)"));
     assert!(CONTROL_PLANE.contains("emergency_retirement_in_progress: bool"));
-    assert!(CONTROL_PLANE.contains(
-        "#[cfg(test)]\npub(crate) fn test_context_import_runtime_fixture"
-    ));
+    assert!(
+        CONTROL_PLANE.contains("#[cfg(test)]\npub(crate) fn test_context_import_runtime_fixture")
+    );
 
     let commit_start = CONTROL_PLANE
         .find("pub(crate) fn commit_durable_update(")

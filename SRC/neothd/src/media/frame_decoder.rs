@@ -5,14 +5,14 @@
 //! ffmpeg is a subprocess — there is no in-process video codec dep. A missing
 //! binary maps to an actionable "install ffmpeg" error, not "command not found".
 
-use std::path::Path;
 use super::video::{
-    acquire_auxiliary_video_work_permit, poison_video_worker_budget_after_private_cleanup_failure,
+    AuxiliaryVideoWorkPermit, acquire_auxiliary_video_work_permit,
+    poison_video_worker_budget_after_private_cleanup_failure,
     run_auxiliary_ffmpeg_bounded_with_permit, snapshot_video_input_for_auxiliary_ffmpeg,
-    AuxiliaryVideoWorkPermit,
 };
 use super::video_frames::{Frame, FrameFormat, HARD_MAX_FRAMES_PER_REQUEST};
 use super::{Asset, ExtractionError};
+use std::path::Path;
 
 const PERCEPTUAL_GRID_SIDE: usize = 16;
 const PERCEPTUAL_SIGNATURE_BYTES: usize = PERCEPTUAL_GRID_SIDE * PERCEPTUAL_GRID_SIDE;
@@ -334,16 +334,16 @@ async fn run_ffmpeg_perceptual(
         permit,
     )
     .await?;
-    stdout.try_into().map_err(|bytes: Vec<u8>| {
-        ExtractionError::Backend {
+    stdout
+        .try_into()
+        .map_err(|bytes: Vec<u8>| ExtractionError::Backend {
             backend: "video",
             reason: format!(
                 "ffmpeg perceptual frame at {ts_ms}ms produced {} bytes; \
                  expected {PERCEPTUAL_SIGNATURE_BYTES}",
                 bytes.len()
             ),
-        }
-    })
+        })
 }
 
 #[cfg(test)]
@@ -388,9 +388,10 @@ mod tests {
     fn perceptual_ffmpeg_args_emit_one_fixed_greyscale_grid() {
         let args = ffmpeg_perceptual_args("/v.mp4", 2_500);
         assert!(args.windows(2).any(|pair| pair == ["-frames:v", "1"]));
-        assert!(args
-            .windows(2)
-            .any(|pair| pair == ["-vf", "scale=16:16:flags=area,format=gray"]));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-vf", "scale=16:16:flags=area,format=gray"])
+        );
         assert!(args.windows(2).any(|pair| pair == ["-f", "rawvideo"]));
         assert!(args.windows(2).any(|pair| pair == ["-pix_fmt", "gray"]));
         assert_eq!(args.last().map(String::as_str), Some("pipe:1"));
@@ -417,9 +418,7 @@ mod tests {
             .unwrap();
         let loop_start = owned.find("for ts_ms in timestamps_ms").unwrap();
         let encoded = owned.find("run_ffmpeg_frame(snapshot.path()").unwrap();
-        let signature = owned
-            .find("run_ffmpeg_perceptual(snapshot.path()")
-            .unwrap();
+        let signature = owned.find("run_ffmpeg_perceptual(snapshot.path()").unwrap();
         let close = owned.find("snapshot.close()").unwrap();
         let poison = owned
             .find("poison_video_worker_budget_after_private_cleanup_failure()")
@@ -429,5 +428,4 @@ mod tests {
         assert!(encoded < signature);
         assert!(signature < close && close < poison);
     }
-
 }

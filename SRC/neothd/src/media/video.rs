@@ -93,8 +93,8 @@ async fn acquire_video_work_permit() -> Result<VideoWorkPermit, ExtractionError>
     })
 }
 
-pub(crate) async fn acquire_auxiliary_video_work_permit(
-) -> Result<AuxiliaryVideoWorkPermit, ExtractionError> {
+pub(crate) async fn acquire_auxiliary_video_work_permit()
+-> Result<AuxiliaryVideoWorkPermit, ExtractionError> {
     Ok(AuxiliaryVideoWorkPermit(acquire_video_work_permit().await?))
 }
 
