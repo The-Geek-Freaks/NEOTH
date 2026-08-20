@@ -26,19 +26,43 @@ pub enum AuditRpcClientError {
     Refused(u16),
 }
 
+/// Fail-closed reason for a synchronous audit-RPC health probe. This is kept
+/// crate-visible so integration tests and operator-facing callers can retain
+/// the public boolean API while exposing the precise rejected security gate.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub(crate) enum AuditRpcHealthError {
+    #[error("audit-RPC health sidecar rejected: {0}")]
+    Sidecar(String),
+    #[error("audit-RPC health sidecar PID {pid} does not own the exact endpoint")]
+    ExactDaemonOwner { pid: u32 },
+    #[error("audit-RPC health bearer token rejected: {0}")]
+    Token(String),
+    #[error("audit-RPC health transport or peer attestation rejected: {0}")]
+    TransportOrPeer(String),
+    #[error("audit-RPC health endpoint returned HTTP {0}, expected 200")]
+    Status(u16),
+    #[error("audit-RPC health endpoint returned an unexpected exact body ({bytes} bytes)")]
+    Body { bytes: usize },
+}
+
 /// Authenticated same-user IPC health probe. Sidecar/PID checks bind discovery
 /// to the live daemon incarnation; the transport additionally proves the OS
 /// user before the bearer is sent.
 pub fn is_reachable(home: &Path) -> bool {
-    let Ok(sidecar) = read_sidecar(home) else {
-        return false;
-    };
+    health_check(home).is_ok()
+}
+
+/// Run the same fail-closed reachability probe as [`is_reachable`], preserving
+/// the rejection category for diagnostics. This never sends the bearer until
+/// strict sidecar and exact PID/nonce/lock ownership checks have succeeded.
+pub(crate) fn health_check(home: &Path) -> std::result::Result<(), AuditRpcHealthError> {
+    let sidecar =
+        read_sidecar(home).map_err(|error| AuditRpcHealthError::Sidecar(error.to_string()))?;
     if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
-        return false;
+        return Err(AuditRpcHealthError::ExactDaemonOwner { pid: sidecar.pid });
     }
-    let Ok(token) = read_rpc_token(home) else {
-        return false;
-    };
+    let token =
+        read_rpc_token(home).map_err(|error| AuditRpcHealthError::Token(error.to_string()))?;
     let request = format!(
         "POST /health HTTP/1.1\r\n\
          Host: neoth-local\r\n\
@@ -49,20 +73,37 @@ pub fn is_reachable(home: &Path) -> bool {
          \r\n\
          {{}}"
     );
-    let Ok(response) = super::transport::exchange_blocking(
+    let response = super::transport::exchange_blocking(
         &sidecar.endpoint,
         request.as_bytes(),
         4096,
         HEALTH_CHECK_EXCHANGE_TIMEOUT,
-    ) else {
-        return false;
-    };
-    parse_rpc_response(response).is_ok_and(|(status, response)| {
-        status == 200
-            && response
-                .split_once("\r\n\r\n")
-                .is_some_and(|(_, body)| body == "{\"ok\":true}")
-    })
+    )
+    .map_err(|error| AuditRpcHealthError::TransportOrPeer(error.to_string()))?;
+    validate_health_response(response)
+}
+
+fn validate_health_response(response: Vec<u8>) -> std::result::Result<(), AuditRpcHealthError> {
+    let (status, response) = parse_rpc_response(response)
+        .map_err(|error| AuditRpcHealthError::TransportOrPeer(error.to_string()))?;
+    if status != 200 {
+        return Err(AuditRpcHealthError::Status(status));
+    }
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        // `parse_rpc_response` has already proved the separator exists. Keep
+        // this defensive branch fail-closed if that invariant ever changes.
+        .ok_or_else(|| {
+            AuditRpcHealthError::TransportOrPeer(
+                "parsed health response lost its header boundary".into(),
+            )
+        })?;
+    if body == "{\"ok\":true}" {
+        Ok(())
+    } else {
+        Err(AuditRpcHealthError::Body { bytes: body.len() })
+    }
 }
 
 fn exact_daemon_owner(home: &Path, pid: u32, endpoint_nonce: &str) -> bool {
@@ -527,6 +568,14 @@ mod tests {
         format!("HTTP/1.1 200 OK\r\n{headers}\r\n\r\n{body}").into_bytes()
     }
 
+    fn health_response(status: u16, body: &str) -> Vec<u8> {
+        format!(
+            "HTTP/1.1 {status} test\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes()
+    }
+
     #[test]
     fn rpc_response_requires_one_exact_content_length() {
         let (status, parsed) =
@@ -556,6 +605,55 @@ mod tests {
         ] {
             assert!(parse_rpc_response(malformed).is_err());
         }
+    }
+
+    #[test]
+    fn health_response_diagnostics_distinguish_status_body_and_transport_rejections() {
+        assert_eq!(
+            validate_health_response(health_response(503, "{\"ok\":true}")),
+            Err(AuditRpcHealthError::Status(503))
+        );
+        assert_eq!(
+            validate_health_response(health_response(200, "{\"ok\":false}")),
+            Err(AuditRpcHealthError::Body {
+                bytes: "{\"ok\":false}".len()
+            })
+        );
+        assert!(matches!(
+            validate_health_response(b"HTTP/1.1 200 OK\r\n\r\n".to_vec()),
+            Err(AuditRpcHealthError::TransportOrPeer(_))
+        ));
+    }
+
+    #[test]
+    fn health_check_diagnostics_distinguish_sidecar_owner_and_token_rejections() {
+        let home = tempfile::tempdir().expect("create health-check home");
+        assert!(matches!(
+            health_check(home.path()),
+            Err(AuditRpcHealthError::Sidecar(_))
+        ));
+
+        let nonce = "0123456789abcdeffedcba9876543210";
+        let endpoint = super::super::transport::endpoint_for_home(home.path(), nonce)
+            .expect("derive health-check endpoint");
+        super::super::sidecar::write_sidecar(home.path(), &endpoint, std::process::id(), nonce)
+            .expect("write strict health-check sidecar");
+        assert_eq!(
+            health_check(home.path()),
+            Err(AuditRpcHealthError::ExactDaemonOwner {
+                pid: std::process::id()
+            })
+        );
+
+        let mut daemon = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid"))
+            .expect("acquire daemon PID lock");
+        daemon
+            .publish_endpoint_nonce(nonce)
+            .expect("publish exact endpoint nonce");
+        assert!(matches!(
+            health_check(home.path()),
+            Err(AuditRpcHealthError::Token(_))
+        ));
     }
 
     #[test]

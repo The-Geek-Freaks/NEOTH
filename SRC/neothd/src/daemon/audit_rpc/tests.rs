@@ -49,9 +49,10 @@ fn health_probe_child_process_checks_live_listener() {
     let Some(home) = std::env::var_os(HEALTH_PROBE_CHILD_HOME_ENV) else {
         return;
     };
+    let diagnostic = super::client::health_check(std::path::Path::new(&home));
     assert!(
-        is_reachable(std::path::Path::new(&home)),
-        "one-shot child must accept the exact authenticated health response"
+        diagnostic.is_ok(),
+        "one-shot child must accept the exact authenticated health response: {diagnostic:?}"
     );
 }
 
