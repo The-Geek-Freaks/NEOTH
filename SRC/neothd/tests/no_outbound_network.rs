@@ -27,6 +27,12 @@
 //!                                     module connects to itself, not the
 //!                                     network. Listener never opens
 //!                                     outbound `TcpStream::connect`.
+//!   - `src/graphify_runner.rs`      — only the Linux containment guardian's
+//!                                     fixed AF_INET/AF_INET6/AF_UNIX negative
+//!                                     libc socket probe. The AST gate verifies
+//!                                     its exact caller chain and fail-closed
+//!                                     result handling; the module is not
+//!                                     generally allowlisted.
 //!   - `src/channels/webhook_listener.rs`
 //!                                  — inbound localhost webhook listener;
 //!                                    test module connects to itself, not
@@ -325,6 +331,13 @@ fn no_direct_pre_expansion_network_construction_outside_reviewed_boundaries() {
         .expect("module graph requires a canonical source root");
     let test_only_external_modules = module_graph.exempt_files();
     let mut violations = Vec::new();
+    let graphify_launch_contract = match graphify_module_and_binary_contract(&src_root) {
+        Ok(()) => true,
+        Err(error) => {
+            violations.push(format!("Graphify module/binary launch contract failed: {error}"));
+            false
+        }
+    };
     match production_public_rendezvous_callers(&src_root) {
         Ok(callers) if callers == ["src/daemon/companion.rs"] => {}
         Ok(callers) => violations.push(format!(
@@ -369,6 +382,7 @@ fn no_direct_pre_expansion_network_construction_outside_reviewed_boundaries() {
             &content,
             repo_rel == "src/daemon/audit_rpc/transport/unix.rs",
             repo_rel == "src/media/stt_provider.rs",
+            repo_rel == "src/graphify_runner.rs" && graphify_launch_contract,
         );
     })
     .expect("source traversal and reads must succeed");
@@ -378,6 +392,88 @@ fn no_direct_pre_expansion_network_construction_outside_reviewed_boundaries() {
         "direct pre-expansion network-construction drift guard violated:\n  {}",
         violations.join("\n  "),
     );
+}
+
+fn graphify_module_and_binary_contract(src_root: &Path) -> Result<(), String> {
+    let library = fs::read_to_string(src_root.join("lib.rs"))
+        .map_err(|error| format!("read src/lib.rs: {error}"))?;
+    if !graphify_library_module_contract_is_exact(&library) {
+        return Err(
+            "src/lib.rs must contain one unconditional public graphify_runner module without path override"
+                .to_owned(),
+        );
+    }
+
+    let binary = fs::read_to_string(src_root.join("main.rs"))
+        .map_err(|error| format!("read src/main.rs: {error}"))?;
+    if !graphify_binary_main_contract_is_exact(&binary) {
+        return Err(
+            "src/main.rs must dispatch the Linux guardian before every public runtime path"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn graphify_library_module_contract_is_exact(content: &str) -> bool {
+    let Ok(file) = syn::parse_file(content) else {
+        return false;
+    };
+    let modules = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Mod(module) if module.ident.to_string() == "graphify_runner" => Some(module),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [module] = modules.as_slice() else {
+        return false;
+    };
+    module.attrs.is_empty()
+        && matches!(&module.vis, syn::Visibility::Public(_))
+        && module.content.is_none()
+        && module.semi.is_some()
+}
+
+fn graphify_binary_main_contract_is_exact(content: &str) -> bool {
+    let Ok(file) = syn::parse_file(content) else {
+        return false;
+    };
+    let mut counter = NamedFunctionCounter {
+        name: "main",
+        count: 0,
+    };
+    counter.visit_file(&file);
+    if counter.count != 1 {
+        return false;
+    }
+    let mains = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Fn(function) if function.sig.ident.to_string() == "main" => Some(function),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [main] = mains.as_slice() else {
+        return false;
+    };
+    graphify_function_tokens_match(content, main, GRAPHIFY_BINARY_MAIN_CONTRACT)
+}
+
+struct NamedFunctionCounter<'name> {
+    name: &'name str,
+    count: usize,
+}
+
+impl<'ast> Visit<'ast> for NamedFunctionCounter<'_> {
+    fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+        if function.sig.ident.to_string() == self.name {
+            self.count += 1;
+        }
+        visit::visit_item_fn(self, function);
+    }
 }
 
 /// `spawn_public_rendezvous` owns a public-DHT bootstrap/spawn/join sequence.
@@ -634,11 +730,13 @@ fn collect_network_violations(
     content: &str,
     allows_audit_rpc_af_unix: bool,
     allows_stt_pidfd_syscalls: bool,
+    allows_graphify_denial_probe: bool,
 ) {
     for (line_no, pattern) in forbidden_network_constructions_with_boundaries(
         content,
         allows_audit_rpc_af_unix,
         allows_stt_pidfd_syscalls,
+        allows_graphify_denial_probe,
     ) {
         violations.push(format!(
             "{}:{}: direct network-construction pattern `{}` outside explicitly reviewed boundary modules",
@@ -654,13 +752,14 @@ fn collect_network_violations(
 /// `#[cfg(test)]`; a bare `#[test]` attribute is not treated as a broad source
 /// escape hatch by this static guard.
 fn forbidden_network_constructions_in_production(content: &str) -> Vec<(usize, &'static str)> {
-    forbidden_network_constructions_with_boundaries(content, false, false)
+    forbidden_network_constructions_with_boundaries(content, false, false, false)
 }
 
 fn forbidden_network_constructions_with_boundaries(
     content: &str,
     allows_audit_rpc_af_unix: bool,
     allows_stt_pidfd_syscalls: bool,
+    allows_graphify_denial_probe: bool,
 ) -> Vec<(usize, &'static str)> {
     let Ok(file) = syn::parse_file(content) else {
         // Parse failure deliberately grants no exception.  A malformed source
@@ -668,6 +767,11 @@ fn forbidden_network_constructions_with_boundaries(
         return vec![(0, "unparseable Rust source")];
     };
     let test_only_ranges = test_only_item_ranges(content).unwrap_or_default();
+    let reviewed_graphify_socket_call = if allows_graphify_denial_probe {
+        reviewed_graphify_libc_probe_contract(&file, content)
+    } else {
+        None
+    };
     let mut visitor = ProductionNetworkVisitor {
         content,
         test_only_ranges: &test_only_ranges,
@@ -676,11 +780,946 @@ fn forbidden_network_constructions_with_boundaries(
         macro_rule_scopes: vec![HashMap::new()],
         allows_audit_rpc_af_unix,
         allows_stt_pidfd_syscalls,
+        allows_graphify_denial_probe,
+        reviewed_graphify_socket_call: reviewed_graphify_socket_call.clone(),
         function_names: Vec::new(),
         violations: Vec::new(),
     };
     visitor.visit_file(&file);
+    if allows_graphify_denial_probe && reviewed_graphify_socket_call.is_none() {
+        visitor
+            .violations
+            .push((0, "invalid Graphify libc address-family denial contract"));
+    }
     visitor.violations
+}
+
+const GRAPHIFY_BINARY_MAIN_CONTRACT: &str = r#"
+fn main() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    if let Some(exit_code) =
+        ::neothd::graphify_runner::run_linux_graphify_containment_guard_if_requested()
+    {
+        ::std::process::exit(exit_code);
+    }
+
+    if let Some(result) = neothd::media::pdf::run_internal_pdf_worker_if_requested() {
+        result.map_err(anyhow::Error::msg)?;
+        return Ok(());
+    }
+
+    let worker = std::thread::Builder::new()
+        .name("neoth-main".to_string())
+        .stack_size(MAIN_STACK_BYTES)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("build the tokio runtime")?
+                .block_on(neothd::run())
+        })
+        .context("spawn the neoth main worker thread")?;
+    let outcome: Result<()> = worker
+        .join()
+        .map_err(|_| anyhow::anyhow!("neoth main worker thread panicked"))?;
+
+    if let Err(e) = &outcome
+        && let Some(neothd::QuietExit(code)) = e.downcast_ref::<neothd::QuietExit>()
+    {
+        std::process::exit(*code);
+    }
+    outcome
+}
+"#;
+
+const GRAPHIFY_GUARD_MAIN_CONTRACT: &str = r#"
+#[cfg(target_os = "linux")]
+fn linux_graphify_containment_guard_main(arguments: Vec<OsString>) -> Result<()> {
+    use std::os::unix::process::CommandExt as _;
+
+    let mut arguments = arguments.into_iter();
+    let unit_name = next_guard_argument(&mut arguments, "unit name")?;
+    let expected_mount_namespace = next_guard_argument(&mut arguments, "host mount namespace")?;
+    let expected_network_namespace = next_guard_argument(&mut arguments, "host network namespace")?;
+    let working_directory =
+        PathBuf::from(next_guard_argument(&mut arguments, "working directory")?);
+    let staging = PathBuf::from(next_guard_argument(&mut arguments, "staging directory")?);
+    let python = PathBuf::from(next_guard_argument(&mut arguments, "Python executable")?);
+    if arguments.next().as_deref() != Some(OsStr::new("--")) {
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "missing Graphify argument separator",
+        ));
+    }
+    let python_arguments = arguments.collect::<Vec<_>>();
+    if !is_graphify_module_invocation(&python_arguments) {
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "guardian received a non-Graphify Python invocation",
+        ));
+    }
+    verify_linux_guardian_boundary(
+        &unit_name,
+        &expected_mount_namespace,
+        &expected_network_namespace,
+        &working_directory,
+        &staging,
+    )?;
+    std::env::set_current_dir(&working_directory).with_context(|| {
+        format!(
+            "enter guarded Graphify working directory {}",
+            working_directory.display()
+        )
+    })?;
+    let error = std::process::Command::new(&python)
+        .args(python_arguments)
+        .exec();
+    Err(error).with_context(|| format!("exec guarded Graphify Python {}", python.display()))
+}
+"#;
+
+const GRAPHIFY_BOUNDARY_CONTRACT: &str = r#"
+#[cfg(target_os = "linux")]
+fn verify_linux_guardian_boundary(
+    unit_name: &OsStr,
+    expected_mount_namespace: &OsStr,
+    expected_network_namespace: &OsStr,
+    working_directory: &Path,
+    staging: &Path,
+) -> Result<()> {
+    let cgroup = current_linux_unified_cgroup()?;
+    if cgroup.rsplit('/').next() != unit_name.to_str() {
+        return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+            "guardian cgroup {cgroup} is not bound to the expected transient unit"
+        )));
+    }
+    if read_linux_namespace("mnt")?.as_os_str() == expected_mount_namespace {
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "the service retained the host mount namespace",
+        ));
+    }
+    if read_linux_namespace("net")?.as_os_str() == expected_network_namespace {
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "the service retained the host network namespace",
+        ));
+    }
+    verify_linux_cgroup_limits(&cgroup)?;
+    verify_linux_network_denied()?;
+    verify_linux_write_boundary(working_directory, staging)?;
+    Ok(())
+}
+"#;
+
+const GRAPHIFY_NETWORK_CONTRACT: &str = r#"
+#[cfg(target_os = "linux")]
+fn verify_linux_network_denied() -> Result<()> {
+    verify_linux_graphify_address_family_denied("AF_INET", ::libc::AF_INET)?;
+    verify_linux_graphify_address_family_denied("AF_INET6", ::libc::AF_INET6)?;
+    verify_linux_graphify_address_family_denied("AF_UNIX", ::libc::AF_UNIX)?;
+
+    let routes =
+        std::fs::read_to_string("/proc/net/route").context("read effective IPv4 routes")?;
+    if routes.lines().skip(1).any(|line| !line.trim().is_empty()) {
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "effective network namespace retains IPv4 routes",
+        ));
+    }
+    if !std::fs::read_to_string("/proc/net/ipv6_route")
+        .context("read effective IPv6 routes")?
+        .trim()
+        .is_empty()
+    {
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "effective network namespace retains IPv6 routes",
+        ));
+    }
+    Ok(())
+}
+"#;
+
+const GRAPHIFY_SOCKET_HELPER_CONTRACT: &str = r#"
+#[cfg(target_os = "linux")]
+fn verify_linux_graphify_address_family_denied(name: &str, domain: ::libc::c_int) -> Result<()> {
+    let descriptor = unsafe {
+        ::libc::socket(
+            domain,
+            ::libc::SOCK_STREAM | ::libc::SOCK_CLOEXEC,
+            0,
+        )
+    };
+    if descriptor >= 0 {
+        unsafe { ::libc::close(descriptor) };
+        return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+            "effective address-family policy still permits {name}"
+        )));
+    }
+
+    let error = ::std::io::Error::last_os_error();
+    if error.raw_os_error() == ::std::option::Option::Some(::libc::EAFNOSUPPORT) {
+        return ::std::result::Result::Ok(());
+    }
+    ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+        "could not prove effective address-family denial for {name}: {error}"
+    )))
+}
+"#;
+
+const GRAPHIFY_CONTAINED_PROCESS_CONTRACT: &str = r#"
+async fn run_contained_process<I, S>(
+    executable: &Path,
+    args: I,
+    current_dir: Option<&Path>,
+    environment: &GraphifyEnvironment,
+    limits: &GraphifyRunLimits,
+) -> Result<std::process::Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let args = args
+        .into_iter()
+        .map(|argument| argument.as_ref().to_os_string())
+        .collect::<Vec<_>>();
+
+    #[cfg(target_os = "linux")]
+    let (mut command, linux_unit) =
+        LinuxGraphifyUnit::command(executable, &args, current_dir, environment, limits)?;
+    #[cfg(not(target_os = "linux"))]
+    let mut command = Command::new(executable);
+
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(not(target_os = "linux"))]
+    {
+        command.args(&args);
+        if let Some(current_dir) = current_dir {
+            command.current_dir(current_dir);
+        }
+        environment.apply(&mut command);
+        configure_containment(&mut command)?;
+    }
+
+    let child = command
+        .spawn()
+        .with_context(|| format!("spawn {}", limits.label))?;
+    #[cfg(target_os = "linux")]
+    let mut child = ContainedChild::activate(child, linux_unit)
+        .with_context(|| format!("activate {} process containment", limits.label))?;
+    #[cfg(not(target_os = "linux"))]
+    let mut child = ContainedChild::activate(child)
+        .with_context(|| format!("activate {} process containment", limits.label))?;
+    let stdout = match child.child_mut().stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            child.terminate_and_reap().await?;
+            bail!("Graphify child stdout pipe was not created");
+        }
+    };
+    let stderr = match child.child_mut().stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            child.terminate_and_reap().await?;
+            bail!("Graphify child stderr pipe was not created");
+        }
+    };
+
+    let run = async {
+        tokio::try_join!(
+            async { child.child_mut().wait().await.map_err(anyhow::Error::from) },
+            read_capped(stdout, limits.stdout_cap_bytes, "stdout"),
+            read_capped(stderr, limits.stderr_cap_bytes, "stderr"),
+        )
+    };
+    match tokio::time::timeout(limits.timeout, run).await {
+        Ok(Ok((status, stdout, stderr))) => Ok(std::process::Output {
+            status,
+            stdout,
+            stderr,
+        }),
+        Ok(Err(error)) => {
+            child.terminate_and_reap().await?;
+            Err(error).with_context(|| format!("{} output collection failed", limits.label))
+        }
+        Err(_) => {
+            child.terminate_and_reap().await?;
+            bail!(
+                "{} exceeded its {:?} execution deadline",
+                limits.label,
+                limits.timeout
+            );
+        }
+    }
+}
+"#;
+
+const GRAPHIFY_FLAG_DISPATCH_CONTRACT: &str = r#"
+#[cfg(target_os = "linux")]
+pub fn run_linux_graphify_containment_guard_if_requested() -> Option<i32> {
+    let mut arguments = std::env::args_os().skip(1);
+    if arguments.next().as_deref() != Some(OsStr::new(LINUX_GRAPHIFY_GUARD_FLAG)) {
+        return None;
+    }
+    Some(
+        match linux_graphify_containment_guard_main(arguments.collect()) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!(
+                    "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify containment guardian refused execution: {error:#}"
+                );
+                125
+            }
+        },
+    )
+}
+"#;
+
+const GRAPHIFY_NEXT_ARGUMENT_CONTRACT: &str = r#"
+#[cfg(target_os = "linux")]
+fn next_guard_argument(
+    arguments: &mut impl Iterator<Item = OsString>,
+    name: &str,
+) -> Result<OsString> {
+    let value = arguments
+        .next()
+        .with_context(|| format!("missing Graphify guardian {name}"))?;
+    if value.as_os_str().is_empty() {
+        return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+            "Graphify guardian {name} is empty"
+        )));
+    }
+    Ok(value)
+}
+"#;
+
+const GRAPHIFY_NAMESPACE_READER_CONTRACT: &str = r#"
+#[cfg(target_os = "linux")]
+fn read_linux_namespace(kind: &str) -> Result<OsString> {
+    let path = ::std::format!("/proc/self/ns/{kind}");
+    let namespace = std::fs::read_link(&path)
+        .with_context(|| ::std::format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: read {path}"))?;
+    if namespace.as_os_str().is_empty() {
+        return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+            "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: {path} is empty"
+        )));
+    }
+    Ok(namespace.into_os_string())
+}
+"#;
+
+const GRAPHIFY_CGROUP_MEMBERSHIP_CONTRACT: &str = r#"
+#[cfg(target_os = "linux")]
+fn current_linux_unified_cgroup() -> Result<String> {
+    let contents =
+        std::fs::read_to_string("/proc/self/cgroup").context("read guardian cgroup membership")?;
+    let mut unified = None;
+    for line in contents.lines() {
+        let mut fields = line.splitn(3, ':');
+        let hierarchy = fields.next();
+        let controllers = fields.next();
+        let path = fields.next();
+        if hierarchy == Some("0")
+            && controllers == Some("")
+            && unified
+                .replace(
+                    path.context("guardian cgroup entry has no path")?
+                        .to_owned(),
+                )
+                .is_some()
+        {
+            return ::std::result::Result::Err(::anyhow::Error::msg(
+                "guardian has multiple unified cgroup entries",
+            ));
+        }
+    }
+    let cgroup = unified.context("guardian has no unified cgroup-v2 membership")?;
+    if !cgroup.starts_with('/') || cgroup.contains("..") {
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "guardian cgroup path is not normalized",
+        ));
+    }
+    Ok(cgroup)
+}
+"#;
+
+const GRAPHIFY_CGROUP_LIMITS_CONTRACT: &str = r#"
+#[cfg(target_os = "linux")]
+fn verify_linux_cgroup_limits(cgroup: &str) -> Result<()> {
+    let directory = Path::new("/sys/fs/cgroup").join(cgroup.trim_start_matches('/'));
+    let bounded_value = |name: &str, ceiling: u64| -> Result<()> {
+        let value = std::fs::read_to_string(directory.join(name))
+            .with_context(|| format!("read effective cgroup {name}"))?;
+        let value = value
+            .trim()
+            .parse::<u64>()
+            .with_context(|| format!("parse effective cgroup {name}"))?;
+        if value > ceiling {
+            return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+                "effective cgroup {name} is not bounded to {ceiling}"
+            )));
+        }
+        Ok(())
+    };
+    bounded_value("memory.max", 1_073_741_824)?;
+    bounded_value("pids.max", 64)?;
+    let cpu_max = std::fs::read_to_string(directory.join("cpu.max"))
+        .context("read effective cgroup cpu.max")?;
+    let mut cpu_max = cpu_max.split_ascii_whitespace();
+    let quota = cpu_max
+        .next()
+        .context("effective cgroup cpu.max has no quota")?;
+    let period = cpu_max
+        .next()
+        .context("effective cgroup cpu.max has no period")?
+        .parse::<u64>()
+        .context("parse effective cgroup cpu.max period")?;
+    let quota = quota
+        .parse::<u64>()
+        .context("effective cgroup cpu.max quota is unlimited")?;
+    if quota > period.saturating_mul(2) {
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "effective cgroup cpu.max exceeds the two-core limit",
+        ));
+    }
+    Ok(())
+}
+"#;
+
+const GRAPHIFY_WRITE_BOUNDARY_CONTRACT: &str = r#"
+#[cfg(target_os = "linux")]
+fn verify_linux_write_boundary(working_directory: &Path, staging: &Path) -> Result<()> {
+    let nonce = new_linux_graphify_unit_name()?;
+    if working_directory != staging {
+        let denied_probe = working_directory.join(::std::format!(".{nonce}.write-probe"));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&denied_probe)
+        {
+            Ok(_) => {
+                let _ = std::fs::remove_file(&denied_probe);
+                return ::std::result::Result::Err(::anyhow::Error::msg(
+                    "effective filesystem boundary permits a host working-directory write",
+                ));
+            }
+            Err(error)
+                if ::std::matches!(
+                    error.raw_os_error(),
+                    Some(libc::EACCES | libc::EROFS)
+                ) => {}
+            Err(error) => return Err(error).context("prove host working-directory write denial"),
+        }
+    }
+    let staging_probe = staging.join(::std::format!(".{nonce}.write-probe"));
+    std::fs::write(&staging_probe, b"guard")
+        .context("prove the exact Graphify staging write capability")?;
+    std::fs::remove_file(&staging_probe).context("remove Graphify staging proof")?;
+    let run_probe = Path::new("/run").join(::std::format!(".{nonce}.write-probe"));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&run_probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&run_probe);
+            return ::std::result::Result::Err(::anyhow::Error::msg(
+                "effective filesystem boundary permits a host runtime-directory write",
+            ));
+        }
+        Err(error)
+            if ::std::matches!(
+                error.raw_os_error(),
+                Some(libc::EACCES | libc::EROFS | libc::ENOENT)
+            ) => {}
+        Err(error) => return Err(error).context("prove host runtime-directory write denial"),
+    }
+    Ok(())
+}
+"#;
+
+const GRAPHIFY_SYSTEMD_PROPERTIES_CONTRACT: &str = r#"
+#[cfg(target_os = "linux")]
+fn linux_systemd_properties(
+    working_directory: &Path,
+    staging: &Path,
+    runtime_millis: u128,
+) -> Vec<OsString> {
+    ::std::vec![
+        ::std::format!("--working-directory={}", working_directory.display()).into(),
+        "--property=Delegate=no".into(),
+        "--property=KillMode=control-group".into(),
+        "--property=SendSIGKILL=yes".into(),
+        "--property=TimeoutStopSec=2s".into(),
+        "--property=Restart=no".into(),
+        "--property=UMask=0077".into(),
+        "--property=NoNewPrivileges=yes".into(),
+        "--property=PrivateNetwork=yes".into(),
+        "--property=PrivateTmp=yes".into(),
+        "--property=PrivateDevices=yes".into(),
+        "--property=ProtectSystem=strict".into(),
+        "--property=ProtectHome=read-only".into(),
+        "--property=InaccessiblePaths=/run /var/run".into(),
+        ::std::format!("--property=ReadWritePaths={}", staging.display()).into(),
+        "--property=RestrictSUIDSGID=yes".into(),
+        "--property=RestrictAddressFamilies=none".into(),
+        "--property=IPAddressDeny=any".into(),
+        "--property=LockPersonality=yes".into(),
+        "--property=SystemCallArchitectures=native".into(),
+        "--property=CapabilityBoundingSet=".into(),
+        "--property=MemoryMax=1073741824".into(),
+        "--property=TasksMax=64".into(),
+        "--property=CPUQuota=200%".into(),
+        "--property=LimitCORE=0".into(),
+        ::std::format!("--property=RuntimeMaxSec={runtime_millis}ms").into(),
+        "--property=UnsetEnvironment=LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONUSERBASE VIRTUAL_ENV HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY OPENAI_API_KEY ANTHROPIC_API_KEY".into(),
+    ]
+}
+"#;
+
+const GRAPHIFY_SYSTEMD_COMMAND_CONTRACT: &str = r#"
+fn command(
+    executable: &Path,
+    args: &[OsString],
+    current_dir: Option<&Path>,
+    environment: &GraphifyEnvironment,
+    limits: &GraphifyRunLimits,
+) -> Result<(::tokio::process::Command, Self)> {
+    if !environment.overrides.is_empty() {
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            LINUX_GRAPHIFY_NETWORK_ERROR,
+        ));
+    }
+    Self::ensure_manager_available()?;
+    let systemd_run = trusted_linux_systemd_tool("systemd-run")?;
+    let systemctl = trusted_linux_systemd_tool("systemctl")?;
+    let executable = canonical_linux_safe_path(executable, "Graphify Python executable")?;
+    let guardian = trusted_linux_graphify_guardian()?;
+    let (working_directory, staging, ephemeral_staging) =
+        prepare_linux_graphify_staging(current_dir)?;
+    let unit_name = new_linux_graphify_unit_name()?;
+    let host_mount_namespace = read_linux_namespace("mnt")?;
+    let host_network_namespace = read_linux_namespace("net")?;
+    if ephemeral_staging.is_some() {
+        ensure_linux_private_staging_leaf(&working_directory)?;
+        ensure_linux_private_staging_leaf(&staging)?;
+    } else {
+        ensure_linux_private_path_ancestry(&working_directory, "Graphify working directory")?;
+        ensure_linux_private_path_ancestry(&staging, "Graphify output staging")?;
+    }
+    let runtime_millis = limits.timeout.as_millis();
+    if runtime_millis == 0 {
+        return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+            "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify runtime limit is not representable"
+        )));
+    }
+
+    let mut command = ::tokio::process::Command::new(systemd_run);
+    command
+        .arg("--user")
+        .arg("--quiet")
+        .arg("--wait")
+        .arg("--pipe")
+        .arg("--collect")
+        .arg("--service-type=exec")
+        .arg(::std::format!("--unit={unit_name}"))
+        .env_remove("LD_PRELOAD")
+        .env_remove("LD_LIBRARY_PATH")
+        .env_remove("LD_AUDIT")
+        .env_remove("PYTHONPATH")
+        .env_remove("PYTHONHOME")
+        .env_remove("VIRTUAL_ENV");
+    command.args(linux_systemd_properties(
+        &working_directory,
+        &staging,
+        runtime_millis,
+    ));
+    for (name, value) in environment.systemd_assignments()? {
+        let mut assignment = OsString::from("--setenv=");
+        assignment.push(name);
+        assignment.push("=");
+        assignment.push(value);
+        command.arg(assignment);
+    }
+    command
+        .arg("--")
+        .arg(guardian)
+        .arg(LINUX_GRAPHIFY_GUARD_FLAG)
+        .arg(&unit_name)
+        .arg(host_mount_namespace)
+        .arg(host_network_namespace)
+        .arg(&working_directory)
+        .arg(&staging)
+        .arg(executable)
+        .arg("--")
+        .args(args);
+
+    Ok((
+        command,
+        Self {
+            systemctl,
+            unit_name,
+            _ephemeral_staging: ephemeral_staging,
+        },
+    ))
+}
+"#;
+
+const GRAPHIFY_CONTRACT_FUNCTIONS: [(&str, &str); 12] = [
+    (
+        "run_contained_process",
+        GRAPHIFY_CONTAINED_PROCESS_CONTRACT,
+    ),
+    (
+        "run_linux_graphify_containment_guard_if_requested",
+        GRAPHIFY_FLAG_DISPATCH_CONTRACT,
+    ),
+    (
+        "linux_graphify_containment_guard_main",
+        GRAPHIFY_GUARD_MAIN_CONTRACT,
+    ),
+    ("next_guard_argument", GRAPHIFY_NEXT_ARGUMENT_CONTRACT),
+    (
+        "verify_linux_guardian_boundary",
+        GRAPHIFY_BOUNDARY_CONTRACT,
+    ),
+    ("read_linux_namespace", GRAPHIFY_NAMESPACE_READER_CONTRACT),
+    (
+        "current_linux_unified_cgroup",
+        GRAPHIFY_CGROUP_MEMBERSHIP_CONTRACT,
+    ),
+    (
+        "verify_linux_cgroup_limits",
+        GRAPHIFY_CGROUP_LIMITS_CONTRACT,
+    ),
+    ("verify_linux_network_denied", GRAPHIFY_NETWORK_CONTRACT),
+    (
+        "verify_linux_graphify_address_family_denied",
+        GRAPHIFY_SOCKET_HELPER_CONTRACT,
+    ),
+    (
+        "verify_linux_write_boundary",
+        GRAPHIFY_WRITE_BOUNDARY_CONTRACT,
+    ),
+    (
+        "linux_systemd_properties",
+        GRAPHIFY_SYSTEMD_PROPERTIES_CONTRACT,
+    ),
+];
+
+fn graphify_contract_fixture() -> String {
+    let functions = GRAPHIFY_CONTRACT_FUNCTIONS
+        .iter()
+        .map(|(_, expected)| *expected)
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "use ::anyhow::{{Context, Result, bail}};\n{functions}\n#[cfg(target_os = \"linux\")]\nimpl LinuxGraphifyUnit {{\n{GRAPHIFY_SYSTEMD_COMMAND_CONTRACT}\n}}"
+    )
+}
+
+fn reviewed_graphify_libc_probe_contract(
+    file: &syn::File,
+    content: &str,
+) -> Option<Range<usize>> {
+    let mut counts = GraphifyContractFunctionCounter::default();
+    counts.visit_file(file);
+    if counts.counts.iter().any(|count| *count != 1)
+        || !graphify_macro_environment_is_exact(file)
+    {
+        return None;
+    }
+
+    let mut helper = None;
+    for (name, expected) in GRAPHIFY_CONTRACT_FUNCTIONS {
+        let mut matches = file.items.iter().filter_map(|item| match item {
+            Item::Fn(function) if function.sig.ident.to_string() == name => Some(function),
+            _ => None,
+        });
+        let function = matches.next()?;
+        if matches.next().is_some() || !graphify_function_tokens_match(content, function, expected) {
+            return None;
+        }
+        if name == "verify_linux_graphify_address_family_denied" {
+            helper = Some(function);
+        }
+    }
+    if !graphify_systemd_command_contract_is_exact(file, content) {
+        return None;
+    }
+
+    let mut socket_calls = AbsoluteLibcSocketCallCollector::default();
+    socket_calls.visit_item_fn(helper?);
+    let [socket_call] = socket_calls.ranges.as_slice() else {
+        return None;
+    };
+    Some(socket_call.clone())
+}
+
+fn graphify_macro_environment_is_exact(file: &syn::File) -> bool {
+    let mut security_bindings = Vec::new();
+    let mut has_top_level_glob = false;
+    for item in &file.items {
+        let Item::Use(import) = item else {
+            continue;
+        };
+        collect_named_use_bindings(
+            &import.tree,
+            &mut Vec::new(),
+            import.leading_colon.is_some(),
+            matches!(&import.vis, syn::Visibility::Inherited),
+            &mut security_bindings,
+            &mut has_top_level_glob,
+        );
+    }
+    security_bindings.sort_by(|left, right| left.2.cmp(&right.2));
+    let expected_security_bindings = vec![
+        (
+            true,
+            true,
+            vec!["anyhow".to_owned(), "Context".to_owned()],
+        ),
+        (
+            true,
+            true,
+            vec!["anyhow".to_owned(), "Result".to_owned()],
+        ),
+        (
+            true,
+            true,
+            vec!["anyhow".to_owned(), "bail".to_owned()],
+        ),
+    ];
+    if has_top_level_glob || security_bindings != expected_security_bindings {
+        return false;
+    }
+
+    let mut macros = BailMacroDefinitionVisitor::default();
+    macros.visit_file(file);
+    !macros.found
+}
+
+fn collect_named_use_bindings(
+    tree: &UseTree,
+    prefix: &mut Vec<String>,
+    absolute: bool,
+    private: bool,
+    security_bindings: &mut Vec<(bool, bool, Vec<String>)>,
+    has_glob: &mut bool,
+) {
+    match tree {
+        UseTree::Path(path) => {
+            prefix.push(path.ident.to_string());
+            collect_named_use_bindings(
+                &path.tree,
+                prefix,
+                absolute,
+                private,
+                security_bindings,
+                has_glob,
+            );
+            prefix.pop();
+        }
+        UseTree::Name(name)
+            if matches!(name.ident.to_string().as_str(), "Context" | "Result" | "bail") =>
+        {
+            let mut target = prefix.clone();
+            target.push(name.ident.to_string());
+            security_bindings.push((absolute, private, target));
+        }
+        UseTree::Rename(rename)
+            if matches!(
+                rename.rename.to_string().as_str(),
+                "Context" | "Result" | "bail"
+            ) =>
+        {
+            let mut target = prefix.clone();
+            target.push(rename.ident.to_string());
+            security_bindings.push((absolute, private, target));
+        }
+        UseTree::Group(group) => {
+            for child in &group.items {
+                collect_named_use_bindings(
+                    child,
+                    prefix,
+                    absolute,
+                    private,
+                    security_bindings,
+                    has_glob,
+                );
+            }
+        }
+        UseTree::Glob(_) => *has_glob = true,
+        UseTree::Name(_) | UseTree::Rename(_) => {}
+    }
+}
+
+#[derive(Default)]
+struct BailMacroDefinitionVisitor {
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for BailMacroDefinitionVisitor {
+    fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
+        if item
+            .ident
+            .as_ref()
+            .is_some_and(|name| name.to_string() == "bail")
+        {
+            self.found = true;
+        }
+        visit::visit_item_macro(self, item);
+    }
+}
+
+fn graphify_function_tokens_match(
+    content: &str,
+    function: &syn::ItemFn,
+    expected: &str,
+) -> bool {
+    let start = function
+        .attrs
+        .iter()
+        .find(|attribute| !attribute.path().is_ident("doc"))
+        .map(|attribute| attribute.span())
+        .or_else(|| match &function.vis {
+            syn::Visibility::Inherited => None,
+            visibility => Some(visibility.span()),
+        })
+        .unwrap_or_else(|| function.sig.span())
+        .byte_range()
+        .start;
+    let end = function.block.span().byte_range().end;
+    graphify_source_tokens_match(content, start..end, expected)
+}
+
+fn graphify_impl_function_tokens_match(
+    content: &str,
+    function: &syn::ImplItemFn,
+    expected: &str,
+) -> bool {
+    let start = function
+        .attrs
+        .iter()
+        .find(|attribute| !attribute.path().is_ident("doc"))
+        .map(|attribute| attribute.span())
+        .or_else(|| match &function.vis {
+            syn::Visibility::Inherited => None,
+            visibility => Some(visibility.span()),
+        })
+        .unwrap_or_else(|| function.sig.span())
+        .byte_range()
+        .start;
+    let end = function.block.span().byte_range().end;
+    graphify_source_tokens_match(content, start..end, expected)
+}
+
+fn graphify_source_tokens_match(content: &str, range: Range<usize>, expected: &str) -> bool {
+    let Some(actual) = content.get(range) else {
+        return false;
+    };
+    let Ok(actual) = actual.parse::<proc_macro2::TokenStream>() else {
+        return false;
+    };
+    let Ok(expected) = expected.parse::<proc_macro2::TokenStream>() else {
+        return false;
+    };
+    actual.to_string() == expected.to_string()
+}
+
+fn graphify_systemd_command_contract_is_exact(file: &syn::File, content: &str) -> bool {
+    let commands = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Impl(implementation)
+                if graphify_linux_cfg_is_exact(&implementation.attrs)
+                    && matches!(
+                        &*implementation.self_ty,
+                        Type::Path(path)
+                            if path.qself.is_none() && path.path.is_ident("LinuxGraphifyUnit")
+                    ) => Some(implementation),
+            _ => None,
+        })
+        .flat_map(|implementation| implementation.items.iter())
+        .filter_map(|item| match item {
+            syn::ImplItem::Fn(function) if function.sig.ident.to_string() == "command" => {
+                Some(function)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [command] = commands.as_slice() else {
+        return false;
+    };
+    graphify_impl_function_tokens_match(content, command, GRAPHIFY_SYSTEMD_COMMAND_CONTRACT)
+}
+
+fn graphify_linux_cfg_is_exact(attributes: &[Attribute]) -> bool {
+    let [attribute] = attributes else {
+        return false;
+    };
+    if !attribute.path().is_ident("cfg") {
+        return false;
+    }
+    let Ok(Meta::NameValue(predicate)) = attribute.parse_args::<Meta>() else {
+        return false;
+    };
+    predicate.path.is_ident("target_os")
+        && matches!(
+            predicate.value,
+            Expr::Lit(ref literal)
+                if matches!(&literal.lit, syn::Lit::Str(value) if value.value() == "linux")
+        )
+}
+
+#[derive(Default)]
+struct GraphifyContractFunctionCounter {
+    counts: [usize; GRAPHIFY_CONTRACT_FUNCTIONS.len()],
+}
+
+impl<'ast> Visit<'ast> for GraphifyContractFunctionCounter {
+    fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+        for (index, (name, _)) in GRAPHIFY_CONTRACT_FUNCTIONS.iter().enumerate() {
+            if function.sig.ident.to_string() == *name {
+                self.counts[index] += 1;
+            }
+        }
+        visit::visit_item_fn(self, function);
+    }
+}
+
+#[derive(Default)]
+struct AbsoluteLibcSocketCallCollector {
+    ranges: Vec<Range<usize>>,
+}
+
+impl<'ast> Visit<'ast> for AbsoluteLibcSocketCallCollector {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if absolute_call_path_is(call, &["libc", "socket"]) {
+            self.ranges.push(call.span().byte_range());
+        }
+        visit::visit_expr_call(self, call);
+    }
+}
+
+fn absolute_call_path_is(call: &syn::ExprCall, expected: &[&str]) -> bool {
+    let Expr::Path(function) = &*call.func else {
+        return false;
+    };
+    let actual = function
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    call.attrs.is_empty()
+        && function.attrs.is_empty()
+        && function.qself.is_none()
+        && function.path.leading_colon.is_some()
+        && actual
+            .iter()
+            .map(String::as_str)
+            .eq(expected.iter().copied())
 }
 
 #[derive(Clone)]
@@ -1045,6 +2084,8 @@ struct ProductionNetworkVisitor<'source> {
     macro_rule_scopes: Vec<HashMap<String, MacroRuleNetworkSummary>>,
     allows_audit_rpc_af_unix: bool,
     allows_stt_pidfd_syscalls: bool,
+    allows_graphify_denial_probe: bool,
+    reviewed_graphify_socket_call: Option<Range<usize>>,
     function_names: Vec<String>,
     violations: Vec<(usize, &'static str)>,
 }
@@ -1435,6 +2476,8 @@ fn macro_groups_contain_network_path(
                     macro_rule_scopes: vec![HashMap::new(); scopes.len()],
                     allows_audit_rpc_af_unix: false,
                     allows_stt_pidfd_syscalls: false,
+                    allows_graphify_denial_probe: false,
+                    reviewed_graphify_socket_call: None,
                     function_names: Vec::new(),
                     violations: Vec::new(),
                 };
@@ -1569,7 +2612,13 @@ impl<'ast> Visit<'ast> for ProductionNetworkVisitor<'_> {
                         .first()
                         .is_some_and(|argument| is_libc_af_unix(argument, &self.scopes)))
                     || pattern == "libc::connect");
-            if !is_reviewed_unix_ipc {
+            let is_reviewed_graphify_probe = self.allows_graphify_denial_probe
+                && pattern == "libc::socket"
+                && self
+                    .reviewed_graphify_socket_call
+                    .as_ref()
+                    .is_some_and(|range| *range == call.span().byte_range());
+            if !is_reviewed_graphify_probe && !is_reviewed_unix_ipc {
                 self.report(call, pattern);
             }
         }
@@ -3577,7 +4626,7 @@ fn connect_std_with_deadline() {
 }
 "#;
     assert!(
-        forbidden_network_constructions_with_boundaries(unix_ipc, true, false).is_empty(),
+        forbidden_network_constructions_with_boundaries(unix_ipc, true, false, false).is_empty(),
         "only the audit-RPC AF_UNIX boundary may construct its Unix IPC socket"
     );
     assert!(
@@ -3586,6 +4635,221 @@ fn connect_std_with_deadline() {
             .any(|(_, pattern)| *pattern == "libc::socket"),
         "AF_UNIX remains forbidden everywhere except the exact audited boundary"
     );
+}
+
+#[test]
+fn ast_network_gate_allows_only_the_exact_wired_graphify_libc_denial_contract() {
+    assert!(graphify_library_module_contract_is_exact(
+        "pub mod graphify_runner;"
+    ));
+    assert!(graphify_binary_main_contract_is_exact(
+        GRAPHIFY_BINARY_MAIN_CONTRACT
+    ));
+    let complete = graphify_contract_fixture();
+    assert!(
+        forbidden_network_constructions_with_boundaries(&complete, false, false, true).is_empty(),
+        "the exact guardian -> boundary -> network -> libc probe chain is reviewed"
+    );
+    assert_eq!(
+        forbidden_network_constructions_in_production(&complete)
+            .iter()
+            .filter(|(_, pattern)| *pattern == "libc::socket")
+            .count(),
+        1,
+        "the libc socket remains forbidden without the exact Graphify source boundary"
+    );
+}
+
+#[test]
+fn ast_network_gate_rejects_graphify_module_swap_and_removed_binary_dispatch() {
+    for source in [
+        "#[path = \"graphify_runner_alt.rs\"] pub mod graphify_runner;",
+        "#[cfg_attr(target_os = \"linux\", path = \"graphify_runner_alt.rs\")] pub mod graphify_runner;",
+        "mod graphify_runner;",
+        "pub mod graphify_runner { }",
+    ] {
+        assert!(
+            !graphify_library_module_contract_is_exact(source),
+            "Graphify module selection must be unconditional, public, and path-fixed"
+        );
+    }
+
+    let removed_dispatch = GRAPHIFY_BINARY_MAIN_CONTRACT.replacen(
+        "::neothd::graphify_runner::run_linux_graphify_containment_guard_if_requested()",
+        "::std::option::Option::None",
+        1,
+    );
+    assert!(
+        !graphify_binary_main_contract_is_exact(&removed_dispatch),
+        "the binary must dispatch the private Linux guardian before Clap/Tokio"
+    );
+}
+
+#[test]
+fn ast_network_gate_rejects_graphify_probe_cfg_decoys_and_unwired_callers() {
+    let complete = graphify_contract_fixture();
+    let assert_rejected = |source: &str, reason: &str| {
+        assert!(
+            forbidden_network_constructions_with_boundaries(source, false, false, true)
+                .iter()
+                .any(|(_, pattern)| {
+                    *pattern == "invalid Graphify libc address-family denial contract"
+                }),
+            "{reason}"
+        );
+    };
+
+    let cfg_helper = complete.replacen(
+        "#[cfg(target_os = \"linux\")]\nfn verify_linux_graphify_address_family_denied",
+        "#[cfg(any())]\nfn verify_linux_graphify_address_family_denied",
+        1,
+    );
+    assert_rejected(
+        &cfg_helper,
+        "a cfg-disabled helper must invalidate the exception",
+    );
+
+    let cfg_socket = complete.replacen(
+        "    let descriptor = unsafe {",
+        "    #[cfg(any())]\n    let descriptor = unsafe {",
+        1,
+    );
+    assert_rejected(
+        &cfg_socket,
+        "a cfg-disabled socket statement must invalidate the exception",
+    );
+
+    let early_return = complete.replacen(
+        "    verify_linux_graphify_address_family_denied(\"AF_INET\", ::libc::AF_INET)?;",
+        "    return Ok(());\n    verify_linux_graphify_address_family_denied(\"AF_INET\", ::libc::AF_INET)?;",
+        1,
+    );
+    assert_rejected(
+        &early_return,
+        "an early success before the address-family probes must invalidate the exception",
+    );
+
+    let nested_decoy = format!(
+        "{complete}\nfn decoy() {{\n{GRAPHIFY_SOCKET_HELPER_CONTRACT}\n}}"
+    );
+    assert_rejected(
+        &nested_decoy,
+        "a nested same-name decoy must not satisfy the unique top-level contract",
+    );
+
+    let unwired_boundary = complete.replacen(
+        "    verify_linux_network_denied()?;",
+        "",
+        1,
+    );
+    assert_rejected(
+        &unwired_boundary,
+        "removing the real boundary call must invalidate the exception",
+    );
+
+    let unwired_main = complete.replacen(
+        "verify_linux_guardian_boundary(",
+        "skip_linux_guardian_boundary(",
+        1,
+    );
+    assert_rejected(
+        &unwired_main,
+        "the attestation call must stay on the path before Python exec",
+    );
+
+    let linux_branch_removed = complete.replacen(
+        "LinuxGraphifyUnit::command(executable, &args, current_dir, environment, limits)?;",
+        "Command::new(executable);",
+        1,
+    );
+    assert_rejected(
+        &linux_branch_removed,
+        "Linux must construct the manager-owned contained command",
+    );
+
+    let direct_python_unit = complete.replacen(
+        ".arg(guardian)\n        .arg(LINUX_GRAPHIFY_GUARD_FLAG)",
+        ".arg(executable)\n        .arg(\"--uncontained\")",
+        1,
+    );
+    assert_rejected(
+        &direct_python_unit,
+        "the transient unit must start the guardian rather than Python",
+    );
+
+    let shadowed_bail = format!("macro_rules! bail {{ ($($token:tt)*) => {{}}; }}\n{complete}");
+    assert_rejected(
+        &shadowed_bail,
+        "a local bail macro must not redirect fail-closed branches",
+    );
+
+    let rebound_bail = complete.replacen(
+        "use ::anyhow::{Context, Result, bail};",
+        "use ::malicious::{Context, Result, bail};",
+        1,
+    );
+    assert_rejected(
+        &rebound_bail,
+        "the remaining non-guardian bail macro binding must stay absolute anyhow",
+    );
+}
+
+#[test]
+fn ast_network_gate_rejects_graphify_probe_semantic_weakening() {
+    let complete = graphify_contract_fixture();
+    let assert_rejected = |source: &str, reason: &str| {
+        assert!(
+            forbidden_network_constructions_with_boundaries(source, false, false, true)
+                .iter()
+                .any(|(_, pattern)| {
+                    *pattern == "invalid Graphify libc address-family denial contract"
+                }),
+            "{reason}"
+        );
+    };
+
+    assert_rejected(
+        &complete.replacen(
+            "        unsafe { ::libc::close(descriptor) };",
+            "",
+            1,
+        ),
+        "a permitted socket must still be closed before the guardian fails",
+    );
+    assert_rejected(
+        &complete.replacen(
+            "return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(\n            \"effective address-family policy still permits {name}\"",
+            "return ::std::result::Result::Ok(::anyhow::Error::msg(::std::format!(\n            \"effective address-family policy still permits {name}\"",
+            1,
+        ),
+        "a permitted socket must be fatal",
+    );
+    assert_rejected(
+        &complete.replacen("::libc::EAFNOSUPPORT", "::libc::ENOMEM", 1),
+        "only systemd's exact address-family policy errno may attest denial",
+    );
+
+    let wrong_family = complete.replacen(
+        "verify_linux_graphify_address_family_denied(\"AF_UNIX\", ::libc::AF_UNIX)?;",
+        "verify_linux_graphify_address_family_denied(\"AF_UNIX\", ::libc::AF_INET)?;",
+        1,
+    );
+    assert_rejected(
+        &wrong_family,
+        "AF_INET, AF_INET6, and AF_UNIX must each be probed exactly once"
+    );
+
+    for property in [
+        "--property=PrivateNetwork=yes",
+        "--property=RestrictAddressFamilies=none",
+        "--property=IPAddressDeny=any",
+    ] {
+        let changed = complete.replacen(property, "--property=WEAKENED", 1);
+        assert_rejected(
+            &changed,
+            "every mandatory network property must remain exact",
+        );
+    }
 }
 
 #[test]
@@ -3661,7 +4925,7 @@ impl FasterWhisperContainmentSetup {
 }
 "#;
     assert!(
-        forbidden_network_constructions_with_boundaries(allowed, false, true).is_empty(),
+        forbidden_network_constructions_with_boundaries(allowed, false, true, false).is_empty(),
         "only exact pidfd lifecycle syscall constants are allowed in configure"
     );
 
@@ -3673,7 +4937,8 @@ impl FasterWhisperContainmentSetup {
 }
 "#;
     assert!(
-        forbidden_network_constructions_with_boundaries(glob_allowed, false, true).is_empty(),
+        forbidden_network_constructions_with_boundaries(glob_allowed, false, true, false)
+            .is_empty(),
         "libc glob spelling must resolve to the same exact reviewed pidfd syscall"
     );
 
@@ -3686,7 +4951,7 @@ impl FasterWhisperContainmentSetup {
             "struct FasterWhisperContainmentSetup; impl FasterWhisperContainmentSetup {{ fn configure() {{ {rejected} }} }}"
         );
         assert!(
-            forbidden_network_constructions_with_boundaries(&source, false, true)
+            forbidden_network_constructions_with_boundaries(&source, false, true, false)
                 .iter()
                 .any(|(_, pattern)| *pattern == "libc::syscall"),
             "only the exact libc constant spelling is exempt"
@@ -3701,7 +4966,7 @@ impl FasterWhisperContainmentSetup {
 }
 "#;
     assert!(
-        forbidden_network_constructions_with_boundaries(glob_socket, false, true)
+        forbidden_network_constructions_with_boundaries(glob_socket, false, true, false)
             .iter()
             .any(|(_, pattern)| *pattern == "libc::syscall"),
         "libc glob SYS_socket must not bypass the exact pidfd syscall boundary"

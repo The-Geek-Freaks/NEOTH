@@ -866,9 +866,9 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "linux")))]
     #[test]
-    fn graphify_check_is_unavailable_on_unix_before_any_python_probe() {
+    fn graphify_check_is_unavailable_on_non_linux_unix_before_any_python_probe() {
         let home = tempfile::tempdir().unwrap();
         let outcome = check_graphify_python(home.path());
 
@@ -876,7 +876,7 @@ mod tests {
         assert!(
             outcome
                 .detail
-                .contains("Graphify runner is unavailable on Unix")
+                .contains("Graphify runner is unavailable on this Unix platform")
         );
         assert!(outcome.detail.contains("Package installation is not a fix"));
         assert!(!outcome.detail.contains("pip install"));

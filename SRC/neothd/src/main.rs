@@ -31,9 +31,9 @@ fn main() -> Result<()> {
     // start until its effective Linux boundary has been attested.
     #[cfg(target_os = "linux")]
     if let Some(exit_code) =
-        neothd::graphify_runner::run_linux_graphify_containment_guard_if_requested()
+        ::neothd::graphify_runner::run_linux_graphify_containment_guard_if_requested()
     {
-        std::process::exit(exit_code);
+        ::std::process::exit(exit_code);
     }
 
     // Private media-worker modes must run before Clap or the long-lived Tokio

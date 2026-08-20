@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, bail};
+use ::anyhow::{Context, Result, bail};
 use tokio::{io::AsyncReadExt as _, process::Command, sync::Mutex};
 
 // Process groups do not provide containment on Unix: a descendant can create
@@ -804,9 +804,11 @@ impl LinuxGraphifyUnit {
         current_dir: Option<&Path>,
         environment: &GraphifyEnvironment,
         limits: &GraphifyRunLimits,
-    ) -> Result<(Command, Self)> {
+    ) -> Result<(::tokio::process::Command, Self)> {
         if !environment.overrides.is_empty() {
-            bail!(LINUX_GRAPHIFY_NETWORK_ERROR);
+            return ::std::result::Result::Err(::anyhow::Error::msg(
+                LINUX_GRAPHIFY_NETWORK_ERROR,
+            ));
         }
         Self::ensure_manager_available()?;
         let systemd_run = trusted_linux_systemd_tool("systemd-run")?;
@@ -830,10 +832,12 @@ impl LinuxGraphifyUnit {
         }
         let runtime_millis = limits.timeout.as_millis();
         if runtime_millis == 0 {
-            bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify runtime limit is not representable");
+            return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+                "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify runtime limit is not representable"
+            )));
         }
 
-        let mut command = Command::new(systemd_run);
+        let mut command = ::tokio::process::Command::new(systemd_run);
         command
             .arg("--user")
             .arg("--quiet")
@@ -841,7 +845,7 @@ impl LinuxGraphifyUnit {
             .arg("--pipe")
             .arg("--collect")
             .arg("--service-type=exec")
-            .arg(format!("--unit={unit_name}"))
+            .arg(::std::format!("--unit={unit_name}"))
             .env_remove("LD_PRELOAD")
             .env_remove("LD_LIBRARY_PATH")
             .env_remove("LD_AUDIT")
@@ -1044,8 +1048,8 @@ fn linux_systemd_properties(
     staging: &Path,
     runtime_millis: u128,
 ) -> Vec<OsString> {
-    vec![
-        format!("--working-directory={}", working_directory.display()).into(),
+    ::std::vec![
+        ::std::format!("--working-directory={}", working_directory.display()).into(),
         "--property=Delegate=no".into(),
         "--property=KillMode=control-group".into(),
         "--property=SendSIGKILL=yes".into(),
@@ -1059,7 +1063,7 @@ fn linux_systemd_properties(
         "--property=ProtectSystem=strict".into(),
         "--property=ProtectHome=read-only".into(),
         "--property=InaccessiblePaths=/run /var/run".into(),
-        format!("--property=ReadWritePaths={}", staging.display()).into(),
+        ::std::format!("--property=ReadWritePaths={}", staging.display()).into(),
         "--property=RestrictSUIDSGID=yes".into(),
         "--property=RestrictAddressFamilies=none".into(),
         "--property=IPAddressDeny=any".into(),
@@ -1070,7 +1074,7 @@ fn linux_systemd_properties(
         "--property=TasksMax=64".into(),
         "--property=CPUQuota=200%".into(),
         "--property=LimitCORE=0".into(),
-        format!("--property=RuntimeMaxSec={runtime_millis}ms").into(),
+        ::std::format!("--property=RuntimeMaxSec={runtime_millis}ms").into(),
         "--property=UnsetEnvironment=LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONUSERBASE VIRTUAL_ENV HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY OPENAI_API_KEY ANTHROPIC_API_KEY".into(),
     ]
 }
@@ -1164,11 +1168,13 @@ fn trusted_linux_graphify_guardian() -> Result<PathBuf> {
 
 #[cfg(target_os = "linux")]
 fn read_linux_namespace(kind: &str) -> Result<OsString> {
-    let path = format!("/proc/self/ns/{kind}");
+    let path = ::std::format!("/proc/self/ns/{kind}");
     let namespace = std::fs::read_link(&path)
-        .with_context(|| format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: read {path}"))?;
+        .with_context(|| ::std::format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: read {path}"))?;
     if namespace.as_os_str().is_empty() {
-        bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: {path} is empty");
+        return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+            "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: {path} is empty"
+        )));
     }
     Ok(namespace.into_os_string())
 }
@@ -1349,11 +1355,15 @@ fn linux_graphify_containment_guard_main(arguments: Vec<OsString>) -> Result<()>
     let staging = PathBuf::from(next_guard_argument(&mut arguments, "staging directory")?);
     let python = PathBuf::from(next_guard_argument(&mut arguments, "Python executable")?);
     if arguments.next().as_deref() != Some(OsStr::new("--")) {
-        bail!("missing Graphify argument separator");
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "missing Graphify argument separator",
+        ));
     }
     let python_arguments = arguments.collect::<Vec<_>>();
     if !is_graphify_module_invocation(&python_arguments) {
-        bail!("guardian received a non-Graphify Python invocation");
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "guardian received a non-Graphify Python invocation",
+        ));
     }
     verify_linux_guardian_boundary(
         &unit_name,
@@ -1383,7 +1393,9 @@ fn next_guard_argument(
         .next()
         .with_context(|| format!("missing Graphify guardian {name}"))?;
     if value.as_os_str().is_empty() {
-        bail!("Graphify guardian {name} is empty");
+        return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+            "Graphify guardian {name} is empty"
+        )));
     }
     Ok(value)
 }
@@ -1398,13 +1410,19 @@ fn verify_linux_guardian_boundary(
 ) -> Result<()> {
     let cgroup = current_linux_unified_cgroup()?;
     if cgroup.rsplit('/').next() != unit_name.to_str() {
-        bail!("guardian cgroup {cgroup} is not bound to the expected transient unit");
+        return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+            "guardian cgroup {cgroup} is not bound to the expected transient unit"
+        )));
     }
     if read_linux_namespace("mnt")?.as_os_str() == expected_mount_namespace {
-        bail!("the service retained the host mount namespace");
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "the service retained the host mount namespace",
+        ));
     }
     if read_linux_namespace("net")?.as_os_str() == expected_network_namespace {
-        bail!("the service retained the host network namespace");
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "the service retained the host network namespace",
+        ));
     }
     verify_linux_cgroup_limits(&cgroup)?;
     verify_linux_network_denied()?;
@@ -1431,12 +1449,16 @@ fn current_linux_unified_cgroup() -> Result<String> {
                 )
                 .is_some()
         {
-            bail!("guardian has multiple unified cgroup entries");
+            return ::std::result::Result::Err(::anyhow::Error::msg(
+                "guardian has multiple unified cgroup entries",
+            ));
         }
     }
     let cgroup = unified.context("guardian has no unified cgroup-v2 membership")?;
     if !cgroup.starts_with('/') || cgroup.contains("..") {
-        bail!("guardian cgroup path is not normalized");
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "guardian cgroup path is not normalized",
+        ));
     }
     Ok(cgroup)
 }
@@ -1452,7 +1474,9 @@ fn verify_linux_cgroup_limits(cgroup: &str) -> Result<()> {
             .parse::<u64>()
             .with_context(|| format!("parse effective cgroup {name}"))?;
         if value > ceiling {
-            bail!("effective cgroup {name} is not bounded to {ceiling}");
+            return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+                "effective cgroup {name} is not bounded to {ceiling}"
+            )));
         }
         Ok(())
     };
@@ -1473,40 +1497,68 @@ fn verify_linux_cgroup_limits(cgroup: &str) -> Result<()> {
         .parse::<u64>()
         .context("effective cgroup cpu.max quota is unlimited")?;
     if quota > period.saturating_mul(2) {
-        bail!("effective cgroup cpu.max exceeds the two-core limit");
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "effective cgroup cpu.max exceeds the two-core limit",
+        ));
     }
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
 fn verify_linux_network_denied() -> Result<()> {
-    for (domain, name) in [
-        (libc::AF_INET, "AF_INET"),
-        (libc::AF_INET6, "AF_INET6"),
-        (libc::AF_UNIX, "AF_UNIX"),
-    ] {
-        // SAFETY: `socket` has no pointer arguments. A successful descriptor is
-        // immediately closed before the guardian returns an error.
-        let descriptor = unsafe { libc::socket(domain, libc::SOCK_STREAM, 0) };
-        if descriptor >= 0 {
-            // SAFETY: this descriptor was just created by this process.
-            unsafe { libc::close(descriptor) };
-            bail!("effective address-family policy still permits {name}");
-        }
-    }
+    verify_linux_graphify_address_family_denied("AF_INET", ::libc::AF_INET)?;
+    verify_linux_graphify_address_family_denied("AF_INET6", ::libc::AF_INET6)?;
+    verify_linux_graphify_address_family_denied("AF_UNIX", ::libc::AF_UNIX)?;
+
     let routes =
         std::fs::read_to_string("/proc/net/route").context("read effective IPv4 routes")?;
     if routes.lines().skip(1).any(|line| !line.trim().is_empty()) {
-        bail!("effective network namespace retains IPv4 routes");
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "effective network namespace retains IPv4 routes",
+        ));
     }
     if !std::fs::read_to_string("/proc/net/ipv6_route")
         .context("read effective IPv6 routes")?
         .trim()
         .is_empty()
     {
-        bail!("effective network namespace retains IPv6 routes");
+        return ::std::result::Result::Err(::anyhow::Error::msg(
+            "effective network namespace retains IPv6 routes",
+        ));
     }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn verify_linux_graphify_address_family_denied(name: &str, domain: ::libc::c_int) -> Result<()> {
+    // SAFETY: socket receives a reviewed address-family constant, fixed stream
+    // flags, and protocol zero. A successful descriptor is closed immediately.
+    let descriptor = unsafe {
+        ::libc::socket(
+            domain,
+            ::libc::SOCK_STREAM | ::libc::SOCK_CLOEXEC,
+            0,
+        )
+    };
+    if descriptor >= 0 {
+        // SAFETY: a non-negative socket return is an owned descriptor. This
+        // process exits the guardian path after the containment failure.
+        unsafe { ::libc::close(descriptor) };
+        return ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+            "effective address-family policy still permits {name}"
+        )));
+    }
+
+    // systemd's empty RestrictAddressFamilies allow-list installs a seccomp
+    // rule that reports EAFNOSUPPORT. No other errno proves that the policy is
+    // actually active; transient resource failures therefore fail closed.
+    let error = ::std::io::Error::last_os_error();
+    if error.raw_os_error() == ::std::option::Option::Some(::libc::EAFNOSUPPORT) {
+        return ::std::result::Result::Ok(());
+    }
+    ::std::result::Result::Err(::anyhow::Error::msg(::std::format!(
+        "could not prove effective address-family denial for {name}: {error}"
+    )))
 }
 
 #[cfg(target_os = "linux")]
@@ -1516,7 +1568,7 @@ fn verify_linux_write_boundary(working_directory: &Path, staging: &Path) -> Resu
     // directory is deliberately both CWD and the sole write capability. A
     // corpus invocation must prove that its distinct working tree is read-only.
     if working_directory != staging {
-        let denied_probe = working_directory.join(format!(".{nonce}.write-probe"));
+        let denied_probe = working_directory.join(::std::format!(".{nonce}.write-probe"));
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -1524,17 +1576,23 @@ fn verify_linux_write_boundary(working_directory: &Path, staging: &Path) -> Resu
         {
             Ok(_) => {
                 let _ = std::fs::remove_file(&denied_probe);
-                bail!("effective filesystem boundary permits a host working-directory write")
+                return ::std::result::Result::Err(::anyhow::Error::msg(
+                    "effective filesystem boundary permits a host working-directory write",
+                ));
             }
-            Err(error) if matches!(error.raw_os_error(), Some(libc::EACCES | libc::EROFS)) => {}
+            Err(error)
+                if ::std::matches!(
+                    error.raw_os_error(),
+                    Some(libc::EACCES | libc::EROFS)
+                ) => {}
             Err(error) => return Err(error).context("prove host working-directory write denial"),
         }
     }
-    let staging_probe = staging.join(format!(".{nonce}.write-probe"));
+    let staging_probe = staging.join(::std::format!(".{nonce}.write-probe"));
     std::fs::write(&staging_probe, b"guard")
         .context("prove the exact Graphify staging write capability")?;
     std::fs::remove_file(&staging_probe).context("remove Graphify staging proof")?;
-    let run_probe = Path::new("/run").join(format!(".{nonce}.write-probe"));
+    let run_probe = Path::new("/run").join(::std::format!(".{nonce}.write-probe"));
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1542,10 +1600,12 @@ fn verify_linux_write_boundary(working_directory: &Path, staging: &Path) -> Resu
     {
         Ok(_) => {
             let _ = std::fs::remove_file(&run_probe);
-            bail!("effective filesystem boundary permits a host runtime-directory write")
+            return ::std::result::Result::Err(::anyhow::Error::msg(
+                "effective filesystem boundary permits a host runtime-directory write",
+            ));
         }
         Err(error)
-            if matches!(
+            if ::std::matches!(
                 error.raw_os_error(),
                 Some(libc::EACCES | libc::EROFS | libc::ENOENT)
             ) => {}
