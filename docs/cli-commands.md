@@ -3639,13 +3639,30 @@ Verify and print the latest correlated updater state per concrete lane and task 
 
 ## `neoth usage`
 
-QM-9 Phase 1: render the persisted usage log as a human-readable or JSON rollup. Aggregates the last 24h by default; `--days N` widens the window; `--since-unix … --until-unix …` pins an explicit range. Source files: `~/.neoth/usage/YYYY-MM-DD.jsonl`
+QM-9 Phase 1 + ADOPT31-D2: render the persisted usage log as a human-readable or JSON rollup. Aggregates the last 24h by default; `--days N` widens the window; `--since-unix … --until-unix …` pins an explicit range. Source files: `~/.neoth/usage/YYYY-MM-DD.jsonl`
 
 - `--days <DAYS>` — How many days back to aggregate (default 1)
 - `--format <FORMAT>` — Output format: `table` (default) or `json`
 - `--since-unix <SINCE_UNIX>` — Optional explicit start unix timestamp (overrides --days)
 - `--until-unix <UNTIL_UNIX>` — Optional explicit end unix timestamp (overrides --days)
 - `--currency <CURRENCY>` — Display currency: USD (default) / EUR / GBP / CHF / JPY / CNY. Storage canonical stays USD; this only affects the rendering. Operator can also pin in `freedom.yaml::usage_currency`
+
+The JSON rollup includes `workflow_rollup_schema: 1`, `per_workflow`, and an optional
+`workflow_other` bucket when the running daemon supports ADOPT31-D2. A workflow is a
+closed execution class derived only from the complete audited provider-call triple
+`(call_scope, source, call_type)`; it is not a task title, prompt, request id, user id,
+provider/model string, or configurable label. Legacy rows and any future/mismatched triple
+remain explicitly visible as `unclassified` rather than being guessed or dropped.
+
+Workflow rows are fully aggregated before presentation, then deterministically capped at
+eight named classes. If named classes exceed that bound, `workflow_other` is an output-only
+sum of the omitted classes; no event can classify itself as `other`. `unclassified` remains
+visible when present.
+
+All dollar totals in workflow rows are **known-cost totals only**. A reported `0.0` is a
+known/free call, while an absent, invalid, or unsafe cost is counted as `unpriced`; the CLI
+and JSON never represent unpriced calls as `$0.00`. Currency conversion applies to known USD
+totals only, never to the `unpriced` count.
 
 ## `neoth verify`
 

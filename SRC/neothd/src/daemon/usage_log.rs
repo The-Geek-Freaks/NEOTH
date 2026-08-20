@@ -93,6 +93,157 @@ pub struct UsageEvent {
     pub streaming: bool,
 }
 
+/// Maximum number of named workflow rows exposed by one usage rollup.
+///
+/// The cap is a presentation boundary, applied only after every workflow has
+/// been fully aggregated. It keeps the CLI and GUI bounded without making
+/// unknown/future audited triples disappear: those always remain the explicit
+/// [`WorkflowKind::Unclassified`] row.
+pub const MAX_WORKFLOW_ROWS: usize = 8;
+
+/// Closed, content-free execution classes for cost-per-decision reporting.
+///
+/// A value is derived only by [`WorkflowKey::from_audited`] from the exact
+/// provider-call audit triple. This is deliberately not a task-name, prompt,
+/// request id, session id, provider, model, or user-controlled label.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowKind {
+    ChatTurn,
+    ChatPostReply,
+    DeepResearch,
+    SessionNaming,
+    BackgroundSession,
+    CouncilDeliberation,
+    McpAgentLoop,
+    N8nProviderCall,
+    ClusterDelegated,
+    HistoryCompaction,
+    TeacherEscalation,
+    RefusalRecovery,
+    ScheduledMaintenance,
+    /// Missing, legacy, malformed, future, or otherwise unmapped audited
+    /// triples. This is distinct from the output-only `workflow_other` bucket.
+    Unclassified,
+}
+
+/// Static workflow key serialized as one closed snake-case string.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct WorkflowKey(pub WorkflowKind);
+
+impl Default for WorkflowKey {
+    fn default() -> Self {
+        Self(WorkflowKind::Unclassified)
+    }
+}
+
+impl WorkflowKey {
+    /// Derive a workflow class from the complete audited triple.
+    ///
+    /// Every accepted arm is an exact contract emitted by a current production
+    /// caller. Prefix matching and partial matching are intentionally absent:
+    /// a caller changing just one field is visible as `unclassified` until its
+    /// new contract is explicitly reviewed here.
+    pub(crate) fn from_audited(
+        call_scope: Option<&str>,
+        source: Option<&str>,
+        call_type: Option<&str>,
+    ) -> Self {
+        let kind = match (call_scope, source, call_type) {
+            (Some("chat_provider_round"), Some("chat"), Some("chat_provider_round")) => {
+                WorkflowKind::ChatTurn
+            }
+            (Some("chat_post_reply_round"), Some("chat"), Some("chat_post_reply_round")) => {
+                WorkflowKind::ChatPostReply
+            }
+            (Some("deep_research_round"), Some("chat"), Some("deep_research_round")) => {
+                WorkflowKind::DeepResearch
+            }
+            (Some("session_naming"), Some("chat"), Some("session_naming")) => {
+                WorkflowKind::SessionNaming
+            }
+            (Some("background_session"), Some("chat"), Some("background_session")) => {
+                WorkflowKind::BackgroundSession
+            }
+            // Council leaves inherit the chat request's audited context, but
+            // have their own fixed call scope at the authorized leaf boundary.
+            (Some("council_leaf"), Some("chat"), Some("chat_provider_round")) => {
+                WorkflowKind::CouncilDeliberation
+            }
+            (Some("n8n.provider_call"), Some("n8n_api"), Some("n8n_provider_call")) => {
+                WorkflowKind::N8nProviderCall
+            }
+            (Some("cluster.delegated_task"), Some("cluster_executor"), Some("cluster_delegated")) => {
+                WorkflowKind::ClusterDelegated
+            }
+            _ => WorkflowKind::Unclassified,
+        };
+        Self(kind)
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self.0 {
+            WorkflowKind::ChatTurn => "chat_turn",
+            WorkflowKind::ChatPostReply => "chat_post_reply",
+            WorkflowKind::DeepResearch => "deep_research",
+            WorkflowKind::SessionNaming => "session_naming",
+            WorkflowKind::BackgroundSession => "background_session",
+            WorkflowKind::CouncilDeliberation => "council_deliberation",
+            WorkflowKind::McpAgentLoop => "mcp_agent_loop",
+            WorkflowKind::N8nProviderCall => "n8n_provider_call",
+            WorkflowKind::ClusterDelegated => "cluster_delegated",
+            WorkflowKind::HistoryCompaction => "history_compaction",
+            WorkflowKind::TeacherEscalation => "teacher_escalation",
+            WorkflowKind::RefusalRecovery => "refusal_recovery",
+            WorkflowKind::ScheduledMaintenance => "scheduled_maintenance",
+            WorkflowKind::Unclassified => "unclassified",
+        }
+    }
+}
+
+/// Fully aggregated content-free totals for one static workflow class.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct PerWorkflowTotals {
+    pub workflow: WorkflowKey,
+    pub call_count: u64,
+    pub ok_count: u64,
+    pub err_count: u64,
+    /// Sum of only finite, non-negative reported costs. `Some(0.0)` is a
+    /// known/free call and therefore contributes to `known_cost_count`.
+    pub known_cost_usd: f64,
+    pub known_cost_count: u64,
+    /// Calls whose cost was missing, invalid, or unsafe to report. Never fold
+    /// this into a dollar zero.
+    pub unknown_cost_count: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub unknown_input_token_count: u64,
+    pub unknown_output_token_count: u64,
+    pub automated_count: u64,
+    pub human_count: u64,
+}
+
+/// Totals for named workflow classes omitted solely by the presentation cap.
+///
+/// This is output-only: no event can classify itself as `other`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct WorkflowOtherTotals {
+    pub omitted_workflow_count: u64,
+    pub call_count: u64,
+    pub ok_count: u64,
+    pub err_count: u64,
+    pub known_cost_usd: f64,
+    pub known_cost_count: u64,
+    pub unknown_cost_count: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub unknown_input_token_count: u64,
+    pub unknown_output_token_count: u64,
+    pub automated_count: u64,
+    pub human_count: u64,
+}
+
 /// Daily-keyed rollup for a single provider/model pair.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct PerProviderTotals {
@@ -163,6 +314,19 @@ pub struct UsageRollup {
     pub total_human_count: u64,
     /// Per-provider breakdown, sorted by `provider` alphabetically.
     pub per_provider: Vec<PerProviderTotals>,
+    /// ADOPT31-D2 workflow rollup wire version. `None` is an older daemon
+    /// response; current aggregation emits `Some(1)` even for an empty window.
+    #[serde(default)]
+    pub workflow_rollup_schema: Option<u16>,
+    /// At most [`MAX_WORKFLOW_ROWS`] named, closed workflow classes. Legacy and
+    /// unknown triples remain visible as `unclassified` rather than being
+    /// silently folded into `workflow_other`.
+    #[serde(default)]
+    pub per_workflow: Vec<PerWorkflowTotals>,
+    /// Synthetic output-only bucket for named workflow classes omitted after
+    /// full aggregation because of the display cap.
+    #[serde(default)]
+    pub workflow_other: Option<WorkflowOtherTotals>,
 }
 
 /// Directory under `home` that holds the daily JSONL files.
@@ -608,6 +772,7 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
     let mut roll = UsageRollup {
         since_unix,
         until_unix,
+        workflow_rollup_schema: Some(1),
         ..Default::default()
     };
     let dir = usage_dir(home);
@@ -615,6 +780,8 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
         return roll;
     }
     let mut per: std::collections::BTreeMap<String, PerProviderTotals> = Default::default();
+    let mut workflows: std::collections::BTreeMap<WorkflowKey, PerWorkflowTotals> =
+        Default::default();
     // VIEW-07 — collect the raw latency samples per provider (+ overall) so we
     // can compute percentiles, not just the running mean.
     let mut latency_samples: std::collections::BTreeMap<String, Vec<u64>> = Default::default();
@@ -647,9 +814,10 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
                 Some(tokens) => roll.total_output_tokens += u64::from(tokens),
                 None => roll.total_unknown_output_token_count += 1,
             }
-            match ev.cost_usd {
-                Some(cost) => roll.total_cost_usd += cost,
-                None => roll.total_unknown_cost_count += 1,
+            let event_known_cost = valid_known_cost(ev.cost_usd);
+            match event_known_cost {
+                Some(cost) if add_known_cost(&mut roll.total_cost_usd, cost) => {}
+                _ => roll.total_unknown_cost_count += 1,
             }
             roll.total_cache_creation_tokens +=
                 u64::from(ev.cache_creation_tokens.unwrap_or_default());
@@ -681,9 +849,9 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
                 Some(tokens) => totals.output_tokens += u64::from(tokens),
                 None => totals.unknown_output_token_count += 1,
             }
-            match ev.cost_usd {
-                Some(cost) => totals.cost_usd += cost,
-                None => totals.unknown_cost_count += 1,
+            match event_known_cost {
+                Some(cost) if add_known_cost(&mut totals.cost_usd, cost) => {}
+                _ => totals.unknown_cost_count += 1,
             }
             totals.cache_creation_tokens += u64::from(ev.cache_creation_tokens.unwrap_or_default());
             totals.cache_read_tokens += u64::from(ev.cache_read_tokens.unwrap_or_default());
@@ -704,6 +872,17 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
                 .entry(ev.provider)
                 .or_default()
                 .push(ev.latency_ms);
+
+            let workflow = WorkflowKey::from_audited(
+                ev.call_scope.as_deref(),
+                ev.source.as_deref(),
+                ev.call_type.as_deref(),
+            );
+            let totals = workflows.entry(workflow).or_insert_with(|| PerWorkflowTotals {
+                workflow,
+                ..Default::default()
+            });
+            accumulate_workflow_totals(totals, &ev, event_known_cost);
         }
     }
     for (provider, mut totals) in per.into_iter() {
@@ -727,9 +906,144 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
     }
     // VIEW-02 — spend rate over the window → USD/day + 30-day projection.
     let window_secs = (until_unix - since_unix).max(1) as f64;
-    roll.burn_rate_usd_per_day = roll.total_cost_usd / window_secs * 86_400.0;
-    roll.projected_monthly_usd = roll.burn_rate_usd_per_day * 30.0;
+    roll.burn_rate_usd_per_day = finite_nonnegative_product(
+        roll.total_cost_usd,
+        86_400.0 / window_secs,
+    );
+    roll.projected_monthly_usd = finite_nonnegative_product(roll.burn_rate_usd_per_day, 30.0);
+    let (per_workflow, workflow_other) = finalize_workflow_rows(workflows);
+    roll.per_workflow = per_workflow;
+    roll.workflow_other = workflow_other;
     roll
+}
+
+/// A damaged or hand-edited JSONL row must never manufacture a negative or
+/// non-finite spend value. It remains explicitly unpriced in every rollup.
+fn valid_known_cost(cost: Option<f64>) -> Option<f64> {
+    cost.filter(|value| value.is_finite() && *value >= 0.0)
+}
+
+/// Add only when the resulting known-cost total remains representable. A tiny
+/// positive amount that cannot change an enormous f64 total is also rejected:
+/// silently losing paid usage is no more truthful than emitting infinity.
+fn add_known_cost(total: &mut f64, cost: f64) -> bool {
+    let next = *total + cost;
+    if next.is_finite() && (cost == 0.0 || next > *total) {
+        *total = next;
+        true
+    } else {
+        false
+    }
+}
+
+/// Keep derived presentation metrics JSON-safe even when a valid but
+/// exceptionally large hand-edited historic cost would overflow the rate.
+fn finite_nonnegative_product(left: f64, right: f64) -> f64 {
+    let product = left * right;
+    if product.is_finite() && product >= 0.0 {
+        product
+    } else {
+        f64::MAX
+    }
+}
+
+fn accumulate_workflow_totals(
+    totals: &mut PerWorkflowTotals,
+    event: &UsageEvent,
+    known_cost: Option<f64>,
+) {
+    totals.call_count += 1;
+    if event.ok {
+        totals.ok_count += 1;
+    } else {
+        totals.err_count += 1;
+    }
+    match event.input_tokens {
+        Some(tokens) => totals.input_tokens += u64::from(tokens),
+        None => totals.unknown_input_token_count += 1,
+    }
+    match event.output_tokens {
+        Some(tokens) => totals.output_tokens += u64::from(tokens),
+        None => totals.unknown_output_token_count += 1,
+    }
+    match known_cost {
+        Some(cost) if add_known_cost(&mut totals.known_cost_usd, cost) => {
+            totals.known_cost_count += 1;
+        }
+        None => totals.unknown_cost_count += 1,
+        Some(_) => totals.unknown_cost_count += 1,
+    }
+    if event.automated {
+        totals.automated_count += 1;
+    } else {
+        totals.human_count += 1;
+    }
+}
+
+fn workflow_row_order(left: &PerWorkflowTotals, right: &PerWorkflowTotals) -> std::cmp::Ordering {
+    right
+        .known_cost_usd
+        .total_cmp(&left.known_cost_usd)
+        .then_with(|| right.unknown_cost_count.cmp(&left.unknown_cost_count))
+        .then_with(|| right.call_count.cmp(&left.call_count))
+        .then_with(|| left.workflow.cmp(&right.workflow))
+}
+
+fn merge_workflow_other(other: &mut WorkflowOtherTotals, totals: PerWorkflowTotals) {
+    other.omitted_workflow_count += 1;
+    other.call_count += totals.call_count;
+    other.ok_count += totals.ok_count;
+    other.err_count += totals.err_count;
+    if add_known_cost(&mut other.known_cost_usd, totals.known_cost_usd) {
+        other.known_cost_count += totals.known_cost_count;
+        other.unknown_cost_count += totals.unknown_cost_count;
+    } else {
+        // A capped presentation row must stay finite even for corrupt JSONL.
+        // We retain prior known spend and expose the unrepresentable source
+        // contributions as unpriced rather than serializing `inf`.
+        other.unknown_cost_count += totals
+            .unknown_cost_count
+            .saturating_add(totals.known_cost_count);
+    }
+    other.input_tokens += totals.input_tokens;
+    other.output_tokens += totals.output_tokens;
+    other.unknown_input_token_count += totals.unknown_input_token_count;
+    other.unknown_output_token_count += totals.unknown_output_token_count;
+    other.automated_count += totals.automated_count;
+    other.human_count += totals.human_count;
+}
+
+/// Cap presentation only after every workflow has been fully aggregated.
+/// `unclassified` is reserved and visible whenever it has data; `other`
+/// represents only omitted named static classes.
+fn finalize_workflow_rows(
+    mut workflows: std::collections::BTreeMap<WorkflowKey, PerWorkflowTotals>,
+) -> (Vec<PerWorkflowTotals>, Option<WorkflowOtherTotals>) {
+    let unclassified = workflows.remove(&WorkflowKey(WorkflowKind::Unclassified));
+    let mut named: Vec<_> = workflows.into_values().collect();
+    named.sort_by(workflow_row_order);
+
+    let retained_named = MAX_WORKFLOW_ROWS.saturating_sub(usize::from(unclassified.is_some()));
+    let omitted = if named.len() > retained_named {
+        named.split_off(retained_named)
+    } else {
+        Vec::new()
+    };
+
+    let workflow_other = if omitted.is_empty() {
+        None
+    } else {
+        let mut other = WorkflowOtherTotals::default();
+        for totals in omitted {
+            merge_workflow_other(&mut other, totals);
+        }
+        Some(other)
+    };
+
+    if let Some(unclassified) = unclassified {
+        named.push(unclassified);
+    }
+    (named, workflow_other)
 }
 
 /// Nearest-rank percentile over a SORTED-ascending slice (`p` in `0..=100`):
@@ -1345,5 +1659,267 @@ mod tests {
             "pre-VIEW-06 record counts as human"
         );
         assert_eq!(roll.total_automated_count, 0);
+    }
+
+    #[test]
+    fn workflow_key_requires_the_complete_exact_audited_triple() {
+        let cases = [
+            (("chat_provider_round", Some("chat"), Some("chat_provider_round")), WorkflowKind::ChatTurn),
+            (("chat_post_reply_round", Some("chat"), Some("chat_post_reply_round")), WorkflowKind::ChatPostReply),
+            (("deep_research_round", Some("chat"), Some("deep_research_round")), WorkflowKind::DeepResearch),
+            (("session_naming", Some("chat"), Some("session_naming")), WorkflowKind::SessionNaming),
+            (("background_session", Some("chat"), Some("background_session")), WorkflowKind::BackgroundSession),
+            (("council_leaf", Some("chat"), Some("chat_provider_round")), WorkflowKind::CouncilDeliberation),
+            (("n8n.provider_call", Some("n8n_api"), Some("n8n_provider_call")), WorkflowKind::N8nProviderCall),
+            (("cluster.delegated_task", Some("cluster_executor"), Some("cluster_delegated")), WorkflowKind::ClusterDelegated),
+        ];
+        for ((scope, source, call_type), expected) in cases {
+            assert_eq!(WorkflowKey::from_audited(Some(scope), source, call_type), WorkflowKey(expected));
+        }
+        assert_eq!(
+            WorkflowKey::from_audited(Some("chat_provider_round"), Some("chat"), Some("future_call_type")),
+            WorkflowKey(WorkflowKind::Unclassified),
+            "a matching prefix or two matching fields must never classify a row"
+        );
+        assert_eq!(WorkflowKey::from_audited(None, None, None), WorkflowKey(WorkflowKind::Unclassified));
+    }
+
+    #[test]
+    fn workflow_rollup_preserves_known_free_and_unpriced_costs() {
+        let dir = tempdir().unwrap();
+        for cost in [Some(0.0), None, Some(-2.0)] {
+            append(
+                dir.path(),
+                &UsageEvent {
+                    ts_unix: 100,
+                    provider: "local_ollama".into(),
+                    model: "known-free".into(),
+                    cost_usd: cost,
+                    latency_ms: 1,
+                    ok: true,
+                    call_scope: Some("chat_provider_round".into()),
+                    source: Some("chat".into()),
+                    call_type: Some("chat_provider_round".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+        let roll = aggregate(dir.path(), 0, 200);
+        let row = roll.per_workflow.iter().find(|row| row.workflow == WorkflowKey(WorkflowKind::ChatTurn)).unwrap();
+        assert_eq!(row.known_cost_usd, 0.0);
+        assert_eq!(row.known_cost_count, 1);
+        assert_eq!(row.unknown_cost_count, 2);
+        assert_eq!(roll.total_cost_usd, 0.0);
+        assert_eq!(roll.total_unknown_cost_count, 2);
+    }
+
+    #[test]
+    fn workflow_rollup_rejects_cumulative_cost_overflow_as_unpriced() {
+        let dir = tempdir().unwrap();
+        for _ in 0..2 {
+            append(
+                dir.path(),
+                &UsageEvent {
+                    ts_unix: 100,
+                    provider: "openai_api".into(),
+                    model: "hand-edited-cost".into(),
+                    cost_usd: Some(f64::MAX),
+                    latency_ms: 1,
+                    ok: true,
+                    call_scope: Some("chat_provider_round".into()),
+                    source: Some("chat".into()),
+                    call_type: Some("chat_provider_round".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+        let roll = aggregate(dir.path(), 0, 200);
+        let workflow = roll.per_workflow.iter().find(|row| row.workflow.as_str() == "chat_turn").unwrap();
+        assert!(roll.total_cost_usd.is_finite());
+        assert_eq!(roll.total_cost_usd, f64::MAX);
+        assert_eq!(roll.total_unknown_cost_count, 1);
+        assert!(roll.burn_rate_usd_per_day.is_finite());
+        assert!(roll.projected_monthly_usd.is_finite());
+        assert!(roll.per_provider[0].cost_usd.is_finite());
+        assert_eq!(roll.per_provider[0].unknown_cost_count, 1);
+        assert!(workflow.known_cost_usd.is_finite());
+        assert_eq!(workflow.known_cost_count, 1);
+        assert_eq!(workflow.unknown_cost_count, 1);
+    }
+
+    #[test]
+    fn overflow_in_global_total_does_not_hide_representable_provider_or_workflow_costs() {
+        let dir = tempdir().unwrap();
+        let events = [
+            (
+                "provider_a",
+                "chat_provider_round",
+                "chat",
+                "chat_provider_round",
+            ),
+            (
+                "provider_b",
+                "n8n.provider_call",
+                "n8n_api",
+                "n8n_provider_call",
+            ),
+        ];
+        for (provider, call_scope, source, call_type) in events {
+            append(
+                dir.path(),
+                &UsageEvent {
+                    ts_unix: 100,
+                    provider: provider.into(),
+                    model: "hand-edited-cost".into(),
+                    cost_usd: Some(f64::MAX),
+                    latency_ms: 1,
+                    ok: true,
+                    call_scope: Some(call_scope.into()),
+                    source: Some(source.into()),
+                    call_type: Some(call_type.into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+        let roll = aggregate(dir.path(), 0, 200);
+        assert_eq!(roll.total_cost_usd, f64::MAX);
+        assert_eq!(roll.total_unknown_cost_count, 1);
+        assert!(roll.per_provider.iter().all(|row| {
+            row.cost_usd == f64::MAX && row.unknown_cost_count == 0
+        }));
+        assert!(roll.per_workflow.iter().all(|row| {
+            row.known_cost_usd == f64::MAX
+                && row.known_cost_count == 1
+                && row.unknown_cost_count == 0
+        }));
+    }
+
+    #[test]
+    fn workflow_rows_cap_after_complete_aggregation_and_reserve_unclassified() {
+        let named = [
+            WorkflowKind::ChatTurn,
+            WorkflowKind::ChatPostReply,
+            WorkflowKind::DeepResearch,
+            WorkflowKind::SessionNaming,
+            WorkflowKind::BackgroundSession,
+            WorkflowKind::CouncilDeliberation,
+            WorkflowKind::McpAgentLoop,
+            WorkflowKind::N8nProviderCall,
+            WorkflowKind::ClusterDelegated,
+        ];
+        let mut rows = std::collections::BTreeMap::new();
+        for (index, kind) in named.into_iter().enumerate() {
+            rows.insert(
+                WorkflowKey(kind),
+                PerWorkflowTotals {
+                    workflow: WorkflowKey(kind),
+                    call_count: 1,
+                    known_cost_usd: (index + 1) as f64,
+                    known_cost_count: 1,
+                    ..Default::default()
+                },
+            );
+        }
+        rows.insert(
+            WorkflowKey(WorkflowKind::Unclassified),
+            PerWorkflowTotals {
+                workflow: WorkflowKey(WorkflowKind::Unclassified),
+                call_count: 3,
+                unknown_cost_count: 3,
+                ..Default::default()
+            },
+        );
+        let (visible, other) = finalize_workflow_rows(rows);
+        assert_eq!(visible.len(), MAX_WORKFLOW_ROWS);
+        assert_eq!(visible.last().unwrap().workflow.as_str(), "unclassified");
+        let other = other.unwrap();
+        assert_eq!(other.omitted_workflow_count, 2);
+        assert_eq!(other.call_count, 2);
+        assert_eq!(other.known_cost_usd, 3.0);
+    }
+
+    #[test]
+    fn workflow_other_reclassifies_unrepresentable_cost_as_unpriced() {
+        let max = PerWorkflowTotals {
+            known_cost_usd: f64::MAX,
+            known_cost_count: 1,
+            ..Default::default()
+        };
+        let mut other = WorkflowOtherTotals::default();
+        merge_workflow_other(&mut other, max.clone());
+        merge_workflow_other(&mut other, max);
+        assert_eq!(other.known_cost_usd, f64::MAX);
+        assert_eq!(other.known_cost_count, 1);
+        assert_eq!(other.unknown_cost_count, 1);
+    }
+
+    #[test]
+    fn terminal_projection_and_repair_payload_have_identical_workflow_rollups() {
+        let normal_home = tempdir().unwrap();
+        let repaired_home = tempdir().unwrap();
+        let normal = provider_terminal_event(
+            100, "unknown_provider", "unknown_model", Some(1), Some(2), 3, false, None, None,
+            true, &"b".repeat(64), "provider_error", "n8n.provider_call", Some("n8n_api"),
+            Some("n8n_provider_call"), false,
+        );
+        append(normal_home.path(), &normal).unwrap();
+        let payload = serde_json::json!({
+            "usage_projection_schema": "neoth.provider-usage.v2",
+            "invocation_id": "b".repeat(64),
+            "ok": false,
+            "error_kind": "provider_error",
+            "ts_unix": 100_u64,
+            "latency_ms": 3_u64,
+            "provider": "unknown_provider",
+            "wire_model": "unknown_model",
+            "automated": true,
+            "call_scope": "n8n.provider_call",
+            "source": "n8n_api",
+            "call_type": "n8n_provider_call",
+            "streaming": false,
+            "input_tokens": 1_u64,
+            "output_tokens": 2_u64,
+        });
+        let payload = serde_json::to_vec(&payload).unwrap();
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            &payload,
+        )
+        .build();
+        let mut segment = crate::wal::segment_header::SegmentHeader::new(
+            1,
+            1,
+            1,
+            100_000_000_000,
+            [0; 16],
+        )
+        .to_le_bytes()
+        .to_vec();
+        segment.extend_from_slice(&crate::wal::frame::encode_frame(&header, &payload));
+        let wal_dir = repaired_home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        std::fs::write(wal_dir.join("terminal-usage-000001.wal"), segment).unwrap();
+        assert_eq!(repair_from_terminal_wal(repaired_home.path()).unwrap(), 1);
+        assert_eq!(repair_from_terminal_wal(repaired_home.path()).unwrap(), 0);
+        let normal_roll = aggregate(normal_home.path(), 0, 200);
+        let repaired_roll = aggregate(repaired_home.path(), 0, 200);
+        assert_eq!(normal_roll.per_workflow, repaired_roll.per_workflow);
+        assert_eq!(normal_roll.workflow_other, repaired_roll.workflow_other);
+    }
+
+    #[test]
+    fn workflow_rollup_schema_is_defaulted_for_older_rollup_json() {
+        let mut legacy = serde_json::to_value(UsageRollup::default()).unwrap();
+        let object = legacy.as_object_mut().unwrap();
+        object.remove("workflow_rollup_schema");
+        object.remove("per_workflow");
+        object.remove("workflow_other");
+        let decoded: UsageRollup = serde_json::from_value(legacy).unwrap();
+        assert_eq!(decoded.workflow_rollup_schema, None);
+        assert!(decoded.per_workflow.is_empty());
+        assert_eq!(decoded.workflow_other, None);
     }
 }
