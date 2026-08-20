@@ -4638,7 +4638,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recovery_marks_armed_without_result_crash_unknown_and_settles_queue() {
+    async fn recovery_defers_unexpired_armed_attempt_and_keeps_queue() {
         let home = tempfile::tempdir().unwrap();
         let queued = item("armed-only");
         let generation = seed_queue(home.path(), queued.clone());
@@ -4652,18 +4652,25 @@ mod tests {
         append_armed(&delivery_lock, &writer, &armed).await.unwrap();
         drop(delivery_lock);
 
-        recover_pending_claims(home.path(), &segment, &writer, 31)
-            .await
-            .unwrap();
-        assert!(!claim_path.exists());
+        assert_eq!(
+            recover_pending_claims(home.path(), &segment, &writer, 31)
+                .await
+                .unwrap(),
+            0,
+            "a fresh v2 Armed claim remains the sole durable dedup authority"
+        );
         assert!(
+            claim_path.exists(),
+            "unexpired v2 Armed claim must remain durable"
+        );
+        assert_eq!(
             ProactiveQueue::load_from(&home.path().join("proactive_queue.json"))
                 .unwrap()
-                .is_empty()
+                .peek()
+                .len(),
+            1
         );
-        let history = read_delivery_history(home.path()).unwrap();
-        assert_eq!(history.len(), 1);
-        assert_eq!(history[0].outcome(), ProactiveEgressOutcome::CrashUnknown);
+        assert!(read_delivery_history(home.path()).unwrap().is_empty());
         drop(writer);
         join.await.unwrap().unwrap();
     }

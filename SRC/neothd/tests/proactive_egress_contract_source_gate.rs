@@ -495,9 +495,13 @@ fn durable_admission_precedes_owned_deadline_bounded_transport_and_terminalizati
         start < terminal,
         "a transport attempt must resolve before terminal WAL evidence is built"
     );
+    let expired_pre_spawn = execute
+        .find("if tokio::time::Instant::now() >= transport_deadline {")
+        .expect("strict pre-spawn deadline guard");
     assert!(
-        execute.contains("tokio::time::Instant::now() < transport_deadline"),
-        "transport must reject an expired admission deadline before task creation"
+        expired_pre_spawn < start
+            && execute.contains("proactive attempt deadline expired before transport start"),
+        "transport admission must reject its deadline at equality before task creation"
     );
     assert!(
         execute
@@ -834,7 +838,7 @@ fn executable_recovery_and_filesystem_matrix_is_present() {
     for case in [
         "recovery_discards_prepared_claim_without_intent_and_keeps_queue",
         "recovery_marks_intent_without_armed_not_attempted_and_keeps_queue",
-        "recovery_marks_armed_without_result_crash_unknown_and_settles_queue",
+        "recovery_defers_unexpired_armed_attempt_and_keeps_queue",
         "authenticated_armed_proof_rejects_a_claim_phase_rollback",
         "recovery_replays_terminal_result_without_duplicate_projection_or_budget",
         "concurrent_delivery_attempts_call_transport_once",
@@ -1051,8 +1055,7 @@ fn every_live_route_uses_the_choke_point_and_keet_binds_raw_capability() {
         "async fn deliver_live_route(",
         "fn canonical_target_channel(",
     );
-    assert_eq!(route.matches("execute!(").count(), 11);
-    for variant in [
+    let live_route_arms = [
         "DeliveryRoute::Telegram",
         "DeliveryRoute::Slack",
         "DeliveryRoute::Discord",
@@ -1064,12 +1067,36 @@ fn every_live_route_uses_the_choke_point_and_keet_binds_raw_capability() {
         "DeliveryRoute::Mattermost",
         "DeliveryRoute::IMessage",
         "DeliveryRoute::Matrix",
-    ] {
+        "DeliveryRoute::GoogleChat",
+    ];
+    for variant in live_route_arms {
         assert!(
             route.contains(variant),
             "unwired proactive route: {variant}"
         );
     }
+    for pair in live_route_arms.windows(2) {
+        let arm = between(route, pair[0], pair[1]);
+        assert!(
+            arm.contains("execute!("),
+            "live proactive route bypasses durable choke point: {}",
+            pair[0]
+        );
+    }
+    let google_chat_arm = between(
+        route,
+        "DeliveryRoute::GoogleChat",
+        "fn canonical_target_channel(",
+    );
+    assert!(
+        google_chat_arm.contains("execute!("),
+        "live proactive route bypasses durable choke point: DeliveryRoute::GoogleChat"
+    );
+    assert_eq!(
+        route.matches("execute!(").count(),
+        live_route_arms.len(),
+        "each declared live route must have exactly one durable choke-point call"
+    );
     assert!(route.contains("let topic_capability = topic.expose();"));
     assert!(route.contains("execute!(topic_capability, &channel)"));
     assert!(!route.contains("topic_alias"));
