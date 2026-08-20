@@ -61,6 +61,7 @@ const DEFAULT_DELIVERY_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(60);
 // cross-process lease on one out-of-band byte so recovery can still read and
 // authenticate the private claim before it probes Busy. Unix flock locks do
 // not block ordinary reads, but use the same named logical lease.
+#[cfg(windows)]
 const ARMED_CLAIM_LEASE_OFFSET: u64 = MAX_CLAIM_BYTES + 4_096;
 
 type TransportJoinHandle = tokio::task::JoinHandle<std::result::Result<MessageId, ChannelError>>;

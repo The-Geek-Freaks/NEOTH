@@ -1422,16 +1422,16 @@ fn current_linux_unified_cgroup() -> Result<String> {
         let hierarchy = fields.next();
         let controllers = fields.next();
         let path = fields.next();
-        if hierarchy == Some("0") && controllers == Some("") {
-            if unified
+        if hierarchy == Some("0")
+            && controllers == Some("")
+            && unified
                 .replace(
                     path.context("guardian cgroup entry has no path")?
                         .to_owned(),
                 )
                 .is_some()
-            {
-                bail!("guardian has multiple unified cgroup entries");
-            }
+        {
+            bail!("guardian has multiple unified cgroup entries");
         }
     }
     let cgroup = unified.context("guardian has no unified cgroup-v2 membership")?;

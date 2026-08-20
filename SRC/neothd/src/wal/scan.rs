@@ -160,6 +160,7 @@ pub(crate) fn load_home_hmac_keys(home: &Path) -> Result<Vec<Vec<u8>>> {
     .verification_keys)
 }
 
+#[cfg(test)]
 fn load_home_hmac_keys_with_limits(
     home: &Path,
     max_archives: usize,
@@ -268,10 +269,10 @@ fn load_home_hmac_key_set_with_limits(
         &active_display,
     )?);
     for name in &names {
-        let display = root.display_path.join(&name);
+        let display = root.display_path.join(name);
         let body = crate::skills::store::read_regular_file_bounded(
             &root.dir,
-            &name,
+            name,
             &display,
             MAX_HOME_KEY_BYTES,
         )
