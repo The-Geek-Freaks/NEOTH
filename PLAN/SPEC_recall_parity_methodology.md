@@ -1,8 +1,13 @@
 # SPEC -- Recall-Parity Methodology — NEOTH v1.1
 
 **Version:** 1.1
-**Last-Updated:** 2026-05-16
-**Implementation-Status:** DESIGN — eval harness (goldset extraction, 4-grader protocol, kappa computation, parity score) is Phase 3 Day 73-79 work. Underlying multi-tier recall (hot+warm+cold+groundtruth) it would evaluate is SHIPPED at `SRC/neothd/src/memory/{store, tiers, consolidate, groundtruth}.rs` + `cli/recall.rs`.
+**Last-Updated:** 2026-08-20
+**Implementation-Status:** PARTIAL — the deterministic scorer and P1-07
+versioned roster/coverage gate are implemented. Live goldset extraction,
+shadow-run execution, external provider provenance, and P1-08 cryptographic
+batch binding remain open. Underlying multi-tier recall (hot+warm+cold+groundtruth)
+it evaluates is SHIPPED at `SRC/neothd/src/memory/{store, tiers, consolidate,
+groundtruth}.rs` + `cli/recall.rs`.
 
 > Status: DESIGN (eval methodology). Fixes: H6 (test_all_three_agree_and_wrong unfalsifiable), H7 (grader-family bias via 4-grader cross-family protocol).
 > Binds to Day 77-79 of RUNBOOK_phase3_cutover.md.
@@ -154,6 +159,67 @@ Output per grader: `eval/grades-grader-{A,B,C,D}.jsonl` (100 lines each × 2 sys
   - Voice standard: blunt, direct, German if German, no pleasantries, technical substance exact
   - Rubric: paste of 5 dimensions above
   - Output format: JSON object with 5 integer keys, nothing else
+
+### 4.1 P1-07 roster and complete-coverage gate (implemented)
+
+`neoth recall-score` requires both `--grader-config <PATH>` and
+`--goldset <PATH>` for every scoring run. The file is a strict JSON object with
+`schema_version: 1` and a `graders` array; unknown fields and unknown enum tags
+are rejected. One roster member has exactly these fields:
+
+```json
+{
+  "grader_id": "external",
+  "provider": "mistral",
+  "model_id": "mistral-large-2",
+  "family": "independent_external"
+}
+```
+
+Accepted provider tags are `anthropic`, `openai`, `google`, `mistral`,
+`deepseek`, and `qwen`. Their required family tags are deterministic:
+
+| Provider tags | Required `family` tag |
+|---|---|
+| `anthropic`, `openai`, `google` | `anthropic_openai_google` |
+| `mistral`, `deepseek`, `qwen` | `independent_external` |
+
+The roster must contain at least one member from each family, use unique
+`grader_id` values, and use unique `(provider, model_id)` pairs. It is limited
+to 64 graders and a 64 KiB JSON file. A `grader_id` is 1–64 ASCII characters:
+its first character is alphanumeric and subsequent characters are limited to
+alphanumerics, `.`, `_`, and `-`. A `model_id` is a trimmed 1–128-character
+ASCII identifier containing at least one alphanumeric character and using only
+`A–Z`, `a–z`, `0–9`, `.`, `_`, `-`, `/`, `:`, `@`, and `+`. The provider is the
+source of the family rule; a persisted `family` label cannot claim independence
+for an Anthropic/OpenAI/Google grader.
+
+Before calculating kappa or parity, the scorer treats the validated roster and
+the mandatory goldset as the closed identity sets. The goldset loader accepts at
+most 4 MiB and requires exactly 100 records with unique canonical `query_id`
+values. Query IDs and grader IDs are 1–64 ASCII characters: an alphanumeric
+first character followed only by alphanumerics, `.`, `_`, or `-`. For every one
+of those 100 goldset queries, every roster member must provide exactly one
+record for `system: neoth` and exactly one for `system: reference`. It rejects
+duplicates of the full `(query_id, grader_id, system)` tuple, unknown grader
+IDs, unused configured graders, missing observations, and any grade query ID
+missing from or extra to the goldset. Thus, an incomplete external-family sheet
+cannot be silently omitted from a mean, and no caller can obtain a PASS from a
+cherry-picked grade corpus.
+
+Inputs are bounded before scoring: the goldset JSONL is capped at 4 MiB; each
+grades JSONL is capped at 16 MiB and 12,800 records; and the aggregate grade
+submission cannot exceed the exact `100 × configured graders × 2 systems`
+matrix. Grade records are independently revalidated by the scorer for canonical
+identifiers and all five `0..=5` Likert values before any parity math, so a
+direct caller cannot bypass the file-loader boundary.
+
+The score report exposes stable participant metadata only: `grader_id`,
+`provider`, `family`, and `model_id`, plus the independent-external-family gate
+result. This validates declared configuration and coverage; it is not a signed
+provider receipt or other proof that the named provider/model generated the
+grades. P1-08 retains ownership of provenance, grading-batch binding, and
+cryptographic hashes/attestations.
 
 ---
 

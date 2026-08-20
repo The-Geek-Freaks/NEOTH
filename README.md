@@ -436,7 +436,7 @@ today:
 | `neoth dream now` | Cluster recent episodes into themes, written to Obsidian as notes. |
 | `neoth groundtruth ask "<q>"` | Query the immutable-facts register; contradictions get flagged, not overwritten. |
 | `neoth identity merge` | The same person on Telegram, WhatsApp, and email becomes one identity. |
-| `neoth recall-score` | LongMemEval-style memory benchmark with inter-rater kappa — prove recall quality. |
+| `neoth recall-score --grader-config roster.json --goldset goldset.jsonl --grades grader.jsonl` | LongMemEval-style recall gate with inter-rater kappa. It requires a strict v1 cross-family roster and the exact 100-query goldset; the complete grade matrix fails closed. Provider provenance remains a separate P1-08 gate. |
 | `neoth memory-eval` | Reproducible recall benchmark in a temp DB; never touches real memory. |
 | `neoth profile communication why directness` | Explain the typed, subject-bound evidence behind an active presentation preference without revealing raw messages. |
 | `neoth cost "<prompt>"` | Token count and dollar estimate before the call is made. |
@@ -548,6 +548,7 @@ runbook so beginners get plain fixes and pros get scriptable diagnostics.
 | Install paths | [docs/install.md](docs/install.md) |
 | Privacy proof | [docs/privacy.md](docs/privacy.md) |
 | Verify the claims yourself | [docs/evaluation.md](docs/evaluation.md) |
+| Recall-parity cutover gate | [docs/runbook_recall_parity_gate.md](docs/runbook_recall_parity_gate.md) |
 | CLI reference | [docs/cli-reference.md](docs/cli-reference.md) |
 | Channels | [docs/channels.md](docs/channels.md) |
 | Local models | [docs/local-models.md](docs/local-models.md) |

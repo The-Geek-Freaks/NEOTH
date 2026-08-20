@@ -2842,10 +2842,11 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 
 ## `neoth recall-score`
 
-ARCH-05/SPEC-08 — score the legacy-AI→NEOTH recall-parity gate over grader sheets: inter-rater kappa + kappa-adjusted weighted-harmonic parity + per-query CRITICAL divergences (emits `0x3E`). Exits non-zero on FAIL. `recall-score --grades a.jsonl --grades b.jsonl [--goldset g.jsonl]`
+ARCH-05/SPEC-08 — score the legacy-AI→NEOTH recall-parity gate over grader sheets: inter-rater kappa + kappa-adjusted weighted-harmonic parity + per-query CRITICAL divergences (emits `0x3E`). Exits non-zero on FAIL. Requires a validated cross-family grader roster: `recall-score --grader-config graders.json --goldset g.jsonl --grades a.jsonl --grades b.jsonl`. The goldset has exactly 100 unique canonical query IDs, which bind grade query IDs exactly
 
-- `--grades <GRADES>` — Grader-sheet JSONL file(s) (each line a GraderGrade: query_id, grader_id, system, 5×Likert). Pass one per grader; all are merged. Need ≥ 2 graders
-- `--goldset <GOLDSET>` — Optional goldset JSONL — validated + its query count reported (the scoring runs off the grades, not the goldset)
+- `--grades <GRADES>` — Grader-sheet JSONL file(s) (each line a GraderGrade: query_id, grader_id, system, 5×Likert). Supply no more files than configured graders; all records are merged. Every configured grader must cover every query/system
+- `--grader-config <PATH>` — Versioned grader roster JSON. Required: binds submitted grader IDs to validated provider/family/model metadata and requires an independent external family. This is metadata only, not provenance evidence
+- `--goldset <PATH>` — Goldset JSONL. Required: exactly 100 unique canonical query IDs must match submitted grade query IDs; partial or extra grading fails
 - `--no-audit` — Don't emit `0x3E` WAL frames (dry scoring; the report still prints)
 
 ## `neoth recipe`
