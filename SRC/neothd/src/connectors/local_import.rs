@@ -11,7 +11,7 @@ use std::{
     path::{Component, Path},
 };
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::{
     ffi::CString,
     fs::{File, Metadata},
@@ -69,7 +69,7 @@ impl LocalImportPolicy {
 /// An approved physical import root. Private fields and parent-only issuance
 /// prevent arbitrary path strings from forging approval.
 pub struct ApprovedImportRoot {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     handle: File,
     identity: PhysicalFileId,
 }
@@ -392,7 +392,7 @@ struct BoundSourceIdentity {
     source: PhysicalFileId,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct FileSnapshot {
     identity: PhysicalFileId,
@@ -404,7 +404,7 @@ struct FileSnapshot {
     changed_nanoseconds: i64,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn snapshot(metadata: &Metadata) -> FileSnapshot {
     use std::os::unix::fs::MetadataExt;
 
@@ -453,6 +453,43 @@ fn open_approved_root(path: &Path) -> Result<ApprovedImportRoot, LocalImportErro
     })
 }
 
+#[cfg(target_os = "macos")]
+fn open_approved_root(path: &Path) -> Result<ApprovedImportRoot, LocalImportError> {
+    use std::os::unix::ffi::OsStrExt;
+
+    // Darwin has no `openat2(RESOLVE_BENEATH)`.  Build the approved root one
+    // component at a time from a pinned handle for `/` instead.  Every open
+    // has both `O_NOFOLLOW` and Darwin's `O_NOFOLLOW_ANY`: a kernel without
+    // the latter is deliberately unsupported rather than silently accepting
+    // a weaker path-resolution contract.
+    let mut current = open_macos_absolute_root()?;
+    ensure_macos_local_filesystem(&current)?;
+    for component in path.components() {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(name) => {
+                let name =
+                    CString::new(name.as_bytes()).map_err(|_| LocalImportError::AmbiguousRoot)?;
+                current = open_macos_component(&current, &name, macos_directory_open_flags())?;
+                ensure_macos_local_filesystem(&current)?;
+            }
+            Component::Prefix(_) | Component::CurDir | Component::ParentDir => {
+                return Err(LocalImportError::AmbiguousRoot);
+            }
+        }
+    }
+    let metadata = current
+        .metadata()
+        .map_err(|_| LocalImportError::Unavailable)?;
+    if !metadata.is_dir() {
+        return Err(LocalImportError::NotRegularFile);
+    }
+    Ok(ApprovedImportRoot {
+        identity: snapshot(&metadata).identity,
+        handle: current,
+    })
+}
+
 #[cfg(windows)]
 fn open_approved_root(_: &Path) -> Result<ApprovedImportRoot, LocalImportError> {
     // Intentional fail-closed boundary until reparse-safe handle traversal and
@@ -460,7 +497,7 @@ fn open_approved_root(_: &Path) -> Result<ApprovedImportRoot, LocalImportError> 
     Err(LocalImportError::PlatformUnsupported)
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn open_approved_root(_: &Path) -> Result<ApprovedImportRoot, LocalImportError> {
     Err(LocalImportError::PlatformUnsupported)
 }
@@ -620,6 +657,178 @@ fn openat_raw(
     Ok(unsafe { File::from_raw_fd(descriptor) })
 }
 
+#[cfg(target_os = "macos")]
+const MACOS_O_NOFOLLOW_ANY: libc::c_int = 0x2000_0000;
+
+#[cfg(target_os = "macos")]
+fn macos_directory_open_flags() -> libc::c_int {
+    libc::O_RDONLY
+        | libc::O_DIRECTORY
+        | libc::O_NOFOLLOW
+        | MACOS_O_NOFOLLOW_ANY
+        | libc::O_NONBLOCK
+        | libc::O_CLOEXEC
+}
+
+#[cfg(target_os = "macos")]
+fn macos_leaf_open_flags() -> libc::c_int {
+    libc::O_RDONLY
+        | libc::O_NOFOLLOW
+        | MACOS_O_NOFOLLOW_ANY
+        | libc::O_NONBLOCK
+        | libc::O_CLOEXEC
+}
+
+#[cfg(target_os = "macos")]
+fn open_macos_absolute_root() -> Result<File, LocalImportError> {
+    openat_macos_raw(libc::AT_FDCWD, c"/", macos_directory_open_flags())
+}
+
+#[cfg(target_os = "macos")]
+fn open_macos_component(
+    parent: &File,
+    name: &std::ffi::CStr,
+    flags: libc::c_int,
+) -> Result<File, LocalImportError> {
+    use std::os::fd::AsRawFd;
+
+    openat_macos_raw(parent.as_raw_fd(), name, flags)
+}
+
+#[cfg(target_os = "macos")]
+fn openat_macos_raw(
+    parent_fd: libc::c_int,
+    name: &std::ffi::CStr,
+    flags: libc::c_int,
+) -> Result<File, LocalImportError> {
+    use std::os::fd::FromRawFd;
+
+    // SAFETY: `name` is live and NUL terminated. A successful `openat`
+    // returns one owned descriptor, immediately wrapped by exactly one File.
+    let descriptor = unsafe { libc::openat(parent_fd, name.as_ptr(), flags) };
+    if descriptor < 0 {
+        return Err(map_macos_resolution_error(std::io::Error::last_os_error()));
+    }
+    // SAFETY: `openat` returned a new owned descriptor.
+    Ok(unsafe { File::from_raw_fd(descriptor) })
+}
+
+#[cfg(target_os = "macos")]
+fn map_macos_resolution_error(error: std::io::Error) -> LocalImportError {
+    match error.raw_os_error() {
+        // `O_NOFOLLOW` / `O_NOFOLLOW_ANY` report a link-like path component
+        // with ELOOP. This includes the Darwin firmlink/symlink resolution
+        // cases which must never escape the handle-relative traversal.
+        Some(libc::ELOOP) => LocalImportError::SymlinkOrReparsePoint,
+        Some(libc::EXDEV) => LocalImportError::MountBoundaryCrossed,
+        // `O_NOFOLLOW_ANY` is a required Darwin capability. Older kernels or
+        // filesystems which do not honor it fail closed instead of falling
+        // back to final-component-only `O_NOFOLLOW` semantics.
+        Some(libc::EINVAL | libc::ENOTSUP) => LocalImportError::PlatformUnsupported,
+        _ => LocalImportError::Unavailable,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_macos_local_filesystem(handle: &File) -> Result<(), LocalImportError> {
+    use std::{mem::MaybeUninit, os::fd::AsRawFd};
+
+    let mut status = MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: `status` is writable storage for one statfs and `handle` owns a
+    // live descriptor for this call.
+    if unsafe { libc::fstatfs(handle.as_raw_fd(), status.as_mut_ptr()) } != 0 {
+        return Err(LocalImportError::RemoteOrUnknownFilesystem);
+    }
+    // SAFETY: successful fstatfs initialized the complete structure.
+    let status = unsafe { status.assume_init() };
+    let bytes: Vec<u8> = status.f_fstypename.iter().map(|byte| *byte as u8).collect();
+    let Some(nul) = bytes.iter().position(|byte| *byte == 0) else {
+        return Err(LocalImportError::RemoteOrUnknownFilesystem);
+    };
+    // Restrict to APFS. HFS+ has only second-granularity mutation timestamps,
+    // which cannot support the before/after identity binding below for an
+    // in-place same-length modification. Network, FUSE, synthetic, HFS, and
+    // unknown mounts do not get a best-effort path through this boundary.
+    if is_explicitly_local_macos_filesystem_name(&bytes[..nul]) {
+        Ok(())
+    } else {
+        Err(LocalImportError::RemoteOrUnknownFilesystem)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn is_explicitly_local_macos_filesystem_name(name: &[u8]) -> bool {
+    name == b"apfs"
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_macos_descendant(
+    handle: &File,
+    approved_root: PhysicalFileId,
+) -> Result<Metadata, LocalImportError> {
+    ensure_macos_local_filesystem(handle)?;
+    let metadata = handle
+        .metadata()
+        .map_err(|_| LocalImportError::Unavailable)?;
+    if !is_within_macos_approved_volume(snapshot(&metadata).identity, approved_root) {
+        return Err(LocalImportError::MountBoundaryCrossed);
+    }
+    Ok(metadata)
+}
+
+#[cfg(target_os = "macos")]
+fn is_within_macos_approved_volume(
+    candidate: PhysicalFileId,
+    approved_root: PhysicalFileId,
+) -> bool {
+    candidate.volume == approved_root.volume
+}
+
+#[cfg(target_os = "macos")]
+fn open_macos_relative_leaf(
+    root: &ApprovedImportRoot,
+    path: &Path,
+) -> Result<File, LocalImportError> {
+    use std::os::unix::ffi::OsStrExt;
+
+    validate_relative_selection(path)?;
+    let mut current = root
+        .handle
+        .try_clone()
+        .map_err(|_| LocalImportError::Unavailable)?;
+    let mut components = path.components().peekable();
+    while let Some(component) = components.next() {
+        let Component::Normal(name) = component else {
+            return Err(LocalImportError::OutsideApprovedRoot);
+        };
+        let name =
+            CString::new(name.as_bytes()).map_err(|_| LocalImportError::OutsideApprovedRoot)?;
+        let is_leaf = components.peek().is_none();
+        let next = open_macos_component(
+            &current,
+            &name,
+            if is_leaf {
+                macos_leaf_open_flags()
+            } else {
+                macos_directory_open_flags()
+            },
+        )?;
+        let metadata = ensure_macos_descendant(&next, root.identity)?;
+        if !is_leaf && !metadata.is_dir() {
+            return Err(LocalImportError::NotRegularFile);
+        }
+        current = next;
+    }
+    let metadata = ensure_macos_descendant(&current, root.identity)?;
+    if !metadata.is_file() {
+        return Err(LocalImportError::NotRegularFile);
+    }
+    if snapshot(&metadata).link_count != 1 {
+        return Err(LocalImportError::MultipleHardLinks);
+    }
+    Ok(current)
+}
+
 #[cfg(target_os = "linux")]
 fn open_relative_leaf(root: &File, path: &Path) -> Result<File, LocalImportError> {
     use std::os::unix::ffi::OsStrExt;
@@ -762,6 +971,66 @@ fn read_bound_source_with_hook(
     ))
 }
 
+#[cfg(target_os = "macos")]
+fn read_bound_source(
+    root: &ApprovedImportRoot,
+    path: &Path,
+    max_bytes: usize,
+) -> Result<(Vec<u8>, BoundSourceIdentity), LocalImportError> {
+    read_macos_bound_source_with_hook(root, path, max_bytes, || {})
+}
+
+#[cfg(target_os = "macos")]
+fn read_macos_bound_source_with_hook(
+    root: &ApprovedImportRoot,
+    path: &Path,
+    max_bytes: usize,
+    after_read: impl FnOnce(),
+) -> Result<(Vec<u8>, BoundSourceIdentity), LocalImportError> {
+    // The reader is the exact O_NOFOLLOW_ANY descriptor that was classified;
+    // no path is reopened before the bounded read. The final handle-relative
+    // rebind detects a same-size replacement between open and commit.
+    let mut file = open_macos_relative_leaf(root, path)?;
+    let before_metadata = ensure_macos_descendant(&file, root.identity)?;
+    if !before_metadata.is_file() {
+        return Err(LocalImportError::NotRegularFile);
+    }
+    let before = snapshot(&before_metadata);
+    if before.link_count != 1 {
+        return Err(LocalImportError::MultipleHardLinks);
+    }
+    let expected_len = checked_len(before.length, max_bytes)?;
+    let mut raw = Vec::with_capacity(expected_len);
+    file.by_ref()
+        .take((max_bytes as u64).saturating_add(1))
+        .read_to_end(&mut raw)
+        .map_err(|_| LocalImportError::Unavailable)?;
+    if raw.len() > max_bytes {
+        return Err(LocalImportError::SizeLimitExceeded);
+    }
+    if raw.len() != expected_len {
+        return Err(LocalImportError::ChangedDuringRead);
+    }
+    after_read();
+    let after_metadata = ensure_macos_descendant(&file, root.identity)?;
+    let after = snapshot(&after_metadata);
+    if after != before {
+        return Err(LocalImportError::ChangedDuringRead);
+    }
+    let rebound = open_macos_relative_leaf(root, path)?;
+    let rebound_metadata = ensure_macos_descendant(&rebound, root.identity)?;
+    if !rebound_metadata.is_file() || snapshot(&rebound_metadata).identity != before.identity {
+        return Err(LocalImportError::ChangedDuringRead);
+    }
+    Ok((
+        raw,
+        BoundSourceIdentity {
+            root: root.identity,
+            source: before.identity,
+        },
+    ))
+}
+
 #[cfg(windows)]
 fn read_bound_source(
     _: &ApprovedImportRoot,
@@ -771,7 +1040,7 @@ fn read_bound_source(
     Err(LocalImportError::PlatformUnsupported)
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn read_bound_source(
     _: &ApprovedImportRoot,
     _: &Path,
@@ -933,7 +1202,7 @@ fn authenticated_identifier(
 mod tests {
     use std::path::PathBuf;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     use std::fs;
 
     use super::*;
@@ -1055,6 +1324,11 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    fn capability(root: &Path) -> OperatorImportCapability {
+        issue_operator_import_capability(approve_import_root(root).unwrap(), key())
+    }
+
+    #[cfg(target_os = "macos")]
     fn capability(root: &Path) -> OperatorImportCapability {
         issue_operator_import_capability(approve_import_root(root).unwrap(), key())
     }
@@ -1235,6 +1509,114 @@ mod tests {
             Err(LocalImportError::ChangedDuringRead)
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_component_traversal_rejects_links_and_hard_linked_leaves() {
+        use std::os::unix::fs::symlink;
+
+        let outside = fixture_root("macos-outside");
+        let root = fixture_root("macos-link-check");
+        fs::create_dir_all(&outside).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(outside.join("secret.txt"), b"secret").unwrap();
+        symlink(&outside, root.join("linked-parent")).unwrap();
+        let authority = capability(&root);
+        let request =
+            LocalImportRequest::new(&authority, Path::new("linked-parent/secret.txt"), policy(1))
+                .unwrap();
+        assert_eq!(
+            plan_operator_selected_file(request),
+            Err(LocalImportError::SymlinkOrReparsePoint)
+        );
+        symlink(outside.join("secret.txt"), root.join("linked-leaf.txt")).unwrap();
+        let request =
+            LocalImportRequest::new(&authority, Path::new("linked-leaf.txt"), policy(1)).unwrap();
+        assert_eq!(
+            plan_operator_selected_file(request),
+            Err(LocalImportError::SymlinkOrReparsePoint)
+        );
+        let original = root.join("original.txt");
+        fs::write(&original, b"data").unwrap();
+        fs::hard_link(&original, root.join("alias.txt")).unwrap();
+        let request =
+            LocalImportRequest::new(&authority, Path::new("alias.txt"), policy(1)).unwrap();
+        assert_eq!(
+            plan_operator_selected_file(request),
+            Err(LocalImportError::MultipleHardLinks)
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_reader_binds_the_opened_handle_and_rejects_a_same_size_swap() {
+        let root = fixture_root("macos-race");
+        fs::create_dir_all(&root).unwrap();
+        let leaf = root.join("selected.txt");
+        let replacement = root.join("replacement.txt");
+        fs::write(&leaf, b"aaaa").unwrap();
+        fs::write(&replacement, b"bbbb").unwrap();
+        let authority = capability(&root);
+        assert_eq!(
+            read_macos_bound_source_with_hook(&authority.root, Path::new("selected.txt"), 16, || {
+                fs::rename(&replacement, &leaf).unwrap();
+            }),
+            Err(LocalImportError::ChangedDuringRead)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_resolution_contract_requires_whole_path_nofollow_and_local_filesystems() {
+        assert_ne!(MACOS_O_NOFOLLOW_ANY, 0);
+        assert_ne!(macos_directory_open_flags() & libc::O_NOFOLLOW, 0);
+        assert_ne!(macos_directory_open_flags() & MACOS_O_NOFOLLOW_ANY, 0);
+        assert_ne!(macos_leaf_open_flags() & libc::O_NOFOLLOW, 0);
+        assert_ne!(macos_leaf_open_flags() & MACOS_O_NOFOLLOW_ANY, 0);
+        assert!(is_explicitly_local_macos_filesystem_name(b"apfs"));
+        for forbidden in [
+            b"hfs".as_slice(),
+            b"nfs",
+            b"smbfs",
+            b"osxfuse",
+            b"autofs",
+            b"devfs",
+            b"",
+        ] {
+            assert!(!is_explicitly_local_macos_filesystem_name(forbidden));
+        }
+        assert_eq!(
+            map_macos_resolution_error(std::io::Error::from_raw_os_error(libc::ELOOP)),
+            LocalImportError::SymlinkOrReparsePoint
+        );
+        assert_eq!(
+            map_macos_resolution_error(std::io::Error::from_raw_os_error(libc::EXDEV)),
+            LocalImportError::MountBoundaryCrossed
+        );
+        assert!(is_within_macos_approved_volume(
+            PhysicalFileId {
+                volume: 7,
+                object: 9,
+            },
+            PhysicalFileId {
+                volume: 7,
+                object: 10,
+            }
+        ));
+        assert!(!is_within_macos_approved_volume(
+            PhysicalFileId {
+                volume: 7,
+                object: 9,
+            },
+            PhysicalFileId {
+                volume: 8,
+                object: 9,
+            }
+        ));
     }
 
     #[cfg(windows)]
