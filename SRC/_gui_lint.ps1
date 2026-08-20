@@ -32,7 +32,7 @@ $MetricLiteralPattern = [regex]'(?i)\d+(?:\.\d+)?\s*\*\s*root\.u|\d+(?:\.\d+)?(?
 
 function Add-GuiLintFinding {
     param(
-        [Parameter(Mandatory)] [System.Collections.Generic.List[object]] $Findings,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [System.Collections.Generic.List[object]] $Findings,
         [Parameter(Mandatory)] [string] $Rule,
         [Parameter(Mandatory)] [string] $Path,
         [Parameter(Mandatory)] [int] $Line,
