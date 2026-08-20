@@ -1426,6 +1426,10 @@ mod tests {
             const { RefCell::new(Vec::new()) };
     }
 
+    fn test_tempdir() -> tempfile::TempDir {
+        crate::test_env::canonical_tempdir().expect("create canonical test directory")
+    }
+
     fn configuration() -> ConnectorConfiguration {
         ConnectorConfiguration {
             connector_id: ConnectorId::Obsidian,
@@ -1457,7 +1461,7 @@ mod tests {
 
     #[test]
     fn queued_vault_requires_live_authority_before_first_planning_io() {
-        let vault_root = tempfile::tempdir().unwrap();
+        let vault_root = test_tempdir();
         std::fs::write(vault_root.path().join("note.md"), "operator material").unwrap();
         let config = configuration();
 
@@ -1490,7 +1494,7 @@ mod tests {
 
     #[test]
     fn revoked_root_grant_is_rejected_before_vault_capability_open() {
-        let vault_root = tempfile::tempdir().unwrap();
+        let vault_root = test_tempdir();
         let config = configuration();
         let authority = ObsidianPolicyAuthority::for_admitted_configuration(&config).unwrap();
         let grant = authority
@@ -1511,7 +1515,7 @@ mod tests {
 
     #[test]
     fn planner_is_deterministic_bounded_and_redacted() {
-        let vault = tempfile::tempdir().unwrap();
+        let vault = test_tempdir();
         std::fs::create_dir(vault.path().join("notes")).unwrap();
         std::fs::create_dir(vault.path().join(".obsidian")).unwrap();
         std::fs::write(vault.path().join("notes").join("z.md"), "zeta\r\n").unwrap();
@@ -1538,7 +1542,7 @@ mod tests {
 
     #[test]
     fn managed_yaml_is_parsed_and_malformed_yaml_fails_closed() {
-        let vault = tempfile::tempdir().unwrap();
+        let vault = test_tempdir();
         std::fs::write(
             vault.path().join("neoth.md"),
             "---\nsource: \"neoth-groundtruth\" # managed\n---\nignored",
@@ -1558,7 +1562,7 @@ mod tests {
         assert_eq!(plan.status().draft_count, 1);
         assert_eq!(plan.drafts()[0].body(), "operator material");
 
-        let malformed = tempfile::tempdir().unwrap();
+        let malformed = test_tempdir();
         std::fs::write(
             malformed.path().join("bad.md"),
             "---\nsource: [unterminated\n---\nbody",
@@ -1572,7 +1576,7 @@ mod tests {
 
     #[test]
     fn all_entries_are_capped_before_non_markdown_material_is_retained() {
-        let vault = tempfile::tempdir().unwrap();
+        let vault = test_tempdir();
         for name in ["one.txt", "two.txt", "three.txt"] {
             std::fs::write(vault.path().join(name), "ignored").unwrap();
         }
@@ -1589,7 +1593,7 @@ mod tests {
 
     #[test]
     fn normalization_expansion_and_retained_output_have_independent_caps() {
-        let expanding = tempfile::tempdir().unwrap();
+        let expanding = test_tempdir();
         std::fs::write(expanding.path().join("expand.md"), "\u{0344}").unwrap();
         let normalized_limits = ObsidianImportLimits {
             max_file_bytes: 8,
@@ -1605,7 +1609,7 @@ mod tests {
             ))
         );
 
-        let retained = tempfile::tempdir().unwrap();
+        let retained = test_tempdir();
         std::fs::write(retained.path().join("body.md"), "abcd").unwrap();
         let retained_limits = ObsidianImportLimits {
             max_file_bytes: 8,
@@ -1621,7 +1625,7 @@ mod tests {
             ))
         );
 
-        let policy_bound = tempfile::tempdir().unwrap();
+        let policy_bound = test_tempdir();
         let normalized_over_policy = ObsidianImportLimits {
             max_total_normalized_bytes: ResourceLimits::LOCAL_DEFAULT.max_total_bytes_per_run
                 as usize
@@ -1633,7 +1637,7 @@ mod tests {
             Err(ObsidianPlanError::PolicyLimitExceeded)
         );
 
-        let per_item_bound = tempfile::tempdir().unwrap();
+        let per_item_bound = test_tempdir();
         let mut narrow_configuration = configuration();
         narrow_configuration.policy.limits.max_bytes_per_item = 1024;
         let narrow_authority =
@@ -1660,8 +1664,8 @@ mod tests {
 
     #[test]
     fn ids_are_policy_stable_and_do_not_digest_absolute_paths() {
-        let first_root = tempfile::tempdir().unwrap();
-        let second_root = tempfile::tempdir().unwrap();
+        let first_root = test_tempdir();
+        let second_root = test_tempdir();
         for root in [first_root.path(), second_root.path()] {
             std::fs::create_dir(root.join("folder")).unwrap();
             std::fs::write(root.join("folder").join("note.md"), "same").unwrap();
@@ -1683,7 +1687,7 @@ mod tests {
 
     #[test]
     fn changed_content_keeps_source_identity_and_changes_revision() {
-        let root = tempfile::tempdir().unwrap();
+        let root = test_tempdir();
         let note = root.path().join("note.md");
         std::fs::write(&note, "first\r\n").unwrap();
         let first = plan_import(approved(root.path()), ObsidianImportLimits::default()).unwrap();
@@ -1719,8 +1723,8 @@ mod tests {
     fn rejects_intermediate_links_and_same_size_file_replacement() {
         use std::os::unix::fs::symlink;
 
-        let linked = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
+        let linked = test_tempdir();
+        let outside = test_tempdir();
         std::fs::write(outside.path().join("outside.md"), "outside").unwrap();
         symlink(outside.path(), linked.path().join("linked")).unwrap();
         assert_eq!(
@@ -1728,7 +1732,7 @@ mod tests {
             Err(ObsidianPlanError::SymlinkOrReparsePoint)
         );
 
-        let replaced = tempfile::tempdir().unwrap();
+        let replaced = test_tempdir();
         let note = replaced.path().join("note.md");
         let parked = replaced.path().join("parked.md");
         std::fs::write(&note, "first").unwrap();
@@ -1744,7 +1748,7 @@ mod tests {
             Err(ObsidianPlanError::ChangedDuringPlanning)
         );
 
-        let mutated = tempfile::tempdir().unwrap();
+        let mutated = test_tempdir();
         let mutated_note = mutated.path().join("note.md");
         std::fs::write(&mutated_note, "first").unwrap();
         let mutated_vault = approved(mutated.path());
@@ -1761,7 +1765,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn growth_after_metadata_cannot_escape_the_two_read_budget() {
-        let vault = tempfile::tempdir().unwrap();
+        let vault = test_tempdir();
         let note = vault.path().join("note.md");
         std::fs::write(&note, "first").unwrap();
         let approved = approved(vault.path());
@@ -1783,7 +1787,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn detects_an_intermediate_directory_namespace_swap() {
-        let vault = tempfile::tempdir().unwrap();
+        let vault = test_tempdir();
         let child = vault.path().join("child");
         let parked = vault.path().join("parked");
         std::fs::create_dir(&child).unwrap();

@@ -1855,17 +1855,19 @@ fn restrict_database_sidecars(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+fn test_master_key() -> &'static WalMasterKey {
+    static KEY: std::sync::OnceLock<WalMasterKey> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| WalMasterKey::generate().expect("generate context-store test key"))
+}
+
 #[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
 
     fn store() -> ContextStore {
         let home = crate::test_env::canonical_tempdir().unwrap().keep();
-        ContextStore::open_at(
-            home.join("context.db"),
-            &WalMasterKey::from_bytes(&[9; 32]).unwrap(),
-        )
-        .unwrap()
+        ContextStore::open_at(home.join("context.db"), test_master_key()).unwrap()
     }
     fn account() -> AccountContext {
         AccountContext::from_authenticated_identity("principal-a", "local-import").unwrap()
@@ -1954,7 +1956,7 @@ mod tests {
         store.conn.execute("DROP TABLE provenance", []).unwrap();
         drop(store);
 
-        let error = ContextStore::open_at(&path, &WalMasterKey::from_bytes(&[9; 32]).unwrap())
+        let error = ContextStore::open_at(&path, test_master_key())
             .err()
             .expect("partial schema must fail closed on reopen");
         assert!(error.to_string().contains("schema"));
@@ -1965,8 +1967,7 @@ mod tests {
         let store = store();
         let path = store.path().to_path_buf();
         drop(store);
-        let reopened =
-            ContextStore::open_at(&path, &WalMasterKey::from_bytes(&[9; 32]).unwrap()).unwrap();
+        let reopened = ContextStore::open_at(&path, test_master_key()).unwrap();
         for (pragma, expected) in [
             ("foreign_keys", 1),
             ("secure_delete", 1),
@@ -2301,8 +2302,7 @@ mod tests {
         assert_eq!(revisions, 1);
 
         drop(store);
-        let mut recovered =
-            ContextStore::open_at(&path, &WalMasterKey::from_bytes(&[9; 32]).unwrap()).unwrap();
+        let mut recovered = ContextStore::open_at(&path, test_master_key()).unwrap();
         assert!(maintenance_generation(&recovered.conn).unwrap().is_none());
         recovered
             .commit_batch(
@@ -2319,8 +2319,7 @@ mod tests {
     fn second_handle_recovers_persisted_generation_before_its_new_write() {
         let mut first = store();
         let path = first.path().to_path_buf();
-        let mut second =
-            ContextStore::open_at(&path, &WalMasterKey::from_bytes(&[9; 32]).unwrap()).unwrap();
+        let mut second = ContextStore::open_at(&path, test_master_key()).unwrap();
         let account = account();
 
         first.fail_next_post_commit_maintenance = true;
@@ -2450,12 +2449,12 @@ mod tests {
         fs::write(&target, b"not a database").unwrap();
         let db = home.path().join("context.db");
         symlink(&target, &db).unwrap();
-        assert!(ContextStore::open_at(&db, &WalMasterKey::from_bytes(&[9; 32]).unwrap()).is_err());
+        assert!(ContextStore::open_at(&db, test_master_key()).is_err());
 
         fs::remove_file(&db).unwrap();
         let wal = sqlite_sidecar_path(&db, "-wal");
         symlink(&target, &wal).unwrap();
-        assert!(ContextStore::open_at(&db, &WalMasterKey::from_bytes(&[9; 32]).unwrap()).is_err());
+        assert!(ContextStore::open_at(&db, test_master_key()).is_err());
     }
     #[test]
     fn repeated_mutation_key_in_a_new_batch_is_a_noop() {
@@ -2541,8 +2540,7 @@ mod windows_tests {
     #[test]
     fn context_store_fails_closed_until_strict_windows_storage_is_available() {
         let home = crate::test_env::canonical_tempdir().unwrap();
-        let master_key = WalMasterKey::from_bytes(&[9; 32]).unwrap();
-        let error = ContextStore::open_at(home.path().join("context.db"), &master_key)
+        let error = ContextStore::open_at(home.path().join("context.db"), test_master_key())
             .err()
             .expect("Windows context storage must remain unavailable without strict DACL support");
         assert!(error.to_string().contains("disabled on Windows"));

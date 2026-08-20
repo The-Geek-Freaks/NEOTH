@@ -525,46 +525,27 @@ const SECURE_ROOT_COMPONENT_RESOLVE: u64 =
 const SECURE_DESCENDANT_RESOLVE: u64 = SECURE_ROOT_COMPONENT_RESOLVE | RESOLVE_NO_XDEV;
 
 #[cfg(target_os = "linux")]
-#[repr(C)]
-struct OpenHow {
-    flags: u64,
-    mode: u64,
-    resolve: u64,
-}
-
-#[cfg(target_os = "linux")]
 fn openat2_raw(
     parent_fd: libc::c_int,
     name: &std::ffi::CStr,
     flags: libc::c_int,
     resolve: u64,
 ) -> std::io::Result<File> {
-    use std::os::fd::FromRawFd;
+    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use std::os::fd::BorrowedFd;
 
-    let how = OpenHow {
-        flags: flags as u64,
-        mode: 0,
-        resolve,
-    };
-    // SAFETY: `name` and `how` are live for the syscall, the structure size
-    // matches the Linux `open_how` v0 ABI, and a successful descriptor is
-    // transferred immediately to one owning `File`.
-    let descriptor = unsafe {
-        libc::syscall(
-            libc::SYS_openat2,
-            parent_fd,
-            name.as_ptr(),
-            &how,
-            std::mem::size_of::<OpenHow>(),
-        )
-    };
-    if descriptor < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    let descriptor = libc::c_int::try_from(descriptor)
-        .map_err(|_| std::io::Error::from_raw_os_error(libc::EMFILE))?;
-    // SAFETY: `openat2` returned a new owned descriptor.
-    Ok(unsafe { File::from_raw_fd(descriptor) })
+    // SAFETY: both callers borrow the descriptor from a live `File` for only
+    // this call; rustix returns a separately owned descriptor on success.
+    let parent = unsafe { BorrowedFd::borrow_raw(parent_fd) };
+    openat2(
+        parent,
+        name,
+        OFlags::from_bits_retain(flags as u32),
+        Mode::empty(),
+        ResolveFlags::from_bits_retain(resolve),
+    )
+    .map(File::from)
+    .map_err(Into::into)
 }
 
 #[cfg(target_os = "linux")]

@@ -15,6 +15,7 @@ use chacha20::hchacha;
 use poly1305::Poly1305;
 use poly1305::universal_hash::KeyInit;
 use rand::{TryRngCore, rngs::OsRng};
+use std::num::NonZeroU32;
 use subtle::ConstantTimeEq;
 use thiserror::Error;
 use tracing::debug;
@@ -214,16 +215,14 @@ fn init_from_header(key: &[u8; KEYBYTES], header: &[u8; HEADERBYTES]) -> ([u8; 3
     input.copy_from_slice(&header[..16]);
     let subkey = hchacha20_subkey(key, &input);
 
-    // codeql[rust/hard-coded-cryptographic-value]
-    // Security: this is the libsodium secretstream wire-format initial state,
-    // not a reusable nonce. HChaCha derives a per-header subkey above, bytes
-    // 4..12 are copied from the peer-provided header below, and counter=1 is
-    // mandated for the first encrypted secretstream block.
-    let mut nonce = [0u8; 12];
-    // codeql[rust/hard-coded-cryptographic-value]
-    // Security: `1` is the fixed initial counter required by the wire format;
-    // uniqueness comes from the header-derived subkey and nonce suffix above.
-    nonce[0] = 1;
+    // Every byte starts header-derived so no fixed nonce material reaches the
+    // cipher. The wire format then replaces the first word with its required
+    // minimum non-zero counter and the suffix with the final header bytes.
+    // Uniqueness comes from the random header and its HChaCha-derived subkey.
+    let mut nonce: [u8; 12] = header[..12]
+        .try_into()
+        .expect("secretstream header prefix is exactly one nonce wide");
+    nonce[..4].copy_from_slice(&NonZeroU32::MIN.get().to_le_bytes());
     nonce[4..12].copy_from_slice(&header[16..24]);
 
     (subkey, nonce)

@@ -83,9 +83,15 @@ pub(crate) mod test_env {
     /// private child directory.
     pub(crate) fn canonical_tempdir() -> std::io::Result<tempfile::TempDir> {
         let root = std::fs::canonicalize(std::env::temp_dir())?;
-        tempfile::Builder::new()
+        let directory = tempfile::Builder::new()
             .prefix("neoth-test-")
-            .tempdir_in(root)
+            .tempdir_in(root)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+        }
+        Ok(directory)
     }
 }
 
