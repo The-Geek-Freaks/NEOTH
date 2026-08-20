@@ -5,6 +5,23 @@ Originated as a Claude Design handoff (claude.ai/design, 2026-06-15) generated
 by reading NEOTH's real Slint GUI, then adopted as the source of truth for the
 app's look.
 
+## Review contracts (ADOPT31-G1/G4 documentation)
+
+Before reviewing or changing `.slint` UI, read this file together with:
+
+- [`lint_rules.md`](lint_rules.md) — all 59 stable design-lint identifiers and
+  their honest Slint portability class. **Only** the four G2 token-drift rules
+  (`design-system-font`, `design-system-color`, `design-system-radius`, and
+  `design-system-font-size`) are currently automated.
+- [`AUDIT_CHECKLIST.md`](AUDIT_CHECKLIST.md) — the evidence-first five-dimension
+  scorecard for accessibility, performance, theming, responsive behavior, and
+  implementation integrity.
+
+These documents provide a shared review vocabulary. They do not mark
+ADOPT31-G1/G4 complete, do not claim a full GUI lint, and do not replace
+exact-head remote CI, Security, CodeQL, rendered-platform evidence, or broader
+Road requirements.
+
 ## The language
 
 Neon-on-near-black. Three **signal colours carry meaning everywhere**:
