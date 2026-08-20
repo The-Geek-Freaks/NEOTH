@@ -30,7 +30,9 @@ fn main() -> Result<()> {
     // verifier. It must run before Clap and Tokio so untrusted Python cannot
     // start until its effective Linux boundary has been attested.
     #[cfg(target_os = "linux")]
-    if let Some(exit_code) = neothd::graphify_runner::run_linux_graphify_containment_guard_if_requested() {
+    if let Some(exit_code) =
+        neothd::graphify_runner::run_linux_graphify_containment_guard_if_requested()
+    {
         std::process::exit(exit_code);
     }
 

@@ -2945,10 +2945,7 @@ mod tests {
             .unwrap()
             .flatten()
             .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("hmac.key.")
+                entry.file_name().to_string_lossy().starts_with("hmac.key.")
                     && entry.file_name().to_string_lossy().ends_with(".archive")
             })
             .count();
@@ -3009,14 +3006,7 @@ mod tests {
         }
         // This is incomplete retained history. Reconciliation must refuse
         // before it writes archive 65 and leave all recovery evidence intact.
-        let header = crate::wal::segment_header::SegmentHeaderV2::new(
-            1,
-            1,
-            0,
-            0,
-            [0u8; 16],
-            0,
-        );
+        let header = crate::wal::segment_header::SegmentHeaderV2::new(1, 1, 0, 0, [0u8; 16], 0);
         let frame_header = crate::wal::HeaderBuilder::new(0x41, b"unmarked").build();
         let mut segment = header.to_le_bytes().to_vec();
         segment.extend_from_slice(&crate::wal::frame::encode_frame(&frame_header, b"unmarked"));
@@ -3028,8 +3018,14 @@ mod tests {
             format!("{error:#}").contains("reserve a verified HMAC archive-retention slot"),
             "unexpected capacity failure: {error:#}"
         );
-        assert!(journal_path.exists(), "pending journal must remain recoverable");
-        assert!(wal_dir.join(staged_file).exists(), "pending stage must remain recoverable");
+        assert!(
+            journal_path.exists(),
+            "pending journal must remain recoverable"
+        );
+        assert!(
+            wal_dir.join(staged_file).exists(),
+            "pending stage must remain recoverable"
+        );
         assert!(
             !wal_dir.join(archive_file).exists(),
             "failed recovery must not write archive 65"
@@ -3105,14 +3101,14 @@ mod tests {
             .unwrap()
             .flatten()
             .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("hmac.key.")
+                entry.file_name().to_string_lossy().starts_with("hmac.key.")
                     && entry.file_name().to_string_lossy().ends_with(".archive")
             })
             .count();
-        assert_eq!(archive_count, 64, "installed recovery must repair archive 65");
+        assert_eq!(
+            archive_count, 64,
+            "installed recovery must repair archive 65"
+        );
     }
 
     #[test]

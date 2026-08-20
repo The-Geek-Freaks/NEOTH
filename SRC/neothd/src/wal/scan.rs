@@ -308,11 +308,14 @@ fn remove_proven_unused_hmac_archive(
 ) -> Result<()> {
     let display = root.display_path.join(name);
     let (mut file, read_binding) = crate::skills::store::open_bound_regular_file(
-        &root.dir,
-        name,
-        &display,
+        &root.dir, name, &display,
     )
-    .with_context(|| format!("bind HMAC archive candidate for exact removal {}", display.display()))?;
+    .with_context(|| {
+        format!(
+            "bind HMAC archive candidate for exact removal {}",
+            display.display()
+        )
+    })?;
     let mut body = Vec::with_capacity(MAX_HOME_KEY_BYTES);
     file.by_ref()
         .take((MAX_HOME_KEY_BYTES + 1) as u64)
@@ -338,7 +341,12 @@ fn remove_proven_unused_hmac_archive(
         &display,
         &read_binding,
     )
-    .with_context(|| format!("bind exact HMAC archive deletion authority {}", display.display()))?;
+    .with_context(|| {
+        format!(
+            "bind exact HMAC archive deletion authority {}",
+            display.display()
+        )
+    })?;
     removal_binding
         .remove_bound_file(&root.dir, name, &display)
         .with_context(|| format!("remove exact HMAC archive {}", display.display()))
@@ -408,11 +416,8 @@ fn reconcile_hmac_archive_capacity_for_rotation_with_limit(
 }
 
 fn reconcile_hmac_archives_to_at_most(home: &Path, max_retained_archives: usize) -> Result<usize> {
-    let mut key_set = load_home_hmac_key_set_with_limits(
-        home,
-        usize::MAX,
-        MAX_HOME_KEY_DIRECTORY_ENTRIES,
-    )?;
+    let mut key_set =
+        load_home_hmac_key_set_with_limits(home, usize::MAX, MAX_HOME_KEY_DIRECTORY_ENTRIES)?;
     if key_set.archive_names.len() <= max_retained_archives {
         return Ok(0);
     }
@@ -601,11 +606,7 @@ where
 ///
 /// A `.wal` symlink, reparse point, FIFO/device or directory is an integrity
 /// error. It is never skipped and never followed.
-pub(crate) fn for_each_frame_at_home<F>(
-    home: &Path,
-    limits: HomeWalScanLimits,
-    cb: F,
-) -> Result<()>
+pub(crate) fn for_each_frame_at_home<F>(home: &Path, limits: HomeWalScanLimits, cb: F) -> Result<()>
 where
     F: FnMut(&HomeWalFrameLocation, &DecodedFrame<'_>) -> Result<()>,
 {
@@ -700,8 +701,8 @@ where
     let verification_keys = match verification_keys {
         Some(keys) => keys,
         None => {
-            loaded_verification_keys =
-                load_home_hmac_keys(home).context("load HMAC keys for authenticated full WAL scan")?;
+            loaded_verification_keys = load_home_hmac_keys(home)
+                .context("load HMAC keys for authenticated full WAL scan")?;
             &loaded_verification_keys
         }
     };
@@ -710,10 +711,7 @@ where
             .iter()
             .map(|(_, _, name)| root.display_path.join(name))
             .collect::<Vec<_>>();
-        crate::wal::signing::trusted_signing_pubkeys(
-            &paths,
-            &root.display_path.join("signing.key"),
-        )
+        crate::wal::signing::trusted_signing_pubkeys(&paths, &root.display_path.join("signing.key"))
     });
     let mut total_physical = 0u64;
     let mut total_logical = 0u64;
@@ -1719,8 +1717,7 @@ mod tests {
         frames: &[u8],
         key: &[u8],
     ) -> Vec<u8> {
-        let mut segment =
-            uncompressed_segment_with_identity(generation, sequence, node_id, frames);
+        let mut segment = uncompressed_segment_with_identity(generation, sequence, node_id, frames);
         if frames.is_empty() {
             return segment;
         }
@@ -2837,7 +2834,10 @@ mod tests {
             .expect("unused archive must free a verified rotation slot");
         assert_eq!(removed, 1);
         assert!(!archive.exists());
-        assert_eq!(load_home_hmac_keys(home.path()).unwrap(), vec![vec![0x55; 32]]);
+        assert_eq!(
+            load_home_hmac_keys(home.path()).unwrap(),
+            vec![vec![0x55; 32]]
+        );
     }
 
     #[test]
@@ -2875,13 +2875,8 @@ mod tests {
         let archive = wal.join("hmac.key.0000000001.archive");
         fs::write(&archive, TEST_HMAC_KEY).unwrap();
         let frames = frame_bytes(0x41, b"retained-history");
-        let segment = authenticated_segment_with_identity_and_key(
-            1,
-            1,
-            [3u8; 16],
-            &frames,
-            &TEST_HMAC_KEY,
-        );
+        let segment =
+            authenticated_segment_with_identity_and_key(1, 1, [3u8; 16], &frames, &TEST_HMAC_KEY);
         fs::write(wal.join("000001.wal"), segment).unwrap();
 
         let error = reconcile_hmac_archive_capacity_for_rotation_with_limit(home.path(), 1)
@@ -2890,7 +2885,10 @@ mod tests {
             format!("{error:#}").contains("every remaining archive is required"),
             "unexpected retention error: {error:#}"
         );
-        assert!(archive.exists(), "required archive must survive failed retention");
+        assert!(
+            archive.exists(),
+            "required archive must survive failed retention"
+        );
         for_each_frame_at_home(home.path(), HomeWalScanLimits::default(), |_, _| Ok(())).unwrap();
     }
 
@@ -2913,7 +2911,10 @@ mod tests {
             format!("{error:#}").contains("authenticate complete retained WAL history"),
             "unexpected retention error: {error:#}"
         );
-        assert!(archive.exists(), "incomplete history must not lose an archive key");
+        assert!(
+            archive.exists(),
+            "incomplete history must not lose an archive key"
+        );
     }
 
     #[test]

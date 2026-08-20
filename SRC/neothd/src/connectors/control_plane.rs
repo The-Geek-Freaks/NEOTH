@@ -67,7 +67,9 @@ impl AccountAuthority {
             .state
             .upgrade()
             .ok_or(ConnectorControlPlaneError::AuthorityRetired)?;
-        let state = state.lock().map_err(|_| ConnectorControlPlaneError::AuthorityPoisoned)?;
+        let state = state
+            .lock()
+            .map_err(|_| ConnectorControlPlaneError::AuthorityPoisoned)?;
         if !state.active || state.generation != self.generation {
             return Err(ConnectorControlPlaneError::AuthorityRetired);
         }
@@ -122,7 +124,9 @@ impl ConnectorControlPlane {
     fn state_from_durable_config(
         config: &ConnectorControlConfig,
     ) -> Result<ConnectorControlPlaneState, ConnectorControlPlaneError> {
-        config.validate().map_err(ConnectorControlPlaneError::InvalidConfig)?;
+        config
+            .validate()
+            .map_err(ConnectorControlPlaneError::InvalidConfig)?;
         let accounts = config
             .registered_accounts
             .iter()
@@ -249,9 +253,7 @@ impl ConnectorControlPlane {
         Ok(())
     }
 
-    pub(crate) fn status(
-        &self,
-    ) -> Result<Vec<ConnectorAccountStatus>, ConnectorControlPlaneError> {
+    pub(crate) fn status(&self) -> Result<Vec<ConnectorAccountStatus>, ConnectorControlPlaneError> {
         let control = self
             .state
             .lock()
@@ -346,18 +348,11 @@ mod tests {
             )
             .unwrap();
         authority.ensure_live().unwrap();
-        assert!(authority.binding_matches(
-            &instance,
-            &SubjectId::new("operator").unwrap(),
-            7,
-            11
-        ));
+        assert!(authority.binding_matches(&instance, &SubjectId::new("operator").unwrap(), 7, 11));
 
         assert!(matches!(
             plane.authorize_context_import(
-                &AuthenticatedControlSession::test_authenticated(
-                    SubjectId::new("other").unwrap(),
-                ),
+                &AuthenticatedControlSession::test_authenticated(SubjectId::new("other").unwrap(),),
                 &instance,
             ),
             Err(ConnectorControlPlaneError::SubjectBindingMismatch)
@@ -418,8 +413,7 @@ mod tests {
 
         plane
             .replace_after_durable_config_commit(&ConnectorControlConfig {
-                schema_version:
-                    super::super::control_state::CONNECTOR_CONTROL_STATE_SCHEMA_VERSION,
+                schema_version: super::super::control_state::CONNECTOR_CONTROL_STATE_SCHEMA_VERSION,
                 enabled: true,
                 registered_accounts: vec![account("operator", ConnectorLifecycle::Revoked)],
             })
@@ -431,7 +425,9 @@ mod tests {
         ));
         assert!(matches!(
             plane.authorize_context_import(&session, &instance),
-            Err(ConnectorControlPlaneError::AccountNotActive(ConnectorLifecycle::Revoked))
+            Err(ConnectorControlPlaneError::AccountNotActive(
+                ConnectorLifecycle::Revoked
+            ))
         ));
     }
 }

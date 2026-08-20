@@ -552,13 +552,12 @@ async fn deliver_live_route(
                         "LINE proactive route lost its access token".to_string(),
                     )
                 })?;
-            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
-                crate::channels::line::LineChannel::new(token).map_err(|_| {
+            let channel: Arc<dyn crate::channels::Channel> =
+                Arc::new(crate::channels::line::LineChannel::new(token).map_err(|_| {
                     LiveRouteError::AdapterConfiguration(
                         "construct LINE proactive adapter: rejected".to_string(),
                     )
-                })?,
-            );
+                })?);
             execute!(&recipient, channel)
         }
         DeliveryRoute::Mattermost { channel_id } => {
@@ -572,8 +571,9 @@ async fn deliver_live_route(
                     "Mattermost proactive route lost its token".to_string(),
                 )
             })?;
-            let channel: Arc<dyn crate::channels::Channel> =
-                Arc::new(crate::channels::mattermost::MattermostChannel::new(url, token));
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
+                crate::channels::mattermost::MattermostChannel::new(url, token),
+            );
             execute!(&channel_id, channel)
         }
         DeliveryRoute::IMessage { chat_guid } => {

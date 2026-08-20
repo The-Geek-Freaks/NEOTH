@@ -672,11 +672,7 @@ fn macos_directory_open_flags() -> libc::c_int {
 
 #[cfg(target_os = "macos")]
 fn macos_leaf_open_flags() -> libc::c_int {
-    libc::O_RDONLY
-        | libc::O_NOFOLLOW
-        | MACOS_O_NOFOLLOW_ANY
-        | libc::O_NONBLOCK
-        | libc::O_CLOEXEC
+    libc::O_RDONLY | libc::O_NOFOLLOW | MACOS_O_NOFOLLOW_ANY | libc::O_NONBLOCK | libc::O_CLOEXEC
 }
 
 #[cfg(target_os = "macos")]
@@ -1561,9 +1557,14 @@ mod tests {
         fs::write(&replacement, b"bbbb").unwrap();
         let authority = capability(&root);
         assert_eq!(
-            read_macos_bound_source_with_hook(&authority.root, Path::new("selected.txt"), 16, || {
-                fs::rename(&replacement, &leaf).unwrap();
-            }),
+            read_macos_bound_source_with_hook(
+                &authority.root,
+                Path::new("selected.txt"),
+                16,
+                || {
+                    fs::rename(&replacement, &leaf).unwrap();
+                }
+            ),
             Err(LocalImportError::ChangedDuringRead)
         );
         fs::remove_dir_all(root).unwrap();

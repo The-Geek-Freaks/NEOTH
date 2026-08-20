@@ -37,11 +37,9 @@ fn durable_control_schema_stays_default_off_and_content_free() {
     assert!(CONTROL_STATE.contains("const MAX_REGISTERED_CONNECTOR_ACCOUNTS: usize = 64"));
     assert!(!CONTROL_STATE.contains("String content"));
     assert!(!CONTROL_STATE.contains("SecretString"));
-    assert!(
-        CONFIG.contains(
-            "pub context_connectors: crate::connectors::control_state::ConnectorControlConfig"
-        )
-    );
+    assert!(CONFIG.contains(
+        "pub context_connectors: crate::connectors::control_state::ConnectorControlConfig"
+    ));
     assert!(CONFIG.contains("invalid context_connectors config"));
 }
 

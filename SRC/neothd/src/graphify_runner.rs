@@ -164,12 +164,17 @@ impl GraphifyEnvironment {
                 .map(|(name, value)| (name.clone(), value.clone())),
         );
         for (name, value) in &assignments {
-            if name.as_os_str().as_bytes().iter().any(|byte| {
-                !byte.is_ascii_alphanumeric() && *byte != b'_'
-            }) || value.as_os_str().as_bytes().contains(&b'\0')
+            if name
+                .as_os_str()
+                .as_bytes()
+                .iter()
+                .any(|byte| !byte.is_ascii_alphanumeric() && *byte != b'_')
+                || value.as_os_str().as_bytes().contains(&b'\0')
                 || value.as_os_str().as_bytes().contains(&b'\n')
             {
-                bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify environment is not representable safely by systemd");
+                bail!(
+                    "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify environment is not representable safely by systemd"
+                );
             }
         }
         Ok(assignments)
@@ -563,13 +568,8 @@ where
         .collect::<Vec<_>>();
 
     #[cfg(target_os = "linux")]
-    let (mut command, linux_unit) = LinuxGraphifyUnit::command(
-        executable,
-        &args,
-        current_dir,
-        environment,
-        limits,
-    )?;
+    let (mut command, linux_unit) =
+        LinuxGraphifyUnit::command(executable, &args, current_dir, environment, limits)?;
     #[cfg(not(target_os = "linux"))]
     let mut command = Command::new(executable);
 
@@ -771,13 +771,21 @@ impl LinuxGraphifyUnit {
             .with_context(|| format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: invoke trusted systemctl"))?;
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         let output = loop {
-            if child.try_wait().context("poll trusted systemctl manager preflight")?.is_some() {
-                break child.wait_with_output().context("collect trusted systemctl manager preflight")?;
+            if child
+                .try_wait()
+                .context("poll trusted systemctl manager preflight")?
+                .is_some()
+            {
+                break child
+                    .wait_with_output()
+                    .context("collect trusted systemctl manager preflight")?;
             }
             if std::time::Instant::now() >= deadline {
                 let _ = child.kill();
                 let _ = child.wait();
-                bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: trusted systemctl manager preflight timed out");
+                bail!(
+                    "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: trusted systemctl manager preflight timed out"
+                );
             }
             std::thread::sleep(Duration::from_millis(10));
         };
@@ -878,7 +886,11 @@ impl LinuxGraphifyUnit {
     fn await_registration(&self, child: &mut tokio::process::Child) -> Result<()> {
         let deadline = std::time::Instant::now() + LINUX_GRAPHIFY_ACTIVATION_TIMEOUT;
         loop {
-            if child.try_wait().context("poll systemd-run during Graphify activation")?.is_some() {
+            if child
+                .try_wait()
+                .context("poll systemd-run during Graphify activation")?
+                .is_some()
+            {
                 // `--wait` returns only after the service is terminal, so no
                 // live Graphify tree can exist behind an exited client.
                 return Ok(());
@@ -887,7 +899,9 @@ impl LinuxGraphifyUnit {
                 return Ok(());
             }
             if std::time::Instant::now() >= deadline {
-                bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: transient Graphify unit was not registered before the activation deadline");
+                bail!(
+                    "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: transient Graphify unit was not registered before the activation deadline"
+                );
             }
             std::thread::sleep(Duration::from_millis(25));
         }
@@ -900,7 +914,10 @@ impl LinuxGraphifyUnit {
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
-                bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify unit {} did not reach a terminal manager state", self.unit_name);
+                bail!(
+                    "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify unit {} did not reach a terminal manager state",
+                    self.unit_name
+                );
             }
             self.run_systemctl(
                 ["--user", "--no-pager", "--quiet", "stop", &self.unit_name],
@@ -949,23 +966,35 @@ impl LinuxGraphifyUnit {
                 bounded_diagnostic(&output.stderr, &output.stdout)
             );
         }
-        let states = String::from_utf8(output.stdout).context("decode transient Graphify unit state")?;
+        let states =
+            String::from_utf8(output.stdout).context("decode transient Graphify unit state")?;
         let mut states = states.lines();
         let load = states.next().context("systemctl show omitted LoadState")?;
-        let active = states.next().context("systemctl show omitted ActiveState")?;
+        let active = states
+            .next()
+            .context("systemctl show omitted ActiveState")?;
         if load == "not-found" {
             return Ok(false);
         }
         if matches!(active, "inactive" | "failed") {
             return Ok(false);
         }
-        if matches!(active, "active" | "activating" | "deactivating" | "reloading") {
+        if matches!(
+            active,
+            "active" | "activating" | "deactivating" | "reloading"
+        ) {
             return Ok(true);
         }
-        bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: systemctl show reported an unknown Graphify unit state load={load}, active={active}");
+        bail!(
+            "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: systemctl show reported an unknown Graphify unit state load={load}, active={active}"
+        );
     }
 
-    fn run_systemctl<const N: usize>(&self, arguments: [&str; N], timeout: Duration) -> Result<std::process::Output> {
+    fn run_systemctl<const N: usize>(
+        &self,
+        arguments: [&str; N],
+        timeout: Duration,
+    ) -> Result<std::process::Output> {
         let mut child = std::process::Command::new(&self.systemctl)
             .args(arguments)
             .stdin(Stdio::null())
@@ -978,8 +1007,14 @@ impl LinuxGraphifyUnit {
             .context("start bounded transient Graphify unit manager query")?;
         let deadline = std::time::Instant::now() + timeout;
         loop {
-            if child.try_wait().context("poll bounded transient Graphify unit manager query")?.is_some() {
-                return child.wait_with_output().context("collect transient Graphify unit manager query");
+            if child
+                .try_wait()
+                .context("poll bounded transient Graphify unit manager query")?
+                .is_some()
+            {
+                return child
+                    .wait_with_output()
+                    .context("collect transient Graphify unit manager query");
             }
             if std::time::Instant::now() >= deadline {
                 let _ = child.kill();
@@ -993,11 +1028,13 @@ impl LinuxGraphifyUnit {
 
 #[cfg(target_os = "linux")]
 fn spawn_linux_unit_reaper(unit: LinuxGraphifyUnit) {
-    std::thread::spawn(move || loop {
-        if unit.stop_until_terminal(true).is_ok() {
-            break;
+    std::thread::spawn(move || {
+        loop {
+            if unit.stop_until_terminal(true).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(1));
         }
-        std::thread::sleep(Duration::from_secs(1));
     });
 }
 
@@ -1043,8 +1080,13 @@ fn ensure_linux_cgroup_v2() -> Result<()> {
     let controllers = std::fs::read_to_string("/sys/fs/cgroup/cgroup.controllers")
         .with_context(|| format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: read cgroup-v2 controllers"))?;
     for required in ["cpu", "memory", "pids"] {
-        if !controllers.split_ascii_whitespace().any(|value| value == required) {
-            bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: cgroup-v2 does not expose the required {required} controller");
+        if !controllers
+            .split_ascii_whitespace()
+            .any(|value| value == required)
+        {
+            bail!(
+                "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: cgroup-v2 does not expose the required {required} controller"
+            );
         }
     }
     Ok(())
@@ -1052,8 +1094,13 @@ fn ensure_linux_cgroup_v2() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn trusted_linux_systemd_tool(name: &str) -> Result<PathBuf> {
-    for candidate in [PathBuf::from("/usr/bin").join(name), PathBuf::from("/bin").join(name)] {
-        if candidate.exists() && let Ok(validated) = validate_linux_systemd_executable(&candidate, name) {
+    for candidate in [
+        PathBuf::from("/usr/bin").join(name),
+        PathBuf::from("/bin").join(name),
+    ] {
+        if candidate.exists()
+            && let Ok(validated) = validate_linux_systemd_executable(&candidate, name)
+        {
             return Ok(validated);
         }
     }
@@ -1064,17 +1111,28 @@ fn trusted_linux_systemd_tool(name: &str) -> Result<PathBuf> {
 fn validate_linux_systemd_executable(path: &Path, role: &str) -> Result<PathBuf> {
     use std::os::unix::fs::MetadataExt as _;
 
-    let canonical = std::fs::canonicalize(path)
-        .with_context(|| format!("{LINUX_GRAPHIFY_TOOL_ERROR}: resolve {role} {}", path.display()))?;
-    let metadata = std::fs::metadata(&canonical)
-        .with_context(|| format!("{LINUX_GRAPHIFY_TOOL_ERROR}: inspect {role} {}", canonical.display()))?;
+    let canonical = std::fs::canonicalize(path).with_context(|| {
+        format!(
+            "{LINUX_GRAPHIFY_TOOL_ERROR}: resolve {role} {}",
+            path.display()
+        )
+    })?;
+    let metadata = std::fs::metadata(&canonical).with_context(|| {
+        format!(
+            "{LINUX_GRAPHIFY_TOOL_ERROR}: inspect {role} {}",
+            canonical.display()
+        )
+    })?;
     if !canonical.is_absolute()
         || !metadata.is_file()
         || metadata.uid() != 0
         || metadata.mode() & 0o022 != 0
         || metadata.mode() & 0o111 == 0
     {
-        bail!("{LINUX_GRAPHIFY_TOOL_ERROR}: {role} {} failed ownership/mode validation", canonical.display());
+        bail!(
+            "{LINUX_GRAPHIFY_TOOL_ERROR}: {role} {} failed ownership/mode validation",
+            canonical.display()
+        );
     }
     Ok(canonical)
 }
@@ -1083,8 +1141,8 @@ fn validate_linux_systemd_executable(path: &Path, role: &str) -> Result<PathBuf>
 fn trusted_linux_graphify_guardian() -> Result<PathBuf> {
     use std::os::unix::fs::MetadataExt as _;
 
-    let executable = std::env::current_exe()
-        .context("locate the Graphify containment guardian executable")?;
+    let executable =
+        std::env::current_exe().context("locate the Graphify containment guardian executable")?;
     let canonical = canonical_linux_safe_path(&executable, "Graphify containment guardian")?;
     let metadata = std::fs::metadata(&canonical).with_context(|| {
         format!(
@@ -1097,7 +1155,9 @@ fn trusted_linux_graphify_guardian() -> Result<PathBuf> {
         || metadata.mode() & 0o111 == 0
         || (metadata.uid() != 0 && metadata.uid() != unsafe { libc::geteuid() })
     {
-        bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify containment guardian failed ownership/mode validation");
+        bail!(
+            "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify containment guardian failed ownership/mode validation"
+        );
     }
     Ok(canonical)
 }
@@ -1117,14 +1177,20 @@ fn read_linux_namespace(kind: &str) -> Result<OsString> {
 fn canonical_linux_safe_path(path: &Path, role: &str) -> Result<PathBuf> {
     use std::os::unix::ffi::OsStrExt as _;
 
-    let canonical = std::fs::canonicalize(path)
-        .with_context(|| format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: canonicalize {role} {}", path.display()))?;
+    let canonical = std::fs::canonicalize(path).with_context(|| {
+        format!(
+            "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: canonicalize {role} {}",
+            path.display()
+        )
+    })?;
     if !canonical.is_absolute()
         || canonical.as_os_str().as_bytes().iter().any(|byte| {
             !byte.is_ascii_alphanumeric() && !matches!(*byte, b'/' | b'.' | b'_' | b'-')
         })
     {
-        bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: {role} path is not a safe absolute systemd property value");
+        bail!(
+            "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: {role} path is not a safe absolute systemd property value"
+        );
     }
     Ok(canonical)
 }
@@ -1136,8 +1202,12 @@ fn ensure_linux_private_path_ancestry(path: &Path, role: &str) -> Result<()> {
     let path = canonical_linux_safe_path(path, role)?;
     let mut ancestor = Some(path.as_path());
     while let Some(current) = ancestor {
-        let metadata = std::fs::metadata(current)
-            .with_context(|| format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: inspect {role} ancestry {}", current.display()))?;
+        let metadata = std::fs::metadata(current).with_context(|| {
+            format!(
+                "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: inspect {role} ancestry {}",
+                current.display()
+            )
+        })?;
         if (metadata.uid() != 0 && metadata.uid() != unsafe { libc::geteuid() })
             || metadata.mode() & 0o022 != 0
         {
@@ -1152,13 +1222,16 @@ fn ensure_linux_private_path_ancestry(path: &Path, role: &str) -> Result<()> {
 fn ensure_linux_private_staging_leaf(path: &Path) -> Result<()> {
     use std::os::unix::fs::MetadataExt as _;
 
-    let metadata = std::fs::metadata(path)
-        .with_context(|| format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: inspect ephemeral Graphify staging"))?;
+    let metadata = std::fs::metadata(path).with_context(|| {
+        format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: inspect ephemeral Graphify staging")
+    })?;
     if !metadata.is_dir()
         || metadata.uid() != unsafe { libc::geteuid() }
         || metadata.mode() & 0o077 != 0
     {
-        bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: ephemeral Graphify staging is not private to this user");
+        bail!(
+            "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: ephemeral Graphify staging is not private to this user"
+        );
     }
     Ok(())
 }
@@ -1170,7 +1243,8 @@ fn prepare_linux_graphify_staging(
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
     let (working_directory, staging, ephemeral_staging) = if let Some(current_dir) = current_dir {
-        let working_directory = canonical_linux_safe_path(current_dir, "Graphify working directory")?;
+        let working_directory =
+            canonical_linux_safe_path(current_dir, "Graphify working directory")?;
         ensure_linux_private_path_ancestry(&working_directory, "Graphify working directory")?;
         let working_metadata = std::fs::metadata(&working_directory).with_context(|| {
             format!(
@@ -1181,23 +1255,33 @@ fn prepare_linux_graphify_staging(
         if working_metadata.uid() != unsafe { libc::geteuid() }
             || working_metadata.mode() & 0o022 != 0
         {
-            bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify working directory must be private to this user");
+            bail!(
+                "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify working directory must be private to this user"
+            );
         }
         let staging = working_directory.join("graphify-out");
         match std::fs::symlink_metadata(&staging) {
             Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-                bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify output staging is not a real directory")
+                bail!(
+                    "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify output staging is not a real directory"
+                )
             }
             Ok(metadata) if metadata.uid() != unsafe { libc::geteuid() } => {
-                bail!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify output staging is not owned by this user")
+                bail!(
+                    "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify output staging is not owned by this user"
+                )
             }
             Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir(&staging)
-                .with_context(|| format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: create private Graphify staging"))?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&staging).with_context(|| {
+                    format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: create private Graphify staging")
+                })?
+            }
             Err(error) => return Err(error).context("inspect Graphify output staging"),
         }
-        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700))
-            .with_context(|| format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: restrict Graphify staging permissions"))?;
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700)).with_context(
+            || format!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: restrict Graphify staging permissions"),
+        )?;
         let staging = canonical_linux_safe_path(&staging, "Graphify output staging")?;
         ensure_linux_private_path_ancestry(&staging, "Graphify output staging")?;
         if !staging.starts_with(&working_directory) {
@@ -1220,8 +1304,14 @@ fn prepare_linux_graphify_staging(
 fn new_linux_graphify_unit_name() -> Result<String> {
     let mut nonce = [0_u8; 16];
     getrandom::getrandom(&mut nonce).context("generate Graphify systemd unit nonce")?;
-    let nonce = nonce.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-    Ok(format!("neoth-graphify-p{}-n{nonce}.service", std::process::id()))
+    let nonce = nonce
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(format!(
+        "neoth-graphify-p{}-n{nonce}.service",
+        std::process::id()
+    ))
 }
 
 /// Runs inside the manager-owned transient service before Python is allowed to
@@ -1233,13 +1323,17 @@ pub fn run_linux_graphify_containment_guard_if_requested() -> Option<i32> {
     if arguments.next().as_deref() != Some(OsStr::new(LINUX_GRAPHIFY_GUARD_FLAG)) {
         return None;
     }
-    Some(match linux_graphify_containment_guard_main(arguments.collect()) {
-        Ok(()) => 0,
-        Err(error) => {
-            eprintln!("{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify containment guardian refused execution: {error:#}");
-            125
-        }
-    })
+    Some(
+        match linux_graphify_containment_guard_main(arguments.collect()) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!(
+                    "{LINUX_GRAPHIFY_SYSTEMD_ERROR}: Graphify containment guardian refused execution: {error:#}"
+                );
+                125
+            }
+        },
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -1250,7 +1344,8 @@ fn linux_graphify_containment_guard_main(arguments: Vec<OsString>) -> Result<()>
     let unit_name = next_guard_argument(&mut arguments, "unit name")?;
     let expected_mount_namespace = next_guard_argument(&mut arguments, "host mount namespace")?;
     let expected_network_namespace = next_guard_argument(&mut arguments, "host network namespace")?;
-    let working_directory = PathBuf::from(next_guard_argument(&mut arguments, "working directory")?);
+    let working_directory =
+        PathBuf::from(next_guard_argument(&mut arguments, "working directory")?);
     let staging = PathBuf::from(next_guard_argument(&mut arguments, "staging directory")?);
     let python = PathBuf::from(next_guard_argument(&mut arguments, "Python executable")?);
     if arguments.next().as_deref() != Some(OsStr::new("--")) {
@@ -1267,8 +1362,12 @@ fn linux_graphify_containment_guard_main(arguments: Vec<OsString>) -> Result<()>
         &working_directory,
         &staging,
     )?;
-    std::env::set_current_dir(&working_directory)
-        .with_context(|| format!("enter guarded Graphify working directory {}", working_directory.display()))?;
+    std::env::set_current_dir(&working_directory).with_context(|| {
+        format!(
+            "enter guarded Graphify working directory {}",
+            working_directory.display()
+        )
+    })?;
     let error = std::process::Command::new(&python)
         .args(python_arguments)
         .exec();
@@ -1315,8 +1414,8 @@ fn verify_linux_guardian_boundary(
 
 #[cfg(target_os = "linux")]
 fn current_linux_unified_cgroup() -> Result<String> {
-    let contents = std::fs::read_to_string("/proc/self/cgroup")
-        .context("read guardian cgroup membership")?;
+    let contents =
+        std::fs::read_to_string("/proc/self/cgroup").context("read guardian cgroup membership")?;
     let mut unified = None;
     for line in contents.lines() {
         let mut fields = line.splitn(3, ':');
@@ -1324,7 +1423,13 @@ fn current_linux_unified_cgroup() -> Result<String> {
         let controllers = fields.next();
         let path = fields.next();
         if hierarchy == Some("0") && controllers == Some("") {
-            if unified.replace(path.context("guardian cgroup entry has no path")?.to_owned()).is_some() {
+            if unified
+                .replace(
+                    path.context("guardian cgroup entry has no path")?
+                        .to_owned(),
+                )
+                .is_some()
+            {
                 bail!("guardian has multiple unified cgroup entries");
             }
         }
@@ -1342,7 +1447,10 @@ fn verify_linux_cgroup_limits(cgroup: &str) -> Result<()> {
     let bounded_value = |name: &str, ceiling: u64| -> Result<()> {
         let value = std::fs::read_to_string(directory.join(name))
             .with_context(|| format!("read effective cgroup {name}"))?;
-        let value = value.trim().parse::<u64>().with_context(|| format!("parse effective cgroup {name}"))?;
+        let value = value
+            .trim()
+            .parse::<u64>()
+            .with_context(|| format!("parse effective cgroup {name}"))?;
         if value > ceiling {
             bail!("effective cgroup {name} is not bounded to {ceiling}");
         }
@@ -1350,15 +1458,20 @@ fn verify_linux_cgroup_limits(cgroup: &str) -> Result<()> {
     };
     bounded_value("memory.max", 1_073_741_824)?;
     bounded_value("pids.max", 64)?;
-    let cpu_max = std::fs::read_to_string(directory.join("cpu.max")).context("read effective cgroup cpu.max")?;
+    let cpu_max = std::fs::read_to_string(directory.join("cpu.max"))
+        .context("read effective cgroup cpu.max")?;
     let mut cpu_max = cpu_max.split_ascii_whitespace();
-    let quota = cpu_max.next().context("effective cgroup cpu.max has no quota")?;
+    let quota = cpu_max
+        .next()
+        .context("effective cgroup cpu.max has no quota")?;
     let period = cpu_max
         .next()
         .context("effective cgroup cpu.max has no period")?
         .parse::<u64>()
         .context("parse effective cgroup cpu.max period")?;
-    let quota = quota.parse::<u64>().context("effective cgroup cpu.max quota is unlimited")?;
+    let quota = quota
+        .parse::<u64>()
+        .context("effective cgroup cpu.max quota is unlimited")?;
     if quota > period.saturating_mul(2) {
         bail!("effective cgroup cpu.max exceeds the two-core limit");
     }
@@ -1367,7 +1480,11 @@ fn verify_linux_cgroup_limits(cgroup: &str) -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn verify_linux_network_denied() -> Result<()> {
-    for (domain, name) in [(libc::AF_INET, "AF_INET"), (libc::AF_INET6, "AF_INET6"), (libc::AF_UNIX, "AF_UNIX")] {
+    for (domain, name) in [
+        (libc::AF_INET, "AF_INET"),
+        (libc::AF_INET6, "AF_INET6"),
+        (libc::AF_UNIX, "AF_UNIX"),
+    ] {
         // SAFETY: `socket` has no pointer arguments. A successful descriptor is
         // immediately closed before the guardian returns an error.
         let descriptor = unsafe { libc::socket(domain, libc::SOCK_STREAM, 0) };
@@ -1377,7 +1494,8 @@ fn verify_linux_network_denied() -> Result<()> {
             bail!("effective address-family policy still permits {name}");
         }
     }
-    let routes = std::fs::read_to_string("/proc/net/route").context("read effective IPv4 routes")?;
+    let routes =
+        std::fs::read_to_string("/proc/net/route").context("read effective IPv4 routes")?;
     if routes.lines().skip(1).any(|line| !line.trim().is_empty()) {
         bail!("effective network namespace retains IPv4 routes");
     }
@@ -1417,12 +1535,20 @@ fn verify_linux_write_boundary(working_directory: &Path, staging: &Path) -> Resu
         .context("prove the exact Graphify staging write capability")?;
     std::fs::remove_file(&staging_probe).context("remove Graphify staging proof")?;
     let run_probe = Path::new("/run").join(format!(".{nonce}.write-probe"));
-    match std::fs::OpenOptions::new().write(true).create_new(true).open(&run_probe) {
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&run_probe)
+    {
         Ok(_) => {
             let _ = std::fs::remove_file(&run_probe);
             bail!("effective filesystem boundary permits a host runtime-directory write")
         }
-        Err(error) if matches!(error.raw_os_error(), Some(libc::EACCES | libc::EROFS | libc::ENOENT)) => {}
+        Err(error)
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::EACCES | libc::EROFS | libc::ENOENT)
+            ) => {}
         Err(error) => return Err(error).context("prove host runtime-directory write denial"),
     }
     Ok(())

@@ -125,8 +125,7 @@ impl ProactiveConfig {
                 Self::MAX_IDLE_WINDOW_SECS
             ));
         }
-        if !(Self::MIN_DELIVERY_ATTEMPT_TIMEOUT_SECS
-            ..=Self::MAX_DELIVERY_ATTEMPT_TIMEOUT_SECS)
+        if !(Self::MIN_DELIVERY_ATTEMPT_TIMEOUT_SECS..=Self::MAX_DELIVERY_ATTEMPT_TIMEOUT_SECS)
             .contains(&self.delivery_attempt_timeout_secs)
         {
             return Err(format!(

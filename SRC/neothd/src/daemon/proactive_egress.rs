@@ -63,8 +63,7 @@ const DEFAULT_DELIVERY_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(60);
 // not block ordinary reads, but use the same named logical lease.
 const ARMED_CLAIM_LEASE_OFFSET: u64 = MAX_CLAIM_BYTES + 4_096;
 
-type TransportJoinHandle =
-    tokio::task::JoinHandle<std::result::Result<MessageId, ChannelError>>;
+type TransportJoinHandle = tokio::task::JoinHandle<std::result::Result<MessageId, ChannelError>>;
 
 struct CancelledTransportHandle {
     handle: TransportJoinHandle,
@@ -3157,7 +3156,8 @@ fn deadline_after(now_unix: i64, timeout: Duration) -> Result<i64> {
             .contains(&seconds),
         "proactive delivery attempt timeout is outside the configured safety bounds"
     );
-    let seconds = i64::try_from(seconds).context("proactive delivery attempt timeout is too large")?;
+    let seconds =
+        i64::try_from(seconds).context("proactive delivery attempt timeout is too large")?;
     now_unix
         .checked_add(seconds)
         .context("proactive delivery attempt deadline overflow")
@@ -3469,9 +3469,9 @@ async fn recover_pending_claims_locked(
                 // v2 attempt can no longer be safely treated as in-flight.
                 // Neither is re-sent: both become visible CrashUnknown.
                 if let Some(lease) = armed_claim_lease.as_ref() {
-                    lease.validate_claim(&claim).context(
-                        "revalidate proactive Armed claim lease before CrashUnknown",
-                    )?;
+                    lease
+                        .validate_claim(&claim)
+                        .context("revalidate proactive Armed claim lease before CrashUnknown")?;
                 }
                 let result = terminal_result(
                     &claim,
@@ -3694,10 +3694,7 @@ impl OwnedTransportAttempt {
             .validate_claim(claim)
     }
 
-    async fn finish_before(
-        &mut self,
-        deadline: tokio::time::Instant,
-    ) -> OwnedTransportOutcome {
+    async fn finish_before(&mut self, deadline: tokio::time::Instant) -> OwnedTransportOutcome {
         let handle = self
             .handle
             .as_mut()
@@ -3951,10 +3948,9 @@ pub(crate) async fn execute_claimed_once(
             registration,
         )
     };
-    anyhow::ensure!(
-        tokio::time::Instant::now() < transport_deadline,
-        "proactive attempt deadline expired before transport start"
-    );
+    if tokio::time::Instant::now() >= transport_deadline {
+        return Err("proactive attempt deadline expired before transport start".to_string());
+    }
 
     let mut transport = OwnedTransportAttempt::start(
         registration,
@@ -4008,12 +4004,12 @@ pub(crate) async fn execute_claimed_once(
         let _evidence_lock = evidence_lock;
         scan_authenticated_wal(&evidence_home, &evidence_segment, &active)
     })
-        .await
-        .map_err(|error| format!("join proactive terminal evidence scan: {error:#}"))?
-        .map_err(|error| format!("scan proactive terminal evidence: {error:#}"))?;
-    transport
-        .validate_claim_lease(&claim)
-        .map_err(|error| format!("revalidate proactive Armed claim lease before Result: {error:#}"))?;
+    .await
+    .map_err(|error| format!("join proactive terminal evidence scan: {error:#}"))?
+    .map_err(|error| format!("scan proactive terminal evidence: {error:#}"))?;
+    transport.validate_claim_lease(&claim).map_err(|error| {
+        format!("revalidate proactive Armed claim lease before Result: {error:#}")
+    })?;
     if let Some(existing) = evidence.results.get(&claim.intent_id) {
         verify_result_binding(existing, &claim)
             .map_err(|error| format!("verify raced proactive terminal result: {error:#}"))?;
@@ -4333,7 +4329,9 @@ mod tests {
         let claim_file = persist_prepared_claim(&delivery_lock, home, &prepared)
             .await
             .unwrap();
-        append_intent(&delivery_lock, writer, &prepared).await.unwrap();
+        append_intent(&delivery_lock, writer, &prepared)
+            .await
+            .unwrap();
         let armed = claim_in_phase(&prepared, ProactiveEgressPhase::Armed);
         persist_armed_claim(&delivery_lock, &claim_file, &armed)
             .await
@@ -4899,7 +4897,7 @@ mod tests {
             &generation,
             "telegram",
             "operator",
-            Arc::clone(&channel),
+            channel.clone(),
         );
         let second = execute_claimed_once(
             &context,
@@ -4907,7 +4905,7 @@ mod tests {
             &generation,
             "telegram",
             "operator",
-            Arc::clone(&channel),
+            channel.clone(),
         );
         let (first, second) = tokio::join!(first, second);
         let outcomes = [first.unwrap(), second.unwrap()];
@@ -5935,8 +5933,7 @@ mod tests {
         let sampled = chrono::DateTime::<chrono::Utc>::from_timestamp(100, 1_000_000)
             .expect("fixed admission sample");
         assert!(
-            wall_budget_from_admission_sample(160, sampled).unwrap()
-                < Duration::from_secs(60),
+            wall_budget_from_admission_sample(160, sampled).unwrap() < Duration::from_secs(60),
             "the live wall-clock budget is never longer than configuration"
         );
         let mut v2 = new_claim_with_deadline(
@@ -5954,14 +5951,17 @@ mod tests {
         assert_ne!(binding_hash(&v2), v2_binding);
         assert!(validate_claim(&v2, &claim_name(&v2)).is_err());
 
-        let mut v1 = new_claim(item("legacy-v1"), "generation", "telegram", "operator", 100)
-            .unwrap();
+        let mut v1 =
+            new_claim(item("legacy-v1"), "generation", "telegram", "operator", 100).unwrap();
         v1.version = LEGACY_CLAIM_VERSION;
         v1.attempt_deadline_unix = None;
         v1.binding_sha256 = binding_hash(&v1);
         validate_claim(&v1, &claim_name(&v1)).unwrap();
         let v1_intent = intent_frame(&v1);
-        assert_eq!(v1_intent.proactive_binding_version, LEGACY_WAL_BINDING_VERSION);
+        assert_eq!(
+            v1_intent.proactive_binding_version,
+            LEGACY_WAL_BINDING_VERSION
+        );
         assert_eq!(v1_intent.attempt_deadline_unix, None);
         validate_intent_frame(&v1_intent).unwrap();
     }
@@ -5973,15 +5973,8 @@ mod tests {
         let queued = item("reap-queue-test");
         let generation = seed_queue(home.path(), queued.clone());
         let (_segment, writer, join) = ready_writer(home.path()).await;
-        let (claim_file, claim) = armed_v2_claim_with_evidence(
-            home.path(),
-            &writer,
-            queued,
-            &generation,
-            100,
-            160,
-        )
-        .await;
+        let (claim_file, claim) =
+            armed_v2_claim_with_evidence(home.path(), &writer, queued, &generation, 100, 160).await;
         let lease = match ArmedClaimLease::try_acquire(&claim_file, &claim).unwrap() {
             ArmedClaimLeaseProbe::Acquired(lease) => Arc::new(lease),
             ArmedClaimLeaseProbe::Busy => panic!("fresh test claim lease must be acquirable"),
@@ -5989,7 +5982,7 @@ mod tests {
         let channel = Arc::new(BlockingChannel::new());
         let attempt = OwnedTransportAttempt::start(
             TransportIntentRegistration::acquire(&claim.intent_id),
-            Arc::clone(&channel),
+            channel.clone(),
             "operator".to_string(),
             "body".to_string(),
             tokio::time::Instant::now() + Duration::from_secs(60),
@@ -6029,15 +6022,8 @@ mod tests {
         let queued = item("terminal-handoff-test");
         let generation = seed_queue(home.path(), queued.clone());
         let (_segment, writer, join) = ready_writer(home.path()).await;
-        let (claim_file, claim) = armed_v2_claim_with_evidence(
-            home.path(),
-            &writer,
-            queued,
-            &generation,
-            100,
-            160,
-        )
-        .await;
+        let (claim_file, claim) =
+            armed_v2_claim_with_evidence(home.path(), &writer, queued, &generation, 100, 160).await;
         let lease = match ArmedClaimLease::try_acquire(&claim_file, &claim).unwrap() {
             ArmedClaimLeaseProbe::Acquired(lease) => Arc::new(lease),
             ArmedClaimLeaseProbe::Busy => panic!("fresh test claim lease must be acquirable"),
@@ -6082,19 +6068,14 @@ mod tests {
         let generation = seed_queue(home.path(), queued.clone());
         let (segment, writer, join) = ready_writer(home.path()).await;
         let delivery_lock = acquire_delivery_lock(home.path()).await.unwrap();
-        let prepared = new_claim_with_deadline(
-            queued,
-            &generation,
-            "telegram",
-            "operator",
-            100,
-            160,
-        )
-        .unwrap();
+        let prepared =
+            new_claim_with_deadline(queued, &generation, "telegram", "operator", 100, 160).unwrap();
         let claim_file = persist_prepared_claim(&delivery_lock, home.path(), &prepared)
             .await
             .unwrap();
-        append_intent(&delivery_lock, &writer, &prepared).await.unwrap();
+        append_intent(&delivery_lock, &writer, &prepared)
+            .await
+            .unwrap();
         let armed = claim_in_phase(&prepared, ProactiveEgressPhase::Armed);
         persist_armed_claim(&delivery_lock, &claim_file, &armed)
             .await
@@ -6110,7 +6091,10 @@ mod tests {
                 .unwrap(),
             0
         );
-        assert!(claim_path.exists(), "unexpired v2 attempt must remain durable");
+        assert!(
+            claim_path.exists(),
+            "unexpired v2 attempt must remain durable"
+        );
         assert!(read_delivery_history(home.path()).unwrap().is_empty());
 
         assert_eq!(
@@ -6119,7 +6103,10 @@ mod tests {
                 .unwrap(),
             1
         );
-        assert!(!claim_path.exists(), "expired v2 attempt is terminally reconciled");
+        assert!(
+            !claim_path.exists(),
+            "expired v2 attempt is terminally reconciled"
+        );
         assert_eq!(
             read_delivery_history(home.path()).unwrap()[0].outcome(),
             ProactiveEgressOutcome::CrashUnknown
@@ -6170,15 +6157,8 @@ mod tests {
         let queued = item("cross-process-lease");
         let generation = seed_queue(home.path(), queued.clone());
         let (segment, writer, join) = ready_writer(home.path()).await;
-        let (claim_file, claim) = armed_v2_claim_with_evidence(
-            home.path(),
-            &writer,
-            queued,
-            &generation,
-            100,
-            160,
-        )
-        .await;
+        let (claim_file, claim) =
+            armed_v2_claim_with_evidence(home.path(), &writer, queued, &generation, 100, 160).await;
         let claim_path = claim_file.display_path.clone();
         drop(claim_file);
 
@@ -6257,7 +6237,9 @@ mod tests {
         let claim_file = persist_prepared_claim(&delivery_lock, home.path(), &prepared)
             .await
             .unwrap();
-        append_intent(&delivery_lock, &writer, &prepared).await.unwrap();
+        append_intent(&delivery_lock, &writer, &prepared)
+            .await
+            .unwrap();
         let armed = claim_in_phase(&prepared, ProactiveEgressPhase::Armed);
         persist_armed_claim(&delivery_lock, &claim_file, &armed)
             .await

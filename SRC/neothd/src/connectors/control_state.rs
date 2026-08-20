@@ -133,7 +133,7 @@ pub enum ConnectorControlStateError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::connectors::{ConnectorId, ConnectorPolicySnapshot, SubjectId};
+    use crate::connectors::{ConnectorPolicySnapshot, SubjectId};
 
     fn local_import_account(lifecycle: ConnectorLifecycle) -> RegisteredConnectorAccount {
         RegisteredConnectorAccount {
@@ -172,7 +172,9 @@ mod tests {
         config.registered_accounts = vec![account];
         assert!(matches!(
             config.validate(),
-            Err(ConnectorControlStateError::InvalidLifecycleRevision(ConnectorId::LocalImport))
+            Err(ConnectorControlStateError::InvalidLifecycleRevision(
+                ConnectorId::LocalImport
+            ))
         ));
     }
 
@@ -196,17 +198,19 @@ mod tests {
         let omitted: ConnectorControlConfig = serde_yaml::from_str("{}").unwrap();
         assert_eq!(omitted, ConnectorControlConfig::default());
 
-        let unsupported: ConnectorControlConfig = serde_yaml::from_str(
-            "schema_version: 99\nenabled: false\nregistered_accounts: []\n",
-        )
-        .unwrap();
+        let unsupported: ConnectorControlConfig =
+            serde_yaml::from_str("schema_version: 99\nenabled: false\nregistered_accounts: []\n")
+                .unwrap();
         assert!(matches!(
             unsupported.validate(),
             Err(ConnectorControlStateError::UnsupportedSchemaVersion(99))
         ));
 
         let partial: ConnectorControlConfig = serde_yaml::from_str("enabled: true\n").unwrap();
-        assert_eq!(partial.schema_version, CONNECTOR_CONTROL_STATE_SCHEMA_VERSION);
+        assert_eq!(
+            partial.schema_version,
+            CONNECTOR_CONTROL_STATE_SCHEMA_VERSION
+        );
         assert!(partial.enabled);
         partial.validate().unwrap();
     }

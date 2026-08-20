@@ -481,7 +481,7 @@ fn durable_admission_precedes_owned_deadline_bounded_transport_and_terminalizati
     let terminal_release = terminal_append
         + terminalization[terminal_append..]
             .find("transport.release_after_terminal_result();")
-        .expect("terminal transport ownership release");
+            .expect("terminal transport ownership release");
     let terminal_projection = terminalization
         .find("apply_projections_blocking(")
         .expect("terminal projection");
@@ -500,7 +500,8 @@ fn durable_admission_precedes_owned_deadline_bounded_transport_and_terminalizati
         "transport must reject an expired admission deadline before task creation"
     );
     assert!(
-        execute.contains("let transport_deadline = original_monotonic_deadline.min(wall_deadline);"),
+        execute
+            .contains("let transport_deadline = original_monotonic_deadline.min(wall_deadline);"),
         "live transport must be bounded by both monotonic and durable-wall deadlines"
     );
     assert!(
@@ -531,9 +532,7 @@ fn owned_transport_cancellation_is_abort_then_reap_and_recovery_is_fail_closed()
             "owned transport lifecycle lost {required}"
         );
     }
-    let timeout_abort = owned
-        .find("handle.abort();")
-        .expect("timeout abort");
+    let timeout_abort = owned.find("handle.abort();").expect("timeout abort");
     let timeout_reap = owned[timeout_abort..]
         .find("let _ = (&mut handle).await;")
         .expect("timeout reaping acknowledgement");
@@ -572,11 +571,7 @@ fn owned_transport_cancellation_is_abort_then_reap_and_recovery_is_fail_closed()
         "dropping a live delivery must transfer its registration with the aborted handle"
     );
 
-    let reaper = between(
-        EGRESS,
-        "impl CancelledTransportReapGuard {",
-        "#[cfg(test)]",
-    );
+    let reaper = between(EGRESS, "impl CancelledTransportReapGuard {", "#[cfg(test)]");
     let joined = reaper
         .find("let _ = (&mut entry.handle).await;")
         .expect("cancelled handle join");
@@ -659,9 +654,9 @@ fn armed_claim_lease_and_registration_cover_admission_transport_and_terminalizat
     );
     let post_admission = &execute[provider_start..];
     assert!(
-        post_admission
-            .starts_with("let mut transport = OwnedTransportAttempt::start(\n        registration,")
-            && post_admission.contains("        armed_claim_lease,\n    );"),
+        post_admission.starts_with(
+            "let mut transport = OwnedTransportAttempt::start(\n        registration,"
+        ) && post_admission.contains("        armed_claim_lease,\n    );"),
         "only the post-unlock owned attempt may receive admission's registration and Armed lease"
     );
 
@@ -712,7 +707,7 @@ fn armed_claim_lease_and_registration_cover_admission_transport_and_terminalizat
     let owner_release = result_ack
         + terminalization[result_ack..]
             .find("transport.release_after_terminal_result();")
-        .expect("owner lease release");
+            .expect("owner lease release");
     let projections = terminalization
         .find("apply_projections_blocking(")
         .expect("terminal projections");
