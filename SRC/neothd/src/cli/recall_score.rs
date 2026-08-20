@@ -441,9 +441,7 @@ mod tests {
     #[test]
     fn supplied_goldset_requires_exact_grade_query_ids() {
         let entries = vec![entry("q1"), entry("q2")];
-        assert!(
-            validate_goldset_query_binding(&entries, &[grade("q1"), grade("q2")]).is_ok()
-        );
+        assert!(validate_goldset_query_binding(&entries, &[grade("q1"), grade("q2")]).is_ok());
         assert!(validate_goldset_query_binding(&entries, &[grade("q1")]).is_err());
         assert!(
             validate_goldset_query_binding(&entries, &[grade("q1"), grade("q2"), grade("q3")])
