@@ -1239,6 +1239,11 @@ fn commit_pending_hmac_rotation(
                 );
             }
         }
+        if archive_path.is_some() {
+            crate::wal::scan::reconcile_published_hmac_archive_limit(home).context(
+                "reconcile already-installed HMAC archive set before finalizing recovery",
+            )?;
+        }
         crate::wal::compaction::remove_home_wal_file_if_present(home, &staged_path)?;
         crate::wal::compaction::remove_home_wal_file_if_present(
             home,
@@ -1278,6 +1283,9 @@ fn commit_pending_hmac_rotation(
                 );
             }
         } else {
+            crate::wal::scan::reconcile_hmac_archive_capacity_for_rotation(home).context(
+                "reserve a verified HMAC archive-retention slot before recovering a pending rotation",
+            )?;
             let active = crate::wal::compaction::read_existing_home_wal_file(
                 home,
                 key_path,
@@ -1287,6 +1295,9 @@ fn commit_pending_hmac_rotation(
             crate::wal::compaction::write_new_home_wal_file(home, archive, &active)
                 .with_context(|| format!("write HMAC key archive {}", archive.display()))?;
         }
+        crate::wal::scan::reconcile_published_hmac_archive_limit(home).context(
+            "verify recovered HMAC archive set stays within the scanner retention limit",
+        )?;
     }
     crate::wal::compaction::replace_home_key(home, key_path, &staged)
         .context("atomically install audited HMAC replacement key")?;
@@ -1488,6 +1499,8 @@ pub(crate) async fn rotate_hmac_key_with_audit(
         {
             anyhow::bail!("HMAC key archive already exists at {}", archive.display());
         }
+        crate::wal::scan::reconcile_hmac_archive_capacity_for_rotation(home)
+            .context("reserve a verified HMAC archive-retention slot before rotation")?;
     }
     let signing_key = crate::wal::signing::load_or_init_signing_key(&signing_key_path)
         .context("load operator signing key for HMAC-key rotation")?;
@@ -2888,6 +2901,18 @@ mod tests {
         .unwrap();
         crate::wal::compaction::write_key_securely(&wal_dir.join(&staged_file), &replacement)
             .unwrap();
+        // A pre-lifecycle daemon could have reached the exact scanner cap
+        // before crashing after its audit. Recovery must reserve one slot
+        // before it writes this pending transaction's archive, rather than
+        // committing archive 65 and bricking full-home authentication.
+        for index in 0..64u64 {
+            crate::wal::compaction::write_new_home_wal_file(
+                home.path(),
+                &wal_dir.join(format!("hmac.key.{index:020}.archive")),
+                &[0x41; 32],
+            )
+            .unwrap();
+        }
         let event = serde_json::to_vec(&pending.payload).unwrap();
         append_hmac_key_rotated(home.path(), false, &event)
             .await
@@ -2916,6 +2941,178 @@ mod tests {
         );
         assert!(!hmac_rotation_journal_path(&key_path).exists());
         assert!(!wal_dir.join(staged_file).exists());
+        let archive_count = std::fs::read_dir(&wal_dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("hmac.key.")
+                    && entry.file_name().to_string_lossy().ends_with(".archive")
+            })
+            .count();
+        assert_eq!(archive_count, 64, "recovery must never publish archive 65");
+    }
+
+    #[test]
+    fn pending_rotation_capacity_failure_preserves_journal_stage_and_active_key() {
+        let home = TempDir::new().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let key_path = wal_dir.join("hmac.key");
+        let active = [0x31; 32];
+        let replacement = [0x72; 32];
+        crate::wal::compaction::rewrap_key(&key_path, &active).unwrap();
+        let signing_key =
+            crate::wal::signing::load_or_init_signing_key(&wal_dir.join("signing.key")).unwrap();
+        let mut payload = HmacKeyRotatedPayload {
+            schema: HmacKeyRotatedPayload::SCHEMA,
+            rotation_id: uuid::Uuid::now_v7().hyphenated().to_string(),
+            new_key_sha256: sha256_hex(&replacement),
+            previous_key_storage_sha256: current_key_storage_hash(home.path(), &key_path).unwrap(),
+            replaced: true,
+            reason: "rotate".to_owned(),
+            ts_unix: crate::time::now_unix_i64(),
+            signer_pubkey: crate::wal::signing::pubkey_b64(&signing_key),
+            sig: String::new(),
+        };
+        payload.sig = crate::wal::signing::sign_b64(&signing_key, &payload.canonical_bytes());
+        let staged_file = format!("hmac.key.rotation-{}.next", payload.rotation_id);
+        let archive_file = "hmac.key.1700000000.archive".to_owned();
+        let pending = PendingHmacKeyRotation {
+            schema: PendingHmacKeyRotation::SCHEMA,
+            payload,
+            staged_file: staged_file.clone(),
+            archive_file: Some(archive_file.clone()),
+        };
+        let journal_path = hmac_rotation_journal_path(&key_path);
+        crate::wal::compaction::write_new_home_wal_file(
+            home.path(),
+            &journal_path,
+            &serde_json::to_vec(&pending).unwrap(),
+        )
+        .unwrap();
+        crate::wal::compaction::write_new_home_key_sibling(
+            home.path(),
+            &wal_dir.join(&staged_file),
+            &replacement,
+        )
+        .unwrap();
+        for index in 0..64u64 {
+            crate::wal::compaction::write_new_home_wal_file(
+                home.path(),
+                &wal_dir.join(format!("hmac.key.{index:020}.archive")),
+                &[0x41; 32],
+            )
+            .unwrap();
+        }
+        // This is incomplete retained history. Reconciliation must refuse
+        // before it writes archive 65 and leave all recovery evidence intact.
+        let header = crate::wal::segment_header::SegmentHeaderV2::new(
+            1,
+            1,
+            0,
+            0,
+            [0u8; 16],
+            0,
+        );
+        let frame_header = crate::wal::HeaderBuilder::new(0x41, b"unmarked").build();
+        let mut segment = header.to_le_bytes().to_vec();
+        segment.extend_from_slice(&crate::wal::frame::encode_frame(&frame_header, b"unmarked"));
+        std::fs::write(wal_dir.join("000001.wal"), segment).unwrap();
+
+        let error = commit_pending_hmac_rotation(home.path(), &key_path, pending, true)
+            .expect_err("incomplete retained history must block pending archive publication");
+        assert!(
+            format!("{error:#}").contains("reserve a verified HMAC archive-retention slot"),
+            "unexpected capacity failure: {error:#}"
+        );
+        assert!(journal_path.exists(), "pending journal must remain recoverable");
+        assert!(wal_dir.join(staged_file).exists(), "pending stage must remain recoverable");
+        assert!(
+            !wal_dir.join(archive_file).exists(),
+            "failed recovery must not write archive 65"
+        );
+        assert_eq!(
+            crate::wal::compaction::load_existing_home_key(home.path(), &key_path).unwrap(),
+            active
+        );
+    }
+
+    #[test]
+    fn installed_pending_recovery_repairs_a_legacy_over_limit_archive_set() {
+        let home = TempDir::new().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let key_path = wal_dir.join("hmac.key");
+        let active = [0x31; 32];
+        let replacement = [0x72; 32];
+        crate::wal::compaction::rewrap_key(&key_path, &active).unwrap();
+        let previous_key_storage_sha256 = current_key_storage_hash(home.path(), &key_path).unwrap();
+        let active_storage = crate::wal::compaction::read_existing_home_wal_file(
+            home.path(),
+            &key_path,
+            crate::wal::scan::MAX_HOME_KEY_BYTES,
+        )
+        .unwrap();
+        let signing_key =
+            crate::wal::signing::load_or_init_signing_key(&wal_dir.join("signing.key")).unwrap();
+        let rotation_id = uuid::Uuid::now_v7().hyphenated().to_string();
+        let mut payload = HmacKeyRotatedPayload {
+            schema: HmacKeyRotatedPayload::SCHEMA,
+            rotation_id: rotation_id.clone(),
+            new_key_sha256: sha256_hex(&replacement),
+            previous_key_storage_sha256,
+            replaced: true,
+            reason: "rotate".to_owned(),
+            ts_unix: crate::time::now_unix_i64(),
+            signer_pubkey: crate::wal::signing::pubkey_b64(&signing_key),
+            sig: String::new(),
+        };
+        payload.sig = crate::wal::signing::sign_b64(&signing_key, &payload.canonical_bytes());
+        let archive_file = "hmac.key.1700000000.archive".to_owned();
+        let pending = PendingHmacKeyRotation {
+            schema: PendingHmacKeyRotation::SCHEMA,
+            payload,
+            staged_file: format!("hmac.key.rotation-{rotation_id}.next"),
+            archive_file: Some(archive_file.clone()),
+        };
+        for index in 0..64u64 {
+            crate::wal::compaction::write_new_home_wal_file(
+                home.path(),
+                &wal_dir.join(format!("hmac.key.{index:020}.archive")),
+                &[0x41; 32],
+            )
+            .unwrap();
+        }
+        crate::wal::compaction::write_new_home_wal_file(
+            home.path(),
+            &wal_dir.join(&archive_file),
+            &active_storage,
+        )
+        .unwrap();
+        crate::wal::compaction::replace_home_key(home.path(), &key_path, &replacement).unwrap();
+
+        let result = commit_pending_hmac_rotation(home.path(), &key_path, pending, true)
+            .expect("installed-key recovery must repair removable legacy archive overflow");
+        assert!(result.recovered);
+        assert_eq!(
+            crate::wal::compaction::load_existing_home_key(home.path(), &key_path).unwrap(),
+            replacement
+        );
+        let archive_count = std::fs::read_dir(&wal_dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("hmac.key.")
+                    && entry.file_name().to_string_lossy().ends_with(".archive")
+            })
+            .count();
+        assert_eq!(archive_count, 64, "installed recovery must repair archive 65");
     }
 
     #[test]
