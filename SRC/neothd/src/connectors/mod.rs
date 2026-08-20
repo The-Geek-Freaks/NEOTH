@@ -258,7 +258,7 @@ impl fmt::Display for CredentialRef {
 }
 
 impl Serialize for CredentialRef {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
