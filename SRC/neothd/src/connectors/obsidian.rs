@@ -1442,12 +1442,7 @@ mod tests {
     ) -> (ObsidianPolicyAuthority, ApprovedObsidianVault) {
         let authority = ObsidianPolicyAuthority::for_admitted_configuration(configuration).unwrap();
         let grant = authority
-            .issue_root_grant(
-                configuration,
-                path.to_path_buf(),
-                "primary-vault",
-                TEST_KEY,
-            )
+            .issue_root_grant(configuration, path.to_path_buf(), "primary-vault", TEST_KEY)
             .unwrap();
         let vault = ApprovedObsidianVault::issue(configuration, grant).unwrap();
         (authority, vault)
@@ -1820,13 +1815,8 @@ mod tests {
         ] {
             assert_eq!(
                 authority
-                    .issue_root_grant(
-                        &config,
-                        PathBuf::from(root),
-                        "primary-vault",
-                        TEST_KEY,
-                    )
-                .unwrap_err(),
+                    .issue_root_grant(&config, PathBuf::from(root), "primary-vault", TEST_KEY,)
+                    .unwrap_err(),
                 ObsidianPlanError::UnsupportedRootNamespace
             );
         }
