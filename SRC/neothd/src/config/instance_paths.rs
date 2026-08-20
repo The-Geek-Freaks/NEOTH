@@ -16,6 +16,9 @@ pub(crate) struct InstancePaths {
     pub(crate) adr: PathBuf,
     pub(crate) archive: PathBuf,
     pub(crate) code_map: PathBuf,
+    /// Account-scoped context graph store.  This is deliberately instance
+    /// local: selecting `--config` must never cross-read another profile.
+    pub(crate) context_db: PathBuf,
     pub(crate) profile_extensions: PathBuf,
 }
 
@@ -31,6 +34,7 @@ impl InstancePaths {
             adr: home.join("adr"),
             archive: home.join("archive"),
             code_map: home.join("code_map.db"),
+            context_db: home.join("context.db"),
             profile_extensions: home.join("profile_extensions.toml"),
             home,
         }
@@ -61,6 +65,7 @@ mod tests {
         assert_eq!(paths.adr, home.join("adr"));
         assert_eq!(paths.archive, home.join("archive"));
         assert_eq!(paths.code_map, home.join("code_map.db"));
+        assert_eq!(paths.context_db, home.join("context.db"));
         assert_eq!(
             paths.profile_extensions,
             home.join("profile_extensions.toml")
@@ -81,6 +86,7 @@ mod tests {
                 &paths.adr,
                 &paths.archive,
                 &paths.code_map,
+                &paths.context_db,
                 &paths.profile_extensions,
             ]
             .into_iter()

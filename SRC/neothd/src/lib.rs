@@ -121,6 +121,8 @@ pub mod config;
 pub mod connectors;
 pub mod consent;
 pub mod context;
+/// GOLD-CC-02 — instance-bound encrypted connector evidence store.
+pub mod context_graph;
 pub mod council;
 pub mod credentials;
 pub mod cron;
