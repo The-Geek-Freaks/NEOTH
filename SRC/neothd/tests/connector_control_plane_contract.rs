@@ -13,8 +13,10 @@ const CONFIG: &str = include_str!("../src/config/mod.rs");
 fn control_plane_exposes_no_public_capability_mint_or_effect_surface() {
     assert!(!CONTROL_PLANE.contains("pub struct AuthenticatedControlSession"));
     assert!(!CONTROL_PLANE.contains("pub struct AccountAuthority"));
+    assert!(!CONTROL_PLANE.contains("pub struct ContextImportOperationLease"));
     assert!(!CONTROL_PLANE.contains("AuthenticatedControlSessionIssuer"));
     assert!(!CONTROL_PLANE.contains("pub fn authorize_context_import"));
+    assert!(!CONTROL_PLANE.contains("pub fn acquire_context_import_operation_lease"));
     assert!(!CONTROL_PLANE.contains("pub async fn"));
     for forbidden in [
         "use crate::context_graph",
@@ -27,6 +29,29 @@ fn control_plane_exposes_no_public_capability_mint_or_effect_surface() {
             "control plane must not wire {forbidden}"
         );
     }
+}
+
+#[test]
+fn operation_lease_and_durable_transition_stay_private_and_fail_closed() {
+    assert!(CONTROL_PLANE.contains("pub(crate) struct ContextImportOperationLease"));
+    assert!(!CONTROL_PLANE.contains("impl Clone for ContextImportOperationLease"));
+    assert!(!CONTROL_PLANE.contains("#[derive(Clone, Debug)]\npub(crate) struct ContextImportOperationLease"));
+    assert!(CONTROL_PLANE.contains("live_leases: usize"));
+    assert!(CONTROL_PLANE.contains("fn retire_and_drain"));
+    assert!(CONTROL_PLANE.contains("ProjectionFailedClosed"));
+    assert!(CONTROL_PLANE.contains("commit_context_connectors_if_matches"));
+
+    let commit_start = CONTROL_PLANE
+        .find("pub(crate) fn commit_durable_update(")
+        .expect("connector transition must retain the durable commit method");
+    let commit_body = &CONTROL_PLANE[commit_start..];
+    let publication = commit_body
+        .find("commit_context_connectors_if_matches")
+        .expect("transition must publish only a config-bound CAS update");
+    let install = commit_body
+        .find("install_after_durable_commit")
+        .expect("transition must install the projection after publication");
+    assert!(publication < install);
 }
 
 #[test]
@@ -50,7 +75,7 @@ fn only_cc01_admission_can_precede_context_import_authority() {
         .expect("control plane must retain the context-import admission method");
     let body = &CONTROL_PLANE[start..];
     let body = &body[..body
-        .find("\n    /// Retires only the in-memory authority")
+        .find("\n    /// Retire only in-memory authority")
         .expect("authorize_context_import body must end before retirement")];
     let admission = body
         .find("admit_entry_point(")

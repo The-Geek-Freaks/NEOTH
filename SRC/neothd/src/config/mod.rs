@@ -415,6 +415,24 @@ impl PreparedFreedomUpdate {
         sha256_bytes(&self.target)
     }
 
+    /// Commit only when the reviewed target contains this exact connector
+    /// control generation.  The comparison happens before the source CAS, so
+    /// a caller cannot pair a valid `PreparedFreedomUpdate` with a different
+    /// in-memory projection by accident.  The final `commit` still compares
+    /// the on-disk source bytes under the canonical locks.
+    pub(crate) fn commit_context_connectors_if_matches(
+        self,
+        expected: &crate::connectors::control_state::ConnectorControlConfig,
+    ) -> Result<()> {
+        let target = parse_public_freedom_yaml(&self.path, &self.target)
+            .context("parse reviewed freedom.yaml connector-control target")?;
+        anyhow::ensure!(
+            target.context_connectors == *expected,
+            "reviewed freedom.yaml target does not match the connector-control projection; refusing publication"
+        );
+        self.commit()
+    }
+
     /// Publish exactly once. Failure before the atomic rename leaves the
     /// previously observed source untouched; a changed source is never
     /// overwritten.
