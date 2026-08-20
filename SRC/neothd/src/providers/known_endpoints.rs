@@ -175,6 +175,26 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         has_list_models: true,
     },
     KnownEndpoint {
+        display: "Cerebras Inference",
+        provider_id: "cerebras",
+        endpoint: "https://api.cerebras.ai/v1",
+        profile: OpenAiCompatibleProfile::Generic,
+        default_model: "gpt-oss-120b",
+        summary: "Ultra-low-latency open-model inference with OpenAI-compatible chat completions",
+        doc_url: "https://inference-docs.cerebras.ai/resources/openai",
+        has_list_models: true,
+    },
+    KnownEndpoint {
+        display: "Nebius AI Studio",
+        provider_id: "nebius",
+        endpoint: "https://api.studio.nebius.com/v1",
+        profile: OpenAiCompatibleProfile::Generic,
+        default_model: "Qwen/Qwen3-235B-A22B",
+        summary: "Hosted open-model inference with an OpenAI-compatible API",
+        doc_url: "https://api.studio.nebius.com/docs",
+        has_list_models: true,
+    },
+    KnownEndpoint {
         display: "Perplexity AI",
         provider_id: "perplexity",
         endpoint: "https://api.perplexity.ai",
@@ -528,6 +548,21 @@ mod tests {
         assert_eq!(deepseek.display, "DeepSeek (direct)");
         assert_eq!(deepseek.endpoint, "https://api.deepseek.com");
         assert_eq!(deepseek.profile, OpenAiCompatibleProfile::DeepSeek);
+    }
+
+    #[test]
+    fn cerebras_and_nebius_catalog_entries_are_pinned() {
+        let cerebras = find_by_id("cerebras").expect("Cerebras must be present");
+        assert_eq!(cerebras.endpoint, "https://api.cerebras.ai/v1");
+        assert_eq!(cerebras.default_model, "gpt-oss-120b");
+        assert_eq!(cerebras.profile, OpenAiCompatibleProfile::Generic);
+        assert!(cerebras.has_list_models);
+
+        let nebius = find_by_id("nebius").expect("Nebius must be present");
+        assert_eq!(nebius.endpoint, "https://api.studio.nebius.com/v1");
+        assert_eq!(nebius.default_model, "Qwen/Qwen3-235B-A22B");
+        assert_eq!(nebius.profile, OpenAiCompatibleProfile::Generic);
+        assert!(nebius.has_list_models);
     }
 
     #[test]
