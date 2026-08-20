@@ -11,6 +11,19 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+// GOLD-CC-04 — hardened, effect-free import planners.  These remain private
+// implementation substrates until a later control-plane slice can issue their
+// module-private authority.  In particular, this declaration does not expose
+// a connector API, start a daemon, schedule a sync, or grant runtime access.
+//
+// Each substrate intentionally contains its own public-to-the-module planning
+// types for internal contract tests.  The narrow lint allowance prevents those
+// unissued types from forcing a premature public or runtime-facing export.
+#[allow(dead_code)]
+mod local_import;
+#[allow(dead_code)]
+mod obsidian;
+
 pub const CONNECTOR_REGISTRY_SCHEMA_VERSION: u32 = 1;
 const MAX_ID_LEN: usize = 64;
 const MAX_CREDENTIAL_REF_LEN: usize = 128;
@@ -947,6 +960,30 @@ mod tests {
         assert_eq!(research.roles, ConnectorRoles::RESEARCH_BACKEND);
         assert!(!research.capabilities.direct_execution);
         assert!(!research.capabilities.mcp_dispatch);
+    }
+
+    #[test]
+    fn cc04_planning_substrates_compile_without_runtime_or_research_authority() {
+        // These references are a compile contract: removing either private
+        // module breaks this test target, while neither call opens a path,
+        // issues a capability, persists data, or schedules a sync.
+        assert_eq!(local_import::LOCAL_IMPORT_PARSER_REVISION, 1);
+        assert_eq!(local_import::MAX_IMPORT_BYTES, 1024 * 1024);
+        let obsidian_limits = obsidian::ObsidianImportLimits::default();
+        assert_eq!(obsidian_limits.max_depth, 16);
+
+        // Agent-Reach remains a descriptor-only research reference.  The
+        // CC-04 planners do not turn it into an adapter or execution path.
+        let research = descriptor(ConnectorId::AgentReachResearch);
+        assert_eq!(
+            research.availability,
+            ConnectorAvailability::DisabledExperimental
+        );
+        assert_eq!(research.roles, ConnectorRoles::RESEARCH_BACKEND);
+        assert!(!research.capabilities.direct_execution);
+        assert!(!research.capabilities.mcp_dispatch);
+        assert_eq!(research.capabilities.egress, EgressClass::None);
+        assert!(!research.capabilities.actions.any());
     }
 
     #[test]
