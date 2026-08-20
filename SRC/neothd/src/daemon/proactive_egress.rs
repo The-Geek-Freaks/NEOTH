@@ -11,7 +11,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -28,8 +29,15 @@ use crate::wal::writer::WalWriterHandle;
 pub const PROACTIVE_INFLIGHT_DIR: &str = "proactive_inflight";
 pub const PROACTIVE_DELIVERY_LOCK_FILE: &str = "proactive_delivery.lock";
 
-const CLAIM_VERSION: u8 = 1;
-const WAL_BINDING_VERSION: u8 = 1;
+/// Claim/WAL v2 binds an absolute retry budget into the durable authority.
+///
+/// Version one is deliberately still accepted for recovery: it cannot prove a
+/// bounded live attempt, so an Armed v1 claim without a terminal result is
+/// immediately settled as `CrashUnknown` rather than replayed.
+const CLAIM_VERSION: u8 = 2;
+const LEGACY_CLAIM_VERSION: u8 = 1;
+const WAL_BINDING_VERSION: u8 = 2;
+const LEGACY_WAL_BINDING_VERSION: u8 = 1;
 const MAX_CLAIMS: usize = 1_024;
 const MAX_CLAIM_DIRECTORY_ENTRIES: usize = 2_048;
 const MAX_CLAIM_BYTES: u64 = 2 * 1024 * 1024;
@@ -48,6 +56,68 @@ const MAX_SIDECAR_BYTES: u64 = 64 * 1024 * 1024;
 const SIDECAR_ROTATE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_ROTATED_SIDECARS: usize = 32;
 const MAX_ROTATION_CRASH_ARCHIVES: usize = MAX_ROTATED_SIDECARS + 1;
+const DEFAULT_DELIVERY_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(60);
+// Windows byte-range locks conflict with reads over their range. Keep the
+// cross-process lease on one out-of-band byte so recovery can still read and
+// authenticate the private claim before it probes Busy. Unix flock locks do
+// not block ordinary reads, but use the same named logical lease.
+const ARMED_CLAIM_LEASE_OFFSET: u64 = MAX_CLAIM_BYTES + 4_096;
+
+type TransportJoinHandle =
+    tokio::task::JoinHandle<std::result::Result<MessageId, ChannelError>>;
+
+struct CancelledTransportHandle {
+    handle: TransportJoinHandle,
+    registration: TransportIntentRegistration,
+}
+
+/// Outer-future cancellation cannot await, but it must also never detach a
+/// provider task. Drop moves the aborted handle into this process-lifetime
+/// supervisor. Every recovery/admission path drains it before it may inspect
+/// or change durable claim state; a non-cooperative task therefore blocks new
+/// egress fail-closed instead of becoming an unobservable background effect.
+static CANCELLED_TRANSPORT_REAP_QUEUE: LazyLock<Mutex<Vec<CancelledTransportHandle>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// In-process ownership registry for attempts whose channel future can still
+/// be alive. It closes the narrow cancellation/recovery race: recovery checks
+/// this intent-associated state before it can turn an expired Armed claim into
+/// CrashUnknown. The owning egress task clears it only after join/reap.
+static ACTIVE_TRANSPORT_INTENTS: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Same-process companion to the OS lease. File locking can be re-entrant for
+/// handles in one process on some platforms, so recovery needs an intent-bound
+/// local gate too. It is registered under DeliveryLock before Armed WAL ACK
+/// and is transferred into the cancellation reaper rather than being dropped
+/// with an outer egress future.
+struct TransportIntentRegistration {
+    intent_id: String,
+    active: bool,
+}
+
+impl TransportIntentRegistration {
+    fn acquire(intent_id: &str) -> Self {
+        mark_transport_active(intent_id);
+        Self {
+            intent_id: intent_id.to_string(),
+            active: true,
+        }
+    }
+
+    fn release(&mut self) {
+        if self.active {
+            mark_transport_inactive(&self.intent_id);
+            self.active = false;
+        }
+    }
+}
+
+impl Drop for TransportIntentRegistration {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
 
 struct BoundClaimFile {
     root: Arc<crate::skills::store::BoundDirectory>,
@@ -84,6 +154,18 @@ impl BoundClaimFile {
             "proactive claim identity changed before its effect"
         );
         Ok(())
+    }
+
+    fn identity_token(&self) -> Result<String> {
+        let binding = self
+            .removal_binding
+            .lock()
+            .map_err(|_| anyhow::anyhow!("proactive claim removal binding lock poisoned"))?;
+        Ok(binding
+            .as_ref()
+            .context("proactive claim removal binding was already consumed")?
+            .identity_token()
+            .to_owned())
     }
 
     /// Release the old Windows leaf handle immediately before replacing a
@@ -139,6 +221,228 @@ impl BoundClaimFile {
     }
 }
 
+/// Cross-process lifetime fence for one exact Armed v2 claim file.
+///
+/// The delivery lock serializes short durable transitions, but it is released
+/// for provider I/O.  A wall-clock jump in a second process must therefore not
+/// turn the first process's still-monotonic-live attempt into `CrashUnknown`.
+/// This lease is acquired only from the capability-bound, no-follow final
+/// `.claimed` object and is retained until the provider future has stopped and
+/// the Result WAL acknowledgement has made terminal evidence durable. Dropping
+/// the file handle releases the OS lease on process crash.
+struct ArmedClaimLease {
+    root: Arc<crate::skills::store::BoundDirectory>,
+    name: OsString,
+    display_path: PathBuf,
+    intent_id: String,
+    binding_sha256: String,
+    namespace_binding: crate::skills::store::BoundChildObject,
+    // The exact no-follow handle retains the OS lease: an out-of-band
+    // LockFileEx byte on Windows and `File::try_lock`/flock on Unix. Do not
+    // replace it with a sibling lock path.
+    _file: std::fs::File,
+}
+
+enum ArmedClaimLeaseProbe {
+    Acquired(ArmedClaimLease),
+    Busy,
+}
+
+/// `true` means this exact claim object is now exclusively leased; `false`
+/// means another process owns it. The handle itself retains the lease.
+fn try_lock_armed_claim_file(file: &std::fs::File) -> Result<bool> {
+    #[cfg(unix)]
+    {
+        match file.try_lock() {
+            Ok(()) => Ok(true),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(false),
+            Err(std::fs::TryLockError::Error(error)) => {
+                Err(error).context("lock proactive Armed claim lease")
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Win32::Foundation::{GetLastError, HANDLE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
+        };
+
+        #[repr(C)]
+        struct LeaseOverlapped {
+            internal: usize,
+            internal_high: usize,
+            offset: u32,
+            offset_high: u32,
+            event: isize,
+        }
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn LockFileEx(
+                file: HANDLE,
+                flags: u32,
+                reserved: u32,
+                bytes_low: u32,
+                bytes_high: u32,
+                overlapped: *mut LeaseOverlapped,
+            ) -> i32;
+        }
+
+        let mut overlapped = LeaseOverlapped {
+            internal: 0,
+            internal_high: 0,
+            offset: ARMED_CLAIM_LEASE_OFFSET as u32,
+            offset_high: (ARMED_CLAIM_LEASE_OFFSET >> 32) as u32,
+            event: 0,
+        };
+        // SAFETY: `file` is an owned valid Windows file handle; the
+        // stack-backed OVERLAPPED is used synchronously with FAIL_IMMEDIATELY,
+        // so it cannot outlive this call.
+        let acquired = unsafe {
+            LockFileEx(
+                file.as_raw_handle() as HANDLE,
+                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                0,
+                1,
+                0,
+                &mut overlapped,
+            ) != 0
+        };
+        if acquired {
+            return Ok(true);
+        }
+        // ERROR_LOCK_VIOLATION is the sole expected non-blocking contention
+        // result. Everything else is a real capability/I/O failure.
+        const ERROR_LOCK_VIOLATION: u32 = 33;
+        let code = unsafe { GetLastError() };
+        if code == ERROR_LOCK_VIOLATION {
+            Ok(false)
+        } else {
+            Err(std::io::Error::from_raw_os_error(code as i32))
+                .context("lock proactive Armed claim lease")
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        match file.try_lock() {
+            Ok(()) => Ok(true),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(false),
+            Err(std::fs::TryLockError::Error(error)) => {
+                Err(error).context("lock proactive Armed claim lease")
+            }
+        }
+    }
+}
+
+impl ArmedClaimLease {
+    fn try_acquire(
+        claim_file: &BoundClaimFile,
+        claim: &ProactiveEgressClaim,
+    ) -> Result<ArmedClaimLeaseProbe> {
+        anyhow::ensure!(
+            claim.version == CLAIM_VERSION && claim.phase == ProactiveEgressPhase::Armed,
+            "only an Armed v2 proactive claim may acquire a transport lease"
+        );
+        let expected_name = claim_name(claim);
+        anyhow::ensure!(
+            claim_file.name == OsStr::new(&expected_name),
+            "proactive Armed claim lease name does not match its authenticated claim"
+        );
+        validate_claim(claim, &expected_name)?;
+        anyhow::ensure!(
+            claim.binding_sha256 == binding_hash(claim),
+            "proactive Armed claim lease received an invalid claim binding"
+        );
+        // Bind the lease to the exact generation read by recovery/admission,
+        // rather than merely whatever object presently occupies its path.
+        claim_file.ensure_current()?;
+        let expected_identity = claim_file.identity_token()?;
+
+        // This is the no-follow capability open. The returned binding proves
+        // that the exact direct child did not change while being opened.
+        let (mut opened, namespace_binding, is_private) =
+            open_regular_claim_readonly(&claim_file.root, &claim_file.name)?;
+        anyhow::ensure!(
+            is_private,
+            "refuse to lease a proactive claim whose permissions are not private"
+        );
+        anyhow::ensure!(
+            namespace_binding.identity_token() == expected_identity,
+            "proactive Armed claim identity changed before lease acquisition"
+        );
+        let mut bytes = Vec::new();
+        (&mut opened)
+            .take(MAX_CLAIM_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .context("read final proactive Armed claim before lease")?;
+        anyhow::ensure!(
+            bytes.len() as u64 <= MAX_CLAIM_BYTES,
+            "proactive Armed claim exceeds size limit before lease"
+        );
+        let observed: ProactiveEgressClaim = serde_json::from_slice(&bytes)
+            .context("decode final proactive Armed claim before lease")?;
+        validate_claim(&observed, &expected_name)?;
+        anyhow::ensure!(
+            observed == *claim,
+            "proactive Armed claim bytes changed before lease acquisition"
+        );
+        // Re-check the original mutation-capability binding immediately after
+        // reading; the later lease validation repeats this exact identity
+        // check before each provider or terminal effect.
+        claim_file.ensure_current()?;
+
+        let file = opened.into_std();
+
+        match try_lock_armed_claim_file(&file)? {
+            true => {
+                let lease = Self {
+                    root: Arc::clone(&claim_file.root),
+                    name: claim_file.name.clone(),
+                    display_path: claim_file.display_path.clone(),
+                    intent_id: claim.intent_id.clone(),
+                    binding_sha256: claim.binding_sha256.clone(),
+                    namespace_binding,
+                    _file: file,
+                };
+                claim_file.ensure_current()?;
+                lease.validate_claim(claim)?;
+                Ok(ArmedClaimLeaseProbe::Acquired(lease))
+            }
+            false => Ok(ArmedClaimLeaseProbe::Busy),
+        }
+    }
+
+    /// Revalidate the immutable identity/binding immediately before every
+    /// effect boundary. This never trusts an ambient path and never reads raw
+    /// adapter data into a durable error path.
+    fn validate_claim(&self, claim: &ProactiveEgressClaim) -> Result<()> {
+        anyhow::ensure!(
+            claim.version == CLAIM_VERSION
+                && claim.phase == ProactiveEgressPhase::Armed
+                && claim.intent_id == self.intent_id
+                && claim.binding_sha256 == self.binding_sha256
+                && claim.binding_sha256 == binding_hash(claim)
+                && claim_name(claim) == self.name.to_string_lossy(),
+            "proactive Armed claim lease binding changed before effect"
+        );
+        self.validate_namespace_binding()
+    }
+
+    fn validate_namespace_binding(&self) -> Result<()> {
+        let matches = self.namespace_binding.matches_regular_file_child_readonly(
+            &self.root.dir,
+            &self.name,
+            &self.display_path,
+        )?;
+        anyhow::ensure!(
+            matches,
+            "proactive Armed claim lease namespace changed before effect"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ProactiveEgressPhase {
@@ -170,6 +474,11 @@ pub(crate) struct ProactiveEgressClaim {
     pub legacy_claim_sha256: Option<String>,
     pub binding_sha256: String,
     pub created_at_unix: i64,
+    /// Absolute UTC seconds at which a v2 Armed attempt is no longer allowed
+    /// to remain in-flight. It is included in the v2 claim binding and Intent
+    /// frame, so a crash cannot extend an already-admitted transport budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt_deadline_unix: Option<i64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -270,6 +579,8 @@ struct ProactiveIntentFrame {
     dedup_sha256: String,
     queue_generation: String,
     created_at_unix: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    attempt_deadline_unix: Option<i64>,
 }
 
 /// Authenticated proof that the private claim was durably Armed before any
@@ -588,7 +899,23 @@ fn binding_hash(claim: &ProactiveEgressClaim) -> String {
     }
     bytes.extend_from_slice(&(claim.message_bytes as u64).to_be_bytes());
     bytes.extend_from_slice(&claim.created_at_unix.to_be_bytes());
-    effect_hash(b"proactive-egress-binding-v1", &bytes)
+    match claim.version {
+        LEGACY_CLAIM_VERSION => effect_hash(b"proactive-egress-binding-v1", &bytes),
+        CLAIM_VERSION => {
+            // Do not change the v1 preimage: existing persistent claims must
+            // continue to authenticate byte-for-byte.  The deadline is a
+            // mandatory v2 binding element and has no mutable recovery path.
+            let Some(deadline) = claim.attempt_deadline_unix else {
+                // Validation rejects this state; keep hashing total so a
+                // malformed disk record produces a controlled validation
+                // error rather than a recovery-process panic.
+                return effect_hash(b"proactive-egress-binding-v2-invalid", &bytes);
+            };
+            bytes.extend_from_slice(&deadline.to_be_bytes());
+            effect_hash(b"proactive-egress-binding-v2", &bytes)
+        }
+        _ => effect_hash(b"proactive-egress-binding-invalid", &bytes),
+    }
 }
 
 fn claim_in_phase(
@@ -663,9 +990,25 @@ fn validate_claim(claim: &ProactiveEgressClaim, file_name: &str) -> Result<()> {
         "serialized proactive claim exceeds size limit"
     );
     anyhow::ensure!(
-        claim.version == CLAIM_VERSION,
+        matches!(claim.version, LEGACY_CLAIM_VERSION | CLAIM_VERSION),
         "unsupported proactive claim version"
     );
+    match claim.version {
+        LEGACY_CLAIM_VERSION => anyhow::ensure!(
+            claim.attempt_deadline_unix.is_none(),
+            "legacy proactive claim unexpectedly carries an attempt deadline"
+        ),
+        CLAIM_VERSION => {
+            let deadline = claim
+                .attempt_deadline_unix
+                .context("v2 proactive claim is missing its attempt deadline")?;
+            anyhow::ensure!(
+                deadline > claim.created_at_unix,
+                "proactive attempt deadline must be after claim creation"
+            );
+        }
+        _ => unreachable!("version was checked above"),
+    }
     validate_uuid_v7(&claim.intent_id)?;
     anyhow::ensure!(
         !claim.target_channel.trim().is_empty()
@@ -1099,7 +1442,7 @@ where
 
 fn intent_frame(claim: &ProactiveEgressClaim) -> ProactiveIntentFrame {
     ProactiveIntentFrame {
-        proactive_binding_version: WAL_BINDING_VERSION,
+        proactive_binding_version: claim.version,
         intent_id: claim.intent_id.clone(),
         binding_sha256: claim.binding_sha256.clone(),
         target_channel: claim.target_channel.clone(),
@@ -1110,6 +1453,7 @@ fn intent_frame(claim: &ProactiveEgressClaim) -> ProactiveIntentFrame {
         dedup_sha256: claim.dedup_sha256.clone(),
         queue_generation: claim.queue_generation.clone(),
         created_at_unix: claim.created_at_unix,
+        attempt_deadline_unix: claim.attempt_deadline_unix,
     }
 }
 
@@ -1119,7 +1463,7 @@ fn armed_frame(claim: &ProactiveEgressClaim) -> Result<ProactiveArmedFrame> {
         "cannot authenticate a proactive claim before it is Armed"
     );
     Ok(ProactiveArmedFrame {
-        proactive_binding_version: WAL_BINDING_VERSION,
+        proactive_binding_version: claim.version,
         intent_id: claim.intent_id.clone(),
         prepared_binding_sha256: claim_in_phase(claim, ProactiveEgressPhase::Prepared)
             .binding_sha256,
@@ -1130,9 +1474,25 @@ fn armed_frame(claim: &ProactiveEgressClaim) -> Result<ProactiveArmedFrame> {
 
 fn validate_intent_frame(intent: &ProactiveIntentFrame) -> Result<()> {
     anyhow::ensure!(
-        intent.proactive_binding_version == WAL_BINDING_VERSION,
+        matches!(
+            intent.proactive_binding_version,
+            LEGACY_WAL_BINDING_VERSION | WAL_BINDING_VERSION
+        ),
         "unsupported proactive intent binding version"
     );
+    match intent.proactive_binding_version {
+        LEGACY_WAL_BINDING_VERSION => anyhow::ensure!(
+            intent.attempt_deadline_unix.is_none(),
+            "legacy proactive intent unexpectedly carries an attempt deadline"
+        ),
+        WAL_BINDING_VERSION => anyhow::ensure!(
+            intent
+                .attempt_deadline_unix
+                .is_some_and(|deadline| deadline > intent.created_at_unix),
+            "v2 proactive intent has an invalid attempt deadline"
+        ),
+        _ => unreachable!("version was checked above"),
+    }
     validate_uuid_v7(&intent.intent_id)?;
     anyhow::ensure!(
         !intent.target_channel.trim().is_empty()
@@ -1164,7 +1524,10 @@ fn validate_intent_frame(intent: &ProactiveIntentFrame) -> Result<()> {
 
 fn validate_armed_frame(armed: &ProactiveArmedFrame) -> Result<()> {
     anyhow::ensure!(
-        armed.proactive_binding_version == WAL_BINDING_VERSION,
+        matches!(
+            armed.proactive_binding_version,
+            LEGACY_WAL_BINDING_VERSION | WAL_BINDING_VERSION
+        ),
         "unsupported proactive Armed binding version"
     );
     validate_uuid_v7(&armed.intent_id)?;
@@ -1179,7 +1542,7 @@ fn validate_armed_frame(armed: &ProactiveArmedFrame) -> Result<()> {
 
 fn intent_matches_claim(intent: &ProactiveIntentFrame, claim: &ProactiveEgressClaim) -> bool {
     let prepared = claim_in_phase(claim, ProactiveEgressPhase::Prepared);
-    intent.proactive_binding_version == WAL_BINDING_VERSION
+    intent.proactive_binding_version == claim.version
         && intent.intent_id == claim.intent_id
         && intent.binding_sha256 == prepared.binding_sha256
         && intent.target_channel == claim.target_channel
@@ -1190,13 +1553,14 @@ fn intent_matches_claim(intent: &ProactiveIntentFrame, claim: &ProactiveEgressCl
         && intent.dedup_sha256 == claim.dedup_sha256
         && intent.queue_generation == claim.queue_generation
         && intent.created_at_unix == claim.created_at_unix
+        && intent.attempt_deadline_unix == claim.attempt_deadline_unix
 }
 
 fn armed_matches_claim(armed: &ProactiveArmedFrame, claim: &ProactiveEgressClaim) -> bool {
     let prepared = claim_in_phase(claim, ProactiveEgressPhase::Prepared);
     let expected_armed = claim_in_phase(claim, ProactiveEgressPhase::Armed);
     claim.phase == ProactiveEgressPhase::Armed
-        && armed.proactive_binding_version == WAL_BINDING_VERSION
+        && armed.proactive_binding_version == claim.version
         && armed.intent_id == claim.intent_id
         && armed.prepared_binding_sha256 == prepared.binding_sha256
         && armed.armed_binding_sha256 == expected_armed.binding_sha256
@@ -1205,7 +1569,10 @@ fn armed_matches_claim(armed: &ProactiveArmedFrame, claim: &ProactiveEgressClaim
 
 fn validate_result_frame(result: &ProactiveResultFrame) -> Result<()> {
     anyhow::ensure!(
-        result.proactive_binding_version == WAL_BINDING_VERSION,
+        matches!(
+            result.proactive_binding_version,
+            LEGACY_WAL_BINDING_VERSION | WAL_BINDING_VERSION
+        ),
         "unsupported proactive result binding version"
     );
     anyhow::ensure!(
@@ -1253,7 +1620,11 @@ fn validate_result_frame(result: &ProactiveResultFrame) -> Result<()> {
             "delivered proactive result lacks an exclusive receipt"
         ),
         ProactiveEgressOutcome::TransportError => anyhow::ensure!(
-            !has_receipt && result.error_kind.as_deref() == Some("transport"),
+            !has_receipt
+                && matches!(
+                    result.error_kind.as_deref(),
+                    Some("transport" | "deadline_exceeded" | "transport_task_failed")
+                ),
             "transport proactive result has invalid evidence"
         ),
         ProactiveEgressOutcome::AuthError => anyhow::ensure!(
@@ -1337,7 +1708,10 @@ fn scan_wal_evidence(
                 value
                     .get("proactive_binding_version")
                     .and_then(serde_json::Value::as_u64)
-                    == Some(WAL_BINDING_VERSION as u64),
+                    .is_some_and(|version| {
+                        version == u64::from(LEGACY_WAL_BINDING_VERSION)
+                            || version == u64::from(WAL_BINDING_VERSION)
+                    }),
                 "unsupported proactive WAL binding version"
             );
             if subtype == ExtendedSubtype::ChannelEgressIntent as u8 {
@@ -1533,6 +1907,10 @@ fn terminal_result(
     let (error_kind, error_sha256, error_bytes) = match error {
         Some(error) => {
             let kind = match error {
+                ChannelError::Transport(text) if text == "deadline_exceeded" => "deadline_exceeded",
+                ChannelError::Transport(text) if text == "transport_task_failed" => {
+                    "transport_task_failed"
+                }
                 ChannelError::Transport(_) => "transport",
                 ChannelError::NotSupported { .. } => "not_supported",
                 ChannelError::RateLimited { .. } => "rate_limited",
@@ -1548,7 +1926,7 @@ fn terminal_result(
         None => (None, None, 0),
     };
     ProactiveResultFrame {
-        proactive_binding_version: WAL_BINDING_VERSION,
+        proactive_binding_version: claim.version,
         purpose: "proactive".to_string(),
         intent_id: claim.intent_id.clone(),
         binding_sha256: claim.binding_sha256.clone(),
@@ -1579,7 +1957,7 @@ fn verify_result_binding(
     claim: &ProactiveEgressClaim,
 ) -> Result<()> {
     anyhow::ensure!(
-        result.proactive_binding_version == WAL_BINDING_VERSION
+        result.proactive_binding_version == claim.version
             && result.purpose == "proactive"
             && result.intent_id == claim.intent_id
             && result.binding_sha256 == claim.binding_sha256,
@@ -2713,12 +3091,131 @@ async fn queue_generation_matches(
     .context("join proactive queue generation read")?
 }
 
+/// Detect an already-admitted, still-live v2 attempt while the caller owns the
+/// process-wide admission lock. This is intentionally dedup based: a restart
+/// must not turn an authenticated in-flight transport into a second provider
+/// send merely because its original task no longer exists in this process.
+async fn has_unexpired_inflight_dedup(
+    delivery_lock: &std::fs::File,
+    home: &Path,
+    dedup_sha256: &str,
+    now_unix: i64,
+) -> Result<bool> {
+    let cancellation_lock = delivery_lock
+        .try_clone()
+        .context("clone proactive delivery lock for in-flight dedup scan")?;
+    let home = home.to_path_buf();
+    let dedup_sha256 = dedup_sha256.to_string();
+    tokio::task::spawn_blocking(move || {
+        let _cancellation_lock = cancellation_lock;
+        for (claim_file, claim) in read_claims(&home, now_unix)? {
+            if claim.dedup_sha256 != dedup_sha256
+                || claim.phase != ProactiveEgressPhase::Armed
+                || claim.version != CLAIM_VERSION
+            {
+                continue;
+            }
+            // Same-process flock/LockFileEx reentrancy differs by platform,
+            // so retain the local gate as well as the OS lease.
+            if transport_is_locally_active(&claim.intent_id) {
+                return Ok::<_, anyhow::Error>(true);
+            }
+            match ArmedClaimLease::try_acquire(&claim_file, &claim)? {
+                // A different process holds the exact Armed claim lease. Its
+                // monotonic provider budget is authoritative even if this
+                // observer's wall clock has jumped past the persisted UTC
+                // deadline, so the dedup claim must remain in-flight.
+                ArmedClaimLeaseProbe::Busy => return Ok(true),
+                ArmedClaimLeaseProbe::Acquired(_lease) => {
+                    if claim
+                        .attempt_deadline_unix
+                        .is_some_and(|deadline| now_unix < deadline)
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok::<_, anyhow::Error>(false)
+    })
+    .await
+    .context("join proactive in-flight dedup scan")?
+}
+
+fn deadline_after(now_unix: i64, timeout: Duration) -> Result<i64> {
+    anyhow::ensure!(
+        !timeout.is_zero(),
+        "proactive delivery attempt timeout must be non-zero"
+    );
+    let seconds = timeout
+        .as_secs()
+        .checked_add(u64::from(timeout.subsec_nanos() != 0))
+        .context("proactive delivery attempt timeout overflow")?;
+    anyhow::ensure!(
+        (crate::config::automation::ProactiveConfig::MIN_DELIVERY_ATTEMPT_TIMEOUT_SECS
+            ..=crate::config::automation::ProactiveConfig::MAX_DELIVERY_ATTEMPT_TIMEOUT_SECS)
+            .contains(&seconds),
+        "proactive delivery attempt timeout is outside the configured safety bounds"
+    );
+    let seconds = i64::try_from(seconds).context("proactive delivery attempt timeout is too large")?;
+    now_unix
+        .checked_add(seconds)
+        .context("proactive delivery attempt deadline overflow")
+}
+
+/// Derive the wall-clock share of an attempt budget from one admission sample.
+/// The persisted deadline is second-granular. Recovery treats equality as
+/// expired, while live provider I/O uses this subsecond remainder so it never
+/// exceeds the configured timeout merely because the WAL stores whole Unix
+/// seconds.
+fn wall_budget_from_admission_sample(
+    deadline_unix: i64,
+    sample: chrono::DateTime<chrono::Utc>,
+) -> Result<Duration> {
+    let seconds = deadline_unix
+        .checked_sub(sample.timestamp())
+        .context("proactive attempt wall deadline subtraction overflow")?;
+    anyhow::ensure!(
+        seconds > 0,
+        "proactive attempt deadline expired at admission"
+    );
+    let nanos = sample.timestamp_subsec_nanos();
+    if nanos == 0 {
+        return Ok(Duration::from_secs(
+            u64::try_from(seconds).context("proactive attempt wall budget overflow")?,
+        ));
+    }
+    Duration::from_secs(
+        u64::try_from(seconds - 1).context("proactive attempt wall budget overflow")?,
+    )
+    .checked_add(Duration::from_nanos(u64::from(1_000_000_000 - nanos)))
+    .context("proactive attempt wall budget overflow")
+}
+
 fn new_claim(
     item: ProactiveItem,
     queue_generation: &str,
     target_channel: &str,
     transport_recipient: &str,
     now_unix: i64,
+) -> Result<ProactiveEgressClaim> {
+    new_claim_with_deadline(
+        item,
+        queue_generation,
+        target_channel,
+        transport_recipient,
+        now_unix,
+        deadline_after(now_unix, DEFAULT_DELIVERY_ATTEMPT_TIMEOUT)?,
+    )
+}
+
+fn new_claim_with_deadline(
+    item: ProactiveItem,
+    queue_generation: &str,
+    target_channel: &str,
+    transport_recipient: &str,
+    now_unix: i64,
+    attempt_deadline_unix: i64,
 ) -> Result<ProactiveEgressClaim> {
     item.validate()
         .map_err(anyhow::Error::new)
@@ -2746,6 +3243,7 @@ fn new_claim(
         item,
         target_channel: target_channel.to_string(),
         created_at_unix: now_unix,
+        attempt_deadline_unix: Some(attempt_deadline_unix),
     };
     claim.binding_sha256 = binding_hash(&claim);
     Ok(claim)
@@ -2767,6 +3265,9 @@ async fn recover_pending_claims_locked(
     delivery_lock: &std::fs::File,
     now_unix: i64,
 ) -> Result<usize> {
+    reap_cancelled_transport_attempts()
+        .await
+        .context("reap cancelled proactive transport attempts before recovery")?;
     let scan_lock = delivery_lock
         .try_clone()
         .context("clone proactive delivery lock for recovery scan")?;
@@ -2877,6 +3378,31 @@ async fn recover_pending_claims_locked(
                 "proactive Armed proof conflicts with durable claim phase or binding"
             );
         }
+        if transport_is_locally_active(&claim.intent_id) {
+            // A same-process egress task has retained ownership of this exact
+            // provider future or its cancelled JoinHandle. Do not reconcile
+            // the claim—even at wall-clock expiry—until that ownership is
+            // joined/reaped; otherwise a cancellation racing recovery could
+            // remove the sole dedup authority behind live I/O.
+            continue;
+        }
+        // A different process may own a monotonic-live provider future while
+        // this process observes a wall-clock jump. Probe the exact, bound
+        // Armed inode before applying any v2 expiry rule: Busy means that
+        // process still owns the attempt, regardless of `now_unix`.
+        let armed_claim_lease = if claim.version == CLAIM_VERSION
+            && claim.phase == ProactiveEgressPhase::Armed
+            && intent.is_some()
+            && armed.is_some()
+            && result.is_none()
+        {
+            match ArmedClaimLease::try_acquire(&claim_file, &claim)? {
+                ArmedClaimLeaseProbe::Busy => continue,
+                ArmedClaimLeaseProbe::Acquired(lease) => Some(lease),
+            }
+        } else {
+            None
+        };
         match (intent, armed, result) {
             (None, None, None) if claim.phase == ProactiveEgressPhase::Prepared => {
                 let remove_lock = delivery_lock
@@ -2925,7 +3451,28 @@ async fn recover_pending_claims_locked(
                 )
                 .await?;
             }
+            (Some(_), Some(_), None)
+                if claim.version == CLAIM_VERSION
+                    && claim
+                        .attempt_deadline_unix
+                        .is_some_and(|deadline| now_unix < deadline) =>
+            {
+                // This is a v2 transport that was durably admitted but whose
+                // bounded attempt can still be live in another dispatcher.
+                // Keep its exact dedup claim instead of fabricating a retry or
+                // a terminal answer. A later recovery at/after the immutable
+                // deadline will settle the uncertainty once.
+                continue;
+            }
             (Some(_), Some(_), None) => {
+                // v1 has no authenticated absolute deadline, and an expired
+                // v2 attempt can no longer be safely treated as in-flight.
+                // Neither is re-sent: both become visible CrashUnknown.
+                if let Some(lease) = armed_claim_lease.as_ref() {
+                    lease.validate_claim(&claim).context(
+                        "revalidate proactive Armed claim lease before CrashUnknown",
+                    )?;
+                }
                 let result = terminal_result(
                     &claim,
                     ProactiveEgressOutcome::CrashUnknown,
@@ -2934,6 +3481,10 @@ async fn recover_pending_claims_locked(
                     now_unix,
                 );
                 append_result(delivery_lock, writer, &result).await?;
+                // The Result ACK is now durable authority. Drop the exact
+                // lease before a Windows deletion/projection path needs its
+                // mutation handle, but never before this acknowledgement.
+                drop(armed_claim_lease);
                 apply_projections_blocking(
                     delivery_lock,
                     home,
@@ -2994,6 +3545,10 @@ pub(crate) struct ProactiveEgressContext<'a> {
     wal_segment_path: &'a Path,
     writer: &'a WalWriterHandle,
     now_unix: i64,
+    /// Dispatcher-provided, configuration-bounded duration for one live
+    /// provider attempt. The durable claim receives its absolute UTC deadline
+    /// before the Armed ACK; this relative value is never persisted alone.
+    delivery_attempt_timeout: Duration,
 }
 
 impl<'a> ProactiveEgressContext<'a> {
@@ -3002,12 +3557,14 @@ impl<'a> ProactiveEgressContext<'a> {
         wal_segment_path: &'a Path,
         writer: &'a WalWriterHandle,
         now_unix: i64,
+        delivery_attempt_timeout: Duration,
     ) -> Self {
         Self {
             home,
             wal_segment_path,
             writer,
             now_unix,
+            delivery_attempt_timeout,
         }
     }
 
@@ -3026,6 +3583,254 @@ impl<'a> ProactiveEgressContext<'a> {
     pub(crate) fn now_unix(&self) -> i64 {
         self.now_unix
     }
+
+    pub(crate) fn delivery_attempt_timeout(&self) -> Duration {
+        self.delivery_attempt_timeout
+    }
+}
+
+/// An owned provider future. Cancellation never leaves a detached adapter call
+/// behind: normal and timeout paths await its `JoinHandle`, while dropping an
+/// outer delivery future aborts the owned task immediately.
+fn mark_transport_active(intent_id: &str) {
+    let mut active = match ACTIVE_TRANSPORT_INTENTS.lock() {
+        Ok(active) => active,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    // UUIDv7 intent identity is already unique in the durable claim set. A
+    // duplicate in the local registry is fail-closed at the caller's normal
+    // claim admission boundary; retaining membership is safer than removing a
+    // different attempt's cancellation authority.
+    active.insert(intent_id.to_string());
+}
+
+fn mark_transport_inactive(intent_id: &str) {
+    match ACTIVE_TRANSPORT_INTENTS.lock() {
+        Ok(mut active) => {
+            active.remove(intent_id);
+        }
+        Err(poisoned) => {
+            poisoned.into_inner().remove(intent_id);
+        }
+    }
+}
+
+fn transport_is_locally_active(intent_id: &str) -> bool {
+    match ACTIVE_TRANSPORT_INTENTS.lock() {
+        Ok(active) => active.contains(intent_id),
+        Err(poisoned) => poisoned.into_inner().contains(intent_id),
+    }
+}
+
+struct OwnedTransportAttempt {
+    handle: Option<TransportJoinHandle>,
+    registration: Option<TransportIntentRegistration>,
+    // The owner retains this through Result WAL acknowledgement. The spawned
+    // provider future gets its own Arc clone, so outer cancellation releases
+    // cross-process authority exactly when that future actually stops—not
+    // when an asynchronous JoinHandle happens to be reaped later.
+    armed_claim_lease: Option<Arc<ArmedClaimLease>>,
+}
+
+enum OwnedTransportOutcome {
+    Completed(std::result::Result<MessageId, ChannelError>),
+    DeadlineExceeded,
+    TaskFailed,
+}
+
+impl OwnedTransportAttempt {
+    fn start(
+        registration: TransportIntentRegistration,
+        channel: Arc<dyn Channel>,
+        recipient: String,
+        body: String,
+        deadline: tokio::time::Instant,
+        armed_claim_lease: Arc<ArmedClaimLease>,
+    ) -> Self {
+        let runtime = tokio::runtime::Handle::current();
+        let task_lease = Arc::clone(&armed_claim_lease);
+        Self {
+            handle: Some(runtime.spawn(async move {
+                // The post-admission caller has a fast-path check too, but
+                // this check is deliberately colocated with the sole adapter
+                // invocation so a scheduler handoff cannot begin provider I/O
+                // after the immutable attempt boundary.
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(ChannelError::Transport("deadline_exceeded".to_string()));
+                }
+                // Keep `task_lease` captured across the adapter await. An
+                // outer egress Drop may release its owner Arc, but this clone
+                // keeps the exact OS claim-file lease until provider I/O has
+                // really stopped (including cancellation/abort teardown).
+                task_lease
+                    .validate_namespace_binding()
+                    .map_err(|_| ChannelError::Transport("claim_lease_invalid".to_string()))?;
+                let result = channel.send_proactive(&recipient, &body).await;
+                // Keep the Arc observable across the await rather than
+                // relying on compiler liveness after its last validation use.
+                drop(task_lease);
+                result
+            })),
+            registration: Some(registration),
+            armed_claim_lease: Some(armed_claim_lease),
+        }
+    }
+
+    /// Keep the intent locally owned across a completed provider join until
+    /// terminal WAL evidence is acknowledged. This prevents recovery from
+    /// replacing a known receipt/error with `CrashUnknown` while this task is
+    /// merely waiting to reacquire the short terminal DeliveryLock.
+    fn release_after_terminal_result(&mut self) {
+        // Do not release early: a second process can observe a forward wall
+        // clock while this task is waiting for its Result WAL ACK.
+        drop(self.armed_claim_lease.take());
+        drop(self.registration.take());
+    }
+
+    fn validate_claim_lease(&self, claim: &ProactiveEgressClaim) -> Result<()> {
+        self.armed_claim_lease
+            .as_ref()
+            .context("proactive transport lost its Armed claim lease")?
+            .validate_claim(claim)
+    }
+
+    async fn finish_before(
+        &mut self,
+        deadline: tokio::time::Instant,
+    ) -> OwnedTransportOutcome {
+        let handle = self
+            .handle
+            .as_mut()
+            .expect("transport attempt is polled only once");
+        match tokio::time::timeout_at(deadline, handle).await {
+            Ok(Ok(result)) => {
+                let _ = self.handle.take();
+                OwnedTransportOutcome::Completed(result)
+            }
+            Ok(Err(_join_error)) => {
+                let _ = self.handle.take();
+                // A task panic/cancellation is intentionally collapsed to the
+                // same fixed transport category as timeout. No adapter error
+                // text crosses the durable boundary.
+                OwnedTransportOutcome::TaskFailed
+            }
+            Err(_) => {
+                let mut handle = self
+                    .handle
+                    .take()
+                    .expect("timed-out transport keeps its join handle");
+                handle.abort();
+                // Await the abort before terminal WAL evidence. This makes a
+                // timeout a real terminal boundary, not a detached retry race.
+                let _ = (&mut handle).await;
+                OwnedTransportOutcome::DeadlineExceeded
+            }
+        }
+    }
+}
+
+impl Drop for OwnedTransportAttempt {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+            // `Drop` cannot await. Retain, rather than detach, the aborted
+            // JoinHandle for the structured process supervisor below. Future
+            // recovery/admission must explicitly reap it before durable state
+            // can be reconciled. Poison cannot discard a live task either.
+            let registration = self
+                .registration
+                .take()
+                .expect("live transport must retain its local intent registration");
+            match CANCELLED_TRANSPORT_REAP_QUEUE.lock() {
+                Ok(mut queue) => queue.push(CancelledTransportHandle {
+                    handle,
+                    registration,
+                }),
+                Err(poisoned) => poisoned.into_inner().push(CancelledTransportHandle {
+                    handle,
+                    registration,
+                }),
+            }
+        } else if self.registration.is_some() {
+            // The provider task had already joined, but the owning egress
+            // future was cancelled before its Result could become durable.
+            // No live I/O remains; release only this local gate so recovery
+            // can conservatively record CrashUnknown rather than leak an
+            // unresolvable claim forever.
+            self.release_after_terminal_result();
+        }
+    }
+}
+
+/// Cancellation-safe ownership transfer for one queued aborted task. If the
+/// recovery future itself is cancelled while awaiting, this guard's Drop puts
+/// the exact JoinHandle back into process-lifetime supervision rather than
+/// allowing the runtime to detach it.
+struct CancelledTransportReapGuard {
+    entry: Option<CancelledTransportHandle>,
+}
+
+impl CancelledTransportReapGuard {
+    fn take_next() -> Option<Self> {
+        let entry = match CANCELLED_TRANSPORT_REAP_QUEUE.lock() {
+            Ok(mut queue) => queue.pop(),
+            Err(poisoned) => poisoned.into_inner().pop(),
+        };
+        entry.map(|entry| Self { entry: Some(entry) })
+    }
+
+    async fn reap(mut self) {
+        let entry = self
+            .entry
+            .as_mut()
+            .expect("reap guard owns exactly one cancelled transport handle");
+        let _ = (&mut entry.handle).await;
+        // Only a terminal JoinHandle is removed. If this future is cancelled
+        // during the await, `self` drops with the entry still present and its
+        // Drop implementation requeues the exact handle.
+        let entry = self
+            .entry
+            .take()
+            .expect("terminal cancelled transport reap entry is present");
+        drop(entry.registration);
+    }
+}
+
+impl Drop for CancelledTransportReapGuard {
+    fn drop(&mut self) {
+        if let Some(entry) = self.entry.take() {
+            match CANCELLED_TRANSPORT_REAP_QUEUE.lock() {
+                Ok(mut queue) => queue.push(entry),
+                Err(poisoned) => poisoned.into_inner().push(entry),
+            }
+        }
+    }
+}
+
+async fn reap_cancelled_transport_attempts() -> Result<()> {
+    // Fixed-point drain: every handle stays under a cancellation-safe guard
+    // until its join completes. A Drop that arrives while this loop awaits is
+    // observed by a following iteration before recovery is allowed to inspect
+    // durable claims.
+    while let Some(guard) = CancelledTransportReapGuard::take_next() {
+        guard.reap().await;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn cancelled_transport_reap_queue_len() -> usize {
+    match CANCELLED_TRANSPORT_REAP_QUEUE.lock() {
+        Ok(queue) => queue.len(),
+        Err(poisoned) => poisoned.into_inner().len(),
+    }
+}
+
+fn fixed_transport_failure(category: &'static str) -> ChannelError {
+    // Fixed, secret-free diagnostic input. `terminal_result` stores only its
+    // category, size and digest; provider-generated error strings are never
+    // synthesized or persisted by timeout/join handling.
+    ChannelError::Transport(category.to_string())
 }
 
 /// Sole production transport seam for proactive messages.
@@ -3038,62 +3843,189 @@ pub(crate) async fn execute_claimed_once(
     queue_generation: &str,
     target_channel: &str,
     transport_recipient: &str,
-    channel: &dyn Channel,
+    channel: Arc<dyn Channel>,
 ) -> Result<Option<ProactiveStatus>, String> {
     let home = context.home;
     let wal_segment_path = context.wal_segment_path;
     let writer = context.writer;
     let now_unix = context.now_unix;
+    let timeout = context.delivery_attempt_timeout();
+
+    // Admission is one short critical section only. It includes recovery,
+    // generation validation and all irreversible durable pre-transport ACKs;
+    // provider I/O happens after the lock is dropped so unrelated deliveries
+    // can make progress.
+    let (claim, claim_file, transport_deadline, armed_claim_lease, registration) = {
+        let delivery_lock = acquire_delivery_lock(home)
+            .await
+            .map_err(|error| format!("acquire proactive delivery lock: {error:#}"))?;
+        recover_pending_claims_locked(home, wal_segment_path, writer, &delivery_lock, now_unix)
+            .await
+            .map_err(|error| format!("recover before proactive delivery: {error:#}"))?;
+        let generation_matches =
+            queue_generation_matches(&delivery_lock, home, &item.dedup_key, queue_generation)
+                .await
+                .map_err(|error| format!("load fresh proactive queue before claim: {error:#}"))?;
+        if !generation_matches {
+            return Ok(None);
+        }
+        let dedup_sha256 = effect_hash(b"proactive-egress-dedup-v1", item.dedup_key.as_bytes());
+        if has_unexpired_inflight_dedup(&delivery_lock, home, &dedup_sha256, now_unix)
+            .await
+            .map_err(|error| format!("check proactive in-flight dedup: {error:#}"))?
+        {
+            return Ok(None);
+        }
+        // Sample both clocks once at admission. The original monotonic budget
+        // prevents a later wall-clock rollback from extending live I/O; the
+        // wall-derived budget prevents whole-second WAL encoding from adding a
+        // hidden fractional second. The actual transport deadline is their
+        // minimum after accounting for elapsed admission work.
+        let monotonic_admission = tokio::time::Instant::now();
+        let wall_admission = chrono::Utc::now();
+        let original_monotonic_deadline = monotonic_admission
+            .checked_add(timeout)
+            .context("proactive transport deadline overflow")
+            .map_err(|error| format!("bind proactive transport deadline: {error:#}"))?;
+        let admission_now_unix = wall_admission.timestamp();
+        let attempt_deadline_unix = deadline_after(admission_now_unix, timeout)
+            .map_err(|error| format!("bind proactive attempt deadline: {error:#}"))?;
+        let wall_budget = wall_budget_from_admission_sample(attempt_deadline_unix, wall_admission)
+            .map_err(|error| format!("bind proactive wall budget: {error:#}"))?;
+        let wall_budget = wall_budget
+            .checked_sub(monotonic_admission.elapsed())
+            .context("proactive attempt deadline expired during admission")
+            .map_err(|error| format!("bind proactive wall budget: {error:#}"))?;
+        let wall_deadline = monotonic_admission
+            .checked_add(wall_budget)
+            .context("proactive wall deadline overflow")
+            .map_err(|error| format!("bind proactive wall deadline: {error:#}"))?;
+        let transport_deadline = original_monotonic_deadline.min(wall_deadline);
+        let mut claim = new_claim_with_deadline(
+            item,
+            queue_generation,
+            target_channel,
+            transport_recipient,
+            admission_now_unix,
+            attempt_deadline_unix,
+        )
+        .map_err(|error| format!("bind proactive claim: {error:#}"))?;
+        let claim_file = persist_prepared_claim(&delivery_lock, home, &claim)
+            .await
+            .map_err(|error| format!("persist Prepared proactive claim: {error:#}"))?;
+        append_intent(&delivery_lock, writer, &claim)
+            .await
+            .map_err(|error| format!("append proactive intent: {error:#}"))?;
+        claim.phase = ProactiveEgressPhase::Armed;
+        claim.binding_sha256 = binding_hash(&claim);
+        persist_armed_claim(&delivery_lock, &claim_file, &claim)
+            .await
+            .map_err(|error| format!("persist Armed proactive claim: {error:#}"))?;
+        // Acquire the exact final Armed inode while DeliveryLock is still
+        // held, before its WAL ACK permits any provider call. A Busy outcome
+        // is fail-closed: no transport starts and recovery sees no Armed WAL
+        // authority, therefore records the attempt as NotAttempted.
+        let armed_claim_lease = match ArmedClaimLease::try_acquire(&claim_file, &claim)
+            .map_err(|error| format!("acquire proactive Armed claim lease: {error:#}"))?
+        {
+            ArmedClaimLeaseProbe::Acquired(lease) => Arc::new(lease),
+            ArmedClaimLeaseProbe::Busy => {
+                return Err(
+                    "acquire proactive Armed claim lease: exact claim lease is already busy"
+                        .to_string(),
+                );
+            }
+        };
+        // Register the same-process gate before Armed WAL acknowledgement and
+        // before DeliveryLock is released. This closes local re-entrant file
+        // lock behavior in the admission-to-spawn window.
+        let registration = TransportIntentRegistration::acquire(&claim.intent_id);
+        append_armed(&delivery_lock, writer, &claim)
+            .await
+            .map_err(|error| format!("append proactive Armed transition: {error:#}"))?;
+        (
+            claim,
+            claim_file,
+            transport_deadline,
+            armed_claim_lease,
+            registration,
+        )
+    };
+    anyhow::ensure!(
+        tokio::time::Instant::now() < transport_deadline,
+        "proactive attempt deadline expired before transport start"
+    );
+
+    let mut transport = OwnedTransportAttempt::start(
+        registration,
+        channel,
+        transport_recipient.to_string(),
+        claim.item.body.clone(),
+        transport_deadline,
+        armed_claim_lease,
+    );
+    let completed = transport.finish_before(transport_deadline).await;
+    // Capture this only after the transport task either returned or was
+    // aborted and reaped. It is an audit timestamp for the terminal boundary,
+    // not the tick's stale `now_unix` input.
+    let completed_at_unix = chrono::Utc::now().timestamp();
+    let timeout_error = fixed_transport_failure("deadline_exceeded");
+    let task_error = fixed_transport_failure("transport_task_failed");
+    let (outcome, receipt, error) = match &completed {
+        OwnedTransportOutcome::Completed(Ok(receipt)) => {
+            (ProactiveEgressOutcome::Delivered, Some(receipt), None)
+        }
+        OwnedTransportOutcome::Completed(Err(error)) => {
+            (outcome_for_error(error), None, Some(error))
+        }
+        OwnedTransportOutcome::DeadlineExceeded => (
+            ProactiveEgressOutcome::TransportError,
+            None,
+            Some(&timeout_error),
+        ),
+        OwnedTransportOutcome::TaskFailed => (
+            ProactiveEgressOutcome::TransportError,
+            None,
+            Some(&task_error),
+        ),
+    };
+    let result = terminal_result(&claim, outcome, receipt, error, completed_at_unix);
+
+    // Terminalization deliberately re-locks after live I/O. A competing
+    // recovery may have reached the immutable deadline first; do not append a
+    // second Result or promise provider-side exactly-once. The claim/evidence
+    // check makes this race idempotent at NEOTH's durable boundary.
     let delivery_lock = acquire_delivery_lock(home)
         .await
-        .map_err(|error| format!("acquire proactive delivery lock: {error:#}"))?;
-    recover_pending_claims_locked(home, wal_segment_path, writer, &delivery_lock, now_unix)
+        .map_err(|error| format!("reacquire proactive terminal lock: {error:#}"))?;
+    let active = HashSet::from([claim.intent_id.clone()]);
+    let evidence_home = home.to_path_buf();
+    let evidence_segment = wal_segment_path.to_path_buf();
+    let evidence_lock = delivery_lock
+        .try_clone()
+        .map_err(|error| format!("clone proactive terminal lock: {error:#}"))?;
+    let evidence = tokio::task::spawn_blocking(move || {
+        let _evidence_lock = evidence_lock;
+        scan_authenticated_wal(&evidence_home, &evidence_segment, &active)
+    })
         .await
-        .map_err(|error| format!("recover before proactive delivery: {error:#}"))?;
-
-    let generation_matches =
-        queue_generation_matches(&delivery_lock, home, &item.dedup_key, queue_generation)
-            .await
-            .map_err(|error| format!("load fresh proactive queue before claim: {error:#}"))?;
-    if !generation_matches {
-        return Ok(None);
+        .map_err(|error| format!("join proactive terminal evidence scan: {error:#}"))?
+        .map_err(|error| format!("scan proactive terminal evidence: {error:#}"))?;
+    transport
+        .validate_claim_lease(&claim)
+        .map_err(|error| format!("revalidate proactive Armed claim lease before Result: {error:#}"))?;
+    if let Some(existing) = evidence.results.get(&claim.intent_id) {
+        verify_result_binding(existing, &claim)
+            .map_err(|error| format!("verify raced proactive terminal result: {error:#}"))?;
+        transport.release_after_terminal_result();
+        return Ok(Some(existing.outcome.status()));
     }
-
-    let mut claim = new_claim(
-        item,
-        queue_generation,
-        target_channel,
-        transport_recipient,
-        now_unix,
-    )
-    .map_err(|error| format!("bind proactive claim: {error:#}"))?;
-    let claim_file = persist_prepared_claim(&delivery_lock, home, &claim)
-        .await
-        .map_err(|error| format!("persist Prepared proactive claim: {error:#}"))?;
-    append_intent(&delivery_lock, writer, &claim)
-        .await
-        .map_err(|error| format!("append proactive intent: {error:#}"))?;
-
-    claim.phase = ProactiveEgressPhase::Armed;
-    claim.binding_sha256 = binding_hash(&claim);
-    persist_armed_claim(&delivery_lock, &claim_file, &claim)
-        .await
-        .map_err(|error| format!("persist Armed proactive claim: {error:#}"))?;
-    append_armed(&delivery_lock, writer, &claim)
-        .await
-        .map_err(|error| format!("append proactive Armed transition: {error:#}"))?;
-
-    let transport = channel
-        .send_proactive(transport_recipient, &claim.item.body)
-        .await;
-    let (outcome, receipt, error) = match &transport {
-        Ok(receipt) => (ProactiveEgressOutcome::Delivered, Some(receipt), None),
-        Err(error) => (outcome_for_error(error), None, Some(error)),
-    };
-    let result = terminal_result(&claim, outcome, receipt, error, now_unix);
     append_result(&delivery_lock, writer, &result)
         .await
         .map_err(|error| format!("append terminal proactive result: {error:#}"))?;
+    // Result ACK is the authority hand-off: recovery can now authenticate and
+    // replay this terminal evidence without ever synthesizing CrashUnknown.
+    transport.release_after_terminal_result();
     apply_projections_blocking(
         &delivery_lock,
         home,
@@ -3378,6 +4310,37 @@ mod tests {
             .unwrap();
         append_intent(&delivery_lock, writer, &claim).await.unwrap();
         (delivery_lock, claim_path, claim)
+    }
+
+    async fn armed_v2_claim_with_evidence(
+        home: &Path,
+        writer: &WalWriterHandle,
+        queued: ProactiveItem,
+        generation: &str,
+        created_at_unix: i64,
+        attempt_deadline_unix: i64,
+    ) -> (BoundClaimFile, ProactiveEgressClaim) {
+        let delivery_lock = acquire_delivery_lock(home).await.unwrap();
+        let prepared = new_claim_with_deadline(
+            queued,
+            generation,
+            "telegram",
+            "operator",
+            created_at_unix,
+            attempt_deadline_unix,
+        )
+        .unwrap();
+        let claim_file = persist_prepared_claim(&delivery_lock, home, &prepared)
+            .await
+            .unwrap();
+        append_intent(&delivery_lock, writer, &prepared).await.unwrap();
+        let armed = claim_in_phase(&prepared, ProactiveEgressPhase::Armed);
+        persist_armed_claim(&delivery_lock, &claim_file, &armed)
+            .await
+            .unwrap();
+        append_armed(&delivery_lock, writer, &armed).await.unwrap();
+        drop(delivery_lock);
+        (claim_file, armed)
     }
 
     fn item(key: &str) -> ProactiveItem {
@@ -3921,8 +4884,14 @@ mod tests {
         let queued = item("concurrent");
         let generation = seed_queue(home.path(), queued.clone());
         let (segment, writer, join) = ready_writer(home.path()).await;
-        let channel = CountingChannel::new();
-        let context = ProactiveEgressContext::new(home.path(), &segment, &writer, 50);
+        let channel = Arc::new(CountingChannel::new());
+        let context = ProactiveEgressContext::new(
+            home.path(),
+            &segment,
+            &writer,
+            50,
+            DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
+        );
 
         let first = execute_claimed_once(
             &context,
@@ -3930,7 +4899,7 @@ mod tests {
             &generation,
             "telegram",
             "operator",
-            &channel,
+            Arc::clone(&channel),
         );
         let second = execute_claimed_once(
             &context,
@@ -3938,7 +4907,7 @@ mod tests {
             &generation,
             "telegram",
             "operator",
-            &channel,
+            Arc::clone(&channel),
         );
         let (first, second) = tokio::join!(first, second);
         let outcomes = [first.unwrap(), second.unwrap()];
@@ -3969,14 +4938,20 @@ mod tests {
         let task_item = queued.clone();
         let task_generation = old_generation.clone();
         let delivery = tokio::spawn(async move {
-            let context = ProactiveEgressContext::new(&task_home, &task_segment, &task_writer, 60);
+            let context = ProactiveEgressContext::new(
+                &task_home,
+                &task_segment,
+                &task_writer,
+                60,
+                DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
+            );
             execute_claimed_once(
                 &context,
                 task_item,
                 &task_generation,
                 "telegram",
                 "operator",
-                task_channel.as_ref(),
+                task_channel,
             )
             .await
         });
@@ -4023,14 +4998,20 @@ mod tests {
         let task_writer = gated_writer.clone();
         let task_channel = Arc::clone(&channel);
         let delivery = tokio::spawn(async move {
-            let context = ProactiveEgressContext::new(&task_home, &task_segment, &task_writer, 70);
+            let context = ProactiveEgressContext::new(
+                &task_home,
+                &task_segment,
+                &task_writer,
+                70,
+                DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
+            );
             execute_claimed_once(
                 &context,
                 queued,
                 &generation,
                 "telegram",
                 "operator",
-                task_channel.as_ref(),
+                task_channel,
             )
             .await
         });
@@ -4942,5 +5923,360 @@ mod tests {
         assert!(crate::wal::events::needs_immediate_sync(
             EVENT_TYPE_EXTENDED
         ));
+    }
+
+    #[test]
+    fn v2_deadline_is_tamper_evident_and_v1_preimage_stays_compatible() {
+        assert_eq!(
+            deadline_after(100, Duration::from_secs(60)).unwrap(),
+            160,
+            "a second-granular admission must not add a hidden rounding second"
+        );
+        let sampled = chrono::DateTime::<chrono::Utc>::from_timestamp(100, 1_000_000)
+            .expect("fixed admission sample");
+        assert!(
+            wall_budget_from_admission_sample(160, sampled).unwrap()
+                < Duration::from_secs(60),
+            "the live wall-clock budget is never longer than configuration"
+        );
+        let mut v2 = new_claim_with_deadline(
+            item("deadline-binding"),
+            "generation",
+            "telegram",
+            "operator",
+            100,
+            160,
+        )
+        .unwrap();
+        let v2_binding = v2.binding_sha256.clone();
+        assert_eq!(intent_frame(&v2).attempt_deadline_unix, Some(160));
+        v2.attempt_deadline_unix = Some(161);
+        assert_ne!(binding_hash(&v2), v2_binding);
+        assert!(validate_claim(&v2, &claim_name(&v2)).is_err());
+
+        let mut v1 = new_claim(item("legacy-v1"), "generation", "telegram", "operator", 100)
+            .unwrap();
+        v1.version = LEGACY_CLAIM_VERSION;
+        v1.attempt_deadline_unix = None;
+        v1.binding_sha256 = binding_hash(&v1);
+        validate_claim(&v1, &claim_name(&v1)).unwrap();
+        let v1_intent = intent_frame(&v1);
+        assert_eq!(v1_intent.proactive_binding_version, LEGACY_WAL_BINDING_VERSION);
+        assert_eq!(v1_intent.attempt_deadline_unix, None);
+        validate_intent_frame(&v1_intent).unwrap();
+    }
+
+    #[tokio::test]
+    async fn outer_cancellation_retains_and_structurally_reaps_transport_handle() {
+        let baseline = cancelled_transport_reap_queue_len();
+        let home = tempfile::tempdir().unwrap();
+        let queued = item("reap-queue-test");
+        let generation = seed_queue(home.path(), queued.clone());
+        let (_segment, writer, join) = ready_writer(home.path()).await;
+        let (claim_file, claim) = armed_v2_claim_with_evidence(
+            home.path(),
+            &writer,
+            queued,
+            &generation,
+            100,
+            160,
+        )
+        .await;
+        let lease = match ArmedClaimLease::try_acquire(&claim_file, &claim).unwrap() {
+            ArmedClaimLeaseProbe::Acquired(lease) => Arc::new(lease),
+            ArmedClaimLeaseProbe::Busy => panic!("fresh test claim lease must be acquirable"),
+        };
+        let channel = Arc::new(BlockingChannel::new());
+        let attempt = OwnedTransportAttempt::start(
+            TransportIntentRegistration::acquire(&claim.intent_id),
+            Arc::clone(&channel),
+            "operator".to_string(),
+            "body".to_string(),
+            tokio::time::Instant::now() + Duration::from_secs(60),
+            Arc::clone(&lease),
+        );
+        channel.entered.notified().await;
+        drop(attempt);
+        assert_eq!(
+            cancelled_transport_reap_queue_len(),
+            baseline + 1,
+            "Drop must retain the aborted JoinHandle for structured reaping"
+        );
+        reap_cancelled_transport_attempts().await.unwrap();
+        assert_eq!(
+            cancelled_transport_reap_queue_len(),
+            baseline,
+            "recovery/admission supervisor must observe and drain cancellation"
+        );
+        assert!(
+            !transport_is_locally_active(&claim.intent_id),
+            "only a joined/reaped task may release its local claim authority"
+        );
+        assert_eq!(
+            Arc::strong_count(&lease),
+            1,
+            "reaping must release the provider-held Armed lease Arc"
+        );
+        drop(lease);
+        drop(claim_file);
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn completed_transport_stays_active_until_terminal_authority_handoff() {
+        let home = tempfile::tempdir().unwrap();
+        let queued = item("terminal-handoff-test");
+        let generation = seed_queue(home.path(), queued.clone());
+        let (_segment, writer, join) = ready_writer(home.path()).await;
+        let (claim_file, claim) = armed_v2_claim_with_evidence(
+            home.path(),
+            &writer,
+            queued,
+            &generation,
+            100,
+            160,
+        )
+        .await;
+        let lease = match ArmedClaimLease::try_acquire(&claim_file, &claim).unwrap() {
+            ArmedClaimLeaseProbe::Acquired(lease) => Arc::new(lease),
+            ArmedClaimLeaseProbe::Busy => panic!("fresh test claim lease must be acquirable"),
+        };
+        let channel: Arc<dyn Channel> = Arc::new(CountingChannel::new());
+        let mut attempt = OwnedTransportAttempt::start(
+            TransportIntentRegistration::acquire(&claim.intent_id),
+            channel,
+            "operator".to_string(),
+            "body".to_string(),
+            tokio::time::Instant::now() + Duration::from_secs(60),
+            Arc::clone(&lease),
+        );
+        assert!(matches!(
+            attempt
+                .finish_before(tokio::time::Instant::now() + Duration::from_secs(60))
+                .await,
+            OwnedTransportOutcome::Completed(Ok(_))
+        ));
+        assert!(
+            transport_is_locally_active(&claim.intent_id),
+            "provider completion alone must not let recovery erase known evidence"
+        );
+        assert_eq!(
+            Arc::strong_count(&lease),
+            2,
+            "owner lease must survive provider join until Result WAL authority"
+        );
+        attempt.release_after_terminal_result();
+        assert!(!transport_is_locally_active(&claim.intent_id));
+        assert_eq!(Arc::strong_count(&lease), 1);
+        drop(lease);
+        drop(claim_file);
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovery_retains_only_an_unexpired_v2_armed_attempt() {
+        let home = tempfile::tempdir().unwrap();
+        let queued = item("retain-v2-armed");
+        let generation = seed_queue(home.path(), queued.clone());
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let delivery_lock = acquire_delivery_lock(home.path()).await.unwrap();
+        let prepared = new_claim_with_deadline(
+            queued,
+            &generation,
+            "telegram",
+            "operator",
+            100,
+            160,
+        )
+        .unwrap();
+        let claim_file = persist_prepared_claim(&delivery_lock, home.path(), &prepared)
+            .await
+            .unwrap();
+        append_intent(&delivery_lock, &writer, &prepared).await.unwrap();
+        let armed = claim_in_phase(&prepared, ProactiveEgressPhase::Armed);
+        persist_armed_claim(&delivery_lock, &claim_file, &armed)
+            .await
+            .unwrap();
+        append_armed(&delivery_lock, &writer, &armed).await.unwrap();
+        let claim_path = claim_file.display_path.clone();
+        drop(claim_file);
+        drop(delivery_lock);
+
+        assert_eq!(
+            recover_pending_claims(home.path(), &segment, &writer, 120)
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(claim_path.exists(), "unexpired v2 attempt must remain durable");
+        assert!(read_delivery_history(home.path()).unwrap().is_empty());
+
+        assert_eq!(
+            recover_pending_claims(home.path(), &segment, &writer, 160)
+                .await
+                .unwrap(),
+            1
+        );
+        assert!(!claim_path.exists(), "expired v2 attempt is terminally reconciled");
+        assert_eq!(
+            read_delivery_history(home.path()).unwrap()[0].outcome(),
+            ProactiveEgressOutcome::CrashUnknown
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    /// This test reinvokes the test binary as a second process. The child owns
+    /// the exact claim-file lease, while the parent deliberately advances its
+    /// recovery wall clock to the persisted deadline. That must defer instead
+    /// of fabricating CrashUnknown; once the child exits, the OS releases the
+    /// lease and the parent can reconcile exactly once.
+    #[tokio::test]
+    async fn cross_process_armed_claim_lease_defers_wall_forward_and_releases_on_exit() {
+        const CHILD_ROLE: &str = "NEOTH_EGRESS_ARMED_LEASE_CHILD";
+        const CHILD_HOME: &str = "NEOTH_EGRESS_ARMED_LEASE_HOME";
+        const CHILD_READY: &str = "armed-lease-child.ready";
+        const CHILD_RELEASE: &str = "armed-lease-child.release";
+
+        if std::env::var_os(CHILD_ROLE).is_some() {
+            let home = PathBuf::from(std::env::var_os(CHILD_HOME).unwrap());
+            let (claim_file, claim) = read_claims(&home, 160)
+                .unwrap()
+                .into_iter()
+                .next()
+                .expect("child must observe parent Armed claim");
+            let _lease = match ArmedClaimLease::try_acquire(&claim_file, &claim).unwrap() {
+                ArmedClaimLeaseProbe::Acquired(lease) => lease,
+                ArmedClaimLeaseProbe::Busy => panic!("child must own a fresh cross-process lease"),
+            };
+            std::fs::write(home.join(CHILD_READY), b"ready").unwrap();
+            let release = home.join(CHILD_RELEASE);
+            let started = std::time::Instant::now();
+            while !release.exists() {
+                assert!(
+                    started.elapsed() < Duration::from_secs(10),
+                    "parent did not release cross-process lease child"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            // Returning drops the OS lock as an abrupt child-process exit
+            // would; the parent verifies another process can take it.
+            return;
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let queued = item("cross-process-lease");
+        let generation = seed_queue(home.path(), queued.clone());
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let (claim_file, claim) = armed_v2_claim_with_evidence(
+            home.path(),
+            &writer,
+            queued,
+            &generation,
+            100,
+            160,
+        )
+        .await;
+        let claim_path = claim_file.display_path.clone();
+        drop(claim_file);
+
+        // libtest reports names relative to the crate root, while
+        // `module_path!()` includes the crate name. Build an exact filter
+        // that works for the self-reexec child on every crate rename.
+        let test_module = module_path!()
+            .strip_prefix(concat!(env!("CARGO_CRATE_NAME"), "::"))
+            .unwrap_or(module_path!());
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg(format!(
+                "{}::cross_process_armed_claim_lease_defers_wall_forward_and_releases_on_exit",
+                test_module
+            ))
+            .arg("--nocapture")
+            .env(CHILD_ROLE, "1")
+            .env(CHILD_HOME, home.path())
+            .spawn()
+            .expect("spawn cross-process Armed lease holder");
+        let ready = home.path().join(CHILD_READY);
+        let started = std::time::Instant::now();
+        while !ready.exists() {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "cross-process Armed lease child did not become ready"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let dedup_lock = acquire_delivery_lock(home.path()).await.unwrap();
+        assert!(
+            has_unexpired_inflight_dedup(&dedup_lock, home.path(), &claim.dedup_sha256, 160)
+                .await
+                .unwrap(),
+            "Busy exact Armed lease must retain dedup despite wall-clock expiry"
+        );
+        drop(dedup_lock);
+        assert_eq!(
+            recover_pending_claims(home.path(), &segment, &writer, 160)
+                .await
+                .unwrap(),
+            0,
+            "Busy exact Armed lease must defer CrashUnknown after wall-clock forward"
+        );
+        assert!(claim_path.exists());
+
+        std::fs::write(home.path().join(CHILD_RELEASE), b"release").unwrap();
+        assert!(child.wait().unwrap().success());
+        assert_eq!(
+            recover_pending_claims(home.path(), &segment, &writer, 160)
+                .await
+                .unwrap(),
+            1,
+            "lease release on child exit must permit one terminal reconciliation"
+        );
+        assert_eq!(
+            read_delivery_history(home.path()).unwrap()[0].outcome(),
+            ProactiveEgressOutcome::CrashUnknown
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn v1_armed_without_result_is_immediately_crash_unknown() {
+        let home = tempfile::tempdir().unwrap();
+        let queued = item("legacy-v1-recovery");
+        let generation = seed_queue(home.path(), queued.clone());
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let delivery_lock = acquire_delivery_lock(home.path()).await.unwrap();
+        let mut prepared = new_claim(queued, &generation, "telegram", "operator", 100).unwrap();
+        prepared.version = LEGACY_CLAIM_VERSION;
+        prepared.attempt_deadline_unix = None;
+        prepared.binding_sha256 = binding_hash(&prepared);
+        let claim_file = persist_prepared_claim(&delivery_lock, home.path(), &prepared)
+            .await
+            .unwrap();
+        append_intent(&delivery_lock, &writer, &prepared).await.unwrap();
+        let armed = claim_in_phase(&prepared, ProactiveEgressPhase::Armed);
+        persist_armed_claim(&delivery_lock, &claim_file, &armed)
+            .await
+            .unwrap();
+        append_armed(&delivery_lock, &writer, &armed).await.unwrap();
+        drop(claim_file);
+        drop(delivery_lock);
+
+        assert_eq!(
+            recover_pending_claims(home.path(), &segment, &writer, 101)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            read_delivery_history(home.path()).unwrap()[0].outcome(),
+            ProactiveEgressOutcome::CrashUnknown
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
     }
 }

@@ -8,6 +8,7 @@
 //! is not transport authority.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::task::JoinHandle;
@@ -390,9 +391,10 @@ async fn deliver_live_route(
                     "Telegram proactive route lost its token".to_string(),
                 )
             })?;
-            let channel =
-                crate::channels::telegram::TelegramChannel::new(token, config.telegram_user_id);
-            execute!(&chat_id, &channel)
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
+                crate::channels::telegram::TelegramChannel::new(token, config.telegram_user_id),
+            );
+            execute!(&chat_id, channel)
         }
         DeliveryRoute::Slack { channel_id } => {
             let bot = credentials.slack_bot_token.clone().ok_or_else(|| {
@@ -405,8 +407,9 @@ async fn deliver_live_route(
                     "Slack proactive route lost its app token".to_string(),
                 )
             })?;
-            let channel = crate::channels::slack::SlackChannel::new(bot, app);
-            execute!(&channel_id, &channel)
+            let channel: Arc<dyn crate::channels::Channel> =
+                Arc::new(crate::channels::slack::SlackChannel::new(bot, app));
+            execute!(&channel_id, channel)
         }
         DeliveryRoute::Discord { channel_id } => {
             let token = credentials.discord_bot_token.clone().ok_or_else(|| {
@@ -414,12 +417,14 @@ async fn deliver_live_route(
                     "Discord proactive route lost its token".to_string(),
                 )
             })?;
-            let channel = crate::channels::discord::DiscordChannel::new(token).map_err(|_| {
-                LiveRouteError::AdapterConfiguration(
-                    "construct Discord proactive adapter: rejected".to_string(),
-                )
-            })?;
-            execute!(&channel_id, &channel)
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
+                crate::channels::discord::DiscordChannel::new(token).map_err(|_| {
+                    LiveRouteError::AdapterConfiguration(
+                        "construct Discord proactive adapter: rejected".to_string(),
+                    )
+                })?,
+            );
+            execute!(&channel_id, channel)
         }
         DeliveryRoute::WhatsApp { recipient } => {
             let access = credentials.whatsapp_token.clone().ok_or_else(|| {
@@ -437,8 +442,10 @@ async fn deliver_live_route(
                     "WhatsApp proactive route lost its verify token".to_string(),
                 )
             })?;
-            let channel = crate::channels::whatsapp::WhatsAppChannel::new(access, phone_id, verify);
-            execute!(&recipient, &channel)
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
+                crate::channels::whatsapp::WhatsAppChannel::new(access, phone_id, verify),
+            );
+            execute!(&recipient, channel)
         }
         DeliveryRoute::WhatsAppBaileys { recipient } => {
             let url = credentials.whatsapp_baileys_url.clone().ok_or_else(|| {
@@ -459,19 +466,21 @@ async fn deliver_live_route(
                         "Baileys proactive route lost its sender policy".to_string(),
                     )
                 })?;
-            let channel = crate::channels::whatsapp_baileys::WhatsAppBaileysChannel::new(
-                url,
-                token,
-                senders,
-                credentials.whatsapp_baileys_allowed_groups.as_deref(),
-                home.join("channel-state/whatsapp-baileys-cursor.json"),
-            )
-            .map_err(|_| {
-                LiveRouteError::AdapterConfiguration(
-                    "construct Baileys proactive adapter: rejected".to_string(),
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
+                crate::channels::whatsapp_baileys::WhatsAppBaileysChannel::new(
+                    url,
+                    token,
+                    senders,
+                    credentials.whatsapp_baileys_allowed_groups.as_deref(),
+                    home.join("channel-state/whatsapp-baileys-cursor.json"),
                 )
-            })?;
-            execute!(&recipient, &channel)
+                .map_err(|_| {
+                    LiveRouteError::AdapterConfiguration(
+                        "construct Baileys proactive adapter: rejected".to_string(),
+                    )
+                })?,
+            );
+            execute!(&recipient, channel)
         }
         DeliveryRoute::Keet => {
             let url = credentials.keet_bridge_url.as_deref().ok_or_else(|| {
@@ -498,19 +507,21 @@ async fn deliver_live_route(
                     "Keet proactive route lost its sender policy".to_string(),
                 )
             })?;
-            let channel = crate::channels::keet::KeetChannel::new(
-                url,
-                token,
-                topic_capability,
-                allowed_senders,
-                home.join(crate::channels::keet::DEFAULT_CURSOR_FILE),
-            )
-            .map_err(|_| {
-                LiveRouteError::AdapterConfiguration(
-                    "construct Keet proactive adapter: rejected".to_string(),
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
+                crate::channels::keet::KeetChannel::new(
+                    url,
+                    token,
+                    topic_capability,
+                    allowed_senders,
+                    home.join(crate::channels::keet::DEFAULT_CURSOR_FILE),
                 )
-            })?;
-            execute!(topic_capability, &channel)
+                .map_err(|_| {
+                    LiveRouteError::AdapterConfiguration(
+                        "construct Keet proactive adapter: rejected".to_string(),
+                    )
+                })?,
+            );
+            execute!(topic_capability, channel)
         }
         DeliveryRoute::Signal { recipient } => {
             let url = credentials.signal_cli_url.clone().ok_or_else(|| {
@@ -523,13 +534,14 @@ async fn deliver_live_route(
                     "Signal proactive route lost its phone number".to_string(),
                 )
             })?;
-            let channel =
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
                 crate::channels::signal::SignalChannel::new(url, number).map_err(|_| {
                     LiveRouteError::AdapterConfiguration(
                         "construct Signal proactive adapter: rejected".to_string(),
                     )
-                })?;
-            execute!(&recipient, &channel)
+                })?,
+            );
+            execute!(&recipient, channel)
         }
         DeliveryRoute::Line { recipient } => {
             let token = credentials
@@ -540,12 +552,14 @@ async fn deliver_live_route(
                         "LINE proactive route lost its access token".to_string(),
                     )
                 })?;
-            let channel = crate::channels::line::LineChannel::new(token).map_err(|_| {
-                LiveRouteError::AdapterConfiguration(
-                    "construct LINE proactive adapter: rejected".to_string(),
-                )
-            })?;
-            execute!(&recipient, &channel)
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
+                crate::channels::line::LineChannel::new(token).map_err(|_| {
+                    LiveRouteError::AdapterConfiguration(
+                        "construct LINE proactive adapter: rejected".to_string(),
+                    )
+                })?,
+            );
+            execute!(&recipient, channel)
         }
         DeliveryRoute::Mattermost { channel_id } => {
             let url = credentials.mattermost_url.clone().ok_or_else(|| {
@@ -558,8 +572,9 @@ async fn deliver_live_route(
                     "Mattermost proactive route lost its token".to_string(),
                 )
             })?;
-            let channel = crate::channels::mattermost::MattermostChannel::new(url, token);
-            execute!(&channel_id, &channel)
+            let channel: Arc<dyn crate::channels::Channel> =
+                Arc::new(crate::channels::mattermost::MattermostChannel::new(url, token));
+            execute!(&channel_id, channel)
         }
         DeliveryRoute::IMessage { chat_guid } => {
             let url = credentials.bluebubbles_url.clone().ok_or_else(|| {
@@ -572,15 +587,17 @@ async fn deliver_live_route(
                     "BlueBubbles proactive route lost its password".to_string(),
                 )
             })?;
-            let channel = crate::channels::imessage_bluebubbles::BlueBubblesChannel::new(
-                url, password, None, None,
-            )
-            .map_err(|_| {
-                LiveRouteError::AdapterConfiguration(
-                    "construct BlueBubbles proactive adapter: rejected".to_string(),
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
+                crate::channels::imessage_bluebubbles::BlueBubblesChannel::new(
+                    url, password, None, None,
                 )
-            })?;
-            execute!(&chat_guid, &channel)
+                .map_err(|_| {
+                    LiveRouteError::AdapterConfiguration(
+                        "construct BlueBubbles proactive adapter: rejected".to_string(),
+                    )
+                })?,
+            );
+            execute!(&chat_guid, channel)
         }
         #[cfg(feature = "matrix-channel")]
         DeliveryRoute::Matrix { room_id } => {
@@ -594,24 +611,26 @@ async fn deliver_live_route(
                     "Matrix proactive route lost its user id".to_string(),
                 )
             })?;
-            let channel = crate::channels::matrix::MatrixChannel::new(
-                homeserver,
-                user_id,
-                credentials.matrix_password.clone(),
-                credentials.matrix_access_token.clone(),
-                credentials
-                    .matrix_store_path
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                    .map(PathBuf::from),
-            )
-            .with_policy(
-                credentials.matrix_allowed_user_id.clone(),
-                credentials.matrix_allowed_room_ids.clone(),
-                credentials.matrix_requires_encryption(),
-                writer.clone(),
+            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
+                crate::channels::matrix::MatrixChannel::new(
+                    homeserver,
+                    user_id,
+                    credentials.matrix_password.clone(),
+                    credentials.matrix_access_token.clone(),
+                    credentials
+                        .matrix_store_path
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                        .map(PathBuf::from),
+                )
+                .with_policy(
+                    credentials.matrix_allowed_user_id.clone(),
+                    credentials.matrix_allowed_room_ids.clone(),
+                    credentials.matrix_requires_encryption(),
+                    writer.clone(),
+                ),
             );
-            execute!(&room_id, &channel)
+            execute!(&room_id, channel)
         }
     }
 }
@@ -791,6 +810,7 @@ pub async fn run_proactive_delivery_tick(
         wal_segment_path,
         writer,
         now_unix,
+        Duration::from_secs(config.proactive.delivery_attempt_timeout_secs),
     );
     let mut delivered = 0usize;
     for (item, queue_generation) in drained {

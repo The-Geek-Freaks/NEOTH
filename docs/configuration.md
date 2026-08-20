@@ -102,6 +102,29 @@ These keys match the deserialized schema. Channel credentials belong in the
 credential store and should normally be written through `neoth channel add`,
 not invented as nested `channels.*.enabled` booleans.
 
+### Proactive delivery
+
+Proactive delivery remains opt-in. Its `freedom.yaml::proactive` block controls
+when a queued unsolicited message may enter the dispatcher; it does not bypass
+the selected channel's route, account, sender, permission, or policy checks.
+
+```yaml
+proactive:
+  enabled: false                     # default: no unsolicited delivery
+  # quiet_hours_utc: [22, 7]         # optional UTC silence window
+  idle_only: false                   # require an inactive operator when true
+  idle_only_window_secs: 300         # inactivity threshold when idle_only
+  delivery_attempt_timeout_secs: 60  # one-attempt deadline; valid: 1..300
+```
+
+`delivery_attempt_timeout_secs` is the absolute wall-clock budget for one
+proactive channel-delivery attempt. It defaults to 60 seconds and is validated
+inclusively between 1 and 300 seconds. When the deadline expires, NEOTH
+cancels that attempt instead of leaving a channel operation unbounded; the
+normal recovery and recorded outcome path then determines the queue state.
+Changing this setting cannot turn on proactive messaging: `enabled: true` is a
+separate, explicit opt-in.
+
 ### Communication adaptation
 
 `profile.communication` is separate from the optional LLM-backed fact

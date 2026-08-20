@@ -111,6 +111,25 @@ custom_autonomy:
 #     channel_send: allow
 
 
+# ── 4a. Proactive delivery ──────────────────────────────────────────────────
+
+# Default OFF: NEOTH never posts unsolicited messages until you explicitly
+# enable this switch. Channel routing and each underlying channel's own sender,
+# account and permission checks still apply.
+proactive:
+  enabled: false
+  # Optional UTC quiet-hours window [start_hour, end_hour]. Delivery is silent
+  # from start through the hour before end; [22, 7] means 22:00–06:59 UTC.
+  # quiet_hours_utc: [22, 7]
+  # When true, only deliver after this many seconds without an operator turn.
+  idle_only: false
+  idle_only_window_secs: 300
+  # Absolute time budget for ONE delivery attempt. Default 60; valid range
+  # is 1..300 seconds. Timeout cancels the attempt rather than allowing a
+  # stalled channel operation to run without a bound.
+  delivery_attempt_timeout_secs: 60
+
+
 # ── 5. Cluster transport + LAN privacy ──────────────────────────────────────
 
 # The cluster master switch is OFF by default. A public `name`, a shared

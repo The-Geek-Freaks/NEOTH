@@ -86,6 +86,10 @@ pub struct ProactiveConfig {
     /// GOLD-FEAT-11 — inactivity window for `idle_only` gating, seconds.
     /// Default 300 (5 min). Ignored when `idle_only = false`.
     pub idle_only_window_secs: u64,
+    /// GOLD-LF-P1-14 — absolute deadline for one proactive delivery attempt,
+    /// in seconds. Default 60 seconds. Bounds prevent an operator typo from
+    /// creating an unbounded attempt or one that bypasses cancellation.
+    pub delivery_attempt_timeout_secs: u64,
 }
 
 impl Default for ProactiveConfig {
@@ -95,6 +99,7 @@ impl Default for ProactiveConfig {
             quiet_hours_utc: None,
             idle_only: false,
             idle_only_window_secs: 300,
+            delivery_attempt_timeout_secs: 60,
         }
     }
 }
@@ -103,6 +108,10 @@ impl ProactiveConfig {
     /// Largest inactivity window that can be converted to nanoseconds in the
     /// signed timestamps stored by the memory index without overflow.
     pub const MAX_IDLE_WINDOW_SECS: u64 = i64::MAX as u64 / 1_000_000_000;
+    /// Inclusive lower bound for one proactive delivery attempt deadline.
+    pub const MIN_DELIVERY_ATTEMPT_TIMEOUT_SECS: u64 = 1;
+    /// Inclusive upper bound for one proactive delivery attempt deadline.
+    pub const MAX_DELIVERY_ATTEMPT_TIMEOUT_SECS: u64 = 300;
 
     pub fn validate(&self) -> Result<(), String> {
         if let Some([start, end]) = self.quiet_hours_utc
@@ -114,6 +123,16 @@ impl ProactiveConfig {
             return Err(format!(
                 "idle_only_window_secs must be <= {}",
                 Self::MAX_IDLE_WINDOW_SECS
+            ));
+        }
+        if !(Self::MIN_DELIVERY_ATTEMPT_TIMEOUT_SECS
+            ..=Self::MAX_DELIVERY_ATTEMPT_TIMEOUT_SECS)
+            .contains(&self.delivery_attempt_timeout_secs)
+        {
+            return Err(format!(
+                "delivery_attempt_timeout_secs must be between {} and {}",
+                Self::MIN_DELIVERY_ATTEMPT_TIMEOUT_SECS,
+                Self::MAX_DELIVERY_ATTEMPT_TIMEOUT_SECS
             ));
         }
         Ok(())

@@ -436,22 +436,19 @@ fn exactly_one_production_proactive_transport_seam_exists() {
 }
 
 #[test]
-fn prepared_intent_armed_result_order_is_durable_and_fail_closed() {
+fn durable_admission_precedes_owned_deadline_bounded_transport_and_terminalization() {
     let execute = between(
         EGRESS,
         "pub(crate) async fn execute_claimed_once(",
         "/// Settle a configured-but-unavailable route",
     );
-    let ordered = [
+    let admission = [
         "persist_prepared_claim(&delivery_lock, home, &claim)",
         "append_intent(&delivery_lock, writer, &claim)",
         "persist_armed_claim(&delivery_lock, &claim_file, &claim)",
         "append_armed(&delivery_lock, writer, &claim)",
-        ".send_proactive(transport_recipient, &claim.item.body)",
-        "append_result(&delivery_lock, writer, &result)",
-        "apply_projections_blocking(\n        &delivery_lock,\n        home,\n        wal_segment_path,",
     ];
-    let positions: Vec<_> = ordered
+    let admission_positions: Vec<_> = admission
         .iter()
         .map(|needle| {
             execute
@@ -459,9 +456,289 @@ fn prepared_intent_armed_result_order_is_durable_and_fail_closed() {
                 .unwrap_or_else(|| panic!("missing stage: {needle}"))
         })
         .collect();
-    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(
+        admission_positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "Prepared, Intent and Armed durability must precede transport admission"
+    );
+
+    let start = execute
+        .find("let mut transport = OwnedTransportAttempt::start(")
+        .expect("owned transport admission");
+    assert!(
+        admission_positions.last().copied().unwrap() < start,
+        "no provider task may be created before the Armed WAL acknowledgement"
+    );
+    let terminal = execute
+        .find("let result = terminal_result(&claim, outcome, receipt, error, completed_at_unix);")
+        .expect("terminal result construction");
+    let terminalization = &execute[terminal..];
+    let terminal_lock = terminalization
+        .find("let delivery_lock = acquire_delivery_lock(home)")
+        .expect("terminal lock reacquisition");
+    let terminal_append = terminalization
+        .find("append_result(&delivery_lock, writer, &result)")
+        .expect("terminal result WAL append");
+    let terminal_release = terminal_append
+        + terminalization[terminal_append..]
+            .find("transport.release_after_terminal_result();")
+        .expect("terminal transport ownership release");
+    let terminal_projection = terminalization
+        .find("apply_projections_blocking(")
+        .expect("terminal projection");
+    assert!(
+        terminal_lock < terminal_append
+            && terminal_append < terminal_release
+            && terminal_release < terminal_projection,
+        "terminalization must re-lock, acknowledge Result, release transport ownership, then project"
+    );
+    assert!(
+        start < terminal,
+        "a transport attempt must resolve before terminal WAL evidence is built"
+    );
+    assert!(
+        execute.contains("tokio::time::Instant::now() < transport_deadline"),
+        "transport must reject an expired admission deadline before task creation"
+    );
+    assert!(
+        execute.contains("let transport_deadline = original_monotonic_deadline.min(wall_deadline);"),
+        "live transport must be bounded by both monotonic and durable-wall deadlines"
+    );
+    assert!(
+        execute.contains("let completed_at_unix = chrono::Utc::now().timestamp();"),
+        "terminal evidence must use completion time rather than the stale tick time"
+    );
     assert!(EGRESS.contains("atomic_write_private_child_create_new("));
     assert!(EGRESS.contains("bind_written_claim(claim_root, name, &prepared)"));
+}
+
+#[test]
+fn owned_transport_cancellation_is_abort_then_reap_and_recovery_is_fail_closed() {
+    let owned = between(
+        EGRESS,
+        "impl OwnedTransportAttempt {",
+        "impl Drop for OwnedTransportAttempt",
+    );
+    for required in [
+        "channel: Arc<dyn Channel>",
+        "runtime.spawn(async move",
+        "channel.send_proactive(&recipient, &body).await",
+        "tokio::time::timeout_at(deadline, handle).await",
+        "handle.abort();",
+        "let _ = (&mut handle).await;",
+    ] {
+        assert!(
+            owned.contains(required),
+            "owned transport lifecycle lost {required}"
+        );
+    }
+    let timeout_abort = owned
+        .find("handle.abort();")
+        .expect("timeout abort");
+    let timeout_reap = owned[timeout_abort..]
+        .find("let _ = (&mut handle).await;")
+        .expect("timeout reaping acknowledgement");
+    assert!(
+        timeout_reap > 0,
+        "a deadline must await its abort before emitting terminal evidence"
+    );
+
+    let drop_impl = between(
+        EGRESS,
+        "impl Drop for OwnedTransportAttempt",
+        "async fn reap_cancelled_transport_attempts()",
+    );
+    let cancelled_handle = between(
+        EGRESS,
+        "struct CancelledTransportHandle {",
+        "/// Outer-future cancellation cannot await",
+    );
+    assert!(
+        cancelled_handle.contains("handle: TransportJoinHandle,")
+            && cancelled_handle.contains("registration: TransportIntentRegistration,"),
+        "a cancelled transport must retain both its local intent registration and JoinHandle"
+    );
+    assert!(
+        EGRESS.contains("Mutex<Vec<CancelledTransportHandle>>"),
+        "the cancellation supervisor must queue intent-bound handles"
+    );
+    let drop_abort = drop_impl.find("handle.abort();").expect("drop abort");
+    let queued = &drop_impl[drop_abort..];
+    let queue_entry = queued
+        .find("queue.push(CancelledTransportHandle {")
+        .expect("cancelled handle reaper queue");
+    assert!(
+        queued[queue_entry..].contains("handle,")
+            && queued[queue_entry..].contains("registration,"),
+        "dropping a live delivery must transfer its registration with the aborted handle"
+    );
+
+    let reaper = between(
+        EGRESS,
+        "impl CancelledTransportReapGuard {",
+        "#[cfg(test)]",
+    );
+    let joined = reaper
+        .find("let _ = (&mut entry.handle).await;")
+        .expect("cancelled handle join");
+    let registration_release = reaper
+        .find("drop(entry.registration);")
+        .expect("reaped registration release");
+    assert!(
+        joined < registration_release,
+        "only a joined cancelled task may release its transferred local registration"
+    );
+
+    let recovery = between(
+        EGRESS,
+        "async fn recover_pending_claims_locked(",
+        "/// Reconcile every durable claim",
+    );
+    let reap = recovery
+        .find("reap_cancelled_transport_attempts()\n        .await")
+        .expect("cancelled transport reaping");
+    let scan = recovery
+        .find("let scan_lock = delivery_lock")
+        .expect("durable recovery scan");
+    assert!(
+        reap < scan,
+        "recovery must reap cancelled adapter work before inspecting durable claims"
+    );
+    assert!(
+        recovery.contains("if claim.version == CLAIM_VERSION")
+            && recovery.contains("is_some_and(|deadline| now_unix < deadline)")
+            && recovery.contains("continue;"),
+        "only an unexpired v2 Armed claim may remain in-flight during recovery"
+    );
+    assert!(
+        !recovery.contains("now_unix <= deadline"),
+        "deadline equality must not leave a v2 Armed attempt in-flight"
+    );
+    assert!(
+        recovery.contains("ProactiveEgressOutcome::CrashUnknown"),
+        "legacy or expired Armed uncertainty must settle fail-closed"
+    );
+}
+
+#[test]
+fn armed_claim_lease_and_registration_cover_admission_transport_and_terminalization() {
+    let execute = between(
+        EGRESS,
+        "pub(crate) async fn execute_claimed_once(",
+        "/// Settle a configured-but-unavailable route",
+    );
+    let provider_start = execute
+        .find("let mut transport = OwnedTransportAttempt::start(")
+        .expect("owned provider start");
+    let admission = &execute[..provider_start];
+    let admission_lock = admission
+        .find("let delivery_lock = acquire_delivery_lock(home)")
+        .expect("admission DeliveryLock");
+    let persist_armed = admission
+        .find("persist_armed_claim(&delivery_lock, &claim_file, &claim)")
+        .expect("Armed claim persistence");
+    let lease = admission
+        .find("let armed_claim_lease = match ArmedClaimLease::try_acquire(&claim_file, &claim)")
+        .expect("exact Armed claim lease acquisition");
+    let registration = admission
+        .find("let registration = TransportIntentRegistration::acquire(&claim.intent_id);")
+        .expect("local intent registration");
+    let armed_ack = admission
+        .find("append_armed(&delivery_lock, writer, &claim)")
+        .expect("Armed WAL acknowledgement");
+    assert!(
+        admission_lock < persist_armed
+            && persist_armed < lease
+            && lease < registration
+            && registration < armed_ack,
+        "the final Armed inode lease and local registration must be acquired under DeliveryLock before Armed ACK"
+    );
+    assert!(
+        admission.contains("ArmedClaimLeaseProbe::Busy =>")
+            && admission.contains("exact claim lease is already busy"),
+        "a busy exact Armed lease must fail closed before any provider task starts"
+    );
+    let post_admission = &execute[provider_start..];
+    assert!(
+        post_admission
+            .starts_with("let mut transport = OwnedTransportAttempt::start(\n        registration,")
+            && post_admission.contains("        armed_claim_lease,\n    );"),
+        "only the post-unlock owned attempt may receive admission's registration and Armed lease"
+    );
+
+    let owned = between(
+        EGRESS,
+        "impl OwnedTransportAttempt {",
+        "impl Drop for OwnedTransportAttempt",
+    );
+    let task_lease_clone = owned
+        .find("let task_lease = Arc::clone(&armed_claim_lease);")
+        .expect("provider lease Arc clone");
+    let provider_send = owned
+        .find("let result = channel.send_proactive(&recipient, &body).await;")
+        .expect("sole provider send");
+    let task_lease_drop = owned[provider_send..]
+        .find("drop(task_lease);")
+        .expect("provider lease Arc release");
+    assert!(
+        task_lease_clone < provider_send && task_lease_drop > 0,
+        "the spawned provider task must retain an Armed lease Arc through send_proactive await"
+    );
+
+    let dedup = between(
+        EGRESS,
+        "async fn has_unexpired_inflight_dedup(",
+        "fn deadline_after(",
+    );
+    assert!(
+        dedup.contains("ArmedClaimLeaseProbe::Busy => return Ok(true)"),
+        "dedup must defer while another process owns the exact Armed lease"
+    );
+    let recovery = between(
+        EGRESS,
+        "async fn recover_pending_claims_locked(",
+        "/// Reconcile every durable claim",
+    );
+    assert!(
+        recovery.contains("ArmedClaimLeaseProbe::Busy => continue"),
+        "recovery must defer rather than synthesize a terminal result for a busy Armed lease"
+    );
+    let terminal = execute
+        .find("let result = terminal_result(&claim, outcome, receipt, error, completed_at_unix);")
+        .expect("terminal result construction");
+    let terminalization = &execute[terminal..];
+    let result_ack = terminalization
+        .find("append_result(&delivery_lock, writer, &result)")
+        .expect("Result WAL acknowledgement");
+    let owner_release = result_ack
+        + terminalization[result_ack..]
+            .find("transport.release_after_terminal_result();")
+        .expect("owner lease release");
+    let projections = terminalization
+        .find("apply_projections_blocking(")
+        .expect("terminal projections");
+    assert!(
+        result_ack < owner_release && owner_release < projections,
+        "owner Armed lease must survive Result ACK and be released before projection/removal"
+    );
+    let owner_release_impl = between(
+        EGRESS,
+        "fn release_after_terminal_result(&mut self)",
+        "fn validate_claim_lease(&self, claim: &ProactiveEgressClaim)",
+    );
+    assert!(
+        owner_release_impl.contains("drop(self.armed_claim_lease.take());")
+            && owner_release_impl.contains("drop(self.registration.take());"),
+        "the owner hand-off must release both OS lease and local registration together"
+    );
+    let projection_impl = between(
+        EGRESS,
+        "fn apply_projections(",
+        "async fn apply_projections_blocking(",
+    );
+    assert!(
+        projection_impl.contains("claim_file\n        .remove()"),
+        "terminal projections retain the claim-removal authority after lease hand-off"
+    );
 }
 
 #[test]

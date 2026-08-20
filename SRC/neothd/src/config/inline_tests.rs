@@ -1478,6 +1478,8 @@ mod tests {
         // refactor flipping the default to true would surface here.
         let cfg = ProactiveConfig::default();
         assert!(!cfg.enabled);
+        assert_eq!(cfg.delivery_attempt_timeout_secs, 60);
+        cfg.validate().expect("proactive defaults must be valid");
     }
 
     #[test]
@@ -1491,10 +1493,21 @@ mod tests {
     #[test]
     fn proactive_enabled_true_round_trips_via_yaml() {
         let dir = tempfile::tempdir().unwrap();
-        let yaml = "operator_id: alice\nproactive:\n  enabled: true\n";
+        let legacy_yaml = "operator_id: alice\nproactive:\n  enabled: true\n";
+        let legacy_path = write_yaml(dir.path(), legacy_yaml);
+        let legacy = FreedomConfig::load_from_path(&legacy_path).unwrap();
+        assert_eq!(legacy.proactive.delivery_attempt_timeout_secs, 60);
+
+        let yaml = "operator_id: alice\nproactive:\n  enabled: true\n  delivery_attempt_timeout_secs: 120\n";
         let path = write_yaml(dir.path(), yaml);
         let cfg = FreedomConfig::load_from_path(&path).unwrap();
         assert!(cfg.proactive.enabled);
+        assert_eq!(cfg.proactive.delivery_attempt_timeout_secs, 120);
+
+        let encoded = serde_yaml::to_string(&cfg.proactive).expect("serialize proactive config");
+        let decoded: ProactiveConfig =
+            serde_yaml::from_str(&encoded).expect("round-trip proactive config");
+        assert_eq!(decoded, cfg.proactive);
     }
 
     #[test]
@@ -1508,6 +1521,21 @@ mod tests {
         assert!(cfg.validate().is_err());
 
         cfg.idle_only_window_secs = ProactiveConfig::MAX_IDLE_WINDOW_SECS;
+        cfg.validate().unwrap();
+
+        cfg.delivery_attempt_timeout_secs = 0;
+        assert_eq!(
+            cfg.validate().unwrap_err(),
+            "delivery_attempt_timeout_secs must be between 1 and 300"
+        );
+
+        cfg.delivery_attempt_timeout_secs = 301;
+        assert_eq!(
+            cfg.validate().unwrap_err(),
+            "delivery_attempt_timeout_secs must be between 1 and 300"
+        );
+
+        cfg.delivery_attempt_timeout_secs = 60;
         cfg.validate().unwrap();
     }
 
