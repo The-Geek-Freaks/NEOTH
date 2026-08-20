@@ -12,9 +12,10 @@
 
 use chacha20::cipher::{KeyIvInit, StreamCipher};
 use chacha20::hchacha;
-use poly1305::universal_hash::KeyInit;
 use poly1305::Poly1305;
-use rand::{rngs::OsRng, TryRngCore};
+use poly1305::universal_hash::KeyInit;
+use rand::{TryRngCore, rngs::OsRng};
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 use tracing::debug;
 
@@ -197,7 +198,7 @@ fn secretstream_decrypt(
 
     // Verify MAC
     let computed_mac = compute_mac(&poly_key, aad, &tag_block, encrypted_msg);
-    if computed_mac != received_mac {
+    if !bool::from(computed_mac.as_slice().ct_eq(received_mac)) {
         return Err(SecretstreamError::DecryptionFailed);
     }
 
@@ -213,7 +214,15 @@ fn init_from_header(key: &[u8; KEYBYTES], header: &[u8; HEADERBYTES]) -> ([u8; 3
     input.copy_from_slice(&header[..16]);
     let subkey = hchacha20_subkey(key, &input);
 
+    // codeql[rust/hard-coded-cryptographic-value]
+    // Security: this is the libsodium secretstream wire-format initial state,
+    // not a reusable nonce. HChaCha derives a per-header subkey above, bytes
+    // 4..12 are copied from the peer-provided header below, and counter=1 is
+    // mandated for the first encrypted secretstream block.
     let mut nonce = [0u8; 12];
+    // codeql[rust/hard-coded-cryptographic-value]
+    // Security: `1` is the fixed initial counter required by the wire format;
+    // uniqueness comes from the header-derived subkey and nonce suffix above.
     nonce[0] = 1;
     nonce[4..12].copy_from_slice(&header[16..24]);
 
@@ -235,7 +244,9 @@ impl Push {
     pub fn new(key: &[u8; KEYBYTES]) -> (Self, [u8; HEADERBYTES]) {
         let mut header = [0u8; HEADERBYTES];
         // SAFETY: OsRng is the OS CSPRNG; failure indicates a fatal platform issue.
-        OsRng.try_fill_bytes(&mut header).expect("OsRng should not fail");
+        OsRng
+            .try_fill_bytes(&mut header)
+            .expect("OsRng should not fail");
         let state = Self::with_header(key, &header);
         (state, header)
     }
@@ -268,7 +279,12 @@ impl Push {
             rekey_state(&mut self.key, &mut self.nonce);
         }
 
-        debug!(tag, plaintext_len = plaintext.len(), ciphertext_len = ciphertext.len(), "Push::push");
+        debug!(
+            tag,
+            plaintext_len = plaintext.len(),
+            ciphertext_len = ciphertext.len(),
+            "Push::push"
+        );
         ciphertext
     }
 }

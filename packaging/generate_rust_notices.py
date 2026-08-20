@@ -202,6 +202,21 @@ def unchanged_posix_relative_path(value: object) -> str | None:
     return value
 
 
+def upstream_vcs_path(value: object) -> str | None:
+    """Accept Cargo's repository-root marker or a strict POSIX crate path.
+
+    Cargo writes ``path_in_vcs: ""`` for a crate published from its upstream
+    repository root.  That exact empty marker is safe to retain as a stable
+    identity component.  Every non-root path must still pass the ordinary
+    Markdown-safe relative-path validation; in particular, no normalization is
+    performed for traversal, platform, or presentation syntax.
+    """
+
+    if value == "":
+        return ""
+    return unchanged_posix_relative_path(value)
+
+
 def contains_ascii_control(value: str) -> bool:
     """Return whether a value contains a C0 control or DEL character."""
 
@@ -251,7 +266,7 @@ def local_vendor_provenance(package: dict[str, Any]) -> dict[str, str] | None:
         ) from error
 
     revision = data.get("git", {}).get("sha1")
-    path_in_vcs = unchanged_posix_relative_path(data.get("path_in_vcs"))
+    path_in_vcs = upstream_vcs_path(data.get("path_in_vcs"))
     if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise SystemExit(
             f"locally vended {package_label(package)} has no exact upstream Git revision"

@@ -43,6 +43,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use nostr::nips::nip59::extract_rumor;
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -102,16 +103,28 @@ pub async fn probe_relays(secret_key: &SecretString, relays_csv: &str) -> Result
     let keys = parse_keys(secret_key)?;
     let public_key = keys.public_key().to_hex();
     let relays = normalize_relay_urls(relays_csv)?;
-    let client = Client::builder().signer(keys).build();
+    let client = Client::builder()
+        .authenticator(SignerAuthenticator::new(keys))
+        .build();
     for relay in &relays {
         client
             .add_relay(relay.as_str())
             .await
             .with_context(|| format!("add Nostr relay {relay}"))?;
     }
-    let outcome = client.try_connect(super::readiness::PROBE_TIMEOUT).await;
-    client.disconnect().await;
-    classify_relay_probe(&public_key, outcome.success.len(), outcome.failed.len())
+    client
+        .connect()
+        .and_wait(super::readiness::PROBE_TIMEOUT)
+        .await;
+    let connected = client
+        .relays()
+        .await
+        .values()
+        .filter(|relay| relay.status().is_connected())
+        .count();
+    let failed = relays.len().saturating_sub(connected);
+    client.shutdown().await;
+    classify_relay_probe(&public_key, connected, failed)
 }
 
 fn classify_relay_probe(public_key: &str, connected: usize, failed: usize) -> Result<String> {
@@ -321,7 +334,9 @@ impl Channel for NostrChannel {
             &my_pubkey.to_hex(),
             scan_started_at,
         )?;
-        let client = Client::builder().signer(keys).build();
+        let client = Client::builder()
+            .authenticator(SignerAuthenticator::new(keys.clone()))
+            .build();
         for relay in &relays {
             client
                 .add_relay(relay.as_str())
@@ -349,7 +364,7 @@ impl Channel for NostrChannel {
             ));
         }
         let subscription = client
-            .subscribe(filter, None)
+            .subscribe(filter)
             .await
             .context("nostr subscribe to gift wraps")?;
         if subscription.success.is_empty() {
@@ -365,35 +380,37 @@ impl Channel for NostrChannel {
                 "nostr subscription partially degraded"
             );
         }
-        let subscription_id = subscription.val;
-        let mut awaiting_eose: HashSet<RelayUrl> = subscription.success;
+        let subscription_id = subscription.value;
+        let mut awaiting_eose: HashSet<RelayUrl> = subscription.success.into_keys().collect();
         info!(
             relays = awaiting_eose.len(),
             catch_up = !first_boot,
             "nostr adapter live"
         );
 
-        while let Ok(notification) = notifications.recv().await {
+        while let Some(notification) = notifications.next().await {
             let event = match notification {
-                RelayPoolNotification::Message {
-                    relay_url,
-                    message: RelayMessage::EndOfStoredEvents(id),
-                } if id.as_ref() == &subscription_id => {
-                    awaiting_eose.remove(&relay_url);
-                    if awaiting_eose.is_empty() && cursor.completed_scan_unix < scan_started_at {
-                        cursor.complete_scan(cursor_path, scan_started_at)?;
-                        info!(
-                            completed_scan_unix = cursor.completed_scan_unix,
-                            "nostr catch-up cursor advanced"
-                        );
+                ClientNotification::Message { relay_url, message } => {
+                    if let RelayMessage::EndOfStoredEvents(id) = message.as_ref()
+                        && id.as_ref() == &subscription_id
+                    {
+                        awaiting_eose.remove(&relay_url);
+                        if awaiting_eose.is_empty() && cursor.completed_scan_unix < scan_started_at
+                        {
+                            cursor.complete_scan(cursor_path, scan_started_at)?;
+                            info!(
+                                completed_scan_unix = cursor.completed_scan_unix,
+                                "nostr catch-up cursor advanced"
+                            );
+                        }
                     }
                     continue;
                 }
-                RelayPoolNotification::Event {
+                ClientNotification::Event {
                     subscription_id: id,
                     event,
                     ..
-                } if id == subscription_id => event,
+                } if id == subscription_id => *event,
                 _ => continue,
             };
             if event.kind != Kind::GiftWrap {
@@ -403,7 +420,7 @@ impl Channel for NostrChannel {
             if !cursor.claim(cursor_path, outer_id.clone(), event.created_at.as_secs())? {
                 continue;
             }
-            let unwrapped = match client.unwrap_gift_wrap(&event).await {
+            let unwrapped = match extract_rumor(&keys, &event) {
                 Ok(u) => u,
                 Err(e) => {
                     warn!(error = %e, "nostr gift-wrap unwrap failed; skipping");
@@ -449,7 +466,15 @@ impl Channel for NostrChannel {
             match handler(inbound).await {
                 Ok(Some(out)) => {
                     for chunk in nostr_text_chunks(&out.text) {
-                        if let Err(e) = client.send_private_msg(sender, chunk, []).await {
+                        let event =
+                            match PrivateDirectMessageBuilder::new(sender, chunk).finalize(&keys) {
+                                Ok(event) => event,
+                                Err(e) => {
+                                    warn!(error = %e, "nostr DM reply signing failed (dropped)");
+                                    break;
+                                }
+                            };
+                        if let Err(e) = client.send_event(&event).await {
                             warn!(error = %e, "nostr DM reply failed (dropped)");
                             break;
                         }
@@ -477,9 +502,15 @@ impl Channel for NostrChannel {
         })?;
         let recipient = PublicKey::parse(chat_id)
             .map_err(|e| ChannelError::Transport(format!("invalid nostr recipient pubkey: {e}")))?;
+        let keys = self
+            .keys()
+            .map_err(|e| ChannelError::Transport(format!("invalid nostr signing key: {e}")))?;
         for chunk in nostr_text_chunks(text) {
+            let event = PrivateDirectMessageBuilder::new(recipient, chunk)
+                .finalize(&keys)
+                .map_err(|e| ChannelError::Transport(format!("nostr DM signing: {e}")))?;
             client
-                .send_private_msg(recipient, chunk, [])
+                .send_event(&event)
                 .await
                 .map_err(|e| ChannelError::Transport(format!("nostr send: {e}")))?;
         }

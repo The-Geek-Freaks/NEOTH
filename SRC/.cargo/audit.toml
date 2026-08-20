@@ -22,10 +22,10 @@ ignore = [
     "RUSTSEC-2026-0206", # rustybuzz unmaintained — latest Slint/usvg graph; no safe upgrade, see deny.toml
     "RUSTSEC-2026-0194", # quick-xml <0.41 quadratic attr-check DoS — build-time only via wayland-scanner; see deny.toml
     "RUSTSEC-2026-0195", # quick-xml <0.41 NsReader memory DoS — same build-time-only chain; runtime copies are 0.41
-    # audit-only, deliberately NOT mirrored into deny.toml: `instant` reaches the
-    # graph solely through the optional `nostr-channel` feature. cargo-audit reads
-    # the whole lockfile and sees it; cargo-deny resolves features and does not,
-    # and rejects the entry as "no crate matched advisory criteria". Adding it
-    # there fails the gate rather than satisfying it.
-    "RUSTSEC-2024-0384", # instant unmaintained — transitive via nostr-sdk; no vuln, no upgrade without a nostr stack bump
+    # Temporary Matrix-only `bitmaps` exceptions. Both advisories have no
+    # upstream-compatible fix: the Matrix SDK's immutable-collections chain
+    # selects bitmaps 3.x, and NEOTH has no direct use or safe substitution.
+    # Re-evaluate 2026-11-13 with the next Matrix stack update.
+    "RUSTSEC-2026-0247",
+    "RUSTSEC-2025-0167",
 ]

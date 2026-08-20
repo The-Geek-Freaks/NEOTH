@@ -170,6 +170,13 @@ ignore = [
     # both resolve to 0.41. Drop both ignores when wayland-scanner bumps.
     { id = "RUSTSEC-2026-0194", reason = "quick-xml <0.41 quadratic attr-check DoS — build-time only via wayland-scanner over vendored protocol XML; all runtime copies are 0.41. Drop when wayland-scanner bumps." },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml <0.41 NsReader memory-exhaustion DoS — same build-time-only wayland-scanner chain; no operator-controlled XML. Drop when wayland-scanner bumps." },
+    # Temporary synchronized exceptions: `bitmaps` is Matrix-only through the
+    # Matrix SDK immutable-collections chain. There is no upstream-compatible
+    # fix, NEOTH does not use it directly, and replacing it locally would fork
+    # the Matrix stack. Re-evaluate both with the next Matrix stack update on
+    # 2026-11-13.
+    { id = "RUSTSEC-2026-0247", reason = "bitmaps is Matrix-only via the matrix-sdk immutable-collections chain; no upstream-compatible fix and no direct NEOTH use. Re-evaluate 2026-11-13." },
+    { id = "RUSTSEC-2025-0167", reason = "bitmaps is Matrix-only via the matrix-sdk immutable-collections chain; no upstream-compatible fix and no direct NEOTH use. Re-evaluate 2026-11-13." },
 ]
 
 [sources]

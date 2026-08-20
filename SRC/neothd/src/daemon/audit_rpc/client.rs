@@ -633,10 +633,12 @@ mod tests {
             Err(AuditRpcHealthError::Sidecar(_))
         ));
 
-        let nonce = "0123456789abcdeffedcba9876543210";
-        let endpoint = super::super::transport::endpoint_for_home(home.path(), nonce)
+        // Exercise the strict nonce/owner path with a fresh value: even test
+        // sidecars must not normalize a reusable endpoint capability.
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let endpoint = super::super::transport::endpoint_for_home(home.path(), &nonce)
             .expect("derive health-check endpoint");
-        super::super::sidecar::write_sidecar(home.path(), &endpoint, std::process::id(), nonce)
+        super::super::sidecar::write_sidecar(home.path(), &endpoint, std::process::id(), &nonce)
             .expect("write strict health-check sidecar");
         assert_eq!(
             health_check(home.path()),
@@ -648,7 +650,7 @@ mod tests {
         let mut daemon = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid"))
             .expect("acquire daemon PID lock");
         daemon
-            .publish_endpoint_nonce(nonce)
+            .publish_endpoint_nonce(&nonce)
             .expect("publish exact endpoint nonce");
         assert!(matches!(
             health_check(home.path()),

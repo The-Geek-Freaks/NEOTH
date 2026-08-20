@@ -47,6 +47,10 @@ pub enum NoiseError {
     /// The handshake state machine received a message out of order.
     #[error("unexpected handshake state")]
     UnexpectedState,
+    /// A transport cipher would reuse an AEAD nonce after exhausting its
+    /// counter, so it must stop rather than wrap.
+    #[error("cipher nonce exhausted")]
+    NonceExhausted,
 }
 
 // ─── Primitive cryptography ───────────────────────────────────────────────────
@@ -149,12 +153,42 @@ pub fn ed25519_dh(secret_key: &[u8; 64], public_key: &[u8; 32]) -> Result<[u8; 3
 /// When no key is set, encrypt/decrypt are identity operations.
 struct CipherState {
     key: Option<[u8; 32]>,
-    nonce: u64,
+    nonce: CipherNonce,
+}
+
+/// Monotonic Noise transport nonce. The Noise specification deliberately
+/// starts each newly derived cipher key at zero; keeping that protocol value
+/// behind this type makes the reset invariant explicit and prevents wrapping.
+#[derive(Default)]
+struct CipherNonce(u64);
+
+impl CipherNonce {
+    fn initial() -> Self {
+        Self::default()
+    }
+
+    fn take_and_increment(&mut self) -> Result<u64, NoiseError> {
+        let current = self.current();
+        self.advance()?;
+        Ok(current)
+    }
+
+    fn current(&self) -> u64 {
+        self.0
+    }
+
+    fn advance(&mut self) -> Result<(), NoiseError> {
+        self.0 = self.0.checked_add(1).ok_or(NoiseError::NonceExhausted)?;
+        Ok(())
+    }
 }
 
 impl CipherState {
     fn new() -> Self {
-        CipherState { key: None, nonce: 0 }
+        CipherState {
+            key: None,
+            nonce: CipherNonce::initial(),
+        }
     }
 
     fn has_key(&self) -> bool {
@@ -163,7 +197,7 @@ impl CipherState {
 
     fn set_key(&mut self, key: [u8; 32]) {
         self.key = Some(key);
-        self.nonce = 0;
+        self.nonce = CipherNonce::initial();
     }
 
     /// Build the 12-byte IETF nonce: `[0x00; 4] || nonce_u64_le`.
@@ -183,7 +217,9 @@ impl CipherState {
             None => return Ok(plaintext.to_vec()),
             Some(k) => k,
         };
-        let nonce_bytes = Self::build_nonce(self.nonce);
+        // Reserve the send nonce before attempting encryption: if a future
+        // AEAD implementation can fail, retrying must still never reuse it.
+        let nonce_bytes = Self::build_nonce(self.nonce.take_and_increment()?);
         let cipher = ChaCha20Poly1305::new_from_slice(&key)
             // SAFETY: CipherState.key is Option<[u8; 32]>; ChaCha20Poly1305 requires 32 bytes.
             .expect("key is always 32 bytes");
@@ -191,7 +227,6 @@ impl CipherState {
         let ciphertext = cipher
             .encrypt(&nonce, Payload { msg: plaintext, aad: ad })
             .map_err(|_| NoiseError::DecryptionFailed)?;
-        self.nonce += 1;
         Ok(ciphertext)
     }
 
@@ -202,7 +237,7 @@ impl CipherState {
             None => return Ok(ciphertext.to_vec()),
             Some(k) => k,
         };
-        let nonce_bytes = Self::build_nonce(self.nonce);
+        let nonce_bytes = Self::build_nonce(self.nonce.current());
         let cipher = ChaCha20Poly1305::new_from_slice(&key)
             // SAFETY: CipherState.key is Option<[u8; 32]>; ChaCha20Poly1305 requires 32 bytes.
             .expect("key is always 32 bytes");
@@ -210,7 +245,9 @@ impl CipherState {
         let plaintext = cipher
             .decrypt(&nonce, Payload { msg: ciphertext, aad: ad })
             .map_err(|_| NoiseError::DecryptionFailed)?;
-        self.nonce += 1;
+        // A rejected peer frame must not desynchronize the receive counter;
+        // after a valid frame, fail closed instead of ever wrapping/reusing.
+        self.nonce.advance()?;
         Ok(plaintext)
     }
 }
@@ -255,8 +292,9 @@ impl SymmetricState {
     fn mix_key(&mut self, dh_output: &[u8; 32]) {
         let (ck, temp_k) = hkdf(&self.chaining_key, dh_output);
         self.chaining_key = ck;
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&temp_k[..32]);
+        let key: [u8; 32] = temp_k[..32]
+            .try_into()
+            .expect("HKDF produces at least one 32-byte cipher key");
         self.cipher.set_key(key);
     }
 
@@ -895,7 +933,9 @@ mod tests {
     /// Encrypt then decrypt produces the original plaintext.
     #[test]
     fn cipher_roundtrip() {
-        let key = [0x42u8; 32];
+        // A test key still comes from the OS CSPRNG so fixture code cannot
+        // normalize an accidentally copied, reusable cryptographic value.
+        let key = generate_keypair().public_key;
         let mut enc = CipherState::new();
         enc.set_key(key);
         let mut dec = CipherState::new();
@@ -908,6 +948,16 @@ mod tests {
         let recovered = dec.decrypt(&ciphertext, ad).unwrap();
 
         assert_eq!(recovered, plaintext);
+    }
+
+    #[test]
+    fn cipher_nonce_refuses_to_wrap_and_reuse_an_aead_nonce() {
+        let mut nonce = CipherNonce(u64::MAX);
+        assert!(matches!(
+            nonce.take_and_increment(),
+            Err(NoiseError::NonceExhausted)
+        ));
+        assert_eq!(nonce.0, u64::MAX, "failed advancement must not wrap");
     }
 
     /// With no key set, encrypt and decrypt are identity operations.

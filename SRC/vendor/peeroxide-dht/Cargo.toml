@@ -145,6 +145,9 @@ version = "0.9"
 [dependencies.sha2]
 version = "0.10"
 
+[dependencies.subtle]
+version = "2.6"
+
 [dependencies.thiserror]
 version = "2"
 

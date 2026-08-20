@@ -43,6 +43,15 @@ jobs:
           toolchain: '1.91.0'
           components: rustfmt
 
+      - name: Test vendored arrayref provenance gate
+        # Fixture coverage exercises byte tampering, archive expansion, manifest
+        # dependency/build injection, VCS metadata, patch, and lock spoofing.
+        # Keep this before Cargo: the yanked path patch must be proved first.
+        run: python3 packaging/tests/test_arrayref_provenance_gate.py
+
+      - name: Verify vendored arrayref provenance before Cargo metadata
+        run: python3 packaging/arrayref_provenance_gate.py
+
       - name: Validate locked workspace metadata without dependencies
         working-directory: SRC
         run: cargo metadata --locked --no-deps --format-version 1 > /dev/null

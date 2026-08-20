@@ -1032,6 +1032,18 @@
       "repository": "https://github.com/rust-nostr/nostr",
       "revision": "a86ce27c3b4d0dcab186a707336237653a01b114"
     },
+    "nostr\u00000.45.1\u0000registry+https://github.com/rust-lang/crates.io-index": {
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "6a891eb4928dc43daf339e9ba7151cff1dfc26852cbc92b2b378b583203aaf83",
+          "text": "MIT License\n\nCopyright (c) 2022-2023 Yuki Kishimoto\nCopyright (c) 2023-present Nostr Dev Kit Developers\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ],
+      "path_in_vcs": "nostr",
+      "repository": "https://github.com/nostrdevkit/nostr",
+      "revision": "b5103642c0be30f04a4b7eb28de99c99ddb9fda1"
+    },
     "nostr-database\u00000.44.0\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
@@ -1044,6 +1056,18 @@
       "repository": "https://github.com/rust-nostr/nostr",
       "revision": "c1a24383cd361a408fc53eeac7c1708a3b589194"
     },
+    "nostr-database\u00000.45.1\u0000registry+https://github.com/rust-lang/crates.io-index": {
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "6a891eb4928dc43daf339e9ba7151cff1dfc26852cbc92b2b378b583203aaf83",
+          "text": "MIT License\n\nCopyright (c) 2022-2023 Yuki Kishimoto\nCopyright (c) 2023-present Nostr Dev Kit Developers\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ],
+      "path_in_vcs": "database/nostr-database",
+      "repository": "https://github.com/nostrdevkit/nostr",
+      "revision": "ede118f4db5d8ec2a8b47e869220f7e723ed8775"
+    },
     "nostr-gossip\u00000.44.0\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
@@ -1055,6 +1079,18 @@
       "path_in_vcs": "gossip/nostr-gossip",
       "repository": "https://github.com/rust-nostr/nostr",
       "revision": "c1a24383cd361a408fc53eeac7c1708a3b589194"
+    },
+    "nostr-gossip\u00000.45.0\u0000registry+https://github.com/rust-lang/crates.io-index": {
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "6a891eb4928dc43daf339e9ba7151cff1dfc26852cbc92b2b378b583203aaf83",
+          "text": "MIT License\n\nCopyright (c) 2022-2023 Yuki Kishimoto\nCopyright (c) 2023-present Nostr Dev Kit Developers\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ],
+      "path_in_vcs": "gossip/nostr-gossip",
+      "repository": "https://github.com/nostrdevkit/nostr",
+      "revision": "9ad7b273e7f4c460d07feea0077b3a4491dcbc6a"
     },
     "nostr-relay-pool\u00000.44.3\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
@@ -1079,6 +1115,18 @@
       "path_in_vcs": "crates/nostr-sdk",
       "repository": "https://github.com/rust-nostr/nostr",
       "revision": "837df0fdcf34609abca444ad991dcc8345b3add6"
+    },
+    "nostr-sdk\u00000.45.1\u0000registry+https://github.com/rust-lang/crates.io-index": {
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "6a891eb4928dc43daf339e9ba7151cff1dfc26852cbc92b2b378b583203aaf83",
+          "text": "MIT License\n\nCopyright (c) 2022-2023 Yuki Kishimoto\nCopyright (c) 2023-present Nostr Dev Kit Developers\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ],
+      "path_in_vcs": "nostr-sdk",
+      "repository": "https://github.com/nostrdevkit/nostr",
+      "revision": "ede118f4db5d8ec2a8b47e869220f7e723ed8775"
     },
     "number_prefix\u00000.4.0\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [

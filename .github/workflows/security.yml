@@ -44,9 +44,61 @@ jobs:
             exit 1
           fi
 
-  audit:
+  advisory-exception-gate:
     if: github.ref == 'refs/heads/main'
     needs: trusted-main
+    name: temporary advisory exception gate
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Test temporary advisory exception gate
+        # Pure fixture tests cover expiry, configuration drift, and every
+        # allowed/forbidden reverse-path transition without compiling Rust.
+        run: python3 packaging/tests/test_advisory_exception_gate.py
+
+      - name: Test vendored arrayref provenance gate
+        # The yanked path patch is an explicit containment exception. Verify
+        # both adversarial fixtures and the exact checked-in archive before
+        # cargo metadata, audit, or deny can read its dependency graph.
+        run: python3 packaging/tests/test_arrayref_provenance_gate.py
+
+      - name: Verify vendored arrayref provenance before Cargo metadata
+        run: python3 packaging/arrayref_provenance_gate.py
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Cache Cargo registry
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          # Cargo.lock lives at the workspace root (SRC/), not the
+          # neothd member crate. Fixed 2026-05-26 — prior key
+          # SRC/neothd/Cargo.lock didn't exist, so cache never hit
+          # and cargo-audit found no lockfile to scan.
+          key: security-audit-cargo-${{ hashFiles('SRC/Cargo.lock', '.github/release-tools/neoth-release-signer/Cargo.lock') }}
+
+      - name: Validate temporary Matrix bitmaps advisory exceptions
+        # These two global ignores are self-expiring and can only remain while
+        # the exact locked graph proves the documented Matrix SDK
+        # immutable-collections chain. Generate one metadata snapshot and pass
+        # it to the repository-owned gate; metadata never builds or links.
+        run: |
+          set -euo pipefail
+          cargo metadata --manifest-path SRC/Cargo.toml --locked --all-features --format-version 1 > "$RUNNER_TEMP/neoth-cargo-metadata.json"
+          python3 packaging/advisory_exception_gate.py --metadata "$RUNNER_TEMP/neoth-cargo-metadata.json"
+
+  audit:
+    if: github.ref == 'refs/heads/main'
+    needs: [trusted-main, advisory-exception-gate]
     name: cargo-audit (RUSTSEC)
     runs-on: ubuntu-24.04
 
@@ -98,7 +150,7 @@ jobs:
 
   deny:
     if: github.ref == 'refs/heads/main'
-    needs: trusted-main
+    needs: [trusted-main, advisory-exception-gate]
     name: cargo-deny (license + supply chain)
     runs-on: ubuntu-24.04
 

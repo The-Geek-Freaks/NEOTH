@@ -209,7 +209,7 @@ irc-channel = ["dep:irc"]
 # + `NostrFormatter` + the probe row + the pure `nostr_api` mapping stay compiled
 # in every build (they carry no `nostr-sdk` dependency); only the relay adapter
 # needs the feature.
-nostr-channel = ["dep:nostr-sdk"]
+nostr-channel = ["dep:nostr-sdk", "dep:nostr"]
 # B9 — Google Chat via a GCP Pub/Sub PULL subscription (no public URL; NEOTH
 # dials out). Off by default — needs `jsonwebtoken` (RustCrypto RS256) for the
 # service-account JWT. The `ChannelKind::GoogleChat` variant + formatter +
@@ -248,10 +248,11 @@ opthash = { version = "0.10", optional = true }
 # GOLD-FEAT-10 — IRC channel (optional, behind `irc-channel`). Tokio-native,
 # owns the IRC wire protocol + PING/PONG + reconnect. rustls TLS (no system lib).
 irc = { version = "1", default-features = false, features = ["tls-rust"], optional = true }
-# GOLD-FEAT-10 — Nostr channel (optional, behind `nostr-channel`). The `nip59`
-# feature pulls the gift-wrap + NIP-44 encryption that NIP-17 private DMs need;
-# default features keep the tokio relay-pool + rustls WSS transport.
-nostr-sdk = { version = "0.44", features = ["nip59"], optional = true }
+# GOLD-FEAT-10 — Nostr channel (optional, behind `nostr-channel`). Nostr SDK
+# 0.45 moved NIP-59 support to the protocol crate, so keep it an explicit,
+# feature-gated direct dependency. The SDK defaults retain rustls WSS transport.
+nostr-sdk = { version = "0.45.1", optional = true }
+nostr = { version = "0.45.1", features = ["nip59"], optional = true }
 # B9 — Google Chat channel (optional, behind `gchat-channel`). RS256 service-
 # account JWT signing through jsonwebtoken's RustCrypto-backed RSA implementation.
 jsonwebtoken = { version = "10.4", optional = true }
@@ -269,9 +270,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 crc32c             = "0.6"
 xxhash-rust        = { version = "0.8", features = ["xxh3", "xxh64"] }
 # GOLD-ADAPT-KV-03 — LRU cold tier for Ouro prefix-KV offload.
-# 0.16 clears RUSTSEC-2026-0002 (unsound IterMut in <0.16.3); NEOTH only uses
-# new/get/put/pop, so the bump is API-compatible.
-lru                = "0.16"
+# 0.18.2 clears the lru advisory; NEOTH only uses new/get/put/pop, so the
+# direct bump remains API-compatible.
+lru                = "0.18.2"
 uuid               = { version = "1", features = ["v4", "v7", "serde"] }
 # SX-01: SSRF guard for tools/web_fetch.rs — strict URL parsing + scheme
 # filtering instead of string-prefix checks.

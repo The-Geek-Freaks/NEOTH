@@ -44,15 +44,16 @@ fn load_fixtures() -> FixtureFile {
         env!("CARGO_MANIFEST_DIR"),
         "/../tests/interop/secure-payload-fixtures.json"
     );
-    let data = std::fs::read_to_string(path).unwrap_or_else(|e| {
-        panic!("Failed to read secure-payload fixtures at {path}: {e}.")
-    });
+    let data = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("Failed to read secure-payload fixtures at {path}: {e}."));
     serde_json::from_str(&data)
         .unwrap_or_else(|e| panic!("Failed to parse secure-payload fixtures: {e}"))
 }
 
 fn hex_bytes(hex_str: &str) -> Vec<u8> {
-    hex::decode(hex_str).unwrap_or_else(|e| panic!("Invalid hex '{hex_str}': {e}"))
+    // Fixtures contain cryptographic material. Failure diagnostics must never
+    // echo the fixture value into a test log or CI artifact.
+    hex::decode(hex_str).expect("secure-payload fixture contains invalid hexadecimal")
 }
 
 fn hex_array_32(hex_str: &str) -> [u8; 32] {
@@ -104,8 +105,8 @@ fn golden_secure_payload_decrypt() {
         let decrypted = sp.decrypt(&encrypted).unwrap_or_else(|e| {
             panic!("DECRYPT {} failed: {e}", fixture.label);
         });
-        assert_eq!(
-            decrypted, expected,
+        assert!(
+            decrypted == expected,
             "DECRYPT mismatch for {}",
             fixture.label
         );
@@ -127,13 +128,10 @@ fn golden_secure_payload_encrypt() {
         let encrypted = sp.encrypt_with_nonce(&payload, nonce).unwrap_or_else(|e| {
             panic!("ENCRYPT {} failed: {e}", fixture.label);
         });
-        assert_eq!(
-            hex::encode(&encrypted),
-            hex::encode(&expected_encrypted),
-            "ENCRYPT mismatch for {}: Rust={} Node={}",
-            fixture.label,
-            hex::encode(&encrypted),
-            hex::encode(&expected_encrypted)
+        assert!(
+            encrypted == expected_encrypted,
+            "ENCRYPT mismatch for {}",
+            fixture.label
         );
     }
 }
@@ -148,11 +146,9 @@ fn golden_secure_payload_tokens() {
 
     for (host, expected_hex) in &file.tokens {
         let token = sp.token(host);
-        assert_eq!(
-            hex::encode(token),
-            *expected_hex,
-            "TOKEN mismatch for host {host}: Rust={} Node={expected_hex}",
-            hex::encode(token)
+        assert!(
+            hex::encode(token) == *expected_hex,
+            "TOKEN mismatch for host {host}"
         );
     }
 }

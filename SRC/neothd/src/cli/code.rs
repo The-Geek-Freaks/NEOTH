@@ -455,11 +455,10 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
             return Ok(None);
         }
 
-        println!(
-            "session #{} opened (channel={})",
-            session_id.raw(),
-            args.source_channel
-        );
+        // Session identifiers correlate local work history. Do not emit them
+        // into terminal transcripts; the operator can inspect scoped state
+        // explicitly with `neoth kanban list`.
+        println!("session opened (channel={})", args.source_channel);
         println!("decomposed into {} task(s):", result.task_ids.len());
 
         // GOLD-ADAPT-GRILL-02 — adversarial plan review on the decomposed plan
@@ -1199,10 +1198,7 @@ fn print_decomposition_summary(conn: &Connection, result: &DecompositionResult) 
         "estimated complexity: {}",
         result.session_complexity.as_str()
     );
-    println!(
-        "next: `neoth kanban show {}` to inspect, `neoth kanban watch` for the activity feed",
-        tasks[0].session_id.raw(),
-    );
+    println!("next: `neoth kanban list` to inspect, `neoth kanban watch` for the activity feed");
     Ok(())
 }
 

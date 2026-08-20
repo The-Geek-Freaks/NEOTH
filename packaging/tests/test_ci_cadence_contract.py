@@ -77,8 +77,7 @@ def workflow_jobs(workflow: str) -> dict[str, str]:
         raise AssertionError("workflow has no jobs mapping")
     return dict(
         re.findall(
-            r"(?ms)^  ([A-Za-z0-9_-]+):\n"
-            r"(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+            r"(?ms)^  ([A-Za-z0-9_-]+):\n" r"(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
             parts[1],
         )
     )
@@ -165,6 +164,8 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertEqual(
             run_commands(PREFLIGHT_TEXT),
             [
+                "python3 packaging/tests/test_arrayref_provenance_gate.py",
+                "python3 packaging/arrayref_provenance_gate.py",
                 "cargo metadata --locked --no-deps --format-version 1 > /dev/null",
                 "cargo fmt --all -- --check",
                 "\n".join(
@@ -230,6 +231,7 @@ class CiCadenceContractTests(unittest.TestCase):
             set(jobs),
             {
                 "trusted-main",
+                "advisory-exception-gate",
                 "audit",
                 "deny",
                 "bridge-audit",
@@ -257,11 +259,12 @@ class CiCadenceContractTests(unittest.TestCase):
                 r"(?m)^    if: github\.ref == 'refs/heads/main'\s*$",
                 f"privileged Security job {name} must reject non-main dispatches",
             )
-            expected_needs = (
-                r"(?m)^    needs: \[trusted-main, codeql, codeql-javascript\]\s*$"
-                if name == "codeql-gate"
-                else r"(?m)^    needs: trusted-main\s*$"
-            )
+            expected_needs = {
+                "advisory-exception-gate": r"(?m)^    needs: trusted-main\s*$",
+                "audit": r"(?m)^    needs: \[trusted-main, advisory-exception-gate\]\s*$",
+                "deny": r"(?m)^    needs: \[trusted-main, advisory-exception-gate\]\s*$",
+                "codeql-gate": r"(?m)^    needs: \[trusted-main, codeql, codeql-javascript\]\s*$",
+            }.get(name, r"(?m)^    needs: trusted-main\s*$")
             self.assertRegex(
                 body,
                 expected_needs,
@@ -303,7 +306,7 @@ class CiCadenceContractTests(unittest.TestCase):
                 f"release job {job} can bypass the Road-to-Gold root gate",
             )
         self.assertIn('-f head_sha="$RELEASE_SHA"', RELEASE_TEXT)
-        self.assertIn("and .conclusion == \"success\"", RELEASE_TEXT)
+        self.assertIn('and .conclusion == "success"', RELEASE_TEXT)
 
 
 if __name__ == "__main__":

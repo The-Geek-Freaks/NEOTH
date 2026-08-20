@@ -44,6 +44,7 @@ zeroize    = { version = "1", features = ["zeroize_derive"] }
 unsafe_op_in_unsafe_fn = "warn"
 
 [patch.crates-io]
+arrayref = { path = "vendor/arrayref", version = "=0.3.9" }
 libudx = { path = "vendor/libudx" }
 peeroxide = { path = "vendor/peeroxide" }
 peeroxide-dht = { path = "vendor/peeroxide-dht" }
