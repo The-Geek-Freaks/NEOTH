@@ -26,7 +26,11 @@ pub mod control_state;
 // types for internal contract tests.  The narrow lint allowance prevents those
 // unissued types from forcing a premature public or runtime-facing export.
 #[allow(dead_code)]
-mod local_import;
+pub(crate) mod local_import;
+// CC-RUNTIME-P0 remains crate-private until an authenticated same-user RPC
+// can own session issuance, durable config publication, and recovery startup.
+#[allow(dead_code)]
+pub(crate) mod runtime_local_import;
 #[allow(dead_code)]
 mod obsidian;
 

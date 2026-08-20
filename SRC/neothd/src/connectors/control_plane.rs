@@ -1,12 +1,13 @@
 //! In-crate, revocable CC-01 account authority.
 //!
 //! No client-facing value can construct an [`AuthenticatedControlSession`], an
-//! [`AccountAuthority`], or a [`ContextImportOperationLease`]. This is only a
-//! policy/control substrate: it starts no work and exposes no store, planner,
-//! credential, action, MCP, or GroundTruth capability.
+//! [`AccountAuthority`], [`ContextImportRuntimeBinding`], or a
+//! [`ContextImportOperationLease`]. This is only a policy/control substrate:
+//! it starts no work and exposes no store, planner, credential, action, MCP,
+//! or GroundTruth capability.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Condvar, Mutex, Weak},
 };
 
@@ -48,6 +49,9 @@ impl AuthenticatedControlSession {
 struct AuthorityState {
     accepting_leases: bool,
     generation: u64,
+    next_runtime_id: u64,
+    next_operation_id: u64,
+    active_operation_ids: BTreeSet<u64>,
     live_leases: usize,
 }
 
@@ -63,6 +67,9 @@ impl AccountLeaseGate {
             state: Mutex::new(AuthorityState {
                 accepting_leases,
                 generation: 1,
+                next_runtime_id: 1,
+                next_operation_id: 1,
+                active_operation_ids: BTreeSet::new(),
                 live_leases: 0,
             }),
             drained: Condvar::new(),
@@ -96,6 +103,19 @@ impl AccountLeaseGate {
         state.accepting_leases = accepting_leases;
         Ok(())
     }
+
+    fn accepting_leases(&self) -> Result<bool, ConnectorControlPlaneError> {
+        self.state
+            .lock()
+            .map(|state| state.accepting_leases)
+            .map_err(|_| ConnectorControlPlaneError::AuthorityPoisoned)
+    }
+}
+
+#[derive(Debug)]
+struct GateRestore {
+    gate: Arc<AccountLeaseGate>,
+    accepting_leases: bool,
 }
 
 /// A revocable, exact-binding authority for one admitted ContextImport entry
@@ -143,9 +163,12 @@ impl AccountAuthority {
     }
 
     /// Acquire the non-cloneable lease which future import code must keep
-    /// through its final durable commit. This re-enters the plane lock before
-    /// the account gate, closing the race where a transition has begun but has
-    /// not yet retired the account gate.
+    /// through its final durable commit. The plane check is its admission
+    /// linearization point; it is deliberately released before acquiring the
+    /// account gate. A transition which wins that subsequent gate race rejects
+    /// this lease, while a lease which increments the live count first is
+    /// drained by that transition. No broad plane mutex is held across a
+    /// per-account gate wait.
     pub(crate) fn acquire_context_import_operation_lease(
         &self,
     ) -> Result<ContextImportOperationLease, ConnectorControlPlaneError> {
@@ -166,6 +189,9 @@ impl AccountAuthority {
             .accounts
             .get(&self.instance_id)
             .ok_or(ConnectorControlPlaneError::AuthorityRetired)?;
+        if slot.emergency_retirement_in_progress {
+            return Err(ConnectorControlPlaneError::AuthorityRetired);
+        }
         let authority_gate = self
             .gate
             .upgrade()
@@ -178,6 +204,12 @@ impl AccountAuthority {
             return Err(ConnectorControlPlaneError::AuthorityRetired);
         }
         let gate = slot.gate.clone();
+        // Do not invert the permit's gate-only lock ordering. The exact slot
+        // and generation were bound while `control` was locked above; if a
+        // transition starts after that point, it must retire this same gate
+        // before it can finish and either wins this gate race (rejecting us) or
+        // drains the live lease recorded below.
+        drop(control);
         let mut state = gate
             .state
             .lock()
@@ -185,12 +217,20 @@ impl AccountAuthority {
         if !state.accepting_leases || state.generation != self.generation {
             return Err(ConnectorControlPlaneError::AuthorityRetired);
         }
+        let operation_id = state.next_operation_id;
+        state.next_operation_id = state
+            .next_operation_id
+            .checked_add(1)
+            .ok_or(ConnectorControlPlaneError::OperationIdExhausted)?;
         state.live_leases = state
             .live_leases
             .checked_add(1)
             .ok_or(ConnectorControlPlaneError::LeaseCountExhausted)?;
+        if !state.active_operation_ids.insert(operation_id) {
+            state.live_leases -= 1;
+            return Err(ConnectorControlPlaneError::OperationIdCollision);
+        }
         drop(state);
-        drop(control);
         Ok(ContextImportOperationLease {
             instance_id: self.instance_id.clone(),
             subject_id: self.subject_id.clone(),
@@ -198,15 +238,316 @@ impl AccountAuthority {
             lifecycle_revision: self.lifecycle_revision,
             gate,
             generation: self.generation,
+            runtime_id: 0,
+            operation_id,
         })
+    }
+
+    /// Mint a non-live runtime-root binding. It does not increment the gate's
+    /// live-operation count, so an idle coordinator cannot block pause/revoke
+    /// or a durable transition. Each effectful operation must later acquire a
+    /// short-lived lease from this exact binding.
+    pub(crate) fn acquire_context_import_runtime(
+        &self,
+    ) -> Result<ContextImportRuntimeBinding, ConnectorControlPlaneError> {
+        let plane = self
+            .plane_state
+            .upgrade()
+            .ok_or(ConnectorControlPlaneError::AuthorityRetired)?;
+        let control = plane
+            .lock()
+            .map_err(|_| ConnectorControlPlaneError::ControlPlaneStatePoisoned)?;
+        if control.failed_closed {
+            return Err(ConnectorControlPlaneError::ProjectionFailedClosed);
+        }
+        if control.transition_in_progress {
+            return Err(ConnectorControlPlaneError::TransitionInProgress);
+        }
+        let slot = control
+            .accounts
+            .get(&self.instance_id)
+            .ok_or(ConnectorControlPlaneError::AuthorityRetired)?;
+        if slot.emergency_retirement_in_progress {
+            return Err(ConnectorControlPlaneError::AuthorityRetired);
+        }
+        let authority_gate = self
+            .gate
+            .upgrade()
+            .ok_or(ConnectorControlPlaneError::AuthorityRetired)?;
+        if slot.account.configuration.subject_id != self.subject_id
+            || slot.account.configuration.policy.revision != self.policy_revision
+            || slot.account.lifecycle_revision != self.lifecycle_revision
+            || !Arc::ptr_eq(&slot.gate, &authority_gate)
+        {
+            return Err(ConnectorControlPlaneError::AuthorityRetired);
+        }
+        let gate = Arc::clone(&slot.gate);
+        drop(control);
+        let mut state = gate
+            .state
+            .lock()
+            .map_err(|_| ConnectorControlPlaneError::AuthorityPoisoned)?;
+        if !state.accepting_leases || state.generation != self.generation {
+            return Err(ConnectorControlPlaneError::AuthorityRetired);
+        }
+        let runtime_id = state.next_runtime_id;
+        state.next_runtime_id = state
+            .next_runtime_id
+            .checked_add(1)
+            .ok_or(ConnectorControlPlaneError::RuntimeIdExhausted)?;
+        drop(state);
+        Ok(ContextImportRuntimeBinding {
+            instance_id: self.instance_id.clone(),
+            subject_id: self.subject_id.clone(),
+            policy_revision: self.policy_revision,
+            lifecycle_revision: self.lifecycle_revision,
+            plane_state: Arc::clone(&plane),
+            gate,
+            generation: self.generation,
+            runtime_id,
+        })
+    }
+}
+
+/// Test-only fixture for runtime/store behavioral tests. It deliberately
+/// reaches the same authenticated-session -> authority -> runtime-pair path
+/// as production will, but exports no production session issuer or mint.
+#[cfg(test)]
+pub(crate) fn test_context_import_runtime_fixture(
+    instance_id: ConnectorInstanceId,
+    subject_id: SubjectId,
+    policy_revision: u64,
+    lifecycle_revision: u64,
+) -> anyhow::Result<ContextImportRuntimeBinding> {
+    anyhow::ensure!(
+        instance_id.connector_id == super::ConnectorId::LocalImport,
+        "the context-import runtime fixture supports only local_import"
+    );
+    anyhow::ensure!(
+        policy_revision != 0 && lifecycle_revision != 0,
+        "the context-import runtime fixture requires nonzero revisions"
+    );
+    let config = ConnectorControlConfig {
+        schema_version: super::control_state::CONNECTOR_CONTROL_STATE_SCHEMA_VERSION,
+        enabled: true,
+        registered_accounts: vec![RegisteredConnectorAccount {
+            configuration: super::ConnectorConfiguration {
+                connector_id: instance_id.connector_id,
+                account_id: instance_id.account_id.clone(),
+                subject_id: subject_id.clone(),
+                credential_ref: None,
+                policy: super::ConnectorPolicySnapshot::local_read_only(policy_revision),
+            },
+            lifecycle: ConnectorLifecycle::Active,
+            lifecycle_revision,
+        }],
+    };
+    let plane = ConnectorControlPlane::from_config(&config)?;
+    let session = AuthenticatedControlSession::test_authenticated(subject_id);
+    let authority = plane.authorize_context_import(&session, &instance_id)?;
+    authority
+        .acquire_context_import_runtime()
+        .map_err(anyhow::Error::from)
+}
+
+/// Non-cloneable runtime-root binding for the ContextImport vertical slice.
+/// It is a construction-time capability only: it has no Store, path, planner,
+/// credential, action, MCP, or GroundTruth method. Runtime construction must
+/// use it to obtain one short-lived exact operation lease for each operation.
+#[derive(Debug)]
+pub(crate) struct ContextImportRuntimeBinding {
+    instance_id: ConnectorInstanceId,
+    subject_id: SubjectId,
+    policy_revision: u64,
+    lifecycle_revision: u64,
+    plane_state: Arc<Mutex<ConnectorControlPlaneState>>,
+    gate: Arc<AccountLeaseGate>,
+    generation: u64,
+    runtime_id: u64,
+}
+
+impl ContextImportRuntimeBinding {
+    /// Read-only identity accessors for a runtime which already owns this
+    /// non-forgeable binding. They expose no constructor or authority mint and
+    /// must not be accepted as a replacement for this binding or its lease.
+    pub(crate) fn instance_id(&self) -> &ConnectorInstanceId {
+        &self.instance_id
+    }
+
+    pub(crate) fn subject_id(&self) -> &SubjectId {
+        &self.subject_id
+    }
+
+    pub(crate) const fn policy_revision(&self) -> u64 {
+        self.policy_revision
+    }
+
+    pub(crate) const fn lifecycle_revision(&self) -> u64 {
+        self.lifecycle_revision
+    }
+
+    /// Derive the opaque, non-forgeable witness which an approved local-import
+    /// root may retain. The runtime itself keeps this binding; the witness is
+    /// intentionally insufficient to mint a runtime or lease on its own.
+    pub(crate) fn capability_binding(&self) -> ContextImportCapabilityBinding {
+        ContextImportCapabilityBinding {
+            instance_id: self.instance_id.clone(),
+            subject_id: self.subject_id.clone(),
+            policy_revision: self.policy_revision,
+            lifecycle_revision: self.lifecycle_revision,
+            gate: Arc::clone(&self.gate),
+            generation: self.generation,
+            runtime_id: self.runtime_id,
+        }
+    }
+
+    pub(crate) fn binding_matches(
+        &self,
+        instance_id: &ConnectorInstanceId,
+        subject_id: &SubjectId,
+        policy_revision: u64,
+        lifecycle_revision: u64,
+    ) -> bool {
+        self.instance_id == *instance_id
+            && self.subject_id == *subject_id
+            && self.policy_revision == policy_revision
+            && self.lifecycle_revision == lifecycle_revision
+    }
+
+    /// Acquire one short-lived exact operation lease. Its live count is held
+    /// only until the caller completes or abandons the operation, so idle
+    /// runtimes never hold up transition drainage.
+    pub(crate) fn acquire_context_import_operation_lease(
+        &self,
+    ) -> Result<ContextImportOperationLease, ConnectorControlPlaneError> {
+        let control = self
+            .plane_state
+            .lock()
+            .map_err(|_| ConnectorControlPlaneError::ControlPlaneStatePoisoned)?;
+        if control.failed_closed {
+            return Err(ConnectorControlPlaneError::ProjectionFailedClosed);
+        }
+        if control.transition_in_progress {
+            return Err(ConnectorControlPlaneError::TransitionInProgress);
+        }
+        let slot = control
+            .accounts
+            .get(&self.instance_id)
+            .ok_or(ConnectorControlPlaneError::AuthorityRetired)?;
+        if slot.emergency_retirement_in_progress
+            || slot.account.configuration.subject_id != self.subject_id
+            || slot.account.configuration.policy.revision != self.policy_revision
+            || slot.account.lifecycle_revision != self.lifecycle_revision
+            || !Arc::ptr_eq(&slot.gate, &self.gate)
+        {
+            return Err(ConnectorControlPlaneError::AuthorityRetired);
+        }
+        let gate = Arc::clone(&slot.gate);
+        drop(control);
+        let mut state = gate
+            .state
+            .lock()
+            .map_err(|_| ConnectorControlPlaneError::AuthorityPoisoned)?;
+        if !state.accepting_leases || state.generation != self.generation {
+            return Err(ConnectorControlPlaneError::AuthorityRetired);
+        }
+        let operation_id = state.next_operation_id;
+        state.next_operation_id = state
+            .next_operation_id
+            .checked_add(1)
+            .ok_or(ConnectorControlPlaneError::OperationIdExhausted)?;
+        state.live_leases = state
+            .live_leases
+            .checked_add(1)
+            .ok_or(ConnectorControlPlaneError::LeaseCountExhausted)?;
+        if !state.active_operation_ids.insert(operation_id) {
+            state.live_leases -= 1;
+            return Err(ConnectorControlPlaneError::OperationIdCollision);
+        }
+        drop(state);
+        Ok(ContextImportOperationLease {
+            instance_id: self.instance_id.clone(),
+            subject_id: self.subject_id.clone(),
+            policy_revision: self.policy_revision,
+            lifecycle_revision: self.lifecycle_revision,
+            gate,
+            generation: self.generation,
+            runtime_id: self.runtime_id,
+            operation_id,
+        })
+    }
+
+    pub(crate) fn matches_operation_lease(&self, lease: &ContextImportOperationLease) -> bool {
+        self.binding_matches(
+            &lease.instance_id,
+            &lease.subject_id,
+            lease.policy_revision,
+            lease.lifecycle_revision,
+        ) && self.generation == lease.generation
+            && self.runtime_id == lease.runtime_id
+            && Arc::ptr_eq(&self.gate, &lease.gate)
+    }
+}
+
+/// Opaque capability-side witness of one runtime binding. It has no
+/// constructor, identity tuple accessor, capability mint, or effect surface.
+/// The runtime must retain the original [`ContextImportRuntimeBinding`] and
+/// recheck both that binding and this witness against every operation lease.
+#[derive(Debug)]
+pub(crate) struct ContextImportCapabilityBinding {
+    instance_id: ConnectorInstanceId,
+    subject_id: SubjectId,
+    policy_revision: u64,
+    lifecycle_revision: u64,
+    gate: Arc<AccountLeaseGate>,
+    generation: u64,
+    runtime_id: u64,
+}
+
+impl ContextImportCapabilityBinding {
+    /// Produce an opaque plan/evidence witness from an already-bound approved
+    /// root. The copy remains non-constructible and has the same exact
+    /// runtime identity; it lets a retained plan prove that its root and a
+    /// runtime's original binding are the same pair.
+    pub(crate) fn for_evidence(&self) -> Self {
+        Self {
+            instance_id: self.instance_id.clone(),
+            subject_id: self.subject_id.clone(),
+            policy_revision: self.policy_revision,
+            lifecycle_revision: self.lifecycle_revision,
+            gate: Arc::clone(&self.gate),
+            generation: self.generation,
+            runtime_id: self.runtime_id,
+        }
+    }
+
+    pub(crate) fn matches_runtime_binding(&self, binding: &ContextImportRuntimeBinding) -> bool {
+        self.instance_id == binding.instance_id
+            && self.subject_id == binding.subject_id
+            && self.policy_revision == binding.policy_revision
+            && self.lifecycle_revision == binding.lifecycle_revision
+            && self.generation == binding.generation
+            && self.runtime_id == binding.runtime_id
+            && Arc::ptr_eq(&self.gate, &binding.gate)
+    }
+
+    pub(crate) fn matches_operation_lease(&self, lease: &ContextImportOperationLease) -> bool {
+        self.instance_id == lease.instance_id
+            && self.subject_id == lease.subject_id
+            && self.policy_revision == lease.policy_revision
+            && self.lifecycle_revision == lease.lifecycle_revision
+            && self.generation == lease.generation
+            && self.runtime_id == lease.runtime_id
+            && Arc::ptr_eq(&self.gate, &lease.gate)
     }
 }
 
 /// A non-cloneable, exact-generation lease for one future ContextImport
 /// operation. It carries no filesystem, database, planner, credential,
 /// network, action, MCP, or GroundTruth capability. The later runtime must
-/// call `ensure_live` immediately before each durable import commit and retain
-/// this value until that commit has completed or failed.
+/// retain this value until its work has completed or failed. Final SQLite and
+/// receipt-ack mutations must execute through
+/// `with_context_import_commit_permit`, not a preceding `ensure_live` probe.
 #[derive(Debug)]
 pub(crate) struct ContextImportOperationLease {
     instance_id: ConnectorInstanceId,
@@ -215,6 +556,8 @@ pub(crate) struct ContextImportOperationLease {
     lifecycle_revision: u64,
     gate: Arc<AccountLeaseGate>,
     generation: u64,
+    runtime_id: u64,
+    operation_id: u64,
 }
 
 impl ContextImportOperationLease {
@@ -224,7 +567,10 @@ impl ContextImportOperationLease {
             .state
             .lock()
             .map_err(|_| ConnectorControlPlaneError::AuthorityPoisoned)?;
-        if !state.accepting_leases || state.generation != self.generation {
+        if !state.accepting_leases
+            || state.generation != self.generation
+            || !state.active_operation_ids.contains(&self.operation_id)
+        {
             return Err(ConnectorControlPlaneError::AuthorityRetired);
         }
         Ok(())
@@ -242,13 +588,46 @@ impl ContextImportOperationLease {
             && self.policy_revision == policy_revision
             && self.lifecycle_revision == lifecycle_revision
     }
+
+    /// Run one final ContextImport commit boundary while the exact account gate
+    /// remains locked. The gate lock begins before the closure and is released
+    /// only after its SQLite transaction and any paired outbox-ACK/delete have
+    /// returned. A pause/revoke/replacement must obtain this same gate before
+    /// it can retire and drain the generation, so it cannot complete between a
+    /// liveness check and the durable commit.
+    ///
+    /// This deliberately does not hold the broad control-plane mutex during
+    /// SQLite or WAL work. The operation lease's live-count and this per-account
+    /// gate provide the required transition serialization without blocking
+    /// unrelated control-plane inspection.
+    pub(crate) fn with_context_import_commit_permit<T>(
+        &self,
+        commit: impl FnOnce() -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let state = self
+            .gate
+            .state
+            .lock()
+            .map_err(anyhow::Error::from)?;
+        if !state.accepting_leases
+            || state.generation != self.generation
+            || !state.active_operation_ids.contains(&self.operation_id)
+        {
+            return Err(anyhow::Error::from(ConnectorControlPlaneError::AuthorityRetired));
+        }
+        let result = commit();
+        drop(state);
+        result
+    }
 }
 
 impl Drop for ContextImportOperationLease {
     fn drop(&mut self) {
         if let Ok(mut state) = self.gate.state.lock() {
             debug_assert!(state.live_leases > 0, "operation lease count underflow");
-            if state.live_leases > 0 {
+            let removed = state.active_operation_ids.remove(&self.operation_id);
+            debug_assert!(removed, "operation lease id was not active on drop");
+            if removed && state.live_leases > 0 {
                 state.live_leases -= 1;
                 if state.live_leases == 0 {
                     self.gate.drained.notify_all();
@@ -262,6 +641,7 @@ impl Drop for ContextImportOperationLease {
 struct AccountSlot {
     account: RegisteredConnectorAccount,
     gate: Arc<AccountLeaseGate>,
+    emergency_retirement_in_progress: bool,
 }
 
 #[derive(Debug)]
@@ -308,6 +688,7 @@ impl ConnectorControlPlane {
                     AccountSlot {
                         account,
                         gate: Arc::new(AccountLeaseGate::new(accepting_leases)),
+                        emergency_retirement_in_progress: false,
                     },
                 ))
             })
@@ -344,6 +725,13 @@ impl ConnectorControlPlane {
             if control.transition_in_progress {
                 return Err(ConnectorControlPlaneError::TransitionInProgress);
             }
+            if control
+                .accounts
+                .values()
+                .any(|slot| slot.emergency_retirement_in_progress)
+            {
+                return Err(ConnectorControlPlaneError::EmergencyRetirementInProgress);
+            }
             validate_successor_config(&control.durable_config, &next_config)?;
             control.transition_in_progress = true;
             control
@@ -353,35 +741,51 @@ impl ConnectorControlPlane {
                 .collect::<Vec<_>>()
         };
 
-        for gate in &gates {
-            if let Err(error) = gate.retire_and_drain() {
-                self.cancel_transition_after_prepare_failure(&gates);
+        let previous_gates = match gates
+            .iter()
+            .map(|gate| {
+                Ok(GateRestore {
+                    gate: Arc::clone(gate),
+                    accepting_leases: gate.accepting_leases()?,
+                })
+            })
+            .collect::<Result<Vec<_>, ConnectorControlPlaneError>>()
+        {
+            Ok(previous_gates) => previous_gates,
+            Err(error) => {
+                if let Ok(mut control) = self.state.lock() {
+                    control.transition_in_progress = false;
+                }
+                return Err(error);
+            }
+        };
+
+        for restore in &previous_gates {
+            if let Err(error) = restore.gate.retire_and_drain() {
+                // Gate failure means this transition cannot prove that every
+                // old generation is safely drained. Reopening captured gates
+                // after that error could resurrect authority, including an
+                // emergency-retired account, so globally fail closed instead.
+                self.fail_closed_after_prepare_failure();
                 return Err(error);
             }
         }
 
         Ok(ConnectorControlTransition {
             state: Arc::clone(&self.state),
-            previous_gates: gates,
+            previous_gates,
             next_config,
             durable_published: false,
             completed: false,
         })
     }
 
-    fn cancel_transition_after_prepare_failure(&self, gates: &[Arc<AccountLeaseGate>]) {
+    fn fail_closed_after_prepare_failure(&self) {
+        // The state flag is the only authority admission root, so this is
+        // fail-closed even if an individual gate is poisoned. Do not re-enter
+        // any account gate while holding the broad plane mutex.
         if let Ok(mut control) = self.state.lock() {
-            for gate in gates {
-                let accepting = control
-                    .accounts
-                    .values()
-                    .find(|slot| Arc::ptr_eq(&slot.gate, gate))
-                    .is_some_and(|slot| {
-                        control.durable_config.enabled
-                            && slot.account.lifecycle.admits_context_import()
-                    });
-                let _ = gate.reopen(accepting);
-            }
+            control.failed_closed = true;
             control.transition_in_progress = false;
         }
     }
@@ -391,38 +795,54 @@ impl ConnectorControlPlane {
         session: &AuthenticatedControlSession,
         instance_id: &ConnectorInstanceId,
     ) -> Result<AccountAuthority, ConnectorControlPlaneError> {
-        let control = self
-            .state
-            .lock()
-            .map_err(|_| ConnectorControlPlaneError::ControlPlaneStatePoisoned)?;
-        if control.failed_closed {
-            return Err(ConnectorControlPlaneError::ProjectionFailedClosed);
-        }
-        if control.transition_in_progress {
-            return Err(ConnectorControlPlaneError::TransitionInProgress);
-        }
-        if !control.durable_config.enabled {
-            return Err(ConnectorControlPlaneError::ControlPlaneDisabled);
-        }
-        let slot = control
-            .accounts
-            .get(instance_id)
-            .ok_or(ConnectorControlPlaneError::UnknownAccount)?;
-        if slot.account.configuration.subject_id != *session.subject_id() {
-            return Err(ConnectorControlPlaneError::SubjectBindingMismatch);
-        }
-        if !slot.account.lifecycle.admits_context_import() {
-            return Err(ConnectorControlPlaneError::AccountNotActive(
-                slot.account.lifecycle,
-            ));
-        }
-        admit_entry_point(
-            &slot.account.configuration,
-            ConnectorEntryPoint::ContextImport,
-        )
-        .map_err(ConnectorControlPlaneError::Admission)?;
-        let state = slot
-            .gate
+        let (subject_id, policy_revision, lifecycle_revision, gate) = {
+            let control = self
+                .state
+                .lock()
+                .map_err(|_| ConnectorControlPlaneError::ControlPlaneStatePoisoned)?;
+            if control.failed_closed {
+                return Err(ConnectorControlPlaneError::ProjectionFailedClosed);
+            }
+            if control.transition_in_progress {
+                return Err(ConnectorControlPlaneError::TransitionInProgress);
+            }
+            if !control.durable_config.enabled {
+                return Err(ConnectorControlPlaneError::ControlPlaneDisabled);
+            }
+            let slot = control
+                .accounts
+                .get(instance_id)
+                .ok_or(ConnectorControlPlaneError::UnknownAccount)?;
+            if slot.emergency_retirement_in_progress {
+                return Err(ConnectorControlPlaneError::AuthorityRetired);
+            }
+            if slot.account.configuration.subject_id != *session.subject_id() {
+                return Err(ConnectorControlPlaneError::SubjectBindingMismatch);
+            }
+            if !slot.account.lifecycle.admits_context_import() {
+                return Err(ConnectorControlPlaneError::AccountNotActive(
+                    slot.account.lifecycle,
+                ));
+            }
+            admit_entry_point(
+                &slot.account.configuration,
+                ConnectorEntryPoint::ContextImport,
+            )
+            .map_err(ConnectorControlPlaneError::Admission)?;
+            (
+                slot.account.configuration.subject_id.clone(),
+                slot.account.configuration.policy.revision,
+                slot.account.lifecycle_revision,
+                Arc::clone(&slot.gate),
+            )
+        };
+
+        // Keep every broad-plane -> account-gate handoff non-blocking. A
+        // transition that starts after the admission snapshot either retires
+        // this gate before we read it (rejecting the authority) or must later
+        // drain any lease minted from it; lease acquisition rechecks the plane
+        // state before it increments that live count.
+        let state = gate
             .state
             .lock()
             .map_err(|_| ConnectorControlPlaneError::AuthorityPoisoned)?;
@@ -431,11 +851,11 @@ impl ConnectorControlPlane {
         }
         Ok(AccountAuthority {
             instance_id: instance_id.clone(),
-            subject_id: slot.account.configuration.subject_id.clone(),
-            policy_revision: slot.account.configuration.policy.revision,
-            lifecycle_revision: slot.account.lifecycle_revision,
+            subject_id,
+            policy_revision,
+            lifecycle_revision,
             plane_state: Arc::downgrade(&self.state),
-            gate: Arc::downgrade(&slot.gate),
+            gate: Arc::downgrade(&gate),
             generation: state.generation,
         })
     }
@@ -447,27 +867,41 @@ impl ConnectorControlPlane {
         &self,
         instance_id: &ConnectorInstanceId,
     ) -> Result<(), ConnectorControlPlaneError> {
-        let control = self
-            .state
-            .lock()
-            .map_err(|_| ConnectorControlPlaneError::ControlPlaneStatePoisoned)?;
-        if control.failed_closed {
-            return Err(ConnectorControlPlaneError::ProjectionFailedClosed);
+        let gate = {
+            let mut control = self
+                .state
+                .lock()
+                .map_err(|_| ConnectorControlPlaneError::ControlPlaneStatePoisoned)?;
+            if control.failed_closed {
+                return Err(ConnectorControlPlaneError::ProjectionFailedClosed);
+            }
+            if control.transition_in_progress {
+                return Err(ConnectorControlPlaneError::TransitionInProgress);
+            }
+            let slot = control
+                .accounts
+                .get_mut(instance_id)
+                .ok_or(ConnectorControlPlaneError::UnknownAccount)?;
+            if slot.emergency_retirement_in_progress {
+                return Err(ConnectorControlPlaneError::EmergencyRetirementInProgress);
+            }
+            // Linearize against transition and new lease admission, then drop
+            // the broad plane lock before waiting on the account gate. A final
+            // commit permit may safely inspect the plane while it holds that
+            // gate; the marker keeps a transition from replacing the slot.
+            slot.emergency_retirement_in_progress = true;
+            Arc::clone(&slot.gate)
+        };
+
+        let result = gate.retire_and_drain();
+        if result.is_ok()
+            && let Ok(mut control) = self.state.lock()
+            && let Some(slot) = control.accounts.get_mut(instance_id)
+            && Arc::ptr_eq(&slot.gate, &gate)
+        {
+            slot.emergency_retirement_in_progress = false;
         }
-        // Keep the plane lock until the selected gate is fully drained. This
-        // makes emergency retirement and durable replacement one state-machine
-        // boundary: a transition cannot select/replace a generation after this
-        // call has reported success, while a lease Drop needs only the gate
-        // lock and can therefore always let this drain complete.
-        if control.transition_in_progress {
-            return Err(ConnectorControlPlaneError::TransitionInProgress);
-        }
-        control
-            .accounts
-            .get(instance_id)
-            .ok_or(ConnectorControlPlaneError::UnknownAccount)?
-            .gate
-            .retire_and_drain()
+        result
     }
 
     pub(crate) fn status(&self) -> Result<Vec<ConnectorAccountStatus>, ConnectorControlPlaneError> {
@@ -494,7 +928,7 @@ impl ConnectorControlPlane {
 #[derive(Debug)]
 pub(crate) struct ConnectorControlTransition {
     state: Arc<Mutex<ConnectorControlPlaneState>>,
-    previous_gates: Vec<Arc<AccountLeaseGate>>,
+    previous_gates: Vec<GateRestore>,
     next_config: ConnectorControlConfig,
     durable_published: bool,
     completed: bool,
@@ -532,29 +966,33 @@ impl ConnectorControlTransition {
     }
 
     fn fail_closed_locked(&self, control: &mut ConnectorControlPlaneState) {
+        // A durable transition has already retired and drained every old gate
+        // before this object exists. Marking the plane failed is therefore
+        // sufficient to deny all new authority without re-entering account
+        // gates while holding the broad plane mutex.
         control.failed_closed = true;
         control.transition_in_progress = false;
-        for slot in control.accounts.values() {
-            let _ = slot.gate.reopen(false);
-        }
     }
 
     fn cancel_unpublished(&mut self) {
-        if let Ok(mut control) = self.state.lock() {
-            if !control.transition_in_progress || control.failed_closed {
-                return;
-            }
-            for gate in &self.previous_gates {
-                let accepting = control
-                    .accounts
-                    .values()
-                    .find(|slot| Arc::ptr_eq(&slot.gate, gate))
-                    .is_some_and(|slot| {
-                        control.durable_config.enabled
-                            && slot.account.lifecycle.admits_context_import()
-                    });
-                let _ = gate.reopen(accepting);
-            }
+        let restore = self
+            .state
+            .lock()
+            .map(|control| control.transition_in_progress && !control.failed_closed)
+            .unwrap_or(false);
+        if !restore {
+            return;
+        }
+        // Keep `transition_in_progress` true until every gate has returned to
+        // its captured pre-transition state. This avoids both plane->gate
+        // inversion with a commit permit and resurrection of an emergency stop.
+        for restore in &self.previous_gates {
+            let _ = restore.gate.reopen(restore.accepting_leases);
+        }
+        if let Ok(mut control) = self.state.lock()
+            && control.transition_in_progress
+            && !control.failed_closed
+        {
             control.transition_in_progress = false;
         }
     }
@@ -644,6 +1082,8 @@ pub(crate) enum ConnectorControlPlaneError {
     AuthorityRetired,
     #[error("connector control transition is in progress")]
     TransitionInProgress,
+    #[error("connector account emergency retirement is in progress")]
+    EmergencyRetirementInProgress,
     #[error("connector control projection is fail-closed after a durable update")]
     ProjectionFailedClosed,
     #[error("connector control projection rejected durable-install ordering")]
@@ -658,6 +1098,12 @@ pub(crate) enum ConnectorControlPlaneError {
     AuthorityGenerationExhausted,
     #[error("connector operation lease count is exhausted")]
     LeaseCountExhausted,
+    #[error("connector runtime binding identity is exhausted")]
+    RuntimeIdExhausted,
+    #[error("connector operation lease identity is exhausted")]
+    OperationIdExhausted,
+    #[error("connector operation lease identity unexpectedly collided")]
+    OperationIdCollision,
     #[error("connector account `{instance:?}` changed without a newer lifecycle revision")]
     StaleLifecycleRevision { instance: ConnectorInstanceId },
     #[error("connector account `{instance:?}` changed policy without a newer policy revision")]
@@ -751,6 +1197,145 @@ mod tests {
         plane.retire_account(&instance).unwrap();
         assert!(matches!(
             authority.acquire_context_import_operation_lease(),
+            Err(ConnectorControlPlaneError::AuthorityRetired)
+        ));
+    }
+
+    #[test]
+    fn authenticated_authority_mints_only_a_matching_runtime_root_and_commit_permit() {
+        let plane = plane(ConnectorLifecycle::Active);
+        let instance = instance();
+        let authority = plane
+            .authorize_context_import(&session(), &instance)
+            .unwrap();
+        let binding = authority.acquire_context_import_runtime().unwrap();
+        let lease = binding.acquire_context_import_operation_lease().unwrap();
+
+        assert!(binding.binding_matches(
+            &instance,
+            &SubjectId::new("operator").unwrap(),
+            7,
+            11,
+        ));
+        assert!(binding.matches_operation_lease(&lease));
+        let capability_binding = binding.capability_binding();
+        assert!(capability_binding.matches_runtime_binding(&binding));
+        assert!(capability_binding.matches_operation_lease(&lease));
+        let evidence_binding = capability_binding.for_evidence();
+        assert!(evidence_binding.matches_runtime_binding(&binding));
+        assert!(evidence_binding.matches_operation_lease(&lease));
+        assert!(lease
+            .with_context_import_commit_permit(|| -> anyhow::Result<()> { Ok(()) })
+            .is_ok());
+
+        let independently_acquired = authority.acquire_context_import_operation_lease().unwrap();
+        assert!(
+            !binding.matches_operation_lease(&independently_acquired),
+            "a runtime root must not accept another lease from the same generation"
+        );
+        assert!(
+            !capability_binding.matches_operation_lease(&independently_acquired),
+            "a capability witness must not accept another lease from the same generation"
+        );
+        drop(independently_acquired);
+        let next_runtime_lease = binding.acquire_context_import_operation_lease().unwrap();
+        assert!(binding.matches_operation_lease(&next_runtime_lease));
+        assert!(capability_binding.matches_operation_lease(&next_runtime_lease));
+        assert!(
+            lease.operation_id != next_runtime_lease.operation_id,
+            "each runtime operation must receive its own operation identity"
+        );
+        drop(next_runtime_lease);
+    }
+
+    #[test]
+    fn idle_runtime_binding_does_not_block_or_survive_a_transition() {
+        let plane = plane(ConnectorLifecycle::Active);
+        let instance = instance();
+        let authority = plane
+            .authorize_context_import(&session(), &instance)
+            .unwrap();
+        let binding = authority.acquire_context_import_runtime().unwrap();
+        let mut next = config(ConnectorLifecycle::Paused);
+        next.registered_accounts[0].lifecycle_revision = 12;
+
+        // No operation lease is live, so this cannot wait for an idle runtime.
+        let transition = plane.begin_durable_transition(next).unwrap();
+        drop(transition);
+        assert!(matches!(
+            binding.acquire_context_import_operation_lease(),
+            Err(ConnectorControlPlaneError::AuthorityRetired)
+        ));
+    }
+
+    #[test]
+    fn operation_id_is_live_only_until_its_lease_drops() {
+        let plane = plane(ConnectorLifecycle::Active);
+        let instance = instance();
+        let authority = plane
+            .authorize_context_import(&session(), &instance)
+            .unwrap();
+        let binding = authority.acquire_context_import_runtime().unwrap();
+        let lease = binding.acquire_context_import_operation_lease().unwrap();
+        let operation_id = lease.operation_id;
+        {
+            let state = binding.gate.state.lock().unwrap();
+            assert!(state.active_operation_ids.contains(&operation_id));
+            assert_eq!(state.live_leases, 1);
+        }
+        drop(lease);
+        {
+            let state = binding.gate.state.lock().unwrap();
+            assert!(!state.active_operation_ids.contains(&operation_id));
+            assert_eq!(state.live_leases, 0);
+        }
+    }
+
+    #[test]
+    fn commit_permit_never_deadlocks_an_emergency_retirement_plane_probe() {
+        let plane = Arc::new(plane(ConnectorLifecycle::Active));
+        let instance = instance();
+        let authority = plane
+            .authorize_context_import(&session(), &instance)
+            .unwrap();
+        let lease = authority.acquire_context_import_operation_lease().unwrap();
+        let (retired_tx, retired_rx) = mpsc::channel();
+        let probe_plane = Arc::clone(&plane);
+        let probe_instance = instance.clone();
+
+        lease
+            .with_context_import_commit_permit(|| -> anyhow::Result<()> {
+                let retire_plane = Arc::clone(&probe_plane);
+                std::thread::spawn(move || {
+                    retired_tx.send(retire_plane.retire_account(&probe_instance)).unwrap();
+                });
+                while !matches!(
+                    probe_plane.authorize_context_import(&session(), &instance),
+                    Err(ConnectorControlPlaneError::AuthorityRetired)
+                ) {
+                    std::thread::yield_now();
+                }
+                // The retire marker is set but it has released the plane lock
+                // before waiting on this permit's account gate.
+                probe_plane.status().map_err(anyhow::Error::from)?;
+                Ok(())
+            })
+            .unwrap();
+        drop(lease);
+        retired_rx.recv().unwrap().unwrap();
+    }
+
+    #[test]
+    fn aborted_same_config_transition_cannot_reopen_an_emergency_retirement() {
+        let plane = plane(ConnectorLifecycle::Active);
+        let instance = instance();
+        plane.retire_account(&instance).unwrap();
+        let transition = plane
+            .begin_durable_transition(config(ConnectorLifecycle::Active))
+            .unwrap();
+        drop(transition);
+        assert!(matches!(
+            plane.authorize_context_import(&session(), &instance),
             Err(ConnectorControlPlaneError::AuthorityRetired)
         ));
     }

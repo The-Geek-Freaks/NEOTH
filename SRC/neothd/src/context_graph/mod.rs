@@ -22,18 +22,23 @@ use hmac::{Hmac, Mac};
 #[cfg(not(windows))]
 use rusqlite::OpenFlags;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
-#[cfg(not(windows))]
-use sha2::Digest;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 
 #[cfg(not(windows))]
 use crate::wal::crypto::derive_subkey;
 use crate::wal::crypto::{WalMasterKey, WalSegmentKey, decrypt_blob, encrypt_blob};
+use crate::connectors::{
+    ConnectorId, ConnectorInstanceId, SubjectId,
+    control_plane::{
+        ContextImportCapabilityBinding, ContextImportOperationLease, ContextImportRuntimeBinding,
+    },
+    local_import::LocalImportPlan,
+};
 
 #[cfg(not(windows))]
 const APPLICATION_ID: i64 = 0x4e43_5432; // "NCT2"
 #[cfg(not(windows))]
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 #[cfg(not(windows))]
 const CRYPTO_DOMAIN: &[u8] = b"neoth-context-graph-content-v1";
 #[cfg(not(windows))]
@@ -100,7 +105,6 @@ struct AccountCapability(());
 struct ConnectorInstance(String);
 
 impl ConnectorInstance {
-    #[cfg(test)]
     fn new(value: &str) -> Result<Self> {
         validate_identifier("connector instance", value)?;
         Ok(Self(value.to_owned()))
@@ -121,6 +125,49 @@ impl AccountContext {
             _unforgeable: AccountCapability(()),
         })
     }
+
+    fn from_local_import_binding(
+        subject_id: &SubjectId,
+        instance_id: &ConnectorInstanceId,
+    ) -> Result<Self> {
+        let mut digest = Sha256::new();
+        digest.update(b"neoth/context-account/local-import/v1\0");
+        digest.update(subject_id.as_str().as_bytes());
+        digest.update([0]);
+        digest.update(instance_id.connector_id.as_str().as_bytes());
+        digest.update([0]);
+        if let Some(account_id) = &instance_id.account_id {
+            digest.update(account_id.as_str().as_bytes());
+        }
+        let connector_instance = format!("{:x}", digest.finalize());
+        Ok(Self {
+            principal: subject_id.as_str().to_owned(),
+            connector_instance: ConnectorInstance::new(&connector_instance)?,
+            _unforgeable: AccountCapability(()),
+        })
+    }
+}
+
+/// Check the two non-forgeable halves of the runtime pair before deriving the
+/// only ContextStore account that the P0 bridge may access.
+fn validate_context_import_runtime_pair(
+    runtime_binding: &ContextImportRuntimeBinding,
+    lease: &ContextImportOperationLease,
+) -> Result<AccountContext> {
+    let instance_id = runtime_binding.instance_id();
+    let subject_id = runtime_binding.subject_id();
+    if instance_id.connector_id != ConnectorId::LocalImport
+        || !runtime_binding.matches_operation_lease(lease)
+        || !lease.binding_matches(
+            instance_id,
+            subject_id,
+            runtime_binding.policy_revision(),
+            runtime_binding.lifecycle_revision(),
+        )
+    {
+        bail!("context import runtime pair does not authorize a local-import store operation");
+    }
+    AccountContext::from_local_import_binding(subject_id, instance_id)
 }
 
 /// Stable object identity inside the account bound by [`AccountContext`].
@@ -193,6 +240,61 @@ pub enum AuditReceipt {
     RevisionStored,
     ObjectTombstoned,
     CursorAdvanced,
+    /// Content-free receipt for the sole connector-bound `UntrustedExternal`
+    /// Evidence bridge below. Generic callers cannot select it accidentally.
+    ContextEvidenceStored,
+}
+
+/// One local-import payload that can become only encrypted Evidence with fixed
+/// `UntrustedExternal`/Connector provenance. It does not expose object kind,
+/// trust class, receipt kind, or arbitrary source provenance to callers.
+pub(crate) struct UntrustedExternalEvidenceBatch {
+    batch_key: SourceKey,
+    mutation_key: SourceKey,
+    object_id: String,
+    content: Vec<u8>,
+    evidence_binding: ContextImportCapabilityBinding,
+}
+
+impl std::fmt::Debug for UntrustedExternalEvidenceBatch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("UntrustedExternalEvidenceBatch(<redacted>)")
+    }
+}
+
+impl UntrustedExternalEvidenceBatch {
+    /// Derive storage identities and content only from a validated,
+    /// capability-bound LocalImport plan. No caller can provide raw source
+    /// keys, object identities, provenance, or content to this bridge.
+    pub(crate) fn from_local_import_plan(plan: &LocalImportPlan) -> Result<Self> {
+        let evidence_binding = plan
+            .evidence_binding()
+            .ok_or_else(|| anyhow!("local import plan has no runtime capability binding"))?
+            .for_evidence();
+        let mut content = Vec::new();
+        for (index, record) in plan.records().iter().enumerate() {
+            if index != 0 {
+                content.push(b'\n');
+            }
+            content.extend_from_slice(record.text().as_bytes());
+        }
+        if content.is_empty() || content.len() > MAX_CONTENT_BYTES {
+            bail!("local import evidence content must contain 1..={MAX_CONTENT_BYTES} bytes");
+        }
+        let plan_hex = hex_bytes(plan.id().as_bytes());
+        let object_id = format!(
+            "local-import-evidence-{}",
+            hex_bytes(plan.source_object_id().as_bytes())
+        );
+        validate_identifier("local import evidence object id", &object_id)?;
+        Ok(Self {
+            batch_key: SourceKey::new(format!("local-import-batch-{plan_hex}"))?,
+            mutation_key: SourceKey::new(format!("local-import-mutation-{plan_hex}"))?,
+            object_id,
+            content,
+            evidence_binding,
+        })
+    }
 }
 
 /// A mutation has a unique source key. Repeating the same key in a later batch
@@ -253,7 +355,15 @@ pub struct AuditOutboxEntry {
     /// Coarsened at the public boundary to avoid leaking precise activity
     /// timing. SQLite retains the internal timestamp only for ordering.
     pub occurred_at_unix_minute: i64,
+    authority_revisions: Option<(u64, u64)>,
     row_id: i64,
+}
+
+impl AuditOutboxEntry {
+    pub(crate) fn context_evidence_revisions(&self) -> Result<(u64, u64)> {
+        self.authority_revisions
+            .ok_or_else(|| anyhow!("Context Evidence audit receipt lacks committed authority revisions"))
+    }
 }
 
 impl std::fmt::Debug for AuditOutboxEntry {
@@ -362,13 +472,119 @@ impl ContextStore {
         self.commit_batch_with_limits(account, batch, DEFAULT_STORE_LIMITS)
     }
 
+    /// The sole Context Connector P0 write bridge. Caller-supplied binding
+    /// values are assertions only: each must match the non-forgeable live
+    /// lease. This fixes persisted semantics to `Evidence`, Connector
+    /// provenance, explicit `UntrustedExternal`, and a content-free receipt.
+    pub(crate) fn commit_local_import_evidence(
+        &mut self,
+        runtime_binding: &ContextImportRuntimeBinding,
+        lease: &ContextImportOperationLease,
+        evidence: UntrustedExternalEvidenceBatch,
+    ) -> Result<()> {
+        let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
+        if !evidence.evidence_binding.matches_runtime_binding(runtime_binding)
+            || !evidence.evidence_binding.matches_operation_lease(lease)
+        {
+            bail!("local-import evidence is not bound to this runtime pair");
+        }
+        let policy_revision = runtime_binding.policy_revision();
+        let lifecycle_revision = runtime_binding.lifecycle_revision();
+        let batch = CommitBatch {
+            source_batch_key: evidence.batch_key,
+            operations: vec![ContextOperation::PutRevision {
+                source_key: evidence.mutation_key,
+                object: ObjectRef {
+                    object_id: evidence.object_id,
+                    object_kind: ObjectKind::Evidence,
+                },
+                content: evidence.content,
+                provenance: Provenance {
+                    source_kind: ProvenanceKind::Connector,
+                    source_ref: "untrusted_external:local_import".into(),
+                },
+                receipt: AuditReceipt::ContextEvidenceStored,
+            }],
+        };
+        lease.with_context_import_commit_permit(|| {
+            self.commit_batch_with_limits_and_context_evidence_receipt(
+                &account,
+                &batch,
+                DEFAULT_STORE_LIMITS,
+                true,
+                Some((policy_revision, lifecycle_revision)),
+            )
+        })
+    }
+
+    /// Reserve the current P0 receipt rows while the exact lease is live.
+    /// Delivery intentionally occurs outside the gate: a WAL adapter is an
+    /// extensible boundary and must never block account retirement.
+    pub(crate) fn reserve_local_import_audit(
+        &mut self,
+        runtime_binding: &ContextImportRuntimeBinding,
+        lease: &ContextImportOperationLease,
+    ) -> Result<Vec<AuditOutboxEntry>> {
+        let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
+        lease.with_context_import_commit_permit(|| {
+            let entries = self.pending_audit(&account)?;
+            if entries
+                .iter()
+                .any(|entry| entry.receipt != AuditReceipt::ContextEvidenceStored)
+            {
+                bail!("local-import audit scope contains a non-ContextEvidence receipt");
+            }
+            Ok(entries)
+        })
+    }
+
+    /// Conditionally acknowledge a successfully delivered, reserved receipt.
+    /// If retirement won after external WAL delivery, the permit fails and the
+    /// row remains durable; handle-based append-once then makes later retry
+    /// safe.
+    pub(crate) fn acknowledge_local_import_audit(
+        &mut self,
+        runtime_binding: &ContextImportRuntimeBinding,
+        lease: &ContextImportOperationLease,
+        entry: &AuditOutboxEntry,
+    ) -> Result<()> {
+        let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
+        if entry.receipt != AuditReceipt::ContextEvidenceStored {
+            bail!("context import lease binding does not authorize this local-import commit");
+        }
+        lease.with_context_import_commit_permit(|| {
+            if self.conn.execute(
+                "DELETE FROM audit_outbox WHERE scope_key=?1 AND event_id=?2 AND receipt_code=?3",
+                params![
+                    self.scope(&account).key.as_slice(),
+                    entry.row_id,
+                    receipt_code(AuditReceipt::ContextEvidenceStored),
+                ],
+            )? != 1 {
+                bail!("local-import audit outbox entry changed before acknowledged replay");
+            }
+            Ok(())
+        })
+    }
+
     fn commit_batch_with_limits(
         &mut self,
         account: &AccountContext,
         batch: &CommitBatch,
         limits: StoreLimits,
     ) -> Result<()> {
-        validate_batch(batch)?;
+        self.commit_batch_with_limits_and_context_evidence_receipt(account, batch, limits, false, None)
+    }
+
+    fn commit_batch_with_limits_and_context_evidence_receipt(
+        &mut self,
+        account: &AccountContext,
+        batch: &CommitBatch,
+        limits: StoreLimits,
+        permits_context_evidence_receipt: bool,
+        authority_revisions: Option<(u64, u64)>,
+    ) -> Result<()> {
+        validate_batch(batch, permits_context_evidence_receipt)?;
         // Reject oversized / malformed payloads and exhausted account capacity
         // before acquiring SQLite's writer lock. Re-check under that lock below
         // so concurrent store handles cannot race the quota.
@@ -460,6 +676,7 @@ impl ContextStore {
                     &scope,
                     operation,
                     mutation_key,
+                    authority_revisions,
                 )?;
             }
             let retained_batches: i64 = tx.query_row(
@@ -616,7 +833,7 @@ impl ContextStore {
             bail!("context audit outbox exceeds its safety cap");
         }
         let mut stmt = self.conn.prepare(
-            "SELECT event_id, receipt_code, occurred_at_ms, mutation_key FROM audit_outbox WHERE scope_key=?1 ORDER BY event_id",
+            "SELECT event_id, receipt_code, occurred_at_ms, mutation_key, policy_revision, lifecycle_revision FROM audit_outbox WHERE scope_key=?1 ORDER BY event_id",
         )?;
         stmt.query_map([scope.key.as_slice()], |row| {
             let row_id: i64 = row.get(0)?;
@@ -632,6 +849,14 @@ impl ContextStore {
                 handle: audit_receipt_handle(&self.lookup_key, &scope, &mutation_key),
                 receipt: receipt_from_code(row.get::<_, i64>(1)?)?,
                 occurred_at_unix_minute: row.get::<_, i64>(2)?.div_euclid(60_000),
+                authority_revisions: match (row.get::<_, Option<i64>>(4)?, row.get::<_, Option<i64>>(5)?) {
+                    (Some(policy), Some(lifecycle)) => Some((
+                        u64::try_from(policy).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(4, policy))?,
+                        u64::try_from(lifecycle).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(5, lifecycle))?,
+                    )),
+                    (None, None) => None,
+                    _ => return Err(rusqlite::Error::InvalidQuery),
+                },
                 row_id,
             })
         })?
@@ -648,10 +873,12 @@ impl ContextStore {
         let mut delivered = 0;
         for entry in entries {
             sink.deliver(&entry)?;
-            self.conn.execute(
+            if self.conn.execute(
                 "DELETE FROM audit_outbox WHERE scope_key=?1 AND event_id=?2",
                 params![self.scope(account).key.as_slice(), entry.row_id],
-            )?;
+            )? != 1 {
+                bail!("context audit outbox entry changed during acknowledged replay");
+            }
             delivered += 1;
         }
         Ok(delivered)
@@ -770,7 +997,7 @@ const EXPECTED_TABLE_SQL: &[(&str, &str)] = &[
     ),
     (
         "audit_outbox",
-        "CREATE TABLE audit_outbox (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL, FOREIGN KEY(event_id) REFERENCES events(event_id) ON DELETE CASCADE, UNIQUE(scope_key, mutation_key))",
+        "CREATE TABLE audit_outbox (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL, policy_revision INTEGER, lifecycle_revision INTEGER, CHECK((receipt_code=4 AND policy_revision IS NOT NULL AND policy_revision>0 AND lifecycle_revision IS NOT NULL AND lifecycle_revision>0) OR (receipt_code<>4 AND policy_revision IS NULL AND lifecycle_revision IS NULL)), FOREIGN KEY(event_id) REFERENCES events(event_id) ON DELETE CASCADE, UNIQUE(scope_key, mutation_key))",
     ),
     (
         "cursors",
@@ -805,6 +1032,12 @@ const EXPECTED_TABLE_SQL: &[(&str, &str)] = &[
         "CREATE TABLE tombstones (scope_key BLOB NOT NULL, object_key BLOB NOT NULL, mutation_key BLOB NOT NULL, revision INTEGER NOT NULL, deleted_at_ms INTEGER NOT NULL, PRIMARY KEY(scope_key, object_key, mutation_key))",
     ),
 ];
+
+/// The exact v5 outbox shape accepted as a migration source.  It is kept
+/// separate from v6 so an attacker cannot smuggle a relaxed schema through a
+/// write-first "upgrade" path.
+#[cfg(not(windows))]
+const V5_AUDIT_OUTBOX_SQL: &str = "CREATE TABLE audit_outbox (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL, FOREIGN KEY(event_id) REFERENCES events(event_id) ON DELETE CASCADE, UNIQUE(scope_key, mutation_key))";
 
 #[cfg(not(windows))]
 fn configure_connection(conn: &Connection) -> Result<()> {
@@ -842,7 +1075,28 @@ fn ensure_pragma_i64(conn: &Connection, name: &str, expected: i64) -> Result<()>
 fn validate_or_initialize_schema(conn: &Connection, existing: bool) -> Result<()> {
     let app_id: i64 = conn.query_row("PRAGMA application_id", [], |row| row.get(0))?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if existing && (app_id != APPLICATION_ID || version != SCHEMA_VERSION) {
+    if existing && app_id != APPLICATION_ID {
+        bail!(
+            "context.db is corrupt, foreign, or has an unsupported schema version (application_id={app_id}, user_version={version})"
+        );
+    }
+    if existing && version == SCHEMA_VERSION - 1 {
+        // Validate the complete pre-upgrade database before `BEGIN IMMEDIATE`
+        // can alter it.  A matching header is not evidence that a v5 file is
+        // one of ours; in particular, a relaxed audit_outbox must fail closed.
+        validate_v5_schema(conn)?;
+        conn.execute_batch(
+            "BEGIN IMMEDIATE;
+             CREATE TABLE audit_outbox_v5_backup (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL);
+             INSERT INTO audit_outbox_v5_backup(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key) SELECT event_id,scope_key,receipt_code,occurred_at_ms,mutation_key FROM audit_outbox;
+             DROP TABLE audit_outbox;
+             CREATE TABLE audit_outbox (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL, policy_revision INTEGER, lifecycle_revision INTEGER, CHECK((receipt_code=4 AND policy_revision IS NOT NULL AND policy_revision>0 AND lifecycle_revision IS NOT NULL AND lifecycle_revision>0) OR (receipt_code<>4 AND policy_revision IS NULL AND lifecycle_revision IS NULL)), FOREIGN KEY(event_id) REFERENCES events(event_id) ON DELETE CASCADE, UNIQUE(scope_key, mutation_key));
+             INSERT INTO audit_outbox(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key) SELECT event_id,scope_key,receipt_code,occurred_at_ms,mutation_key FROM audit_outbox_v5_backup;
+             DROP TABLE audit_outbox_v5_backup;
+             PRAGMA user_version=6;
+             COMMIT;",
+        )?;
+    } else if existing && version != SCHEMA_VERSION {
         bail!(
             "context.db is corrupt, foreign, or has an unsupported schema version (application_id={app_id}, user_version={version})"
         );
@@ -905,6 +1159,42 @@ struct SchemaSignature {
 
 #[cfg(not(windows))]
 fn validate_schema(conn: &Connection) -> Result<()> {
+    let expected = Connection::open_in_memory()?;
+    for (_, statement) in EXPECTED_TABLE_SQL {
+        expected.execute(statement, [])?;
+    }
+    validate_schema_against(conn, &expected)
+}
+
+#[cfg(not(windows))]
+fn validate_v5_schema(conn: &Connection) -> Result<()> {
+    let expected = Connection::open_in_memory()?;
+    for (table_name, statement) in EXPECTED_TABLE_SQL {
+        expected.execute(
+            if *table_name == "audit_outbox" {
+                V5_AUDIT_OUTBOX_SQL
+            } else {
+                statement
+            },
+            [],
+        )?;
+    }
+    validate_schema_against(conn, &expected)?;
+    let unsupported_receipt: Option<i64> = conn
+        .query_row(
+            "SELECT receipt_code FROM audit_outbox WHERE receipt_code NOT IN (1,2,3) LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(receipt_code) = unsupported_receipt {
+        bail!("context.db v5 audit outbox contains unsupported receipt code {receipt_code}");
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn validate_schema_against(conn: &Connection, expected: &Connection) -> Result<()> {
     let journal_mode: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
     if !journal_mode.eq_ignore_ascii_case("wal") {
         bail!("context store must use WAL journal mode");
@@ -914,11 +1204,7 @@ fn validate_schema(conn: &Connection) -> Result<()> {
         bail!("context.db failed SQLite quick_check: {quick_check}");
     }
 
-    let expected = Connection::open_in_memory()?;
-    for (_, statement) in EXPECTED_TABLE_SQL {
-        expected.execute(statement, [])?;
-    }
-    let expected_signature = schema_signature(&expected)?;
+    let expected_signature = schema_signature(expected)?;
     let actual_signature = schema_signature(conn)?;
     if actual_signature != expected_signature {
         bail!("context.db schema tables, columns, indexes, or SQL fingerprint do not match");
@@ -1035,6 +1321,7 @@ fn apply_operation(
     scope: &Scope,
     operation: &ContextOperation,
     mutation_key: [u8; 32],
+    authority_revisions: Option<(u64, u64)>,
 ) -> Result<()> {
     let now = Utc::now().timestamp_millis();
     match operation {
@@ -1085,6 +1372,7 @@ fn apply_operation(
                 Some(revision),
                 *receipt,
                 now,
+                authority_revisions,
             )?;
         }
         ContextOperation::Tombstone {
@@ -1108,6 +1396,7 @@ fn apply_operation(
                 Some(revision),
                 *receipt,
                 now,
+                authority_revisions,
             )?;
         }
         ContextOperation::AdvanceCursor {
@@ -1123,7 +1412,16 @@ fn apply_operation(
             let cursor_key = scope.pseudonym(lookup_key, b"cursor", cursor_name);
             let encrypted = encrypt_value(key, b"cursor", scope, cursor_name, 0, cursor)?;
             tx.execute("INSERT INTO cursors(scope_key,cursor_key,mutation_key,value,updated_at_ms) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(scope_key,cursor_key) DO UPDATE SET mutation_key=excluded.mutation_key,value=excluded.value,updated_at_ms=excluded.updated_at_ms", params![scope.key.as_slice(), cursor_key.as_slice(), mutation_key.as_slice(), encrypted, now])?;
-            append_event(tx, scope, mutation_key, None, None, *receipt, now)?;
+            append_event(
+                tx,
+                scope,
+                mutation_key,
+                None,
+                None,
+                *receipt,
+                now,
+                authority_revisions,
+            )?;
         }
     }
     Ok(())
@@ -1137,10 +1435,20 @@ fn append_event(
     revision: Option<i64>,
     receipt: AuditReceipt,
     now: i64,
+    authority_revisions: Option<(u64, u64)>,
 ) -> Result<()> {
     tx.execute("INSERT INTO events(scope_key,mutation_key,object_key,revision,receipt_code,occurred_at_ms) VALUES(?1,?2,?3,?4,?5,?6)", params![scope.key.as_slice(), mutation_key.as_slice(), object_key.as_ref().map(|value| value.as_slice()), revision, receipt_code(receipt), now])?;
     let event_id = tx.last_insert_rowid();
-    tx.execute("INSERT INTO audit_outbox(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key) VALUES(?1,?2,?3,?4,?5)", params![event_id, scope.key.as_slice(), receipt_code(receipt), now, mutation_key.as_slice()])?;
+    let (policy_revision, lifecycle_revision) = authority_revisions
+        .map(|(policy, lifecycle)| {
+            Ok((
+                Some(i64::try_from(policy).map_err(|_| anyhow!("policy revision exceeds SQLite integer range"))?),
+                Some(i64::try_from(lifecycle).map_err(|_| anyhow!("lifecycle revision exceeds SQLite integer range"))?),
+            ))
+        })
+        .transpose()?
+        .unwrap_or((None, None));
+    tx.execute("INSERT INTO audit_outbox(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key,policy_revision,lifecycle_revision) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![event_id, scope.key.as_slice(), receipt_code(receipt), now, mutation_key.as_slice(), policy_revision, lifecycle_revision])?;
     Ok(())
 }
 
@@ -1648,7 +1956,7 @@ fn encrypted_storage_len(plaintext_len: usize) -> Result<i64> {
         .ok_or_else(|| anyhow!("encrypted value length overflows quota accounting"))
 }
 
-fn validate_batch(batch: &CommitBatch) -> Result<()> {
+fn validate_batch(batch: &CommitBatch, permits_context_evidence_receipt: bool) -> Result<()> {
     if batch.operations.is_empty() || batch.operations.len() > MAX_BATCH_OPS {
         bail!("context batch must contain 1..={MAX_BATCH_OPS} operations");
     }
@@ -1678,7 +1986,11 @@ fn validate_batch(batch: &CommitBatch) -> Result<()> {
                     bail!("provenance reference must contain 1..={MAX_PROVENANCE_BYTES} bytes");
                 }
                 if *receipt != AuditReceipt::RevisionStored {
-                    bail!("revision mutations require RevisionStored receipt");
+                    if *receipt != AuditReceipt::ContextEvidenceStored
+                        || !permits_context_evidence_receipt
+                    {
+                        bail!("revision mutations require RevisionStored receipt");
+                    }
                 }
             }
             ContextOperation::Tombstone {
@@ -1724,6 +2036,7 @@ fn receipt_code(receipt: AuditReceipt) -> i64 {
         AuditReceipt::RevisionStored => 1,
         AuditReceipt::ObjectTombstoned => 2,
         AuditReceipt::CursorAdvanced => 3,
+        AuditReceipt::ContextEvidenceStored => 4,
     }
 }
 fn receipt_from_code(code: i64) -> rusqlite::Result<AuditReceipt> {
@@ -1731,8 +2044,18 @@ fn receipt_from_code(code: i64) -> rusqlite::Result<AuditReceipt> {
         1 => Ok(AuditReceipt::RevisionStored),
         2 => Ok(AuditReceipt::ObjectTombstoned),
         3 => Ok(AuditReceipt::CursorAdvanced),
+        4 => Ok(AuditReceipt::ContextEvidenceStored),
         _ => Err(rusqlite::Error::InvalidQuery),
     }
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
 }
 
 fn validate_identifier(label: &str, value: &str) -> Result<()> {
@@ -1901,6 +2224,95 @@ mod tests {
     }
     fn key(value: &str) -> SourceKey {
         SourceKey::new(value).unwrap()
+    }
+
+    fn v5_connection(path: &Path) -> Connection {
+        let conn = Connection::open(path).unwrap();
+        configure_connection(&conn).unwrap();
+        let journal_mode: String = conn
+            .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
+            .unwrap();
+        assert!(journal_mode.eq_ignore_ascii_case("wal"));
+        for (table_name, statement) in EXPECTED_TABLE_SQL {
+            conn.execute(
+                if *table_name == "audit_outbox" {
+                    V5_AUDIT_OUTBOX_SQL
+                } else {
+                    statement
+                },
+                [],
+            )
+            .unwrap();
+        }
+        conn.execute_batch(&format!(
+            "PRAGMA application_id={APPLICATION_ID}; PRAGMA user_version={};",
+            SCHEMA_VERSION - 1,
+        ))
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn canonical_v5_outbox_migrates_atomically_without_losing_rows() {
+        let home = crate::test_env::canonical_tempdir().unwrap().keep();
+        let path = home.join("context.db");
+        let conn = v5_connection(&path);
+        conn.execute(
+            "INSERT INTO events(scope_key,mutation_key,object_key,revision,receipt_code,occurred_at_ms) VALUES(?1,?2,NULL,NULL,1,0)",
+            params![&[7_u8; 32][..], &[8_u8; 32][..]],
+        )
+        .unwrap();
+        let event_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO audit_outbox(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key) VALUES(?1,?2,1,0,?3)",
+            params![event_id, &[7_u8; 32][..], &[8_u8; 32][..]],
+        )
+        .unwrap();
+        validate_or_initialize_schema(&conn, true).unwrap();
+        validate_schema(&conn).unwrap();
+        assert_eq!(conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), SCHEMA_VERSION);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM audit_outbox", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(
+            conn.query_row(
+                "SELECT policy_revision IS NULL AND lifecycle_revision IS NULL FROM audit_outbox WHERE event_id=?1",
+                [event_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap(),
+            true,
+        );
+    }
+
+    #[test]
+    fn malformed_v5_is_rejected_before_schema_or_data_mutation() {
+        let home = crate::test_env::canonical_tempdir().unwrap().keep();
+        let path = home.join("context.db");
+        let conn = v5_connection(&path);
+        conn.execute_batch("DROP TABLE audit_outbox; CREATE TABLE audit_outbox (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL);")
+            .unwrap();
+        assert!(validate_or_initialize_schema(&conn, true).is_err());
+        assert_eq!(conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), SCHEMA_VERSION - 1);
+        let sql: String = conn
+            .query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='audit_outbox'", [], |row| row.get(0))
+            .unwrap();
+        assert!(!sql.contains("policy_revision"));
+    }
+
+    #[test]
+    fn audit_outbox_enforces_context_receipt_revision_pairs() {
+        let mut store = store();
+        let scope = store.scope(&account());
+        for (receipt, policy, lifecycle) in [(4_i64, None, None), (1_i64, Some(7_i64), Some(11_i64))] {
+            store.conn.execute(
+                "INSERT INTO events(scope_key,mutation_key,object_key,revision,receipt_code,occurred_at_ms) VALUES(?1,?2,NULL,NULL,?3,0)",
+                params![scope.key.as_slice(), [receipt as u8; 32].as_slice(), receipt],
+            ).unwrap();
+            let event_id = store.conn.last_insert_rowid();
+            assert!(store.conn.execute(
+                "INSERT INTO audit_outbox(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key,policy_revision,lifecycle_revision) VALUES(?1,?2,?3,0,?4,?5,?6)",
+                params![event_id, scope.key.as_slice(), receipt, [receipt as u8; 32].as_slice(), policy, lifecycle],
+            ).is_err());
+        }
     }
     fn put(source_key: &str, content: &[u8]) -> ContextOperation {
         ContextOperation::PutRevision {

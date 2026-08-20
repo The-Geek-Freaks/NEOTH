@@ -22,6 +22,10 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
+use super::control_plane::{
+    ContextImportCapabilityBinding, ContextImportOperationLease, ContextImportRuntimeBinding,
+};
+
 type HmacSha256 = Hmac<Sha256>;
 
 pub const MAX_IMPORT_BYTES: usize = 1024 * 1024;
@@ -85,6 +89,9 @@ impl fmt::Debug for ApprovedImportRoot {
 pub struct OperatorImportCapability {
     root: ApprovedImportRoot,
     plan_key: Zeroizing<[u8; 32]>,
+    /// Non-cloneable, control-plane-issued binding. A root cannot be reused
+    /// under a different subject/instance/revision or lease generation.
+    runtime_binding: Option<ContextImportCapabilityBinding>,
 }
 
 impl fmt::Debug for OperatorImportCapability {
@@ -93,18 +100,55 @@ impl fmt::Debug for OperatorImportCapability {
     }
 }
 
-pub(super) fn approve_import_root(path: &Path) -> Result<ApprovedImportRoot, LocalImportError> {
+pub(crate) fn approve_import_root(path: &Path) -> Result<ApprovedImportRoot, LocalImportError> {
     validate_approved_root_path(path)?;
     open_approved_root(path)
 }
 
-pub(super) fn issue_operator_import_capability(
+pub(crate) fn issue_operator_import_capability(
+    root: ApprovedImportRoot,
+    plan_key: [u8; 32],
+    runtime_binding: ContextImportCapabilityBinding,
+) -> OperatorImportCapability {
+    OperatorImportCapability {
+        root,
+        plan_key: Zeroizing::new(plan_key),
+        runtime_binding: Some(runtime_binding),
+    }
+}
+
+impl OperatorImportCapability {
+    pub(crate) fn binding_matches_runtime(
+        &self,
+        runtime_binding: &ContextImportRuntimeBinding,
+    ) -> bool {
+        self.runtime_binding
+            .as_ref()
+            .is_some_and(|binding| binding.matches_runtime_binding(runtime_binding))
+    }
+
+    pub(crate) fn binding_matches(
+        &self,
+        runtime_binding: &ContextImportRuntimeBinding,
+        lease: &ContextImportOperationLease,
+    ) -> bool {
+        self.binding_matches_runtime(runtime_binding)
+            && self
+                .runtime_binding
+                .as_ref()
+                .is_some_and(|binding| binding.matches_operation_lease(lease))
+    }
+}
+
+#[cfg(test)]
+fn issue_operator_import_capability_for_test(
     root: ApprovedImportRoot,
     plan_key: [u8; 32],
 ) -> OperatorImportCapability {
     OperatorImportCapability {
         root,
         plan_key: Zeroizing::new(plan_key),
+        runtime_binding: None,
     }
 }
 
@@ -116,7 +160,7 @@ pub struct LocalImportRequest<'a> {
 }
 
 impl<'a> LocalImportRequest<'a> {
-    pub(super) fn new(
+    pub(crate) fn new(
         capability: &'a OperatorImportCapability,
         selected_relative_path: &'a Path,
         policy: LocalImportPolicy,
@@ -209,7 +253,6 @@ impl fmt::Debug for UntrustedImportRecord {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
 pub struct LocalImportPlan {
     id: LocalImportPlanId,
     source_object_id: SourceObjectId,
@@ -217,7 +260,24 @@ pub struct LocalImportPlan {
     policy_revision: u64,
     parser_revision: u32,
     records: Vec<UntrustedImportRecord>,
+    evidence_binding: Option<ContextImportCapabilityBinding>,
 }
+
+// The non-cloneable runtime witness deliberately does not participate in
+// parser-plan equality: this comparison is used only by parser tests, while
+// evidence persistence separately verifies the witness against its runtime.
+impl PartialEq for LocalImportPlan {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.source_object_id == other.source_object_id
+            && self.version_fingerprint == other.version_fingerprint
+            && self.policy_revision == other.policy_revision
+            && self.parser_revision == other.parser_revision
+            && self.records == other.records
+    }
+}
+
+impl Eq for LocalImportPlan {}
 
 impl LocalImportPlan {
     pub const fn id(&self) -> LocalImportPlanId {
@@ -237,6 +297,10 @@ impl LocalImportPlan {
     }
     pub fn records(&self) -> &[UntrustedImportRecord] {
         &self.records
+    }
+
+    pub(crate) fn evidence_binding(&self) -> Option<&ContextImportCapabilityBinding> {
+        self.evidence_binding.as_ref()
     }
 }
 
@@ -308,7 +372,17 @@ pub fn plan_operator_selected_file(
         request.selected_relative_path,
         request.policy.max_bytes,
     )?;
-    build_plan_from_snapshot(&request.capability.plan_key, identity, request.policy, &raw)
+    build_plan_from_snapshot(
+        &request.capability.plan_key,
+        identity,
+        request.policy,
+        &raw,
+        request
+            .capability
+            .runtime_binding
+            .as_ref()
+            .map(ContextImportCapabilityBinding::for_evidence),
+    )
 }
 
 fn validate_policy(policy: LocalImportPolicy) -> Result<(), LocalImportError> {
@@ -1059,6 +1133,7 @@ fn build_plan_from_snapshot(
     source_identity: BoundSourceIdentity,
     policy: LocalImportPolicy,
     raw: &[u8],
+    evidence_binding: Option<ContextImportCapabilityBinding>,
 ) -> Result<LocalImportPlan, LocalImportError> {
     validate_policy(policy)?;
     if raw.len() > policy.max_bytes {
@@ -1105,6 +1180,7 @@ fn build_plan_from_snapshot(
         policy_revision: policy.revision,
         parser_revision: LOCAL_IMPORT_PARSER_REVISION,
         records,
+        evidence_binding,
     })
 }
 
@@ -1230,7 +1306,7 @@ mod tests {
         source: BoundSourceIdentity,
         bytes: &[u8],
     ) -> Result<LocalImportPlan, LocalImportError> {
-        build_plan_from_snapshot(&key(), source, policy(revision), bytes)
+        build_plan_from_snapshot(&key(), source, policy(revision), bytes, None)
     }
 
     #[test]
@@ -1258,9 +1334,9 @@ mod tests {
         assert_eq!(plan.records()[1].source_span.normalized_byte_end, 8);
         assert_eq!(plan.records()[2].source_span.line_start, 3);
         let exact = LocalImportPolicy::new(1, 8, 8).unwrap();
-        assert!(build_plan_from_snapshot(&key(), identity(3), exact, b"12345678").is_ok());
+        assert!(build_plan_from_snapshot(&key(), identity(3), exact, b"12345678", None).is_ok());
         assert_eq!(
-            build_plan_from_snapshot(&key(), identity(3), exact, b"123456789"),
+            build_plan_from_snapshot(&key(), identity(3), exact, b"123456789", None),
             Err(LocalImportError::SizeLimitExceeded)
         );
     }
@@ -1277,13 +1353,13 @@ mod tests {
         );
         let narrow = LocalImportPolicy::new(1, 1_024, 3).unwrap();
         assert_eq!(
-            build_plan_from_snapshot(&key(), identity(3), narrow, b"four"),
+            build_plan_from_snapshot(&key(), identity(3), narrow, b"four", None),
             Err(LocalImportError::RecordTooLarge)
         );
         let too_many = "x\n".repeat(MAX_RECORDS_PER_PLAN + 1);
         let broad = LocalImportPolicy::new(1, MAX_IMPORT_BYTES, MAX_RECORD_BYTES).unwrap();
         assert_eq!(
-            build_plan_from_snapshot(&key(), identity(3), broad, too_many.as_bytes()),
+            build_plan_from_snapshot(&key(), identity(3), broad, too_many.as_bytes(), None),
             Err(LocalImportError::TooManyRecords)
         );
     }
@@ -1321,12 +1397,12 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     fn capability(root: &Path) -> OperatorImportCapability {
-        issue_operator_import_capability(approve_import_root(root).unwrap(), key())
+        issue_operator_import_capability_for_test(approve_import_root(root).unwrap(), key())
     }
 
     #[cfg(target_os = "macos")]
     fn capability(root: &Path) -> OperatorImportCapability {
-        issue_operator_import_capability(approve_import_root(root).unwrap(), key())
+        issue_operator_import_capability_for_test(approve_import_root(root).unwrap(), key())
     }
 
     #[cfg(target_os = "linux")]
