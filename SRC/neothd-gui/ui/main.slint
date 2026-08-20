@@ -732,8 +732,9 @@ export component MainWindow inherits Window {
     callback sd-decline-clicked(string);
     callback sd-scan-clicked();
     callback sd-refresh-clicked();
-    /// GUI-DES-SELFDEV-APPLY-01 — fire gate subprocess for accepted SourceEdit.
-    /// args: (id, patch_path, diff_sha256)
+    /// GUI-DES-SELFDEV-APPLY-01 — fire the explicit, Pending SourceEdit
+    /// ceremony; Rust binds `(id, patch_path, diff_sha256)` to
+    /// `self-edit --diff <path> --yes --proposal-id <id> --expect-hash <hash>`.
     callback sd-apply-source-clicked(string, string, string);
 
     // ── Wave 4b — Obsidian panel ──────────────────────────────────────────────

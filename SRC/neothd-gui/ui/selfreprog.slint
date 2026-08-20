@@ -1,12 +1,12 @@
 // NEOTH — Self-Dev Proposal Review panel (FEAT-05).
 //
 // Displays proposals from `neoth self-dev review --output json` with per-row
-// Accept / Decline buttons.  Accept marks the proposal for human review — no
-// source files are modified.
+// controls. SourceEdit never uses generic Accept: its only terminal action is
+// the proposal-bound Apply to Source ceremony while still Pending.
 //
-// RED-LINE copy contract (mandatory, never change):
-//   "Accepting a proposal marks it for human review.
-//    No source files are modified — self-editing is not enabled."
+// RED-LINE contract: generic Accept cannot authorize a SourceEdit. Source
+// mutation is possible only through the explicit, second-confirmed,
+// proposal-id + reviewed-hash bound Apply-to-Source flow.
 //
 // Layout: EntranceFade > ScrollView > VerticalLayout{min-height} (no binding-loop).
 // Follows the babel.slint / selfimprove.slint wave-4a pattern exactly.
@@ -52,9 +52,9 @@ component SelfReprogRow inherits Rectangle {
     in property <string> row-diff-sha256: "";
     callback accept-clicked();
     callback decline-clicked();
-    /// Fired when operator confirms "Apply to Source" for a SourceEdit proposal.
-    /// args: (id, patch_path, diff_sha256) — validated + escaped in Rust before
-    /// being forwarded to `run_neothd_probe(["self-edit", "--diff", ..., "--expect-hash", ...])`.
+    /// Fired only after the operator confirms a Pending SourceEdit ceremony.
+    /// args: (id, patch_path, diff_sha256) are validated in Rust and become
+    /// `self-edit --diff <path> --yes --proposal-id <id> --expect-hash <hash>`.
     callback apply-source-clicked(string, string, string);
 
     border-radius: Theme.radius-md;
@@ -208,8 +208,9 @@ component SelfReprogRow inherits Rectangle {
         HorizontalLayout {
             alignment: end; spacing: 8px;
 
-            // Accept — consent-pink (operator authorization action)
-            Rectangle {
+            // Generic Accept is deliberately absent for SourceEdit. Its
+            // effect cannot be accepted separately from live apply + audit.
+            if !root.row-is-source-edit: Rectangle {
                 width: 72px; height: 26px;
                 border-radius: Theme.radius-md;
                 background: Theme.consent;
@@ -235,22 +236,21 @@ component SelfReprogRow inherits Rectangle {
                 clicked => { root.decline-clicked(); }
             }
 
-            // Apply to Source — only for accepted SourceEdit proposals.
-            // Disabled (greyed) when status != "accepted".
-            if root.row-is-source-edit: Rectangle {
+            // SourceEdit is applicable only while Pending. Accepted is a
+            // completed terminal state and must never surface a re-apply UI.
+            if root.row-is-source-edit && root.row-status-badge == "pending": Rectangle {
                 width: 100px; height: 26px;
                 border-radius: Theme.radius-md;
-                background: root.row-status-badge == "accepted" ? Theme.consent : Theme.surface-2;
-                opacity: root.row-status-badge == "accepted" ? 1.0 : 0.38;
+                background: Theme.consent;
+                opacity: 1.0;
                 border-width: 1px;
-                border-color: root.row-status-badge == "accepted" ? Theme.accent : Theme.border-subtle;
+                border-color: Theme.accent;
                 TouchArea {
-                    enabled: root.row-status-badge == "accepted";
                     clicked => { apply-confirm.show(); }
                 }
                 Text {
                     text: "Apply to Source";
-                    color: root.row-status-badge == "accepted" ? Theme.text-primary : Theme.text-disabled;
+                    color: Theme.text-primary;
                     font-size: 9px;
                     font-weight: Theme.weight-semibold;
                     horizontal-alignment: center;
@@ -274,10 +274,9 @@ export component SelfReprogramView inherits Rectangle {
     callback decline-clicked(string);  // proposal id — reason is hard-coded "declined" in Rust
     callback scan-clicked();
     callback refresh-clicked();
-    /// GUI-DES-SELFDEV-APPLY-01 — fires after operator confirms the apply dialog.
-    /// args: (id, patch_path, diff_sha256) forwarded to the Rust handler which
-    /// invokes run_neothd_probe(["self-edit", "--diff", patch_path, "--yes",
-    ///   "--expect-hash", diff_sha256]).
+    /// GUI-DES-SELFDEV-APPLY-01 — fires after the Pending SourceEdit ceremony.
+    /// The Rust handler binds every argument to
+    /// `self-edit --diff <path> --yes --proposal-id <id> --expect-hash <hash>`.
     callback sd-apply-source-clicked(string, string, string);
 
     background: transparent;
@@ -333,7 +332,7 @@ export component SelfReprogramView inherits Rectangle {
                         padding-left: 14px; padding-right: 14px;
                         alignment: center;
                         Text {
-                            text: "Accepting a proposal marks it for human review. No source files are modified — self-editing is not enabled.";
+                            text: "Accept applies non-source proposals. SourceEdit stays pending until its explicit, review-bound Apply to Source ceremony completes.";
                             color: Theme.text-secondary;
                             font-size: 10px;
                             wrap: word-wrap;

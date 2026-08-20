@@ -22,16 +22,59 @@
 //!                                          pass; prints signal + proposal counts.
 //!                                          Bridge until HERMES-01 cron ships.
 
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsStr,
+    io::Read,
+    path::{Component, Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
+use cap_std::fs::{Dir, Metadata, OpenOptions};
 use clap::{Args, Subcommand};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+use subtle::ConstantTimeEq as _;
 
 use crate::profile::estimators::BehaviouralProfile;
 use crate::profile::presets::{ProfilePreset, apply_preset};
-use crate::profile::self_dev::{SelfDevProposal, propose_adjustments};
+use crate::profile::self_dev::{
+    ExtensionAuthorityBinding, ProposalKind, SelfDevProposal, ValidatedProposalTarget,
+    propose_adjustments,
+};
 use crate::wal::writer::WalWriterHandle;
+
+static SELF_DEV_STATE_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Retains the two-tier proposal-state lock. Every production
+/// `proposals.json` RMW, recovery, decision, and proposal publication owns one
+/// of these from its first state read through its final durable cleanup.
+pub(crate) struct SelfDevStateGuard {
+    _process: tokio::sync::MutexGuard<'static, ()>,
+    _file: std::fs::File,
+}
+
+fn self_dev_state_lock_path(home: &Path) -> PathBuf {
+    home.join("self_dev").join("state.lock")
+}
+
+/// Serialize self-development state across both async tasks and separate
+/// `neoth`/daemon OS processes. Lock acquisition is blocking by nature, so it
+/// runs outside Tokio's worker pool.
+pub(crate) async fn acquire_self_dev_state_guard(home: &Path) -> Result<SelfDevStateGuard> {
+    let process = SELF_DEV_STATE_MUTEX.lock().await;
+    let path = self_dev_state_lock_path(home);
+    let file = tokio::task::spawn_blocking(move || {
+        crate::util::locked_file::lock_file_blocking(&path, "self-dev proposal state")
+    })
+    .await
+    .context("join self-dev proposal-state lock acquisition")??;
+    Ok(SelfDevStateGuard {
+        _process: process,
+        _file: file,
+    })
+}
 
 #[derive(Args, Debug, Clone)]
 pub struct SelfDevArgs {
@@ -109,6 +152,220 @@ pub struct ProposalStore {
     audit_pending: Vec<ProposalAuditIntent>,
 }
 
+// GOLD-R4-11 — a self-dev acceptance is a cross-store transaction: the
+// proposal decision and its real target effect must never disagree. The
+// target-specific writers each provide their own atomic mutation boundary, but
+// none can atomically include `self_dev/proposals.json`; this small journal
+// bridges that gap and lets the next CLI entry recover deterministically.
+const EFFECT_TRANSACTION_MAX_BYTES: usize = 128 * 1024;
+const SOURCE_EDIT_TRANSACTION_MAX_BYTES: usize = 128 * 1024;
+const SOURCE_EDIT_RECEIPT_MAX_BYTES: usize = 128 * 1024;
+const SOURCE_EDIT_TRANSACTION_VERSION: u32 = 1;
+const SOURCE_EDIT_RECEIPT_VERSION: u32 = 2;
+const SOURCE_EDIT_AUTH_KEY_FILE: &str = "source_edit_authority.key";
+const SOURCE_EDIT_JOURNAL_DOMAIN: &[u8] = b"NEOTH/R4-11/source-edit-journal/v1";
+const SOURCE_EDIT_RECEIPT_DOMAIN: &[u8] = b"NEOTH/R4-11/source-edit-receipt/v2";
+const SOURCE_EDIT_IMAGE_MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
+const SOURCE_EDIT_IMAGE_MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+const SOURCE_EDIT_IMAGE_MAX_TARGET_PATHS: usize = 256;
+const SOURCE_EDIT_IMAGE_MAX_PATH_BYTES: usize = 4 * 1024;
+const SOURCE_EDIT_IMAGE_MAX_TOTAL_PATH_BYTES: usize = 64 * 1024;
+type HmacSha256 = Hmac<Sha256>;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "effect", rename_all = "snake_case")]
+enum EffectTarget {
+    Preset {
+        target: String,
+    },
+    Verbosity {
+        target: String,
+    },
+    Briefing {
+        hour: u8,
+        minute: u8,
+    },
+    Extension {
+        id: String,
+        authority: ExtensionAuthorityBinding,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EffectTransactionPhase {
+    /// Intent is durable, but the target writer has not been invoked.
+    Prepared,
+    /// The target writer may have run. Recovery must inspect the target.
+    Applying,
+    /// The target was read back successfully; only the proposal-store commit
+    /// or journal cleanup may remain.
+    PostconditionProven,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct EffectTransactionJournal {
+    proposal_id: String,
+    proposal_sha256: String,
+    target: EffectTarget,
+    phase: EffectTransactionPhase,
+}
+
+/// One path image is deliberately bound to both the exact relative path and
+/// whether it existed. This distinguishes a deleted file from an empty file
+/// and makes the pre/post image evidence unambiguous during crash recovery.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SourceEditPathImage {
+    path: String,
+    exists: bool,
+    sha256: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SourceEditTransactionPhase {
+    /// Durable authorization exists, but the five gate stack was not entered.
+    Prepared,
+    /// Gate processing may have reached live `git apply`; recovery must never
+    /// infer success from a changed tree alone.
+    Applying,
+    /// Exact postimages and mandatory WAL finalization were observed.
+    PostconditionProven,
+}
+
+/// Durable, authenticated pre-apply source-edit transaction. It is written
+/// before the live gate can invoke `git apply`, and carries the reviewed
+/// contract plus the exact preimage for every authoritative path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceEditApplyJournal {
+    version: u32,
+    proposal_id: String,
+    proposal_sha256: String,
+    diff_sha256: String,
+    source_root: String,
+    target_paths: Vec<String>,
+    base_images: Vec<SourceEditPathImage>,
+    post_images: Option<Vec<SourceEditPathImage>>,
+    phase: SourceEditTransactionPhase,
+    self_edit_audit_finalized: bool,
+    auth_tag: String,
+}
+
+/// Receipt published only after the live source mutation, exact postimage
+/// readback, and mandatory self-edit WAL finalization have all completed.
+/// The receipt repeats the authenticated pre-apply evidence so it can never
+/// turn a matching but forged JSON file into Accepted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceEditApplyReceipt {
+    version: u32,
+    proposal_id: String,
+    proposal_sha256: String,
+    diff_sha256: String,
+    source_root: String,
+    target_paths: Vec<String>,
+    base_images: Vec<SourceEditPathImage>,
+    post_images: Vec<SourceEditPathImage>,
+    self_edit_audit_finalized: bool,
+    applied_at_unix: i64,
+    auth_tag: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SourceEditProposalContract {
+    proposal_id: String,
+    proposal_sha256: String,
+    diff_sha256: String,
+    source_root: PathBuf,
+    target_paths: Vec<String>,
+    base_images: Vec<SourceEditPathImage>,
+}
+
+/// Opaque capability passed from the authenticated self-dev transaction into
+/// the live source-edit gate. Its fields remain private so callers can only
+/// ask it for the reviewed path set or prove the preimage still matches.
+#[derive(Clone, Debug)]
+pub(crate) struct SourceEditPreApplyPlan {
+    source_root: PathBuf,
+    target_paths: Vec<String>,
+    base_images: Vec<SourceEditPathImage>,
+}
+
+impl SourceEditPreApplyPlan {
+    pub(crate) fn target_paths(&self) -> &[String] {
+        &self.target_paths
+    }
+
+    pub(crate) fn binds_source_root(&self, source_root: &Path) -> bool {
+        source_root
+            .canonicalize()
+            .is_ok_and(|candidate| candidate == self.source_root)
+    }
+
+    /// This awaits the bounded, no-follow filesystem snapshot on Tokio's
+    /// blocking pool. It is called immediately before the live git sink.
+    pub(crate) async fn exact_base_images_still_match(&self) -> Result<bool> {
+        Ok(source_edit_images(&self.source_root, &self.target_paths).await? == self.base_images)
+    }
+}
+
+/// Owns the common proposal-state lock across the complete self-edit gate,
+/// mandatory audit finalization, receipt publication, and exact acceptance.
+pub(crate) struct SourceEditApplyTransaction {
+    home: PathBuf,
+    contract: SourceEditProposalContract,
+    journal: SourceEditApplyJournal,
+    guard: SelfDevStateGuard,
+}
+
+/// Machine-classifiable, retry-safe rejection states for a proposal effect.
+/// These errors deliberately leave the proposal non-Accepted; callers can
+/// correct state and retry without fabricating a successful decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelfDevEffectTransactionError {
+    AlreadySatisfied { proposal_id: String },
+    SeparateApplyRequired { proposal_id: String },
+    PostconditionFailed { proposal_id: String },
+    RecoveryRequired { proposal_id: String },
+    SourceEditContractRejected { proposal_id: String },
+    SourceEditReceiptRecoveryRequired { proposal_id: String },
+}
+
+impl std::fmt::Display for SelfDevEffectTransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadySatisfied { proposal_id } => write!(
+                f,
+                "SELF_DEV_EFFECT_ALREADY_SATISFIED:{proposal_id}: no new target effect was applied; proposal remains pending"
+            ),
+            Self::SeparateApplyRequired { proposal_id } => write!(
+                f,
+                "SELF_DEV_EFFECT_SEPARATE_APPLY_REQUIRED:{proposal_id}: source edits require explicit `neoth self-edit`; proposal remains pending"
+            ),
+            Self::PostconditionFailed { proposal_id } => write!(
+                f,
+                "SELF_DEV_EFFECT_POSTCONDITION_FAILED:{proposal_id}: target read-back did not prove the effect; transaction is recoverable and proposal remains pending"
+            ),
+            Self::RecoveryRequired { proposal_id } => write!(
+                f,
+                "SELF_DEV_EFFECT_RECOVERY_REQUIRED:{proposal_id}: an interrupted target effect needs recovery before accepting another proposal"
+            ),
+            Self::SourceEditContractRejected { proposal_id } => write!(
+                f,
+                "SELF_DEV_SOURCE_EDIT_CONTRACT_REJECTED:{proposal_id}: proposal id, patch, or expected diff hash did not match the pending reviewed proposal"
+            ),
+            Self::SourceEditReceiptRecoveryRequired { proposal_id } => write!(
+                f,
+                "SELF_DEV_SOURCE_EDIT_RECEIPT_RECOVERY_REQUIRED:{proposal_id}: the durable apply receipt could not be bound to the exact pending source-edit proposal"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SelfDevEffectTransactionError {}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum ProposalAuditIntent {
@@ -166,17 +423,1511 @@ pub fn load_store(home: &Path) -> Result<ProposalStore> {
     serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
 }
 
-pub fn save_store(home: &Path, store: &ProposalStore) -> Result<()> {
+fn save_store_locked(home: &Path, store: &ProposalStore, _guard: &SelfDevStateGuard) -> Result<()> {
     let path = proposals_path(home);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("mkdir -p {}", parent.display()))?;
-    }
-    let tmp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec_pretty(store)?;
-    std::fs::write(&tmp, &bytes).with_context(|| format!("write {}", tmp.display()))?;
-    std::fs::rename(&tmp, &path)
-        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
+    crate::util::atomic_write::atomic_write_private(&path, &bytes)
+        .with_context(|| format!("private atomic write {}", path.display()))?;
+    crate::util::atomic_write::sync_parent_directory_required(&path)
+        .with_context(|| format!("durably commit {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(test)]
+fn save_store_fixture(home: &Path, store: &ProposalStore) -> Result<()> {
+    let path = proposals_path(home);
+    let bytes = serde_json::to_vec_pretty(store)?;
+    crate::util::atomic_write::atomic_write_private(&path, &bytes)
+        .with_context(|| format!("private atomic fixture write {}", path.display()))?;
+    crate::util::atomic_write::sync_parent_directory_required(&path)
+        .with_context(|| format!("durably commit fixture {}", path.display()))?;
+    Ok(())
+}
+
+fn effect_transaction_path(home: &Path) -> PathBuf {
+    home.join("self_dev").join("effect_transaction.json")
+}
+
+fn source_edit_receipt_path(home: &Path) -> PathBuf {
+    home.join("self_dev").join("source_edit_apply_receipt.json")
+}
+
+fn source_edit_transaction_path(home: &Path) -> PathBuf {
+    home.join("self_dev").join("source_edit_apply_transaction.json")
+}
+
+/// The self-edit journal has an authority independent from user-editable
+/// proposal JSON. It is home-bound and DPAPI-/permission-protected through the
+/// same hardened key storage used for WAL authentication. Losing this key is
+/// fail-closed: old journals cannot become trusted under a replacement key.
+fn source_edit_authority_key(home: &Path) -> Result<Vec<u8>> {
+    crate::wal::compaction::load_or_init_key(
+        &home.join("self_dev").join(SOURCE_EDIT_AUTH_KEY_FILE),
+    )
+    .context("load home-bound source-edit transaction authority")
+}
+
+fn source_edit_home_binding(home: &Path) -> Result<Vec<u8>> {
+    let canonical = home
+        .canonicalize()
+        .with_context(|| format!("canonicalize source-edit home {}", home.display()))?;
+    Ok(canonical.to_string_lossy().as_bytes().to_vec())
+}
+
+fn update_framed_hmac(mac: &mut HmacSha256, field: &[u8]) {
+    mac.update(&(field.len() as u64).to_be_bytes());
+    mac.update(field);
+}
+
+fn source_edit_auth_tag(home: &Path, domain: &[u8], unsigned: &[u8]) -> Result<String> {
+    let key = source_edit_authority_key(home)?;
+    let home_binding = source_edit_home_binding(home)?;
+    let mut mac = HmacSha256::new_from_slice(&key)
+        .expect("HMAC-SHA256 accepts every authority key length");
+    update_framed_hmac(&mut mac, domain);
+    update_framed_hmac(&mut mac, &home_binding);
+    update_framed_hmac(&mut mac, unsigned);
+    Ok(hex::encode(mac.finalize().into_bytes()))
+}
+
+fn source_edit_auth_tag_matches(
+    home: &Path,
+    domain: &[u8],
+    unsigned: &[u8],
+    claimed_hex: &str,
+) -> Result<bool> {
+    let claimed = match hex::decode(claimed_hex) {
+        Ok(claimed) if claimed.len() == 32 => claimed,
+        _ => return Ok(false),
+    };
+    let computed = source_edit_auth_tag(home, domain, unsigned)?;
+    let computed = hex::decode(computed).expect("locally generated HMAC is valid hex");
+    Ok(bool::from(computed.as_slice().ct_eq(claimed.as_slice())))
+}
+
+#[derive(Serialize)]
+struct SourceEditJournalUnsigned<'a> {
+    version: u32,
+    proposal_id: &'a str,
+    proposal_sha256: &'a str,
+    diff_sha256: &'a str,
+    source_root: &'a str,
+    target_paths: &'a [String],
+    base_images: &'a [SourceEditPathImage],
+    post_images: &'a Option<Vec<SourceEditPathImage>>,
+    phase: SourceEditTransactionPhase,
+    self_edit_audit_finalized: bool,
+}
+
+fn source_edit_journal_unsigned(journal: &SourceEditApplyJournal) -> Result<Vec<u8>> {
+    serde_json::to_vec(&SourceEditJournalUnsigned {
+        version: journal.version,
+        proposal_id: &journal.proposal_id,
+        proposal_sha256: &journal.proposal_sha256,
+        diff_sha256: &journal.diff_sha256,
+        source_root: &journal.source_root,
+        target_paths: &journal.target_paths,
+        base_images: &journal.base_images,
+        post_images: &journal.post_images,
+        phase: journal.phase,
+        self_edit_audit_finalized: journal.self_edit_audit_finalized,
+    })
+    .context("serialize source-edit journal authentication payload")
+}
+
+#[derive(Serialize)]
+struct SourceEditReceiptUnsigned<'a> {
+    version: u32,
+    proposal_id: &'a str,
+    proposal_sha256: &'a str,
+    diff_sha256: &'a str,
+    source_root: &'a str,
+    target_paths: &'a [String],
+    base_images: &'a [SourceEditPathImage],
+    post_images: &'a [SourceEditPathImage],
+    self_edit_audit_finalized: bool,
+    applied_at_unix: i64,
+}
+
+fn source_edit_receipt_unsigned(receipt: &SourceEditApplyReceipt) -> Result<Vec<u8>> {
+    serde_json::to_vec(&SourceEditReceiptUnsigned {
+        version: receipt.version,
+        proposal_id: &receipt.proposal_id,
+        proposal_sha256: &receipt.proposal_sha256,
+        diff_sha256: &receipt.diff_sha256,
+        source_root: &receipt.source_root,
+        target_paths: &receipt.target_paths,
+        base_images: &receipt.base_images,
+        post_images: &receipt.post_images,
+        self_edit_audit_finalized: receipt.self_edit_audit_finalized,
+        applied_at_unix: receipt.applied_at_unix,
+    })
+    .context("serialize source-edit receipt authentication payload")
+}
+
+/// A link/reparse test must be performed on metadata obtained without
+/// following the candidate. On Windows a junction is not necessarily reported
+/// as a Unix-style symlink, hence the explicit reparse bit check.
+/// Validate untrusted proposal path material before cloning it into an async
+/// blocking job or reserving a result vector. Even an all-missing path list can
+/// otherwise force allocation and scheduler work without touching the source
+/// tree, so cardinality, byte budgets, and duplicate spelling are hard limits.
+fn validate_source_edit_image_paths(paths: &[String]) -> Result<()> {
+    anyhow::ensure!(
+        !paths.is_empty() && paths.len() <= SOURCE_EDIT_IMAGE_MAX_TARGET_PATHS,
+        "source-edit target path count must be 1..={} (got {})",
+        SOURCE_EDIT_IMAGE_MAX_TARGET_PATHS,
+        paths.len()
+    );
+    let mut total_bytes = 0usize;
+    let mut seen = std::collections::BTreeSet::new();
+    for path in paths {
+        anyhow::ensure!(
+            !path.is_empty() && path.len() <= SOURCE_EDIT_IMAGE_MAX_PATH_BYTES,
+            "source-edit target path exceeds the {}-byte cap",
+            SOURCE_EDIT_IMAGE_MAX_PATH_BYTES
+        );
+        anyhow::ensure!(
+            seen.insert(path),
+            "source-edit target paths must not contain duplicates"
+        );
+        total_bytes = total_bytes
+            .checked_add(path.len())
+            .context("source-edit target path byte counter overflow")?;
+        anyhow::ensure!(
+            total_bytes <= SOURCE_EDIT_IMAGE_MAX_TOTAL_PATH_BYTES,
+            "source-edit target path bytes exceed the {}-byte cap",
+            SOURCE_EDIT_IMAGE_MAX_TOTAL_PATH_BYTES
+        );
+    }
+    Ok(())
+}
+
+fn source_edit_metadata_is_link_like(metadata: &Metadata) -> bool {
+    if metadata.is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// A reviewed source leaf must not have another directory entry. Without this
+/// check an external hard-link alias could mutate the same inode while the
+/// source-edit transaction believes it owns a stable path. The count is read
+/// from the already nofollow-opened handle; unavailable platforms fail closed.
+fn ensure_source_edit_single_hard_link(file: &std::fs::File) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let links = file
+            .metadata()
+            .context("read no-follow source-edit leaf link count")?
+            .nlink();
+        anyhow::ensure!(
+            links == 1,
+            "source-edit leaf has {links} hard links; exactly one is required"
+        );
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        };
+        let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+        // SAFETY: `file` owns the live nofollow-opened handle and `information`
+        // is writable for the exact Windows structure size.
+        anyhow::ensure!(
+            unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr()) } != 0,
+            "read no-follow source-edit leaf link count: {}",
+            std::io::Error::last_os_error()
+        );
+        // SAFETY: successful GetFileInformationByHandle initialized all fields.
+        let information = unsafe { information.assume_init() };
+        anyhow::ensure!(
+            information.nNumberOfLinks == 1,
+            "source-edit leaf has {} hard links; exactly one is required",
+            information.nNumberOfLinks
+        );
+        return Ok(());
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = file;
+        anyhow::bail!("source-edit hard-link count is unsupported on this platform");
+    }
+}
+
+/// Open a component from an already-open parent handle without following it.
+/// Holding the returned capability keeps traversal rooted in the reviewed
+/// source tree even if its visible namespace is renamed concurrently.
+fn open_source_edit_child_directory(parent: &Dir, name: &OsStr) -> Result<Dir> {
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+            FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        options
+            .access_mode(FILE_GENERIC_READ)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    #[cfg(not(any(unix, windows)))]
+    anyhow::bail!("source-edit image evidence is unsupported without no-follow filesystem APIs");
+
+    let opened = parent
+        .open_with(name, &options)
+        .with_context(|| format!("open source-edit directory component {:?} without following links", name))?;
+    let metadata = opened
+        .metadata()
+        .context("inspect opened source-edit directory component")?;
+    anyhow::ensure!(
+        metadata.is_dir() && !source_edit_metadata_is_link_like(&metadata),
+        "source-edit path component {:?} is a symlink, junction, reparse point, or non-directory",
+        name
+    );
+    Ok(Dir::from_std_file(opened.into_std()))
+}
+
+fn read_source_edit_regular_leaf(
+    parent: &Dir,
+    name: &OsStr,
+    max_bytes: u64,
+) -> Result<Vec<u8>> {
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_SHARE_READ,
+        };
+        options
+            .access_mode(FILE_GENERIC_READ)
+            .share_mode(FILE_SHARE_READ)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    #[cfg(not(any(unix, windows)))]
+    anyhow::bail!("source-edit image evidence is unsupported without no-follow filesystem APIs");
+
+    let opened = parent
+        .open_with(name, &options)
+        .with_context(|| format!("open source-edit leaf {:?} without following links", name))?;
+    let opened_metadata = opened
+        .metadata()
+        .context("inspect opened source-edit leaf")?;
+    anyhow::ensure!(
+        opened_metadata.is_file() && !source_edit_metadata_is_link_like(&opened_metadata),
+        "source-edit leaf {:?} is a symlink, junction, reparse point, or non-regular file",
+        name
+    );
+    // `into_std` preserves this exact handle; all later metadata/read/link
+    // probes remain bound to the nofollow-opened object, never reopen by path.
+    let mut opened = opened.into_std();
+    ensure_source_edit_single_hard_link(&opened)?;
+    let before = opened
+        .metadata()
+        .context("inspect bound source-edit leaf after hard-link check")?;
+    anyhow::ensure!(
+        before.len() <= max_bytes,
+        "source-edit leaf {:?} exceeds the {}-byte bounded evidence cap",
+        name,
+        max_bytes
+    );
+    let capacity = usize::try_from(before.len()).context("convert source-edit leaf length")?;
+    let mut bytes = Vec::with_capacity(capacity.min(64 * 1024));
+    after_source_edit_leaf_open_for_test()?;
+    (&mut opened)
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .context("read no-follow source-edit leaf")?;
+    anyhow::ensure!(
+        u64::try_from(bytes.len()).context("convert bounded source-edit read length")? <= max_bytes,
+        "source-edit leaf {:?} grew beyond its bounded evidence cap while being read",
+        name
+    );
+    anyhow::ensure!(
+        u64::try_from(bytes.len()).context("convert source-edit read length")? == before.len(),
+        "source-edit leaf {:?} changed length while its evidence image was read",
+        name
+    );
+    let after = opened
+        .metadata()
+        .context("reinspect opened source-edit leaf")?;
+    ensure_source_edit_single_hard_link(&opened)?;
+    anyhow::ensure!(
+        after.is_file() && after.len() == before.len(),
+        "source-edit leaf changed while its evidence image was read"
+    );
+    Ok(bytes)
+}
+
+/// Read one reviewed source path by walking every existing ancestor from a
+/// retained capability for the canonical source root. No ambient `root.join`
+/// read is permitted: a symlink/junction/reparse point at either a parent or
+/// leaf is a hard refusal. A missing leaf (including one below a currently
+/// absent descendant) is represented explicitly only after every existing
+/// ancestor has been proven real and beneath that capability.
+fn read_source_edit_path_nofollow(
+    source_root: &Path,
+    relative: &Path,
+    max_bytes: u64,
+) -> Result<Option<Vec<u8>>> {
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (source_root, relative);
+        anyhow::bail!("source-edit image evidence is unsupported without no-follow filesystem APIs");
+    }
+    #[cfg(any(unix, windows))]
+    {
+        let mut current = Dir::open_ambient_dir(source_root, cap_std::ambient_authority())
+            .with_context(|| format!("open canonical source-edit root {}", source_root.display()))?;
+        let root_metadata = current.dir_metadata().context("inspect source-edit root capability")?;
+        anyhow::ensure!(
+            root_metadata.is_dir() && !source_edit_metadata_is_link_like(&root_metadata),
+            "source-edit root is a symlink, junction, reparse point, or non-directory"
+        );
+        let components: Vec<_> = relative.components().collect();
+        anyhow::ensure!(!components.is_empty(), "empty source-edit target path");
+        for (index, component) in components.iter().enumerate() {
+            let Component::Normal(name) = component else {
+                anyhow::bail!("unsafe source-edit target path component");
+            };
+            let is_leaf = index + 1 == components.len();
+            let named = match current.symlink_metadata(name) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("inspect source-edit path component {:?} without following links", name)
+                    });
+                }
+            };
+            anyhow::ensure!(
+                !source_edit_metadata_is_link_like(&named),
+                "source-edit path component {:?} is a symlink, junction, or reparse point",
+                name
+            );
+            if is_leaf {
+                anyhow::ensure!(
+                    named.is_file(),
+                    "source-edit leaf {:?} is not a regular file",
+                    name
+                );
+                return read_source_edit_regular_leaf(&current, name, max_bytes).map(Some);
+            }
+            anyhow::ensure!(
+                named.is_dir(),
+                "source-edit path component {:?} is not a directory",
+                name
+            );
+            current = open_source_edit_child_directory(&current, name)?;
+        }
+        unreachable!("non-empty source-edit path always has a leaf")
+    }
+}
+
+fn source_edit_images_blocking(
+    source_root: &Path,
+    paths: &[String],
+) -> Result<Vec<SourceEditPathImage>> {
+    let canonical_root = source_root
+        .canonicalize()
+        .with_context(|| format!("canonicalize source-edit root {}", source_root.display()))?;
+    let mut images = Vec::with_capacity(paths.len());
+    let mut total_bytes = 0u64;
+    for path in paths {
+        let relative = Path::new(path);
+        anyhow::ensure!(
+            relative.is_relative()
+                && relative.components().all(|component| matches!(component, Component::Normal(_))),
+            "unsafe source-edit target path `{path}`"
+        );
+        let remaining_bytes = SOURCE_EDIT_IMAGE_MAX_TOTAL_BYTES.saturating_sub(total_bytes);
+        anyhow::ensure!(remaining_bytes > 0, "source-edit evidence reached its total byte cap");
+        let max_bytes = SOURCE_EDIT_IMAGE_MAX_FILE_BYTES.min(remaining_bytes);
+        let (exists, bytes) = match read_source_edit_path_nofollow(&canonical_root, relative, max_bytes)? {
+            Some(bytes) => (true, bytes),
+            None => (false, Vec::new()),
+        };
+        total_bytes = total_bytes
+            .checked_add(u64::try_from(bytes.len()).context("convert source-edit image length")?)
+            .context("source-edit evidence byte counter overflow")?;
+        anyhow::ensure!(
+            total_bytes <= SOURCE_EDIT_IMAGE_MAX_TOTAL_BYTES,
+            "source-edit evidence exceeds the {}-byte total cap",
+            SOURCE_EDIT_IMAGE_MAX_TOTAL_BYTES
+        );
+        let mut digest = Sha256::new();
+        let state_marker: &[u8] = if exists {
+            b"NEOTH/source-edit/image/present\0"
+        } else {
+            b"NEOTH/source-edit/image/missing\0"
+        };
+        digest.update(state_marker);
+        digest.update(path.as_bytes());
+        digest.update([0]);
+        digest.update(&bytes);
+        images.push(SourceEditPathImage {
+            path: path.clone(),
+            exists,
+            sha256: format!("{:x}", digest.finalize()),
+        });
+    }
+    Ok(images)
+}
+
+/// Source-image IO is intentionally bounded and runs off Tokio's worker pool:
+/// a huge/sparse candidate must not allocate unbounded memory or block the
+/// async proposal state lock while it is being rejected.
+pub(crate) async fn source_edit_images(
+    source_root: &Path,
+    paths: &[String],
+) -> Result<Vec<SourceEditPathImage>> {
+    validate_source_edit_image_paths(paths)?;
+    let source_root = source_root.to_path_buf();
+    let paths = paths.to_vec();
+    tokio::task::spawn_blocking(move || source_edit_images_blocking(&source_root, &paths))
+        .await
+        .context("join bounded source-edit image snapshot")?
+}
+
+fn proposal_sha256(proposal: &SelfDevProposal) -> Result<String> {
+    let bytes = serde_json::to_vec(proposal).context("serialize self-dev proposal identity")?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn save_effect_transaction(home: &Path, journal: &EffectTransactionJournal) -> Result<()> {
+    let path = effect_transaction_path(home);
+    let bytes = serde_json::to_vec_pretty(journal).context("serialize self-dev effect journal")?;
+    anyhow::ensure!(
+        bytes.len() <= EFFECT_TRANSACTION_MAX_BYTES,
+        "self-dev effect journal exceeds its size limit"
+    );
+    crate::util::atomic_write::atomic_write_private(&path, &bytes)
+        .with_context(|| format!("write self-dev effect journal {}", path.display()))?;
+    crate::util::atomic_write::sync_parent_directory_required(&path)
+        .with_context(|| format!("durably commit self-dev effect journal {}", path.display()))
+}
+
+fn load_effect_transaction(home: &Path) -> Result<Option<EffectTransactionJournal>> {
+    let path = effect_transaction_path(home);
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            anyhow::ensure!(
+                bytes.len() <= EFFECT_TRANSACTION_MAX_BYTES,
+                "self-dev effect journal exceeds its size limit"
+            );
+            Ok(Some(serde_json::from_slice(&bytes).with_context(|| {
+                format!("parse self-dev effect journal {}", path.display())
+            })?))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("read self-dev effect journal {}", path.display()))
+        }
+    }
+}
+
+fn remove_effect_transaction(home: &Path) -> Result<()> {
+    let path = effect_transaction_path(home);
+    crate::util::atomic_write::durable_remove_file(&path)
+        .with_context(|| format!("durably remove self-dev effect journal {}", path.display()))
+}
+
+fn save_source_edit_transaction(home: &Path, journal: &mut SourceEditApplyJournal) -> Result<()> {
+    journal.auth_tag = source_edit_auth_tag(
+        home,
+        SOURCE_EDIT_JOURNAL_DOMAIN,
+        &source_edit_journal_unsigned(journal)?,
+    )?;
+    let path = source_edit_transaction_path(home);
+    let bytes = serde_json::to_vec_pretty(journal).context("serialize source-edit apply journal")?;
+    anyhow::ensure!(
+        bytes.len() <= SOURCE_EDIT_TRANSACTION_MAX_BYTES,
+        "source-edit apply journal exceeds its size limit"
+    );
+    crate::util::atomic_write::atomic_write_private(&path, &bytes)
+        .with_context(|| format!("write source-edit apply journal {}", path.display()))?;
+    crate::util::atomic_write::sync_parent_directory_required(&path)
+        .with_context(|| format!("durably commit source-edit apply journal {}", path.display()))
+}
+
+fn load_source_edit_transaction(home: &Path) -> Result<Option<SourceEditApplyJournal>> {
+    let path = source_edit_transaction_path(home);
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            anyhow::ensure!(
+                bytes.len() <= SOURCE_EDIT_TRANSACTION_MAX_BYTES,
+                "source-edit apply journal exceeds its size limit"
+            );
+            let journal: SourceEditApplyJournal = serde_json::from_slice(&bytes)
+                .with_context(|| format!("parse source-edit apply journal {}", path.display()))?;
+            anyhow::ensure!(
+                source_edit_auth_tag_matches(
+                    home,
+                    SOURCE_EDIT_JOURNAL_DOMAIN,
+                    &source_edit_journal_unsigned(&journal)?,
+                    &journal.auth_tag,
+                )?,
+                "source-edit apply journal authentication failed"
+            );
+            Ok(Some(journal))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error)
+            .with_context(|| format!("read source-edit apply journal {}", path.display())),
+    }
+}
+
+fn remove_source_edit_transaction(home: &Path) -> Result<()> {
+    let path = source_edit_transaction_path(home);
+    crate::util::atomic_write::durable_remove_file(&path)
+        .with_context(|| format!("durably remove source-edit apply journal {}", path.display()))
+}
+
+fn save_source_edit_receipt(home: &Path, receipt: &mut SourceEditApplyReceipt) -> Result<()> {
+    receipt.auth_tag = source_edit_auth_tag(
+        home,
+        SOURCE_EDIT_RECEIPT_DOMAIN,
+        &source_edit_receipt_unsigned(receipt)?,
+    )?;
+    let path = source_edit_receipt_path(home);
+    let bytes =
+        serde_json::to_vec_pretty(receipt).context("serialize source-edit apply receipt")?;
+    anyhow::ensure!(
+        bytes.len() <= SOURCE_EDIT_RECEIPT_MAX_BYTES,
+        "source-edit apply receipt exceeds its size limit"
+    );
+    crate::util::atomic_write::atomic_write_private(&path, &bytes)
+        .with_context(|| format!("write source-edit apply receipt {}", path.display()))?;
+    crate::util::atomic_write::sync_parent_directory_required(&path).with_context(|| {
+        format!(
+            "durably commit source-edit apply receipt {}",
+            path.display()
+        )
+    })
+}
+
+fn load_source_edit_receipt(home: &Path) -> Result<Option<SourceEditApplyReceipt>> {
+    let path = source_edit_receipt_path(home);
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            anyhow::ensure!(
+                bytes.len() <= SOURCE_EDIT_RECEIPT_MAX_BYTES,
+                "source-edit apply receipt exceeds its size limit"
+            );
+            let receipt: SourceEditApplyReceipt = serde_json::from_slice(&bytes).with_context(|| {
+                format!("parse source-edit apply receipt {}", path.display())
+            })?;
+            anyhow::ensure!(
+                source_edit_auth_tag_matches(
+                    home,
+                    SOURCE_EDIT_RECEIPT_DOMAIN,
+                    &source_edit_receipt_unsigned(&receipt)?,
+                    &receipt.auth_tag,
+                )?,
+                "source-edit apply receipt authentication failed"
+            );
+            Ok(Some(receipt))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("read source-edit apply receipt {}", path.display()))
+        }
+    }
+}
+
+fn remove_source_edit_receipt(home: &Path) -> Result<()> {
+    let path = source_edit_receipt_path(home);
+    crate::util::atomic_write::durable_remove_file(&path).with_context(|| {
+        format!(
+            "durably remove source-edit apply receipt {}",
+            path.display()
+        )
+    })
+}
+
+fn effect_target_for(proposal: &SelfDevProposal) -> Result<EffectTarget> {
+    match proposal
+        .validate_for_acceptance()
+        .map_err(anyhow::Error::msg)?
+    {
+        ValidatedProposalTarget::Preset(preset) => Ok(EffectTarget::Preset {
+            target: preset.as_str().to_owned(),
+        }),
+        ValidatedProposalTarget::Verbosity(_) => Ok(EffectTarget::Verbosity {
+            target: proposal.target.clone(),
+        }),
+        ValidatedProposalTarget::BriefingTime { hour, minute } => {
+            Ok(EffectTarget::Briefing { hour, minute })
+        }
+        ValidatedProposalTarget::ExtensionSelector { id, authority } => {
+            Ok(EffectTarget::Extension { id, authority })
+        }
+        // SourceEdit is intentionally a separate explicit operator action. It
+        // cannot be labelled Accepted until the self-edit gate itself produces
+        // a durable apply receipt.
+        ValidatedProposalTarget::SourceEdit => {
+            Err(SelfDevEffectTransactionError::SeparateApplyRequired {
+                proposal_id: proposal.id.clone(),
+            }
+            .into())
+        }
+    }
+}
+
+async fn effect_matches_readback(home: &Path, target: &EffectTarget) -> Result<bool> {
+    use crate::cron::schema::{CronRole, JobsFile, classify_role};
+    use crate::profile::communication::{
+        CommunicationDimension, PreferenceValue, ProcessingLoadPreference,
+    };
+
+    match target {
+        EffectTarget::Preset { target } => Ok(crate::cli::profile::load_active_preset(home)
+            .is_some_and(|preset| preset.as_str() == target)),
+        EffectTarget::Verbosity { target } => {
+            let desired = match target.as_str() {
+                "terse" => PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Compact),
+                "normal" => PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Balanced),
+                "detailed" => PreferenceValue::ProcessingLoad(ProcessingLoadPreference::Deep),
+                _ => anyhow::bail!("invalid journaled verbosity target `{target}`"),
+            };
+            let state = crate::profile::communication::load_state(home)?;
+            Ok(state
+                .subjects
+                .get("operator")
+                .and_then(|subject| {
+                    subject
+                        .estimates
+                        .get(&CommunicationDimension::ProcessingLoad)
+                })
+                .is_some_and(|estimate| estimate.pinned && estimate.selected == desired))
+        }
+        EffectTarget::Briefing { hour, minute } => {
+            let path = home.join("jobs.yaml");
+            let body = match std::fs::read_to_string(&path) {
+                Ok(body) => body,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(error) => {
+                    return Err(error).with_context(|| format!("read {}", path.display()));
+                }
+            };
+            let jobs = JobsFile::from_yaml_str(&body)
+                .with_context(|| format!("parse {} for briefing postcondition", path.display()))?;
+            let expected = format!("{minute} {hour} * * *");
+            Ok(jobs.jobs.iter().any(|job| {
+                job.enabled
+                    && classify_role(job) == CronRole::Briefing
+                    && job.schedule.cron == expected
+                    && job.schedule.every_seconds.is_none()
+                    && job.schedule.anchor_unix.is_none()
+                    && job.schedule.at.is_none()
+            }))
+        }
+        EffectTarget::Extension { id, authority } => {
+            let config_path = home.join("freedom.yaml");
+            let config =
+                crate::config::FreedomConfig::load_from_path(&config_path).with_context(|| {
+                    format!("read {} for extension postcondition", config_path.display())
+                })?;
+            let enabled = config
+                .skills
+                .enabled
+                .iter()
+                .any(|candidate| candidate.trim().eq_ignore_ascii_case(id));
+            if !enabled {
+                return Ok(false);
+            }
+            match authority {
+                ExtensionAuthorityBinding::Bundled => {
+                    let inventory =
+                        crate::skills::loader::diagnostic_inventory_for_accepted_config(
+                            &home.join("skills"),
+                            config,
+                            config_path,
+                        )
+                        .await
+                        .context("read back exact bundled Skill origin")?;
+                    Ok(inventory.iter().any(|row| {
+                        row.id().eq_ignore_ascii_case(id)
+                            && matches!(
+                                row,
+                                crate::skills::loader::SkillInventoryRow::Healthy {
+                                    origin: crate::skills::loader::SkillInventoryOrigin::Bundled,
+                                    runtime_state:
+                                        crate::skills::loader::SkillInventoryRuntimeState::TrustedBundledActive,
+                                    ..
+                                }
+                            )
+                    }))
+                }
+                ExtensionAuthorityBinding::Installed {
+                    package_generation_sha256,
+                    install_incarnation,
+                    install_terminal_receipt_sha256,
+                } => {
+                    let reload = crate::config::reload::ReloadController::new(config, config_path);
+                    let validation =
+                        crate::skills::authority::validate_installed_authority(home, id, &reload);
+                    let crate::skills::authority::InstalledSkillAuthorityValidation::Active(
+                        validated,
+                    ) = validation
+                    else {
+                        return Ok(false);
+                    };
+                    Ok(exact_installed_extension_postcondition(
+                        package_generation_sha256,
+                        *install_incarnation,
+                        install_terminal_receipt_sha256,
+                        validated.package_generation_sha256(),
+                        validated.install_incarnation(),
+                        validated.install_terminal_receipt_sha256(),
+                        validated.record().state,
+                    ))
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn exact_installed_extension_postcondition(
+    expected_generation_sha256: &str,
+    expected_install_incarnation: u64,
+    expected_terminal_receipt_sha256: &str,
+    observed_generation_sha256: &str,
+    observed_install_incarnation: u64,
+    observed_terminal_receipt_sha256: &str,
+    observed_state: crate::skills::authority::SkillAuthorityState,
+) -> bool {
+    observed_state == crate::skills::authority::SkillAuthorityState::Active
+        && observed_generation_sha256 == expected_generation_sha256
+        && observed_install_incarnation == expected_install_incarnation
+        && observed_terminal_receipt_sha256 == expected_terminal_receipt_sha256
+}
+
+fn commit_accepted_store(
+    home: &Path,
+    proposal_id: &str,
+    expected_proposal_sha256: &str,
+    guard: &SelfDevStateGuard,
+) -> Result<()> {
+    let mut store = load_store(home)?;
+    let ts = now_unix();
+    let accepted_at_unix = {
+        let entry = store
+            .entries
+            .iter_mut()
+            .find(|entry| entry.proposal.id == proposal_id)
+            .with_context(|| {
+                format!("proposal id `{proposal_id}` missing during effect recovery")
+            })?;
+        anyhow::ensure!(
+            proposal_sha256(&entry.proposal)? == expected_proposal_sha256,
+            "proposal `{proposal_id}` changed after its effect transaction was prepared; journal preserved"
+        );
+        match entry.status {
+            ProposalStatus::Pending => {
+                entry.status = ProposalStatus::Accepted;
+                entry.status_at_unix = ts;
+                entry.decline_reason.clear();
+                Some(entry.status_at_unix)
+            }
+            ProposalStatus::Accepted => None,
+            ProposalStatus::Declined => anyhow::bail!(
+                "proposal `{proposal_id}` was declined while its effect transaction was pending; journal preserved"
+            ),
+        }
+    };
+    if let Some(ts_unix) = accepted_at_unix {
+        store.audit_pending.push(ProposalAuditIntent::Accepted {
+            proposal_id: proposal_id.to_owned(),
+            ts_unix,
+        });
+    }
+    save_store_locked(home, &store, guard)
+}
+
+/// Recover an interrupted non-Skill proposal acceptance before servicing new
+/// CLI actions. A prepared journal with no observable effect is abandoned;
+/// an applied/proven journal commits the already-read-back decision. Ambiguous
+/// state remains journaled and returns a typed retry-safe error.
+async fn recover_effect_transaction_locked(home: &Path, guard: &SelfDevStateGuard) -> Result<()> {
+    let Some(journal) = load_effect_transaction(home).map_err(|error| {
+        anyhow::Error::new(SelfDevEffectTransactionError::RecoveryRequired {
+            proposal_id: "<unreadable-effect-journal>".to_owned(),
+        })
+        .context(format!("read interrupted effect journal: {error:#}"))
+    })?
+    else {
+        return Ok(());
+    };
+    let store = load_store(home)?;
+    let entry = store
+        .entries
+        .iter()
+        .find(|entry| entry.proposal.id == journal.proposal_id)
+        .ok_or_else(|| {
+            anyhow::Error::new(SelfDevEffectTransactionError::RecoveryRequired {
+                proposal_id: journal.proposal_id.clone(),
+            })
+            .context(format!(
+                "effect journal references missing proposal `{}`",
+                journal.proposal_id
+            ))
+        })?;
+    if proposal_sha256(&entry.proposal)? != journal.proposal_sha256 {
+        return Err(SelfDevEffectTransactionError::RecoveryRequired {
+            proposal_id: journal.proposal_id,
+        }
+        .into());
+    }
+    // The journal is not an authority source. Re-validate the current stored
+    // proposal and derive its exact typed target again before trusting any
+    // journaled effect. This blocks forged SourceEdit journals and same-id
+    // extension package substitutions.
+    let current_target = effect_target_for(&entry.proposal).map_err(|error| {
+        anyhow::Error::new(SelfDevEffectTransactionError::RecoveryRequired {
+            proposal_id: journal.proposal_id.clone(),
+        })
+        .context(format!(
+            "re-derive stored proposal target during recovery: {error:#}"
+        ))
+    })?;
+    if current_target != journal.target {
+        return Err(SelfDevEffectTransactionError::RecoveryRequired {
+            proposal_id: journal.proposal_id,
+        }
+        .into());
+    }
+    if entry.status == ProposalStatus::Accepted {
+        remove_effect_transaction(home)?;
+        return Ok(());
+    }
+    if entry.status == ProposalStatus::Declined {
+        return Err(SelfDevEffectTransactionError::RecoveryRequired {
+            proposal_id: journal.proposal_id,
+        }
+        .into());
+    }
+
+    let matches = effect_matches_readback(home, &journal.target)
+        .await
+        .map_err(|error| {
+            anyhow::Error::new(SelfDevEffectTransactionError::RecoveryRequired {
+                proposal_id: journal.proposal_id.clone(),
+            })
+            .context(format!("read back interrupted proposal effect: {error:#}"))
+        })?;
+    match (journal.phase, matches) {
+        (EffectTransactionPhase::Prepared, false) => {
+            // No observable target effect exists. Target writers are atomic,
+            // so a crash before invoking one can discard only the intent and
+            // leave the proposal pending.
+            remove_effect_transaction(home)
+        }
+        (EffectTransactionPhase::Prepared, true) => {
+            // An intent alone is never proof that this process applied the
+            // effect. Another writer may have changed the target between the
+            // durable intent and `Applying`; keep the proposal Pending and
+            // force explicit recovery instead of granting Accepted.
+            Err(SelfDevEffectTransactionError::RecoveryRequired {
+                proposal_id: journal.proposal_id,
+            }
+            .into())
+        }
+        (EffectTransactionPhase::Applying, false) => {
+            // The writer may have been invoked and its exact target may since
+            // have been replaced/revoked. Clean the stale intent durably, keep
+            // the decision Pending, and surface a typed retry instead of
+            // silently treating this ambiguous state as success.
+            remove_effect_transaction(home)?;
+            Err(SelfDevEffectTransactionError::PostconditionFailed {
+                proposal_id: journal.proposal_id,
+            }
+            .into())
+        }
+        (_, true) => {
+            commit_accepted_store(home, &journal.proposal_id, &journal.proposal_sha256, guard)?;
+            remove_effect_transaction(home)
+        }
+        (_, false) => Err(SelfDevEffectTransactionError::RecoveryRequired {
+            proposal_id: journal.proposal_id,
+        }
+        .into()),
+    }
+}
+
+fn normalized_source_paths(paths: &[String]) -> Vec<String> {
+    let mut paths = paths.to_vec();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn source_edit_contract_rejection(
+    proposal_id: &str,
+    detail: impl std::fmt::Display,
+) -> anyhow::Error {
+    anyhow::Error::new(SelfDevEffectTransactionError::SourceEditContractRejected {
+        proposal_id: proposal_id.to_owned(),
+    })
+    .context(detail.to_string())
+}
+
+fn source_edit_receipt_recovery_error(
+    proposal_id: &str,
+    detail: impl std::fmt::Display,
+) -> anyhow::Error {
+    anyhow::Error::new(
+        SelfDevEffectTransactionError::SourceEditReceiptRecoveryRequired {
+            proposal_id: proposal_id.to_owned(),
+        },
+    )
+    .context(detail.to_string())
+}
+
+async fn validate_source_edit_contract_locked(
+    home: &Path,
+    proposal_id: &str,
+    diff_path: &Path,
+    source_root: &Path,
+    expected_diff_sha256: &str,
+    actual_diff_sha256: &str,
+    parsed_target_paths: &[String],
+    _guard: &SelfDevStateGuard,
+) -> Result<SourceEditProposalContract> {
+    let store = load_store(home)?;
+    let entry = store
+        .entries
+        .iter()
+        .find(|entry| entry.proposal.id == proposal_id)
+        .ok_or_else(|| source_edit_contract_rejection(proposal_id, "proposal id not found"))?;
+    match entry.status {
+        ProposalStatus::Pending => {}
+        ProposalStatus::Accepted => {
+            return Err(source_edit_contract_rejection(
+                proposal_id,
+                "proposal is already accepted; refusing to apply its effect again",
+            ));
+        }
+        ProposalStatus::Declined => {
+            return Err(source_edit_contract_rejection(
+                proposal_id,
+                "proposal was declined and cannot authorize a source edit",
+            ));
+        }
+    }
+    entry
+        .proposal
+        .validate_for_acceptance()
+        .map_err(|error| source_edit_contract_rejection(proposal_id, error))?;
+    let ProposalKind::SourceEdit {
+        patch_path,
+        diff_sha256,
+        target_paths,
+    } = &entry.proposal.kind
+    else {
+        return Err(source_edit_contract_rejection(
+            proposal_id,
+            "proposal is not a SourceEdit proposal",
+        ));
+    };
+    validate_source_edit_image_paths(target_paths).map_err(|error| {
+        source_edit_contract_rejection(
+            proposal_id,
+            format!("reviewed SourceEdit target paths violate evidence limits: {error:#}"),
+        )
+    })?;
+    if expected_diff_sha256 != diff_sha256 || actual_diff_sha256 != diff_sha256 {
+        return Err(source_edit_contract_rejection(
+            proposal_id,
+            format!("expected/actual diff hash does not equal reviewed hash {diff_sha256}"),
+        ));
+    }
+    let reviewed_patch = patch_path.canonicalize().map_err(|error| {
+        source_edit_contract_rejection(
+            proposal_id,
+            format!(
+                "cannot resolve reviewed patch {}: {error}",
+                patch_path.display()
+            ),
+        )
+    })?;
+    if reviewed_patch != diff_path {
+        return Err(source_edit_contract_rejection(
+            proposal_id,
+            format!(
+                "diff path {} does not equal reviewed patch {}",
+                diff_path.display(),
+                reviewed_patch.display()
+            ),
+        ));
+    }
+    let expected_paths = normalized_source_paths(target_paths);
+    if normalized_source_paths(parsed_target_paths) != expected_paths {
+        return Err(source_edit_contract_rejection(
+            proposal_id,
+            "parsed diff target paths do not equal the reviewed proposal paths",
+        ));
+    }
+    let source_root = source_root.canonicalize().map_err(|error| {
+        source_edit_contract_rejection(
+            proposal_id,
+            format!("cannot resolve authoritative source root {}: {error}", source_root.display()),
+        )
+    })?;
+    let base_images = source_edit_images(&source_root, &expected_paths).await.map_err(|error| {
+        source_edit_contract_rejection(
+            proposal_id,
+            format!("cannot snapshot reviewed source preimages: {error:#}"),
+        )
+    })?;
+    Ok(SourceEditProposalContract {
+        proposal_id: proposal_id.to_owned(),
+        proposal_sha256: proposal_sha256(&entry.proposal)?,
+        diff_sha256: diff_sha256.clone(),
+        source_root,
+        target_paths: expected_paths,
+        base_images,
+    })
+}
+
+/// Recover a source-edit transaction before examining a receipt or serving a
+/// new proposal operation. A changed source tree while phase is `Prepared` or
+/// `Applying` is intentionally ambiguous: a process may have died just after
+/// `git apply`, and accepting based only on a tree comparison would be a false
+/// success. Only an authenticated `PostconditionProven` journal with exact
+/// images and a recorded WAL finalization may advance to a receipt.
+async fn recover_source_edit_transaction_locked(home: &Path, guard: &SelfDevStateGuard) -> Result<()> {
+    let Some(journal) = load_source_edit_transaction(home).map_err(|error| {
+        source_edit_receipt_recovery_error(
+            "<unreadable-source-edit-journal>",
+            format!("read authenticated pre-apply source-edit journal: {error:#}"),
+        )
+    })?
+    else {
+        return Ok(());
+    };
+    let fail = |detail: String| source_edit_receipt_recovery_error(&journal.proposal_id, detail);
+    if journal.version != SOURCE_EDIT_TRANSACTION_VERSION {
+        return Err(fail(format!(
+            "unsupported source-edit transaction version {}",
+            journal.version
+        )));
+    }
+    let store = load_store(home)?;
+    let entry = store
+        .entries
+        .iter()
+        .find(|entry| entry.proposal.id == journal.proposal_id)
+        .ok_or_else(|| fail("journal references a missing proposal id".to_owned()))?;
+    if proposal_sha256(&entry.proposal)? != journal.proposal_sha256 {
+        return Err(fail("journal proposal digest does not match stored proposal".to_owned()));
+    }
+    let ProposalKind::SourceEdit {
+        diff_sha256,
+        target_paths,
+        ..
+    } = &entry.proposal.kind
+    else {
+        return Err(fail("journal proposal is not a SourceEdit proposal".to_owned()));
+    };
+    let expected_paths = normalized_source_paths(target_paths);
+    if journal.diff_sha256 != *diff_sha256 || journal.target_paths != expected_paths {
+        return Err(fail("journal diff or authoritative path set differs from proposal".to_owned()));
+    }
+    let current_images = source_edit_images(Path::new(&journal.source_root), &journal.target_paths).await
+        .map_err(|error| fail(format!("read current authoritative source images: {error:#}")))?;
+    match journal.phase {
+        SourceEditTransactionPhase::Prepared => {
+            if current_images == journal.base_images {
+                remove_source_edit_transaction(home)
+            } else {
+                Err(fail(
+                    "prepared source-edit journal has a changed tree; refusing to infer an applied edit"
+                        .to_owned(),
+                ))
+            }
+        }
+        SourceEditTransactionPhase::Applying => {
+            if current_images == journal.base_images {
+                // The gate was entered but no observable live change remains.
+                // It may safely be retried because the proposal is still Pending.
+                remove_source_edit_transaction(home)
+            } else {
+                Err(fail(
+                    "source edit may have applied before crash, but no authenticated postimage/WAL proof exists"
+                        .to_owned(),
+                ))
+            }
+        }
+        SourceEditTransactionPhase::PostconditionProven => {
+            let post_images = journal.post_images.as_ref().ok_or_else(|| {
+                fail("postcondition-proven journal lacks postimage evidence".to_owned())
+            })?;
+            if !journal.self_edit_audit_finalized || current_images != *post_images {
+                return Err(fail(
+                    "postcondition-proven journal no longer has exact postimage/WAL evidence"
+                        .to_owned(),
+                ));
+            }
+            let mut receipt = SourceEditApplyReceipt {
+                version: SOURCE_EDIT_RECEIPT_VERSION,
+                proposal_id: journal.proposal_id.clone(),
+                proposal_sha256: journal.proposal_sha256.clone(),
+                diff_sha256: journal.diff_sha256.clone(),
+                source_root: journal.source_root.clone(),
+                target_paths: journal.target_paths.clone(),
+                base_images: journal.base_images.clone(),
+                post_images: post_images.clone(),
+                self_edit_audit_finalized: true,
+                applied_at_unix: now_unix(),
+                auth_tag: String::new(),
+            };
+            save_source_edit_receipt(home, &mut receipt)?;
+            recover_source_edit_receipt_locked(home, guard).await?;
+            remove_source_edit_transaction(home)
+        }
+    }
+}
+
+async fn recover_source_edit_receipt_locked(home: &Path, guard: &SelfDevStateGuard) -> Result<()> {
+    let Some(receipt) = load_source_edit_receipt(home).map_err(|error| {
+        source_edit_receipt_recovery_error(
+            "<unreadable-source-edit-receipt>",
+            format!("read durable source-edit receipt: {error:#}"),
+        )
+    })?
+    else {
+        return Ok(());
+    };
+    let fail = |detail: String| source_edit_receipt_recovery_error(&receipt.proposal_id, detail);
+    if receipt.version != SOURCE_EDIT_RECEIPT_VERSION {
+        return Err(fail(format!(
+            "unsupported source-edit receipt version {}",
+            receipt.version
+        )));
+    }
+    if !receipt.self_edit_audit_finalized {
+        return Err(fail(
+            "receipt does not prove mandatory self-edit audit finalization".to_owned(),
+        ));
+    }
+    let store = load_store(home)?;
+    let entry = store
+        .entries
+        .iter()
+        .find(|entry| entry.proposal.id == receipt.proposal_id)
+        .ok_or_else(|| fail("receipt references a missing proposal id".to_owned()))?;
+    if proposal_sha256(&entry.proposal)? != receipt.proposal_sha256 {
+        return Err(fail(
+            "receipt proposal digest does not match the stored proposal".to_owned(),
+        ));
+    }
+    entry
+        .proposal
+        .validate_for_acceptance()
+        .map_err(|error| fail(format!("stored proposal no longer validates: {error}")))?;
+    let ProposalKind::SourceEdit {
+        diff_sha256,
+        target_paths,
+        ..
+    } = &entry.proposal.kind
+    else {
+        return Err(fail(
+            "receipt proposal is not a SourceEdit proposal".to_owned(),
+        ));
+    };
+    if receipt.diff_sha256 != *diff_sha256 {
+        return Err(fail(
+            "receipt diff hash does not match the reviewed proposal".to_owned(),
+        ));
+    }
+    let receipt_paths = normalized_source_paths(&receipt.target_paths);
+    let expected_paths = normalized_source_paths(target_paths);
+    if receipt_paths.is_empty() || receipt_paths != expected_paths {
+        return Err(fail(
+            "receipt target paths do not exactly equal reviewed proposal paths".to_owned(),
+        ));
+    }
+    let source_root = PathBuf::from(&receipt.source_root);
+    let current_images = source_edit_images(&source_root, &receipt_paths).await
+        .map_err(|error| fail(format!("read receipt postimage paths: {error:#}")))?;
+    if receipt.base_images.len() != receipt_paths.len()
+        || receipt.post_images.len() != receipt_paths.len()
+        || current_images != receipt.post_images
+    {
+        return Err(fail(
+            "receipt exact source postimage evidence is missing, malformed, or no longer current"
+                .to_owned(),
+        ));
+    }
+    match entry.status {
+        ProposalStatus::Pending => {
+            commit_accepted_store(home, &receipt.proposal_id, &receipt.proposal_sha256, guard)?
+        }
+        ProposalStatus::Accepted => {}
+        ProposalStatus::Declined => {
+            return Err(fail(
+                "proposal was declined after the edit was applied; manual recovery required"
+                    .to_owned(),
+            ));
+        }
+    }
+    remove_source_edit_receipt(home)
+}
+
+/// Bind a live self-edit attempt to one exact pending SourceEdit proposal and
+/// retain the common OS-backed proposal lock until terminal finalization.
+pub(crate) async fn begin_source_edit_apply(
+    home: &Path,
+    proposal_id: &str,
+    diff_path: &Path,
+    source_root: &Path,
+    expected_diff_sha256: &str,
+    actual_diff_sha256: &str,
+    parsed_target_paths: &[String],
+) -> Result<SourceEditApplyTransaction> {
+    let guard = acquire_self_dev_state_guard(home).await?;
+    recover_source_edit_transaction_locked(home, &guard).await?;
+    recover_source_edit_receipt_locked(home, &guard).await?;
+    recover_effect_transaction_locked(home, &guard).await?;
+    flush_pending_audits_locked(home, None, &guard).await?;
+    let contract = validate_source_edit_contract_locked(
+        home,
+        proposal_id,
+        diff_path,
+        source_root,
+        expected_diff_sha256,
+        actual_diff_sha256,
+        parsed_target_paths,
+        &guard,
+    )
+    .await?;
+    let mut journal = SourceEditApplyJournal {
+        version: SOURCE_EDIT_TRANSACTION_VERSION,
+        proposal_id: contract.proposal_id.clone(),
+        proposal_sha256: contract.proposal_sha256.clone(),
+        diff_sha256: contract.diff_sha256.clone(),
+        source_root: contract.source_root.to_string_lossy().to_string(),
+        target_paths: contract.target_paths.clone(),
+        base_images: contract.base_images.clone(),
+        post_images: None,
+        phase: SourceEditTransactionPhase::Prepared,
+        self_edit_audit_finalized: false,
+        auth_tag: String::new(),
+    };
+    // This is the final pre-apply durable barrier. If it cannot be written the
+    // caller never enters the five-gate stack, therefore cannot reach git apply.
+    save_source_edit_transaction(home, &mut journal)?;
+    Ok(SourceEditApplyTransaction {
+        home: home.to_path_buf(),
+        contract,
+        journal,
+        guard,
+    })
+}
+
+impl SourceEditApplyTransaction {
+    /// The immutable reviewed path plan. The gate consumes this before its
+    /// live mutation boundary and compares it with Git's authoritative path
+    /// differential; callers cannot substitute a parser-only superset.
+    pub(crate) fn reviewed_target_paths(&self) -> &[String] {
+        &self.contract.target_paths
+    }
+
+    /// Clone the opaque reviewed source plan for the gate's final no-follow
+    /// preimage recheck immediately before the live git sink.
+    pub(crate) fn pre_apply_plan(&self) -> SourceEditPreApplyPlan {
+        SourceEditPreApplyPlan {
+            source_root: self.contract.source_root.clone(),
+            target_paths: self.contract.target_paths.clone(),
+            base_images: self.contract.base_images.clone(),
+        }
+    }
+
+    /// Cross the second durable barrier immediately before entering the gate
+    /// stack. A crash thereafter is deliberately Pending/ambiguous until exact
+    /// authenticated postimage evidence exists; this function never accepts.
+    pub(crate) fn mark_applying(&mut self) -> Result<()> {
+        self.journal.phase = SourceEditTransactionPhase::Applying;
+        save_source_edit_transaction(&self.home, &mut self.journal)
+    }
+
+    /// Publish the receipt only after the caller has both applied the exact
+    /// diff and observed clean completion of the required self-edit WAL writer.
+    /// Acceptance and its audit intent are then durable before the receipt is
+    /// durably removed, all while the same state lock remains held.
+    pub(crate) async fn finalize_after_apply_and_audit(
+        mut self,
+        actual_diff_sha256: &str,
+        actual_target_paths: &[String],
+    ) -> Result<()> {
+        if actual_diff_sha256 != self.contract.diff_sha256 {
+            return Err(source_edit_contract_rejection(
+                &self.contract.proposal_id,
+                "gate outcome diff hash changed after contract validation",
+            ));
+        }
+        let actual_paths = normalized_source_paths(actual_target_paths);
+        if actual_paths.is_empty() || actual_paths != self.contract.target_paths {
+            return Err(source_edit_contract_rejection(
+                &self.contract.proposal_id,
+                "gate outcome paths do not exactly equal reviewed proposal paths",
+            ));
+        }
+        let post_images = source_edit_images(&self.contract.source_root, &actual_paths).await.map_err(|error| {
+            source_edit_contract_rejection(
+                &self.contract.proposal_id,
+                format!("cannot read back exact postimage after source edit: {error:#}"),
+            )
+        })?;
+        self.journal.post_images = Some(post_images.clone());
+        self.journal.phase = SourceEditTransactionPhase::PostconditionProven;
+        self.journal.self_edit_audit_finalized = true;
+        save_source_edit_transaction(&self.home, &mut self.journal)?;
+        after_source_edit_postcondition_for_test()?;
+        let mut receipt = SourceEditApplyReceipt {
+            version: SOURCE_EDIT_RECEIPT_VERSION,
+            proposal_id: self.contract.proposal_id.clone(),
+            proposal_sha256: self.contract.proposal_sha256.clone(),
+            diff_sha256: self.contract.diff_sha256.clone(),
+            source_root: self.contract.source_root.to_string_lossy().to_string(),
+            target_paths: actual_paths,
+            base_images: self.contract.base_images.clone(),
+            post_images,
+            self_edit_audit_finalized: true,
+            applied_at_unix: now_unix(),
+            auth_tag: String::new(),
+        };
+        save_source_edit_receipt(&self.home, &mut receipt)?;
+        after_source_edit_receipt_publish_for_test()?;
+        recover_source_edit_receipt_locked(&self.home, &self.guard).await?;
+        remove_source_edit_transaction(&self.home)?;
+        flush_pending_audits_locked(&self.home, None, &self.guard)
+            .await
+            .context("source-edit proposal accepted; audit intent remains pending for retry")?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static EFFECT_TRANSACTION_PREPARE_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static EFFECT_TRANSACTION_AFTER_ACCEPTED_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SOURCE_EDIT_AFTER_POSTCONDITION_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SOURCE_EDIT_RECEIPT_AFTER_PUBLISH_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SOURCE_EDIT_LEAF_GROW_AFTER_OPEN: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Test-only race seam placed after the regular-file handle and its initial
+/// metadata have been acquired, but before bounded reading starts.
+fn after_source_edit_leaf_open_for_test() -> Result<()> {
+    #[cfg(test)]
+    {
+        let path = SOURCE_EDIT_LEAF_GROW_AFTER_OPEN.with(|slot| slot.borrow_mut().take());
+        if let Some(path) = path {
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .with_context(|| format!("open source-edit growth seam {}", path.display()))?;
+            std::io::Write::write_all(&mut file, b"!")
+                .with_context(|| format!("grow source-edit seam {}", path.display()))?;
+            file.sync_all()
+                .with_context(|| format!("sync source-edit growth seam {}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Test-only crash seam: it runs after durable intent publication and before
+/// the target writer. Production builds have no injectable path here.
+fn after_effect_transaction_prepare_for_test() -> Result<()> {
+    #[cfg(test)]
+    {
+        let fail = EFFECT_TRANSACTION_PREPARE_FAILURE.with(|slot| {
+            let fail = slot.get();
+            slot.set(false);
+            fail
+        });
+        if fail {
+            anyhow::bail!("injected failure after self-dev effect transaction prepare");
+        }
+    }
+    Ok(())
+}
+
+fn after_effect_transaction_accepted_for_test() -> Result<()> {
+    #[cfg(test)]
+    {
+        let fail = EFFECT_TRANSACTION_AFTER_ACCEPTED_FAILURE.with(|slot| {
+            let fail = slot.get();
+            slot.set(false);
+            fail
+        });
+        if fail {
+            anyhow::bail!("injected failure after durable self-dev acceptance");
+        }
+    }
+    Ok(())
+}
+
+fn after_source_edit_receipt_publish_for_test() -> Result<()> {
+    #[cfg(test)]
+    {
+        let fail = SOURCE_EDIT_RECEIPT_AFTER_PUBLISH_FAILURE.with(|slot| {
+            let fail = slot.get();
+            slot.set(false);
+            fail
+        });
+        if fail {
+            anyhow::bail!("injected failure after durable source-edit receipt publication");
+        }
+    }
+    Ok(())
+}
+
+/// Test-only crash seam for the narrow window after a real apply and clean WAL
+/// shutdown, but before a receipt exists. Recovery must preserve Pending until
+/// an operator supplies/reconciles authoritative evidence; it may never infer
+/// Accepted merely because the source tree changed.
+fn after_source_edit_postcondition_for_test() -> Result<()> {
+    #[cfg(test)]
+    {
+        let fail = SOURCE_EDIT_AFTER_POSTCONDITION_FAILURE.with(|slot| {
+            let fail = slot.get();
+            slot.set(false);
+            fail
+        });
+        if fail {
+            anyhow::bail!("injected failure after source-edit postcondition before receipt");
+        }
+    }
     Ok(())
 }
 
@@ -189,9 +1940,12 @@ pub async fn run(
     writer: Option<&WalWriterHandle>,
     output: crate::cli::OutputFormat,
 ) -> Result<()> {
-    flush_pending_audits(home, writer).await?;
     match args.action {
-        SelfDevAction::Review { min_confidence } => run_review(home, min_confidence, output),
+        SelfDevAction::Review { min_confidence } => {
+            let guard = acquire_self_dev_state_guard(home).await?;
+            recover_and_flush_locked(home, writer, &guard).await?;
+            run_review(home, min_confidence, output)
+        }
         SelfDevAction::Accept { id } => run_accept(home, &id, writer, output).await,
         SelfDevAction::Decline { id, reason } => {
             run_decline(home, &id, &reason, writer, output).await
@@ -200,13 +1954,32 @@ pub async fn run(
             from_profile,
             current_preset,
         } => run_propose(home, &from_profile, &current_preset, writer).await,
-        SelfDevAction::Scan => run_scan(home, output).await,
+        SelfDevAction::Scan => {
+            // Do not retain the state lock across the collector/evolver scan:
+            // its proposal publication path acquires this exact lock itself.
+            let guard = acquire_self_dev_state_guard(home).await?;
+            recover_and_flush_locked(home, writer, &guard).await?;
+            drop(guard);
+            run_scan(home, output).await
+        }
     }
 }
 
+async fn recover_and_flush_locked(
+    home: &Path,
+    writer: Option<&WalWriterHandle>,
+    guard: &SelfDevStateGuard,
+) -> Result<()> {
+    recover_source_edit_transaction_locked(home, guard).await?;
+    recover_source_edit_receipt_locked(home, guard).await?;
+    recover_effect_transaction_locked(home, guard).await?;
+    flush_pending_audits_locked(home, writer, guard).await?;
+    Ok(())
+}
+
 /// GUI-DES-SELFDEV-APPLY-01 — JSON row-builder for the GUI Proposal-Review
-/// tab. Returns pending AND accepted entries (declined excluded) so the
-/// "Apply to Source" button can fire on accepted SourceEdit proposals.
+/// tab. Returns pending AND accepted entries (declined excluded). Source-edit
+/// rows remain pending until their separate explicit self-edit gate commits.
 ///
 /// `SourceEdit` entries carry `patch_path`, `diff_sha256`, and `target_paths`
 /// as top-level JSON fields. All other proposal kinds leave those fields `null`
@@ -257,8 +2030,7 @@ fn review_proposals_json(entries: &[&StoredProposal]) -> Vec<serde_json::Value> 
 
 fn run_review(home: &Path, min_confidence: f64, output: crate::cli::OutputFormat) -> Result<()> {
     let store = load_store(home)?;
-    // JSON mode: include pending + accepted (GUI "Apply" button needs accepted
-    // SourceEdit entries). Declined entries are excluded.
+    // JSON mode: include pending + accepted. Declined entries are excluded.
     // Table mode stays pending-only — operator review flow doesn't need to re-
     // read accepted ones in human output.
     let active: Vec<&StoredProposal> = store
@@ -290,6 +2062,18 @@ fn run_review(home: &Path, min_confidence: f64, output: crate::cli::OutputFormat
             println!("  authority   {binding:?}");
         }
         println!("  reason      {}", e.proposal.reason);
+        if let ProposalKind::SourceEdit {
+            patch_path,
+            diff_sha256,
+            ..
+        } = &e.proposal.kind
+        {
+            println!("  patch       {}", patch_path.display());
+            println!("  diff_sha256 {diff_sha256}");
+            println!(
+                "  apply       use `neoth self-edit --diff <patch> --proposal-id <id> --expect-hash <sha256> --yes` with the exact values above"
+            );
+        }
         println!();
         shown += 1;
     }
@@ -298,7 +2082,9 @@ fn run_review(home: &Path, min_confidence: f64, output: crate::cli::OutputFormat
             "(no pending proposals — run `neoth self-dev propose --from-profile <p>` to generate, or wait for the aggregation cron to ship)"
         );
     } else {
-        println!("{shown} pending proposal(s). Accept via `neoth self-dev accept <id>`.");
+        println!(
+            "{shown} pending proposal(s). Accept non-source effects via `neoth self-dev accept <id>`; SourceEdit rows show their bound `neoth self-edit` command above."
+        );
     }
     Ok(())
 }
@@ -309,7 +2095,9 @@ async fn run_accept(
     writer: Option<&WalWriterHandle>,
     output: crate::cli::OutputFormat,
 ) -> Result<()> {
-    let mut store = load_store(home)?;
+    let guard = acquire_self_dev_state_guard(home).await?;
+    recover_and_flush_locked(home, writer, &guard).await?;
+    let store = load_store(home)?;
     let entry_index = store
         .entries
         .iter()
@@ -334,20 +2122,71 @@ async fn run_accept(
         );
     }
     let proposal = entry.proposal.clone();
-    apply_proposal_effect(home, &proposal)
-        .await
-        .with_context(|| format!("apply proposal effect for `{id}`"))?;
-    let ts = now_unix();
-    let entry = &mut store.entries[entry_index];
-    entry.status = ProposalStatus::Accepted;
-    entry.status_at_unix = ts;
-    entry.decline_reason.clear();
-    store.audit_pending.push(ProposalAuditIntent::Accepted {
+    let target = effect_target_for(&proposal)
+        .with_context(|| format!("validate effect target for `{id}`"))?;
+    if effect_matches_readback(home, &target).await? {
+        return Err(SelfDevEffectTransactionError::AlreadySatisfied {
+            proposal_id: id.to_owned(),
+        }
+        .into());
+    }
+    let mut journal = EffectTransactionJournal {
         proposal_id: id.to_owned(),
-        ts_unix: ts,
-    });
-    save_store(home, &store)?;
-    flush_pending_audits(home, writer)
+        proposal_sha256: proposal_sha256(&proposal)?,
+        target,
+        phase: EffectTransactionPhase::Prepared,
+    };
+    save_effect_transaction(home, &journal)?;
+    after_effect_transaction_prepare_for_test()?;
+
+    journal.phase = EffectTransactionPhase::Applying;
+    save_effect_transaction(home, &journal)?;
+    if let Err(error) = apply_proposal_effect(home, &proposal).await {
+        // Target writers are independently atomic. If their read-back proves
+        // no target effect, abandon the intent and keep the proposal pending;
+        // if the effect did land (or read-back itself is unavailable), retain
+        // the journal so recovery can safely finish rather than false-accept.
+        match effect_matches_readback(home, &journal.target).await {
+            Ok(false) => {
+                remove_effect_transaction(home)?;
+                return Err(SelfDevEffectTransactionError::PostconditionFailed {
+                    proposal_id: id.to_owned(),
+                }
+                .into())
+                .context(format!("apply proposal effect for `{id}`: {error:#}"));
+            }
+            Ok(true) | Err(_) => {
+                return Err(SelfDevEffectTransactionError::RecoveryRequired {
+                    proposal_id: id.to_owned(),
+                }
+                .into())
+                .context(format!("apply proposal effect for `{id}`: {error:#}"));
+            }
+        }
+    }
+    let postcondition = effect_matches_readback(home, &journal.target)
+        .await
+        .map_err(|error| {
+            anyhow::Error::new(SelfDevEffectTransactionError::RecoveryRequired {
+                proposal_id: id.to_owned(),
+            })
+            .context(format!("read back applied proposal effect: {error:#}"))
+        })?;
+    if !postcondition {
+        return Err(SelfDevEffectTransactionError::PostconditionFailed {
+            proposal_id: id.to_owned(),
+        }
+        .into());
+    }
+    journal.phase = EffectTransactionPhase::PostconditionProven;
+    save_effect_transaction(home, &journal)?;
+    // Reload inside the durable transaction instead of committing the stale
+    // pre-effect copy held above. The journal binds the exact proposal bytes
+    // and recovery refuses a changed or declined entry.
+    commit_accepted_store(home, id, &journal.proposal_sha256, &guard)?;
+    after_effect_transaction_accepted_for_test()?;
+    remove_effect_transaction(home)?;
+    flush_pending_audits_locked(home, writer, &guard)
         .await
         .context("proposal accepted; audit intent remains pending for retry")?;
     render_proposal_mutation(
@@ -364,9 +2203,7 @@ async fn run_accept(
 
 async fn apply_proposal_effect(home: &Path, proposal: &SelfDevProposal) -> Result<()> {
     use crate::cron::schema::{CronRole, JobsFile, classify_role};
-    use crate::profile::self_dev::{
-        ExtensionAuthorityBinding, ProposalKind, ValidatedProposalTarget,
-    };
+    use crate::profile::self_dev::{ExtensionAuthorityBinding, ValidatedProposalTarget};
 
     match proposal
         .validate_for_acceptance()
@@ -447,31 +2284,10 @@ async fn apply_proposal_effect(home: &Path, proposal: &SelfDevProposal) -> Resul
             .with_context(|| format!("reschedule briefing job in {}", path.display()))?;
         }
         ValidatedProposalTarget::SourceEdit => {
-            let ProposalKind::SourceEdit {
-                patch_path,
-                diff_sha256,
-                ..
-            } = &proposal.kind
-            else {
-                anyhow::bail!("source-edit target validation mismatch");
-            };
-            // Accepting a source-edit proposal records the DECISION only —
-            // the live-tree mutation is deliberately a second explicit step
-            // through the FEAT-05 five-layer gate stack:
-            //   neoth self-edit --diff <patch> --expect-hash <sha256> --yes
-            // (the GUI Apply button spawns exactly this, per
-            // GUI-DES-SELFDEV-APPLY-01). Auto-applying on accept would erode
-            // the Layer-3 policy — "never auto-apply, even at Full" — and
-            // contradict the shipped two-step GUI contract ("Accepted
-            // (pending apply)"). Before this wiring, accept itself bailed,
-            // so a SourceEdit proposal could never even be ACCEPTED.
-            tracing::info!(
-                patch = %patch_path.display(),
-                sha256 = %diff_sha256,
-                "source-edit proposal accepted — apply via `neoth self-edit --diff {} --expect-hash {} --yes`",
-                patch_path.display(),
-                diff_sha256,
-            );
+            return Err(SelfDevEffectTransactionError::SeparateApplyRequired {
+                proposal_id: proposal.id.clone(),
+            }
+            .into());
         }
     }
     Ok(())
@@ -487,6 +2303,8 @@ async fn run_decline(
     if reason != "declined" && reason != "timeout" {
         anyhow::bail!("--reason must be `declined` or `timeout`, got `{reason}`");
     }
+    let guard = acquire_self_dev_state_guard(home).await?;
+    recover_and_flush_locked(home, writer, &guard).await?;
     let mut store = load_store(home)?;
     let entry = store
         .entries
@@ -519,8 +2337,8 @@ async fn run_decline(
         reason: reason.to_owned(),
         ts_unix: ts,
     });
-    save_store(home, &store)?;
-    flush_pending_audits(home, writer)
+    save_store_locked(home, &store, &guard)?;
+    flush_pending_audits_locked(home, writer, &guard)
         .await
         .context("proposal declined; audit intent remains pending for retry")?;
     render_proposal_mutation(
@@ -605,7 +2423,9 @@ pub(crate) async fn propose_and_store(
         None => apply_preset(ProfilePreset::Lowkey),
     };
     let new_proposals = propose_adjustments(profile, &current);
-    store_proposals(home, &new_proposals, writer).await
+    let guard = acquire_self_dev_state_guard(home).await?;
+    recover_and_flush_locked(home, writer, &guard).await?;
+    store_proposals_locked(home, &new_proposals, writer, &guard).await
 }
 
 /// Dedup-and-store a set of proposals + emit `0x1C SELF_DEV_PROPOSED` per NEW
@@ -620,7 +2440,17 @@ pub(crate) async fn store_proposals(
     proposals: &[SelfDevProposal],
     writer: Option<&WalWriterHandle>,
 ) -> Result<usize> {
-    flush_pending_audits(home, writer).await?;
+    let guard = acquire_self_dev_state_guard(home).await?;
+    recover_and_flush_locked(home, writer, &guard).await?;
+    store_proposals_locked(home, proposals, writer, &guard).await
+}
+
+async fn store_proposals_locked(
+    home: &Path,
+    proposals: &[SelfDevProposal],
+    writer: Option<&WalWriterHandle>,
+    guard: &SelfDevStateGuard,
+) -> Result<usize> {
     if proposals.is_empty() {
         return Ok(0);
     }
@@ -742,14 +2572,18 @@ pub(crate) async fn store_proposals(
             ts_unix: ts,
         });
     }
-    save_store(home, &store)?;
-    flush_pending_audits(home, writer)
+    save_store_locked(home, &store, guard)?;
+    flush_pending_audits_locked(home, writer, guard)
         .await
         .context("proposals stored; audit intent remains pending for retry")?;
     Ok(to_add.len())
 }
 
-async fn flush_pending_audits(home: &Path, writer: Option<&WalWriterHandle>) -> Result<usize> {
+async fn flush_pending_audits_locked(
+    home: &Path,
+    writer: Option<&WalWriterHandle>,
+    guard: &SelfDevStateGuard,
+) -> Result<usize> {
     let mut flushed = 0usize;
     loop {
         let store = load_store(home)?;
@@ -771,7 +2605,7 @@ async fn flush_pending_audits(home: &Path, writer: Option<&WalWriterHandle>) -> 
         let mut latest = load_store(home)?;
         if latest.audit_pending.first() == Some(&intent) {
             latest.audit_pending.remove(0);
-            save_store(home, &latest)?;
+            save_store_locked(home, &latest, guard)?;
         }
         if let Some(w) = writer {
             super::self_dev_outbox::drain_once(home, w).await?;
@@ -918,10 +2752,76 @@ mod tests {
         }
     }
 
+    fn source_edit_proposal(id: &str, patch_path: PathBuf, diff_sha256: &str) -> SelfDevProposal {
+        SelfDevProposal {
+            id: id.into(),
+            kind: ProposalKind::SourceEdit {
+                patch_path,
+                diff_sha256: diff_sha256.into(),
+                target_paths: vec!["src/cli/dummy.rs".into()],
+            },
+            reason: "test source edit".into(),
+            confidence: 0.9,
+            target: "src/cli/dummy.rs".into(),
+            extension_authority: None,
+        }
+    }
+
     #[test]
     fn proposals_path_lands_under_self_dev_subdir() {
         let p = proposals_path(Path::new("/home/x"));
         assert_eq!(p, Path::new("/home/x/self_dev/proposals.json"));
+    }
+
+    #[test]
+    fn self_dev_state_lock_excludes_a_second_os_process() {
+        const CHILD_ENV: &str = "NEOTH_SELF_DEV_STATE_LOCK_CHILD";
+        const TEST_PATH: &str =
+            "cli::self_dev::tests::self_dev_state_lock_excludes_a_second_os_process";
+
+        if let Ok(home) = std::env::var(CHILD_ENV) {
+            let path = self_dev_state_lock_path(Path::new(&home));
+            match crate::util::locked_file::try_lock_file_once(
+                &path,
+                "self-dev proposal state test",
+            ) {
+                Ok(Some(_guard)) => std::process::exit(0),
+                Ok(None) => std::process::exit(3),
+                Err(_) => std::process::exit(4),
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let lock_path = self_dev_state_lock_path(dir.path());
+        let parent_guard = crate::util::locked_file::lock_file_blocking(
+            &lock_path,
+            "self-dev proposal state test",
+        )
+        .unwrap();
+        let blocked = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST_PATH])
+            .env(CHILD_ENV, dir.path())
+            .output()
+            .expect("spawn blocked self-dev state-lock child");
+        assert_eq!(
+            blocked.status.code(),
+            Some(3),
+            "second OS process acquired held state lock (stderr: {})",
+            String::from_utf8_lossy(&blocked.stderr)
+        );
+        drop(parent_guard);
+
+        let acquired = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST_PATH])
+            .env(CHILD_ENV, dir.path())
+            .output()
+            .expect("spawn released self-dev state-lock child");
+        assert_eq!(
+            acquired.status.code(),
+            Some(0),
+            "second OS process did not acquire released state lock (stderr: {})",
+            String::from_utf8_lossy(&acquired.stderr)
+        );
     }
 
     #[test]
@@ -941,21 +2841,29 @@ mod tests {
             status_at_unix: 1_700_000_000,
             decline_reason: String::new(),
         });
-        save_store(dir.path(), &store).unwrap();
+        save_store_fixture(dir.path(), &store).unwrap();
         let back = load_store(dir.path()).unwrap();
         assert_eq!(back, store);
     }
 
     #[test]
-    fn save_uses_atomic_rename_via_tmp_extension() {
-        // Smoke — after save, the tmp file is gone + real file
-        // exists. Crash-during-save would leave .tmp + miss real.
+    fn save_uses_private_atomic_write_and_required_parent_sync() {
         let dir = tempdir().unwrap();
-        save_store(dir.path(), &ProposalStore::default()).unwrap();
+        let before = crate::util::atomic_write::required_parent_sync_attempts_for_test();
+        save_store_fixture(dir.path(), &ProposalStore::default()).unwrap();
         let real = proposals_path(dir.path());
-        let tmp = real.with_extension("json.tmp");
         assert!(real.exists());
-        assert!(!tmp.exists());
+        assert!(
+            std::fs::read_dir(real.parent().unwrap())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp")),
+            "successful private atomic replacement left a staged file"
+        );
+        assert!(
+            crate::util::atomic_write::required_parent_sync_attempts_for_test() > before,
+            "proposal store did not cross its required parent-directory durability barrier"
+        );
     }
 
     const BRIEFING_JOBS_YAML: &str = r#"
@@ -996,7 +2904,7 @@ jobs:
             target: "08:30".into(),
             extension_authority: None,
         };
-        save_store(dir.path(), &store_with(proposal)).unwrap();
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
 
         run_accept(
             dir.path(),
@@ -1030,7 +2938,7 @@ jobs:
             target: "07:15".into(),
             extension_authority: None,
         };
-        save_store(dir.path(), &store_with(proposal)).unwrap();
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
 
         let err = run_accept(
             dir.path(),
@@ -1047,7 +2955,188 @@ jobs:
     }
 
     #[tokio::test]
-    async fn accept_source_edit_records_decision_without_touching_the_tree() {
+    async fn effect_prepare_failure_never_accepts_or_mutates_the_preset() {
+        let dir = tempdir().unwrap();
+        let proposal = fixture_proposal("switch_preset-prepare-failure", 0.9);
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
+
+        EFFECT_TRANSACTION_PREPARE_FAILURE.with(|slot| slot.set(true));
+        let error = run_accept(
+            dir.path(),
+            "switch_preset-prepare-failure",
+            None,
+            crate::cli::OutputFormat::Table,
+        )
+        .await
+        .expect_err("injected post-prepare failure must abort accept");
+        assert!(
+            format!("{error:#}")
+                .contains("injected failure after self-dev effect transaction prepare")
+        );
+        assert!(effect_transaction_path(dir.path()).exists());
+        assert!(crate::cli::profile::load_active_preset(dir.path()).is_none());
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Pending
+        );
+
+        // Recovery proves no target effect occurred and abandons only the
+        // journal. The proposal stays reviewable/pending for an operator retry.
+        let guard = acquire_self_dev_state_guard(dir.path()).await.unwrap();
+        recover_effect_transaction_locked(dir.path(), &guard)
+            .await
+            .unwrap();
+        drop(guard);
+        assert!(!effect_transaction_path(dir.path()).exists());
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Pending
+        );
+    }
+
+    #[tokio::test]
+    async fn applied_effect_recovery_commits_only_after_readback() {
+        let dir = tempdir().unwrap();
+        let proposal = fixture_proposal("switch_preset-recover-applied", 0.9);
+        let proposal_hash = proposal_sha256(&proposal).unwrap();
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
+        crate::cli::profile::record_active_preset(dir.path(), ProfilePreset::Formal).unwrap();
+        save_effect_transaction(
+            dir.path(),
+            &EffectTransactionJournal {
+                proposal_id: "switch_preset-recover-applied".into(),
+                proposal_sha256: proposal_hash,
+                target: EffectTarget::Preset {
+                    target: "formal".into(),
+                },
+                phase: EffectTransactionPhase::Applying,
+            },
+        )
+        .unwrap();
+
+        let guard = acquire_self_dev_state_guard(dir.path()).await.unwrap();
+        recover_effect_transaction_locked(dir.path(), &guard)
+            .await
+            .unwrap();
+        drop(guard);
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Accepted
+        );
+        assert!(!effect_transaction_path(dir.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn crash_after_durable_accept_recovers_by_durably_removing_the_journal() {
+        let dir = tempdir().unwrap();
+        let proposal = fixture_proposal("switch_preset-accepted-crash", 0.9);
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
+
+        EFFECT_TRANSACTION_AFTER_ACCEPTED_FAILURE.with(|slot| slot.set(true));
+        let error = run_accept(
+            dir.path(),
+            "switch_preset-accepted-crash",
+            None,
+            crate::cli::OutputFormat::Table,
+        )
+        .await
+        .expect_err("crash seam after durable Accepted must interrupt cleanup");
+        assert!(
+            format!("{error:#}").contains("injected failure after durable self-dev acceptance")
+        );
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Accepted
+        );
+        assert_eq!(
+            load_effect_transaction(dir.path()).unwrap().unwrap().phase,
+            EffectTransactionPhase::PostconditionProven
+        );
+
+        let before = crate::util::atomic_write::required_parent_sync_attempts_for_test();
+        let guard = acquire_self_dev_state_guard(dir.path()).await.unwrap();
+        recover_effect_transaction_locked(dir.path(), &guard)
+            .await
+            .unwrap();
+        drop(guard);
+        assert!(!effect_transaction_path(dir.path()).exists());
+        assert!(
+            crate::util::atomic_write::required_parent_sync_attempts_for_test() > before,
+            "journal deletion did not cross its required durability barrier"
+        );
+    }
+
+    #[tokio::test]
+    async fn forged_source_edit_effect_journal_never_accepts_the_proposal() {
+        let dir = tempdir().unwrap();
+        let patch = dir.path().join("proposal.patch");
+        std::fs::write(&patch, "reviewed patch bytes").unwrap();
+        let proposal = source_edit_proposal("source_edit-forged-journal", patch, &"a".repeat(64));
+        let proposal_hash = proposal_sha256(&proposal).unwrap();
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
+        save_effect_transaction(
+            dir.path(),
+            &EffectTransactionJournal {
+                proposal_id: "source_edit-forged-journal".into(),
+                proposal_sha256: proposal_hash,
+                target: EffectTarget::Preset {
+                    target: "formal".into(),
+                },
+                phase: EffectTransactionPhase::PostconditionProven,
+            },
+        )
+        .unwrap();
+        crate::cli::profile::record_active_preset(dir.path(), ProfilePreset::Formal).unwrap();
+
+        let guard = acquire_self_dev_state_guard(dir.path()).await.unwrap();
+        let error = recover_effect_transaction_locked(dir.path(), &guard)
+            .await
+            .expect_err("SourceEdit cannot inherit a forged preset journal");
+        drop(guard);
+        assert!(format!("{error:#}").contains("SELF_DEV_EFFECT_RECOVERY_REQUIRED"));
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Pending
+        );
+        assert!(effect_transaction_path(dir.path()).exists());
+    }
+
+    #[test]
+    fn installed_extension_replacement_or_revocation_fails_exact_postcondition() {
+        let generation = "1".repeat(64);
+        let replacement_generation = "2".repeat(64);
+        let receipt = "3".repeat(64);
+        assert!(exact_installed_extension_postcondition(
+            &generation,
+            7,
+            &receipt,
+            &generation,
+            7,
+            &receipt,
+            crate::skills::authority::SkillAuthorityState::Active,
+        ));
+        assert!(!exact_installed_extension_postcondition(
+            &generation,
+            7,
+            &receipt,
+            &replacement_generation,
+            8,
+            &receipt,
+            crate::skills::authority::SkillAuthorityState::Active,
+        ));
+        assert!(!exact_installed_extension_postcondition(
+            &generation,
+            7,
+            &receipt,
+            &generation,
+            7,
+            &receipt,
+            crate::skills::authority::SkillAuthorityState::Revoked,
+        ));
+    }
+
+    #[tokio::test]
+    async fn source_edit_remains_pending_until_the_separate_apply_gate_commits() {
         let dir = tempdir().unwrap();
         let proposal = SelfDevProposal {
             id: "source_edit-cafe0003".into(),
@@ -1061,20 +3150,385 @@ jobs:
             target: "src/cli/dummy.rs".into(),
             extension_authority: None,
         };
-        save_store(dir.path(), &store_with(proposal)).unwrap();
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
 
-        // Accept records the decision; the live-tree apply stays the
-        // explicit second step through the FEAT-05 gate stack.
-        run_accept(
+        // R4-11: a generic Accepted state cannot stand in for the separate
+        // self-edit effect. Keep this pending until that gate publishes its
+        // own durable apply receipt.
+        let error = run_accept(
             dir.path(),
             "source_edit-cafe0003",
             None,
             crate::cli::OutputFormat::Table,
         )
         .await
-        .unwrap();
+        .expect_err("source edit has no self-dev target effect");
+        assert!(format!("{error:#}").contains("SELF_DEV_EFFECT_SEPARATE_APPLY_REQUIRED"));
         let store = load_store(dir.path()).unwrap();
-        assert_eq!(store.entries[0].status, ProposalStatus::Accepted);
+        assert_eq!(store.entries[0].status, ProposalStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn source_edit_contract_rejects_wrong_proposal_id_and_hash_before_apply() {
+        use sha2::{Digest as _, Sha256};
+
+        let dir = tempdir().unwrap();
+        let patch = dir.path().join("proposal.patch");
+        let diff = concat!(
+            "--- a/src/cli/dummy.rs\n",
+            "+++ b/src/cli/dummy.rs\n",
+            "@@ -1 +1 @@\n",
+            "-old\n",
+            "+new\n",
+        );
+        std::fs::write(&patch, diff).unwrap();
+        let hash = format!("{:x}", Sha256::digest(diff.as_bytes()));
+        let proposal = source_edit_proposal("source_edit-contract", patch.clone(), &hash);
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
+        let canonical_patch = patch.canonicalize().unwrap();
+        let paths = vec!["src/cli/dummy.rs".to_owned()];
+
+        let wrong_id = begin_source_edit_apply(
+            dir.path(),
+            "source_edit-other",
+            &canonical_patch,
+            dir.path(),
+            &hash,
+            &hash,
+            &paths,
+        )
+        .await
+        .err()
+        .expect("wrong proposal id must be refused before the gate");
+        assert!(format!("{wrong_id:#}").contains("SELF_DEV_SOURCE_EDIT_CONTRACT_REJECTED"));
+
+        let wrong_hash = "f".repeat(64);
+        let error = begin_source_edit_apply(
+            dir.path(),
+            "source_edit-contract",
+            &canonical_patch,
+            dir.path(),
+            &wrong_hash,
+            &hash,
+            &paths,
+        )
+        .await
+        .err()
+        .expect("wrong expected hash must be refused before the gate");
+        assert!(format!("{error:#}").contains("SELF_DEV_SOURCE_EDIT_CONTRACT_REJECTED"));
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Pending
+        );
+        assert!(!source_edit_receipt_path(dir.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn durable_source_edit_receipt_recovers_exact_proposal_after_crash() {
+        use sha2::{Digest as _, Sha256};
+
+        let dir = tempdir().unwrap();
+        let patch = dir.path().join("proposal.patch");
+        let diff = concat!(
+            "--- a/src/cli/dummy.rs\n",
+            "+++ b/src/cli/dummy.rs\n",
+            "@@ -1 +1 @@\n",
+            "-old\n",
+            "+new\n",
+        );
+        std::fs::write(&patch, diff).unwrap();
+        let hash = format!("{:x}", Sha256::digest(diff.as_bytes()));
+        let proposal = source_edit_proposal("source_edit-receipt-crash", patch.clone(), &hash);
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
+        let paths = vec!["src/cli/dummy.rs".to_owned()];
+        let transaction = begin_source_edit_apply(
+            dir.path(),
+            "source_edit-receipt-crash",
+            &patch.canonicalize().unwrap(),
+            dir.path(),
+            &hash,
+            &hash,
+            &paths,
+        )
+        .await
+        .unwrap();
+
+        SOURCE_EDIT_RECEIPT_AFTER_PUBLISH_FAILURE.with(|slot| slot.set(true));
+        let error = transaction
+            .finalize_after_apply_and_audit(&hash, &paths)
+            .await
+            .expect_err("post-publication crash seam must leave the durable receipt");
+        assert!(
+            format!("{error:#}").contains("injected failure after durable source-edit receipt")
+        );
+        assert!(source_edit_receipt_path(dir.path()).exists());
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Pending
+        );
+
+        let guard = acquire_self_dev_state_guard(dir.path()).await.unwrap();
+        recover_source_edit_receipt_locked(dir.path(), &guard).await.unwrap();
+        drop(guard);
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Accepted
+        );
+        assert!(!source_edit_receipt_path(dir.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn audited_postcondition_crash_before_receipt_recovers_only_exact_transaction() {
+        use sha2::{Digest as _, Sha256};
+
+        let dir = tempdir().unwrap();
+        let patch = dir.path().join("proposal.patch");
+        let diff = concat!(
+            "--- a/src/cli/dummy.rs\n",
+            "+++ b/src/cli/dummy.rs\n",
+            "@@ -1 +1 @@\n",
+            "-old\n",
+            "+new\n",
+        );
+        std::fs::write(&patch, diff).unwrap();
+        let hash = format!("{:x}", Sha256::digest(diff.as_bytes()));
+        let proposal = source_edit_proposal("source_edit-postcondition-crash", patch.clone(), &hash);
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
+        let paths = vec!["src/cli/dummy.rs".to_owned()];
+        let mut transaction = begin_source_edit_apply(
+            dir.path(),
+            "source_edit-postcondition-crash",
+            &patch.canonicalize().unwrap(),
+            dir.path(),
+            &hash,
+            &hash,
+            &paths,
+        )
+        .await
+        .unwrap();
+        transaction.mark_applying().unwrap();
+        SOURCE_EDIT_AFTER_POSTCONDITION_FAILURE.with(|slot| slot.set(true));
+        let error = transaction
+            .finalize_after_apply_and_audit(&hash, &paths)
+            .await
+            .expect_err("crash seam must interrupt after WAL/postimage journal, before receipt");
+        assert!(format!("{error:#}").contains("postcondition before receipt"));
+        assert!(source_edit_transaction_path(dir.path()).exists());
+        assert!(!source_edit_receipt_path(dir.path()).exists());
+        assert_eq!(load_store(dir.path()).unwrap().entries[0].status, ProposalStatus::Pending);
+
+        let guard = acquire_self_dev_state_guard(dir.path()).await.unwrap();
+        recover_source_edit_transaction_locked(dir.path(), &guard).await.unwrap();
+        drop(guard);
+        assert_eq!(load_store(dir.path()).unwrap().entries[0].status, ProposalStatus::Accepted);
+        assert!(!source_edit_transaction_path(dir.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn forged_source_edit_receipt_hash_stays_pending_and_blocks_recovery() {
+        let dir = tempdir().unwrap();
+        let patch = dir.path().join("proposal.patch");
+        std::fs::write(&patch, "reviewed patch bytes").unwrap();
+        let proposal = source_edit_proposal("source_edit-forged-receipt", patch, &"a".repeat(64));
+        let proposal_hash = proposal_sha256(&proposal).unwrap();
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
+        let paths = vec!["src/cli/dummy.rs".to_owned()];
+        let images = source_edit_images(dir.path(), &paths).await.unwrap();
+        let mut forged_receipt = SourceEditApplyReceipt {
+                version: SOURCE_EDIT_RECEIPT_VERSION,
+                proposal_id: "source_edit-forged-receipt".into(),
+                proposal_sha256: proposal_hash,
+                diff_sha256: "b".repeat(64),
+                source_root: dir.path().to_string_lossy().to_string(),
+                target_paths: paths,
+                base_images: images.clone(),
+                post_images: images,
+                self_edit_audit_finalized: true,
+                applied_at_unix: now_unix(),
+                auth_tag: String::new(),
+            };
+        save_source_edit_receipt(dir.path(), &mut forged_receipt).unwrap();
+
+        let guard = acquire_self_dev_state_guard(dir.path()).await.unwrap();
+        let error = recover_source_edit_receipt_locked(dir.path(), &guard)
+            .await
+            .expect_err("forged receipt hash must not accept the proposal");
+        drop(guard);
+        assert!(format!("{error:#}").contains("SELF_DEV_SOURCE_EDIT_RECEIPT_RECOVERY_REQUIRED"));
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Pending
+        );
+        assert!(source_edit_receipt_path(dir.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn fully_matching_but_unauthenticated_source_edit_receipt_stays_pending() {
+        let dir = tempdir().unwrap();
+        let patch = dir.path().join("proposal.patch");
+        std::fs::write(&patch, "reviewed patch bytes").unwrap();
+        let diff_sha256 = "a".repeat(64);
+        let proposal = source_edit_proposal("source_edit-forged-auth", patch, &diff_sha256);
+        let proposal_sha256 = proposal_sha256(&proposal).unwrap();
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
+        let paths = vec!["src/cli/dummy.rs".to_owned()];
+        let images = source_edit_images(dir.path(), &paths).await.unwrap();
+        let forged = SourceEditApplyReceipt {
+            version: SOURCE_EDIT_RECEIPT_VERSION,
+            proposal_id: "source_edit-forged-auth".into(),
+            proposal_sha256,
+            diff_sha256,
+            source_root: dir.path().to_string_lossy().to_string(),
+            target_paths: paths,
+            base_images: images.clone(),
+            post_images: images,
+            self_edit_audit_finalized: true,
+            applied_at_unix: now_unix(),
+            // Every non-authentication field matches. This value was not
+            // minted from the home-bound authority and must not be trusted.
+            auth_tag: "00".repeat(32),
+        };
+        crate::util::atomic_write::atomic_write_private(
+            &source_edit_receipt_path(dir.path()),
+            &serde_json::to_vec_pretty(&forged).unwrap(),
+        )
+        .unwrap();
+
+        let guard = acquire_self_dev_state_guard(dir.path()).await.unwrap();
+        let error = recover_source_edit_receipt_locked(dir.path(), &guard)
+            .await
+            .expect_err("matching forged receipt must be rejected by HMAC");
+        drop(guard);
+        assert!(format!("{error:#}").contains("SELF_DEV_SOURCE_EDIT_RECEIPT_RECOVERY_REQUIRED"));
+        assert_eq!(load_store(dir.path()).unwrap().entries[0].status, ProposalStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn applying_source_edit_with_changed_tree_never_auto_accepts_after_crash() {
+        use sha2::{Digest as _, Sha256};
+
+        let dir = tempdir().unwrap();
+        let patch = dir.path().join("proposal.patch");
+        let diff = concat!(
+            "--- a/src/cli/dummy.rs\n",
+            "+++ b/src/cli/dummy.rs\n",
+            "@@ -1 +1 @@\n",
+            "-old\n",
+            "+new\n",
+        );
+        std::fs::write(&patch, diff).unwrap();
+        let hash = format!("{:x}", Sha256::digest(diff.as_bytes()));
+        let proposal = source_edit_proposal("source_edit-apply-crash", patch.clone(), &hash);
+        save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
+        let paths = vec!["src/cli/dummy.rs".to_owned()];
+        let mut transaction = begin_source_edit_apply(
+            dir.path(),
+            "source_edit-apply-crash",
+            &patch.canonicalize().unwrap(),
+            dir.path(),
+            &hash,
+            &hash,
+            &paths,
+        )
+        .await
+        .unwrap();
+        transaction.mark_applying().unwrap();
+        std::fs::create_dir_all(dir.path().join("src/cli")).unwrap();
+        std::fs::write(dir.path().join("src/cli/dummy.rs"), "new\n").unwrap();
+        drop(transaction);
+
+        let guard = acquire_self_dev_state_guard(dir.path()).await.unwrap();
+        let error = recover_source_edit_transaction_locked(dir.path(), &guard)
+            .await
+            .expect_err("changed Applying tree is ambiguous, not Accepted");
+        drop(guard);
+        assert!(format!("{error:#}").contains("SELF_DEV_SOURCE_EDIT_RECEIPT_RECOVERY_REQUIRED"));
+        assert_eq!(load_store(dir.path()).unwrap().entries[0].status, ProposalStatus::Pending);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn source_edit_image_rejects_symlinked_leaf_and_parent_without_reading_outside_root() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("root");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(root.join("src/cli")).unwrap();
+        std::fs::create_dir_all(outside.join("cli")).unwrap();
+        std::fs::write(outside.join("secret.rs"), "outside leaf").unwrap();
+        std::fs::write(outside.join("cli/dummy.rs"), "outside parent").unwrap();
+
+        symlink(outside.join("secret.rs"), root.join("src/cli/dummy.rs")).unwrap();
+        let leaf = source_edit_images(&root, &["src/cli/dummy.rs".to_owned()])
+            .await
+            .expect_err("symlink leaf must not be read through source-edit evidence");
+        assert!(format!("{leaf:#}").contains("symlink"));
+        std::fs::remove_file(root.join("src/cli/dummy.rs")).unwrap();
+        std::fs::remove_dir_all(root.join("src")).unwrap();
+
+        symlink(&outside, root.join("src")).unwrap();
+        let parent = source_edit_images(&root, &["src/cli/dummy.rs".to_owned()])
+            .await
+            .expect_err("symlink parent must not be traversed for source-edit evidence");
+        assert!(format!("{parent:#}").contains("symlink"));
+    }
+
+    #[tokio::test]
+    async fn source_edit_image_rejects_over_cap_sparse_leaf_before_allocation() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("root");
+        let leaf = root.join("src/cli/oversized.rs");
+        std::fs::create_dir_all(leaf.parent().unwrap()).unwrap();
+        let file = std::fs::File::create(&leaf).unwrap();
+        file.set_len(SOURCE_EDIT_IMAGE_MAX_FILE_BYTES + 1).unwrap();
+        let error = source_edit_images(&root, &["src/cli/oversized.rs".to_owned()])
+            .await
+            .expect_err("oversized/sparse file must be rejected before allocation");
+        assert!(format!("{error:#}").contains("evidence cap"));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[tokio::test]
+    async fn source_edit_image_rejects_hard_linked_leaf_before_snapshot() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("root");
+        let leaf = root.join("src/cli/aliased.rs");
+        let alias = dir.path().join("external-alias.rs");
+        std::fs::create_dir_all(leaf.parent().unwrap()).unwrap();
+        std::fs::write(&leaf, "reviewed bytes").unwrap();
+        std::fs::hard_link(&leaf, &alias).unwrap();
+        let error = source_edit_images(&root, &["src/cli/aliased.rs".to_owned()])
+            .await
+            .expect_err("hard-linked source leaf must not be snapshotted");
+        assert!(format!("{error:#}").contains("hard links"));
+    }
+
+    #[tokio::test]
+    async fn source_edit_image_rejects_huge_all_missing_path_list_before_clone() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let paths: Vec<String> = (0..=SOURCE_EDIT_IMAGE_MAX_TARGET_PATHS)
+            .map(|index| format!("src/missing-{index}.rs"))
+            .collect();
+        let error = source_edit_images(&root, &paths)
+            .await
+            .expect_err("over-cardinality missing path list must be refused before clone/snapshot");
+        assert!(format!("{error:#}").contains("path count"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_edit_leaf_growth_is_rejected_by_bounded_handle_read() {
+        let dir = tempdir().unwrap();
+        let leaf = dir.path().join("leaf.rs");
+        std::fs::write(&leaf, b"x").unwrap();
+        let root = Dir::open_ambient_dir(dir.path(), cap_std::ambient_authority()).unwrap();
+        SOURCE_EDIT_LEAF_GROW_AFTER_OPEN.with(|slot| *slot.borrow_mut() = Some(leaf));
+        let error = read_source_edit_regular_leaf(&root, OsStr::new("leaf.rs"), 1)
+            .expect_err("one byte of concurrent growth must exceed bounded handle read");
+        assert!(format!("{error:#}").contains("bounded evidence cap"));
     }
 
     #[tokio::test]
@@ -1194,7 +3648,7 @@ jobs:
             status_at_unix: 0,
             decline_reason: String::new(),
         });
-        save_store(dir.path(), &store).unwrap();
+        save_store_fixture(dir.path(), &store).unwrap();
         let args = SelfDevArgs {
             action: SelfDevAction::Accept {
                 id: "switch_preset-aabbccdd".into(),
@@ -1218,7 +3672,7 @@ jobs:
             status_at_unix: 1_700_000_000,
             decline_reason: String::new(),
         });
-        save_store(dir.path(), &store).unwrap();
+        save_store_fixture(dir.path(), &store).unwrap();
         let args = SelfDevArgs {
             action: SelfDevAction::Accept { id: "x".into() },
         };
@@ -1237,7 +3691,7 @@ jobs:
             status_at_unix: 0,
             decline_reason: String::new(),
         });
-        save_store(dir.path(), &store).unwrap();
+        save_store_fixture(dir.path(), &store).unwrap();
         let args = SelfDevArgs {
             action: SelfDevAction::Decline {
                 id: "x".into(),
@@ -1260,7 +3714,7 @@ jobs:
             status_at_unix: 0,
             decline_reason: String::new(),
         });
-        save_store(dir.path(), &store).unwrap();
+        save_store_fixture(dir.path(), &store).unwrap();
         let args = SelfDevArgs {
             action: SelfDevAction::Decline {
                 id: "x".into(),
@@ -1285,7 +3739,7 @@ jobs:
             status_at_unix: 1_700_000_000,
             decline_reason: String::new(),
         });
-        save_store(dir.path(), &store).unwrap();
+        save_store_fixture(dir.path(), &store).unwrap();
         let args = SelfDevArgs {
             action: SelfDevAction::Decline {
                 id: "x".into(),

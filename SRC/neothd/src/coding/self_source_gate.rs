@@ -66,6 +66,7 @@ use tracing::{info, warn};
 use crate::coding::self_source::{
     SourceRoots, diff_line_count, diff_paths, diff_sha256, neoth_source_root,
 };
+use crate::cli::self_dev::SourceEditPreApplyPlan;
 use crate::coding::types::KanbanTaskId;
 use crate::coding::worktree::{
     PatchApplyOutcome, apply_patch_in_worktree, cleanup_worktree, create_task_worktree,
@@ -251,12 +252,16 @@ pub struct SelfEditOutcome {
 ///   A disabled green-test gate is allowed only in this preview mode.
 /// - `wal`: optional handle to the WAL writer for audit emission. When `None`,
 ///   a warning is logged and the gates proceed (WAL is audit, not security).
+/// - `source_edit_pre_apply_plan`: only proposal-bound callers populate this;
+///   Git's Layer-4b plan and a final no-follow base-image snapshot must both
+///   match before live mutation.
 pub async fn run_gate_stack(
     diff_text: &str,
     cfg: &FreedomConfig,
     dry_run: bool,
     operator_acked: bool,
     wal: Option<&WalWriterHandle>,
+    source_edit_pre_apply_plan: Option<&SourceEditPreApplyPlan>,
 ) -> Result<SelfEditOutcome, GateError> {
     let self_edit_cfg = &cfg.coding.self_edit;
     let diff_bytes = diff_text.as_bytes();
@@ -455,6 +460,22 @@ pub async fn run_gate_stack(
     audit.target_paths = real_paths.clone();
     audit.layer4_worktree = LayerOutcome::Pass;
 
+    // A SourceEdit proposal binds a finite authoritative path set. Git—not the
+    // lightweight unified-diff parser—is the final authority after worktree
+    // application, so reject additions, removals, renames and mode-smuggled
+    // paths HERE, before Layer 5 or the live `git apply` sink can run.
+    if let Some(plan) = source_edit_pre_apply_plan {
+        if !exact_authoritative_path_set(plan.target_paths(), &real_paths) {
+            let reason = format!(
+                "proposal-bound source edit path mismatch: reviewed {:?}, git resolved {:?}",
+                plan.target_paths(), real_paths
+            );
+            audit.layer2_allowlist = LayerOutcome::Fail(reason.clone());
+            let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &audit).await;
+            return Err(GateError::Allowlist(reason));
+        }
+    }
+
     // ── Layer 3b: autonomy permission re-check on git-truth paths ─────────────
     // The Layer-3 check above ran on the vendored-parser `target_paths`. Layer-4b
     // already re-ran the ALLOWLIST on git's authoritative `real_paths`, but the
@@ -558,6 +579,37 @@ pub async fn run_gate_stack(
             }
         }
 
+        // Final proposal-bound live-sink invariant, deliberately after the
+        // generic Git HEAD/index proof and immediately before `git apply`.
+        // The bounded no-follow snapshot must still equal the transaction's
+        // authenticated base images; no parser-only or stale source state can
+        // cross the mutation boundary.
+        if let Some(plan) = source_edit_pre_apply_plan {
+            let plan_matches = if !plan.binds_source_root(&roots.crate_dir) {
+                Ok(false)
+            } else {
+                plan.exact_base_images_still_match().await
+            };
+            match plan_matches {
+                Ok(true) => {}
+                Ok(false) => {
+                    let reason = "proposal-bound source edit base images changed before live apply"
+                        .to_owned();
+                    audit.layer_state_drift = LayerOutcome::Fail(reason.clone());
+                    let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &audit).await;
+                    return Err(GateError::StateDrift(reason));
+                }
+                Err(error) => {
+                    let reason = format!(
+                        "proposal-bound source edit base-image proof unavailable before live apply: {error:#}"
+                    );
+                    audit.layer_state_drift = LayerOutcome::Fail(reason.clone());
+                    let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &audit).await;
+                    return Err(GateError::StateDrift(reason));
+                }
+            }
+        }
+
         // Apply the SAME in-memory bytes the gates validated (piped via stdin),
         // NOT a re-read of the on-disk file — closes the TOCTOU where the diff
         // file could be swapped between validation and the live apply. Runs in
@@ -612,6 +664,20 @@ pub async fn run_gate_stack(
         diff_hash,
         dry_run,
     })
+}
+
+/// Path equality is set equality with no duplicate tolerance. Both inputs are
+/// expected to be validated clean relative paths; sorting only gives the
+/// comparison a stable order while preserving the exact member requirement.
+fn exact_authoritative_path_set(expected: &[String], actual: &[String]) -> bool {
+    if expected.is_empty() || expected.len() != actual.len() {
+        return false;
+    }
+    let mut expected = expected.to_vec();
+    let mut actual = actual.to_vec();
+    expected.sort();
+    actual.sort();
+    expected == actual
 }
 
 /// Canonical anti-loop sentinel (`~/.neoth/self_edit/last_apply`).
@@ -1578,6 +1644,27 @@ mod tests {
         assert!(layer2_allowlist(&cfg, &["src/tools/foo.rs".to_string()], 1).is_ok());
     }
 
+    #[test]
+    fn proposal_bound_authoritative_path_plan_requires_exact_set_equality() {
+        let reviewed = vec!["src/cli/a.rs".to_string(), "src/cli/b.rs".to_string()];
+        assert!(exact_authoritative_path_set(
+            &reviewed,
+            &["src/cli/b.rs".to_string(), "src/cli/a.rs".to_string()],
+        ));
+        assert!(!exact_authoritative_path_set(
+            &reviewed,
+            &[
+                "src/cli/a.rs".to_string(),
+                "src/cli/b.rs".to_string(),
+                "src/cli/hidden.rs".to_string(),
+            ],
+        ));
+        assert!(!exact_authoritative_path_set(
+            &reviewed,
+            &["src/cli/a.rs".to_string(), "src/cli/a.rs".to_string()],
+        ));
+    }
+
     // ── Reentrancy lock ──────────────────────────────────────────────────────
 
     #[test]
@@ -1689,7 +1776,7 @@ mod tests {
         let (wal_handle, wal_join) =
             crate::wal::writer::spawn(wal_seg).expect("fixture WAL writer");
 
-        let outcome = run_gate_stack(diff, &cfg, false, true, Some(&wal_handle))
+        let outcome = run_gate_stack(diff, &cfg, false, true, Some(&wal_handle), None)
             .await
             .expect("dummy.rs comment addition must pass all gates");
         drop(wal_handle);
@@ -1741,12 +1828,12 @@ mod tests {
         cfg.coding.self_edit.apply_cooldown_secs = 0;
         cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
 
-        let preview = run_gate_stack(diff, &cfg, true, false, None)
+        let preview = run_gate_stack(diff, &cfg, true, false, None, None)
             .await
             .expect("dry-run may explicitly skip Layer 5");
         assert!(preview.dry_run);
 
-        let err = run_gate_stack(diff, &cfg, false, true, None)
+        let err = run_gate_stack(diff, &cfg, false, true, None, None)
             .await
             .expect_err("live apply must not bypass Layer 5");
         assert!(
@@ -1787,7 +1874,7 @@ mod tests {
         cfg.coding.self_edit.apply_cooldown_secs = 0;
         cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
 
-        let err = run_gate_stack(diff, &cfg, false, true, None)
+        let err = run_gate_stack(diff, &cfg, false, true, None, None)
             .await
             .expect_err("live apply without a WAL writer must be refused");
         assert!(
@@ -1829,7 +1916,7 @@ mod tests {
         cfg.coding.self_edit.apply_cooldown_secs = 0;
         cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
 
-        let err = run_gate_stack(diff, &cfg, false, true, None)
+        let err = run_gate_stack(diff, &cfg, false, true, None, None)
             .await
             .expect_err("rename into src/wal/ must be refused by the git-truth guard");
         // Refused at the allowlist layer on git's REAL path set.

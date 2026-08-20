@@ -1,4 +1,5 @@
 //! GOLD-FEAT-05 — `neoth self-edit --diff <file> [--dry-run]`
+//! or proposal-bound `--proposal-id <id> --expect-hash <sha256> --yes`.
 //!
 //! CLI surface for the five-layer self-source-edit gate stack.
 //!
@@ -6,6 +7,8 @@
 //!
 //! ```text
 //! neoth self-edit --diff <path/to/edit.patch> [--dry-run]
+//! neoth self-edit --diff <path/to/edit.patch> --proposal-id <id> \
+//!   --expect-hash <sha256> --yes
 //! ```
 //!
 //! ## Gate invocation
@@ -74,10 +77,28 @@ pub struct SelfEditArgs {
     /// and apply. The GUI always passes this; CLI callers may omit it.
     #[arg(long, value_name = "SHA256")]
     pub expect_hash: Option<String>,
+
+    /// Bind this live apply to the exact pending self-development SourceEdit
+    /// proposal. `--expect-hash` is mandatory with this option and must equal
+    /// both the reviewed proposal hash and the bytes passed to the gate.
+    /// Proposal-bound edits cannot be dry-runs.
+    #[arg(
+        long,
+        value_name = "ID",
+        requires = "expect_hash",
+        conflicts_with = "dry_run"
+    )]
+    pub proposal_id: Option<String>,
 }
 
 /// Entry point for `neoth self-edit`.
 pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<()> {
+    if args.proposal_id.is_some() && args.dry_run {
+        anyhow::bail!(
+            "--proposal-id authorizes a live effect and cannot be combined with --dry-run"
+        );
+    }
+
     // 1. Read the diff file.
     let diff_path = args
         .diff
@@ -92,11 +113,13 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
     }
 
     // 1b. TOCTOU guard — verify hash before any gate runs.
+    let actual_diff_sha256 = sha256_hex(diff_text.as_bytes());
     if let Some(ref expected) = args.expect_hash {
         check_expect_hash(diff_text.as_bytes(), expected)?;
     }
 
     // 2. Load FreedomConfig.
+    let home = FreedomConfig::default_neoth_home();
     let cfg = FreedomConfig::load_from_path(&FreedomConfig::default_path())
         .unwrap_or_else(|e| {
             warn!(error = %e, "self_edit: cannot load freedom.yaml — using defaults (kill-switch will refuse)");
@@ -117,6 +140,47 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
              (set freedom.yaml::coding.self_edit.max_lines_changed to raise this limit)"
         );
     }
+
+    // Resolve the exact crate directory the gate will later use for its live
+    // `git apply`. Proposal-bound preimages must be taken from this same root;
+    // binding a merely configured string would permit source-root substitution
+    // between review and the live mutation boundary.
+    let proposal_source_root = if args.proposal_id.is_some() {
+        Some(
+            crate::coding::self_source::neoth_source_root(&cfg.coding.self_edit.source_root)
+                .context("resolve authoritative source root for proposal-bound self-edit")?
+                .crate_dir,
+        )
+    } else {
+        None
+    };
+
+    // 3c. Proposal-bound applies acquire the same home-scoped process + OS
+    // lock used by self-dev accept/decline/propose/recovery. The returned
+    // transaction retains it through the live gate, required audit shutdown,
+    // durable receipt consumption, and exact proposal acceptance.
+    let mut proposal_transaction = match args.proposal_id.as_deref() {
+        Some(proposal_id) => {
+            let expected = args.expect_hash.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("--proposal-id requires an explicit --expect-hash")
+            })?;
+            Some(
+                super::self_dev::begin_source_edit_apply(
+                    &home,
+                    proposal_id,
+                    &diff_path,
+                    proposal_source_root
+                        .as_deref()
+                        .expect("proposal-bound source root was resolved"),
+                    expected,
+                    &actual_diff_sha256,
+                    &target_paths,
+                )
+                .await?,
+            )
+        }
+        None => None,
+    };
 
     match output {
         OutputFormat::Table => {
@@ -147,7 +211,6 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
     // audit trail is REQUIRED: if the WAL is unavailable we refuse rather than
     // silently mutate the source tree with no forensic record. Dry-run (no
     // apply) may proceed without it.
-    let home = FreedomConfig::default_neoth_home();
     let wal_dir = home.join("wal");
     let pidfile = home.join("neothd.pid");
     let daemon_live = crate::daemon::pidfile::live_daemon_pid(&pidfile)
@@ -186,7 +249,18 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
         None => (None, None),
     };
 
-    // 5. Run all five gates. `args.yes` is the operator's explicit acknowledgement
+    // 5. Persist `Applying` immediately before entering the gate stack. The
+    // transaction has already durably bound proposal/diff/root/preimages; a
+    // crash after this point remains Pending until authenticated postimage and
+    // mandatory WAL-finalization evidence is available.
+    if let Some(transaction) = proposal_transaction.as_mut() {
+        transaction.mark_applying()?;
+    }
+    let source_edit_pre_apply_plan = proposal_transaction
+        .as_ref()
+        .map(|transaction| transaction.pre_apply_plan());
+
+    // Run all five gates. `args.yes` is the operator's explicit acknowledgement
     // that Layer 3 requires before applying a Confirm-level self-edit.
     let result = run_gate_stack(
         &diff_text,
@@ -194,6 +268,7 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
         args.dry_run,
         args.yes,
         wal_handle.as_ref(),
+        source_edit_pre_apply_plan.as_ref(),
     )
     .await;
 
@@ -219,6 +294,20 @@ pub async fn run_self_edit(args: SelfEditArgs, output: OutputFormat) -> Result<(
             );
         }
         warn!(%error, "self_edit: audit writer shutdown was incomplete");
+    }
+
+    if let Ok(outcome) = &result
+        && !outcome.dry_run
+        && let Some(transaction) = proposal_transaction.take()
+    {
+        transaction
+            .finalize_after_apply_and_audit(&outcome.diff_hash, &outcome.target_paths)
+            .await
+            .context(
+                "INCONSISTENT: source edit was applied and audited, but its proposal-bound \
+                 receipt could not be finalized; the durable receipt (if published) must be \
+                 recovered before another self-dev decision",
+            )?;
     }
 
     match result {
@@ -331,8 +420,7 @@ fn open_audit_wal(home: &std::path::Path) -> Option<AuditWal> {
 /// Called immediately after reading the diff file so any TOCTOU swap between
 /// proposal-acceptance and the apply invocation is caught before gates run.
 fn check_expect_hash(diff_bytes: &[u8], expected_hex: &str) -> Result<()> {
-    use sha2::{Digest, Sha256};
-    let actual = hex::encode(Sha256::digest(diff_bytes));
+    let actual = sha256_hex(diff_bytes);
     if actual != expected_hex {
         anyhow::bail!(
             "diff hash mismatch — TOCTOU guard: expected {expected_hex}, got {actual}. \
@@ -340,6 +428,11 @@ fn check_expect_hash(diff_bytes: &[u8], expected_hex: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(bytes))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

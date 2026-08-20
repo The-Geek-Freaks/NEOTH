@@ -7594,7 +7594,7 @@ fn main() -> Result<()> {
             });
         });
 
-        // GUI-DES-SELFDEV-APPLY-01 — Apply accepted SourceEdit proposal via gate.
+        // GUI-DES-SELFDEV-APPLY-01 — Apply a pending SourceEdit via its bound gate.
         let weak_sd_apply = window.as_weak();
         window.on_sd_apply_source_clicked(move |id, patch_path, diff_sha256| {
             let id = id.to_string();
@@ -7623,14 +7623,7 @@ fn main() -> Result<()> {
                     return;
                 }
                 let result = run_neothd_json_action::<gui_action::SelfEditAck>(
-                    &[
-                        "self-edit",
-                        "--diff",
-                        patch_path.trim(),
-                        "--yes",
-                        "--expect-hash",
-                        sha,
-                    ],
+                    &source_edit_apply_args(id.trim(), patch_path.trim(), sha),
                     "Self-Dev source apply",
                 )
                 .and_then(|ack| ack.verify_applied(sha));
@@ -16587,6 +16580,29 @@ fn run_neothd_probe(args: &[&str]) -> String {
     }
 }
 
+/// Build the argv for a live, proposal-bound SourceEdit apply.
+///
+/// The caller validates every dynamic value before invoking the executable.
+/// Keep the proposal ID and expected digest in this same argument vector: the
+/// CLI uses the pair to consume exactly the accepted proposal receipt before
+/// any source mutation is allowed.
+fn source_edit_apply_args<'a>(
+    proposal_id: &'a str,
+    patch_path: &'a str,
+    sha256: &'a str,
+) -> [&'a str; 8] {
+    [
+        "self-edit",
+        "--diff",
+        patch_path,
+        "--yes",
+        "--proposal-id",
+        proposal_id,
+        "--expect-hash",
+        sha256,
+    ]
+}
+
 /// Execute one GUI-triggered CLI action through the structured automation
 /// contract. A successful exit without a valid typed acknowledgement is still
 /// a failure; callers must additionally verify action-specific fields.
@@ -24862,11 +24878,10 @@ fn refresh_selfdev(weak: slint::Weak<MainWindow>) {
             .map(|p| {
                 // RED LINE: status_badge never says "Applied" or
                 // "Self-Reprogramming applied". Badge is the raw status string
-                // ("pending" | "accepted" | "declined") so the Slint Apply button
-                // condition `row-status-badge == "accepted"` resolves correctly.
-                // SourceEdit accepted proposals show the Apply button as enabled;
-                // the operator must click through a confirm dialog before any
-                // gate subprocess fires.
+                // ("pending" | "accepted" | "declined"). SourceEdit's Slint
+                // Apply button is intentionally present only for `pending`:
+                // generic self-dev Accept is not a source-edit authority, and
+                // an accepted SourceEdit is terminal/non-reapplicable.
                 let badge = match p.status.as_str() {
                     "accepted" => "accepted",
                     "declined" => "declined",
@@ -27850,6 +27865,39 @@ fn init_tracing() {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn source_edit_apply_argv_binds_selected_proposal_and_reviewed_hash() {
+        let args = source_edit_apply_args(
+            "source_edit-a1b2c3",
+            "C:/neoth/proposals/a1b2c3.patch",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        );
+
+        assert_eq!(
+            args,
+            [
+                "self-edit",
+                "--diff",
+                "C:/neoth/proposals/a1b2c3.patch",
+                "--yes",
+                "--proposal-id",
+                "source_edit-a1b2c3",
+                "--expect-hash",
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            ]
+        );
+    }
+
+    #[test]
+    fn source_edit_ui_exposes_only_pending_apply_not_generic_accept() {
+        let ui = include_str!("../ui/selfreprog.slint");
+        assert!(ui.contains("if !root.row-is-source-edit: Rectangle"));
+        assert!(ui.contains(
+            "if root.row-is-source-edit && root.row-status-badge == \"pending\": Rectangle"
+        ));
+        assert!(!ui.contains("row-status-badge == \"accepted\" ? Theme.consent"));
+    }
 
     #[test]
     fn provider_endpoint_writer_persists_only_exact_reviewed_profile() {
