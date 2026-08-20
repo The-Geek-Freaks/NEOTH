@@ -4,13 +4,17 @@
 # This workflow intentionally does not compile or link the Rust workspace.
 # Feature waves land in small reviewed commits, while the expensive cross-OS
 # matrix runs on pull requests, the weekly integration cadence, and explicit
-# milestone dispatches. release.yml still requires fresh successful full CI
-# and Security runs for the exact release HEAD.
+# milestone dispatches. Preflight itself runs on both pull requests and pushes
+# to main so the same stable status context can be required before merge.
+# release.yml still requires fresh successful full CI and Security runs for
+# the exact release HEAD.
 # =============================================================================
 
 name: Preflight
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:

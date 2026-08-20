@@ -125,8 +125,13 @@ def transitive_dependencies(jobs: dict[str, str], job: str) -> set[str]:
 class CiCadenceContractTests(unittest.TestCase):
     def test_preflight_is_the_only_main_push_workflow_in_this_contract(self) -> None:
         preflight = trigger_block(PREFLIGHT_TEXT)
+        self.assertRegex(preflight, r"(?m)^  pull_request:\s*$")
         self.assertRegex(preflight, r"(?m)^  push:\s*$")
         self.assertRegex(preflight, r"(?m)^  workflow_dispatch:\s*$")
+        self.assertEqual(
+            event_block(PREFLIGHT_TEXT, "pull_request"),
+            "  pull_request:\n    branches: [main]",
+        )
 
         ci_triggers = trigger_block(CI_TEXT)
         self.assertNotRegex(ci_triggers, r"(?m)^  push:\s*$")

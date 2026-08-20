@@ -29,14 +29,15 @@ knowledge change does.
 
 ## During feature and wiring work
 
-Every push to `main` runs `.github/workflows/preflight.yml`:
+Every pull request targeting `main` and every push to `main` runs
+`.github/workflows/preflight.yml`:
 
 - locked Cargo metadata without dependency compilation;
 - workspace formatting;
 - offline packaging, release, provider-parity, and lost-feature contracts;
 - checked-in shell syntax.
 
-The push preflight must not compile, link, or execute the Rust workspace. Each
+The PR/push preflight must not compile, link, or execute the Rust workspace. Each
 bounded implementation slice still receives targeted local/static verification
 and an independent code review before commit.
 
