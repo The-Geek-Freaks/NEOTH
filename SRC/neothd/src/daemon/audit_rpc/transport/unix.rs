@@ -288,9 +288,6 @@ pub(super) fn exchange_blocking(
     let mut response = Vec::with_capacity(max_response.min(8192));
     let mut chunk = [0_u8; 8192];
     loop {
-        stream
-            .set_read_timeout(Some(remaining(deadline)?))
-            .context("set audit-RPC Unix read timeout")?;
         let allowed = max_response
             .checked_add(1)
             .context("audit-RPC response bound overflow")?
@@ -299,9 +296,16 @@ pub(super) fn exchange_blocking(
             anyhow::bail!("audit-RPC response exceeds {max_response} bytes");
         }
         let read_limit = chunk.len().min(allowed);
-        let read = stream
-            .read(&mut chunk[..read_limit])
-            .context("read audit-RPC Unix response")?;
+        // Darwin can reject SO_RCVTIMEO for Unix-domain streams. Polling the
+        // same connected descriptor keeps the absolute exchange deadline
+        // without relying on that socket option; the following blocking read
+        // cannot wait for bytes because POLLIN/POLLHUP was observed first.
+        wait_for_read(stream.as_raw_fd(), deadline)?;
+        let read = match stream.read(&mut chunk[..read_limit]) {
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error).context("read audit-RPC Unix response"),
+        };
         if read == 0 {
             break;
         }
@@ -476,6 +480,82 @@ fn wait_for_connect(fd: RawFd, deadline: Instant) -> Result<()> {
                 .context("complete audit-RPC Unix connect");
         }
         return Ok(());
+    }
+}
+
+/// Wait for a response byte or EOF without using `SO_RCVTIMEO`. The stream is
+/// uniquely owned by the blocking health probe, so a successful readiness poll
+/// guarantees its subsequent read cannot block behind another consumer.
+fn wait_for_read(fd: RawFd, deadline: Instant) -> Result<()> {
+    loop {
+        let timeout = remaining(deadline)?;
+        let timeout_ms = i32::try_from(timeout.as_millis().clamp(1, i32::MAX as u128))
+            .context("audit-RPC Unix read timeout does not fit poll")?;
+        let mut poll_fd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: poll_fd points to one initialized pollfd for this live
+        // descriptor and the timeout is bounded by the caller deadline.
+        let ready = unsafe { libc::poll(&mut poll_fd, 1, timeout_ms) };
+        if ready < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            return Err(error).context("poll audit-RPC Unix response");
+        }
+        ensure!(ready != 0, "audit-RPC blocking exchange timed out");
+
+        let revents = poll_fd.revents;
+        ensure!(
+            revents & libc::POLLNVAL == 0,
+            "audit-RPC Unix response socket is invalid"
+        );
+        ensure!(
+            revents & libc::POLLERR == 0,
+            "audit-RPC Unix response socket reported an error"
+        );
+        if revents & (libc::POLLIN | libc::POLLHUP) != 0 {
+            return Ok(());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read as _, Write as _};
+    use std::os::fd::AsRawFd as _;
+
+    #[test]
+    fn read_poll_accepts_response_data_without_socket_read_timeouts() {
+        let (mut reader, mut writer) = StdUnixStream::pair().unwrap();
+        let writer_task = std::thread::spawn(move || {
+            writer.write_all(b"ok").unwrap();
+        });
+
+        wait_for_read(
+            reader.as_raw_fd(),
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap();
+        let mut response = [0_u8; 2];
+        reader.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"ok");
+        writer_task.join().unwrap();
+    }
+
+    #[test]
+    fn read_poll_fails_closed_when_the_absolute_deadline_expires() {
+        let (reader, _writer) = StdUnixStream::pair().unwrap();
+        let deadline = Instant::now() + Duration::from_millis(10);
+        let error = wait_for_read(reader.as_raw_fd(), deadline).unwrap_err();
+        assert!(
+            error.to_string().contains("timed out"),
+            "read readiness must fail closed at the exchange deadline: {error:#}"
+        );
     }
 }
 
