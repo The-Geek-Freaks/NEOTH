@@ -296,15 +296,17 @@ pub(crate) fn plan_delivery(
                 .gchat_service_account_json
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty());
-            let subscription = credentials
-                .gchat_subscription
-                .as_deref()
-                .and_then(|value| crate::channels::gchat::validate_subscription_resource(value).ok());
+            let subscription = credentials.gchat_subscription.as_deref().and_then(|value| {
+                crate::channels::gchat::validate_subscription_resource(value).ok()
+            });
             let allowed_sender = credentials
                 .gchat_allowed_sender
                 .as_deref()
-                .and_then(|value| crate::channels::gchat::validate_allowed_sender_resource(value).ok());
-            let space = dest.and_then(|value| crate::channels::gchat::validate_space_resource(value).ok());
+                .and_then(|value| {
+                    crate::channels::gchat::validate_allowed_sender_resource(value).ok()
+                });
+            let space =
+                dest.and_then(|value| crate::channels::gchat::validate_space_resource(value).ok());
             match (service_account, subscription, allowed_sender, space) {
                 (true, Some(_), Some(_), Some(space)) => DeliveryRoute::GoogleChat { space },
                 _ => DeliveryRoute::SidecarOnly,
@@ -693,7 +695,8 @@ async fn deliver_live_route(
                 .and_then(|value| {
                     crate::channels::gchat::validate_allowed_sender_resource(value).map_err(|_| {
                         LiveRouteError::AdapterConfiguration(
-                            "Google Chat proactive route has an invalid sender allowlist".to_string(),
+                            "Google Chat proactive route has an invalid sender allowlist"
+                                .to_string(),
                         )
                     })
                 })?;
@@ -703,16 +706,13 @@ async fn deliver_live_route(
                 )
             })?;
             let channel: Arc<dyn crate::channels::Channel> = Arc::new(
-                crate::channels::gchat::GChatChannel::new(
-                    Path::new(service_account),
-                    subscription,
-                )
-                .map_err(|_| {
-                    LiveRouteError::AdapterConfiguration(
-                        "construct Google Chat proactive adapter: rejected".to_string(),
-                    )
-                })?
-                .with_allowlist(Some(allowed_sender), writer.clone()),
+                crate::channels::gchat::GChatChannel::new(Path::new(service_account), subscription)
+                    .map_err(|_| {
+                        LiveRouteError::AdapterConfiguration(
+                            "construct Google Chat proactive adapter: rejected".to_string(),
+                        )
+                    })?
+                    .with_allowlist(Some(allowed_sender), writer.clone()),
             );
             execute!(&space, channel)
         }
@@ -1786,7 +1786,8 @@ mod tests {
             "a malformed sender allowlist must never arm GChat"
         );
         let mut invalid_destination = rt;
-        invalid_destination.destinations.gchat_space = Some("spaces/AAAA/messages/BBBB".to_string());
+        invalid_destination.destinations.gchat_space =
+            Some("spaces/AAAA/messages/BBBB".to_string());
         assert_eq!(
             plan_delivery(
                 "google_chat",

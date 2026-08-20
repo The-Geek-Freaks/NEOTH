@@ -518,8 +518,9 @@ impl Channel for GChatChannel {
         chat_id: &str,
         text: &str,
     ) -> std::result::Result<MessageId, ChannelError> {
-        let space = validate_space_resource(chat_id)
-            .map_err(|_| ChannelError::Transport("gchat send requires a canonical space".to_string()))?;
+        let space = validate_space_resource(chat_id).map_err(|_| {
+            ChannelError::Transport("gchat send requires a canonical space".to_string())
+        })?;
         self.post_text(&space, text).await
     }
 
@@ -599,9 +600,7 @@ mod tests {
             let key = dir.path().join(format!("poisoned-{index}.json"));
             std::fs::write(
                 &key,
-                format!(
-                    r#"{{"client_email":"b@p","private_key":"x","token_uri":"{token_uri}"}}"#
-                ),
+                format!(r#"{{"client_email":"b@p","private_key":"x","token_uri":"{token_uri}"}}"#),
             )
             .unwrap();
             let Err(err) = GChatChannel::new(&key, "projects/p/subscriptions/s") else {
@@ -658,7 +657,10 @@ mod tests {
 
     #[test]
     fn space_and_sender_resources_require_canonical_identity_names() {
-        assert_eq!(validate_space_resource("spaces/AAAA").unwrap(), "spaces/AAAA");
+        assert_eq!(
+            validate_space_resource("spaces/AAAA").unwrap(),
+            "spaces/AAAA"
+        );
         assert_eq!(
             validate_allowed_sender_resource("users/12345").unwrap(),
             "users/12345"
@@ -672,7 +674,10 @@ mod tests {
             assert!(validate_space_resource(invalid).is_err(), "{invalid}");
         }
         for invalid in [" users/12345", "users/", "users/123/extra", "users/123#x"] {
-            assert!(validate_allowed_sender_resource(invalid).is_err(), "{invalid}");
+            assert!(
+                validate_allowed_sender_resource(invalid).is_err(),
+                "{invalid}"
+            );
         }
     }
 
