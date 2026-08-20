@@ -604,7 +604,16 @@ impl ContextImportOperationLease {
         &self,
         commit: impl FnOnce() -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
-        let state = self.gate.state.lock().map_err(anyhow::Error::from)?;
+        let state = self
+            .gate
+            .state
+            .lock()
+            // `PoisonError<MutexGuard<_>>` is not Send, so never carry its
+            // guard into anyhow. The owned domain error preserves fail-closed
+            // behavior without leaking poisoned-lock internals.
+            .map_err(|_| {
+                anyhow::Error::from(ConnectorControlPlaneError::AuthorityPoisoned)
+            })?;
         if !state.accepting_leases
             || state.generation != self.generation
             || !state.active_operation_ids.contains(&self.operation_id)
@@ -1241,6 +1250,36 @@ mod tests {
             "each runtime operation must receive its own operation identity"
         );
         drop(next_runtime_lease);
+    }
+
+    #[test]
+    fn commit_permit_fails_closed_when_its_account_gate_is_poisoned() {
+        let plane = plane(ConnectorLifecycle::Active);
+        let instance = instance();
+        let authority = plane
+            .authorize_context_import(&session(), &instance)
+            .unwrap();
+        let lease = authority.acquire_context_import_operation_lease().unwrap();
+        let gate = Arc::clone(&lease.gate);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = gate
+                    .state
+                    .lock()
+                    .expect("fresh test gate must lock");
+                panic!("deliberately poison the account gate");
+            })
+            .join()
+            .is_err()
+        );
+
+        let error = lease
+            .with_context_import_commit_permit(|| -> anyhow::Result<()> { Ok(()) })
+            .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<ConnectorControlPlaneError>(),
+            Some(ConnectorControlPlaneError::AuthorityPoisoned)
+        ));
     }
 
     #[test]

@@ -1453,7 +1453,7 @@ fn append_event(
     let event_id = tx.last_insert_rowid();
     let (policy_revision, lifecycle_revision) = authority_revisions
         .map(|(policy, lifecycle)| {
-            Ok((
+            Ok::<_, anyhow::Error>((
                 Some(
                     i64::try_from(policy)
                         .map_err(|_| anyhow!("policy revision exceeds SQLite integer range"))?,

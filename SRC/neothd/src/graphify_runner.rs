@@ -14,7 +14,9 @@ use std::{
 };
 
 use ::anyhow::{Context, Result, bail};
-use tokio::{io::AsyncReadExt as _, process::Command, sync::Mutex};
+use tokio::{io::AsyncReadExt as _, sync::Mutex};
+#[cfg(any(not(target_os = "linux"), test))]
+use tokio::process::Command;
 
 // Process groups do not provide containment on Unix: a descendant can create
 // a new session with `setsid(2)` and escape a later group kill. Linux is

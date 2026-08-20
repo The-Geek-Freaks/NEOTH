@@ -1443,7 +1443,6 @@ struct PdfWorkerContainmentSetup {
 impl PdfWorkerContainmentSetup {
     fn configure(command: &mut tokio::process::Command) -> Result<Self, ExtractionError> {
         use std::os::fd::AsRawFd as _;
-        use std::os::unix::process::CommandExt as _;
 
         let (child_liveness_read_end, parent_liveness_lease) =
             create_macos_pdf_parent_liveness_lease().map_err(|error| ExtractionError::Backend {
