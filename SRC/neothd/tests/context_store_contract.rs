@@ -71,10 +71,15 @@ fn context_store_contract_enforces_typed_content_free_receipts_and_preflight_lim
 }
 
 #[test]
-fn context_store_contract_fails_closed_for_unsafe_paths_and_windows() {
+fn context_store_contract_fails_closed_for_unsafe_paths_and_unwired_windows_vfs() {
     let source = include_str!("../src/context_graph/mod.rs");
     assert!(source.contains("SQLITE_OPEN_NOFOLLOW"));
     assert!(source.contains("reject_database_sidecars(&path)?"));
     assert!(source.contains("context store parent must already exist and be private"));
-    assert!(source.contains("disabled on Windows pending strict DACL and reparse-point hardening"));
+    assert!(source.contains("fn open_windows_context_store_unwired"));
+    assert!(source.contains("capability-bound SQLite VFS"));
+    assert!(source.contains("identity-pinned context.db and WAL/SHM sidecars"));
+    assert!(source.contains("reject every reparse ancestor and leaf"));
+    assert!(source.contains("retain the appropriate no-delete handles through quota and"));
+    assert!(source.contains("Do not weaken this boundary into pre-open/post-open path checks"));
 }

@@ -286,17 +286,11 @@ pub struct ContextStore {
 
 impl ContextStore {
     /// Open an explicitly selected, instance-local `context.db`. No fallback
-    /// to HOME/USERPROFILE is permitted. Windows intentionally fails closed
-    /// until this subsystem has a strict parent-and-sidecar DACL primitive;
-    /// the existing WAL helper logs and swallows DACL errors, so it is not a
-    /// suitable security boundary for this database.
+    /// to HOME/USERPROFILE is permitted.
     pub fn open_at(path: impl AsRef<Path>, master_key: &WalMasterKey) -> Result<Self> {
         #[cfg(windows)]
         {
-            let _ = (path.as_ref(), master_key);
-            bail!(
-                "context graph store is disabled on Windows pending strict DACL and reparse-point hardening"
-            );
+            open_windows_context_store_unwired(path.as_ref(), master_key)
         }
         #[cfg(not(windows))]
         {
@@ -675,6 +669,36 @@ impl ContextStore {
         }
         recover_persisted_maintenance_generation(&mut self.conn, &self.path, generation)
     }
+}
+
+/// Windows is deliberately not a path-based implementation placeholder.
+///
+/// `win_native` now supplies process-token DACL and exact-handle identity
+/// primitives, and `skills::store` supplies capability-relative no-reparse
+/// traversal. Those primitives are necessary but not sufficient for SQLite:
+/// rusqlite's ordinary path VFS would resolve `context.db`, `context.db-wal`,
+/// and `context.db-shm` separately after the capability checks. That cannot
+/// prove that SQLite opened the same private, non-reparse objects whose DACLs,
+/// allocation quota, and recovery state were checked. Retaining a main-file
+/// handle alone is also insufficient because SQLite may create, replace, or
+/// reopen either sidecar later in the connection lifetime.
+///
+/// The future Windows implementation must therefore start with a dedicated
+/// capability-bound SQLite VFS (or equivalent reviewed SQLite handle API). It
+/// must open every database object below an already verified private parent,
+/// reject every reparse ancestor and leaf, bind stable file identity before and
+/// after SQLite use, retain the appropriate no-delete handles through quota and
+/// recovery, and fail the whole open if a main or sidecar DACL proof fails.
+/// Do not weaken this boundary into pre-open/post-open path checks.
+#[cfg(windows)]
+fn open_windows_context_store_unwired(
+    path: &Path,
+    master_key: &WalMasterKey,
+) -> Result<ContextStore> {
+    let _ = (path, master_key);
+    bail!(
+        "context graph store is disabled on Windows: a capability-bound SQLite VFS for private, identity-pinned context.db and WAL/SHM sidecars is not wired"
+    );
 }
 
 struct Scope {
@@ -2538,11 +2562,16 @@ mod windows_tests {
     use super::*;
 
     #[test]
-    fn context_store_fails_closed_until_strict_windows_storage_is_available() {
+    fn context_store_fails_closed_without_a_capability_bound_sqlite_vfs() {
         let home = crate::test_env::canonical_tempdir().unwrap();
-        let error = ContextStore::open_at(home.path().join("context.db"), test_master_key())
+        let path = home.path().join("context.db");
+        let error = ContextStore::open_at(&path, test_master_key())
             .err()
-            .expect("Windows context storage must remain unavailable without strict DACL support");
-        assert!(error.to_string().contains("disabled on Windows"));
+            .expect("Windows context storage must remain unavailable without a bound SQLite VFS");
+        assert!(error.to_string().contains("capability-bound SQLite VFS"));
+        assert!(
+            !path.exists(),
+            "the fail-closed Windows gate must not create context.db before it can bind SQLite's exact handles"
+        );
     }
 }
