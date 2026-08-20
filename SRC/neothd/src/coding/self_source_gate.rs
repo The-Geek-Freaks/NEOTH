@@ -63,10 +63,10 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use crate::cli::self_dev::SourceEditPreApplyPlan;
 use crate::coding::self_source::{
     SourceRoots, diff_line_count, diff_paths, diff_sha256, neoth_source_root,
 };
-use crate::cli::self_dev::SourceEditPreApplyPlan;
 use crate::coding::types::KanbanTaskId;
 use crate::coding::worktree::{
     PatchApplyOutcome, apply_patch_in_worktree, cleanup_worktree, create_task_worktree,
@@ -468,7 +468,8 @@ pub async fn run_gate_stack(
         if !exact_authoritative_path_set(plan.target_paths(), &real_paths) {
             let reason = format!(
                 "proposal-bound source edit path mismatch: reviewed {:?}, git resolved {:?}",
-                plan.target_paths(), real_paths
+                plan.target_paths(),
+                real_paths
             );
             audit.layer2_allowlist = LayerOutcome::Fail(reason.clone());
             let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &audit).await;

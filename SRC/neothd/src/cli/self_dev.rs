@@ -453,7 +453,8 @@ fn source_edit_receipt_path(home: &Path) -> PathBuf {
 }
 
 fn source_edit_transaction_path(home: &Path) -> PathBuf {
-    home.join("self_dev").join("source_edit_apply_transaction.json")
+    home.join("self_dev")
+        .join("source_edit_apply_transaction.json")
 }
 
 /// The self-edit journal has an authority independent from user-editable
@@ -461,10 +462,8 @@ fn source_edit_transaction_path(home: &Path) -> PathBuf {
 /// same hardened key storage used for WAL authentication. Losing this key is
 /// fail-closed: old journals cannot become trusted under a replacement key.
 fn source_edit_authority_key(home: &Path) -> Result<Vec<u8>> {
-    crate::wal::compaction::load_or_init_key(
-        &home.join("self_dev").join(SOURCE_EDIT_AUTH_KEY_FILE),
-    )
-    .context("load home-bound source-edit transaction authority")
+    crate::wal::compaction::load_or_init_key(&home.join("self_dev").join(SOURCE_EDIT_AUTH_KEY_FILE))
+        .context("load home-bound source-edit transaction authority")
 }
 
 fn source_edit_home_binding(home: &Path) -> Result<Vec<u8>> {
@@ -482,8 +481,8 @@ fn update_framed_hmac(mac: &mut HmacSha256, field: &[u8]) {
 fn source_edit_auth_tag(home: &Path, domain: &[u8], unsigned: &[u8]) -> Result<String> {
     let key = source_edit_authority_key(home)?;
     let home_binding = source_edit_home_binding(home)?;
-    let mut mac = HmacSha256::new_from_slice(&key)
-        .expect("HMAC-SHA256 accepts every authority key length");
+    let mut mac =
+        HmacSha256::new_from_slice(&key).expect("HMAC-SHA256 accepts every authority key length");
     update_framed_hmac(&mut mac, domain);
     update_framed_hmac(&mut mac, &home_binding);
     update_framed_hmac(&mut mac, unsigned);
@@ -647,7 +646,9 @@ fn ensure_source_edit_single_hard_link(file: &std::fs::File) -> Result<()> {
         // SAFETY: `file` owns the live nofollow-opened handle and `information`
         // is writable for the exact Windows structure size.
         anyhow::ensure!(
-            unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr()) } != 0,
+            unsafe {
+                GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr())
+            } != 0,
             "read no-follow source-edit leaf link count: {}",
             std::io::Error::last_os_error()
         );
@@ -693,9 +694,12 @@ fn open_source_edit_child_directory(parent: &Dir, name: &OsStr) -> Result<Dir> {
     #[cfg(not(any(unix, windows)))]
     anyhow::bail!("source-edit image evidence is unsupported without no-follow filesystem APIs");
 
-    let opened = parent
-        .open_with(name, &options)
-        .with_context(|| format!("open source-edit directory component {:?} without following links", name))?;
+    let opened = parent.open_with(name, &options).with_context(|| {
+        format!(
+            "open source-edit directory component {:?} without following links",
+            name
+        )
+    })?;
     let metadata = opened
         .metadata()
         .context("inspect opened source-edit directory component")?;
@@ -707,11 +711,7 @@ fn open_source_edit_child_directory(parent: &Dir, name: &OsStr) -> Result<Dir> {
     Ok(Dir::from_std_file(opened.into_std()))
 }
 
-fn read_source_edit_regular_leaf(
-    parent: &Dir,
-    name: &OsStr,
-    max_bytes: u64,
-) -> Result<Vec<u8>> {
+fn read_source_edit_regular_leaf(parent: &Dir, name: &OsStr, max_bytes: u64) -> Result<Vec<u8>> {
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
     #[cfg(unix)]
@@ -799,13 +799,19 @@ fn read_source_edit_path_nofollow(
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (source_root, relative);
-        anyhow::bail!("source-edit image evidence is unsupported without no-follow filesystem APIs");
+        anyhow::bail!(
+            "source-edit image evidence is unsupported without no-follow filesystem APIs"
+        );
     }
     #[cfg(any(unix, windows))]
     {
         let mut current = Dir::open_ambient_dir(source_root, cap_std::ambient_authority())
-            .with_context(|| format!("open canonical source-edit root {}", source_root.display()))?;
-        let root_metadata = current.dir_metadata().context("inspect source-edit root capability")?;
+            .with_context(|| {
+                format!("open canonical source-edit root {}", source_root.display())
+            })?;
+        let root_metadata = current
+            .dir_metadata()
+            .context("inspect source-edit root capability")?;
         anyhow::ensure!(
             root_metadata.is_dir() && !source_edit_metadata_is_link_like(&root_metadata),
             "source-edit root is a symlink, junction, reparse point, or non-directory"
@@ -822,7 +828,10 @@ fn read_source_edit_path_nofollow(
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                 Err(error) => {
                     return Err(error).with_context(|| {
-                        format!("inspect source-edit path component {:?} without following links", name)
+                        format!(
+                            "inspect source-edit path component {:?} without following links",
+                            name
+                        )
                     });
                 }
             };
@@ -863,16 +872,22 @@ fn source_edit_images_blocking(
         let relative = Path::new(path);
         anyhow::ensure!(
             relative.is_relative()
-                && relative.components().all(|component| matches!(component, Component::Normal(_))),
+                && relative
+                    .components()
+                    .all(|component| matches!(component, Component::Normal(_))),
             "unsafe source-edit target path `{path}`"
         );
         let remaining_bytes = SOURCE_EDIT_IMAGE_MAX_TOTAL_BYTES.saturating_sub(total_bytes);
-        anyhow::ensure!(remaining_bytes > 0, "source-edit evidence reached its total byte cap");
+        anyhow::ensure!(
+            remaining_bytes > 0,
+            "source-edit evidence reached its total byte cap"
+        );
         let max_bytes = SOURCE_EDIT_IMAGE_MAX_FILE_BYTES.min(remaining_bytes);
-        let (exists, bytes) = match read_source_edit_path_nofollow(&canonical_root, relative, max_bytes)? {
-            Some(bytes) => (true, bytes),
-            None => (false, Vec::new()),
-        };
+        let (exists, bytes) =
+            match read_source_edit_path_nofollow(&canonical_root, relative, max_bytes)? {
+                Some(bytes) => (true, bytes),
+                None => (false, Vec::new()),
+            };
         total_bytes = total_bytes
             .checked_add(u64::try_from(bytes.len()).context("convert source-edit image length")?)
             .context("source-edit evidence byte counter overflow")?;
@@ -965,15 +980,20 @@ fn save_source_edit_transaction(home: &Path, journal: &mut SourceEditApplyJourna
         &source_edit_journal_unsigned(journal)?,
     )?;
     let path = source_edit_transaction_path(home);
-    let bytes = serde_json::to_vec_pretty(journal).context("serialize source-edit apply journal")?;
+    let bytes =
+        serde_json::to_vec_pretty(journal).context("serialize source-edit apply journal")?;
     anyhow::ensure!(
         bytes.len() <= SOURCE_EDIT_TRANSACTION_MAX_BYTES,
         "source-edit apply journal exceeds its size limit"
     );
     crate::util::atomic_write::atomic_write_private(&path, &bytes)
         .with_context(|| format!("write source-edit apply journal {}", path.display()))?;
-    crate::util::atomic_write::sync_parent_directory_required(&path)
-        .with_context(|| format!("durably commit source-edit apply journal {}", path.display()))
+    crate::util::atomic_write::sync_parent_directory_required(&path).with_context(|| {
+        format!(
+            "durably commit source-edit apply journal {}",
+            path.display()
+        )
+    })
 }
 
 fn load_source_edit_transaction(home: &Path) -> Result<Option<SourceEditApplyJournal>> {
@@ -998,15 +1018,20 @@ fn load_source_edit_transaction(home: &Path) -> Result<Option<SourceEditApplyJou
             Ok(Some(journal))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error)
-            .with_context(|| format!("read source-edit apply journal {}", path.display())),
+        Err(error) => {
+            Err(error).with_context(|| format!("read source-edit apply journal {}", path.display()))
+        }
     }
 }
 
 fn remove_source_edit_transaction(home: &Path) -> Result<()> {
     let path = source_edit_transaction_path(home);
-    crate::util::atomic_write::durable_remove_file(&path)
-        .with_context(|| format!("durably remove source-edit apply journal {}", path.display()))
+    crate::util::atomic_write::durable_remove_file(&path).with_context(|| {
+        format!(
+            "durably remove source-edit apply journal {}",
+            path.display()
+        )
+    })
 }
 
 fn save_source_edit_receipt(home: &Path, receipt: &mut SourceEditApplyReceipt) -> Result<()> {
@@ -1040,9 +1065,8 @@ fn load_source_edit_receipt(home: &Path) -> Result<Option<SourceEditApplyReceipt
                 bytes.len() <= SOURCE_EDIT_RECEIPT_MAX_BYTES,
                 "source-edit apply receipt exceeds its size limit"
             );
-            let receipt: SourceEditApplyReceipt = serde_json::from_slice(&bytes).with_context(|| {
-                format!("parse source-edit apply receipt {}", path.display())
-            })?;
+            let receipt: SourceEditApplyReceipt = serde_json::from_slice(&bytes)
+                .with_context(|| format!("parse source-edit apply receipt {}", path.display()))?;
             anyhow::ensure!(
                 source_edit_auth_tag_matches(
                     home,
@@ -1498,15 +1522,20 @@ async fn validate_source_edit_contract_locked(
     let source_root = source_root.canonicalize().map_err(|error| {
         source_edit_contract_rejection(
             proposal_id,
-            format!("cannot resolve authoritative source root {}: {error}", source_root.display()),
+            format!(
+                "cannot resolve authoritative source root {}: {error}",
+                source_root.display()
+            ),
         )
     })?;
-    let base_images = source_edit_images(&source_root, &expected_paths).await.map_err(|error| {
-        source_edit_contract_rejection(
-            proposal_id,
-            format!("cannot snapshot reviewed source preimages: {error:#}"),
-        )
-    })?;
+    let base_images = source_edit_images(&source_root, &expected_paths)
+        .await
+        .map_err(|error| {
+            source_edit_contract_rejection(
+                proposal_id,
+                format!("cannot snapshot reviewed source preimages: {error:#}"),
+            )
+        })?;
     Ok(SourceEditProposalContract {
         proposal_id: proposal_id.to_owned(),
         proposal_sha256: proposal_sha256(&entry.proposal)?,
@@ -1523,7 +1552,10 @@ async fn validate_source_edit_contract_locked(
 /// `git apply`, and accepting based only on a tree comparison would be a false
 /// success. Only an authenticated `PostconditionProven` journal with exact
 /// images and a recorded WAL finalization may advance to a receipt.
-async fn recover_source_edit_transaction_locked(home: &Path, guard: &SelfDevStateGuard) -> Result<()> {
+async fn recover_source_edit_transaction_locked(
+    home: &Path,
+    guard: &SelfDevStateGuard,
+) -> Result<()> {
     let Some(journal) = load_source_edit_transaction(home).map_err(|error| {
         source_edit_receipt_recovery_error(
             "<unreadable-source-edit-journal>",
@@ -1547,7 +1579,9 @@ async fn recover_source_edit_transaction_locked(home: &Path, guard: &SelfDevStat
         .find(|entry| entry.proposal.id == journal.proposal_id)
         .ok_or_else(|| fail("journal references a missing proposal id".to_owned()))?;
     if proposal_sha256(&entry.proposal)? != journal.proposal_sha256 {
-        return Err(fail("journal proposal digest does not match stored proposal".to_owned()));
+        return Err(fail(
+            "journal proposal digest does not match stored proposal".to_owned(),
+        ));
     }
     let ProposalKind::SourceEdit {
         diff_sha256,
@@ -1555,14 +1589,23 @@ async fn recover_source_edit_transaction_locked(home: &Path, guard: &SelfDevStat
         ..
     } = &entry.proposal.kind
     else {
-        return Err(fail("journal proposal is not a SourceEdit proposal".to_owned()));
+        return Err(fail(
+            "journal proposal is not a SourceEdit proposal".to_owned(),
+        ));
     };
     let expected_paths = normalized_source_paths(target_paths);
     if journal.diff_sha256 != *diff_sha256 || journal.target_paths != expected_paths {
-        return Err(fail("journal diff or authoritative path set differs from proposal".to_owned()));
+        return Err(fail(
+            "journal diff or authoritative path set differs from proposal".to_owned(),
+        ));
     }
-    let current_images = source_edit_images(Path::new(&journal.source_root), &journal.target_paths).await
-        .map_err(|error| fail(format!("read current authoritative source images: {error:#}")))?;
+    let current_images = source_edit_images(Path::new(&journal.source_root), &journal.target_paths)
+        .await
+        .map_err(|error| {
+            fail(format!(
+                "read current authoritative source images: {error:#}"
+            ))
+        })?;
     match journal.phase {
         SourceEditTransactionPhase::Prepared => {
             if current_images == journal.base_images {
@@ -1676,7 +1719,8 @@ async fn recover_source_edit_receipt_locked(home: &Path, guard: &SelfDevStateGua
         ));
     }
     let source_root = PathBuf::from(&receipt.source_root);
-    let current_images = source_edit_images(&source_root, &receipt_paths).await
+    let current_images = source_edit_images(&source_root, &receipt_paths)
+        .await
         .map_err(|error| fail(format!("read receipt postimage paths: {error:#}")))?;
     if receipt.base_images.len() != receipt_paths.len()
         || receipt.post_images.len() != receipt_paths.len()
@@ -1801,12 +1845,14 @@ impl SourceEditApplyTransaction {
                 "gate outcome paths do not exactly equal reviewed proposal paths",
             ));
         }
-        let post_images = source_edit_images(&self.contract.source_root, &actual_paths).await.map_err(|error| {
-            source_edit_contract_rejection(
-                &self.contract.proposal_id,
-                format!("cannot read back exact postimage after source edit: {error:#}"),
-            )
-        })?;
+        let post_images = source_edit_images(&self.contract.source_root, &actual_paths)
+            .await
+            .map_err(|error| {
+                source_edit_contract_rejection(
+                    &self.contract.proposal_id,
+                    format!("cannot read back exact postimage after source edit: {error:#}"),
+                )
+            })?;
         self.journal.post_images = Some(post_images.clone());
         self.journal.phase = SourceEditTransactionPhase::PostconditionProven;
         self.journal.self_edit_audit_finalized = true;
@@ -2151,15 +2197,13 @@ async fn run_accept(
                 remove_effect_transaction(home)?;
                 return Err(SelfDevEffectTransactionError::PostconditionFailed {
                     proposal_id: id.to_owned(),
-                }
-                .into())
+                })
                 .context(format!("apply proposal effect for `{id}`: {error:#}"));
             }
             Ok(true) | Err(_) => {
                 return Err(SelfDevEffectTransactionError::RecoveryRequired {
                     proposal_id: id.to_owned(),
-                }
-                .into())
+                })
                 .context(format!("apply proposal effect for `{id}`: {error:#}"));
             }
         }
@@ -3268,7 +3312,9 @@ jobs:
         );
 
         let guard = acquire_self_dev_state_guard(dir.path()).await.unwrap();
-        recover_source_edit_receipt_locked(dir.path(), &guard).await.unwrap();
+        recover_source_edit_receipt_locked(dir.path(), &guard)
+            .await
+            .unwrap();
         drop(guard);
         assert_eq!(
             load_store(dir.path()).unwrap().entries[0].status,
@@ -3292,7 +3338,8 @@ jobs:
         );
         std::fs::write(&patch, diff).unwrap();
         let hash = format!("{:x}", Sha256::digest(diff.as_bytes()));
-        let proposal = source_edit_proposal("source_edit-postcondition-crash", patch.clone(), &hash);
+        let proposal =
+            source_edit_proposal("source_edit-postcondition-crash", patch.clone(), &hash);
         save_store_fixture(dir.path(), &store_with(proposal)).unwrap();
         let paths = vec!["src/cli/dummy.rs".to_owned()];
         let mut transaction = begin_source_edit_apply(
@@ -3315,12 +3362,20 @@ jobs:
         assert!(format!("{error:#}").contains("postcondition before receipt"));
         assert!(source_edit_transaction_path(dir.path()).exists());
         assert!(!source_edit_receipt_path(dir.path()).exists());
-        assert_eq!(load_store(dir.path()).unwrap().entries[0].status, ProposalStatus::Pending);
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Pending
+        );
 
         let guard = acquire_self_dev_state_guard(dir.path()).await.unwrap();
-        recover_source_edit_transaction_locked(dir.path(), &guard).await.unwrap();
+        recover_source_edit_transaction_locked(dir.path(), &guard)
+            .await
+            .unwrap();
         drop(guard);
-        assert_eq!(load_store(dir.path()).unwrap().entries[0].status, ProposalStatus::Accepted);
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Accepted
+        );
         assert!(!source_edit_transaction_path(dir.path()).exists());
     }
 
@@ -3335,18 +3390,18 @@ jobs:
         let paths = vec!["src/cli/dummy.rs".to_owned()];
         let images = source_edit_images(dir.path(), &paths).await.unwrap();
         let mut forged_receipt = SourceEditApplyReceipt {
-                version: SOURCE_EDIT_RECEIPT_VERSION,
-                proposal_id: "source_edit-forged-receipt".into(),
-                proposal_sha256: proposal_hash,
-                diff_sha256: "b".repeat(64),
-                source_root: dir.path().to_string_lossy().to_string(),
-                target_paths: paths,
-                base_images: images.clone(),
-                post_images: images,
-                self_edit_audit_finalized: true,
-                applied_at_unix: now_unix(),
-                auth_tag: String::new(),
-            };
+            version: SOURCE_EDIT_RECEIPT_VERSION,
+            proposal_id: "source_edit-forged-receipt".into(),
+            proposal_sha256: proposal_hash,
+            diff_sha256: "b".repeat(64),
+            source_root: dir.path().to_string_lossy().to_string(),
+            target_paths: paths,
+            base_images: images.clone(),
+            post_images: images,
+            self_edit_audit_finalized: true,
+            applied_at_unix: now_unix(),
+            auth_tag: String::new(),
+        };
         save_source_edit_receipt(dir.path(), &mut forged_receipt).unwrap();
 
         let guard = acquire_self_dev_state_guard(dir.path()).await.unwrap();
@@ -3400,7 +3455,10 @@ jobs:
             .expect_err("matching forged receipt must be rejected by HMAC");
         drop(guard);
         assert!(format!("{error:#}").contains("SELF_DEV_SOURCE_EDIT_RECEIPT_RECOVERY_REQUIRED"));
-        assert_eq!(load_store(dir.path()).unwrap().entries[0].status, ProposalStatus::Pending);
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Pending
+        );
     }
 
     #[tokio::test]
@@ -3443,7 +3501,10 @@ jobs:
             .expect_err("changed Applying tree is ambiguous, not Accepted");
         drop(guard);
         assert!(format!("{error:#}").contains("SELF_DEV_SOURCE_EDIT_RECEIPT_RECOVERY_REQUIRED"));
-        assert_eq!(load_store(dir.path()).unwrap().entries[0].status, ProposalStatus::Pending);
+        assert_eq!(
+            load_store(dir.path()).unwrap().entries[0].status,
+            ProposalStatus::Pending
+        );
     }
 
     #[cfg(unix)]
