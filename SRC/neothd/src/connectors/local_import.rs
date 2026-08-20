@@ -584,12 +584,16 @@ fn open_unix_absolute_root() -> Result<File, LocalImportError> {
 
 #[cfg(target_os = "linux")]
 fn directory_open_flags() -> libc::c_int {
-    libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC
+    // `openat2` rejects flag combinations which `openat` would merely
+    // ignore.  With `O_PATH`, only `O_CLOEXEC`, `O_DIRECTORY`, and
+    // `O_NOFOLLOW` are meaningful; the object itself is never opened, so
+    // omitting `O_NONBLOCK` cannot make a FIFO or device lookup block.
+    libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC
 }
 
 #[cfg(target_os = "linux")]
 fn leaf_open_flags() -> libc::c_int {
-    libc::O_PATH | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC
+    libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC
 }
 
 #[cfg(target_os = "linux")]
@@ -1515,6 +1519,14 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn openat2_resolution_contract_is_complete_and_fail_closed() {
+        let allowed_path_flags = libc::O_PATH
+            | libc::O_DIRECTORY
+            | libc::O_NOFOLLOW
+            | libc::O_CLOEXEC;
+        assert_eq!(directory_open_flags(), allowed_path_flags);
+        assert_eq!(leaf_open_flags(), allowed_path_flags & !libc::O_DIRECTORY);
+        assert_eq!(directory_open_flags() & libc::O_NONBLOCK, 0);
+        assert_eq!(leaf_open_flags() & libc::O_NONBLOCK, 0);
         assert_eq!(
             SECURE_ROOT_COMPONENT_RESOLVE,
             RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS
