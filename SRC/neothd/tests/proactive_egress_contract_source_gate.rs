@@ -1055,6 +1055,8 @@ fn every_live_route_uses_the_choke_point_and_keet_binds_raw_capability() {
         "async fn deliver_live_route(",
         "fn canonical_target_channel(",
     );
+    let route_code = rust_code_only(route);
+    let route = route_code.as_str();
     let live_route_arms = [
         "DeliveryRoute::Telegram",
         "DeliveryRoute::Slack",
@@ -1083,11 +1085,16 @@ fn every_live_route_uses_the_choke_point_and_keet_binds_raw_capability() {
             pair[0]
         );
     }
-    let google_chat_arm = between(
-        route,
-        "DeliveryRoute::GoogleChat",
-        "fn canonical_target_channel(",
-    );
+    let google_chat_start = route
+        .find("DeliveryRoute::GoogleChat")
+        .expect("Google Chat live-route arm");
+    let google_chat_open = route[google_chat_start..]
+        .find("=> {")
+        .map(|relative| google_chat_start + relative + "=> ".len())
+        .expect("Google Chat live-route arm body");
+    let google_chat_end = matching_rust_brace(route, google_chat_open)
+        .expect("complete Google Chat live-route arm body");
+    let google_chat_arm = &route[google_chat_start..=google_chat_end];
     assert!(
         google_chat_arm.contains("execute!("),
         "live proactive route bypasses durable choke point: DeliveryRoute::GoogleChat"

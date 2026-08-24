@@ -589,12 +589,14 @@ impl ContextImportOperationLease {
             && self.lifecycle_revision == lifecycle_revision
     }
 
-    /// Run one final ContextImport commit boundary while the exact account gate
-    /// remains locked. The gate lock begins before the closure and is released
-    /// only after its SQLite transaction and any paired outbox-ACK/delete have
-    /// returned. A pause/revoke/replacement must obtain this same gate before
-    /// it can retire and drain the generation, so it cannot complete between a
-    /// liveness check and the durable commit.
+    /// Admit one final ContextImport commit boundary against the exact account
+    /// gate. The gate lock is released after that linearized check, before the
+    /// closure runs. Because this method borrows the sole non-cloneable lease,
+    /// its operation ID and live count remain registered for the entire SQLite
+    /// transaction or paired outbox-ACK/delete. A pause, revoke, or replacement
+    /// which wins before the check rejects the commit; one which starts
+    /// afterwards must drain this live lease before it can complete or replace
+    /// the generation.
     ///
     /// This deliberately does not hold the broad control-plane mutex during
     /// SQLite or WAL work. The operation lease's live-count and this per-account
@@ -620,9 +622,8 @@ impl ContextImportOperationLease {
                 ConnectorControlPlaneError::AuthorityRetired,
             ));
         }
-        let result = commit();
         drop(state);
-        result
+        commit()
     }
 }
 
@@ -1121,7 +1122,10 @@ pub(crate) enum ConnectorControlPlaneError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, mpsc};
+    use std::{
+        sync::{Arc, mpsc},
+        time::{Duration, Instant},
+    };
 
     use super::*;
     use crate::connectors::{
@@ -1166,6 +1170,14 @@ mod tests {
 
     fn instance() -> ConnectorInstanceId {
         ConnectorInstanceId::accountless(ConnectorId::LocalImport)
+    }
+
+    fn wait_until(label: &str, mut ready: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ready() {
+            assert!(Instant::now() < deadline, "timed out waiting for {label}");
+            std::thread::yield_now();
+        }
     }
 
     #[test]
@@ -1328,6 +1340,7 @@ mod tests {
             .authorize_context_import(&session(), &instance)
             .unwrap();
         let lease = authority.acquire_context_import_operation_lease().unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
         let (retired_tx, retired_rx) = mpsc::channel();
         let probe_plane = Arc::clone(&plane);
         let probe_instance = instance.clone();
@@ -1336,24 +1349,61 @@ mod tests {
             .with_context_import_commit_permit(|| -> anyhow::Result<()> {
                 let retire_plane = Arc::clone(&probe_plane);
                 std::thread::spawn(move || {
+                    started_tx.send(()).unwrap();
                     retired_tx
                         .send(retire_plane.retire_account(&probe_instance))
                         .unwrap();
                 });
-                while !matches!(
+                started_rx
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("retirement worker must start");
+
+                wait_until("emergency retirement to close the account gate", || {
+                    match lease.gate.state.try_lock() {
+                        Ok(state) => !state.accepting_leases,
+                        Err(std::sync::TryLockError::WouldBlock) => false,
+                        Err(std::sync::TryLockError::Poisoned(_)) => {
+                            panic!("account gate was unexpectedly poisoned")
+                        }
+                    }
+                });
+                {
+                    let state = lease.gate.state.lock().unwrap();
+                    assert!(state.active_operation_ids.contains(&lease.operation_id));
+                    assert_eq!(state.live_leases, 1);
+                }
+
+                assert!(matches!(
                     probe_plane.authorize_context_import(&session(), &instance),
                     Err(ConnectorControlPlaneError::AuthorityRetired)
-                ) {
-                    std::thread::yield_now();
-                }
-                // The retire marker is set but it has released the plane lock
-                // before waiting on this permit's account gate.
+                ));
+                assert!(matches!(
+                    lease.ensure_live(),
+                    Err(ConnectorControlPlaneError::AuthorityRetired)
+                ));
+                assert!(matches!(
+                    authority.acquire_context_import_operation_lease(),
+                    Err(ConnectorControlPlaneError::AuthorityRetired)
+                ));
+                assert!(matches!(
+                    retired_rx.try_recv(),
+                    Err(mpsc::TryRecvError::Empty)
+                ));
+
                 probe_plane.status().map_err(anyhow::Error::from)?;
                 Ok(())
             })
             .unwrap();
+
+        assert!(matches!(
+            retired_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
         drop(lease);
-        retired_rx.recv().unwrap().unwrap();
+        retired_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("retirement must finish after the live lease drops")
+            .unwrap();
     }
 
     #[test]
@@ -1383,24 +1433,41 @@ mod tests {
         next.registered_accounts[0].lifecycle_revision = 12;
 
         let (started_tx, started_rx) = mpsc::channel();
+        let (transition_tx, transition_rx) = mpsc::channel();
         let transition_plane = Arc::clone(&plane);
-        let transition = std::thread::spawn(move || {
+        let transition_thread = std::thread::spawn(move || {
             started_tx.send(()).unwrap();
-            transition_plane.begin_durable_transition(next).unwrap()
+            transition_tx
+                .send(transition_plane.begin_durable_transition(next))
+                .unwrap();
         });
-        started_rx.recv().unwrap();
-        while !matches!(
-            plane.authorize_context_import(&session(), &instance),
-            Err(ConnectorControlPlaneError::TransitionInProgress)
-        ) {
-            std::thread::yield_now();
-        }
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("transition worker must start");
+        wait_until("transition admission to close", || {
+            match plane.state.try_lock() {
+                Ok(control) => control.transition_in_progress,
+                Err(std::sync::TryLockError::WouldBlock) => false,
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    panic!("control plane was unexpectedly poisoned")
+                }
+            }
+        });
+
         assert!(matches!(
-            lease.ensure_live(),
-            Err(ConnectorControlPlaneError::AuthorityRetired)
+            authority.acquire_context_import_operation_lease(),
+            Err(ConnectorControlPlaneError::TransitionInProgress)
+        ));
+        assert!(matches!(
+            transition_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
         ));
         drop(lease);
-        let transition = transition.join().unwrap();
+        let transition = transition_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("transition must finish after the existing lease drains")
+            .unwrap();
+        transition_thread.join().unwrap();
         drop(transition);
 
         // Publication did not happen, so Drop restores only fresh authorities

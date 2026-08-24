@@ -7,11 +7,15 @@ const STORE: &str = include_str!("../src/context_graph/mod.rs");
 
 #[test]
 fn runtime_is_private_plan_bound_and_effectively_one_shot() {
+    let compact_runtime = RUNTIME
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace())
+        .collect::<String>();
     assert!(RUNTIME.contains("pub(crate) struct RuntimeLocalImport"));
     assert!(!RUNTIME.contains("pub struct RuntimeLocalImport"));
     assert!(RUNTIME.contains("MAX_RETAINED_PLANS"));
     assert!(RUNTIME.contains("plan_ttl"));
-    assert!(RUNTIME.contains("plans.remove(&plan_id)"));
+    assert!(compact_runtime.contains("plans.remove(&plan_id)"));
     assert!(RUNTIME.contains("plan_id != confirm_plan_id"));
     assert!(RUNTIME.contains("source changed after planning"));
     assert!(RUNTIME.contains("purge_expired"));

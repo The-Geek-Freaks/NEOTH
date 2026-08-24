@@ -44,7 +44,32 @@ fn context_store_persists_only_scope_bound_pseudonyms() {
         );
     }
     assert!(source.contains("scope_key BLOB NOT NULL"));
-    assert!(!source.contains("account_id"));
+    let binding_start = source
+        .find("fn from_local_import_binding(")
+        .expect("local-import account binding must remain private");
+    let binding_end = binding_start
+        + source[binding_start..]
+            .find("\n    }\n}")
+            .expect("local-import account binding must have a complete body");
+    let binding = &source[binding_start..binding_end];
+    assert!(binding.contains("if let Some(account_id) = &instance_id.account_id"));
+    assert!(binding.contains("digest.update(account_id.as_str().as_bytes())"));
+    assert_eq!(
+        source.matches("account_id").count(),
+        binding.matches("account_id").count(),
+        "account_id may only participate in the private local-import binding hash"
+    );
+    let schema_start = source
+        .find("const EXPECTED_TABLE_SQL")
+        .expect("canonical context schema must remain explicit");
+    let schema_end = schema_start
+        + source[schema_start..]
+            .find("\n];")
+            .expect("canonical context schema must have a closed table list")
+        + "\n];".len();
+    let schema = &source[schema_start..schema_end];
+    assert!(source.contains("fn validate_schema("));
+    assert!(!schema.contains("account_id"));
     assert!(!source.contains("CREATE TABLE accounts"));
 }
 

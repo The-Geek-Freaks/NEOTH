@@ -944,7 +944,7 @@ fn verify_linux_graphify_address_family_denied(name: &str, domain: ::libc::c_int
         ::libc::socket(
             domain,
             ::libc::SOCK_STREAM | ::libc::SOCK_CLOEXEC,
-            0,
+            0
         )
     };
     if descriptor >= 0 {

@@ -52,7 +52,21 @@ fn operation_lease_and_durable_transition_stay_private_and_fail_closed() {
     assert!(CONTROL_PLANE.contains("ProjectionFailedClosed"));
     assert!(CONTROL_PLANE.contains("commit_context_connectors_if_matches"));
     assert!(CONTROL_PLANE.contains("fn with_context_import_commit_permit"));
-    assert!(CONTROL_PLANE.contains("let result = commit();\n        drop(state);"));
+    let permit_start = CONTROL_PLANE
+        .find("fn with_context_import_commit_permit")
+        .expect("commit permit must remain private");
+    let permit_end = permit_start
+        + CONTROL_PLANE[permit_start..]
+            .find("impl Drop for ContextImportOperationLease")
+            .expect("commit permit must end before lease Drop");
+    let permit = &CONTROL_PLANE[permit_start..permit_end];
+    let release = permit
+        .find("drop(state);")
+        .expect("commit permit must release the account gate");
+    let commit = permit
+        .rfind("commit()")
+        .expect("commit permit must invoke its closure");
+    assert!(release < commit, "account gate must release before commit closure");
     assert!(CONTROL_PLANE.contains("next_runtime_id: u64"));
     assert!(CONTROL_PLANE.contains("next_operation_id: u64"));
     assert!(CONTROL_PLANE.contains("active_operation_ids: BTreeSet<u64>"));
