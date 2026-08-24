@@ -36,6 +36,7 @@ pub mod operator_sovereignty;
 /// packages, fails open on a lookup error.
 pub mod osv_check;
 pub mod paperless_ingest;
+pub(crate) mod prompt_envelope;
 pub(crate) mod provider_subject;
 pub mod redact;
 pub mod refusal_abliterated;
