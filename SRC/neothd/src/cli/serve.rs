@@ -447,21 +447,96 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let daemon_pid_guard = pid_guard
         .as_mut()
         .context("normal daemon startup must retain its PID lock")?;
+    // This is the one nonce committed to the held PID lock.  The private
+    // connector-control endpoint derives its own domain-separated nonce from
+    // this value rather than competing for a second PID-file publication.
+    let audit_endpoint_nonce = uuid::Uuid::now_v7().simple().to_string();
     #[cfg(feature = "cluster")]
     let (audit_rpc_task, mut audit_rpc_guard) = crate::cli::serve_tasks::spawn_audit_rpc(
         &config,
         &neoth_home,
         &writer,
         daemon_pid_guard,
+        &audit_endpoint_nonce,
         std::sync::Arc::clone(&membership_controller),
     )
     .await
     .context("start daemon membership/audit RPC")?;
     #[cfg(not(feature = "cluster"))]
-    let (audit_rpc_task, mut audit_rpc_guard) =
-        crate::cli::serve_tasks::spawn_audit_rpc(&config, &neoth_home, &writer, daemon_pid_guard)
-            .await
-            .context("start mandatory daemon audit RPC")?;
+    let (audit_rpc_task, mut audit_rpc_guard) = crate::cli::serve_tasks::spawn_audit_rpc(
+        &config,
+        &neoth_home,
+        &writer,
+        daemon_pid_guard,
+        &audit_endpoint_nonce,
+    )
+    .await
+    .context("start mandatory daemon audit RPC")?;
+
+    #[cfg(unix)]
+    let connector_control_replay_enabled = config.context_connectors.enabled
+        && config.context_connectors.registered_accounts.iter().any(|account| {
+            account.configuration.connector_id == crate::connectors::ConnectorId::LocalImport
+                && account.lifecycle.admits_context_import()
+        });
+    #[cfg(unix)]
+    let connector_control_plane = Arc::new(
+        crate::connectors::control_plane::ConnectorControlPlane::from_config(
+            &config.context_connectors,
+        )
+        .context("construct private connector-control authority projection")?,
+    );
+    #[cfg(unix)]
+    let connector_control_subject =
+        crate::connectors::control_plane::rpc::daemon_subject_from_operator_id(
+            config.operator_id.as_deref(),
+            connector_control_replay_enabled,
+        )?;
+    #[cfg(unix)]
+    if connector_control_replay_enabled {
+        let replayed = crate::cli::serve_tasks::replay_connector_control_receipts_at_startup(
+            &neoth_home,
+            Arc::clone(&connector_control_plane),
+            connector_control_subject.clone(),
+            &writer,
+        )
+        .await
+        .context("recover pending connector-control Context Evidence before endpoint startup")?;
+        if replayed != 0 {
+            info!(
+                replayed,
+                "recovered pending authenticated Context Evidence receipts before connector-control RPC startup"
+            );
+        }
+    }
+    #[cfg(unix)]
+    let (connector_control_rpc_task, mut connector_control_rpc_guard) = {
+        let (task, guard) = crate::cli::serve_tasks::spawn_connector_control_rpc(
+            &neoth_home,
+            &audit_endpoint_nonce,
+            Arc::clone(&connector_control_plane),
+            connector_control_subject,
+            &writer,
+        )
+        .await
+        .context("start private connector-control RPC")?;
+        (Some(task), Some(guard))
+    };
+    #[cfg(not(unix))]
+    let (connector_control_rpc_task, mut connector_control_rpc_guard): (
+        Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+        Option<crate::connectors::control_plane::rpc::SidecarGuard>,
+    ) = {
+        // No TCP or generic local fallback. Windows remains deliberately
+        // unavailable until the CC-specific SID-attested named-pipe and the
+        // capability-bound ContextStore VFS land together; the Road item is
+        // visible here rather than silently pretending this authority exists.
+        warn!(
+            "private connector-control RPC unavailable on this platform; no weaker transport is enabled"
+        );
+        (None, None)
+    };
+    let connector_control_rpc_required = connector_control_rpc_task.is_some();
 
     // Recover consent authority before any runtime-service preflight constructs
     // a provider. A prepared or required-audit journal deliberately blocks
@@ -2171,6 +2246,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     };
 
     let mut audit_rpc_task = audit_rpc_task;
+    let mut connector_control_rpc_task = connector_control_rpc_task;
+    let mut connector_control_rpc_completed = false;
     let mut writer_join_result: Option<
         std::result::Result<Result<(), String>, tokio::task::JoinError>,
     > = None;
@@ -2230,12 +2307,40 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             crate::daemon::audit_rpc::remove_sidecar(&neoth_home);
             true
         }
+        result = async {
+            connector_control_rpc_task
+                .as_mut()
+                .expect("required connector-control listener task missing after startup")
+                .await
+        }, if connector_control_rpc_required => {
+            connector_control_rpc_completed = true;
+            match result {
+                Ok(Ok(())) => error!("private connector-control listener exited unexpectedly"),
+                Ok(Err(error)) => error!(
+                    %error,
+                    "private connector-control listener failed; treating authority boundary loss as fatal"
+                ),
+                Err(error) => error!(
+                    %error,
+                    "private connector-control listener panicked; treating authority boundary loss as fatal"
+                ),
+            }
+            connector_control_rpc_guard.take();
+            true
+        }
     };
     // Withdraw endpoint discovery at the shutdown decision, before hooks or
     // background drains can take time and before the OS endpoint can be
-    // substituted. The guard also aborts the listener; its JoinHandle remains
-    // in `BackgroundHandles` solely for ordered task collection.
+    // substituted. The CC guard cooperatively stops acceptance; its listener
+    // then joins every admitted operation before BackgroundHandles continues
+    // toward the WAL drain.
     audit_rpc_guard.take();
+    connector_control_rpc_guard.take();
+    if connector_control_rpc_completed {
+        // This JoinHandle was already polled to completion by the fatal select
+        // branch above. Never hand a completed Future to the later drain.
+        let _ = connector_control_rpc_task.take();
+    }
     restart_watcher.abort();
     let _ = restart_watcher.await;
     // Linearize generation-bound effect shutdown at the signal/fatal-boundary
@@ -2361,6 +2466,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         indexer_task,
         reload_task,
         audit_rpc_task,
+        connector_control_rpc_task,
         healthz_task,
         decay_task,
         gc_task,

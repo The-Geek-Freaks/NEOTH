@@ -352,6 +352,10 @@ pub enum ReloadRejectionReason {
     /// Enabling sovereign mode requires its explicit consent ceremony, but it
     /// does not require a daemon restart after that ceremony succeeds.
     SovereignBuddyCeremonyRequired,
+    /// Connector-control state is a durable authority projection, not a
+    /// tunable ArcSwap field.  Reloading it without the control-plane
+    /// transition would let live authority and `freedom.yaml` diverge.
+    ConnectorControlTransitionRequired,
 }
 
 impl ReloadRejectionReason {
@@ -362,6 +366,7 @@ impl ReloadRejectionReason {
             Self::ProviderKindChanged { .. } => "provider_kind_changed",
             Self::ProviderRuntimeChanged { .. } => "provider_runtime_changed",
             Self::SovereignBuddyCeremonyRequired => "sovereign_buddy_ceremony_required",
+            Self::ConnectorControlTransitionRequired => "context_connectors_transition_required",
         }
     }
 
@@ -373,6 +378,7 @@ impl ReloadRejectionReason {
             Self::OperatorIdChanged { .. }
                 | Self::ProviderKindChanged { .. }
                 | Self::ProviderRuntimeChanged { .. }
+                | Self::ConnectorControlTransitionRequired
         )
     }
 }
@@ -396,6 +402,10 @@ impl std::fmt::Display for ReloadRejectionReason {
             Self::SovereignBuddyCeremonyRequired => write!(
                 f,
                 "sovereign_buddy cannot be enabled via reload — run `neoth autonomy sovereign --enable` (consent ceremony required)"
+            ),
+            Self::ConnectorControlTransitionRequired => write!(
+                f,
+                "context_connectors cannot be hot-reloaded — restart NEOTH after the durable configuration update; a connector-aware in-process transition is not wired yet, so ArcSwap must not split from the authority projection"
             ),
         }
     }
@@ -733,6 +743,9 @@ fn validate_reload(old: &FreedomConfig, new: &FreedomConfig) -> Option<ReloadRej
     // De-escalation (true→false) through reload is always allowed.
     if new.sovereign_buddy && !old.sovereign_buddy {
         reasons.push(ReloadRejectionReason::SovereignBuddyCeremonyRequired);
+    }
+    if old.context_connectors != new.context_connectors {
+        reasons.push(ReloadRejectionReason::ConnectorControlTransitionRequired);
     }
     ReloadRejection::from_reasons(reasons)
 }
@@ -1119,6 +1132,25 @@ mod tests {
             &[ReloadRejectionReason::SovereignBuddyCeremonyRequired]
         );
         assert!(!rejection.restart_required());
+    }
+
+    #[test]
+    fn connector_control_config_cannot_bypass_its_durable_transition_via_reload() {
+        let old = fresh_config();
+        let mut new = old.clone();
+        new.context_connectors.enabled = !old.context_connectors.enabled;
+
+        let rejection = validate_reload(&old, &new)
+            .expect("connector control projection must never ArcSwap independently");
+        assert_eq!(
+            rejection.reasons(),
+            &[ReloadRejectionReason::ConnectorControlTransitionRequired]
+        );
+        assert!(rejection.restart_required());
+        assert_eq!(
+            rejection.reason_codes(),
+            ["context_connectors_transition_required"]
+        );
     }
 
     #[test]

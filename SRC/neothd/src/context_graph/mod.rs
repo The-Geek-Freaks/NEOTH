@@ -23,6 +23,7 @@ use hmac::{Hmac, Mac};
 use rusqlite::OpenFlags;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq as _;
 
 use crate::connectors::{
     ConnectorId, ConnectorInstanceId, SubjectId,
@@ -38,7 +39,11 @@ use crate::wal::crypto::{WalMasterKey, WalSegmentKey, decrypt_blob, encrypt_blob
 #[cfg(not(windows))]
 const APPLICATION_ID: i64 = 0x4e43_5432; // "NCT2"
 #[cfg(not(windows))]
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
+#[cfg(not(windows))]
+const SCHEMA_VERSION_V5: i64 = 5;
+#[cfg(not(windows))]
+const SCHEMA_VERSION_V6: i64 = 6;
 #[cfg(not(windows))]
 const CRYPTO_DOMAIN: &[u8] = b"neoth-context-graph-content-v1";
 #[cfg(not(windows))]
@@ -61,6 +66,7 @@ const MAX_OBJECTS_PER_SCOPE: i64 = 8192;
 const MAX_REVISIONS_PER_OBJECT: i64 = 4096;
 const MAX_CURSORS_PER_SCOPE: i64 = 512;
 const MAX_PENDING_AUDIT_ENTRIES: i64 = 4096;
+const MAX_CONTEXT_IMPORT_OUTCOMES_PER_SCOPE: i64 = 64;
 const MAX_EVENTS_PER_SCOPE: i64 = 65_536;
 const MAX_APPLIED_BATCHES_PER_SCOPE: i64 = MAX_EVENTS_PER_SCOPE;
 const ENCRYPTED_VALUE_OVERHEAD: i64 = 39; // ENC_MAGIC + nonce + GCM-SIV tag
@@ -245,6 +251,50 @@ pub enum AuditReceipt {
     ContextEvidenceStored,
 }
 
+/// Opaque RPC apply identity. Both values are generated outside the Store,
+/// but only keyed pseudonyms are persisted. Keeping the confirmation nonce in
+/// a separately domain-separated digest makes same-key/different-nonce reuse
+/// fail closed instead of aliasing a committed outcome.
+pub(crate) struct ContextImportApplyKey {
+    operation_key: [u8; 32],
+    confirmation_nonce: [u8; 32],
+}
+
+impl ContextImportApplyKey {
+    pub(crate) const fn new(
+        operation_key: [u8; 32],
+        confirmation_nonce: [u8; 32],
+    ) -> Self {
+        Self {
+            operation_key,
+            confirmation_nonce,
+        }
+    }
+}
+
+impl std::fmt::Debug for ContextImportApplyKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ContextImportApplyKey(<redacted>)")
+    }
+}
+
+/// Stable, content-free durable admission/result for one outer operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ContextImportApplyOutcome {
+    accepted: bool,
+    audit_pending: bool,
+}
+
+impl ContextImportApplyOutcome {
+    pub(crate) const fn accepted(self) -> bool {
+        self.accepted
+    }
+
+    pub(crate) const fn audit_pending(self) -> bool {
+        self.audit_pending
+    }
+}
+
 /// One local-import payload that can become only encrypted Evidence with fixed
 /// `UntrustedExternal`/Connector provenance. It does not expose object kind,
 /// trust class, receipt kind, or arbitrary source provenance to callers.
@@ -294,6 +344,25 @@ impl UntrustedExternalEvidenceBatch {
             content,
             evidence_binding,
         })
+    }
+}
+
+fn local_import_evidence_batch(evidence: UntrustedExternalEvidenceBatch) -> CommitBatch {
+    CommitBatch {
+        source_batch_key: evidence.batch_key,
+        operations: vec![ContextOperation::PutRevision {
+            source_key: evidence.mutation_key,
+            object: ObjectRef {
+                object_id: evidence.object_id,
+                object_kind: ObjectKind::Evidence,
+            },
+            content: evidence.content,
+            provenance: Provenance {
+                source_kind: ProvenanceKind::Connector,
+                source_ref: "untrusted_external:local_import".into(),
+            },
+            receipt: AuditReceipt::ContextEvidenceStored,
+        }],
     }
 }
 
@@ -473,6 +542,179 @@ impl ContextStore {
         self.commit_batch_with_limits(account, batch, DEFAULT_STORE_LIMITS)
     }
 
+    /// Reserve one bounded, content-free outer apply identity before any
+    /// Evidence effect. Pending and terminal rows share the same per-scope cap;
+    /// an already acknowledged oldest terminal row may be evicted to admit new
+    /// work. A pending receipt is never evicted. Live failures release their
+    /// exact reservation; after a process restart, the authenticated startup
+    /// replay path explicitly reclaims only this binding's account scope.
+    pub(crate) fn reserve_local_import_apply_outcome(
+        &mut self,
+        runtime_binding: &ContextImportRuntimeBinding,
+        lease: &ContextImportOperationLease,
+        key: &ContextImportApplyKey,
+    ) -> Result<ContextImportApplyOutcome> {
+        let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
+        let scope = self.scope(&account);
+        let digests = context_import_outcome_digests(
+            &scope,
+            &self.lookup_key,
+            runtime_binding,
+            key,
+        );
+        lease.with_context_import_commit_permit(|| {
+            let tx = self
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let now = Utc::now().timestamp_millis();
+            if let Some(outcome) = load_context_import_outcome(&tx, &scope, &digests)? {
+                tx.commit()?;
+                return Ok(outcome);
+            }
+            let scope_known: i64 = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM scopes WHERE scope_key=?1) OR EXISTS(SELECT 1 FROM context_import_outcomes WHERE scope_key=?1)",
+                [scope.key.as_slice()],
+                |row| row.get(0),
+            )?;
+            if scope_known == 0 {
+                let retained_scopes: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM (SELECT scope_key FROM scopes UNION SELECT scope_key FROM context_import_outcomes)",
+                    [],
+                    |row| row.get(0),
+                )?;
+                if retained_scopes >= MAX_SCOPES_PER_STORE {
+                    bail!("context store scope-count safety cap exceeded");
+                }
+            }
+            let retained: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM context_import_outcomes WHERE scope_key=?1",
+                [scope.key.as_slice()],
+                |row| row.get(0),
+            )?;
+            if retained > MAX_CONTEXT_IMPORT_OUTCOMES_PER_SCOPE {
+                bail!("context-import apply outcome capacity invariant is exceeded");
+            }
+            if retained == MAX_CONTEXT_IMPORT_OUTCOMES_PER_SCOPE
+                && tx.execute(
+                    "DELETE FROM context_import_outcomes WHERE rowid=(SELECT rowid FROM context_import_outcomes WHERE scope_key=?1 AND accepted=1 AND audit_pending=0 ORDER BY updated_at_ms,event_id LIMIT 1)",
+                    [scope.key.as_slice()],
+                )? != 1
+            {
+                bail!("context-import apply outcome capacity is exhausted");
+            }
+            ensure_context_import_outcome_reservation_store_limit(
+                &tx,
+                &self.path,
+                DEFAULT_STORE_LIMITS.max_bytes,
+            )?;
+            tx.execute(
+                "INSERT INTO context_import_outcomes(scope_key,outcome_key,binding_digest,confirmation_digest,accepted,audit_pending,event_id,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,0,0,NULL,?5,?5)",
+                params![
+                    scope.key.as_slice(),
+                    digests.outcome_key.as_slice(),
+                    digests.binding_digest.as_slice(),
+                    digests.confirmation_digest.as_slice(),
+                    now,
+                ],
+            )?;
+            tx.commit()?;
+            Ok(ContextImportApplyOutcome {
+                accepted: false,
+                audit_pending: false,
+            })
+        })
+    }
+
+    /// Remove only uncommitted reservations in the exact authenticated scope
+    /// during daemon restart recovery. No in-memory plan can survive that
+    /// process boundary, so these rows are unreachable; accepted outcomes and
+    /// audit receipts are never touched. This must run before RPC admission.
+    pub(crate) fn reclaim_uncommitted_local_import_apply_outcomes(
+        &mut self,
+        runtime_binding: &ContextImportRuntimeBinding,
+        lease: &ContextImportOperationLease,
+    ) -> Result<usize> {
+        let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
+        let scope = self.scope(&account);
+        lease.with_context_import_commit_permit(|| {
+            let tx = self
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let reclaimed = tx.execute(
+                "DELETE FROM context_import_outcomes WHERE scope_key=?1 AND accepted=0 AND audit_pending=0 AND event_id IS NULL",
+                [scope.key.as_slice()],
+            )?;
+            tx.commit()?;
+            Ok(reclaimed)
+        })
+    }
+
+    /// Release an uncommitted admission after planning or confirmation failed.
+    /// The exact keyed binding/nonce pair is required, accepted results are
+    /// immutable, and absence is an idempotent success for cleanup paths.
+    pub(crate) fn release_local_import_apply_outcome(
+        &mut self,
+        runtime_binding: &ContextImportRuntimeBinding,
+        lease: &ContextImportOperationLease,
+        key: &ContextImportApplyKey,
+    ) -> Result<()> {
+        let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
+        let scope = self.scope(&account);
+        let digests = context_import_outcome_digests(
+            &scope,
+            &self.lookup_key,
+            runtime_binding,
+            key,
+        );
+        lease.with_context_import_commit_permit(|| {
+            let tx = self
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let Some(outcome) = load_context_import_outcome(&tx, &scope, &digests)? else {
+                tx.commit()?;
+                return Ok(());
+            };
+            if outcome.accepted {
+                bail!("accepted context-import outcome cannot be released");
+            }
+            if tx.execute(
+                "DELETE FROM context_import_outcomes WHERE scope_key=?1 AND outcome_key=?2 AND binding_digest=?3 AND confirmation_digest=?4 AND accepted=0 AND audit_pending=0 AND event_id IS NULL",
+                params![
+                    scope.key.as_slice(),
+                    digests.outcome_key.as_slice(),
+                    digests.binding_digest.as_slice(),
+                    digests.confirmation_digest.as_slice(),
+                ],
+            )? != 1
+            {
+                bail!("context-import outcome reservation changed before release");
+            }
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
+    /// Query a retained apply result through the exact current account/runtime
+    /// binding. Only the two content-free booleans leave the Store.
+    pub(crate) fn query_local_import_apply_outcome(
+        &self,
+        runtime_binding: &ContextImportRuntimeBinding,
+        lease: &ContextImportOperationLease,
+        key: &ContextImportApplyKey,
+    ) -> Result<Option<ContextImportApplyOutcome>> {
+        let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
+        let scope = self.scope(&account);
+        let digests = context_import_outcome_digests(
+            &scope,
+            &self.lookup_key,
+            runtime_binding,
+            key,
+        );
+        lease.with_context_import_commit_permit(|| {
+            load_context_import_outcome(&self.conn, &scope, &digests)
+        })
+    }
+
     /// The sole Context Connector P0 write bridge. Caller-supplied binding
     /// values are assertions only: each must match the non-forgeable live
     /// lease. This fixes persisted semantics to `Evidence`, Connector
@@ -493,22 +735,7 @@ impl ContextStore {
         }
         let policy_revision = runtime_binding.policy_revision();
         let lifecycle_revision = runtime_binding.lifecycle_revision();
-        let batch = CommitBatch {
-            source_batch_key: evidence.batch_key,
-            operations: vec![ContextOperation::PutRevision {
-                source_key: evidence.mutation_key,
-                object: ObjectRef {
-                    object_id: evidence.object_id,
-                    object_kind: ObjectKind::Evidence,
-                },
-                content: evidence.content,
-                provenance: Provenance {
-                    source_kind: ProvenanceKind::Connector,
-                    source_ref: "untrusted_external:local_import".into(),
-                },
-                receipt: AuditReceipt::ContextEvidenceStored,
-            }],
-        };
+        let batch = local_import_evidence_batch(evidence);
         lease.with_context_import_commit_permit(|| {
             self.commit_batch_with_limits_and_context_evidence_receipt(
                 &account,
@@ -516,7 +743,57 @@ impl ContextStore {
                 DEFAULT_STORE_LIMITS,
                 true,
                 Some((policy_revision, lifecycle_revision)),
-            )
+                None,
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Atomically turn a prior outer-operation reservation into accepted
+    /// Evidence plus Event, outbox receipt, and durable apply outcome.
+    pub(crate) fn commit_local_import_evidence_with_outcome(
+        &mut self,
+        runtime_binding: &ContextImportRuntimeBinding,
+        lease: &ContextImportOperationLease,
+        key: &ContextImportApplyKey,
+        evidence: UntrustedExternalEvidenceBatch,
+    ) -> Result<ContextImportApplyOutcome> {
+        let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
+        if !evidence.evidence_binding.matches_runtime_binding(runtime_binding)
+            || !evidence.evidence_binding.matches_operation_lease(lease)
+        {
+            bail!("local-import evidence is not bound to this runtime pair");
+        }
+        let scope = self.scope(&account);
+        let digests = context_import_outcome_digests(
+            &scope,
+            &self.lookup_key,
+            runtime_binding,
+            key,
+        );
+        let mut batch = local_import_evidence_batch(evidence);
+        // The outer operation identity remains a durable no-duplicate marker
+        // even after its content-free result ages out of the bounded 64-row
+        // query window. `applied_batches` is retained under the larger
+        // fail-closed event cap, so an evicted key can never create a second
+        // Evidence/Event/outbox effect.
+        batch.source_batch_key = SourceKey::new(format!(
+            "context-import-outcome-{}",
+            hex_bytes(&digests.outcome_key),
+        ))?;
+        lease.with_context_import_commit_permit(|| {
+            self.commit_batch_with_limits_and_context_evidence_receipt(
+                &account,
+                &batch,
+                DEFAULT_STORE_LIMITS,
+                true,
+                Some((
+                    runtime_binding.policy_revision(),
+                    runtime_binding.lifecycle_revision(),
+                )),
+                Some(&digests),
+            )?
+            .ok_or_else(|| anyhow!("context-import outcome commit returned no durable outcome"))
         })
     }
 
@@ -555,11 +832,70 @@ impl ContextStore {
         if entry.receipt != AuditReceipt::ContextEvidenceStored {
             bail!("context import lease binding does not authorize this local-import commit");
         }
+        let scope = self.scope(&account);
+        let (committed_policy_revision, committed_lifecycle_revision) =
+            entry.context_evidence_revisions()?;
+        let binding_digest = context_import_binding_digest_for_revisions(
+            &scope,
+            &self.lookup_key,
+            committed_policy_revision,
+            committed_lifecycle_revision,
+        );
         lease.with_context_import_commit_permit(|| {
-            if self.conn.execute(
+            let tx = self
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let linked_outcome: Option<(Vec<u8>, i64, i64)> = tx
+                .query_row(
+                    "SELECT binding_digest,accepted,audit_pending FROM context_import_outcomes WHERE scope_key=?1 AND event_id=?2",
+                    params![scope.key.as_slice(), entry.row_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?;
+            if let Some((stored_binding, accepted, audit_pending)) = linked_outcome {
+                let stored_binding: [u8; 32] = stored_binding
+                    .try_into()
+                    .map_err(|_| anyhow!("context-import outcome has invalid binding digest"))?;
+                if !constant_time_digest_eq(&stored_binding, &binding_digest) || accepted != 1 {
+                    bail!("local-import audit outcome does not match this runtime binding");
+                }
+                if audit_pending == 0 {
+                    let still_pending = tx
+                        .query_row(
+                            "SELECT 1 FROM audit_outbox WHERE scope_key=?1 AND event_id=?2 AND receipt_code=?3",
+                            params![
+                                scope.key.as_slice(),
+                                entry.row_id,
+                                receipt_code(AuditReceipt::ContextEvidenceStored),
+                            ],
+                            |_| Ok(()),
+                        )
+                        .optional()?
+                        .is_some();
+                    if still_pending {
+                        bail!("acknowledged context-import outcome still has an outbox row");
+                    }
+                    tx.commit()?;
+                    return Ok(());
+                }
+                if audit_pending != 1
+                    || tx.execute(
+                        "UPDATE context_import_outcomes SET audit_pending=0,updated_at_ms=?3 WHERE scope_key=?1 AND event_id=?2 AND binding_digest=?4 AND accepted=1 AND audit_pending=1",
+                        params![
+                            scope.key.as_slice(),
+                            entry.row_id,
+                            Utc::now().timestamp_millis(),
+                            binding_digest.as_slice(),
+                        ],
+                    )? != 1
+                {
+                    bail!("local-import audit outcome changed before acknowledged replay");
+                }
+            }
+            if tx.execute(
                 "DELETE FROM audit_outbox WHERE scope_key=?1 AND event_id=?2 AND receipt_code=?3",
                 params![
-                    self.scope(&account).key.as_slice(),
+                    scope.key.as_slice(),
                     entry.row_id,
                     receipt_code(AuditReceipt::ContextEvidenceStored),
                 ],
@@ -567,6 +903,7 @@ impl ContextStore {
             {
                 bail!("local-import audit outbox entry changed before acknowledged replay");
             }
+            tx.commit()?;
             Ok(())
         })
     }
@@ -578,8 +915,14 @@ impl ContextStore {
         limits: StoreLimits,
     ) -> Result<()> {
         self.commit_batch_with_limits_and_context_evidence_receipt(
-            account, batch, limits, false, None,
-        )
+            account,
+            batch,
+            limits,
+            false,
+            None,
+            None,
+        )?;
+        Ok(())
     }
 
     fn commit_batch_with_limits_and_context_evidence_receipt(
@@ -589,14 +932,28 @@ impl ContextStore {
         limits: StoreLimits,
         permits_context_evidence_receipt: bool,
         authority_revisions: Option<(u64, u64)>,
-    ) -> Result<()> {
+        outcome_digests: Option<&ContextImportOutcomeDigests>,
+    ) -> Result<Option<ContextImportApplyOutcome>> {
         validate_batch(batch, permits_context_evidence_receipt)?;
         // Reject oversized / malformed payloads and exhausted account capacity
         // before acquiring SQLite's writer lock. Re-check under that lock below
         // so concurrent store handles cannot race the quota.
         let preflight = self.preflight(account, batch, limits)?;
         if preflight.batch_seen {
-            return Ok(());
+            return outcome_digests
+                .map(|digests| {
+                    let outcome = load_context_import_outcome(
+                        &self.conn,
+                        &self.scope(account),
+                        digests,
+                    )?
+                    .ok_or_else(|| anyhow!("applied context batch has no durable outcome"))?;
+                    if !outcome.accepted {
+                        bail!("applied context batch has only an uncommitted outcome reservation");
+                    }
+                    Ok::<_, anyhow::Error>(outcome)
+                })
+                .transpose();
         }
         let scope = self.scope(account);
         let batch_digest = scope.pseudonym(&self.lookup_key, b"batch", &batch.source_batch_key.0);
@@ -604,6 +961,16 @@ impl ContextStore {
             let tx = self
                 .conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if let Some(digests) = outcome_digests {
+                match load_context_import_outcome(&tx, &scope, digests)? {
+                    Some(outcome) if outcome.accepted => {
+                        tx.commit()?;
+                        return Ok(Some(outcome));
+                    }
+                    Some(_) => {}
+                    None => bail!("context-import outcome was not reserved before commit"),
+                }
+            }
             let batch_seen = tx
                 .query_row(
                     "SELECT 1 FROM applied_batches WHERE scope_key=?1 AND batch_key=?2 LIMIT 1",
@@ -614,7 +981,20 @@ impl ContextStore {
                 .is_some();
             if batch_seen {
                 tx.commit()?;
-                return Ok(());
+                return outcome_digests
+                    .map(|digests| {
+                        let outcome = load_context_import_outcome(
+                            &self.conn,
+                            &scope,
+                            digests,
+                        )?
+                        .ok_or_else(|| anyhow!("applied context batch has no durable outcome"))?;
+                        if !outcome.accepted {
+                            bail!("applied context batch has only an uncommitted outcome reservation");
+                        }
+                        Ok::<_, anyhow::Error>(outcome)
+                    })
+                    .transpose();
             }
             if let Some(generation) = maintenance_generation(&tx)? {
                 tx.rollback()?;
@@ -647,9 +1027,24 @@ impl ContextStore {
             // A fresh page containing only previously-claimed mutations is a
             // true no-op and retains neither a marker nor a batch-key row.
             if newly_claimed.is_empty() {
+                if outcome_digests.is_some() {
+                    bail!("context-import outcome cannot commit an already-claimed mutation");
+                }
                 tx.commit()?;
-                return Ok(());
+                return Ok(None);
             }
+            let outcome_mutation_key = if outcome_digests.is_some() {
+                if newly_claimed.len() != 1 {
+                    bail!("context-import outcome requires exactly one new Evidence mutation");
+                }
+                Some(scope.pseudonym(
+                    &self.lookup_key,
+                    b"mutation",
+                    &operation_source_key(newly_claimed[0]).0,
+                ))
+            } else {
+                None
+            };
 
             let now = Utc::now().timestamp_millis();
             tx.execute(
@@ -697,6 +1092,39 @@ impl ContextStore {
                 "INSERT INTO applied_batches(scope_key,batch_key,applied_at_ms) VALUES(?1,?2,?3)",
                 params![scope.key.as_slice(), batch_digest.as_slice(), now],
             )?;
+            let committed_outcome = if let Some(digests) = outcome_digests {
+                let mutation_key = outcome_mutation_key
+                    .ok_or_else(|| anyhow!("context-import outcome has no mutation key"))?;
+                let event_id: i64 = tx.query_row(
+                    "SELECT event_id FROM audit_outbox WHERE scope_key=?1 AND mutation_key=?2 AND receipt_code=?3",
+                    params![
+                        scope.key.as_slice(),
+                        mutation_key.as_slice(),
+                        receipt_code(AuditReceipt::ContextEvidenceStored),
+                    ],
+                    |row| row.get(0),
+                )?;
+                if tx.execute(
+                    "UPDATE context_import_outcomes SET accepted=1,audit_pending=1,event_id=?5,updated_at_ms=?6 WHERE scope_key=?1 AND outcome_key=?2 AND binding_digest=?3 AND confirmation_digest=?4 AND accepted=0 AND audit_pending=0 AND event_id IS NULL",
+                    params![
+                        scope.key.as_slice(),
+                        digests.outcome_key.as_slice(),
+                        digests.binding_digest.as_slice(),
+                        digests.confirmation_digest.as_slice(),
+                        event_id,
+                        now,
+                    ],
+                )? != 1
+                {
+                    bail!("context-import outcome reservation changed during commit");
+                }
+                Some(ContextImportApplyOutcome {
+                    accepted: true,
+                    audit_pending: true,
+                })
+            } else {
+                None
+            };
             tx.commit()?;
 
             #[cfg(test)]
@@ -708,7 +1136,7 @@ impl ContextStore {
             #[cfg(not(test))]
             let inject_failure = false;
             finish_committed_maintenance(&mut self.conn, &self.path, generation, inject_failure);
-            return Ok(());
+            return Ok(committed_outcome);
         }
         bail!("context store maintenance recovery retry limit exceeded")
     }
@@ -881,6 +1309,12 @@ impl ContextStore {
         sink: &mut dyn AuditReceiptSink,
     ) -> Result<usize> {
         let entries = self.pending_audit(account)?;
+        if entries
+            .iter()
+            .any(|entry| entry.receipt == AuditReceipt::ContextEvidenceStored)
+        {
+            bail!("ContextEvidence receipts require the exact runtime-bound replay path");
+        }
         let mut delivered = 0;
         for entry in entries {
             sink.deliver(&entry)?;
@@ -957,12 +1391,117 @@ impl Scope {
     }
 
     fn pseudonym(&self, lookup_key: &WalSegmentKey, domain: &[u8], value: &str) -> [u8; 32] {
+        self.binary_pseudonym(lookup_key, domain, value.as_bytes())
+    }
+
+    fn binary_pseudonym(
+        &self,
+        lookup_key: &WalSegmentKey,
+        domain: &[u8],
+        value: &[u8],
+    ) -> [u8; 32] {
         let mut data = Vec::with_capacity(self.key.len() + value.len() + 1);
         data.extend_from_slice(&self.key);
         data.push(0);
-        data.extend_from_slice(value.as_bytes());
+        data.extend_from_slice(value);
         keyed_pseudonym(lookup_key, domain, &data)
     }
+}
+
+struct ContextImportOutcomeDigests {
+    outcome_key: [u8; 32],
+    binding_digest: [u8; 32],
+    confirmation_digest: [u8; 32],
+}
+
+fn context_import_outcome_digests(
+    scope: &Scope,
+    lookup_key: &WalSegmentKey,
+    runtime_binding: &ContextImportRuntimeBinding,
+    key: &ContextImportApplyKey,
+) -> ContextImportOutcomeDigests {
+    let binding_digest = context_import_binding_digest(scope, lookup_key, runtime_binding);
+    ContextImportOutcomeDigests {
+        outcome_key: scope.binary_pseudonym(
+            lookup_key,
+            b"context-import-outcome-key",
+            &key.operation_key,
+        ),
+        binding_digest,
+        confirmation_digest: scope.binary_pseudonym(
+            lookup_key,
+            b"context-import-outcome-confirmation",
+            &key.confirmation_nonce,
+        ),
+    }
+}
+
+fn context_import_binding_digest(
+    scope: &Scope,
+    lookup_key: &WalSegmentKey,
+    runtime_binding: &ContextImportRuntimeBinding,
+) -> [u8; 32] {
+    context_import_binding_digest_for_revisions(
+        scope,
+        lookup_key,
+        runtime_binding.policy_revision(),
+        runtime_binding.lifecycle_revision(),
+    )
+}
+
+fn context_import_binding_digest_for_revisions(
+    scope: &Scope,
+    lookup_key: &WalSegmentKey,
+    policy_revision: u64,
+    lifecycle_revision: u64,
+) -> [u8; 32] {
+    let mut binding = Vec::with_capacity(16);
+    binding.extend_from_slice(&policy_revision.to_be_bytes());
+    binding.extend_from_slice(&lifecycle_revision.to_be_bytes());
+    scope.binary_pseudonym(
+        lookup_key,
+        b"context-import-outcome-binding",
+        &binding,
+    )
+}
+
+fn load_context_import_outcome(
+    conn: &Connection,
+    scope: &Scope,
+    expected: &ContextImportOutcomeDigests,
+) -> Result<Option<ContextImportApplyOutcome>> {
+    let row: Option<(Vec<u8>, Vec<u8>, i64, i64)> = conn
+        .query_row(
+            "SELECT binding_digest,confirmation_digest,accepted,audit_pending FROM context_import_outcomes WHERE scope_key=?1 AND outcome_key=?2",
+            params![scope.key.as_slice(), expected.outcome_key.as_slice()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    let Some((binding_digest, confirmation_digest, accepted, audit_pending)) = row else {
+        return Ok(None);
+    };
+    let binding_digest: [u8; 32] = binding_digest
+        .try_into()
+        .map_err(|_| anyhow!("context-import outcome has invalid binding digest"))?;
+    let confirmation_digest: [u8; 32] = confirmation_digest
+        .try_into()
+        .map_err(|_| anyhow!("context-import outcome has invalid confirmation digest"))?;
+    if !constant_time_digest_eq(&binding_digest, &expected.binding_digest)
+        || !constant_time_digest_eq(&confirmation_digest, &expected.confirmation_digest)
+    {
+        bail!("context-import outcome binding or confirmation does not match");
+    }
+    if !matches!(accepted, 0 | 1) || !matches!(audit_pending, 0 | 1) {
+        bail!("context-import outcome has an invalid durable state");
+    }
+    Ok(Some(ContextImportApplyOutcome {
+        accepted: accepted == 1,
+        audit_pending: audit_pending == 1,
+    }))
+}
+
+fn constant_time_digest_eq(left: &[u8; 32], right: &[u8; 32]) -> bool {
+    bool::from(left.ct_eq(right))
 }
 
 struct Preflight {
@@ -998,6 +1537,9 @@ fn audit_receipt_handle(
 }
 
 #[cfg(not(windows))]
+const CONTEXT_IMPORT_OUTCOME_SQL: &str = "CREATE TABLE context_import_outcomes (scope_key BLOB NOT NULL CHECK(length(scope_key)=32), outcome_key BLOB NOT NULL CHECK(length(outcome_key)=32), binding_digest BLOB NOT NULL CHECK(length(binding_digest)=32), confirmation_digest BLOB NOT NULL CHECK(length(confirmation_digest)=32), accepted INTEGER NOT NULL CHECK(accepted IN (0,1)), audit_pending INTEGER NOT NULL CHECK(audit_pending IN (0,1)), event_id INTEGER, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, CHECK((accepted=0 AND audit_pending=0 AND event_id IS NULL) OR (accepted=1 AND event_id IS NOT NULL)), PRIMARY KEY(scope_key,outcome_key), UNIQUE(event_id), FOREIGN KEY(event_id) REFERENCES events(event_id) ON DELETE RESTRICT)";
+
+#[cfg(not(windows))]
 const EXPECTED_TABLE_SQL: &[(&str, &str)] = &[
     (
         "applied_batches",
@@ -1010,6 +1552,10 @@ const EXPECTED_TABLE_SQL: &[(&str, &str)] = &[
     (
         "audit_outbox",
         "CREATE TABLE audit_outbox (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL, policy_revision INTEGER, lifecycle_revision INTEGER, CHECK((receipt_code=4 AND policy_revision IS NOT NULL AND policy_revision>0 AND lifecycle_revision IS NOT NULL AND lifecycle_revision>0) OR (receipt_code<>4 AND policy_revision IS NULL AND lifecycle_revision IS NULL)), FOREIGN KEY(event_id) REFERENCES events(event_id) ON DELETE CASCADE, UNIQUE(scope_key, mutation_key))",
+    ),
+    (
+        "context_import_outcomes",
+        CONTEXT_IMPORT_OUTCOME_SQL,
     ),
     (
         "cursors",
@@ -1092,12 +1638,13 @@ fn validate_or_initialize_schema(conn: &Connection, existing: bool) -> Result<()
             "context.db is corrupt, foreign, or has an unsupported schema version (application_id={app_id}, user_version={version})"
         );
     }
-    if existing && version == SCHEMA_VERSION - 1 {
+    let mut current_version = version;
+    if existing && current_version == SCHEMA_VERSION_V5 {
         // Validate the complete pre-upgrade database before `BEGIN IMMEDIATE`
         // can alter it.  A matching header is not evidence that a v5 file is
         // one of ours; in particular, a relaxed audit_outbox must fail closed.
         validate_v5_schema(conn)?;
-        conn.execute_batch(
+        conn.execute_batch(&format!(
             "BEGIN IMMEDIATE;
              CREATE TABLE audit_outbox_v5_backup (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL);
              INSERT INTO audit_outbox_v5_backup(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key) SELECT event_id,scope_key,receipt_code,occurred_at_ms,mutation_key FROM audit_outbox;
@@ -1105,10 +1652,20 @@ fn validate_or_initialize_schema(conn: &Connection, existing: bool) -> Result<()
              CREATE TABLE audit_outbox (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL, policy_revision INTEGER, lifecycle_revision INTEGER, CHECK((receipt_code=4 AND policy_revision IS NOT NULL AND policy_revision>0 AND lifecycle_revision IS NOT NULL AND lifecycle_revision>0) OR (receipt_code<>4 AND policy_revision IS NULL AND lifecycle_revision IS NULL)), FOREIGN KEY(event_id) REFERENCES events(event_id) ON DELETE CASCADE, UNIQUE(scope_key, mutation_key));
              INSERT INTO audit_outbox(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key) SELECT event_id,scope_key,receipt_code,occurred_at_ms,mutation_key FROM audit_outbox_v5_backup;
              DROP TABLE audit_outbox_v5_backup;
-             PRAGMA user_version=6;
-             COMMIT;",
-        )?;
-    } else if existing && version != SCHEMA_VERSION {
+             {CONTEXT_IMPORT_OUTCOME_SQL};
+             PRAGMA user_version={SCHEMA_VERSION};
+             COMMIT;"
+        ))?;
+        current_version = SCHEMA_VERSION;
+    }
+    if existing && current_version == SCHEMA_VERSION_V6 {
+        validate_v6_schema(conn)?;
+        conn.execute_batch(&format!(
+            "BEGIN IMMEDIATE; {CONTEXT_IMPORT_OUTCOME_SQL}; PRAGMA user_version={SCHEMA_VERSION}; COMMIT;"
+        ))?;
+        current_version = SCHEMA_VERSION;
+    }
+    if existing && current_version != SCHEMA_VERSION {
         bail!(
             "context.db is corrupt, foreign, or has an unsupported schema version (application_id={app_id}, user_version={version})"
         );
@@ -1175,13 +1732,51 @@ fn validate_schema(conn: &Connection) -> Result<()> {
     for (_, statement) in EXPECTED_TABLE_SQL {
         expected.execute(statement, [])?;
     }
-    validate_schema_against(conn, &expected)
+    validate_schema_against(conn, &expected)?;
+    validate_v6_or_later_audit_rows(conn)?;
+    validate_context_import_outcome_rows(conn)
+}
+
+#[cfg(not(windows))]
+fn validate_context_import_outcome_rows(conn: &Connection) -> Result<()> {
+    let invalid_link = conn
+        .query_row(
+            "SELECT 1 FROM context_import_outcomes AS outcome LEFT JOIN events AS stored_event ON stored_event.event_id=outcome.event_id LEFT JOIN audit_outbox AS pending_outbox ON pending_outbox.event_id=outcome.event_id WHERE length(outcome.scope_key)<>32 OR length(outcome.outcome_key)<>32 OR length(outcome.binding_digest)<>32 OR length(outcome.confirmation_digest)<>32 OR outcome.accepted NOT IN (0,1) OR outcome.audit_pending NOT IN (0,1) OR (outcome.accepted=1 AND (stored_event.event_id IS NULL OR stored_event.scope_key<>outcome.scope_key OR stored_event.receipt_code<>4 OR (outcome.audit_pending=1 AND (pending_outbox.event_id IS NULL OR pending_outbox.scope_key<>outcome.scope_key OR pending_outbox.mutation_key<>stored_event.mutation_key OR pending_outbox.receipt_code<>4 OR pending_outbox.occurred_at_ms<>stored_event.occurred_at_ms)) OR (outcome.audit_pending=0 AND pending_outbox.event_id IS NOT NULL))) OR (outcome.accepted=0 AND (outcome.audit_pending<>0 OR outcome.event_id IS NOT NULL)) LIMIT 1",
+            [],
+            |_| Ok(()),
+        )
+        .optional()?;
+    if invalid_link.is_some() {
+        bail!("context.db contains an invalid context-import outcome/event/outbox link");
+    }
+    let over_capacity = conn
+        .query_row(
+            "SELECT 1 FROM context_import_outcomes GROUP BY scope_key HAVING COUNT(*)>?1 LIMIT 1",
+            [MAX_CONTEXT_IMPORT_OUTCOMES_PER_SCOPE],
+            |_| Ok(()),
+        )
+        .optional()?;
+    if over_capacity.is_some() {
+        bail!("context.db context-import outcome capacity invariant is exceeded");
+    }
+    let retained_scopes: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM (SELECT scope_key FROM scopes UNION SELECT scope_key FROM context_import_outcomes)",
+        [],
+        |row| row.get(0),
+    )?;
+    if retained_scopes > MAX_SCOPES_PER_STORE {
+        bail!("context.db scope-count safety invariant is exceeded");
+    }
+    Ok(())
 }
 
 #[cfg(not(windows))]
 fn validate_v5_schema(conn: &Connection) -> Result<()> {
     let expected = Connection::open_in_memory()?;
     for (table_name, statement) in EXPECTED_TABLE_SQL {
+        if *table_name == "context_import_outcomes" {
+            continue;
+        }
         expected.execute(
             if *table_name == "audit_outbox" {
                 V5_AUDIT_OUTBOX_SQL
@@ -1192,15 +1787,67 @@ fn validate_v5_schema(conn: &Connection) -> Result<()> {
         )?;
     }
     validate_schema_against(conn, &expected)?;
-    let unsupported_receipt: Option<i64> = conn
+    validate_v5_audit_rows(conn)
+}
+
+#[cfg(not(windows))]
+fn validate_v6_schema(conn: &Connection) -> Result<()> {
+    let expected = Connection::open_in_memory()?;
+    for (table_name, statement) in EXPECTED_TABLE_SQL {
+        if *table_name != "context_import_outcomes" {
+            expected.execute(statement, [])?;
+        }
+    }
+    validate_schema_against(conn, &expected)?;
+    validate_v6_or_later_audit_rows(conn)
+}
+
+#[cfg(not(windows))]
+fn validate_v5_audit_rows(conn: &Connection) -> Result<()> {
+    let invalid_event = conn
         .query_row(
-            "SELECT receipt_code FROM audit_outbox WHERE receipt_code NOT IN (1,2,3) LIMIT 1",
+            "SELECT receipt_code FROM events WHERE receipt_code NOT IN (1,2,3) LIMIT 1",
             [],
-            |row| row.get(0),
+            |row| row.get::<_, i64>(0),
         )
         .optional()?;
-    if let Some(receipt_code) = unsupported_receipt {
-        bail!("context.db v5 audit outbox contains unsupported receipt code {receipt_code}");
+    if let Some(receipt_code) = invalid_event {
+        bail!("context.db v5 events contain unsupported receipt code {receipt_code}");
+    }
+    let invalid_link = conn
+        .query_row(
+            "SELECT 1 FROM audit_outbox AS pending JOIN events AS stored ON stored.event_id=pending.event_id WHERE pending.receipt_code NOT IN (1,2,3) OR pending.scope_key<>stored.scope_key OR pending.mutation_key<>stored.mutation_key OR pending.receipt_code<>stored.receipt_code OR pending.occurred_at_ms<>stored.occurred_at_ms LIMIT 1",
+            [],
+            |_| Ok(()),
+        )
+        .optional()?;
+    if invalid_link.is_some() {
+        bail!("context.db v5 contains an invalid audit-outbox/event link");
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn validate_v6_or_later_audit_rows(conn: &Connection) -> Result<()> {
+    let invalid_event = conn
+        .query_row(
+            "SELECT receipt_code FROM events WHERE receipt_code NOT IN (1,2,3,4) LIMIT 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    if let Some(receipt_code) = invalid_event {
+        bail!("context.db events contain unsupported receipt code {receipt_code}");
+    }
+    let invalid_link = conn
+        .query_row(
+            "SELECT 1 FROM audit_outbox AS pending JOIN events AS stored ON stored.event_id=pending.event_id WHERE pending.receipt_code NOT IN (1,2,3,4) OR pending.scope_key<>stored.scope_key OR pending.mutation_key<>stored.mutation_key OR pending.receipt_code<>stored.receipt_code OR pending.occurred_at_ms<>stored.occurred_at_ms OR (pending.receipt_code=4 AND (pending.policy_revision IS NULL OR pending.policy_revision<=0 OR pending.lifecycle_revision IS NULL OR pending.lifecycle_revision<=0)) OR (pending.receipt_code<>4 AND (pending.policy_revision IS NOT NULL OR pending.lifecycle_revision IS NOT NULL)) LIMIT 1",
+            [],
+            |_| Ok(()),
+        )
+        .optional()?;
+    if invalid_link.is_some() {
+        bail!("context.db contains an invalid audit-outbox/event link");
     }
     Ok(())
 }
@@ -1496,20 +2143,26 @@ fn ensure_store_limits_with(
         bail!("context store limits must be non-negative");
     }
 
-    let scope_exists = conn
-        .query_row(
-            "SELECT 1 FROM scopes WHERE scope_key=?1 LIMIT 1",
-            [scope.key.as_slice()],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some();
-    if !scope_exists {
-        let scopes: i64 = conn.query_row("SELECT COUNT(*) FROM scopes", [], |row| row.get(0))?;
+    let scope_known_for_cap: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM scopes WHERE scope_key=?1) OR EXISTS(SELECT 1 FROM context_import_outcomes WHERE scope_key=?1)",
+        [scope.key.as_slice()],
+        |row| row.get(0),
+    )?;
+    if !scope_known_for_cap {
+        let scopes: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM (SELECT scope_key FROM scopes UNION SELECT scope_key FROM context_import_outcomes)",
+            [],
+            |row| row.get(0),
+        )?;
         if scopes >= limits.max_scopes {
             bail!("context store scope-count safety cap exceeded");
         }
     }
+    let scope_row_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM scopes WHERE scope_key=?1)",
+        [scope.key.as_slice()],
+        |row| row.get(0),
+    )?;
 
     let page_count: i64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0))?;
     let page_size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
@@ -1520,10 +2173,41 @@ fn ensure_store_limits_with(
         .checked_mul(page_size)
         .ok_or_else(|| anyhow!("context store SQLite allocation overflows quota accounting"))?;
     let footprint = physical_store_footprint(database_path)?;
-    let database_growth = projected_store_growth(page_size, !scope_exists, operations)?;
+    let database_growth = projected_store_growth(page_size, !scope_row_exists, operations)?;
     let projected_growth = projected_database_and_pinned_wal_growth(database_growth, page_size)?;
     ensure_projected_store_bytes(logical_bytes, footprint, projected_growth, limits.max_bytes)?;
     Ok(())
+}
+
+/// Reserve pessimistic table/index and pinned-WAL growth for one content-free
+/// outcome row. Outcome-only scopes must not bypass the absolute Store size
+/// ceiling merely because no Evidence operation has been admitted yet.
+fn ensure_context_import_outcome_reservation_store_limit(
+    conn: &Connection,
+    database_path: &Path,
+    max_bytes: i64,
+) -> Result<()> {
+    if max_bytes < 0 {
+        bail!("context store byte limit must be non-negative");
+    }
+    let page_count: i64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+    let page_size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+    if page_count < 0 || page_size <= 0 {
+        bail!("context store returned invalid SQLite page accounting");
+    }
+    let logical_bytes = page_count
+        .checked_mul(page_size)
+        .ok_or_else(|| anyhow!("context store SQLite allocation overflows quota accounting"))?;
+    let outcome_growth = page_size
+        .checked_mul(PROJECTED_PAGES_PER_ROW)
+        .ok_or_else(|| anyhow!("context-import outcome growth overflows quota accounting"))?;
+    let projected_growth = projected_database_and_pinned_wal_growth(outcome_growth, page_size)?;
+    ensure_projected_store_bytes(
+        logical_bytes,
+        physical_store_footprint(database_path)?,
+        projected_growth,
+        max_bytes,
+    )
 }
 
 /// Reserve both possible destinations for every dirty page. With a pinned
@@ -2228,6 +2912,7 @@ fn test_master_key() -> &'static WalMasterKey {
 #[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
+    use crate::connectors::control_plane::test_context_import_runtime_fixture;
 
     fn store() -> ContextStore {
         let home = crate::test_env::canonical_tempdir().unwrap().keep();
@@ -2243,6 +2928,32 @@ mod tests {
         SourceKey::new(value).unwrap()
     }
 
+    fn apply_key(value: u8) -> ContextImportApplyKey {
+        ContextImportApplyKey::new([value; 32], [value.wrapping_add(1); 32])
+    }
+
+    fn local_import_binding(subject: &str) -> ContextImportRuntimeBinding {
+        test_context_import_runtime_fixture(
+            ConnectorInstanceId::accountless(ConnectorId::LocalImport),
+            SubjectId::new(subject).unwrap(),
+            7,
+            11,
+        )
+        .unwrap()
+    }
+
+    #[derive(Default)]
+    struct CountingAuditSink {
+        delivered: usize,
+    }
+
+    impl AuditReceiptSink for CountingAuditSink {
+        fn deliver(&mut self, _entry: &AuditOutboxEntry) -> Result<()> {
+            self.delivered += 1;
+            Ok(())
+        }
+    }
+
     fn v5_connection(path: &Path) -> Connection {
         let conn = Connection::open(path).unwrap();
         configure_connection(&conn).unwrap();
@@ -2251,6 +2962,9 @@ mod tests {
             .unwrap();
         assert!(journal_mode.eq_ignore_ascii_case("wal"));
         for (table_name, statement) in EXPECTED_TABLE_SQL {
+            if *table_name == "context_import_outcomes" {
+                continue;
+            }
             conn.execute(
                 if *table_name == "audit_outbox" {
                     V5_AUDIT_OUTBOX_SQL
@@ -2263,7 +2977,26 @@ mod tests {
         }
         conn.execute_batch(&format!(
             "PRAGMA application_id={APPLICATION_ID}; PRAGMA user_version={};",
-            SCHEMA_VERSION - 1,
+            SCHEMA_VERSION_V5,
+        ))
+        .unwrap();
+        conn
+    }
+
+    fn v6_connection(path: &Path) -> Connection {
+        let conn = Connection::open(path).unwrap();
+        configure_connection(&conn).unwrap();
+        let journal_mode: String = conn
+            .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
+            .unwrap();
+        assert!(journal_mode.eq_ignore_ascii_case("wal"));
+        for (table_name, statement) in EXPECTED_TABLE_SQL {
+            if *table_name != "context_import_outcomes" {
+                conn.execute(statement, []).unwrap();
+            }
+        }
+        conn.execute_batch(&format!(
+            "PRAGMA application_id={APPLICATION_ID}; PRAGMA user_version={SCHEMA_VERSION_V6};"
         ))
         .unwrap();
         conn
@@ -2319,7 +3052,7 @@ mod tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            SCHEMA_VERSION - 1
+            SCHEMA_VERSION_V5
         );
         let sql: String = conn
             .query_row(
@@ -2329,6 +3062,136 @@ mod tests {
             )
             .unwrap();
         assert!(!sql.contains("policy_revision"));
+    }
+
+    #[test]
+    fn malformed_v5_audit_link_is_rejected_before_migration_mutation() {
+        let home = crate::test_env::canonical_tempdir().unwrap().keep();
+        let path = home.join("context.db");
+        let conn = v5_connection(&path);
+        conn.execute(
+            "INSERT INTO events(scope_key,mutation_key,object_key,revision,receipt_code,occurred_at_ms) VALUES(?1,?2,NULL,NULL,1,0)",
+            params![&[7_u8; 32][..], &[8_u8; 32][..]],
+        )
+        .unwrap();
+        let event_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO audit_outbox(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key) VALUES(?1,?2,1,0,?3)",
+            params![event_id, &[7_u8; 32][..], &[9_u8; 32][..]],
+        )
+        .unwrap();
+
+        assert!(validate_or_initialize_schema(&conn, true).is_err());
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            SCHEMA_VERSION_V5
+        );
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='audit_outbox'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!sql.contains("policy_revision"));
+    }
+
+    #[test]
+    fn canonical_v6_migrates_to_v7_without_losing_pending_receipts() {
+        let home = crate::test_env::canonical_tempdir().unwrap().keep();
+        let path = home.join("context.db");
+        let conn = v6_connection(&path);
+        conn.execute(
+            "INSERT INTO events(scope_key,mutation_key,object_key,revision,receipt_code,occurred_at_ms) VALUES(?1,?2,NULL,NULL,4,0)",
+            params![&[17_u8; 32][..], &[18_u8; 32][..]],
+        )
+        .unwrap();
+        let event_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO audit_outbox(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key,policy_revision,lifecycle_revision) VALUES(?1,?2,4,0,?3,7,11)",
+            params![event_id, &[17_u8; 32][..], &[18_u8; 32][..]],
+        )
+        .unwrap();
+        validate_or_initialize_schema(&conn, true).unwrap();
+        validate_schema(&conn).unwrap();
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            SCHEMA_VERSION
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM audit_outbox", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM context_import_outcomes", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn malformed_v6_is_rejected_before_schema_or_data_mutation() {
+        let home = crate::test_env::canonical_tempdir().unwrap().keep();
+        let path = home.join("context.db");
+        let conn = v6_connection(&path);
+        conn.execute_batch("DROP TABLE audit_outbox; CREATE TABLE audit_outbox (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL, policy_revision INTEGER, lifecycle_revision INTEGER);")
+            .unwrap();
+        assert!(validate_or_initialize_schema(&conn, true).is_err());
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            SCHEMA_VERSION_V6
+        );
+        let outcome_table: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='context_import_outcomes'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert!(outcome_table.is_none());
+    }
+
+    #[test]
+    fn malformed_v6_receipt_data_is_rejected_before_migration_mutation() {
+        let home = crate::test_env::canonical_tempdir().unwrap().keep();
+        let path = home.join("context.db");
+        let conn = v6_connection(&path);
+        conn.execute(
+            "INSERT INTO events(scope_key,mutation_key,object_key,revision,receipt_code,occurred_at_ms) VALUES(?1,?2,NULL,NULL,999,0)",
+            params![&[27_u8; 32][..], &[28_u8; 32][..]],
+        )
+        .unwrap();
+        let event_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO audit_outbox(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key,policy_revision,lifecycle_revision) VALUES(?1,?2,999,0,?3,NULL,NULL)",
+            params![event_id, &[27_u8; 32][..], &[28_u8; 32][..]],
+        )
+        .unwrap();
+
+        assert!(validate_or_initialize_schema(&conn, true).is_err());
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            SCHEMA_VERSION_V6
+        );
+        let outcome_table: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='context_import_outcomes'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert!(outcome_table.is_none());
     }
 
     #[test]
@@ -2349,6 +3212,278 @@ mod tests {
             ).is_err());
         }
     }
+
+    #[test]
+    fn sixty_fifth_active_outcome_is_refused_before_evidence_or_outbox_mutation() {
+        let mut store = store();
+        let binding = local_import_binding("operator");
+        for value in 0_u8..64 {
+            let lease = binding
+                .acquire_context_import_operation_lease()
+                .unwrap();
+            let outcome = store
+                .reserve_local_import_apply_outcome(&binding, &lease, &apply_key(value))
+                .unwrap();
+            assert!(!outcome.accepted());
+        }
+        let lease = binding
+            .acquire_context_import_operation_lease()
+            .unwrap();
+        assert!(store
+            .reserve_local_import_apply_outcome(&binding, &lease, &apply_key(64))
+            .is_err());
+        assert_eq!(
+            store
+                .conn
+                .query_row("SELECT COUNT(*) FROM context_import_outcomes", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            64
+        );
+        assert_eq!(
+            store
+                .conn
+                .query_row("SELECT COUNT(*) FROM events", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store
+                .conn
+                .query_row("SELECT COUNT(*) FROM audit_outbox", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn generic_reopen_preserves_reservations_until_authenticated_startup_reclaim() {
+        let home = crate::test_env::canonical_tempdir().unwrap().keep();
+        let path = home.join("context.db");
+        let mut store = ContextStore::open_at(&path, test_master_key()).unwrap();
+        let binding = local_import_binding("operator");
+        for value in 0_u8..64 {
+            let lease = binding
+                .acquire_context_import_operation_lease()
+                .unwrap();
+            store
+                .reserve_local_import_apply_outcome(&binding, &lease, &apply_key(value))
+                .unwrap();
+        }
+        drop(store);
+
+        let mut reopened = ContextStore::open_at(&path, test_master_key()).unwrap();
+        assert_eq!(
+            reopened
+                .conn
+                .query_row("SELECT COUNT(*) FROM context_import_outcomes", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            64
+        );
+        let recovered_binding = local_import_binding("operator");
+        let lease = recovered_binding
+            .acquire_context_import_operation_lease()
+            .unwrap();
+        assert_eq!(
+            reopened
+                .reclaim_uncommitted_local_import_apply_outcomes(
+                    &recovered_binding,
+                    &lease,
+                )
+                .unwrap(),
+            64
+        );
+        let outcome = reopened
+            .reserve_local_import_apply_outcome(
+                &recovered_binding,
+                &lease,
+                &apply_key(64),
+            )
+            .unwrap();
+        assert!(!outcome.accepted());
+        assert_eq!(
+            reopened
+                .conn
+                .query_row("SELECT COUNT(*) FROM context_import_outcomes", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn context_import_outcome_schema_rejects_invalid_state_and_digest_shapes() {
+        let store = store();
+        assert!(store
+            .conn
+            .execute(
+                "INSERT INTO context_import_outcomes(scope_key,outcome_key,binding_digest,confirmation_digest,accepted,audit_pending,event_id,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,0,1,NULL,0,0)",
+                params![
+                    &[1_u8; 32][..],
+                    &[2_u8; 32][..],
+                    &[3_u8; 32][..],
+                    &[4_u8; 32][..],
+                ],
+            )
+            .is_err());
+        assert!(store
+            .conn
+            .execute(
+                "INSERT INTO context_import_outcomes(scope_key,outcome_key,binding_digest,confirmation_digest,accepted,audit_pending,event_id,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,0,0,NULL,0,0)",
+                params![
+                    &[1_u8; 31][..],
+                    &[2_u8; 32][..],
+                    &[3_u8; 32][..],
+                    &[4_u8; 32][..],
+                ],
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn context_import_outcome_validation_rejects_a_non_evidence_event_link() {
+        let store = store();
+        store
+            .conn
+            .execute(
+                "INSERT INTO events(scope_key,mutation_key,object_key,revision,receipt_code,occurred_at_ms) VALUES(?1,?2,NULL,NULL,1,0)",
+                params![&[11_u8; 32][..], &[12_u8; 32][..]],
+            )
+            .unwrap();
+        let event_id = store.conn.last_insert_rowid();
+        store
+            .conn
+            .execute(
+                "INSERT INTO context_import_outcomes(scope_key,outcome_key,binding_digest,confirmation_digest,accepted,audit_pending,event_id,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,1,0,?5,0,0)",
+                params![
+                    &[11_u8; 32][..],
+                    &[13_u8; 32][..],
+                    &[14_u8; 32][..],
+                    &[15_u8; 32][..],
+                    event_id,
+                ],
+            )
+            .unwrap();
+        assert!(validate_context_import_outcome_rows(&store.conn).is_err());
+    }
+
+    #[test]
+    fn context_import_outcome_validation_rejects_mismatched_outbox_mutation() {
+        let store = store();
+        store
+            .conn
+            .execute(
+                "INSERT INTO events(scope_key,mutation_key,object_key,revision,receipt_code,occurred_at_ms) VALUES(?1,?2,NULL,NULL,4,0)",
+                params![&[61_u8; 32][..], &[62_u8; 32][..]],
+            )
+            .unwrap();
+        let event_id = store.conn.last_insert_rowid();
+        store
+            .conn
+            .execute(
+                "INSERT INTO audit_outbox(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key,policy_revision,lifecycle_revision) VALUES(?1,?2,4,0,?3,7,11)",
+                params![event_id, &[61_u8; 32][..], &[63_u8; 32][..]],
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO context_import_outcomes(scope_key,outcome_key,binding_digest,confirmation_digest,accepted,audit_pending,event_id,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,1,1,?5,0,0)",
+                params![
+                    &[61_u8; 32][..],
+                    &[64_u8; 32][..],
+                    &[65_u8; 32][..],
+                    &[66_u8; 32][..],
+                    event_id,
+                ],
+            )
+            .unwrap();
+
+        assert!(validate_context_import_outcome_rows(&store.conn).is_err());
+        assert!(validate_v6_or_later_audit_rows(&store.conn).is_err());
+    }
+
+    #[test]
+    fn generic_audit_replay_cannot_ack_context_evidence() {
+        let mut store = store();
+        let account = account();
+        let scope = store.scope(&account);
+        store
+            .conn
+            .execute(
+                "INSERT INTO events(scope_key,mutation_key,object_key,revision,receipt_code,occurred_at_ms) VALUES(?1,?2,NULL,NULL,4,0)",
+                params![scope.key.as_slice(), &[42_u8; 32][..]],
+            )
+            .unwrap();
+        let event_id = store.conn.last_insert_rowid();
+        store
+            .conn
+            .execute(
+                "INSERT INTO audit_outbox(event_id,scope_key,receipt_code,occurred_at_ms,mutation_key,policy_revision,lifecycle_revision) VALUES(?1,?2,4,0,?3,7,11)",
+                params![event_id, scope.key.as_slice(), &[42_u8; 32][..]],
+            )
+            .unwrap();
+        let mut sink = CountingAuditSink::default();
+
+        assert!(store.replay_audit(&account, &mut sink).is_err());
+        assert_eq!(sink.delivered, 0);
+        assert_eq!(
+            store
+                .conn
+                .query_row("SELECT COUNT(*) FROM audit_outbox", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn generic_commit_counts_outcome_only_scopes_for_store_admission() {
+        let mut store = store();
+        let outcome_scope = store.scope(&other_account());
+        store
+            .conn
+            .execute(
+                "INSERT INTO context_import_outcomes(scope_key,outcome_key,binding_digest,confirmation_digest,accepted,audit_pending,event_id,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,0,0,NULL,0,0)",
+                params![
+                    outcome_scope.key.as_slice(),
+                    &[51_u8; 32][..],
+                    &[52_u8; 32][..],
+                    &[53_u8; 32][..],
+                ],
+            )
+            .unwrap();
+        let batch = CommitBatch {
+            source_batch_key: key("union-scope-cap-batch"),
+            operations: vec![put("union-scope-cap-mutation", b"bounded")],
+        };
+
+        assert!(store
+            .commit_batch_with_limits(
+                &account(),
+                &batch,
+                StoreLimits {
+                    max_scopes: 1,
+                    max_bytes: MAX_STORE_BYTES,
+                },
+            )
+            .is_err());
+        assert_eq!(
+            store
+                .conn
+                .query_row("SELECT COUNT(*) FROM scopes", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
     fn put(source_key: &str, content: &[u8]) -> ContextOperation {
         ContextOperation::PutRevision {
             source_key: key(source_key),

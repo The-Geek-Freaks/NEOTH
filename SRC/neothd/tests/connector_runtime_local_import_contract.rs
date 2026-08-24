@@ -1,5 +1,5 @@
 //! GOLD-CC-RUNTIME-P0 source contracts. Functional tests live with the
-//! crate-private runtime because no production session issuer/RPC exists yet.
+//! crate-private runtime and Store so the private RPC can use a closed surface.
 
 use syn::{BinOp, Expr, ExprMethodCall, Member, Stmt, UnOp};
 
@@ -164,6 +164,7 @@ fn runtime_is_private_plan_bound_and_effectively_one_shot() {
         RUNTIME
             .contains("LocalImportPolicy::default_bounded(self.runtime_binding.policy_revision())")
     );
+    assert!(compact_runtime.contains("self.capability.binding_matches("));
     let runtime = syn::parse_file(RUNTIME).expect("runtime source must remain valid Rust syntax");
     let acquire_methods = runtime
         .items
@@ -266,4 +267,80 @@ fn store_bridge_is_exactly_untrusted_connector_evidence_and_outbox_backed() {
     let deliver = RUNTIME.find("adapter.deliver(&entry)").unwrap();
     let acknowledge = RUNTIME.find("acknowledge_local_import_audit").unwrap();
     assert!(reserve < deliver && deliver < acknowledge);
+}
+
+#[test]
+fn restart_replay_is_binding_and_store_only() {
+    let start = RUNTIME.find("pub(crate) struct ContextEvidenceReplayRuntime").unwrap();
+    let end = start + RUNTIME[start..].find("#[cfg(all(test, not(windows)))]").unwrap();
+    let replay = &RUNTIME[start..end];
+    assert!(replay.contains("runtime_binding: ContextImportRuntimeBinding"));
+    assert!(replay.contains("store: ContextStore"));
+    assert!(replay.contains("pub(crate) fn replay_receipts"));
+    assert!(replay.contains("pub(crate) fn reclaim_uncommitted_apply_outcomes"));
+    assert!(replay.contains("reserve_local_import_audit"));
+    assert!(replay.contains("acknowledge_local_import_audit"));
+    assert!(!replay.contains("OperatorImportCapability"));
+    assert!(!replay.contains("LocalImportPlan"));
+    assert!(!replay.contains("selected_relative_path"));
+}
+
+#[test]
+fn outer_apply_outcome_is_bounded_opaque_and_atomically_committed() {
+    for required in [
+        "pub(crate) struct ContextImportApplyKey",
+        "pub(crate) struct ContextImportApplyOutcome",
+        "pub(crate) fn reserve_local_import_apply_outcome",
+        "pub(crate) fn query_local_import_apply_outcome",
+        "pub(crate) fn release_local_import_apply_outcome",
+        "pub(crate) fn commit_local_import_evidence_with_outcome",
+        "const SCHEMA_VERSION: i64 = 7",
+        "context_import_outcomes",
+        "MAX_CONTEXT_IMPORT_OUTCOMES_PER_SCOPE",
+        "reclaim_uncommitted_local_import_apply_outcomes",
+        "context-import-outcome-key",
+        "context-import-outcome-binding",
+        "context-import-outcome-confirmation",
+        "context-import-outcome-{}",
+    ] {
+        assert!(STORE.contains(required), "missing durable outcome invariant: {required}");
+    }
+    for required in [
+        "pub(crate) fn reserve_apply_outcome",
+        "pub(crate) fn query_apply_outcome",
+        "pub(crate) fn release_apply_outcome",
+        "pub(crate) fn confirm_import_with_outcome",
+    ] {
+        assert!(RUNTIME.contains(required), "missing runtime outcome API: {required}");
+    }
+    let start = STORE
+        .find("pub(crate) struct ContextImportApplyOutcome")
+        .unwrap();
+    let end = start + STORE[start..].find("impl ContextImportApplyOutcome").unwrap();
+    let outcome = &STORE[start..end];
+    assert!(outcome.contains("accepted: bool"));
+    assert!(outcome.contains("audit_pending: bool"));
+    for forbidden in ["path", "content", "plan", "source_ref", "object_id"] {
+        assert!(!outcome.contains(forbidden), "outcome must not contain {forbidden}");
+    }
+    assert!(STORE.contains(
+        "ContextEvidence receipts require the exact runtime-bound replay path"
+    ));
+}
+
+#[test]
+fn wal_ack_flips_outcome_and_deletes_outbox_in_one_permitted_transaction() {
+    let start = STORE
+        .find("pub(crate) fn acknowledge_local_import_audit")
+        .unwrap();
+    let end = start + STORE[start..].find("fn commit_batch_with_limits(").unwrap();
+    let acknowledge = &STORE[start..end];
+    assert!(acknowledge.contains("with_context_import_commit_permit"));
+    assert!(acknowledge.contains("TransactionBehavior::Immediate"));
+    let flip = acknowledge
+        .find("UPDATE context_import_outcomes SET audit_pending=0")
+        .unwrap();
+    let delete = acknowledge.find("DELETE FROM audit_outbox").unwrap();
+    let commit = acknowledge.rfind("tx.commit()?").unwrap();
+    assert!(flip < delete && delete < commit);
 }

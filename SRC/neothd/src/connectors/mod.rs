@@ -1,9 +1,10 @@
 //! Typed, fail-closed connector control-plane contracts.
 //!
-//! This module deliberately stops at descriptor, configuration, and policy
-//! admission.  It does not perform sync, execute actions, dispatch MCP tools,
-//! install software, or read credentials.  Those effectful seams must be
-//! added as later, separately-gated slices.
+//! The public connector surface deliberately stops at descriptor,
+//! configuration, and policy admission. Its private Unix/macOS child runtime
+//! additionally owns the separately-gated LocalImport/ContextStore/WAL RPC
+//! vertical; it exposes no public sync/action/MCP/credential capability.
+//! Windows remains unavailable until its SID-pipe/VFS Road slice lands.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -11,8 +12,10 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-// GOLD-CC-01 — deliberately non-effectful until a future authenticated local
-// control transport can own session issuance and atomic config replacement.
+// GOLD-CC-01 authority root. The Unix/macOS private same-user RPC is a child
+// of this module and owns the only daemon-derived session construction; no
+// public connector API or arbitrary session issuer is exposed here. Windows
+// remains explicitly unavailable pending its separate SID-pipe/VFS Road slice.
 #[allow(dead_code)]
 pub(crate) mod control_plane;
 pub mod control_state;
@@ -27,8 +30,9 @@ pub mod control_state;
 // unissued types from forcing a premature public or runtime-facing export.
 #[allow(dead_code)]
 pub(crate) mod local_import;
-// CC-RUNTIME-P0 remains crate-private until an authenticated same-user RPC
-// can own session issuance, durable config publication, and recovery startup.
+// CC-RUNTIME-P0 remains crate-private. Unix/macOS wires it only through the
+// authenticated same-user control RPC, including bounded startup receipt
+// recovery; Windows remains unavailable pending the SID-pipe/VFS Road slice.
 #[allow(dead_code)]
 mod obsidian;
 #[allow(dead_code)]

@@ -1,11 +1,12 @@
-//! CC-RUNTIME-P0's intentionally un-wired local-import coordinator.
+//! CC-RUNTIME-P0's crate-private local-import coordinator.
 //!
-//! This is a crate-private bridge between a non-live CC-01 runtime binding,
-//! the capability-relative LocalImport reader, the encrypted ContextStore and
-//! its durable receipt outbox. It is not a daemon, RPC handler, CLI command,
-//! scheduler, provider, message-transport, action, or MCP surface. Each
-//! effect acquires and drops a fresh short-lived operation lease; idle runtime
-//! objects therefore cannot block retirement.
+//! The authenticated same-user Connector-Control RPC is its sole live owner.
+//! This module bridges a daemon-derived CC-01 runtime binding, the
+//! capability-relative LocalImport reader, the encrypted ContextStore and its
+//! durable receipt outbox. It is not itself a daemon, RPC handler, CLI command,
+//! scheduler, provider, message transport, action, or MCP surface. Each effect
+//! acquires and drops a fresh short-lived operation lease; idle runtime objects
+//! therefore cannot block retirement.
 
 use std::{
     collections::BTreeMap,
@@ -22,8 +23,8 @@ use crate::{
         },
     },
     context_graph::{
-        AuditOutboxEntry, AuditReceipt, AuditReceiptSink, ContextStore,
-        UntrustedExternalEvidenceBatch,
+        AuditOutboxEntry, AuditReceipt, AuditReceiptSink, ContextImportApplyKey,
+        ContextImportApplyOutcome, ContextStore, UntrustedExternalEvidenceBatch,
     },
     wal::events::{ContextEvidenceReceipt, ContextEvidenceReceiptKind},
 };
@@ -32,8 +33,9 @@ use anyhow::{Result, anyhow, bail};
 const MAX_RETAINED_PLANS: usize = 64;
 const DEFAULT_PLAN_TTL: Duration = Duration::from_secs(5 * 60);
 
-/// The only P0 WAL seam. The caller supplies a real WAL adapter later; this
-/// coordinator deliberately knows neither WAL paths nor writer handles.
+/// The only P0 WAL seam. The live RPC/startup owner supplies the daemon WAL
+/// adapter; this coordinator deliberately knows neither WAL paths nor writer
+/// handles.
 pub(crate) trait ContextEvidenceWalSink {
     /// Persist this opaque handle at most once. A duplicate handle is a
     /// successful acknowledgement, allowing DB-success/WAL-crash recovery
@@ -123,6 +125,42 @@ impl RuntimeLocalImport {
         Ok(id)
     }
 
+    /// Reserve the bounded, durable outer-operation identity before the
+    /// capability-relative reader observes the selected source. This is
+    /// intentionally separate from `plan_import`: RPC admission must consume
+    /// store capacity before any source read or retained in-memory plan.
+    pub(crate) fn reserve_apply_outcome(
+        &mut self,
+        key: &ContextImportApplyKey,
+    ) -> Result<ContextImportApplyOutcome> {
+        let lease = self.acquire_live_operation_lease()?;
+        self.store
+            .reserve_local_import_apply_outcome(&self.runtime_binding, &lease, key)
+    }
+
+    /// Query the restart-stable outer-operation result through the exact live
+    /// account/runtime binding. No path, plan, content, or receipt handle is
+    /// exposed by this seam.
+    pub(crate) fn query_apply_outcome(
+        &self,
+        key: &ContextImportApplyKey,
+    ) -> Result<Option<ContextImportApplyOutcome>> {
+        let lease = self.acquire_live_operation_lease()?;
+        self.store
+            .query_local_import_apply_outcome(&self.runtime_binding, &lease, key)
+    }
+
+    /// Release only this runtime's still-uncommitted outer-operation
+    /// reservation. Accepted outcomes are immutable in the Store.
+    pub(crate) fn release_apply_outcome(
+        &mut self,
+        key: &ContextImportApplyKey,
+    ) -> Result<()> {
+        let lease = self.acquire_live_operation_lease()?;
+        self.store
+            .release_local_import_apply_outcome(&self.runtime_binding, &lease, key)
+    }
+
     /// Confirm exactly the previously returned plan once. The entry is removed
     /// before rereading its source or touching SQLite; a retry therefore needs
     /// a new explicit plan. Re-reading through the original capability detects
@@ -160,6 +198,76 @@ impl RuntimeLocalImport {
         // around the whole SQLite transaction.
         self.store
             .commit_local_import_evidence(&self.runtime_binding, &lease, evidence)
+    }
+
+    /// Confirm one retained plan and atomically persist its Evidence, Event,
+    /// outbox receipt and durable outer-operation outcome. Every failure
+    /// before the Store commit releases the exact reservation so capacity does
+    /// not leak; an accepted result can never be released or duplicated.
+    pub(crate) fn confirm_import_with_outcome(
+        &mut self,
+        plan_id: LocalImportPlanId,
+        confirm_plan_id: LocalImportPlanId,
+        key: &ContextImportApplyKey,
+    ) -> Result<ContextImportApplyOutcome> {
+        if plan_id != confirm_plan_id {
+            self.release_apply_outcome(key)?;
+            bail!("confirmed local-import plan id does not exactly match planned id");
+        }
+        let lease = match self.acquire_live_operation_lease() {
+            Ok(lease) => lease,
+            Err(error) => {
+                // A retired binding cannot mint the lease needed to mutate the
+                // scoped Store. Its reservation is reclaimed only by the next
+                // authenticated startup for this exact binding.
+                return Err(error);
+            }
+        };
+        self.purge_expired();
+        let retained = match self.plans.remove(&plan_id) {
+            Some(retained) => retained,
+            None => {
+                drop(lease);
+                self.release_apply_outcome(key)?;
+                bail!("local-import plan is absent, expired, or already consumed");
+            }
+        };
+        let result = (|| {
+            let policy =
+                LocalImportPolicy::default_bounded(self.runtime_binding.policy_revision())?;
+            let reread = plan_operator_selected_file(LocalImportRequest::new(
+                &self.capability,
+                &retained.selected_relative_path,
+                policy,
+            )?)?;
+            if reread.id() != retained.plan.id()
+                || reread.source_object_id() != retained.plan.source_object_id()
+                || reread.version_fingerprint() != retained.plan.version_fingerprint()
+                || reread.policy_revision() != retained.plan.policy_revision()
+                || reread.parser_revision() != retained.plan.parser_revision()
+            {
+                bail!("local-import source changed after planning; a new explicit plan is required");
+            }
+            let evidence = UntrustedExternalEvidenceBatch::from_local_import_plan(&retained.plan)?;
+            self.store.commit_local_import_evidence_with_outcome(
+                &self.runtime_binding,
+                &lease,
+                key,
+                evidence,
+            )
+        })();
+        match result {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => {
+                drop(lease);
+                match self.release_apply_outcome(key) {
+                    Ok(()) => Err(error),
+                    Err(release_error) => Err(anyhow!(
+                        "{error:#}; failed to release context-import admission: {release_error:#}"
+                    )),
+                }
+            }
+        }
     }
 
     /// Drain durable, content-free receipt rows to the supplied WAL adapter.
@@ -212,6 +320,81 @@ impl RuntimeLocalImport {
         let now = Instant::now();
         self.plans.retain(|_, plan| plan.expires_at > now);
     }
+}
+
+/// Plan-independent, capability-free recovery coordinator. It can query
+/// durable outcomes, reclaim only dead uncommitted reservations for the exact
+/// authenticated binding, and drain receipt rows; it cannot select a root,
+/// read a path, retain a plan, or commit new Evidence.
+pub(crate) struct ContextEvidenceReplayRuntime {
+    runtime_binding: ContextImportRuntimeBinding,
+    store: ContextStore,
+}
+
+impl ContextEvidenceReplayRuntime {
+    pub(crate) fn new(runtime_binding: ContextImportRuntimeBinding, store: ContextStore) -> Self {
+        Self {
+            runtime_binding,
+            store,
+        }
+    }
+
+    pub(crate) fn query_apply_outcome(
+        &self,
+        key: &ContextImportApplyKey,
+    ) -> Result<Option<ContextImportApplyOutcome>> {
+        let lease = acquire_live_binding_lease(&self.runtime_binding)?;
+        self.store
+            .query_local_import_apply_outcome(&self.runtime_binding, &lease, key)
+    }
+
+    pub(crate) fn reclaim_uncommitted_apply_outcomes(&mut self) -> Result<usize> {
+        let lease = acquire_live_binding_lease(&self.runtime_binding)?;
+        self.store
+            .reclaim_uncommitted_local_import_apply_outcomes(&self.runtime_binding, &lease)
+    }
+
+    pub(crate) fn replay_receipts(
+        &mut self,
+        wal: &mut dyn ContextEvidenceWalSink,
+    ) -> Result<usize> {
+        replay_receipts_for_binding(&self.runtime_binding, &mut self.store, wal)
+    }
+}
+
+fn acquire_live_binding_lease(
+    runtime_binding: &ContextImportRuntimeBinding,
+) -> Result<ContextImportOperationLease> {
+    let lease = runtime_binding
+        .acquire_context_import_operation_lease()
+        .map_err(|error| anyhow!(error))?;
+    if !runtime_binding.matches_operation_lease(&lease) {
+        bail!("local-import recovery requires an exact live context-import lease binding");
+    }
+    lease.ensure_live().map_err(|error| anyhow!(error))?;
+    Ok(lease)
+}
+
+fn replay_receipts_for_binding(
+    runtime_binding: &ContextImportRuntimeBinding,
+    store: &mut ContextStore,
+    wal: &mut dyn ContextEvidenceWalSink,
+) -> Result<usize> {
+    let reserve_lease = acquire_live_binding_lease(runtime_binding)?;
+    let entries = store.reserve_local_import_audit(runtime_binding, &reserve_lease)?;
+    drop(reserve_lease);
+    let mut adapter = ReceiptWalAdapter { wal };
+    let mut delivered = 0;
+    for entry in entries {
+        // WAL is explicitly outside the account gate. If retirement wins
+        // before the following conditional ACK, the durable row remains and
+        // append-once handle semantics make recovery safe.
+        adapter.deliver(&entry)?;
+        let acknowledge_lease = acquire_live_binding_lease(runtime_binding)?;
+        store.acknowledge_local_import_audit(runtime_binding, &acknowledge_lease, &entry)?;
+        delivered += 1;
+    }
+    Ok(delivered)
 }
 
 struct ReceiptWalAdapter<'a> {
@@ -304,6 +487,10 @@ mod tests {
         RuntimeLocalImport::new(capability, binding, store).unwrap()
     }
 
+    fn apply_key(value: u8) -> ContextImportApplyKey {
+        ContextImportApplyKey::new([value; 32], [value.wrapping_add(1); 32])
+    }
+
     #[test]
     fn confirm_is_one_shot_and_receipt_replay_is_durable() {
         let root = crate::test_env::canonical_tempdir().unwrap();
@@ -355,6 +542,110 @@ mod tests {
         };
         assert_eq!(runtime.replay_receipts(&mut recovered).unwrap(), 1);
         assert_eq!(recovered.delivered, 1);
+    }
+
+    #[test]
+    fn durable_outcome_tracks_atomic_acceptance_and_wal_ack() {
+        let root = crate::test_env::canonical_tempdir().unwrap();
+        std::fs::write(root.path().join("selected.txt"), "durable outcome").unwrap();
+        let mut runtime = runtime(root.path());
+        let key = apply_key(17);
+        let reserved = runtime.reserve_apply_outcome(&key).unwrap();
+        assert!(!reserved.accepted());
+        assert!(!reserved.audit_pending());
+        let plan = runtime.plan_import(Path::new("selected.txt")).unwrap();
+        let accepted = runtime
+            .confirm_import_with_outcome(plan, plan, &key)
+            .unwrap();
+        assert!(accepted.accepted());
+        assert!(accepted.audit_pending());
+        assert_eq!(runtime.query_apply_outcome(&key).unwrap(), Some(accepted));
+
+        let mut failing = RecordingWal {
+            delivered: 0,
+            fail: true,
+        };
+        assert!(runtime.replay_receipts(&mut failing).is_err());
+        assert!(runtime
+            .query_apply_outcome(&key)
+            .unwrap()
+            .unwrap()
+            .audit_pending());
+
+        let mut recovered = RecordingWal {
+            delivered: 0,
+            fail: false,
+        };
+        assert_eq!(runtime.replay_receipts(&mut recovered).unwrap(), 1);
+        let acknowledged = runtime.query_apply_outcome(&key).unwrap().unwrap();
+        assert!(acknowledged.accepted());
+        assert!(!acknowledged.audit_pending());
+    }
+
+    #[test]
+    fn precommit_source_change_releases_the_exact_outcome_reservation() {
+        let root = crate::test_env::canonical_tempdir().unwrap();
+        let source = root.path().join("selected.txt");
+        std::fs::write(&source, "first").unwrap();
+        let mut runtime = runtime(root.path());
+        let key = apply_key(23);
+        runtime.reserve_apply_outcome(&key).unwrap();
+        let plan = runtime.plan_import(Path::new("selected.txt")).unwrap();
+        std::fs::write(&source, "second").unwrap();
+
+        assert!(runtime
+            .confirm_import_with_outcome(plan, plan, &key)
+            .is_err());
+        assert_eq!(runtime.query_apply_outcome(&key).unwrap(), None);
+    }
+
+    #[test]
+    fn accepted_outcome_and_pending_receipt_survive_runtime_restart() {
+        let root = crate::test_env::canonical_tempdir().unwrap();
+        std::fs::write(root.path().join("selected.txt"), "restart outcome").unwrap();
+        let (instance, subject) = identity();
+        let binding = test_context_import_runtime_fixture(
+            instance.clone(),
+            subject.clone(),
+            7,
+            11,
+        )
+        .unwrap();
+        let capability = issue_operator_import_capability(
+            approve_import_root(root.path()).unwrap(),
+            [31; 32],
+            binding.capability_binding(),
+        );
+        let store_home = crate::test_env::canonical_tempdir().unwrap().keep();
+        let master_key = WalMasterKey::generate().unwrap();
+        let store = ContextStore::open_at(store_home.join("context.db"), &master_key).unwrap();
+        let key = apply_key(29);
+        let mut runtime = RuntimeLocalImport::new(capability, binding, store).unwrap();
+        runtime.reserve_apply_outcome(&key).unwrap();
+        let plan = runtime.plan_import(Path::new("selected.txt")).unwrap();
+        runtime
+            .confirm_import_with_outcome(plan, plan, &key)
+            .unwrap();
+        drop(runtime);
+
+        let recovered_binding =
+            test_context_import_runtime_fixture(instance, subject, 7, 11).unwrap();
+        let recovered_store =
+            ContextStore::open_at(store_home.join("context.db"), &master_key).unwrap();
+        let mut recovery = ContextEvidenceReplayRuntime::new(recovered_binding, recovered_store);
+        let recovered = recovery.query_apply_outcome(&key).unwrap().unwrap();
+        assert!(recovered.accepted());
+        assert!(recovered.audit_pending());
+        let mut wal = RecordingWal {
+            delivered: 0,
+            fail: false,
+        };
+        assert_eq!(recovery.replay_receipts(&mut wal).unwrap(), 1);
+        assert!(!recovery
+            .query_apply_outcome(&key)
+            .unwrap()
+            .unwrap()
+            .audit_pending());
     }
 
     #[test]

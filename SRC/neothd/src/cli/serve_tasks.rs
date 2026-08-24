@@ -4058,6 +4058,7 @@ pub(crate) async fn spawn_audit_rpc(
     home: &std::path::Path,
     writer: &WalWriterHandle,
     pid_guard: &mut crate::daemon::pidfile::PidGuard,
+    endpoint_nonce: &str,
     #[cfg(feature = "cluster")] membership: std::sync::Arc<
         crate::cluster::membership::MembershipController,
     >,
@@ -4083,21 +4084,20 @@ pub(crate) async fn spawn_audit_rpc(
         membership: Some(membership),
         audit_routes_enabled: config.audit_rpc.enabled,
     };
-    let endpoint_nonce = uuid::Uuid::now_v7().simple().to_string();
-    let (endpoint, task) = crate::daemon::audit_rpc::bind_and_serve(&home, &endpoint_nonce, state)
+    let (endpoint, task) = crate::daemon::audit_rpc::bind_and_serve(&home, endpoint_nonce, state)
         .await
         .context("bind mandatory daemon internal-RPC listener")?;
     if let Err(error) = crate::daemon::audit_rpc::write_sidecar(
         &home,
         &endpoint,
         std::process::id(),
-        &endpoint_nonce,
+        endpoint_nonce,
     ) {
         task.abort();
         crate::daemon::audit_rpc::remove_sidecar(&home);
         return Err(error).context("write mandatory daemon internal-RPC discovery sidecar");
     }
-    if let Err(error) = pid_guard.publish_endpoint_nonce(&endpoint_nonce) {
+    if let Err(error) = pid_guard.publish_endpoint_nonce(endpoint_nonce) {
         task.abort();
         crate::daemon::audit_rpc::remove_sidecar(&home);
         return Err(error).context("commit daemon internal-RPC endpoint to PID lock");
@@ -4115,6 +4115,52 @@ pub(crate) async fn spawn_audit_rpc(
             listener_abort,
         )),
     ))
+}
+
+/// Start the separate Connector-Control same-user endpoint.  It deliberately
+/// receives the PID-bound audit nonce only as input; its own endpoint nonce is
+/// derived in the connector-control domain and is never an audit endpoint.
+#[cfg(unix)]
+pub(crate) async fn spawn_connector_control_rpc(
+    home: &std::path::Path,
+    audit_pid_nonce: &str,
+    plane: Arc<crate::connectors::control_plane::ConnectorControlPlane>,
+    daemon_subject: Option<crate::connectors::SubjectId>,
+    writer: &WalWriterHandle,
+) -> anyhow::Result<(
+    JoinHandle<anyhow::Result<()>>,
+    crate::connectors::control_plane::rpc::SidecarGuard,
+)> {
+    crate::connectors::control_plane::rpc::bind_and_serve(
+        home,
+        audit_pid_nonce,
+        plane,
+        daemon_subject,
+        writer.clone(),
+    )
+    .await
+    .context("bind private connector-control RPC listener")
+}
+
+/// Drain persisted, content-free Context Evidence receipts before the CC
+/// endpoint is discoverable. The RPC child owns the daemon-only subject
+/// session and the plan-independent replay coordinator; this wrapper keeps
+/// `serve` from receiving any authority minting surface.
+#[cfg(unix)]
+pub(crate) async fn replay_connector_control_receipts_at_startup(
+    home: &std::path::Path,
+    plane: Arc<crate::connectors::control_plane::ConnectorControlPlane>,
+    daemon_subject: Option<crate::connectors::SubjectId>,
+    writer: &WalWriterHandle,
+) -> anyhow::Result<usize> {
+    crate::connectors::control_plane::rpc::replay_pending_context_evidence_at_startup(
+        home,
+        plane,
+        daemon_subject,
+        writer.clone(),
+    )
+    .await
+    .context("replay pending authenticated Context Evidence receipts")
 }
 
 /// R-02 Phase 4c / ADR-003 nightly Dream calendar task. Off by default
@@ -6378,6 +6424,33 @@ pub(crate) async fn abort_optional<T>(task: Option<JoinHandle<T>>) {
     }
 }
 
+/// Connector-control is deliberately unlike ordinary cancel-safe background
+/// lanes: after a one-shot apply crosses its authority admission point, the
+/// daemon owns its synchronous ContextStore/WAL terminal phase.  Its guard
+/// withdraws discovery and signals the listener first; this waits for the
+/// listener's owned operation set without aborting it. Call before WAL drain.
+pub(crate) async fn join_connector_control_rpc(
+    task: Option<JoinHandle<anyhow::Result<()>>>,
+) {
+    if let Some(task) = task {
+        match task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    %error,
+                    "connector-control RPC stopped while draining owned operations"
+                )
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "connector-control RPC task panicked while draining owned operations"
+                )
+            }
+        }
+    }
+}
+
 /// Abort a (non-optional) background task and await its termination. The
 /// always-spawned sibling of [`abort_optional`]; behaviour-identical to the
 /// inline `task.abort(); let _ = task.await;` it replaces.
@@ -6828,6 +6901,7 @@ pub(crate) struct BackgroundHandles {
     pub indexer_task: Option<JoinHandle<()>>,
     pub reload_task: JoinHandle<()>,
     pub audit_rpc_task: Option<JoinHandle<anyhow::Result<()>>>,
+    pub connector_control_rpc_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub healthz_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub decay_task: Option<JoinHandle<()>>,
     pub gc_task: Option<JoinHandle<anyhow::Result<()>>>,
@@ -6947,6 +7021,7 @@ pub(crate) async fn shutdown_background_tasks(
         indexer_task,
         reload_task,
         audit_rpc_task,
+        connector_control_rpc_task,
         healthz_task,
         decay_task,
         gc_task,
@@ -7182,6 +7257,7 @@ pub(crate) async fn shutdown_background_tasks(
     // its accept loop and in-flight JoinSet cannot outlive the authority
     // boundary.
     crate::cli::serve_tasks::abort_optional(audit_rpc_task).await;
+    crate::cli::serve_tasks::join_connector_control_rpc(connector_control_rpc_task).await;
     // Abort the independent /healthz listener; it never writes WAL.
     crate::cli::serve_tasks::abort_optional(healthz_task).await;
 
