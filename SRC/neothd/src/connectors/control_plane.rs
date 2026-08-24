@@ -1358,15 +1358,16 @@ mod tests {
                     .recv_timeout(Duration::from_secs(5))
                     .expect("retirement worker must start");
 
-                wait_until("emergency retirement to close the account gate", || {
-                    match lease.gate.state.try_lock() {
+                wait_until(
+                    "emergency retirement to close the account gate",
+                    || match lease.gate.state.try_lock() {
                         Ok(state) => !state.accepting_leases,
                         Err(std::sync::TryLockError::WouldBlock) => false,
                         Err(std::sync::TryLockError::Poisoned(_)) => {
                             panic!("account gate was unexpectedly poisoned")
                         }
-                    }
-                });
+                    },
+                );
                 {
                     let state = lease.gate.state.lock().unwrap();
                     assert!(state.active_operation_ids.contains(&lease.operation_id));

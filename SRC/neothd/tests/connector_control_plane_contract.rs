@@ -66,7 +66,10 @@ fn operation_lease_and_durable_transition_stay_private_and_fail_closed() {
     let commit = permit
         .rfind("commit()")
         .expect("commit permit must invoke its closure");
-    assert!(release < commit, "account gate must release before commit closure");
+    assert!(
+        release < commit,
+        "account gate must release before commit closure"
+    );
     assert!(CONTROL_PLANE.contains("next_runtime_id: u64"));
     assert!(CONTROL_PLANE.contains("next_operation_id: u64"));
     assert!(CONTROL_PLANE.contains("active_operation_ids: BTreeSet<u64>"));
