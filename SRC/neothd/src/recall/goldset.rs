@@ -48,6 +48,7 @@ pub enum GradedSystem {
 
 /// One evaluation query.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GoldsetEntry {
     pub query_id: String,
     pub query_text: String,
@@ -62,6 +63,7 @@ pub struct GoldsetEntry {
 
 /// One grader's 5-dimension Likert scores for one (query, system) pair.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GraderGrade {
     pub query_id: String,
     pub grader_id: String,
@@ -458,11 +460,27 @@ pub fn load_grader_config(path: &Path) -> Result<ValidatedGraderConfigFile> {
         }
         .into());
     }
-    let config: GraderConfigFile = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse grader config {}", path.display()))?;
+    load_grader_config_bytes(&bytes, &path.display().to_string())
+}
+
+/// Parse and validate an already bounded grader-config payload. This is used by
+/// the offline parity harness so the exact bytes fingerprinted into a run
+/// manifest are the same bytes admitted to the scorer (no second file read).
+pub fn load_grader_config_bytes(
+    bytes: &[u8],
+    source: &str,
+) -> Result<ValidatedGraderConfigFile> {
+    if bytes.len() as u64 > MAX_GRADER_CONFIG_BYTES {
+        return Err(GraderConfigError::ConfigTooLarge {
+            max_bytes: MAX_GRADER_CONFIG_BYTES,
+        }
+        .into());
+    }
+    let config: GraderConfigFile = serde_json::from_slice(bytes)
+        .with_context(|| format!("parse grader config {source}"))?;
     config
         .into_validated()
-        .with_context(|| format!("validate grader config {}", path.display()))
+        .with_context(|| format!("validate grader config {source}"))
 }
 
 impl GraderGrade {
@@ -548,6 +566,17 @@ pub fn validate_goldset_contract(entries: &[GoldsetEntry]) -> Result<()> {
 /// Load a goldset JSONL file (one [`GoldsetEntry`] per non-blank line).
 pub fn load_goldset(path: &Path) -> Result<Vec<GoldsetEntry>> {
     let text = read_bounded_jsonl(path, MAX_GOLDSET_BYTES, "goldset")?;
+    load_goldset_bytes(text.as_bytes(), &path.display().to_string())
+}
+
+/// Parse and validate a bounded goldset payload without reopening its source.
+/// This keeps SHA256 provenance and scorer input tied to identical bytes.
+pub fn load_goldset_bytes(bytes: &[u8], source: &str) -> Result<Vec<GoldsetEntry>> {
+    if bytes.len() as u64 > MAX_GOLDSET_BYTES {
+        anyhow::bail!("goldset {source} exceeds the {MAX_GOLDSET_BYTES}-byte limit");
+    }
+    let text = std::str::from_utf8(bytes)
+        .with_context(|| format!("decode goldset {source} as UTF-8"))?;
     let mut out = Vec::with_capacity(EXPECTED_GOLDSET_QUERIES);
     for (i, line) in text.lines().enumerate() {
         let line = line.trim();
@@ -558,8 +587,7 @@ pub fn load_goldset(path: &Path) -> Result<Vec<GoldsetEntry>> {
             serde_json::from_str(line).with_context(|| format!("parse goldset line {}", i + 1))?;
         out.push(entry);
     }
-    validate_goldset_contract(&out)
-        .with_context(|| format!("validate goldset {}", path.display()))?;
+    validate_goldset_contract(&out).with_context(|| format!("validate goldset {source}"))?;
     Ok(out)
 }
 
@@ -567,6 +595,18 @@ pub fn load_goldset(path: &Path) -> Result<Vec<GoldsetEntry>> {
 /// every Likert score fail-closed.
 pub fn load_grades(path: &Path) -> Result<Vec<GraderGrade>> {
     let text = read_bounded_jsonl(path, MAX_GRADES_BYTES, "grades")?;
+    load_grades_bytes(text.as_bytes(), &path.display().to_string())
+}
+
+/// Parse and validate a bounded grades JSONL payload without reopening its
+/// source. Callers that record a digest must use this to prevent a read/hash
+/// split from admitting bytes other than those represented by provenance.
+pub fn load_grades_bytes(bytes: &[u8], source: &str) -> Result<Vec<GraderGrade>> {
+    if bytes.len() as u64 > MAX_GRADES_BYTES {
+        anyhow::bail!("grades {source} exceeds the {MAX_GRADES_BYTES}-byte limit");
+    }
+    let text = std::str::from_utf8(bytes)
+        .with_context(|| format!("decode grades {source} as UTF-8"))?;
     let mut out = Vec::with_capacity(EXPECTED_GOLDSET_QUERIES * 2);
     for (i, line) in text.lines().enumerate() {
         let line = line.trim();
@@ -576,7 +616,7 @@ pub fn load_grades(path: &Path) -> Result<Vec<GraderGrade>> {
         if out.len() >= MAX_GRADE_RECORDS {
             anyhow::bail!(
                 "grades {} exceeds the {MAX_GRADE_RECORDS}-record limit",
-                path.display()
+                source
             );
         }
         let grade: GraderGrade =
@@ -587,7 +627,7 @@ pub fn load_grades(path: &Path) -> Result<Vec<GraderGrade>> {
         out.push(grade);
     }
     if out.is_empty() {
-        anyhow::bail!("grades {} contains no records", path.display());
+        anyhow::bail!("grades {source} contains no records");
     }
     Ok(out)
 }

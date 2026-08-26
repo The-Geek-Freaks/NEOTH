@@ -1125,6 +1125,95 @@ pub(crate) fn open_bound_regular_file_readwrite(
     Ok((file, binding))
 }
 
+/// Open or create one direct private lockfile through an already-bound
+/// directory. The returned OS file is suitable for a cross-process advisory
+/// lock while `BoundChildObject` retains the no-follow child identity that a
+/// caller must revalidate before every capability-relative publication.
+///
+/// This deliberately exposes no ambient path operation: both the create and
+/// existing-file paths are direct-child capabilities and reject symlinks and
+/// Windows reparse points.
+pub(crate) fn open_or_create_bound_lockfile(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<(std::fs::File, BoundChildObject)> {
+    match parent.symlink_metadata(name) {
+        Ok(metadata) => {
+            if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
+                anyhow::bail!("bound lockfile is not a real regular file: {}", display_path.display());
+            }
+            let (file, binding) = open_bound_lockfile_readwrite(parent, name, display_path)?;
+            Ok((file.into_std(), binding))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // Unlike the secret-file constructor, this empty lock leaf uses
+            // the fully capability-relative atomic stage path on Windows too.
+            // `display_path` remains error-only and is never opened.
+            match atomic_write_private_child_create_new(parent, name, display_path, &[]) {
+                Ok(()) => {}
+                Err(error)
+                    if error
+                        .root_cause()
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists) => {}
+                Err(error) => return Err(error),
+            }
+            let (file, binding) = open_bound_lockfile_readwrite(parent, name, display_path)?;
+            Ok((file.into_std(), binding))
+        }
+        Err(error) => Err(error).with_context(|| format!("inspect bound lockfile {}", display_path.display())),
+    }
+}
+
+/// Lock-specific no-follow open. On Windows it intentionally denies delete
+/// sharing for the lifetime of the returned file lock, preventing a lock-leaf
+/// rename/replacement from creating a second active namespace while a writer
+/// holds this lease. Other durability reads keep their broader sharing policy.
+fn open_bound_lockfile_readwrite(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<(File, BoundChildObject)> {
+    validate_child_name(name)?;
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).follow(FollowSymlinks::No);
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        options
+            .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = parent.open_with(name, &options).with_context(|| {
+        format!("open bound lockfile without following links {}", display_path.display())
+    })?;
+    let metadata = file.metadata().with_context(|| {
+        format!("inspect bound lockfile {}", display_path.display())
+    })?;
+    if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
+        anyhow::bail!("bound lockfile is not a real regular file: {}", display_path.display());
+    }
+    let binding = BoundChildObject {
+        identity_token: child_identity_token(&metadata)?,
+        _handle: Some(file.try_clone().with_context(|| {
+            format!("retain bound lockfile identity {}", display_path.display())
+        })?),
+    };
+    if !binding.matches_regular_file_child_readonly(parent, name, display_path)? {
+        anyhow::bail!("bound lockfile changed while its identity was being acquired: {}", display_path.display());
+    }
+    Ok((file, binding))
+}
+
 /// Create the final private regular-file child directly and retain its exact
 /// identity for a journaled secret write.
 ///

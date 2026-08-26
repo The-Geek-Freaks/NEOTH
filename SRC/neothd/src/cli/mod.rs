@@ -316,6 +316,12 @@ pub enum Commands {
     /// IDs, which bind grade query IDs exactly.
     RecallScore(recall_score::RecallScoreArgs),
 
+    /// GOLD-LF-P1-08 — plan, ingest, and report a strictly offline,
+    /// SHA256-bound recall-parity evaluation run. This report is derived
+    /// evidence only and does not replace the fail-closed recall-score gate.
+    #[command(name = "recall-parity-harness")]
+    RecallParityHarness(recall_score::RecallParityHarnessArgs),
+
     /// Check or apply updates for NEOTH-managed CLIs (claude-cli, antigravity-cli, codex).
     ///
     /// `--check` (default) probes installed vs. latest versions and prints a report.
@@ -1475,6 +1481,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::RecallScore(mut args) => {
             args.output = global_output;
             recall_score::run_recall_score(args).await?;
+        }
+        Commands::RecallParityHarness(mut args) => {
+            args.output = global_output;
+            recall_score::run_recall_parity_harness(args).await?;
         }
         Commands::Update(mut args) => {
             args.output = global_output;

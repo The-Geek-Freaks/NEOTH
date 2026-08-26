@@ -13,13 +13,21 @@
 use std::{collections::BTreeSet, path::PathBuf};
 
 use anyhow::{Context, Result};
-use clap::Args;
+use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::recall::goldset::{
     GoldsetEntry, GraderGrade, load_goldset, load_grader_config, load_grades,
 };
 use crate::recall::parity_run::{ParityRunResult, compute_parity_run};
+use crate::recall::{
+    goldset::{MAX_GOLDSET_BYTES, MAX_GRADER_CONFIG_BYTES},
+    parity_harness::{
+        build_report, ingest_offline_grades, plan_run,
+        read_offline_input,
+    },
+    parity_import_receipt::{MAX_PARITY_IMPORT_RECEIPT_BYTES, parse_signed_parity_import_receipt},
+};
 
 #[derive(Args, Debug, Clone)]
 pub struct RecallScoreArgs {
@@ -42,6 +50,144 @@ pub struct RecallScoreArgs {
     pub no_audit: bool,
     #[arg(skip)]
     pub output: OutputFormat,
+}
+
+/// GOLD-LF-P1-08 — fully offline evaluation-run evidence pipeline. Every
+/// operation requires explicit local inputs; it has no provider, network, or
+/// WAL authority, and its derived report cannot replace `recall-score`'s gate.
+#[derive(Args, Debug, Clone)]
+pub struct RecallParityHarnessArgs {
+    #[command(subcommand)]
+    pub operation: RecallParityHarnessOperation,
+    #[arg(skip)]
+    pub output: OutputFormat,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum RecallParityHarnessOperation {
+    /// Bind a fresh run directory to exact validated config/goldset bytes.
+    Plan {
+        #[arg(long, value_name = "DIR")]
+        run_dir: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+    },
+    /// Ingest one complete, explicit, offline grade sheet for exactly one grader.
+    Ingest {
+        #[arg(long, value_name = "DIR")]
+        run_dir: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        grades: PathBuf,
+    },
+    /// Compute the deterministic family-bias report once all graders are imported.
+    Report {
+        #[arg(long, value_name = "DIR")]
+        run_dir: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+        /// Externally held signed receipt binding the complete import vector.
+        #[arg(long = "import-receipt", value_name = "PATH")]
+        import_receipt: PathBuf,
+        /// Out-of-band Ed25519 receipt public key (base64); never read from run state.
+        #[arg(long = "expected-receipt-pubkey", value_name = "BASE64")]
+        expected_receipt_pubkey: String,
+    },
+    /// Recompute and render a run from trusted config/goldset inputs. The
+    /// operation remains offline and never changes the established gate.
+    Show {
+        #[arg(long, value_name = "DIR")]
+        run_dir: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+        /// Externally held signed receipt binding the complete import vector.
+        #[arg(long = "import-receipt", value_name = "PATH")]
+        import_receipt: PathBuf,
+        /// Out-of-band Ed25519 receipt public key (base64); never read from run state.
+        #[arg(long = "expected-receipt-pubkey", value_name = "BASE64")]
+        expected_receipt_pubkey: String,
+    },
+}
+
+pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<()> {
+    let output = args.output;
+    match args.operation {
+        operation @ (RecallParityHarnessOperation::Plan { .. }
+        | RecallParityHarnessOperation::Ingest { .. }
+        | RecallParityHarnessOperation::Report { .. }
+        | RecallParityHarnessOperation::Show { .. }) => {
+            let (run_dir, grader_config, goldset) = match &operation {
+                RecallParityHarnessOperation::Plan { run_dir, grader_config, goldset }
+                | RecallParityHarnessOperation::Ingest { run_dir, grader_config, goldset, .. }
+                | RecallParityHarnessOperation::Report { run_dir, grader_config, goldset, .. }
+                | RecallParityHarnessOperation::Show { run_dir, grader_config, goldset, .. } => {
+                    (run_dir, grader_config, goldset)
+                }
+            };
+            let config_bytes = read_offline_input(grader_config, MAX_GRADER_CONFIG_BYTES, "grader config")?;
+            let goldset_bytes = read_offline_input(goldset, MAX_GOLDSET_BYTES, "goldset")?;
+            let config = crate::recall::goldset::load_grader_config_bytes(&config_bytes, "harness --grader-config")?;
+            let entries = crate::recall::goldset::load_goldset_bytes(&goldset_bytes, "harness --goldset")?;
+            match &operation {
+                RecallParityHarnessOperation::Plan { .. } => {
+                    let manifest = plan_run(run_dir, &config, &config_bytes, &entries, &goldset_bytes)?;
+                    render_harness_json(&manifest, &output)?;
+                }
+                RecallParityHarnessOperation::Ingest { grades, .. } => {
+                    let grade_bytes = read_offline_input(&grades, crate::recall::goldset::MAX_GRADES_BYTES, "grade sheet")?;
+                    let state = ingest_offline_grades(run_dir, &config, &config_bytes, &entries, &goldset_bytes, &grade_bytes)?;
+                    render_harness_json(&state, &output)?;
+                }
+                RecallParityHarnessOperation::Report { import_receipt, expected_receipt_pubkey, .. } => {
+                    let receipt_bytes = read_offline_input(import_receipt, MAX_PARITY_IMPORT_RECEIPT_BYTES as u64, "signed parity import receipt")?;
+                    let signed_receipt = parse_signed_parity_import_receipt(&receipt_bytes)?;
+                    let report = build_report(run_dir, &config, &config_bytes, &entries, &goldset_bytes, &signed_receipt, expected_receipt_pubkey)?;
+                    render_harness_json(&report, &output)?;
+                }
+                RecallParityHarnessOperation::Show { import_receipt, expected_receipt_pubkey, .. } => {
+                    // Do not treat a mutable run-directory checksum as a trust
+                    // anchor. Rebuilding binds the displayed evidence to the
+                    // explicitly supplied, freshly validated config/goldset.
+                    let receipt_bytes = read_offline_input(import_receipt, MAX_PARITY_IMPORT_RECEIPT_BYTES as u64, "signed parity import receipt")?;
+                    let signed_receipt = parse_signed_parity_import_receipt(&receipt_bytes)?;
+                    let report = build_report(run_dir, &config, &config_bytes, &entries, &goldset_bytes, &signed_receipt, expected_receipt_pubkey)?;
+                    render_harness_json(&report, &output)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn render_harness_json<T: serde::Serialize>(value: &T, output: &OutputFormat) -> Result<()> {
+    match output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(value).context("serialize harness JSON output")?);
+        }
+        OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string(value).context("serialize harness JSONL output")?);
+        }
+        OutputFormat::Table => {
+            let fields = serde_json::to_value(value).context("serialize harness table output")?;
+            let object = fields.as_object().context("harness output must serialize as an object")?;
+            println!("# Recall-parity harness");
+            for (field, field_value) in object {
+                let rendered = serde_json::to_string(field_value)
+                    .context("serialize harness table field")?;
+                println!("  {field}: {rendered}");
+            }
+        }
+    }
+    Ok(())
 }
 
 pub async fn run_recall_score(args: RecallScoreArgs) -> Result<()> {
