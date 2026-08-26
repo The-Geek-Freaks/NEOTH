@@ -4636,7 +4636,7 @@ fn ast_network_gate_allows_only_the_exact_wired_graphify_libc_denial_contract() 
     );
     let live_graphify = include_str!("../src/graphify_runner.rs");
     assert!(
-        forbidden_network_constructions_with_boundaries(&live_graphify, false, false, true)
+        forbidden_network_constructions_with_boundaries(live_graphify, false, false, true)
             .is_empty(),
         "the live Graphify source must retain its exact LF denial-probe contract"
     );
