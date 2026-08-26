@@ -83,6 +83,57 @@ def workflow_jobs(workflow: str) -> dict[str, str]:
     )
 
 
+def workflow_steps(job: str) -> dict[str, str]:
+    steps_match = re.search(r"(?ms)^    steps:\n(?P<steps>.*)\Z", job)
+    if steps_match is None:
+        raise AssertionError("workflow job has no steps list")
+    return dict(
+        re.findall(
+            r"(?ms)^      - name: (?P<name>[^\n]+)\n"
+            r"(?P<body>.*?)(?=^      - name:|\Z)",
+            steps_match.group("steps"),
+        )
+    )
+
+
+def direct_mapping_keys(mapping: str, indent: int) -> list[str]:
+    prefix = " " * indent
+    keys: list[str] = []
+    for line in mapping.splitlines():
+        if not line.startswith(prefix) or line.startswith(prefix + " "):
+            continue
+        field = line[indent:]
+        if not field or field.lstrip().startswith("#"):
+            continue
+        key, separator, _ = field.partition(":")
+        if not separator:
+            raise AssertionError(f"workflow mapping field is missing a colon: {line!r}")
+        keys.append(key.strip().strip("'\""))
+    return keys
+
+
+def mapping_block(mapping: str, key: str, indent: int) -> str:
+    prefix = " " * indent
+    match = re.search(
+        rf"(?ms)^{re.escape(prefix)}{re.escape(key)}:\s*\n"
+        rf"(?P<body>.*?)(?=^{re.escape(prefix)}\S[^\n]*:|\Z)",
+        mapping,
+    )
+    if match is None:
+        raise AssertionError(f"workflow mapping has no {key!r} block")
+    return match.group("body")
+
+
+def step_run_command(step: str) -> str:
+    match = re.search(
+        r"(?m)^        run: \|\n(?P<run>(?:^          [^\n]*(?:\n|\Z))*)",
+        step,
+    )
+    if match is None:
+        raise AssertionError("workflow step has no block run command")
+    return "\n".join(line[10:] for line in match.group("run").splitlines())
+
+
 def job_dependencies(body: str) -> set[str]:
     match = re.search(r"(?m)^    needs:(?P<inline>[^\n]*)$", body)
     if match is None:
@@ -275,6 +326,63 @@ class CiCadenceContractTests(unittest.TestCase):
                 expected_needs,
                 f"privileged Security job {name} must depend on the failing main-ref gate",
             )
+
+    def test_security_audit_keeps_json_failures_diagnosable(self) -> None:
+        self.assertEqual(
+            direct_mapping_keys(SECURITY_TEXT, 0),
+            ["name", "on", "concurrency", "permissions", "env", "jobs"],
+        )
+        workflow_env = mapping_block(SECURITY_TEXT, "env", 0)
+        self.assertEqual(direct_mapping_keys(workflow_env, 2), ["CARGO_TERM_COLOR"])
+        self.assertEqual(
+            re.findall(
+                r"(?m)^  CARGO_TERM_COLOR: ([^\s#]+)\s*(?:#.*)?$", workflow_env
+            ),
+            ["always"],
+        )
+        audit_job = workflow_jobs(SECURITY_TEXT)["audit"]
+        self.assertEqual(
+            direct_mapping_keys(audit_job, 4),
+            ["if", "needs", "name", "runs-on", "steps"],
+        )
+        audit_steps = workflow_steps(audit_job)
+        install = audit_steps["Install cargo-audit"]
+        run = audit_steps["Run cargo-audit"]
+
+        self.assertEqual(direct_mapping_keys(install, 8), ["uses", "with"])
+        self.assertEqual(direct_mapping_keys(run, 8), ["working-directory", "run"])
+
+        self.assertEqual(
+            re.findall(r"(?m)^        uses: ([^\s#]+)\s*(?:#.*)?$", install),
+            ["taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853"],
+        )
+        self.assertEqual(
+            re.findall(r"(?m)^          tool: ([^\s#]+)\s*$", install),
+            ["cargo-audit@0.22.2"],
+        )
+        self.assertEqual(
+            re.findall(r"(?m)^        working-directory: ([^\s#]+)\s*$", run),
+            ["SRC"],
+        )
+
+        command = step_run_command(run)
+        self.assertEqual(
+            command,
+            "\n".join(
+                [
+                    "set -euo pipefail",
+                    "cargo audit --json | tee /tmp/audit-result.json",
+                    "cargo audit",
+                ]
+            ),
+        )
+        for line in command.splitlines():
+            if re.search(r"(?:^|\s)cargo\s+audit(?:\s|$)", line):
+                self.assertNotRegex(
+                    line,
+                    r"(?:\b2\s*(?:>>?|>&)|&>|\|&)",
+                    "cargo-audit stderr must remain directly visible",
+                )
 
     def test_release_still_requires_fresh_exact_head_full_gates(self) -> None:
         self.assertIn(

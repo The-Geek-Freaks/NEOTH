@@ -127,7 +127,7 @@ jobs:
       - name: Install cargo-audit
         uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
-          tool: cargo-audit
+          tool: cargo-audit@0.22.2
 
       - name: Run cargo-audit
         working-directory: SRC
@@ -138,10 +138,12 @@ jobs:
         # two files in sync in the same commit.
         # SX-04: enable pipefail explicitly so the tee pipeline propagates
         # cargo-audit's non-zero exit on RUSTSEC findings instead of silently
-        # swallowing CVEs even if the runner's default shell changes.
+        # swallowing CVEs even if the runner's default shell changes. Keep
+        # stderr visible: advisory download, network, and tool failures must
+        # remain diagnosable when the JSON evidence command fails closed.
         run: |
           set -euo pipefail
-          cargo audit --json 2>/dev/null | tee /tmp/audit-result.json
+          cargo audit --json | tee /tmp/audit-result.json
           cargo audit
 
       - name: Audit isolated release signer lockfile
