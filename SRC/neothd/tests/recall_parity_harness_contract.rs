@@ -354,3 +354,64 @@ fn attested_family_bias_export_is_read_only_pinned_and_non_gate() {
     assert!(CLI.contains("BatchFamilyBias"));
     assert!(CLI.contains("summary.export()?"));
 }
+
+#[test]
+fn attested_gate_report_is_the_only_full_evidence_publish_transition() {
+    let gate = HARNESS
+        .split("pub fn build_attested_parity_gate_report")
+        .nth(1)
+        .and_then(|tail| tail.split("fn attested_family_bias_policy_passes").next())
+        .expect("attested gate-report source");
+    for forbidden in ["BoundParityRun::open_or_create", "File::open(", "reqwest", "Command::", "wal::writer", "build_report("] {
+        assert!(!gate.contains(forbidden), "attested gate report acquired ambient authority {forbidden}");
+    }
+    for required in [
+        "BoundParityRun::open_existing",
+        "load_existing_run_manifest",
+        "load_validated_operator_anchor_artifacts_if_present",
+        "load_validated_four_grader_batch_result_artifacts_if_present",
+        "parse_signed_parity_import_receipt",
+        "verify_external_import_receipt",
+        "compute_parity_run",
+        "independent_external_family_gate_met",
+        "attested_family_bias_policy_passes",
+        "parity.verdict.passed",
+        "publish_attested_gate_report",
+        "validate_attested_gate_publication_if_present",
+        "anchor_group.revalidate",
+        "reopened.revalidate",
+        "gate_eligible",
+    ] {
+        assert!(gate.contains(required), "attested gate transition lost {required}");
+    }
+    for required in [
+        "ATTESTED_GATE_REPORT_FILE",
+        "ATTESTED_GATE_IMPORT_RECEIPT_FILE",
+        "ATTESTED_GATE_IMPORT_PUBKEY_FILE",
+        "ATTESTED_GATE_PUBLICATION_RECEIPT_FILE",
+        "replace_child_if_matches",
+        "refuses a stale state report binding",
+        "incomplete attested gate report publication",
+        "results.state.report_sha256",
+        "AttestedParityGatePublicationReceipt",
+        "reject_legacy_report_mutation_after_attested_gate",
+        "legacy report cannot mutate a run with attested gate publication evidence",
+    ] {
+        assert!(HARNESS.contains(required), "attested gate crash-safe receipt/state fence lost {required}");
+    }
+    assert!(CLI.contains("AttestedGateReport"));
+    assert!(CLI.contains("long = \"import-receipt\""));
+    assert!(CLI.contains("long = \"expected-receipt-pubkey\""));
+    let publish = HARNESS
+        .split("fn publish_attested_gate_report")
+        .nth(1)
+        .and_then(|tail| tail.split("fn reject_legacy_report_mutation_after_attested_gate").next())
+        .expect("attested gate publish source");
+    let state_publish = publish
+        .split("None => {")
+        .nth(1)
+        .and_then(|tail| tail.split("run.replace_child_if_matches").next())
+        .expect("attested gate state publish fence");
+    assert!(state_publish.contains("anchor_group.revalidate(run)?;\n            results.revalidate(run)?;"));
+    assert!(gate.matches("anchor_group.revalidate(&run)?;").count() >= 2);
+}

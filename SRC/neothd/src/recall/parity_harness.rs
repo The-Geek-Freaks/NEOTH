@@ -26,7 +26,7 @@ use super::{
     },
     parity::Dimension,
     parity_anchor::{
-        OPERATOR_ANCHOR_QUERY_COUNT, ValidatedOperatorAnchor,
+        FAMILY_BIAS_THRESHOLD, OPERATOR_ANCHOR_QUERY_COUNT, ValidatedOperatorAnchor,
         ValidatedOperatorAnchorEvidenceLink, load_operator_anchor_bytes,
         load_operator_anchor_evidence_link_bytes,
         load_operator_anchor_evidence_link_with_provenance,
@@ -40,7 +40,10 @@ use super::{
     parity_candidate_evidence::{
         ValidatedCandidateEvidence, validate_persisted_candidate_evidence_metadata,
     },
-    parity_import_receipt::{SignedParityImportReceipt, validate_run_id},
+    parity_import_receipt::{
+        MAX_PARITY_IMPORT_RECEIPT_BYTES, SignedParityImportReceipt,
+        parse_signed_parity_import_receipt, validate_run_id,
+    },
     parity_run::compute_parity_run,
 };
 
@@ -64,9 +67,15 @@ const FOUR_GRADER_BATCH_PLAN_FILE: &str = "four-grader-batch-plan.json";
 const FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE: &str = "four-grader-batch-result-receipt.json";
 const FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE: &str = "four-grader-batch-result-pubkey.txt";
 const FOUR_GRADER_BATCH_RESULT_BINDING_FILE: &str = "four-grader-batch-result-binding.json";
+const ATTESTED_GATE_REPORT_FILE: &str = "attested-gate-report.json";
+const ATTESTED_GATE_IMPORT_RECEIPT_FILE: &str = "attested-gate-import-receipt.json";
+const ATTESTED_GATE_IMPORT_PUBKEY_FILE: &str = "attested-gate-import-receipt-pubkey.txt";
+const ATTESTED_GATE_PUBLICATION_RECEIPT_FILE: &str = "attested-gate-publication-receipt.json";
 const LOCK_FILE: &str = ".parity-harness.lock";
 pub const ATTESTED_FAMILY_BIAS_SUMMARY_SCHEMA_VERSION: u32 = 1;
 pub const ATTESTED_FAMILY_BIAS_EXPORT_PURPOSE: &str = "neoth-recall-parity-attested-family-bias-summary/v1";
+pub const ATTESTED_PARITY_GATE_REPORT_PURPOSE: &str = "neoth-recall-parity-attested-gate-report/v1";
+pub const ATTESTED_PARITY_GATE_REPORT_SCHEMA_VERSION: u32 = 1;
 
 /// Capability-bound run namespace. Its root directory and advisory lock are
 /// opened exactly once; every persistent child operation must be relative to
@@ -345,6 +354,46 @@ pub struct AttestedFamilyBiasDimension {
 pub struct AttestedGraderBiasDelta {
     pub grader_id: String,
     pub mean_grader_minus_operator: f64,
+}
+
+/// The only P1-08 report shape permitted to expose a gate-eligible result.
+/// It is still merely a local, provenance-bound report: it does not invoke a
+/// provider, write a WAL verdict, or authorize a release by itself.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttestedParityGateReport {
+    pub schema_version: u32,
+    pub purpose: String,
+    pub run_manifest_sha256: String,
+    pub state_evidence_sha256: String,
+    pub imported_grades: Vec<ImportedGradeFile>,
+    pub batch_plan_sha256: String,
+    pub batch_result_binding_sha256: String,
+    pub family_bias_summary_sha256: String,
+    pub import_receipt_sha256: String,
+    pub import_receipt_pubkey_sha256: String,
+    pub aggregate: f64,
+    pub mean_kappa: f64,
+    pub critical_count: usize,
+    pub independent_external_family_gate_met: bool,
+    pub bias_policy_passed: bool,
+    pub gate_eligible: bool,
+}
+
+/// Immutable publication marker that binds the exact report and external
+/// signed import-receipt bytes. It contains no raw grades, labels, prompts, or
+/// public-key material.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttestedParityGatePublicationReceipt {
+    pub schema_version: u32,
+    pub run_manifest_sha256: String,
+    pub report_sha256: String,
+    pub import_receipt_sha256: String,
+    pub import_receipt_pubkey_sha256: String,
+    pub batch_result_binding_sha256: String,
+    pub family_bias_summary_sha256: String,
+    pub gate_eligible: bool,
 }
 
 /// Canonical state provenance. Publication bookkeeping stays in
@@ -1217,6 +1266,7 @@ fn load_validated_four_grader_batch_result_artifacts_if_present(
         pubkey_artifact: pubkey_bytes,
         binding_artifact: binding_bytes,
         state_artifact: state_bytes,
+        state,
         imports: pinned_imports,
         grades_by_result,
     };
@@ -1234,6 +1284,7 @@ struct ValidatedAttestedFourGraderBatchResults {
     pubkey_artifact: BoundImmutableRunChild,
     binding_artifact: BoundImmutableRunChild,
     state_artifact: BoundImmutableRunChild,
+    state: ParityRunState,
     imports: PinnedAttestedImports,
     grades_by_result: Vec<Vec<GraderGrade>>,
 }
@@ -1281,18 +1332,33 @@ pub fn summarize_attested_four_grader_family_bias(
     if sha256_bytes(&anchor_group.anchor_artifact.bytes) != results.plan.plan.operator_anchor_sha256 {
         anyhow::bail!("attested family-bias summary anchor does not match the verified batch plan");
     }
+    let summary = attested_family_bias_summary_from_validated(
+        &manifest, grader_config, &anchor_group, &results,
+    )?;
+    anchor_group.revalidate(&run)?;
+    results.revalidate(&run)?;
+    run.revalidate_lock()?;
+    Ok(summary)
+}
+
+fn attested_family_bias_summary_from_validated(
+    manifest: &ParityRunManifest,
+    grader_config: &ValidatedGraderConfigFile,
+    anchor_group: &ValidatedOperatorAnchorEvidenceGroup,
+    results: &ValidatedAttestedFourGraderBatchResults,
+) -> Result<AttestedFamilyBiasSummary> {
     let clusters = cluster_attested_four_grader_family_bias(
         grader_config,
         &anchor_group.anchor,
-        &results,
+        results,
     )?;
     let observations_per_grader = OPERATOR_ANCHOR_QUERY_COUNT
         .checked_mul(2)
         .context("attested family-bias observation count overflow")?;
-    let summary = AttestedFamilyBiasSummary {
+    Ok(AttestedFamilyBiasSummary {
         schema_version: ATTESTED_FAMILY_BIAS_SUMMARY_SCHEMA_VERSION,
         purpose: ATTESTED_FAMILY_BIAS_EXPORT_PURPOSE.into(),
-        run_manifest_sha256: sha256_json(&manifest)?,
+        run_manifest_sha256: sha256_json(manifest)?,
         batch_plan_sha256: sha256_bytes(&results.plan.plan_bytes),
         result_binding_sha256: sha256_bytes(&results.binding_artifact.bytes),
         operator_anchor_sha256: sha256_bytes(&anchor_group.anchor_artifact.bytes),
@@ -1301,11 +1367,282 @@ pub fn summarize_attested_four_grader_family_bias(
         observations_per_grader,
         clusters,
         gate_eligible: false,
+    })
+}
+
+/// The sole P1-08 transition which may publish a `gate_eligible: true` report.
+/// It accepts only explicit offline receipt bytes, recomputes every required
+/// proof from retained run capabilities, and performs a conditional state
+/// publication only after the immutable report/receipt group is exact.
+pub fn build_attested_parity_gate_report(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    import_receipt_bytes: &[u8],
+    expected_import_receipt_pubkey_b64: &str,
+) -> Result<AttestedParityGateReport> {
+    let run = BoundParityRun::open_existing(run_dir)?;
+    let manifest = load_existing_run_manifest(
+        &run, grader_config, config_bytes, goldset, goldset_bytes,
+    )?;
+    let anchor_group = load_validated_operator_anchor_artifacts_if_present(
+        &run, &manifest, grader_config, goldset,
+    )?.context("attested gate report requires complete operator anchor provenance")?;
+    let results = load_validated_four_grader_batch_result_artifacts_if_present(
+        &run, &manifest, grader_config, goldset,
+    )?.context("attested gate report requires complete attested four-grader results")?;
+    if sha256_bytes(&anchor_group.anchor_artifact.bytes) != results.plan.plan.operator_anchor_sha256
+        || grader_config.graders().len() != FOUR_GRADER_COUNT
+        || results.state.imported_grades.len() != FOUR_GRADER_COUNT
+    {
+        anyhow::bail!("attested gate report requires one exact anchored result matrix for each of four configured graders");
+    }
+    if import_receipt_bytes.len() > MAX_PARITY_IMPORT_RECEIPT_BYTES {
+        anyhow::bail!("attested gate report import receipt exceeds its bounded contract");
+    }
+    let import_receipt = parse_signed_parity_import_receipt(import_receipt_bytes)?;
+    verify_external_import_receipt(
+        &manifest,
+        &results.state.imported_grades,
+        &import_receipt,
+        expected_import_receipt_pubkey_b64,
+    )?;
+    let (canonical_pubkey, import_receipt_pubkey_sha256) =
+        canonical_batch_result_pubkey(expected_import_receipt_pubkey_b64)?;
+    let family_bias = attested_family_bias_summary_from_validated(
+        &manifest, grader_config, &anchor_group, &results,
+    )?;
+    let bias_policy_passed = attested_family_bias_policy_passes(&family_bias)?;
+    let all_grades = results.grades_by_result.iter().flatten().cloned().collect::<Vec<_>>();
+    let parity = compute_parity_run(grader_config, goldset, &all_grades)
+        .context("compute existing authoritative fail-closed recall-parity verdict")?;
+    ensure_finite_gate_metric(parity.aggregate, "attested gate aggregate")?;
+    ensure_finite_gate_metric(parity.mean_kappa, "attested gate mean kappa")?;
+    let gate_eligible = parity.verdict.passed
+        && parity.independent_external_family_gate_met
+        && bias_policy_passed;
+    let report = AttestedParityGateReport {
+        schema_version: ATTESTED_PARITY_GATE_REPORT_SCHEMA_VERSION,
+        purpose: ATTESTED_PARITY_GATE_REPORT_PURPOSE.into(),
+        run_manifest_sha256: sha256_json(&manifest)?,
+        state_evidence_sha256: sha256_json(&state_evidence(&results.state))?,
+        imported_grades: results.state.imported_grades.clone(),
+        batch_plan_sha256: sha256_bytes(&results.plan.plan_bytes),
+        batch_result_binding_sha256: sha256_bytes(&results.binding_artifact.bytes),
+        family_bias_summary_sha256: sha256_bytes(&family_bias.canonical_bytes()?),
+        import_receipt_sha256: sha256_bytes(import_receipt_bytes),
+        import_receipt_pubkey_sha256,
+        aggregate: parity.aggregate,
+        mean_kappa: parity.mean_kappa,
+        critical_count: parity.critical_queries.len(),
+        independent_external_family_gate_met: parity.independent_external_family_gate_met,
+        bias_policy_passed,
+        gate_eligible,
+    };
+    let report_bytes = serde_json::to_vec(&report).context("serialize attested parity gate report")?;
+    let publication = AttestedParityGatePublicationReceipt {
+        schema_version: ATTESTED_PARITY_GATE_REPORT_SCHEMA_VERSION,
+        run_manifest_sha256: sha256_json(&manifest)?,
+        report_sha256: sha256_bytes(&report_bytes),
+        import_receipt_sha256: sha256_bytes(import_receipt_bytes),
+        import_receipt_pubkey_sha256: report.import_receipt_pubkey_sha256.clone(),
+        batch_result_binding_sha256: report.batch_result_binding_sha256.clone(),
+        family_bias_summary_sha256: report.family_bias_summary_sha256.clone(),
+        gate_eligible,
     };
     anchor_group.revalidate(&run)?;
     results.revalidate(&run)?;
+    publish_attested_gate_report(
+        &run, &anchor_group, &results, &report_bytes, import_receipt_bytes,
+        &canonical_pubkey, &publication,
+    )?;
+    anchor_group.revalidate(&run)?;
+    let reopened = load_validated_four_grader_batch_result_artifacts_if_present(
+        &run, &manifest, grader_config, goldset,
+    )?.context("attested gate report state changed during publication")?;
+    validate_attested_gate_publication_if_present(&run, &manifest, &reopened, &report)?;
+    anchor_group.revalidate(&run)?;
+    reopened.revalidate(&run)?;
     run.revalidate_lock()?;
-    Ok(summary)
+    Ok(report)
+}
+
+fn attested_family_bias_policy_passes(summary: &AttestedFamilyBiasSummary) -> Result<bool> {
+    if summary.schema_version != ATTESTED_FAMILY_BIAS_SUMMARY_SCHEMA_VERSION
+        || summary.purpose != ATTESTED_FAMILY_BIAS_EXPORT_PURPOSE
+        || summary.gate_eligible
+        || summary.anchor_query_count != OPERATOR_ANCHOR_QUERY_COUNT
+        || summary.grader_count != FOUR_GRADER_COUNT
+        || summary.observations_per_grader != OPERATOR_ANCHOR_QUERY_COUNT * 2
+    {
+        anyhow::bail!("attested family-bias policy received an incomplete non-gate summary");
+    }
+    let shared = summary.clusters.iter()
+        .find(|cluster| cluster.evidence_kind == AttestedFamilyEvidenceKind::SameFamilyCorrelation)
+        .context("attested family-bias policy requires a shared-family cluster")?;
+    let external = summary.clusters.iter()
+        .find(|cluster| cluster.evidence_kind == AttestedFamilyEvidenceKind::IndependentExternalFamilyEvidence)
+        .context("attested family-bias policy requires independent external-family evidence")?;
+    if shared.grader_ids.len() < 3 || external.grader_ids.is_empty()
+        || shared.dimensions.len() != Dimension::ALL.len()
+        || external.dimensions.len() != Dimension::ALL.len()
+    {
+        anyhow::bail!("attested family-bias policy requires complete shared and external family coverage");
+    }
+    for dimension in &shared.dimensions {
+        if dimension.per_grader_mean_grader_minus_operator.len() != shared.grader_ids.len()
+            || dimension.observation_count != summary.observations_per_grader * shared.grader_ids.len()
+        {
+            anyhow::bail!("attested family-bias policy has incomplete shared-family evidence");
+        }
+        let same_positive = dimension.per_grader_mean_grader_minus_operator.iter()
+            .all(|entry| entry.mean_grader_minus_operator > FAMILY_BIAS_THRESHOLD);
+        let same_negative = dimension.per_grader_mean_grader_minus_operator.iter()
+            .all(|entry| entry.mean_grader_minus_operator < -FAMILY_BIAS_THRESHOLD);
+        if same_positive || same_negative { return Ok(false); }
+    }
+    Ok(true)
+}
+
+fn ensure_finite_gate_metric(value: f64, label: &str) -> Result<()> {
+    if !value.is_finite() { anyhow::bail!("{label} is not finite"); }
+    Ok(())
+}
+
+fn publish_attested_gate_report(
+    run: &BoundParityRun,
+    anchor_group: &ValidatedOperatorAnchorEvidenceGroup,
+    results: &ValidatedAttestedFourGraderBatchResults,
+    report_bytes: &[u8],
+    import_receipt_bytes: &[u8],
+    canonical_pubkey: &str,
+    publication: &AttestedParityGatePublicationReceipt,
+) -> Result<()> {
+    let report_sha256 = sha256_bytes(report_bytes);
+    if results.state.report_sha256.as_deref().is_some_and(|existing| existing != report_sha256.as_str()) {
+        anyhow::bail!("attested gate report refuses a stale state report binding");
+    }
+    anchor_group.revalidate(run)?;
+    results.revalidate(run)?;
+    create_immutable_run_child(run, ATTESTED_GATE_REPORT_FILE, report_bytes, 64 * 1024)?;
+    anchor_group.revalidate(run)?;
+    results.revalidate(run)?;
+    create_immutable_run_child(
+        run, ATTESTED_GATE_IMPORT_RECEIPT_FILE, import_receipt_bytes,
+        MAX_PARITY_IMPORT_RECEIPT_BYTES,
+    )?;
+    anchor_group.revalidate(run)?;
+    results.revalidate(run)?;
+    create_immutable_run_child(
+        run, ATTESTED_GATE_IMPORT_PUBKEY_FILE, canonical_pubkey.as_bytes(), 128,
+    )?;
+    anchor_group.revalidate(run)?;
+    results.revalidate(run)?;
+    create_immutable_run_child(
+        run, ATTESTED_GATE_PUBLICATION_RECEIPT_FILE,
+        &serde_json::to_vec(publication).context("serialize attested gate publication receipt")?, 64 * 1024,
+    )?;
+    match &results.state.report_sha256 {
+        None => {
+            let mut next = results.state.clone();
+            next.report_sha256 = Some(report_sha256);
+            anchor_group.revalidate(run)?;
+            results.revalidate(run)?;
+            run.replace_child_if_matches(
+                STATE_FILE,
+                &results.state_artifact.bytes,
+                &serde_json::to_vec(&next).context("serialize attested gate state transition")?,
+            )?;
+        }
+        Some(existing) if existing == &report_sha256 => {}
+        Some(_) => anyhow::bail!("attested gate report refuses a stale state report binding"),
+    }
+    Ok(())
+}
+
+fn reject_legacy_report_mutation_after_attested_gate(run: &BoundParityRun) -> Result<()> {
+    for (name, max_bytes) in [
+        (ATTESTED_GATE_REPORT_FILE, 64 * 1024),
+        (ATTESTED_GATE_IMPORT_RECEIPT_FILE, MAX_PARITY_IMPORT_RECEIPT_BYTES),
+        (ATTESTED_GATE_IMPORT_PUBKEY_FILE, 128),
+        (ATTESTED_GATE_PUBLICATION_RECEIPT_FILE, 64 * 1024),
+    ] {
+        if read_bound_immutable_run_child(run, name, max_bytes)?.is_some() {
+            anyhow::bail!("legacy report cannot mutate a run with attested gate publication evidence");
+        }
+    }
+    Ok(())
+}
+
+fn validate_attested_gate_publication_if_present(
+    run: &BoundParityRun,
+    manifest: &ParityRunManifest,
+    results: &ValidatedAttestedFourGraderBatchResults,
+    expected_report: &AttestedParityGateReport,
+) -> Result<()> {
+    let contracts = [
+        (ATTESTED_GATE_REPORT_FILE, 64 * 1024),
+        (ATTESTED_GATE_IMPORT_RECEIPT_FILE, MAX_PARITY_IMPORT_RECEIPT_BYTES),
+        (ATTESTED_GATE_IMPORT_PUBKEY_FILE, 128),
+        (ATTESTED_GATE_PUBLICATION_RECEIPT_FILE, 64 * 1024),
+    ];
+    let artifacts = contracts.iter()
+        .map(|(name, max)| read_bound_immutable_run_child(run, name, *max))
+        .collect::<Result<Vec<_>>>()?;
+    if artifacts.iter().all(Option::is_none) { return Ok(()); }
+    if artifacts.iter().any(Option::is_none) {
+        anyhow::bail!("incomplete attested gate report publication; retry only with identical receipt evidence");
+    }
+    let mut values = artifacts.into_iter().map(Option::unwrap);
+    let report_artifact = values.next().expect("fixed attested gate artifact count");
+    let import_receipt_artifact = values.next().expect("fixed attested gate artifact count");
+    let pubkey_artifact = values.next().expect("fixed attested gate artifact count");
+    let publication_artifact = values.next().expect("fixed attested gate artifact count");
+    let report: AttestedParityGateReport = serde_json::from_slice(&report_artifact.bytes)
+        .map_err(|_| anyhow::anyhow!("parse immutable attested gate report"))?;
+    if report != *expected_report || report.schema_version != ATTESTED_PARITY_GATE_REPORT_SCHEMA_VERSION
+        || report.purpose != ATTESTED_PARITY_GATE_REPORT_PURPOSE
+        || !report.aggregate.is_finite() || !report.mean_kappa.is_finite()
+    {
+        anyhow::bail!("immutable attested gate report does not match the fully validated transition");
+    }
+    let receipt = parse_signed_parity_import_receipt(&import_receipt_artifact.bytes)?;
+    let pubkey = std::str::from_utf8(&pubkey_artifact.bytes)
+        .map_err(|_| anyhow::anyhow!("persisted attested gate receipt public key is not UTF-8"))?;
+    let (_, pubkey_sha256) = canonical_batch_result_pubkey(pubkey)?;
+    receipt.verify(pubkey)?;
+    verify_external_import_receipt(manifest, &results.state.imported_grades, &receipt, pubkey)?;
+    let publication: AttestedParityGatePublicationReceipt = serde_json::from_slice(&publication_artifact.bytes)
+        .map_err(|_| anyhow::anyhow!("parse immutable attested gate publication receipt"))?;
+    let report_sha256 = sha256_bytes(&report_artifact.bytes);
+    if publication.schema_version != ATTESTED_PARITY_GATE_REPORT_SCHEMA_VERSION
+        || publication.run_manifest_sha256 != sha256_json(manifest)?
+        || publication.report_sha256 != report_sha256
+        || publication.import_receipt_sha256 != sha256_bytes(&import_receipt_artifact.bytes)
+        || publication.import_receipt_pubkey_sha256 != pubkey_sha256
+        || publication.batch_result_binding_sha256 != report.batch_result_binding_sha256
+        || publication.family_bias_summary_sha256 != report.family_bias_summary_sha256
+        || publication.gate_eligible != report.gate_eligible
+        || report.import_receipt_sha256 != publication.import_receipt_sha256
+        || report.import_receipt_pubkey_sha256 != publication.import_receipt_pubkey_sha256
+        || report.batch_result_binding_sha256 != sha256_bytes(&results.binding_artifact.bytes)
+        || report.state_evidence_sha256 != sha256_json(&state_evidence(&results.state))?
+        || report.imported_grades != results.state.imported_grades
+        || results.state.report_sha256.as_deref() != Some(report_sha256.as_str())
+    {
+        anyhow::bail!("immutable attested gate publication receipt does not bind current validated evidence");
+    }
+    for ((name, _), artifact) in contracts.iter().zip([
+        &report_artifact,
+        &import_receipt_artifact,
+        &pubkey_artifact,
+        &publication_artifact,
+    ]) {
+        artifact.revalidate(run, name)?;
+    }
+    run.revalidate_lock()
 }
 
 fn cluster_attested_four_grader_family_bias(
@@ -1745,6 +2082,7 @@ pub fn build_report(
     validate_operator_anchor_artifacts_if_present(&run_dir, &manifest, grader_config, goldset)?;
     validate_four_grader_batch_plan_if_present(&run_dir, &manifest, grader_config)?;
     validate_four_grader_batch_result_artifacts_if_present(&run_dir, &manifest, grader_config, goldset)?;
+    reject_legacy_report_mutation_after_attested_gate(&run_dir)?;
     let state_bytes = run_dir.read_child(STATE_FILE, 1024 * 1024)?;
     let mut state = load_state_for_manifest(&run_dir, &manifest)?;
     validate_state_imports(&run_dir, &state, grader_config, goldset)?;

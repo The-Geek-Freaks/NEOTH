@@ -25,7 +25,8 @@ use crate::recall::{
     parity_harness::{
         build_report, ingest_offline_grades, ingest_operator_anchor_evidence, plan_four_grader_batch,
         plan_run, read_offline_input, validate_attested_four_grader_batch_results,
-        ingest_attested_four_grader_batch_results, summarize_attested_four_grader_family_bias,
+        build_attested_parity_gate_report, ingest_attested_four_grader_batch_results,
+        summarize_attested_four_grader_family_bias,
     },
     parity_anchor::{
         MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES, load_operator_anchor_bytes,
@@ -219,6 +220,22 @@ pub enum RecallParityHarnessOperation {
         #[arg(long, value_name = "PATH")]
         goldset: PathBuf,
     },
+    /// Publish the only fully provenance-validated P1-08 gate-eligible report
+    /// transition for an existing attested four-grader run. This remains
+    /// offline: the detached signed import receipt and public key are explicit
+    /// operator inputs; no provider or dispatcher is contacted.
+    AttestedGateReport {
+        #[arg(long, value_name = "DIR")]
+        run_dir: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+        #[arg(long = "import-receipt", value_name = "PATH")]
+        import_receipt: PathBuf,
+        #[arg(long = "expected-receipt-pubkey", value_name = "BASE64")]
+        expected_receipt_pubkey: String,
+    },
 }
 
 pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<()> {
@@ -242,7 +259,8 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
         | RecallParityHarnessOperation::BatchPlan { grader_config, goldset, .. }
         | RecallParityHarnessOperation::BatchResultsVerify { grader_config, goldset, .. }
         | RecallParityHarnessOperation::BatchResultsIngest { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::BatchFamilyBias { grader_config, goldset, .. } => {
+        | RecallParityHarnessOperation::BatchFamilyBias { grader_config, goldset, .. }
+        | RecallParityHarnessOperation::AttestedGateReport { grader_config, goldset, .. } => {
             (grader_config, goldset)
         }
         RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
@@ -380,6 +398,20 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                         &run_dir, &config, &config_bytes, &entries, &goldset_bytes,
                     )?;
                     render_harness_json(&summary.export()?, &output)?;
+                }
+                RecallParityHarnessOperation::AttestedGateReport {
+                    run_dir, import_receipt, expected_receipt_pubkey, ..
+                } => {
+                    let receipt_bytes = read_offline_input(
+                        &import_receipt,
+                        MAX_PARITY_IMPORT_RECEIPT_BYTES as u64,
+                        "signed attested gate import receipt",
+                    )?;
+                    let report = build_attested_parity_gate_report(
+                        &run_dir, &config, &config_bytes, &entries, &goldset_bytes,
+                        &receipt_bytes, &expected_receipt_pubkey,
+                    )?;
+                    render_harness_json(&report, &output)?;
                 }
                 RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
                     unreachable!("candidate evidence returns before config/goldset input loading")
