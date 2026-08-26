@@ -15,6 +15,7 @@ pub(crate) const MAX_QA_CONTRACT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_CANDIDATE_BYTES: usize = 128 * 1024;
 pub(crate) const MAX_QA_FAILURE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_SESSION_NAMING_OPENING_BYTES: usize = 2 * 1024;
+pub(crate) const MAX_DOCUMENT_TITLE_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_DATA_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_RENDERED_BYTES: usize = 384 * 1024;
 
@@ -25,6 +26,7 @@ const PROMPT_ENVELOPE_TRUST: &str = "untrusted_data_only";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PromptEnvelopePurpose {
+    ArxivAbstractSummary,
     ChatClarificationReissue,
     ChatHemisphereLiveTest,
     ChatSessionNaming,
@@ -40,6 +42,10 @@ pub(crate) enum PromptEnvelopePurpose {
 impl PromptEnvelopePurpose {
     fn expected_fields(self) -> &'static [PromptFieldKind] {
         match self {
+            Self::ArxivAbstractSummary => &[
+                PromptFieldKind::DocumentTitle,
+                PromptFieldKind::DocumentAbstract,
+            ],
             Self::ChatClarificationReissue => &[
                 PromptFieldKind::OriginalQuestion,
                 PromptFieldKind::ClarificationAnswer,
@@ -69,6 +75,7 @@ impl PromptEnvelopePurpose {
 
     fn as_str(self) -> &'static str {
         match self {
+            Self::ArxivAbstractSummary => "arxiv_abstract_summary",
             Self::ChatClarificationReissue => "chat_clarification_reissue",
             Self::ChatHemisphereLiveTest => "chat_hemisphere_live_test",
             Self::ChatSessionNaming => "chat_session_naming",
@@ -88,6 +95,8 @@ impl PromptEnvelopePurpose {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PromptFieldKind {
+    DocumentTitle,
+    DocumentAbstract,
     ClarificationAnswer,
     SessionOpening,
     GroundTruthAssertions,
@@ -103,6 +112,8 @@ pub(crate) enum PromptFieldKind {
 impl PromptFieldKind {
     fn max_bytes(self) -> usize {
         match self {
+            Self::DocumentTitle => MAX_DOCUMENT_TITLE_BYTES,
+            Self::DocumentAbstract => MAX_QA_CONTRACT_BYTES,
             Self::ClarificationAnswer => MAX_OPERATOR_TASK_BYTES,
             Self::SessionOpening => MAX_SESSION_NAMING_OPENING_BYTES,
             Self::GroundTruthAssertions => MAX_QA_CONTRACT_BYTES,
@@ -116,6 +127,8 @@ impl PromptFieldKind {
 
     fn as_str(self) -> &'static str {
         match self {
+            Self::DocumentTitle => "document_title",
+            Self::DocumentAbstract => "document_abstract",
             Self::ClarificationAnswer => "clarification_answer",
             Self::SessionOpening => "session_opening",
             Self::GroundTruthAssertions => "ground_truth_assertions",
