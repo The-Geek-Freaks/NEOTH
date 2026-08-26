@@ -11,6 +11,9 @@ pub mod conversational;
 /// (the grade→report aggregator). Consumed by `neoth recall score`.
 pub mod goldset;
 pub mod parity;
+/// GOLD-LF-P1-08 — strict offline operator calibration-anchor validation and
+/// deterministic shared-family bias assessment.
+pub mod parity_anchor;
 /// GOLD-LF-P1-08 — offline SHA256-bound plan/import/family-bias/report harness.
 /// It cannot invoke providers or change the established fail-closed gate.
 pub mod parity_harness;

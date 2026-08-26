@@ -26,6 +26,7 @@ use crate::recall::{
         build_report, ingest_offline_grades, plan_run,
         read_offline_input,
     },
+    parity_anchor::{load_operator_anchor_bytes, summarize_operator_anchor},
     parity_import_receipt::{MAX_PARITY_IMPORT_RECEIPT_BYTES, parse_signed_parity_import_receipt},
 };
 
@@ -116,55 +117,74 @@ pub enum RecallParityHarnessOperation {
         #[arg(long = "expected-receipt-pubkey", value_name = "BASE64")]
         expected_receipt_pubkey: String,
     },
+    /// Validate the operator's 20-query × two-system calibration labels before
+    /// they can be used for a later anchored family-bias correction.
+    AnchorValidate {
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+        #[arg(long = "operator-anchor", value_name = "PATH")]
+        operator_anchor: PathBuf,
+    },
 }
 
 pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<()> {
     let output = args.output;
-    match args.operation {
-        operation @ (RecallParityHarnessOperation::Plan { .. }
-        | RecallParityHarnessOperation::Ingest { .. }
-        | RecallParityHarnessOperation::Report { .. }
-        | RecallParityHarnessOperation::Show { .. }) => {
-            let (run_dir, grader_config, goldset) = match &operation {
-                RecallParityHarnessOperation::Plan { run_dir, grader_config, goldset }
-                | RecallParityHarnessOperation::Ingest { run_dir, grader_config, goldset, .. }
-                | RecallParityHarnessOperation::Report { run_dir, grader_config, goldset, .. }
-                | RecallParityHarnessOperation::Show { run_dir, grader_config, goldset, .. } => {
-                    (run_dir, grader_config, goldset)
-                }
-            };
+    let operation = args.operation;
+    let (grader_config, goldset) = match &operation {
+        RecallParityHarnessOperation::Plan { grader_config, goldset, .. }
+        | RecallParityHarnessOperation::Ingest { grader_config, goldset, .. }
+        | RecallParityHarnessOperation::Report { grader_config, goldset, .. }
+        | RecallParityHarnessOperation::Show { grader_config, goldset, .. }
+        | RecallParityHarnessOperation::AnchorValidate { grader_config, goldset, .. } => {
+            (grader_config, goldset)
+        }
+    };
             let config_bytes = read_offline_input(grader_config, MAX_GRADER_CONFIG_BYTES, "grader config")?;
             let goldset_bytes = read_offline_input(goldset, MAX_GOLDSET_BYTES, "goldset")?;
             let config = crate::recall::goldset::load_grader_config_bytes(&config_bytes, "harness --grader-config")?;
             let entries = crate::recall::goldset::load_goldset_bytes(&goldset_bytes, "harness --goldset")?;
-            match &operation {
-                RecallParityHarnessOperation::Plan { .. } => {
-                    let manifest = plan_run(run_dir, &config, &config_bytes, &entries, &goldset_bytes)?;
+            match operation {
+                RecallParityHarnessOperation::Plan { run_dir, .. } => {
+                    let manifest = plan_run(&run_dir, &config, &config_bytes, &entries, &goldset_bytes)?;
                     render_harness_json(&manifest, &output)?;
                 }
-                RecallParityHarnessOperation::Ingest { grades, .. } => {
+                RecallParityHarnessOperation::Ingest { run_dir, grades, .. } => {
                     let grade_bytes = read_offline_input(&grades, crate::recall::goldset::MAX_GRADES_BYTES, "grade sheet")?;
-                    let state = ingest_offline_grades(run_dir, &config, &config_bytes, &entries, &goldset_bytes, &grade_bytes)?;
+                    let state = ingest_offline_grades(&run_dir, &config, &config_bytes, &entries, &goldset_bytes, &grade_bytes)?;
                     render_harness_json(&state, &output)?;
                 }
-                RecallParityHarnessOperation::Report { import_receipt, expected_receipt_pubkey, .. } => {
-                    let receipt_bytes = read_offline_input(import_receipt, MAX_PARITY_IMPORT_RECEIPT_BYTES as u64, "signed parity import receipt")?;
+                RecallParityHarnessOperation::Report { run_dir, import_receipt, expected_receipt_pubkey, .. } => {
+                    let receipt_bytes = read_offline_input(&import_receipt, MAX_PARITY_IMPORT_RECEIPT_BYTES as u64, "signed parity import receipt")?;
                     let signed_receipt = parse_signed_parity_import_receipt(&receipt_bytes)?;
-                    let report = build_report(run_dir, &config, &config_bytes, &entries, &goldset_bytes, &signed_receipt, expected_receipt_pubkey)?;
+                    let report = build_report(&run_dir, &config, &config_bytes, &entries, &goldset_bytes, &signed_receipt, &expected_receipt_pubkey)?;
                     render_harness_json(&report, &output)?;
                 }
-                RecallParityHarnessOperation::Show { import_receipt, expected_receipt_pubkey, .. } => {
+                RecallParityHarnessOperation::Show { run_dir, import_receipt, expected_receipt_pubkey, .. } => {
                     // Do not treat a mutable run-directory checksum as a trust
                     // anchor. Rebuilding binds the displayed evidence to the
                     // explicitly supplied, freshly validated config/goldset.
-                    let receipt_bytes = read_offline_input(import_receipt, MAX_PARITY_IMPORT_RECEIPT_BYTES as u64, "signed parity import receipt")?;
+                    let receipt_bytes = read_offline_input(&import_receipt, MAX_PARITY_IMPORT_RECEIPT_BYTES as u64, "signed parity import receipt")?;
                     let signed_receipt = parse_signed_parity_import_receipt(&receipt_bytes)?;
-                    let report = build_report(run_dir, &config, &config_bytes, &entries, &goldset_bytes, &signed_receipt, expected_receipt_pubkey)?;
+                    let report = build_report(&run_dir, &config, &config_bytes, &entries, &goldset_bytes, &signed_receipt, &expected_receipt_pubkey)?;
                     render_harness_json(&report, &output)?;
                 }
+                RecallParityHarnessOperation::AnchorValidate { operator_anchor, .. } => {
+                    let anchor_bytes = read_offline_input(
+                        &operator_anchor,
+                        crate::recall::goldset::MAX_GRADES_BYTES,
+                        "operator anchor labels",
+                    )?;
+                    let anchor = load_operator_anchor_bytes(
+                        &anchor_bytes,
+                        "harness --operator-anchor",
+                        &entries,
+                        &config,
+                    )?;
+                    render_harness_json(&summarize_operator_anchor(&anchor, &anchor_bytes), &output)?;
+                }
             }
-        }
-    }
     Ok(())
 }
 

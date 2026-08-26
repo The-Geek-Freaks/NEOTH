@@ -5,6 +5,7 @@
 //! while trust in complete imports comes only from an explicitly supplied key.
 
 const HARNESS: &str = include_str!("../src/recall/parity_harness.rs");
+const ANCHOR: &str = include_str!("../src/recall/parity_anchor.rs");
 const RECEIPT: &str = include_str!("../src/recall/parity_import_receipt.rs");
 const CLI: &str = include_str!("../src/cli/recall_score.rs");
 
@@ -76,5 +77,27 @@ fn receipt_v2_contract_requires_external_complete_signed_evidence() {
         "long = \"expected-receipt-pubkey\"",
     ] {
         assert!(HARNESS.contains(required) || CLI.contains(required), "receipt provenance path lost {required}");
+    }
+}
+
+#[test]
+fn operator_anchor_is_bounded_offline_and_never_claims_to_change_the_gate() {
+    for forbidden in ["reqwest", "Command::", "wal::", "build_report("] {
+        assert!(
+            !ANCHOR.contains(forbidden),
+            "operator anchor must remain an offline analysis boundary: {forbidden}"
+        );
+    }
+    for required in [
+        "OPERATOR_ANCHOR_GRADER_ID",
+        "OPERATOR_ANCHOR_QUERY_COUNT",
+        "load_operator_anchor_bytes",
+        "assess_shared_family_bias",
+        "recommended_unanchored_correction",
+        "compute_parity_run",
+        "canonical_goldset_sha256",
+        "canonical_roster_sha256",
+    ] {
+        assert!(ANCHOR.contains(required), "operator-anchor contract lost {required}");
     }
 }
