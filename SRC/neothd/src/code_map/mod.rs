@@ -17,6 +17,7 @@
 //! missing edges as unknown, never as proof that no relationship exists.
 
 pub mod co_change;
+pub mod diff;
 pub mod graph;
 pub mod impact;
 pub mod outline;
