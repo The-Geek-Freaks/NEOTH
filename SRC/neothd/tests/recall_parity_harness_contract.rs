@@ -6,6 +6,7 @@
 
 const HARNESS: &str = include_str!("../src/recall/parity_harness.rs");
 const ANCHOR: &str = include_str!("../src/recall/parity_anchor.rs");
+const CANDIDATE_EVIDENCE: &str = include_str!("../src/recall/parity_candidate_evidence.rs");
 const RECEIPT: &str = include_str!("../src/recall/parity_import_receipt.rs");
 const CLI: &str = include_str!("../src/cli/recall_score.rs");
 
@@ -100,4 +101,44 @@ fn operator_anchor_is_bounded_offline_and_never_claims_to_change_the_gate() {
     ] {
         assert!(ANCHOR.contains(required), "operator-anchor contract lost {required}");
     }
+}
+
+#[test]
+fn candidate_evidence_is_capability_bound_redacted_and_requires_operator_labels() {
+    for forbidden in [
+        "File::open(",
+        "fs::copy",
+        "fs::remove_file",
+        "fs::rename",
+        "reqwest",
+        "wal::writer",
+        "build_report(",
+        "GoldsetEntry",
+    ] {
+        assert!(
+            !CANDIDATE_EVIDENCE.contains(forbidden),
+            "candidate evidence must not acquire ambient/raw/gate authority: {forbidden}"
+        );
+    }
+    for required in [
+        "open_bound_directory_from_trusted_anchor",
+        "read_regular_file_bounded",
+        "CANDIDATE_EVIDENCE_PURPOSE",
+        "source_span_sha256",
+        "SignedCandidateEvidenceReceipt",
+        "CANDIDATE_EVIDENCE_RECEIPT_PURPOSE",
+        "pub fn canonical_bytes",
+        "verify_b64",
+        "operator_labeling_required: true",
+        "gate_eligible: false",
+        "deny_unknown_fields",
+    ] {
+        assert!(
+            CANDIDATE_EVIDENCE.contains(required),
+            "candidate evidence lost safety/provenance contract {required}"
+        );
+    }
+    assert!(CLI.contains("CandidateEvidenceValidate"));
+    assert!(CLI.contains("long = \"evidence-dir\""));
+    assert!(CLI.contains("long = \"expected-evidence-receipt-pubkey\""));
 }

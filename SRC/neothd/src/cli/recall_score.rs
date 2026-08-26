@@ -27,6 +27,7 @@ use crate::recall::{
         read_offline_input,
     },
     parity_anchor::{load_operator_anchor_bytes, summarize_operator_anchor},
+    parity_candidate_evidence::{load_imported_candidate_evidence, summarize_candidate_evidence},
     parity_import_receipt::{MAX_PARITY_IMPORT_RECEIPT_BYTES, parse_signed_parity_import_receipt},
 };
 
@@ -127,11 +128,30 @@ pub enum RecallParityHarnessOperation {
         #[arg(long = "operator-anchor", value_name = "PATH")]
         operator_anchor: PathBuf,
     },
+    /// Verify a bounded imported transcript/WAL candidate-evidence bundle and
+    /// render only its redacted provenance receipt. Candidates remain in the
+    /// operator-labeling queue and cannot enter a parity gate from this command.
+    CandidateEvidenceValidate {
+        #[arg(long = "evidence-dir", value_name = "DIR")]
+        evidence_dir: PathBuf,
+        /// Out-of-band Ed25519 public key for the immutable candidate-evidence
+        /// receipt. The key is never accepted from the mutable evidence bundle.
+        #[arg(long = "expected-evidence-receipt-pubkey", value_name = "BASE64")]
+        expected_evidence_receipt_pubkey: String,
+    },
 }
 
 pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<()> {
     let output = args.output;
     let operation = args.operation;
+    if let RecallParityHarnessOperation::CandidateEvidenceValidate {
+        evidence_dir,
+        expected_evidence_receipt_pubkey,
+    } = &operation {
+        let evidence = load_imported_candidate_evidence(evidence_dir, expected_evidence_receipt_pubkey)?;
+        render_harness_json(&summarize_candidate_evidence(&evidence), &output)?;
+        return Ok(());
+    }
     let (grader_config, goldset) = match &operation {
         RecallParityHarnessOperation::Plan { grader_config, goldset, .. }
         | RecallParityHarnessOperation::Ingest { grader_config, goldset, .. }
@@ -139,6 +159,9 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
         | RecallParityHarnessOperation::Show { grader_config, goldset, .. }
         | RecallParityHarnessOperation::AnchorValidate { grader_config, goldset, .. } => {
             (grader_config, goldset)
+        }
+        RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
+            unreachable!("candidate evidence returns before config/goldset input loading")
         }
     };
             let config_bytes = read_offline_input(grader_config, MAX_GRADER_CONFIG_BYTES, "grader config")?;
@@ -183,6 +206,9 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                         &config,
                     )?;
                     render_harness_json(&summarize_operator_anchor(&anchor, &anchor_bytes), &output)?;
+                }
+                RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
+                    unreachable!("candidate evidence returns before config/goldset input loading")
                 }
             }
     Ok(())

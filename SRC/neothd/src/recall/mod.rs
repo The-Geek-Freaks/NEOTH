@@ -14,6 +14,10 @@ pub mod parity;
 /// GOLD-LF-P1-08 — strict offline operator calibration-anchor validation and
 /// deterministic shared-family bias assessment.
 pub mod parity_anchor;
+/// GOLD-LF-P1-08 — bounded, read-only imported transcript/WAL candidate
+/// evidence. It exposes no raw source content and cannot enter the gate before
+/// a separate operator-labeling stage.
+pub mod parity_candidate_evidence;
 /// GOLD-LF-P1-08 — offline SHA256-bound plan/import/family-bias/report harness.
 /// It cannot invoke providers or change the established fail-closed gate.
 pub mod parity_harness;
