@@ -1,64 +1,44 @@
 # NEOTH Design System
 
-Canonical visual language for NEOTH — the local-first private AI buddy.
-Originated as a Claude Design handoff (claude.ai/design, 2026-06-15) generated
-by reading NEOTH's real Slint GUI, then adopted as the source of truth for the
-app's look.
+This directory is the durable GUI-work contract for NEOTH's native Slint
+application. Before reviewing or changing `.slint` UI, read these documents in
+order:
 
-## Review contracts (ADOPT31-G1/G4 documentation)
+1. [`PRODUCT.md`](PRODUCT.md) — operator, surface map, states, and interaction
+   truthfulness.
+2. [`DESIGN.md`](DESIGN.md) — Theme authority, semantic signals, type, layout,
+   shape, motion, and review path.
+3. [`../SRC/neothd-gui/ui/COMPONENT_API.md`](../SRC/neothd-gui/ui/COMPONENT_API.md)
+   — the real component property names and Slint constraints.
 
-Before reviewing or changing `.slint` UI, read this file together with:
+The nearest GUI instruction file at
+[`../SRC/neothd-gui/AGENTS.md`](../SRC/neothd-gui/AGENTS.md) makes this pre-read
+mandatory for work in that subtree. The docs are a workflow guard, not compiled
+runtime and not release proof.
 
-- [`lint_rules.md`](lint_rules.md) — all 59 stable design-lint identifiers and
-  their honest Slint portability class. **Only** the four G2 token-drift rules
+## Review contracts
+
+- [`lint_rules.md`](lint_rules.md) contains the 59 stable design-lint identifiers
+  and their honest Slint portability class. Only the four G2 token-drift rules
   (`design-system-font`, `design-system-color`, `design-system-radius`, and
-  `design-system-font-size`) are currently automated.
-- [`AUDIT_CHECKLIST.md`](AUDIT_CHECKLIST.md) — the evidence-first five-dimension
-  scorecard for accessibility, performance, theming, responsive behavior, and
-  implementation integrity.
+  `design-system-font-size`) are automated.
+- [`AUDIT_CHECKLIST.md`](AUDIT_CHECKLIST.md) is the evidence-first scorecard for
+  accessibility, performance, theming, responsive behavior, and implementation
+  integrity.
 
-These documents provide a shared review vocabulary. They do not mark
-ADOPT31-G1/G4 complete, do not claim a full GUI lint, and do not replace
-exact-head remote CI, Security, CodeQL, rendered-platform evidence, or broader
-Road requirements.
+Neither document replaces rendered-platform evidence, exact-head remote CI,
+Security/CodeQL, or the wider Road acceptance requirements.
 
-## The language
+## Production implementation
 
-Neon-on-near-black. Three **signal colours carry meaning everywhere**:
-
-| Signal | Colour | Meaning |
-|--------|--------|---------|
-| green  | `#00ff80` | **memory** — primary / live / accent |
-| pink   | `#ff2a6d` | **consent** — boundaries / alert / danger |
-| cyan   | `#05d5ff` | **audit** — proof / info / network |
-| amber  | `#ffb627` | in-progress / caution |
-
-Type: **Space Grotesk** (all UI + display), **Bodoni Moda** (the NEOTH wordmark
-only), **JetBrains Mono** (ids, audit frames, eyebrows, status lines).
-
-Signature element: the **Buddy** — a glowing neural-core orb that reflects what
-NEOTH is doing right now (idle, thinking, working, remembering, verifying,
-hitting a consent boundary, finishing).
-
-> **Palette decision (2026-06-15):** the saturated neon signal palette above is
-> **canonical** — it supersedes the earlier desaturated emerald (`#3ecf8e`)
-> experiment. Operator call during the design-system adoption.
-
-## Where it lives in the codebase (the real implementation)
-
-The design tokens + Buddy are implemented natively in the Slint GUI — these are
-the production files, not this folder:
-
-- **`SRC/neothd-gui/ui/theme.slint`** — every token (ink scale, signal neons +
-  glow/tint, semantic surfaces, text hierarchy, spacing 4px grid, radii xs..pill,
-  type, motion) as a Slint `Theme` global. Change a value here → it propagates to
-  every screen. **This is the live single source of truth.**
-- **`SRC/neothd-gui/ui/buddy.slint`** — the reactive Buddy orb (`Buddy` +
-  `BuddyDock`), driven by `animation-tick()`. `mood` → hue / orbit speed / breath
-  speed + per-mood overlays (thinking dots, working scan, success check, memory
-  inflow, alert badge, secure lock, …).
-- **`SRC/neothd-gui/src/main.rs`** — drives `buddy-mood` from live activity
-  (chat: thinking → working → success/error).
+The production visual-token authority is
+[`SRC/neothd-gui/ui/theme.slint`](../SRC/neothd-gui/ui/theme.slint). Its Slint
+`Theme` global owns the live dark/light tokens, semantic colors, typography,
+spacing, radii, density, overrides, and reduced-motion behavior. The reactive
+Buddy is implemented by
+[`SRC/neothd-gui/ui/buddy.slint`](../SRC/neothd-gui/ui/buddy.slint), and Rust
+drives its live mood from
+[`SRC/neothd-gui/src/main.rs`](../SRC/neothd-gui/src/main.rs).
 
 ## This folder (reference, not built)
 
