@@ -29,6 +29,13 @@ pub(crate) const MAX_PLAN_REVIEW_CRITIQUES_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_DECOMPOSER_OPERATOR_REQUEST_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_DECOMPOSER_PROJECT_CONTEXT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_DECOMPOSER_PRIOR_PROVIDER_OUTPUT_BYTES: usize = 128 * 1024;
+pub(crate) const MAX_WORKER_TASK_TITLE_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_WORKER_TASK_DESCRIPTION_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_WORKER_TASK_TYPE_BYTES: usize = 4 * 1024;
+pub(crate) const MAX_WORKER_ROLE_BYTES: usize = 4 * 1024;
+pub(crate) const MAX_WORKER_IDENTIFIER_BYTES: usize = 256;
+pub(crate) const MAX_WORKER_ASSIGNED_WORKER_BYTES: usize = 4 * 1024;
+pub(crate) const MAX_WORKER_TOOL_HINT_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_DATA_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_RENDERED_BYTES: usize = 384 * 1024;
 
@@ -44,6 +51,7 @@ pub(crate) enum PromptEnvelopePurpose {
     CodingPlanReview,
     CodingDecomposition,
     CodingDecompositionRepair,
+    CodingProviderWorkerTask,
     DoctorDiagnose,
     EmailThreatTiebreak,
     SubAgentReview,
@@ -83,6 +91,17 @@ impl PromptEnvelopePurpose {
                 PromptFieldKind::DecomposerOperatorRequest,
                 PromptFieldKind::DecomposerProjectContext,
                 PromptFieldKind::PriorProviderOutput,
+            ],
+            Self::CodingProviderWorkerTask => &[
+                PromptFieldKind::WorkerTaskTitle,
+                PromptFieldKind::WorkerTaskDescription,
+                PromptFieldKind::WorkerTaskType,
+                PromptFieldKind::WorkerTaskHemisphere,
+                PromptFieldKind::WorkerRoleHint,
+                PromptFieldKind::WorkerSessionIdentifier,
+                PromptFieldKind::WorkerTaskIdentifier,
+                PromptFieldKind::WorkerAssignedWorker,
+                PromptFieldKind::WorkerToolHint,
             ],
             Self::DoctorDiagnose => &[PromptFieldKind::DiagnosticFindings],
             Self::EmailThreatTiebreak => &[
@@ -131,6 +150,7 @@ impl PromptEnvelopePurpose {
             Self::CodingPlanReview => "coding_plan_review",
             Self::CodingDecomposition => "coding_decomposition",
             Self::CodingDecompositionRepair => "coding_decomposition_repair",
+            Self::CodingProviderWorkerTask => "coding_provider_worker_task",
             Self::DoctorDiagnose => "doctor_diagnose",
             Self::EmailThreatTiebreak => "email_threat_tiebreak",
             Self::SubAgentReview => "sub_agent_review",
@@ -163,6 +183,15 @@ pub(crate) enum PromptFieldKind {
     DecomposerOperatorRequest,
     DecomposerProjectContext,
     PriorProviderOutput,
+    WorkerTaskTitle,
+    WorkerTaskDescription,
+    WorkerTaskType,
+    WorkerTaskHemisphere,
+    WorkerRoleHint,
+    WorkerSessionIdentifier,
+    WorkerTaskIdentifier,
+    WorkerAssignedWorker,
+    WorkerToolHint,
     DiagnosticFindings,
     EmailSubject,
     EmailBody,
@@ -192,6 +221,13 @@ impl PromptFieldKind {
             Self::DecomposerOperatorRequest => MAX_DECOMPOSER_OPERATOR_REQUEST_BYTES,
             Self::DecomposerProjectContext => MAX_DECOMPOSER_PROJECT_CONTEXT_BYTES,
             Self::PriorProviderOutput => MAX_DECOMPOSER_PRIOR_PROVIDER_OUTPUT_BYTES,
+            Self::WorkerTaskTitle => MAX_WORKER_TASK_TITLE_BYTES,
+            Self::WorkerTaskDescription => MAX_WORKER_TASK_DESCRIPTION_BYTES,
+            Self::WorkerTaskType => MAX_WORKER_TASK_TYPE_BYTES,
+            Self::WorkerTaskHemisphere | Self::WorkerRoleHint => MAX_WORKER_ROLE_BYTES,
+            Self::WorkerSessionIdentifier | Self::WorkerTaskIdentifier => MAX_WORKER_IDENTIFIER_BYTES,
+            Self::WorkerAssignedWorker => MAX_WORKER_ASSIGNED_WORKER_BYTES,
+            Self::WorkerToolHint => MAX_WORKER_TOOL_HINT_BYTES,
             Self::DiagnosticFindings => MAX_DOCTOR_DIAGNOSTIC_FINDINGS_BYTES,
             Self::EmailSubject => MAX_EMAIL_SUBJECT_BYTES,
             Self::EmailBody => MAX_EMAIL_BODY_BYTES,
@@ -220,6 +256,15 @@ impl PromptFieldKind {
             Self::DecomposerOperatorRequest => "decomposer_operator_request",
             Self::DecomposerProjectContext => "decomposer_project_context",
             Self::PriorProviderOutput => "prior_provider_output",
+            Self::WorkerTaskTitle => "worker_task_title",
+            Self::WorkerTaskDescription => "worker_task_description",
+            Self::WorkerTaskType => "worker_task_type",
+            Self::WorkerTaskHemisphere => "worker_task_hemisphere",
+            Self::WorkerRoleHint => "worker_role_hint",
+            Self::WorkerSessionIdentifier => "worker_session_identifier",
+            Self::WorkerTaskIdentifier => "worker_task_identifier",
+            Self::WorkerAssignedWorker => "worker_assigned_worker",
+            Self::WorkerToolHint => "worker_tool_hint",
             Self::DiagnosticFindings => "diagnostic_findings",
             Self::EmailSubject => "email_subject",
             Self::EmailBody => "email_body",
