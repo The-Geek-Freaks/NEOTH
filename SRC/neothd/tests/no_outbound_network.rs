@@ -763,6 +763,13 @@ fn forbidden_network_constructions_with_boundaries(
     allows_stt_pidfd_syscalls: bool,
     allows_graphify_denial_probe: bool,
 ) -> Vec<(usize, &'static str)> {
+    // Normalize Windows checkout line endings before parsing and apply every
+    // `proc_macro2::Span::byte_range` to that same byte representation. This
+    // keeps source slices aligned with their AST spans on every CI host. It
+    // changes no Rust tokens and grants no new boundary: malformed source and
+    // every contract mismatch still fail closed.
+    let normalized_content = content.replace("\r\n", "\n");
+    let content = normalized_content.as_str();
     let Ok(file) = syn::parse_file(content) else {
         // Parse failure deliberately grants no exception.  A malformed source
         // file must not turn this source-boundary check into a fail-open gate.
@@ -4631,6 +4638,17 @@ fn ast_network_gate_allows_only_the_exact_wired_graphify_libc_denial_contract() 
     assert!(
         forbidden_network_constructions_with_boundaries(&complete, false, false, true).is_empty(),
         "the exact guardian -> boundary -> network -> libc probe chain is reviewed"
+    );
+    let windows_checkout = complete.replace('\n', "\r\n");
+    assert!(
+        forbidden_network_constructions_with_boundaries(
+            &windows_checkout,
+            false,
+            false,
+            true,
+        )
+        .is_empty(),
+        "CRLF checkout normalization must preserve the exact Graphify token contract"
     );
     assert_eq!(
         forbidden_network_constructions_in_production(&complete)

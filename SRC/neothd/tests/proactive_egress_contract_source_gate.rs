@@ -1104,9 +1104,39 @@ fn every_live_route_uses_the_choke_point_and_keet_binds_raw_capability() {
         live_route_arms.len(),
         "each declared live route must have exactly one durable choke-point call"
     );
-    assert!(route.contains("let topic_capability = topic.expose();"));
-    assert!(route.contains("execute!(topic_capability, &channel)"));
-    assert!(!route.contains("topic_alias"));
+    let route_compact = route
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace())
+        .collect::<String>();
+    let production_dispatcher = without_cfg_test_modules(DISPATCHER);
+    let dispatcher_code = rust_code_only(&production_dispatcher);
+    let dispatcher_compact = dispatcher_code
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace())
+        .collect::<String>();
+    let execute_macro = between(&route_compact, "macro_rules!execute", "matchroute{");
+    assert_eq!(route_compact.matches("macro_rules!execute").count(), 1);
+    assert_eq!(
+        dispatcher_compact.matches("execute_claimed_once").count(),
+        1,
+        "production dispatcher must name the durable egress seam only inside execute!"
+    );
+    assert!(execute_macro.contains("execute_claimed_once("));
+    let keet_arm = between(route, "DeliveryRoute::Keet", "DeliveryRoute::Signal");
+    let keet_compact = keet_arm
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace())
+        .collect::<String>();
+    assert!(keet_compact.contains("lettopic_capability=topic.expose();"));
+    let keet_constructor = between(
+        &keet_compact,
+        "crate::channels::keet::KeetChannel::new(",
+        ").map_err(",
+    );
+    assert!(keet_constructor.contains("topic_capability,"));
+    assert_eq!(keet_compact.matches("topic_capability").count(), 3);
+    assert!(keet_compact.ends_with("execute!(topic_capability,channel)}"));
+    assert!(!keet_arm.contains("topic_alias"));
 }
 
 #[test]

@@ -2298,14 +2298,13 @@ mod tests {
                 .unwrap(),
             1
         );
-        assert_eq!(
+        assert!(
             conn.query_row(
                 "SELECT policy_revision IS NULL AND lifecycle_revision IS NULL FROM audit_outbox WHERE event_id=?1",
                 [event_id],
                 |row| row.get::<_, bool>(0),
             )
-            .unwrap(),
-            true,
+            .unwrap()
         );
     }
 
@@ -2334,7 +2333,7 @@ mod tests {
 
     #[test]
     fn audit_outbox_enforces_context_receipt_revision_pairs() {
-        let mut store = store();
+        let store = store();
         let scope = store.scope(&account());
         for (receipt, policy, lifecycle) in
             [(4_i64, None, None), (1_i64, Some(7_i64), Some(11_i64))]
