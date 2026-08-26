@@ -5,9 +5,8 @@
 //! (creative), Cerebellum (router). The data model already lives in
 //! `config::inference::InferenceTopology`; this CLI surfaces it.
 //!
-//! v0.1 ships `show` + `set` + `test`. The wizard step 5d that
-//! configures all three at onboarding lands in a separate pass against
-//! `cli::init`.
+//! `show` + `set` + `test` share their topology contract with the CLI and GUI
+//! onboarding flows. The command remains the day-two mutation/readiness seam.
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
@@ -30,6 +29,14 @@ fn exact_known_compat_profile(
         .find(|known| known.endpoint == endpoint)
         .map(|known| known.profile)
         .filter(|profile| *profile != crate::config::inference::OpenAiCompatibleProfile::Generic)
+}
+
+fn valid_provider_ids() -> String {
+    crate::config::inference::InferenceProvider::ALL
+        .iter()
+        .map(|provider| provider.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[derive(Args, Debug, Clone)]
@@ -448,11 +455,7 @@ async fn run_mode_single(
     output: &OutputFormat,
 ) -> Result<()> {
     let provider = InferenceProvider::from_str(provider_str).ok_or_else(|| {
-        anyhow::anyhow!(
-            "unknown provider `{provider_str}`. Valid: claude_cli, anthropic_api, \
-             openai_api, openai_compat, gemini_api, local_qwen, local_ouro, \
-             aws_bedrock, azure_openai"
-        )
+        anyhow::anyhow!("unknown provider `{provider_str}`. Valid: {}", valid_provider_ids())
     })?;
 
     let path = FreedomConfig::default_path();
@@ -615,11 +618,7 @@ pub(crate) async fn rebind_at(
 ) -> Result<RebindResult> {
     let role = parse_role(role_str)?;
     let provider = InferenceProvider::from_str(provider_str).ok_or_else(|| {
-        anyhow::anyhow!(
-            "unknown provider `{provider_str}`. Valid: claude_cli, anthropic_api, \
-             openai_api, openai_compat, gemini_api, local_qwen, local_ouro, \
-             aws_bedrock, azure_openai"
-        )
+        anyhow::anyhow!("unknown provider `{provider_str}`. Valid: {}", valid_provider_ids())
     })?;
     let path = home.join("freedom.yaml");
     let credentials_path = home.join("credentials.yaml");

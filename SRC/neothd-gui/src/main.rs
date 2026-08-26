@@ -1282,6 +1282,10 @@ fn main() -> Result<()> {
         .is_some_and(|handoff| handoff.parent_commit);
 
     let window = MainWindow::new()?;
+    // GOLD-LF-P1-22 — seed onboarding before any best-effort subprocess panel
+    // refresh. A missing or old sibling CLI may never resurrect the stale
+    // Hermes/OpenClaw list or leave the first-run provider picker empty.
+    apply_provider_ids(&window, Vec::new());
     D2_USAGE_WINDOW_LIVE.store(true, std::sync::atomic::Ordering::Release);
     hydrate_durable_background_notices(&window, &neoth_dir);
     {
@@ -1909,8 +1913,53 @@ fn main() -> Result<()> {
         match read_freedom_yaml(&neoth_dir.join("freedom.yaml")) {
             Ok(cfg) => {
                 window.set_operator_id(cfg.operator_id.into());
-                window.set_provider_choice(cfg.provider_kind.into());
+                let provider_choice = neothd::config::inference::InferenceProvider::from_str(
+                    &cfg.provider_kind,
+                )
+                .map(|provider| provider.as_str().to_string())
+                .unwrap_or(cfg.provider_kind);
+                window.set_provider_choice(provider_choice.into());
                 window.set_autonomy_choice(cfg.autonomy.into());
+                // Pre-topology configs were necessarily single-provider. Keep
+                // that legacy meaning on re-entry instead of silently turning
+                // an old config into three recommended role bindings.
+                window.set_hemisphere_use_single(true);
+                if let Some(topology) = cfg.inference.as_ref() {
+                    let single = matches!(
+                        topology.mode,
+                        neothd::config::inference::TopologyMode::Single
+                    );
+                    window.set_hemisphere_use_single(single);
+                    if let Some(provider) = topology.default_slot.provider {
+                        window.set_provider_choice(provider.as_str().into());
+                    }
+                    window.set_hemisphere_shared_model(
+                        topology
+                            .default_slot
+                            .model
+                            .as_deref()
+                            .unwrap_or_default()
+                            .into(),
+                    );
+                    let left = topology.slot_for(neothd::config::inference::HemisphereRole::Left);
+                    if let Some(provider) = left.provider {
+                        window.set_hemisphere_left_provider(provider.as_str().into());
+                    }
+                    window.set_hemisphere_left_model(left.model.as_deref().unwrap_or_default().into());
+                    let right = topology.slot_for(neothd::config::inference::HemisphereRole::Right);
+                    if let Some(provider) = right.provider {
+                        window.set_hemisphere_right_provider(provider.as_str().into());
+                    }
+                    window.set_hemisphere_right_model(right.model.as_deref().unwrap_or_default().into());
+                    let cerebellum = topology
+                        .slot_for(neothd::config::inference::HemisphereRole::Cerebellum);
+                    if let Some(provider) = cerebellum.provider {
+                        window.set_hemisphere_cerebellum_provider(provider.as_str().into());
+                    }
+                    window.set_hemisphere_cerebellum_model(
+                        cerebellum.model.as_deref().unwrap_or_default().into(),
+                    );
+                }
                 window.set_enable_telegram(cfg.channels.iter().any(|c| c == "telegram"));
                 if let Some(omi) = cfg.omi {
                     window.set_wz_omi_enabled(omi.enabled);
@@ -1940,6 +1989,10 @@ fn main() -> Result<()> {
                 // rather than clobber the existing config with type defaults.
             }
         }
+        // Recompute combo indices after re-entry hydration. The background
+        // panel refresh is best-effort and must not briefly display row zero
+        // for a persisted non-default role/provider selection.
+        apply_provider_ids(&window, Vec::new());
 
         // Bite #5 — populate the cluster settings panel from the
         // existing freedom.yaml so the post-onboarding operator sees
@@ -5654,6 +5707,23 @@ fn main() -> Result<()> {
                 if let Some(w) = weak.upgrade() {
                     w.set_status_line(status.into());
                     apply_hemispheres(&w, hemis);
+                }
+            });
+        });
+    });
+
+    // P1-22: this is intentionally construction-only. It exercises the same
+    // typed role resolver as `neoth hemispheres test`, but sends no prompt and
+    // never turns a local configuration check into a reachability claim.
+    let weak_hemi_readiness = window.as_weak();
+    window.on_hemisphere_readiness(move |role| {
+        let role = role.to_string();
+        let weak = weak_hemi_readiness.clone();
+        std::thread::spawn(move || {
+            let status = check_hemisphere_readiness(&role);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_status_line(status.into());
                 }
             });
         });
@@ -13028,11 +13098,24 @@ fn main() -> Result<()> {
             let state = WizardSnapshot {
                 operator_id: w.get_operator_id().to_string(),
                 provider_kind: w.get_provider_choice().to_string(),
+                hemisphere_use_single: w.get_hemisphere_use_single(),
+                hemisphere_left_provider: w.get_hemisphere_left_provider().to_string(),
+                hemisphere_right_provider: w.get_hemisphere_right_provider().to_string(),
+                hemisphere_cerebellum_provider: w
+                    .get_hemisphere_cerebellum_provider()
+                    .to_string(),
+                hemisphere_left_model: w.get_hemisphere_left_model().to_string(),
+                hemisphere_right_model: w.get_hemisphere_right_model().to_string(),
+                hemisphere_cerebellum_model: w.get_hemisphere_cerebellum_model().to_string(),
+                hemisphere_shared_model: w.get_hemisphere_shared_model().to_string(),
                 autonomy: w.get_autonomy_choice().to_string(),
                 license_accepted: w.get_license_accepted(),
                 enable_telegram: w.get_enable_telegram(),
                 dream_cron_enabled: w.get_wizard_dream_cron_enabled(),
                 provider_key: w.get_provider_key().to_string(),
+                hemisphere_left_key: w.get_hemisphere_left_key().to_string(),
+                hemisphere_right_key: w.get_hemisphere_right_key().to_string(),
+                hemisphere_cerebellum_key: w.get_hemisphere_cerebellum_key().to_string(),
                 telegram_token: w.get_telegram_token().to_string(),
                 cluster_discovery_disabled: w.get_cluster_discovery_disabled(),
                 // ZF-05 parity fields
@@ -14513,6 +14596,14 @@ fn parse_channel_removed(stdout: &[u8], expected_channel: &str) -> Option<bool> 
 struct WizardSnapshot {
     operator_id: String,
     provider_kind: String,
+    hemisphere_use_single: bool,
+    hemisphere_left_provider: String,
+    hemisphere_right_provider: String,
+    hemisphere_cerebellum_provider: String,
+    hemisphere_left_model: String,
+    hemisphere_right_model: String,
+    hemisphere_cerebellum_model: String,
+    hemisphere_shared_model: String,
     autonomy: String,
     license_accepted: bool,
     enable_telegram: bool,
@@ -14520,6 +14611,9 @@ struct WizardSnapshot {
     /// False is intentional; presets never coerce it on.
     dream_cron_enabled: bool,
     provider_key: String,
+    hemisphere_left_key: String,
+    hemisphere_right_key: String,
+    hemisphere_cerebellum_key: String,
     telegram_token: String,
     /// Q4 ratification: operator's choice on the cluster step.
     /// True means freedom.yaml gets `cluster.mdns.enabled: false`;
@@ -14562,11 +14656,22 @@ impl Default for WizardSnapshot {
         Self {
             operator_id: String::new(),
             provider_kind: String::new(),
+            hemisphere_use_single: true,
+            hemisphere_left_provider: "claude_cli".to_string(),
+            hemisphere_right_provider: "gemini_api".to_string(),
+            hemisphere_cerebellum_provider: "local_qwen".to_string(),
+            hemisphere_left_model: String::new(),
+            hemisphere_right_model: String::new(),
+            hemisphere_cerebellum_model: String::new(),
+            hemisphere_shared_model: String::new(),
             autonomy: String::new(),
             license_accepted: false,
             enable_telegram: false,
             dream_cron_enabled: false,
             provider_key: String::new(),
+            hemisphere_left_key: String::new(),
+            hemisphere_right_key: String::new(),
+            hemisphere_cerebellum_key: String::new(),
             telegram_token: String::new(),
             cluster_discovery_disabled: false,
             wizard_preset_choice: String::new(),
@@ -14687,6 +14792,10 @@ struct MinimalFreedomYaml {
     operator_id: String,
     provider_kind: String,
     autonomy: String,
+    /// Read only during wizard re-entry. The GUI never reads per-role keys
+    /// from this public projection; dedicated credentials remain secret-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    inference: Option<neothd::config::inference::InferenceTopology>,
     /// Always includes `"cli"`. Telegram is appended when the operator
     /// ticked the channel + ended up with a token. We deliberately
     /// store the list inside `freedom.yaml` even though the daemon
@@ -14791,12 +14900,25 @@ struct CredentialsYaml {
     #[serde(skip_serializing_if = "Option::is_none")]
     provider_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    inference_left_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inference_right_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inference_cerebellum_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inference_default_slot_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     telegram_token: Option<String>,
 }
 
 impl CredentialsYaml {
     fn is_empty(&self) -> bool {
-        self.provider_key.is_none() && self.telegram_token.is_none()
+        self.provider_key.is_none()
+            && self.inference_left_key.is_none()
+            && self.inference_right_key.is_none()
+            && self.inference_cerebellum_key.is_none()
+            && self.inference_default_slot_key.is_none()
+            && self.telegram_token.is_none()
     }
 }
 
@@ -14843,8 +14965,106 @@ fn validate_finish_state(state: &WizardSnapshot) -> Result<()> {
         anyhow::bail!("operator id is empty — go back and enter one");
     }
     validate_autonomy(&state.autonomy)?;
+    let _ = wizard_inference_fields(state)?;
     validate_wizard_omi(state)?;
     Ok(())
+}
+
+/// Build the public topology fields owned by the GUI wizard. Provider ids are
+/// strict wire values: aliases accepted by hand-authored legacy YAML are not
+/// silently written back as a different selection. Blank model inputs mean the
+/// provider default, never an invented model id.
+fn wizard_inference_fields(
+    state: &WizardSnapshot,
+) -> Result<Vec<(&'static str, serde_yaml::Value)>> {
+    use neothd::config::inference::InferenceProvider;
+
+    let canonical_provider = |field: &str, raw: &str| -> Result<String> {
+        let value = raw.trim();
+        let provider = InferenceProvider::from_str(value)
+            .ok_or_else(|| anyhow::anyhow!("{field} is not a known provider id: `{value}`"))?;
+        anyhow::ensure!(
+            provider.as_str() == value,
+            "{field} must use canonical provider id `{}`, not `{value}`",
+            provider.as_str()
+        );
+        Ok(value.to_string())
+    };
+    let slot = |field: &str, provider: &str, model: &str| -> Result<serde_yaml::Value> {
+        let provider = canonical_provider(field, provider)?;
+        let mut fields = serde_yaml::Mapping::new();
+        fields.insert(
+            serde_yaml::Value::from("provider"),
+            serde_yaml::Value::from(provider),
+        );
+        fields.insert(
+            serde_yaml::Value::from("model"),
+            if model.trim().is_empty() {
+                serde_yaml::Value::Null
+            } else {
+                serde_yaml::Value::from(model.trim().to_string())
+            },
+        );
+        Ok(serde_yaml::Value::Mapping(fields))
+    };
+
+    let default_slot = slot(
+        "shared provider",
+        &state.provider_kind,
+        &state.hemisphere_shared_model,
+    )?;
+    if state.hemisphere_use_single {
+        return Ok(vec![
+            ("mode", serde_yaml::Value::from("single")),
+            ("default_slot", default_slot),
+        ]);
+    }
+
+    Ok(vec![
+        ("mode", serde_yaml::Value::from("custom")),
+        ("default_slot", default_slot),
+        (
+            "left",
+            slot(
+                "left hemisphere provider",
+                &state.hemisphere_left_provider,
+                &state.hemisphere_left_model,
+            )?,
+        ),
+        (
+            "right",
+            slot(
+                "right hemisphere provider",
+                &state.hemisphere_right_provider,
+                &state.hemisphere_right_model,
+            )?,
+        ),
+        (
+            "cerebellum",
+            slot(
+                "cerebellum provider",
+                &state.hemisphere_cerebellum_provider,
+                &state.hemisphere_cerebellum_model,
+            )?,
+        ),
+    ])
+}
+
+/// The topology owns canonical `InferenceProvider` ids, while the legacy
+/// top-level `provider_kind` has its older `ProviderKind` wire vocabulary
+/// (notably Cohere: `cohere_api` vs `cohere`). Persist each at its own typed
+/// boundary so an onboarding choice never makes freedom.yaml unreadable.
+fn legacy_provider_kind_wire(raw: &str) -> Result<String> {
+    use neothd::config::inference::InferenceProvider;
+
+    let provider = InferenceProvider::from_str(raw.trim())
+        .ok_or_else(|| anyhow::anyhow!("shared provider is not a known provider id: `{raw}`"))?;
+    anyhow::ensure!(
+        provider.as_str() == raw.trim(),
+        "shared provider must use canonical provider id `{}`, not `{raw}`",
+        provider.as_str()
+    );
+    Ok(provider.to_provider_kind().as_str().to_string())
 }
 
 fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBuf> {
@@ -14886,6 +15106,7 @@ fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBu
     let root_map = root
         .as_mapping_mut()
         .context("freedom.yaml is not a YAML mapping")?;
+    let legacy_provider_kind = legacy_provider_kind_wire(&state.provider_kind)?;
     for (key, value) in [
         (
             "operator_id",
@@ -14893,7 +15114,7 @@ fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBu
         ),
         (
             "provider_kind",
-            serde_yaml::Value::from(state.provider_kind.clone()),
+            serde_yaml::Value::from(legacy_provider_kind),
         ),
         ("autonomy", serde_yaml::Value::from(state.autonomy.clone())),
         (
@@ -14903,6 +15124,45 @@ fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBu
     ] {
         root_map.insert(serde_yaml::Value::from(key), value);
     }
+
+    // P1-22: merge only the topology keys this wizard owns. Existing endpoint,
+    // region, API-version and future role metadata remain intact on re-entry;
+    // keys never enter this public YAML and are handled by credentials.yaml.
+    let inference_key = serde_yaml::Value::from("inference");
+    let mut inference = mapping_field_or_empty(root_map, &inference_key, "inference")?;
+    for (key, value) in wizard_inference_fields(state)? {
+        let key = serde_yaml::Value::from(key);
+        if matches!(key.as_str(), Some("left" | "right" | "cerebellum" | "default_slot")) {
+            let mut slot = mapping_field_or_empty(&inference, &key, "inference slot")?;
+            // Legacy inline slot keys are migrated by write_credentials_yaml
+            // before this public transaction. Never retain a secret in
+            // freedom.yaml, even while preserving endpoint/region metadata.
+            slot.remove(&serde_yaml::Value::from("key"));
+            let fields = value
+                .as_mapping()
+                .context("wizard topology slot did not serialize as a mapping")?;
+            for (field, value) in fields {
+                slot.insert(field.clone(), value.clone());
+            }
+            inference.insert(key, serde_yaml::Value::Mapping(slot));
+        } else {
+            inference.insert(key, value);
+        }
+    }
+    // Switching from custom to shared omits the old per-role slots from the
+    // new wizard payload, but they can still carry legacy inline credentials.
+    // Remove every known slot key after the credential transaction above has
+    // migrated it, not only slots emitted by the selected mode.
+    for slot_name in ["default_slot", "left", "right", "cerebellum"] {
+        let slot_key = serde_yaml::Value::from(slot_name);
+        if let Some(slot) = inference.get_mut(&slot_key) {
+            let slot = slot
+                .as_mapping_mut()
+                .with_context(|| format!("freedom.yaml inference.{slot_name} is not a YAML mapping"))?;
+            slot.remove(&serde_yaml::Value::from("key"));
+        }
+    }
+    root_map.insert(inference_key, serde_yaml::Value::Mapping(inference));
 
     let cluster_key = serde_yaml::Value::from("cluster");
     if existed || state.cluster_discovery_disabled {
@@ -14954,17 +15214,133 @@ fn mapping_field_or_empty(
     }
 }
 
+#[derive(Default)]
+struct PersistedInferenceSlots {
+    default_provider: Option<String>,
+    left_provider: Option<String>,
+    right_provider: Option<String>,
+    cerebellum_provider: Option<String>,
+    default_key: Option<String>,
+    left_key: Option<String>,
+    right_key: Option<String>,
+    cerebellum_key: Option<String>,
+}
+
+fn yaml_optional_string(map: &serde_yaml::Mapping, field: &str) -> Result<Option<String>> {
+    let key = serde_yaml::Value::from(field);
+    match map.get(&key) {
+        Some(value) => value
+            .as_str()
+            .map(|value| value.to_string())
+            .ok_or_else(|| anyhow::anyhow!("freedom.yaml field `{field}` is not a string"))
+            .map(Some),
+        None => Ok(None),
+    }
+}
+
+fn canonical_provider_or_raw(raw: String) -> String {
+    neothd::config::inference::InferenceProvider::from_str(&raw)
+        .map(|provider| provider.as_str().to_string())
+        .unwrap_or(raw)
+}
+
+/// Read only the prior public topology before the credential writer mutates
+/// it. Inline legacy keys stay in memory solely long enough to migrate them
+/// into credentials.yaml; they are never logged or returned to the UI.
+fn persisted_inference_slots(neoth_dir: &Path) -> Result<PersistedInferenceSlots> {
+    let path = neoth_dir.join("freedom.yaml");
+    if !path.exists() {
+        return Ok(PersistedInferenceSlots::default());
+    }
+    let body = std::fs::read_to_string(&path)
+        .with_context(|| format!("read {} before credential migration", path.display()))?;
+    let root: serde_yaml::Value = serde_yaml::from_str(&body)
+        .with_context(|| format!("parse {} before credential migration", path.display()))?;
+    let root = root
+        .as_mapping()
+        .context("freedom.yaml is not a YAML mapping")?;
+    let mut slots = PersistedInferenceSlots {
+        default_provider: yaml_optional_string(root, "provider_kind")?
+            .map(canonical_provider_or_raw),
+        ..PersistedInferenceSlots::default()
+    };
+    let inference_key = serde_yaml::Value::from("inference");
+    let Some(inference) = root.get(&inference_key) else {
+        return Ok(slots);
+    };
+    let inference = inference
+        .as_mapping()
+        .context("freedom.yaml field inference is not a YAML mapping")?;
+    let read_slot = |name: &str| -> Result<(Option<String>, Option<String>)> {
+        let key = serde_yaml::Value::from(name);
+        let Some(slot) = inference.get(&key) else {
+            return Ok((None, None));
+        };
+        let slot = slot
+            .as_mapping()
+            .with_context(|| format!("freedom.yaml inference.{name} is not a YAML mapping"))?;
+        Ok((
+            yaml_optional_string(slot, "provider")?.map(canonical_provider_or_raw),
+            yaml_optional_string(slot, "key")?,
+        ))
+    };
+    let (default_provider, default_key) = read_slot("default_slot")?;
+    if default_provider.is_some() {
+        slots.default_provider = default_provider;
+    }
+    slots.default_key = default_key;
+    (slots.left_provider, slots.left_key) = read_slot("left")?;
+    (slots.right_provider, slots.right_key) = read_slot("right")?;
+    (slots.cerebellum_provider, slots.cerebellum_key) = read_slot("cerebellum")?;
+    Ok(slots)
+}
+
+fn merge_wizard_slot_credential(
+    map: &mut serde_yaml::Mapping,
+    credential_name: &str,
+    supplied: Option<&str>,
+    prior_provider: Option<&str>,
+    desired_provider: &str,
+    legacy_inline_key: Option<&str>,
+    legacy_provider_key: Option<&str>,
+) {
+    let key = serde_yaml::Value::from(credential_name);
+    if let Some(value) = supplied {
+        map.insert(key, serde_yaml::Value::from(value));
+    } else if prior_provider != Some(desired_provider) {
+        // A role may never inherit a previous vendor's secret after its
+        // provider changes. The operator can explicitly enter a replacement.
+        map.remove(&key);
+    } else if !map.contains_key(&key) {
+        if let Some(value) = legacy_inline_key.or(legacy_provider_key) {
+            map.insert(key, serde_yaml::Value::from(value));
+        }
+    }
+}
+
 fn write_credentials_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<Option<PathBuf>> {
-    let provider_key = (!state.provider_key.is_empty()).then(|| state.provider_key.clone());
+    let prior = persisted_inference_slots(neoth_dir)?;
+    let provider_key = (state.hemisphere_use_single && !state.provider_key.is_empty())
+        .then(|| state.provider_key.clone());
+    let inference_default_slot_key = provider_key.clone();
+    let inference_left_key = (!state.hemisphere_use_single && !state.hemisphere_left_key.is_empty())
+        .then(|| state.hemisphere_left_key.clone());
+    let inference_right_key =
+        (!state.hemisphere_use_single && !state.hemisphere_right_key.is_empty())
+            .then(|| state.hemisphere_right_key.clone());
+    let inference_cerebellum_key =
+        (!state.hemisphere_use_single && !state.hemisphere_cerebellum_key.is_empty())
+            .then(|| state.hemisphere_cerebellum_key.clone());
     let telegram_token = (state.enable_telegram && !state.telegram_token.is_empty())
         .then(|| state.telegram_token.clone());
     let additions = CredentialsYaml {
         provider_key,
+        inference_left_key,
+        inference_right_key,
+        inference_cerebellum_key,
+        inference_default_slot_key,
         telegram_token,
     };
-    if additions.is_empty() {
-        return Ok(None);
-    }
     let path = neoth_dir.join("credentials.yaml");
     let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut root = if path.exists() {
@@ -14978,13 +15354,63 @@ fn write_credentials_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<Op
     let map = root
         .as_mapping_mut()
         .context("credentials.yaml is not a YAML mapping")?;
-    for (key, value) in [
-        ("provider_key", additions.provider_key),
-        ("telegram_token", additions.telegram_token),
-    ] {
-        if let Some(value) = value {
-            map.insert(serde_yaml::Value::from(key), serde_yaml::Value::from(value));
-        }
+    let provider_key_name = serde_yaml::Value::from("provider_key");
+    let legacy_provider_key = map
+        .get(&provider_key_name)
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::to_string);
+
+    if let Some(value) = additions.provider_key.as_deref() {
+        map.insert(provider_key_name.clone(), serde_yaml::Value::from(value));
+    } else if prior.default_provider.as_deref() != Some(state.provider_kind.as_str()) {
+        // This topology now owns the default slot. Do not leave an old
+        // top-level credential usable by a different newly selected vendor.
+        map.remove(&provider_key_name);
+    }
+    merge_wizard_slot_credential(
+        map,
+        "inference_default_slot_key",
+        additions.inference_default_slot_key.as_deref(),
+        prior.default_provider.as_deref(),
+        &state.provider_kind,
+        prior.default_key.as_deref(),
+        legacy_provider_key.as_deref(),
+    );
+    merge_wizard_slot_credential(
+        map,
+        "inference_left_key",
+        additions.inference_left_key.as_deref(),
+        prior.left_provider.as_deref(),
+        &state.hemisphere_left_provider,
+        prior.left_key.as_deref(),
+        None,
+    );
+    merge_wizard_slot_credential(
+        map,
+        "inference_right_key",
+        additions.inference_right_key.as_deref(),
+        prior.right_provider.as_deref(),
+        &state.hemisphere_right_provider,
+        prior.right_key.as_deref(),
+        None,
+    );
+    merge_wizard_slot_credential(
+        map,
+        "inference_cerebellum_key",
+        additions.inference_cerebellum_key.as_deref(),
+        prior.cerebellum_provider.as_deref(),
+        &state.hemisphere_cerebellum_provider,
+        prior.cerebellum_key.as_deref(),
+        None,
+    );
+    if let Some(value) = additions.telegram_token {
+        map.insert(
+            serde_yaml::Value::from("telegram_token"),
+            serde_yaml::Value::from(value),
+        );
+    }
+    if additions.is_empty() && !path.exists() && map.is_empty() {
+        return Ok(None);
     }
     let body = serde_yaml::to_string(&root).context("serialise merged credentials.yaml")?;
     write_mode_0600(&path, body.as_bytes())?;
@@ -19982,8 +20408,23 @@ fn fetch_provider_ids() -> Vec<String> {
 }
 
 /// SPEC-06 — push the provider-id picker options onto the MainWindow. UI-thread.
-fn apply_provider_ids(window: &MainWindow, ids: Vec<String>) {
+fn canonical_provider_ids() -> Vec<String> {
+    neothd::config::inference::InferenceProvider::ALL
+        .iter()
+        .map(|provider| provider.as_str().to_string())
+        .collect()
+}
+
+fn apply_provider_ids(window: &MainWindow, reported_ids: Vec<String>) {
     use slint::{ModelRc, VecModel};
+    let ids = canonical_provider_ids();
+    if !reported_ids.is_empty() && reported_ids != ids {
+        tracing::warn!(
+            reported = ?reported_ids,
+            canonical = ?ids,
+            "provider-list subprocess drift ignored; GUI uses the canonical roster"
+        );
+    }
     // GUI-improve (gap panel wf_641e1173) — compute the Config combo's selected
     // row = position of the operator's current provider in the LIVE list, so a
     // provider absent from the old hardcoded combo list no longer silently shows
@@ -19991,9 +20432,21 @@ fn apply_provider_ids(window: &MainWindow, ids: Vec<String>) {
     // startup (line 241) before this runs.
     let current = window.get_provider_choice().to_string();
     let idx = ids.iter().position(|p| p == &current).unwrap_or(0) as i32;
-    let rows: Vec<slint::SharedString> = ids.into_iter().map(|s| s.into()).collect();
+    let rows: Vec<slint::SharedString> = ids.iter().cloned().map(Into::into).collect();
     window.set_provider_ids(ModelRc::new(VecModel::from(rows)));
     window.set_provider_choice_index(idx);
+    let role_index = |provider: &str| {
+        ids.iter().position(|id| id == provider).unwrap_or(0) as i32
+    };
+    window.set_hemisphere_left_provider_index(role_index(
+        window.get_hemisphere_left_provider().as_str(),
+    ));
+    window.set_hemisphere_right_provider_index(role_index(
+        window.get_hemisphere_right_provider().as_str(),
+    ));
+    window.set_hemisphere_cerebellum_provider_index(role_index(
+        window.get_hemisphere_cerebellum_provider().as_str(),
+    ));
 }
 
 /// SPEC-06 — rebind a hemisphere role to a provider (`neoth hemispheres set
@@ -20024,6 +20477,23 @@ fn set_hemisphere_via_subprocess(role: &str, provider: &str, model: &str) -> Str
             Err(error) => format!("hemispheres set failed: {error}"),
         },
         Err(error) => format!("hemispheres set failed: {error}"),
+    }
+}
+
+fn check_hemisphere_readiness(role: &str) -> String {
+    let result = run_neothd_json_action::<gui_action::HemisphereReadinessAck>(
+        &["hemispheres", "test", "--role", role],
+        "Hemisphere configuration check",
+    )
+    .and_then(|ack| {
+        ack.verify_build_only(role)?;
+        Ok((ack.provider, ack.construct_latency_ms))
+    });
+    match result {
+        Ok((provider, latency_ms)) => format!(
+            "{role} configuration verified for {provider} ({latency_ms} ms); no provider request was sent"
+        ),
+        Err(error) => format!("{role} configuration is not ready: {error}"),
     }
 }
 
@@ -29254,6 +29724,171 @@ mod tests {
     }
 
     #[test]
+    fn wizard_topology_uses_canonical_custom_role_bindings() {
+        let mut state = empty_snapshot();
+        state.hemisphere_use_single = false;
+        state.hemisphere_left_provider = "claude_cli".into();
+        state.hemisphere_right_provider = "gemini_api".into();
+        state.hemisphere_cerebellum_provider = "local_qwen".into();
+        state.hemisphere_shared_model = "claude-sonnet".into();
+        state.hemisphere_right_model = "gemini-3.1-pro".into();
+
+        let fields = wizard_inference_fields(&state).expect("canonical topology");
+        let fields = fields.into_iter().collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(fields["mode"].as_str(), Some("custom"));
+        assert_eq!(fields["default_slot"]["model"].as_str(), Some("claude-sonnet"));
+        assert_eq!(fields["left"]["provider"].as_str(), Some("claude_cli"));
+        assert_eq!(fields["right"]["model"].as_str(), Some("gemini-3.1-pro"));
+        assert_eq!(
+            fields["cerebellum"]["provider"].as_str(),
+            Some("local_qwen")
+        );
+    }
+
+    #[test]
+    fn wizard_topology_single_has_only_shared_default_slot() {
+        let mut state = empty_snapshot();
+        state.hemisphere_use_single = true;
+        state.hemisphere_shared_model = "claude-opus".into();
+
+        let fields = wizard_inference_fields(&state).expect("single topology");
+        let fields = fields.into_iter().collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields["mode"].as_str(), Some("single"));
+        assert_eq!(
+            fields["default_slot"]["provider"].as_str(),
+            Some("claude_cli")
+        );
+        assert_eq!(fields["default_slot"]["model"].as_str(), Some("claude-opus"));
+    }
+
+    #[test]
+    fn wizard_topology_rejects_stale_provider_tokens() {
+        let mut state = empty_snapshot();
+        state.hemisphere_use_single = false;
+        state.hemisphere_left_provider = "hermes".into();
+
+        let error = wizard_inference_fields(&state).unwrap_err().to_string();
+        assert!(error.contains("left hemisphere provider"));
+        assert!(error.contains("known provider"));
+    }
+
+    #[test]
+    fn wizard_custom_topology_keeps_public_slots_and_secret_keys_separate() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "inference:\n  left:\n    endpoint: https://reviewed.example/v1\n",
+        )
+        .unwrap();
+        let mut state = empty_snapshot();
+        state.hemisphere_use_single = false;
+        state.hemisphere_shared_model = "shared-model".into();
+        state.hemisphere_left_provider = "anthropic_api".into();
+        state.hemisphere_right_provider = "openai_api".into();
+        state.hemisphere_cerebellum_provider = "local_ollama".into();
+        state.hemisphere_left_key = "LEFT_SECRET_SENTINEL".into();
+        state.hemisphere_right_key = "RIGHT_SECRET_SENTINEL".into();
+        state.hemisphere_cerebellum_key = "CEREBELLUM_SECRET_SENTINEL".into();
+
+        let freedom = write_freedom_yaml(&state, dir.path()).unwrap();
+        let public = std::fs::read_to_string(freedom).unwrap();
+        assert!(public.contains("mode: custom"));
+        assert!(public.contains("provider: claude_cli"));
+        assert!(public.contains("model: shared-model"));
+        assert!(public.contains("provider: anthropic_api"));
+        assert!(public.contains("endpoint: https://reviewed.example/v1"));
+        assert!(!public.contains("SECRET_SENTINEL"));
+
+        let credentials = write_credentials_yaml(&state, dir.path())
+            .unwrap()
+            .expect("per-role credentials");
+        let secret = std::fs::read_to_string(credentials).unwrap();
+        assert!(secret.contains("inference_left_key: LEFT_SECRET_SENTINEL"));
+        assert!(secret.contains("inference_right_key: RIGHT_SECRET_SENTINEL"));
+        assert!(secret.contains("inference_cerebellum_key: CEREBELLUM_SECRET_SENTINEL"));
+        assert!(!secret.contains("provider_key:"));
+    }
+
+    #[test]
+    fn wizard_single_topology_writes_default_slot_key_and_legacy_key() {
+        let dir = TempDir::new().unwrap();
+        let mut state = empty_snapshot();
+        state.hemisphere_use_single = true;
+        state.provider_kind = "openai_api".into();
+        state.provider_key = "SINGLE_SECRET_SENTINEL".into();
+
+        let freedom = write_freedom_yaml(&state, dir.path()).unwrap();
+        let public = std::fs::read_to_string(freedom).unwrap();
+        assert!(public.contains("provider: openai_api"));
+        assert!(!public.contains("SINGLE_SECRET_SENTINEL"));
+
+        let credentials = write_credentials_yaml(&state, dir.path())
+            .unwrap()
+            .expect("single credentials");
+        let secret = std::fs::read_to_string(credentials).unwrap();
+        assert!(secret.contains("inference_default_slot_key: SINGLE_SECRET_SENTINEL"));
+        assert!(secret.contains("provider_key: SINGLE_SECRET_SENTINEL"));
+    }
+
+    #[test]
+    fn wizard_migrates_inline_slot_key_and_clears_key_after_provider_change() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "provider_kind: openai_api\ninference:\n  mode: custom\n  left:\n    provider: openai_api\n    key: INLINE_SECRET_SENTINEL\n",
+        )
+        .unwrap();
+        let mut state = empty_snapshot();
+        state.hemisphere_use_single = false;
+        state.hemisphere_left_provider = "openai_api".into();
+        write_credentials_yaml(&state, dir.path()).unwrap();
+        write_freedom_yaml(&state, dir.path()).unwrap();
+        let credentials = std::fs::read_to_string(dir.path().join("credentials.yaml")).unwrap();
+        assert!(credentials.contains("inference_left_key: INLINE_SECRET_SENTINEL"));
+        let public = std::fs::read_to_string(dir.path().join("freedom.yaml")).unwrap();
+        assert!(!public.contains("INLINE_SECRET_SENTINEL"));
+
+        state.hemisphere_left_provider = "gemini_api".into();
+        write_credentials_yaml(&state, dir.path()).unwrap();
+        let credentials = std::fs::read_to_string(dir.path().join("credentials.yaml")).unwrap();
+        assert!(!credentials.contains("inference_left_key"));
+    }
+
+    #[test]
+    fn wizard_single_mode_removes_legacy_keys_from_inactive_custom_slots() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "provider_kind: openai_api\ninference:\n  mode: custom\n  default_slot:\n    provider: openai_api\n  left:\n    provider: openai_api\n    key: INACTIVE_SLOT_SECRET_SENTINEL\n",
+        )
+        .unwrap();
+        let mut state = empty_snapshot();
+        state.hemisphere_use_single = true;
+        state.provider_kind = "openai_api".into();
+        state.hemisphere_left_provider = "openai_api".into();
+
+        write_credentials_yaml(&state, dir.path()).unwrap();
+        write_freedom_yaml(&state, dir.path()).unwrap();
+        let credentials = std::fs::read_to_string(dir.path().join("credentials.yaml")).unwrap();
+        assert!(credentials.contains("inference_left_key: INACTIVE_SLOT_SECRET_SENTINEL"));
+        let public = std::fs::read_to_string(dir.path().join("freedom.yaml")).unwrap();
+        assert!(!public.contains("INACTIVE_SLOT_SECRET_SENTINEL"));
+    }
+
+    #[test]
+    fn wizard_serializes_cohere_topology_and_legacy_provider_kind_separately() {
+        let dir = TempDir::new().unwrap();
+        let mut state = empty_snapshot();
+        state.provider_kind = "cohere_api".into();
+        let freedom = write_freedom_yaml(&state, dir.path()).unwrap();
+        let public = std::fs::read_to_string(freedom).unwrap();
+        assert!(public.contains("provider_kind: cohere"));
+        assert!(public.contains("provider: cohere_api"));
+        assert!(read_freedom_yaml(&dir.path().join("freedom.yaml")).is_ok());
+    }
+
+    #[test]
     fn omi_validation_requires_explicit_cloud_and_mode_credentials() {
         assert!(
             validate_omi_fields(
@@ -29504,6 +30139,7 @@ mod tests {
         )
         .unwrap();
         let mut state = empty_snapshot();
+        state.hemisphere_use_single = true;
         state.provider_key = "new-provider".into();
         write_credentials_yaml(&state, dir.path()).unwrap();
         let credentials = std::fs::read_to_string(dir.path().join("credentials.yaml")).unwrap();
@@ -29876,6 +30512,7 @@ mod tests {
     fn finish_writes_credentials_when_provider_key_set() {
         let dir = TempDir::new().unwrap();
         let mut state = empty_snapshot();
+        state.hemisphere_use_single = true;
         state.provider_kind = "openai_api".into();
         state.provider_key = "sk-test".into();
         let credentials = write_credentials_yaml(&state, dir.path())

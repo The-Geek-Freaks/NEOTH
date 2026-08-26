@@ -991,6 +991,8 @@ export component SettingsView inherits Rectangle {
     // SPEC-06 — operator picked (role, provider) in the Hemispheres rebind
     // control → MainWindow shells `neoth hemispheres set`.
     callback hemisphere-set-clicked(string, string, string);
+    /// Builds the selected persisted role without issuing a provider request.
+    callback hemisphere-readiness-clicked(string);
     /// GOLD-GUI-OVERHAUL — operator picked a provider in the rebind row; Rust
     /// refreshes hemisphere-model-ids with that provider's model options.
     callback hemisphere-provider-picked(string);
@@ -1562,6 +1564,15 @@ export component SettingsView inherits Rectangle {
                                             role_combo.model[role_combo.current-index],
                                             prov_combo.model[prov_combo.current-index],
                                             model_combo.model[model_combo.current-index],
+                                        );
+                                    }
+                                }
+                                NeothButton {
+                                    label: "Check configuration";
+                                    primary: false;
+                                    clicked => {
+                                        root.hemisphere-readiness-clicked(
+                                            role_combo.model[role_combo.current-index],
                                         );
                                     }
                                 }

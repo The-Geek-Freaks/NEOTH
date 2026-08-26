@@ -806,6 +806,38 @@ impl HemisphereSetAck {
     }
 }
 
+/// Exact build-only `neoth hemispheres test --output json` acknowledgement.
+/// It proves the configured role can construct its provider without issuing a
+/// provider request; a GUI readiness check must never imply live reachability.
+#[derive(Debug, Deserialize)]
+pub struct HemisphereReadinessAck {
+    pub role: String,
+    pub provider: String,
+    pub construct_latency_ms: u128,
+    pub note: String,
+}
+
+impl HemisphereReadinessAck {
+    pub fn verify_build_only(&self, expected_role: &str) -> Result<(), String> {
+        if self.role != expected_role {
+            return Err(format!(
+                "hemisphere readiness acknowledged role `{}`, expected `{expected_role}`",
+                self.role
+            ));
+        }
+        if self.provider.trim().is_empty() {
+            return Err("hemisphere readiness acknowledgement has no provider".to_string());
+        }
+        if !self.note.contains("build-only") {
+            return Err(
+                "hemisphere readiness acknowledgement did not confirm a build-only check"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkillAuthorityReceiptAck {
@@ -5735,6 +5767,22 @@ mod tests {
             ack.verify_and_read_back("logic", "local_qwen", None)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn hemisphere_readiness_ack_requires_build_only_receipt() {
+        let ack: HemisphereReadinessAck = serde_json::from_str(
+            r#"{"role":"left","provider":"claude_cli","construct_latency_ms":12,"note":"build-only sanity check; no provider request"}"#,
+        )
+        .unwrap();
+        assert!(ack.verify_build_only("left").is_ok());
+        assert!(ack.verify_build_only("right").is_err());
+
+        let live_note: HemisphereReadinessAck = serde_json::from_str(
+            r#"{"role":"left","provider":"claude_cli","construct_latency_ms":12,"note":"provider responded"}"#,
+        )
+        .unwrap();
+        assert!(live_note.verify_build_only("left").is_err());
     }
 
     #[test]

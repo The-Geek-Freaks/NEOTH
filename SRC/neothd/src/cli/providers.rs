@@ -44,21 +44,10 @@ pub const OPENAI_COMPAT_TARGETS: &[&str] = &[
     "vllm (localhost)",
 ];
 
-const ALL_PROVIDERS: &[InferenceProvider] = &[
-    InferenceProvider::ClaudeCli,
-    InferenceProvider::AnthropicApi,
-    InferenceProvider::OpenAi,
-    InferenceProvider::OpenAiCompat,
-    InferenceProvider::Gemini,
-    InferenceProvider::LocalQwen,
-    InferenceProvider::AwsBedrock,
-    InferenceProvider::AzureOpenAi,
-    InferenceProvider::LocalOuro,
-    InferenceProvider::Cohere,
-    InferenceProvider::GitHubCopilot,
-    InferenceProvider::LocalOllama,
-    InferenceProvider::RecursiveMas,
-];
+// The provider list is a public operator contract. Keep this alias at the
+// CLI boundary, but make the config enum the only roster authority so GUI
+// onboarding and `neoth provider list` cannot drift apart.
+const ALL_PROVIDERS: &[InferenceProvider] = InferenceProvider::ALL;
 
 fn is_compat_aware(p: InferenceProvider) -> bool {
     matches!(p, InferenceProvider::OpenAiCompat)

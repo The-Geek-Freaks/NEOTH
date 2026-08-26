@@ -166,6 +166,22 @@ export component MainWindow inherits Window {
     /// GUI-improve — index of provider-choice within provider-ids; Rust sets it
     /// in apply_provider_ids so the Config combo shows the right selected row.
     in-out property <int> provider-choice-index: 0;
+    // GOLD-LF-P1-22 — onboarding uses the same canonical provider roster as
+    // the day-two Hemispheres panel. Single keeps the legacy default slot;
+    // otherwise each role receives its own explicit binding.
+    in-out property <bool> hemisphere-use-single: true;
+    in-out property <string> hemisphere-left-provider: "claude_cli";
+    in-out property <string> hemisphere-right-provider: "gemini_api";
+    in-out property <string> hemisphere-cerebellum-provider: "local_qwen";
+    in-out property <int> hemisphere-left-provider-index: 0;
+    in-out property <int> hemisphere-right-provider-index: 0;
+    in-out property <int> hemisphere-cerebellum-provider-index: 0;
+    in-out property <string> hemisphere-left-model: "";
+    in-out property <string> hemisphere-right-model: "";
+    in-out property <string> hemisphere-cerebellum-model: "";
+    // Keep the fallback slot distinct from Left in custom mode, so re-entry
+    // never copies Left's model onto `inference.default_slot`.
+    in-out property <string> hemisphere-shared-model: "";
     in-out property <string> autonomy-choice: "standard";
 
     // GU-03 — persona-adaptive settings-panel visibility. Rust sets these on
@@ -188,6 +204,9 @@ export component MainWindow inherits Window {
     /// wizard hard rule "default ON in shipped release").
     in-out property <bool> cluster-discovery-disabled: false;
     in-out property <string> provider-key: "";
+    in-out property <string> hemisphere-left-key: "";
+    in-out property <string> hemisphere-right-key: "";
+    in-out property <string> hemisphere-cerebellum-key: "";
     in-out property <string> telegram-token: "";
     /// Reviewer-3 P1-B (2026-05-20): channel-screen disclosure toggle.
     /// Disabled-channel sections ("SET UP LATER", "ON THE ROADMAP")
@@ -413,6 +432,9 @@ export component MainWindow inherits Window {
     // SPEC-06 — forwarded from the Hemispheres rebind control; Rust shells
     // `neoth hemispheres set --role <r> --provider <p>` + refreshes the panel.
     callback hemisphere-set(string, string, string);
+    /// Build-only provider construction check for one persisted role. This
+    /// never sends a prompt or claims that a remote provider is reachable.
+    callback hemisphere-readiness(string);
     callback hemisphere-provider-picked(string);
     // PF-01-GUI — forwarded from the Skills auto-route toggle; Rust writes
     // `skills.always_embed_route` into freedom.yaml + drops the reload sentinel.
@@ -1360,18 +1382,20 @@ export component MainWindow inherits Window {
     callback kanban-task-assign(string, string);
     callback kanban-task-finish(string);
 
-    // True when the currently-picked provider needs an API key. Mirrors
-    // the require_provider_key() logic in `providers/mod.rs`: claude_cli
-    // uses OAuth, local_qwen is local, everything else is REST + bearer.
+    // True when the currently-picked provider needs the generic API-key
+    // field. Local Ollama and RecursiveMAS construct without that secret;
+    // Claude uses OAuth and Qwen/Ouro are local.
     out property <bool> provider-needs-key:
         root.provider-choice != "claude_cli"
             && root.provider-choice != "local_qwen"
-            && root.provider-choice != "local_ouro";
+            && root.provider-choice != "local_ouro"
+            && root.provider-choice != "local_ollama"
+            && root.provider-choice != "recursive_mas";
 
     // Skip the keys step entirely when no secrets are needed — saves the
     // operator an empty screen when they've picked claude_cli + CLI-only.
     out property <bool> need-keys-step:
-        root.provider-needs-key || root.enable-telegram;
+        (!root.hemisphere-use-single) || root.provider-needs-key || root.enable-telegram;
 
     // ── Three-stripe layout (Pick #28 12/10 polish) ──────────────────
     // Top: persistent ProgressIndicator (brand bar + step counter + progress fill).
@@ -2200,51 +2224,116 @@ export component MainWindow inherits Window {
         if root.step == WizardStep.provider: VerticalLayout {
             spacing: Theme.space-loose;
             ScreenHeader {
-                title: "Provider";
-                subtitle: "Which LLM runs NEOTH's chat. Local Qwen runs offline on your hardware (~3 GB cached). Cloud providers need a key on the next-but-one screen.";
+                title: "Hemisphere providers";
+                subtitle: "Choose one provider for all work, or bind Left, Right, and Cerebellum separately. Optional model names stay blank for the provider default; keys are collected on the next screen without being shown again.";
             }
-            // List MUST stay in sync with `cli::init::ProviderKind` so a
-            // GUI-written `freedom.yaml` always loads cleanly in the
-            // daemon. `anthropic_api` was removed because the daemon
-            // enum has no matching variant — operators who want
-            // Anthropic-direct use `claude_cli` (OAuth) or
-            // `openai_compat` against the Anthropic-compatible endpoint.
             Card {
                 VerticalBox {
                     padding: Theme.space-base;
-                    spacing: Theme.space-tight;
+                    spacing: Theme.space-base;
                     Text {
-                        text: "Backend";
+                        text: "TOPOLOGY";
                         font-family: Theme.font-display;
                         font-size: Theme.font-size-caption;
                         font-weight: Theme.weight-medium;
                         letter-spacing: Theme.letter-spacing-tight;
                         color: Theme.accent-green;
                     }
-                    // G-3 fix: NeothComboBox replaces std-widgets'
-                    // light-mode ComboBox. Maps current-index back to
-                    // the bare provider token expected by freedom.yaml.
-                    NeothComboBox {
-                        model: [
-                            "claude_cli",
-                            "openai_api",
-                            "openai_compat",
-                            "gemini_api",
-                            "local_qwen",
-                            "local_ouro",
-                            "hermes",
-                            "openclaw",
-                        ];
-                        current-index: 0;
-                        selected(i) => {
-                            if (i == 0) { root.provider-choice = "claude_cli"; }
-                            if (i == 1) { root.provider-choice = "openai_api"; }
-                            if (i == 2) { root.provider-choice = "openai_compat"; }
-                            if (i == 3) { root.provider-choice = "gemini_api"; }
-                            if (i == 4) { root.provider-choice = "local_qwen"; }
-                            if (i == 5) { root.provider-choice = "local_ouro"; }
-                            if (i == 6) { root.provider-choice = "hermes"; }
-                            if (i == 7) { root.provider-choice = "openclaw"; }
+                    NeothCheckBox {
+                        text: "Use one provider for all three roles";
+                        checked <=> root.hemisphere-use-single;
+                    }
+                    if root.provider-ids.length == 0: Text {
+                        text: "Provider registry is unavailable. Setup cannot continue until NEOTH loads its canonical provider list.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.warning;
+                        wrap: word-wrap;
+                    }
+                    if root.provider-ids.length > 0 && root.hemisphere-use-single: VerticalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Shared provider";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                        }
+                        NeothComboBox {
+                            model: root.provider-ids;
+                            current-index: root.provider-choice-index;
+                            selected(i) => {
+                                if (i >= 0 && i < root.provider-ids.length) {
+                                    root.provider-choice = root.provider-ids[i];
+                                    root.provider-choice-index = i;
+                                }
+                            }
+                        }
+                        NeothLineEdit {
+                            text <=> root.hemisphere-shared-model;
+                            placeholder-text: "Optional shared model (provider default when blank)";
+                        }
+                    }
+                    if root.provider-ids.length > 0 && !root.hemisphere-use-single: VerticalLayout {
+                        spacing: Theme.space-base;
+                        Text {
+                            text: "Left — analytic and structured (recommended: claude_cli)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                        }
+                        NeothComboBox {
+                            model: root.provider-ids;
+                            current-index: root.hemisphere-left-provider-index;
+                            selected(i) => {
+                                if (i >= 0 && i < root.provider-ids.length) {
+                                    root.hemisphere-left-provider = root.provider-ids[i];
+                                    root.hemisphere-left-provider-index = i;
+                                }
+                            }
+                        }
+                        NeothLineEdit {
+                            text <=> root.hemisphere-left-model;
+                            placeholder-text: "Optional model (provider default when blank)";
+                        }
+                        Text {
+                            text: "Right — creative and freeform (recommended: gemini_api)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                        }
+                        NeothComboBox {
+                            model: root.provider-ids;
+                            current-index: root.hemisphere-right-provider-index;
+                            selected(i) => {
+                                if (i >= 0 && i < root.provider-ids.length) {
+                                    root.hemisphere-right-provider = root.provider-ids[i];
+                                    root.hemisphere-right-provider-index = i;
+                                }
+                            }
+                        }
+                        NeothLineEdit {
+                            text <=> root.hemisphere-right-model;
+                            placeholder-text: "Optional model (provider default when blank)";
+                        }
+                        Text {
+                            text: "Cerebellum — routing and summaries (recommended: local_qwen)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                        }
+                        NeothComboBox {
+                            model: root.provider-ids;
+                            current-index: root.hemisphere-cerebellum-provider-index;
+                            selected(i) => {
+                                if (i >= 0 && i < root.provider-ids.length) {
+                                    root.hemisphere-cerebellum-provider = root.provider-ids[i];
+                                    root.hemisphere-cerebellum-provider-index = i;
+                                }
+                            }
+                        }
+                        NeothLineEdit {
+                            text <=> root.hemisphere-cerebellum-model;
+                            placeholder-text: "Optional model (provider default when blank)";
                         }
                     }
                 }
@@ -2258,6 +2347,7 @@ export component MainWindow inherits Window {
                 }
                 NeothButton {
                     label: "Continue →";
+                    enabled: root.provider-ids.length > 0;
                     clicked => { root.step = WizardStep.autonomy; }
                 }
             }
@@ -2619,7 +2709,7 @@ export component MainWindow inherits Window {
                 VerticalBox {
                     padding: Theme.space-base;
                     spacing: Theme.space-base;
-                    if root.provider-needs-key: VerticalLayout {
+                    if root.hemisphere-use-single && root.provider-needs-key: VerticalLayout {
                         spacing: Theme.space-tight;
                         Text {
                             text: "Provider key — " + root.provider-choice;
@@ -2634,6 +2724,39 @@ export component MainWindow inherits Window {
                             placeholder-text: "sk-... / API key";
                             input-type: password;
                             text <=> root.provider-key;
+                        }
+                    }
+                    if !root.hemisphere-use-single: VerticalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Per-role provider keys";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        Text {
+                            text: "Optional. A blank field keeps a key only when that role's provider is unchanged; changing a provider clears its old key. No key is displayed after this screen.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        LineEdit {
+                            placeholder-text: "Left key — " + root.hemisphere-left-provider;
+                            input-type: password;
+                            text <=> root.hemisphere-left-key;
+                        }
+                        LineEdit {
+                            placeholder-text: "Right key — " + root.hemisphere-right-provider;
+                            input-type: password;
+                            text <=> root.hemisphere-right-key;
+                        }
+                        LineEdit {
+                            placeholder-text: "Cerebellum key — " + root.hemisphere-cerebellum-provider;
+                            input-type: password;
+                            text <=> root.hemisphere-cerebellum-key;
                         }
                     }
                     if root.enable-telegram: VerticalLayout {
@@ -3583,6 +3706,9 @@ export component MainWindow inherits Window {
             }
             hemisphere-set-clicked(role, provider, model) => {
                 root.hemisphere-set(role, provider, model);
+            }
+            hemisphere-readiness-clicked(role) => {
+                root.hemisphere-readiness(role);
             }
             hemisphere-provider-picked(provider) => {
                 root.hemisphere-provider-picked(provider);

@@ -105,6 +105,27 @@ pub enum InferenceProvider {
 }
 
 impl InferenceProvider {
+    /// Canonical operator-visible provider roster.
+    ///
+    /// CLI listings and GUI onboarding consume this ordered list so a newly
+    /// implemented provider cannot appear on one surface while another still
+    /// offers stale or removed choices.
+    pub const ALL: &'static [Self] = &[
+        Self::ClaudeCli,
+        Self::AnthropicApi,
+        Self::OpenAi,
+        Self::OpenAiCompat,
+        Self::Gemini,
+        Self::LocalQwen,
+        Self::AwsBedrock,
+        Self::AzureOpenAi,
+        Self::LocalOuro,
+        Self::Cohere,
+        Self::GitHubCopilot,
+        Self::LocalOllama,
+        Self::RecursiveMas,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             InferenceProvider::ClaudeCli => "claude_cli",
@@ -1475,6 +1496,16 @@ model: local-model
         assert!(InferenceProvider::OpenAi.is_implemented());
         assert!(InferenceProvider::AwsBedrock.is_implemented());
         assert!(InferenceProvider::AzureOpenAi.is_implemented());
+    }
+
+    #[test]
+    fn canonical_provider_roster_round_trips_every_wire_id() {
+        assert_eq!(InferenceProvider::ALL.len(), 13);
+        for provider in InferenceProvider::ALL {
+            assert_eq!(InferenceProvider::from_str(provider.as_str()), Some(*provider));
+        }
+        assert!(InferenceProvider::from_str("hermes").is_none());
+        assert!(InferenceProvider::from_str("openclaw").is_none());
     }
 
     /// C-3 Phase 2 (Session 14) — pin the round-trip for the new
