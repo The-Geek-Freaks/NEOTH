@@ -125,6 +125,45 @@ struct AuthenticatedHomeSegment {
     allow_torn_tail: bool,
 }
 
+/// Authentication/identity result retained between the validation and
+/// callback passes of a full-home scan.
+///
+/// Deliberately does not retain the reconstructed logical segment.  A valid
+/// production home may contain 5 GiB physical / 10 GiB logical WAL, so keeping
+/// one `Vec<u8>` per segment turns a tiny forensic lookup into a multi-GiB
+/// allocation.  The first pass keeps only this fixed-size proof; the second
+/// pass re-opens and re-authenticates one segment at a time before callbacks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AuthenticatedHomeSegmentProof {
+    namespace: Option<String>,
+    sequence: u64,
+    name: OsString,
+    parsed: ParsedSegmentHeader,
+    physical_len: u64,
+    physical_sha256_hex: String,
+    logical_len: usize,
+    header_len: usize,
+    authenticated_through: usize,
+    allow_torn_tail: bool,
+}
+
+impl AuthenticatedHomeSegment {
+    fn proof(&self) -> AuthenticatedHomeSegmentProof {
+        AuthenticatedHomeSegmentProof {
+            namespace: self.namespace.clone(),
+            sequence: self.sequence,
+            name: self.name.clone(),
+            parsed: self.parsed,
+            physical_len: self.physical_len,
+            physical_sha256_hex: self.physical_sha256_hex.clone(),
+            logical_len: self.logical.len(),
+            header_len: self.header_len,
+            authenticated_through: self.authenticated_through,
+            allow_torn_tail: self.allow_torn_tail,
+        }
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SegmentRolloverLink {
@@ -614,29 +653,63 @@ where
     for_each_frame_at_home_with_hmac_keys(home, limits, None, false, cb)
 }
 
-/// Internal full-home scanner with an already-decoded, explicitly selected
-/// verification key set. Archive retention uses this only to prove that a
-/// candidate archive can disappear without weakening any retained WAL marker.
-/// Its strict mode also rejects the normal live-tail exception: a retention
-/// decision cannot call an unmarked/incomplete tail expired merely because a
-/// read-only live scanner is allowed to observe it.
-fn for_each_frame_at_home_with_hmac_keys<F>(
+/// Offline/legacy forensic lookup for an exact Context Connector receipt in
+/// authenticated primary-WAL history.
+///
+/// The two-pass scanner retains only one reconstructed segment plus bounded
+/// metadata, but this lookup still performs O(all retained WAL bytes) I/O. It
+/// is therefore deliberately forbidden from receipt admission: the writer's
+/// canonical authenticated receipt ledger provides fixed-operation lookup.
+/// This helper remains only for an explicit offline migration/forensic tool;
+/// strict mode rejects an unmarked tail or partial home rather than claiming
+/// absence from incomplete legacy history.
+pub(crate) fn authenticated_context_evidence_receipt_exists(
     home: &Path,
     limits: HomeWalScanLimits,
-    verification_keys: Option<&[Vec<u8>]>,
-    require_complete_authentication: bool,
-    mut cb: F,
-) -> Result<()>
-where
-    F: FnMut(&HomeWalFrameLocation, &DecodedFrame<'_>) -> Result<()>,
-{
-    let wal_path = home.join("wal");
-    let Some(root) = crate::skills::store::open_bound_directory(&wal_path, false, "WAL scan root")?
-    else {
-        return Ok(());
-    };
-    let segment_key = load_home_segment_key(&root)?;
-    let mut segments = Vec::<(Option<String>, u64, OsString)>::new();
+    receipt_handle: &[u8; 32],
+    expected: &crate::wal::events::ContextEvidenceReceipt,
+) -> Result<bool> {
+    anyhow::ensure!(
+        expected.matches_opaque_handle(receipt_handle),
+        "Context Evidence receipt payload does not bind its opaque append-once handle"
+    );
+
+    let mut found = false;
+    for_each_frame_at_home_with_hmac_keys(home, limits, None, true, |_, frame| {
+        if frame.header.event_type != crate::wal::events::EVENT_TYPE_EXTENDED
+            || frame.header.event_subtype
+                != crate::wal::events::ExtendedSubtype::ContextEvidenceReceipt as u8
+        {
+            return Ok(());
+        }
+
+        let decoded = crate::wal::events::ContextEvidenceReceipt::decode(frame.payload)
+            .context("decode authenticated Context Evidence receipt")?;
+        if !decoded.matches_opaque_handle(receipt_handle) {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            decoded.eq(expected),
+            "opaque Context Evidence receipt handle is already bound to a different closed payload"
+        );
+        anyhow::ensure!(
+            !found,
+            "authenticated WAL history contains a duplicate Context Evidence receipt handle"
+        );
+        found = true;
+        Ok(())
+    })?;
+    Ok(found)
+}
+
+type HomeSegmentName = (Option<String>, u64, OsString);
+
+fn enumerate_home_segments(
+    root: &crate::skills::store::BoundDirectory,
+    wal_path: &Path,
+    limits: HomeWalScanLimits,
+) -> Result<Vec<HomeSegmentName>> {
+    let mut segments = Vec::<HomeSegmentName>::new();
     let mut examined_entries = 0usize;
     for entry in root
         .dir
@@ -695,6 +768,142 @@ where
             );
         }
     }
+    Ok(segments)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_authenticated_home_segment(
+    root: &crate::skills::store::BoundDirectory,
+    segment_key: Option<&crate::wal::crypto::WalSegmentKey>,
+    verification_keys: &[Vec<u8>],
+    trusted_rotation_signers: Option<&std::collections::BTreeSet<String>>,
+    require_complete_authentication: bool,
+    limits: HomeWalScanLimits,
+    namespace: &Option<String>,
+    sequence: u64,
+    name: &OsString,
+    ends_namespace: bool,
+    total_physical: &mut u64,
+    total_logical: &mut u64,
+) -> Result<AuthenticatedHomeSegment> {
+    let display = root.display_path.join(name);
+    let raw = crate::skills::store::read_regular_file_bounded(
+        &root.dir,
+        name,
+        &display,
+        limits.max_segment_physical_bytes,
+    )
+    .with_context(|| {
+        format!(
+            "read capability-bound regular WAL segment {}",
+            display.display()
+        )
+    })?;
+    *total_physical = total_physical
+        .checked_add(raw.len() as u64)
+        .context("aggregate WAL physical-byte counter overflow")?;
+    anyhow::ensure!(
+        *total_physical <= limits.max_total_physical_bytes,
+        "WAL scan exceeds the {}-byte aggregate physical limit",
+        limits.max_total_physical_bytes
+    );
+
+    let parsed = parse_segment_header(&raw)
+        .with_context(|| format!("parse WAL segment header {}", display.display()))?;
+    anyhow::ensure!(
+        parsed.segment_seq() == sequence,
+        "WAL segment {} header sequence {} differs from file sequence {sequence}",
+        display.display(),
+        parsed.segment_seq()
+    );
+    let (header_len, logical) = logical_segment_bytes_with_key_capped(
+        &raw,
+        segment_key,
+        limits.max_segment_logical_bytes,
+    )
+    .with_context(|| format!("reconstruct home-bound WAL segment {}", display.display()))?;
+    let logical = logical.into_owned();
+    let physical_len =
+        u64::try_from(raw.len()).context("WAL segment physical length exceeds u64")?;
+    let physical_sha256_hex = hex::encode(Sha256::digest(&raw));
+    *total_logical = total_logical
+        .checked_add(logical.len() as u64)
+        .context("aggregate WAL logical-byte counter overflow")?;
+    anyhow::ensure!(
+        *total_logical <= limits.max_total_logical_bytes,
+        "WAL scan exceeds the {}-byte aggregate logical limit",
+        limits.max_total_logical_bytes
+    );
+    let is_strict_rotation_evidence = require_complete_authentication
+        && is_complete_hmac_rotation_evidence(
+            name,
+            &logical,
+            header_len,
+            trusted_rotation_signers.context(
+                "strict rotation signers are missing under strict authentication",
+            )?,
+        )
+        .with_context(|| {
+            format!(
+                "validate signed HMAC-key rotation evidence before retention {}",
+                display.display()
+            )
+        })?;
+    let allow_torn_tail =
+        ends_namespace && !parsed.is_sealed() && !require_complete_authentication;
+    let authenticated_through = if is_strict_rotation_evidence {
+        logical.len()
+    } else {
+        crate::wal::writer::verify_existing_compaction_marker_windows(
+            &logical,
+            header_len,
+            verification_keys,
+            allow_torn_tail,
+        )
+        .with_context(|| {
+            format!(
+                "authenticate compaction-marker windows before scanning {}",
+                display.display()
+            )
+        })?
+    };
+    Ok(AuthenticatedHomeSegment {
+        namespace: namespace.clone(),
+        sequence,
+        name: name.clone(),
+        parsed,
+        physical_len,
+        physical_sha256_hex,
+        logical,
+        header_len,
+        authenticated_through,
+        allow_torn_tail,
+    })
+}
+
+/// Internal full-home scanner with an already-decoded, explicitly selected
+/// verification key set. Archive retention uses this only to prove that a
+/// candidate archive can disappear without weakening any retained WAL marker.
+/// Its strict mode also rejects the normal live-tail exception: a retention
+/// decision cannot call an unmarked/incomplete tail expired merely because a
+/// read-only live scanner is allowed to observe it.
+fn for_each_frame_at_home_with_hmac_keys<F>(
+    home: &Path,
+    limits: HomeWalScanLimits,
+    verification_keys: Option<&[Vec<u8>]>,
+    require_complete_authentication: bool,
+    mut cb: F,
+) -> Result<()>
+where
+    F: FnMut(&HomeWalFrameLocation, &DecodedFrame<'_>) -> Result<()>,
+{
+    let wal_path = home.join("wal");
+    let Some(root) = crate::skills::store::open_bound_directory(&wal_path, false, "WAL scan root")?
+    else {
+        return Ok(());
+    };
+    let segment_key = load_home_segment_key(&root)?;
+    let segments = enumerate_home_segments(&root, &wal_path, limits)?;
     if segments.is_empty() {
         return Ok(());
     }
@@ -714,112 +923,77 @@ where
             .collect::<Vec<_>>();
         crate::wal::signing::trusted_signing_pubkeys(&paths, &root.display_path.join("signing.key"))
     });
+    // Pass 1 proves the complete retained history while keeping at most one
+    // reconstructed segment alive.  No callback may observe a prefix until
+    // every namespace, marker window and predecessor link has validated.
     let mut total_physical = 0u64;
     let mut total_logical = 0u64;
-    let mut authenticated_segments = Vec::with_capacity(segments.len());
+    let mut authenticated_proofs = Vec::with_capacity(segments.len());
+    let mut previous_proof: Option<AuthenticatedHomeSegmentProof> = None;
     for index in 0..segments.len() {
         let (namespace, sequence, name) = &segments[index];
         let ends_namespace =
             index + 1 == segments.len() || segments[index + 1].0.as_deref() != namespace.as_deref();
-        let display = root.display_path.join(name);
-        let raw = crate::skills::store::read_regular_file_bounded(
-            &root.dir,
-            name,
-            &display,
-            limits.max_segment_physical_bytes,
-        )
-        .with_context(|| {
-            format!(
-                "read capability-bound regular WAL segment {}",
-                display.display()
-            )
-        })?;
-        total_physical = total_physical
-            .checked_add(raw.len() as u64)
-            .context("aggregate WAL physical-byte counter overflow")?;
-        if total_physical > limits.max_total_physical_bytes {
-            anyhow::bail!(
-                "WAL scan exceeds the {}-byte aggregate physical limit",
-                limits.max_total_physical_bytes
-            );
-        }
-
-        let parsed = parse_segment_header(&raw)
-            .with_context(|| format!("parse WAL segment header {}", display.display()))?;
-        anyhow::ensure!(
-            parsed.segment_seq() == *sequence,
-            "WAL segment {} header sequence {} differs from file sequence {sequence}",
-            display.display(),
-            parsed.segment_seq()
-        );
-        let (header_len, logical) = logical_segment_bytes_with_key_capped(
-            &raw,
+        let authenticated = load_authenticated_home_segment(
+            &root,
             segment_key.as_ref(),
-            limits.max_segment_logical_bytes,
-        )
-        .with_context(|| format!("reconstruct home-bound WAL segment {}", display.display()))?;
-        let logical = logical.into_owned();
-        let physical_len =
-            u64::try_from(raw.len()).context("WAL segment physical length exceeds u64")?;
-        let physical_sha256_hex = hex::encode(Sha256::digest(&raw));
-        total_logical = total_logical
-            .checked_add(logical.len() as u64)
-            .context("aggregate WAL logical-byte counter overflow")?;
-        if total_logical > limits.max_total_logical_bytes {
-            anyhow::bail!(
-                "WAL scan exceeds the {}-byte aggregate logical limit",
-                limits.max_total_logical_bytes
-            );
+            verification_keys,
+            trusted_rotation_signers.as_ref(),
+            require_complete_authentication,
+            limits,
+            namespace,
+            *sequence,
+            name,
+            ends_namespace,
+            &mut total_physical,
+            &mut total_logical,
+        )?;
+        if let Some(previous) = previous_proof.as_ref()
+            && previous.namespace == authenticated.namespace
+        {
+            validate_cross_segment_link(previous, &authenticated)
+                .context("validate authenticated cross-segment link")?;
         }
-        let is_strict_rotation_evidence = require_complete_authentication
-            && is_complete_hmac_rotation_evidence(
-                name,
-                &logical,
-                header_len,
-                trusted_rotation_signers
-                    .as_ref()
-                    .expect("strict rotation signers are initialized with strict authentication"),
-            )
-            .with_context(|| {
-                format!(
-                    "validate signed HMAC-key rotation evidence before retention {}",
-                    display.display()
-                )
-            })?;
-        let allow_torn_tail =
-            ends_namespace && !parsed.is_sealed() && !require_complete_authentication;
-        let authenticated_through = if is_strict_rotation_evidence {
-            logical.len()
-        } else {
-            crate::wal::writer::verify_existing_compaction_marker_windows(
-                &logical,
-                header_len,
-                verification_keys,
-                allow_torn_tail,
-            )
-            .with_context(|| {
-                format!(
-                    "authenticate compaction-marker windows before scanning {}",
-                    display.display()
-                )
-            })?
-        };
-        authenticated_segments.push(AuthenticatedHomeSegment {
-            namespace: namespace.clone(),
-            sequence: *sequence,
-            name: name.clone(),
-            parsed,
-            physical_len,
-            physical_sha256_hex,
-            logical,
-            header_len,
-            authenticated_through,
-            allow_torn_tail,
-        });
+        let proof = authenticated.proof();
+        previous_proof = Some(proof.clone());
+        authenticated_proofs.push(proof);
     }
-    validate_cross_segment_links(&authenticated_segments)
-        .context("validate authenticated cross-segment links before full-home callbacks")?;
-    for segment in &authenticated_segments {
+
+    // The callback pass re-enumerates and re-authenticates through the same
+    // bound directory. A replacement/removal/addition visible by this second
+    // enumeration cannot reuse pass-1 approval, and every emitted segment must
+    // still equal its pass-1 proof. This is an authenticated snapshot pass, not
+    // an atomic latest-home view: a segment published after this enumeration
+    // belongs to a later scan unless the caller separately holds its mutation
+    // authority.
+    let callback_segments = enumerate_home_segments(&root, &wal_path, limits)?;
+    anyhow::ensure!(
+        callback_segments == segments,
+        "WAL namespace changed between authentication and callback passes"
+    );
+    total_physical = 0;
+    total_logical = 0;
+    for (index, (namespace, sequence, name)) in callback_segments.iter().enumerate() {
+        let ends_namespace = index + 1 == callback_segments.len()
+            || callback_segments[index + 1].0.as_deref() != namespace.as_deref();
+        let segment = load_authenticated_home_segment(
+            &root,
+            segment_key.as_ref(),
+            verification_keys,
+            trusted_rotation_signers.as_ref(),
+            require_complete_authentication,
+            limits,
+            namespace,
+            *sequence,
+            name,
+            ends_namespace,
+            &mut total_physical,
+            &mut total_logical,
+        )?;
+        anyhow::ensure!(
+            segment.proof() == authenticated_proofs[index],
+            "WAL segment changed between authentication and callback passes"
+        );
         scan_one_home_segment(
             &segment.name,
             segment.parsed,
@@ -910,134 +1084,142 @@ fn validate_cross_segment_links(segments: &[AuthenticatedHomeSegment]) -> Result
         if predecessor.namespace != successor.namespace {
             continue;
         }
-        anyhow::ensure!(
-            successor.sequence == predecessor.sequence.saturating_add(1),
-            "WAL cross-segment link is non-contiguous between sequences {} and {}",
-            predecessor.sequence,
-            successor.sequence
-        );
-
-        let link_frame = decode_frame(
-            successor
-                .logical
-                .get(successor.header_len..)
-                .context("successor WAL header exceeds its logical bytes")?,
-        )
-        .with_context(|| {
-            format!(
-                "decode mandatory cross-segment link at the head of {}",
-                successor.name.to_string_lossy()
-            )
-        })?;
-        anyhow::ensure!(
-            link_frame.header.event_type == crate::wal::events::EVENT_TYPE_SEGMENT_ROLLOVER,
-            "WAL successor {} sequence {} does not begin with the mandatory authenticated \
-             cross-segment link",
-            successor.name.to_string_lossy(),
-            successor.sequence
-        );
-        let link: SegmentRolloverLink =
-            serde_json::from_slice(link_frame.payload).with_context(|| {
-                format!(
-                    "decode cross-segment link in {}",
-                    successor.name.to_string_lossy()
-                )
-            })?;
-        let link_end = successor
-            .header_len
-            .checked_add(link_frame.header.total_len as usize)
-            .context("cross-segment link end offset overflow")?;
-        let marker_frame = decode_frame(
-            successor
-                .logical
-                .get(link_end..)
-                .context("cross-segment link end exceeds successor bytes")?,
-        )
-        .with_context(|| {
-            format!(
-                "decode mandatory link-authentication marker in {}",
-                successor.name.to_string_lossy()
-            )
-        })?;
-        anyhow::ensure!(
-            marker_frame.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER,
-            "WAL successor {} cross-segment link is not immediately authenticated by a \
-             compaction marker",
-            successor.name.to_string_lossy()
-        );
-        let marker: crate::wal::compaction::MarkerPayload =
-            serde_json::from_slice(marker_frame.payload).with_context(|| {
-                format!(
-                    "decode link-authentication marker in {}",
-                    successor.name.to_string_lossy()
-                )
-            })?;
-        anyhow::ensure!(
-            marker.from_offset
-                == u64::try_from(successor.header_len).context("successor header exceeds u64")?
-                && marker.to_offset
-                    == u64::try_from(link_end).context("cross-segment link end exceeds u64")?
-                && marker.frame_count == 1,
-            "WAL successor {} does not authenticate exactly its cross-segment link as the \
-             first HMAC window",
-            successor.name.to_string_lossy()
-        );
-
-        anyhow::ensure!(
-            link.link_domain == "neoth.wal.cross-segment.v1" && link.link_version == 1,
-            "WAL successor {} has unsupported cross-segment link version {}",
-            successor.name.to_string_lossy(),
-            link.link_version
-        );
-        anyhow::ensure!(
-            Some(link.closed_segment_name.as_str()) == predecessor.name.to_str()
-                && Some(link.opened_segment_name.as_str()) == successor.name.to_str(),
-            "WAL successor {} cross-segment link does not bind the canonical chain namespace",
-            successor.name.to_string_lossy()
-        );
-        anyhow::ensure!(
-            link.closed_generation == predecessor.parsed.generation()
-                && link.closed_seq == predecessor.parsed.segment_seq()
-                && link.closed_start_ts_ns == predecessor.parsed.segment_start_ts_ns()
-                && link.closed_node_id == predecessor.parsed.node_id(),
-            "WAL successor {} cross-segment link does not match predecessor header identity",
-            successor.name.to_string_lossy()
-        );
-        anyhow::ensure!(
-            link.closed_bytes
-                == u64::try_from(predecessor.logical.len())
-                    .context("predecessor logical length exceeds u64")?,
-            "WAL successor {} claims predecessor logical length {}, actual {}",
-            successor.name.to_string_lossy(),
-            link.closed_bytes,
-            predecessor.logical.len()
-        );
-        anyhow::ensure!(
-            link.closed_physical_bytes == predecessor.physical_len,
-            "WAL successor {} claims predecessor physical length {}, actual {}",
-            successor.name.to_string_lossy(),
-            link.closed_physical_bytes,
-            predecessor.physical_len
-        );
-        anyhow::ensure!(
-            link.closed_sha256_hex == predecessor.physical_sha256_hex,
-            "WAL successor {} cross-segment predecessor digest mismatch",
-            successor.name.to_string_lossy()
-        );
-        anyhow::ensure!(
-            link.opened_generation == successor.parsed.generation()
-                && link.opened_seq == successor.parsed.segment_seq()
-                && link.opened_start_ts_ns == successor.parsed.segment_start_ts_ns()
-                && link.opened_node_id == successor.parsed.node_id(),
-            "WAL successor {} cross-segment link does not match its own header identity",
-            successor.name.to_string_lossy()
-        );
-        anyhow::ensure!(
-            matches!(link.reason.as_str(), "size" | "age" | "sealed_restart") && link.ts_ns > 0,
-            "WAL successor {} has an invalid cross-segment rotation context",
-            successor.name.to_string_lossy()
-        );
+        validate_cross_segment_link(&predecessor.proof(), successor)?;
     }
+    Ok(())
+}
+
+fn validate_cross_segment_link(
+    predecessor: &AuthenticatedHomeSegmentProof,
+    successor: &AuthenticatedHomeSegment,
+) -> Result<()> {
+    anyhow::ensure!(
+        successor.sequence == predecessor.sequence.saturating_add(1),
+        "WAL cross-segment link is non-contiguous between sequences {} and {}",
+        predecessor.sequence,
+        successor.sequence
+    );
+
+    let link_frame = decode_frame(
+        successor
+            .logical
+            .get(successor.header_len..)
+            .context("successor WAL header exceeds its logical bytes")?,
+    )
+    .with_context(|| {
+        format!(
+            "decode mandatory cross-segment link at the head of {}",
+            successor.name.to_string_lossy()
+        )
+    })?;
+    anyhow::ensure!(
+        link_frame.header.event_type == crate::wal::events::EVENT_TYPE_SEGMENT_ROLLOVER,
+        "WAL successor {} sequence {} does not begin with the mandatory authenticated \
+         cross-segment link",
+        successor.name.to_string_lossy(),
+        successor.sequence
+    );
+    let link: SegmentRolloverLink =
+        serde_json::from_slice(link_frame.payload).with_context(|| {
+            format!(
+                "decode cross-segment link in {}",
+                successor.name.to_string_lossy()
+            )
+        })?;
+    let link_end = successor
+        .header_len
+        .checked_add(link_frame.header.total_len as usize)
+        .context("cross-segment link end offset overflow")?;
+    let marker_frame = decode_frame(
+        successor
+            .logical
+            .get(link_end..)
+            .context("cross-segment link end exceeds successor bytes")?,
+    )
+    .with_context(|| {
+        format!(
+            "decode mandatory link-authentication marker in {}",
+            successor.name.to_string_lossy()
+        )
+    })?;
+    anyhow::ensure!(
+        marker_frame.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER,
+        "WAL successor {} cross-segment link is not immediately authenticated by a \
+         compaction marker",
+        successor.name.to_string_lossy()
+    );
+    let marker: crate::wal::compaction::MarkerPayload =
+        serde_json::from_slice(marker_frame.payload).with_context(|| {
+            format!(
+                "decode link-authentication marker in {}",
+                successor.name.to_string_lossy()
+            )
+        })?;
+    anyhow::ensure!(
+        marker.from_offset
+            == u64::try_from(successor.header_len).context("successor header exceeds u64")?
+            && marker.to_offset
+                == u64::try_from(link_end).context("cross-segment link end exceeds u64")?
+            && marker.frame_count == 1,
+        "WAL successor {} does not authenticate exactly its cross-segment link as the \
+         first HMAC window",
+        successor.name.to_string_lossy()
+    );
+
+    anyhow::ensure!(
+        link.link_domain == "neoth.wal.cross-segment.v1" && link.link_version == 1,
+        "WAL successor {} has unsupported cross-segment link version {}",
+        successor.name.to_string_lossy(),
+        link.link_version
+    );
+    anyhow::ensure!(
+        Some(link.closed_segment_name.as_str()) == predecessor.name.to_str()
+            && Some(link.opened_segment_name.as_str()) == successor.name.to_str(),
+        "WAL successor {} cross-segment link does not bind the canonical chain namespace",
+        successor.name.to_string_lossy()
+    );
+    anyhow::ensure!(
+        link.closed_generation == predecessor.parsed.generation()
+            && link.closed_seq == predecessor.parsed.segment_seq()
+            && link.closed_start_ts_ns == predecessor.parsed.segment_start_ts_ns()
+            && link.closed_node_id == predecessor.parsed.node_id(),
+        "WAL successor {} cross-segment link does not match predecessor header identity",
+        successor.name.to_string_lossy()
+    );
+    anyhow::ensure!(
+        link.closed_bytes
+            == u64::try_from(predecessor.logical_len)
+                .context("predecessor logical length exceeds u64")?,
+        "WAL successor {} claims predecessor logical length {}, actual {}",
+        successor.name.to_string_lossy(),
+        link.closed_bytes,
+        predecessor.logical_len
+    );
+    anyhow::ensure!(
+        link.closed_physical_bytes == predecessor.physical_len,
+        "WAL successor {} claims predecessor physical length {}, actual {}",
+        successor.name.to_string_lossy(),
+        link.closed_physical_bytes,
+        predecessor.physical_len
+    );
+    anyhow::ensure!(
+        link.closed_sha256_hex == predecessor.physical_sha256_hex,
+        "WAL successor {} cross-segment predecessor digest mismatch",
+        successor.name.to_string_lossy()
+    );
+    anyhow::ensure!(
+        link.opened_generation == successor.parsed.generation()
+            && link.opened_seq == successor.parsed.segment_seq()
+            && link.opened_start_ts_ns == successor.parsed.segment_start_ts_ns()
+            && link.opened_node_id == successor.parsed.node_id(),
+        "WAL successor {} cross-segment link does not match its own header identity",
+        successor.name.to_string_lossy()
+    );
+    anyhow::ensure!(
+        matches!(link.reason.as_str(), "size" | "age" | "sealed_restart") && link.ts_ns > 0,
+        "WAL successor {} has an invalid cross-segment rotation context",
+        successor.name.to_string_lossy()
+    );
     Ok(())
 }
 

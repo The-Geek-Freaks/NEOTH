@@ -70,6 +70,18 @@ pub enum WalAction {
         #[arg(long, default_value_t = 0)]
         skip: usize,
     },
+    /// Inspect the bounded authenticated Context Evidence receipt ledger.
+    /// With no handle, prints the signed current head. With `--handle`, reads
+    /// only the one fixed shard selected by that lower-case SHA-256 handle and
+    /// includes the exact closed receipt frame when present.
+    ReceiptEvidence {
+        /// Exact 64-character lower-case SHA-256 receipt handle.
+        #[arg(long, value_name = "LOWER_HEX_SHA256")]
+        handle: Option<String>,
+        /// NEOTH home override (tests / inspecting a stopped backup).
+        #[arg(long, value_name = "DIR")]
+        home: Option<PathBuf>,
+    },
     /// KF-03 — export a tamper-evidence `.neoth-proof` bundle covering every
     /// frame in a time window, plus the HMAC compaction marker(s) sealing
     /// those bytes. A third party re-checks integrity offline (`neoth wal
@@ -295,6 +307,11 @@ pub async fn run_wal(args: WalArgs) -> Result<()> {
                 args.output,
             )
         }
+        WalAction::ReceiptEvidence { handle, home } => receipt_evidence(
+            handle.as_deref(),
+            &home.unwrap_or_else(FreedomConfig::default_neoth_home),
+            args.output,
+        ),
         WalAction::Export {
             window,
             out,
@@ -322,6 +339,41 @@ pub async fn run_wal(args: WalArgs) -> Result<()> {
             interval_ms,
         } => follow(types.as_deref(), wal_dir, interval_ms),
     }
+}
+
+fn receipt_evidence(handle: Option<&str>, home: &Path, output: OutputFormat) -> Result<()> {
+    let decoded_handle: Option<[u8; 32]> = match handle {
+        None => None,
+        Some(value) => {
+            anyhow::ensure!(
+                value.len() == 64
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+                "receipt handle must be exactly 64 lower-case hexadecimal characters"
+            );
+            let decoded = hex::decode(value).context("decode receipt handle")?;
+            Some(
+                decoded
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("receipt handle must decode to 32 bytes"))?,
+            )
+        }
+    };
+    let view = crate::wal::context_evidence_receipts::read_authenticated_ledger(
+        home,
+        decoded_handle.as_ref(),
+    )?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string(&view)?);
+        }
+        OutputFormat::Table => match view {
+            Some(view) => println!("{}", serde_json::to_string_pretty(&view)?),
+            None => println!("Context Evidence receipt ledger: not initialized"),
+        },
+    }
+    Ok(())
 }
 
 /// PROOF-KEY-01 — the proof signing key's public key (base64), or `None` when

@@ -4,6 +4,12 @@
 
 pub mod builder;
 pub mod compaction;
+/// CC-RUNTIME-P0 — bounded, authenticated append-once receipt ledger.
+///
+/// This deliberately lives beside (rather than inside) the segment scanner:
+/// a receipt acknowledgement must never require retaining or walking the
+/// complete historical WAL.
+pub(crate) mod context_evidence_receipts;
 /// Workstream F (CT-10/E-20/V1x-06) — zstd compress/decompress helpers
 /// for sealed WAL segments. Pure sync wrappers; the writer calls them
 /// during segment finalization (not on the hot per-frame path).

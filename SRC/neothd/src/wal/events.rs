@@ -475,12 +475,12 @@ pub(crate) enum ContextEvidenceReceiptKind {
 /// Content-free extended-WAL payload reserved for the Context Connector P0
 /// import outbox (`ExtendedSubtype::ContextEvidenceReceipt`).
 ///
-/// This is deliberately un-emitted and un-wired in this slice. It records only
-/// a fixed-width opaque SHA-256 receipt handle, an allowlisted kind, two
-/// authority revisions, and a coarse Unix minute. In particular, it has no
-/// path, source, plan, content, account, database-row, cursor, or raw external
-/// identifier field. `deny_unknown_fields` makes that boundary fail closed on
-/// decode as well as at the Rust type surface.
+/// It may be emitted only through the writer's authenticated append-once
+/// boundary. The payload records a fixed-width opaque SHA-256 receipt handle,
+/// an allowlisted kind, two authority revisions, and a coarse Unix minute. In
+/// particular, it has no path, source, plan, content, account, database-row,
+/// cursor, or raw external identifier field. `deny_unknown_fields` makes that
+/// boundary fail closed on decode as well as at the Rust type surface.
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -576,6 +576,45 @@ impl ContextEvidenceReceipt {
         }
     }
 
+    /// Compare the closed payload's opaque handle with the binary outbox key
+    /// without materializing or exposing its hexadecimal representation.
+    ///
+    /// The append-once WAL boundary receives both values deliberately: the
+    /// fixed-width binary key drives deduplication, while the encoded receipt
+    /// remains a self-describing forensic record. They must bind the same
+    /// operation before either value reaches the writer task.
+    pub(crate) fn matches_opaque_handle(&self, expected: &[u8; 32]) -> bool {
+        let encoded = self.receipt_handle.as_bytes();
+        encoded.len() == CONTEXT_EVIDENCE_RECEIPT_HANDLE_HEX_LEN
+            && encoded
+                .chunks_exact(2)
+                .zip(expected)
+                .all(|(pair, byte)| {
+                    decode_lower_hex_nibble(pair[0])
+                        .zip(decode_lower_hex_nibble(pair[1]))
+                        .is_some_and(|(high, low)| ((high << 4) | low) == *byte)
+                })
+    }
+
+    /// Return the binary form of this already-validated opaque receipt
+    /// handle.  The bounded receipt ledger needs this only to prove strict
+    /// sorted-record and shard-placement invariants; callers must not render
+    /// the returned value in diagnostics.
+    pub(crate) fn opaque_handle(&self) -> anyhow::Result<[u8; 32]> {
+        self.validate()?;
+        let mut decoded = [0u8; 32];
+        for (slot, pair) in decoded.iter_mut().zip(self.receipt_handle.as_bytes().chunks_exact(2)) {
+            let high = decode_lower_hex_nibble(pair[0]).ok_or_else(|| {
+                anyhow::anyhow!("validated Context Evidence receipt handle lost high hex nibble")
+            })?;
+            let low = decode_lower_hex_nibble(pair[1]).ok_or_else(|| {
+                anyhow::anyhow!("validated Context Evidence receipt handle lost low hex nibble")
+            })?;
+            *slot = (high << 4) | low;
+        }
+        Ok(decoded)
+    }
+
     fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.schema_version == CONTEXT_EVIDENCE_RECEIPT_SCHEMA_VERSION,
@@ -592,6 +631,14 @@ impl ContextEvidenceReceipt {
             CONTEXT_EVIDENCE_RECEIPT_HANDLE_HEX_LEN
         );
         Ok(())
+    }
+}
+
+fn decode_lower_hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
     }
 }
 
@@ -4062,6 +4109,9 @@ mod tests {
         let encoded = receipt.encode().unwrap();
 
         assert!(encoded.len() <= MAX_CONTEXT_EVIDENCE_RECEIPT_BYTES);
+        assert!(receipt.matches_opaque_handle(&[0xA3; 32]));
+        assert!(!receipt.matches_opaque_handle(&[0xA4; 32]));
+        assert_eq!(receipt.opaque_handle().unwrap(), [0xA3; 32]);
         assert_eq!(
             ContextEvidenceReceipt::decode(&encoded).unwrap(),
             receipt,

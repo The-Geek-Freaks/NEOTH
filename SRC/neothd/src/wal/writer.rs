@@ -26,10 +26,43 @@ use super::segment_header::{
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024; // 16 MiB sanity ceiling
+const CONTEXT_EVIDENCE_RECEIPT_AUTHORITY_SENTINEL: &str =
+    ".context-evidence-receipt-authority";
+// Keep the in-process side of the receipt authority deliberately bounded: one
+// mutex avoids an attacker-controlled home-key map whose entries can never be
+// reclaimed safely. The availability trade-off is explicit and conservative:
+// receipt decisions for different homes serialize inside one daemon and a
+// waiter fails closed after five seconds. Ordinary WAL appends are unaffected;
+// each receipt scan is itself capped by `supported_home_scan_limits()`.
+static CONTEXT_EVIDENCE_RECEIPT_PROCESS_AUTHORITY: std::sync::LazyLock<
+    std::sync::Arc<tokio::sync::Mutex<()>>,
+> = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
 // Marker JSON uses only bounded integers plus a fixed 64-byte HMAC hex tag.
 // Keep a conservative envelope so operator-frame admission can reserve the
 // mandatory authentication record before acknowledging the operator frame.
 const MAX_COMPACTION_MARKER_FRAME_BYTES: usize = 512;
+// Rotation publishes only a header plus one rollover-link frame and its HMAC
+// marker. Canonical segment leaves are filesystem-component bounded, so 16 KiB
+// is deliberately generous; `rotate` enforces this exact ceiling before it
+// opens a successor. Receipt admission can therefore cover every possible
+// pre-frame rotation without reserving the full per-segment recovery ceiling.
+const MAX_ROTATION_SUCCESSOR_PREFIX_BYTES: usize = 16 * 1024;
+
+fn is_context_evidence_receipt_header(header: &EventHeaderV2) -> bool {
+    header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+        && header.event_subtype
+            == crate::wal::events::ExtendedSubtype::ContextEvidenceReceipt as u8
+}
+
+fn refuse_generic_context_evidence_receipt(header: &EventHeaderV2) -> Result<(), WalError> {
+    if is_context_evidence_receipt_header(header) {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Context Evidence receipts require the authenticated append-once writer API",
+        )));
+    }
+    Ok(())
+}
 
 /// Immutable identity of a closed predecessor as observed through the
 /// capability-bound WAL directory after its final sync/seal.
@@ -44,8 +77,8 @@ struct ClosedSegmentBinding {
 }
 
 #[cfg(all(test, unix))]
-static TEST_FAIL_SEGMENT_PARENT_SYNC_AT: std::sync::Mutex<Option<PathBuf>> =
-    std::sync::Mutex::new(None);
+static TEST_FAIL_SEGMENT_PARENT_SYNC_AT: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +86,7 @@ enum TestSegmentCreateFailure {
     PrivatePermissions,
     HeaderWrite,
     FileSync,
+    StageCleanup,
 }
 
 #[cfg(test)]
@@ -60,8 +94,13 @@ static TEST_FAIL_SEGMENT_CREATE_AT: std::sync::Mutex<Vec<(PathBuf, TestSegmentCr
     std::sync::Mutex::new(Vec::new());
 
 #[cfg(test)]
-static TEST_FAIL_COMPACTION_MARKER_WRITE_AT: std::sync::Mutex<Option<PathBuf>> =
-    std::sync::Mutex::new(None);
+static TEST_FAIL_COMPACTION_MARKER_WRITE_AT: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+static TEST_CONTEXT_EVIDENCE_RECEIPT_AUTHORITY_CONTENTION_AT: std::sync::Mutex<
+    Vec<(PathBuf, std::sync::mpsc::SyncSender<()>)>,
+> = std::sync::Mutex::new(Vec::new());
 
 #[cfg(test)]
 struct TestSegmentPublicationPause {
@@ -71,14 +110,16 @@ struct TestSegmentPublicationPause {
 }
 
 #[cfg(test)]
-static TEST_PAUSE_SEGMENT_PUBLICATION_AT: std::sync::Mutex<Option<TestSegmentPublicationPause>> =
-    std::sync::Mutex::new(None);
+static TEST_PAUSE_SEGMENT_PUBLICATION_AT: std::sync::Mutex<Vec<TestSegmentPublicationPause>> =
+    std::sync::Mutex::new(Vec::new());
 
 #[cfg(all(test, unix))]
 pub(crate) fn fail_segment_parent_sync_for_test(parent: &Path) {
-    *TEST_FAIL_SEGMENT_PARENT_SYNC_AT
+    let mut targets = TEST_FAIL_SEGMENT_PARENT_SYNC_AT
         .lock()
-        .expect("segment parent-sync test hook poisoned") = Some(parent.to_path_buf());
+        .expect("segment parent-sync test hook poisoned");
+    targets.retain(|target| target != parent);
+    targets.push(parent.to_path_buf());
 }
 
 #[cfg(test)]
@@ -86,7 +127,9 @@ fn fail_segment_create_for_test(path: &Path, failure: TestSegmentCreateFailure) 
     let mut targets = TEST_FAIL_SEGMENT_CREATE_AT
         .lock()
         .expect("segment-create test hook poisoned");
-    targets.retain(|(target, _)| target != path);
+    targets.retain(|(target, target_failure)| {
+        target != path || *target_failure != failure
+    });
     targets.push((path.to_path_buf(), failure));
 }
 
@@ -102,11 +145,8 @@ pub(crate) fn pause_segment_publication_for_test(
     let mut pending = TEST_PAUSE_SEGMENT_PUBLICATION_AT
         .lock()
         .expect("segment-publication test hook poisoned");
-    assert!(
-        pending.is_none(),
-        "only one segment-publication pause may be installed at a time"
-    );
-    *pending = Some(TestSegmentPublicationPause {
+    pending.retain(|pause| pause.path != path);
+    pending.push(TestSegmentPublicationPause {
         path: path.to_path_buf(),
         prepared: prepared_tx,
         release: release_rx,
@@ -120,11 +160,10 @@ fn pause_before_segment_publication(path: &Path) -> std::io::Result<()> {
         let mut pending = TEST_PAUSE_SEGMENT_PUBLICATION_AT
             .lock()
             .expect("segment-publication test hook poisoned");
-        if pending.as_ref().is_some_and(|pause| pause.path == path) {
-            pending.take()
-        } else {
-            None
-        }
+        pending
+            .iter()
+            .position(|pause| pause.path == path)
+            .map(|index| pending.swap_remove(index))
     };
     let Some(pause) = pause else {
         return Ok(());
@@ -168,23 +207,54 @@ fn inject_segment_create_failure(
 
 #[cfg(test)]
 fn fail_compaction_marker_write_for_test(path: &Path) {
-    *TEST_FAIL_COMPACTION_MARKER_WRITE_AT
+    let mut targets = TEST_FAIL_COMPACTION_MARKER_WRITE_AT
         .lock()
-        .expect("compaction-marker test hook poisoned") = Some(path.to_path_buf());
+        .expect("compaction-marker test hook poisoned");
+    targets.retain(|target| target != path);
+    targets.push(path.to_path_buf());
 }
 
 #[cfg(test)]
 fn inject_compaction_marker_write_failure(path: &Path) -> std::io::Result<()> {
-    let mut target = TEST_FAIL_COMPACTION_MARKER_WRITE_AT
+    let mut targets = TEST_FAIL_COMPACTION_MARKER_WRITE_AT
         .lock()
         .expect("compaction-marker test hook poisoned");
-    if target.as_deref() == Some(path) {
-        *target = None;
+    if let Some(index) = targets.iter().position(|target| target == path) {
+        targets.swap_remove(index);
         return Err(std::io::Error::other(
             "injected compaction marker write failure",
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+fn observe_context_evidence_receipt_authority_contention_for_test(
+    home: &Path,
+) -> std::sync::mpsc::Receiver<()> {
+    let (reached_tx, reached_rx) = std::sync::mpsc::sync_channel(1);
+    let mut observers = TEST_CONTEXT_EVIDENCE_RECEIPT_AUTHORITY_CONTENTION_AT
+        .lock()
+        .expect("Context Evidence receipt authority test hook poisoned");
+    observers.retain(|(target, _)| target != home);
+    observers.push((home.to_path_buf(), reached_tx));
+    reached_rx
+}
+
+#[cfg(test)]
+fn notify_context_evidence_receipt_authority_contention_for_test(home: &Path) {
+    let observer = {
+        let mut observers = TEST_CONTEXT_EVIDENCE_RECEIPT_AUTHORITY_CONTENTION_AT
+            .lock()
+            .expect("Context Evidence receipt authority test hook poisoned");
+        observers
+            .iter()
+            .position(|(target, _)| target == home)
+            .map(|index| observers.swap_remove(index).1)
+    };
+    if let Some(observer) = observer {
+        let _ = observer.send(());
+    }
 }
 
 /// Allocate a collision-resistant segment namespace for a standalone writer.
@@ -329,10 +399,247 @@ pub struct WriteRequest {
     pub ack: oneshot::Sender<Result<u64, WalError>>,
     /// Close and fsync the current HMAC window before acknowledging this
     /// request. Reserved for producer/consumer contracts whose downstream
-    /// reader must prove the exact frame from authenticated WAL bytes.
+    /// reader must prove the exact frame from authenticated primary-WAL bytes.
     force_authentication_marker: bool,
+    /// Present only for the closed Context Connector receipt primitive. The
+    /// writer uses this binary handle under a cross-process home authority to
+    /// make the bounded authenticated-ledger decision and append one
+    /// transaction. Generic appends can never opt into deduplication by merely
+    /// choosing the receipt event subtype.
+    context_evidence_receipt_once: Option<ContextEvidenceReceiptOnce>,
+    /// Generic WAL admission ownership. It remains pending from the successful
+    /// pre-write quota decision until this request reaches a writer-terminal
+    /// state, so an unrelated home-directory growth cannot consume it during a
+    /// measurement rebase.
+    quota_admission: Option<QuotaPendingAdmission>,
     #[cfg(test)]
     test_ack_gate: Option<TestAckGate>,
+    #[cfg(test)]
+    test_receipt_decision_gate: Option<TestAckGate>,
+}
+
+struct QuotaPendingAdmission {
+    guard: Option<std::sync::Arc<QuotaGuard>>,
+    bytes: u64,
+    measurement_epoch: u64,
+}
+
+impl QuotaPendingAdmission {
+    fn new(guard: std::sync::Arc<QuotaGuard>, bytes: u64) -> Self {
+        let measurement_epoch = guard
+            .measurement_epoch
+            .load(std::sync::atomic::Ordering::Acquire);
+        Self {
+            guard: Some(guard),
+            bytes,
+            measurement_epoch,
+        }
+    }
+
+    fn release_unqueued(mut self) {
+        if let Some(guard) = self.guard.take() {
+            guard.release_unqueued_admission(self.bytes);
+        }
+    }
+
+    fn settle(mut self) {
+        if let Some(guard) = self.guard.take() {
+            guard.settle_pending_admission(self.bytes, self.measurement_epoch);
+        }
+    }
+
+}
+
+impl Drop for QuotaPendingAdmission {
+    fn drop(&mut self) {
+        if let Some(guard) = self.guard.take() {
+            guard.settle_pending_admission(self.bytes, self.measurement_epoch);
+        }
+    }
+}
+
+struct ContextEvidenceReceiptOnce {
+    receipt_handle: [u8; 32],
+    expected: crate::wal::events::ContextEvidenceReceipt,
+    quota_reservation: ContextEvidenceQuotaReservation,
+}
+
+impl ContextEvidenceReceiptOnce {
+    fn arm_quota_fail_closed(&mut self) {
+        self.quota_reservation.arm_fail_closed();
+    }
+
+    fn reconcile_quota_after_terminal(
+        &mut self,
+        retained_bytes: u64,
+        reclaimed_debt_bytes: u64,
+        baseline_reclaimed_bytes: u64,
+        retained_is_failure_debt: bool,
+    ) {
+        let guard = self.quota_reservation.guard.clone();
+        if let Some(guard) = guard.as_ref() {
+            guard.release_receipt_debt_locked(reclaimed_debt_bytes);
+            guard.invalidate_measured_baseline_locked(baseline_reclaimed_bytes);
+        }
+        self.quota_reservation
+            .reconcile_after_terminal_locked(retained_bytes);
+        if retained_is_failure_debt
+            && let Some(guard) = guard.as_ref()
+        {
+            guard.mark_receipt_debt_locked(retained_bytes);
+        }
+    }
+}
+
+/// RAII ownership for the receipt transaction's complete bounded physical
+/// delta. Each component is consumed immediately before (or, for an atomic
+/// successor publication, immediately after) the mutation that can leave it on
+/// disk. Every unused component is released on drop, including deduplication
+/// and all pre-write terminal paths.
+struct ContextEvidenceQuotaReservation {
+    guard: Option<std::sync::Arc<QuotaGuard>>,
+    admitted_bytes: u64,
+    owned_bytes: u64,
+    pending_bytes: u64,
+    measurement_epoch: u64,
+    releasable_bytes: u64,
+    fail_closed: bool,
+}
+
+impl ContextEvidenceQuotaReservation {
+    /// Once a blocking ledger transaction can extend a durable object, a
+    /// cancelled/panicking async owner must not release quota while the
+    /// uncancellable worker can still publish bytes. A normal terminal result
+    /// later narrows this conservative charge to the exact retained delta.
+    fn arm_fail_closed(&mut self) {
+        self.fail_closed = true;
+        self.releasable_bytes = 0;
+    }
+
+    /// Called while the receipt-debt/accounting lock is held.
+    fn reconcile_after_terminal_locked(&mut self, retained_bytes: u64) {
+        debug_assert!(
+            retained_bytes <= self.owned_bytes,
+            "receipt ledger retained more than its admitted transaction bound"
+        );
+        if let Some(guard) = self.guard.as_ref() {
+            guard.settle_pending_admission_locked(self.pending_bytes);
+            guard.rearm_if_measurement_crossed_locked(self.measurement_epoch);
+            guard.release_reserved_locked(self.owned_bytes.saturating_sub(retained_bytes));
+        }
+        self.pending_bytes = 0;
+        self.fail_closed = false;
+        self.owned_bytes = retained_bytes.min(self.owned_bytes);
+        self.releasable_bytes = 0;
+    }
+
+    fn consume(&mut self, bytes: usize) {
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        debug_assert!(
+            bytes <= self.releasable_bytes,
+            "receipt physical mutation exceeded its admitted reservation"
+        );
+        // Saturating to zero is fail-closed for quota accounting if a future
+        // component bound ever drifts: it retains the whole remaining
+        // reservation rather than releasing bytes that might now be on disk.
+        self.releasable_bytes = self.releasable_bytes.saturating_sub(bytes);
+    }
+
+    fn split_component(
+        &mut self,
+        max_bytes: usize,
+    ) -> Result<ContextEvidenceQuotaComponent, WalError> {
+        let max_bytes = u64::try_from(max_bytes).map_err(|_| {
+            compaction_recovery_error("receipt quota component bound exceeds u64")
+        })?;
+        if max_bytes > self.releasable_bytes {
+            return Err(compaction_recovery_error(
+                "receipt quota component exceeds its admitted transaction reservation",
+            ));
+        }
+        self.releasable_bytes -= max_bytes;
+        self.owned_bytes -= max_bytes;
+        self.pending_bytes = self.pending_bytes.saturating_sub(max_bytes);
+        Ok(ContextEvidenceQuotaComponent {
+            guard: self.guard.clone(),
+            reserved_bytes: max_bytes,
+            retained_bytes: 0,
+            measurement_epoch: self.measurement_epoch,
+        })
+    }
+
+    fn release_unqueued(mut self) {
+        debug_assert_eq!(
+            self.releasable_bytes, self.admitted_bytes,
+            "unqueued receipt reservation must still own its complete admission"
+        );
+        if let Some(guard) = self.guard.take() {
+            guard.release_unqueued_admission(self.pending_bytes);
+        }
+        self.owned_bytes = 0;
+        self.pending_bytes = 0;
+        self.releasable_bytes = 0;
+        self.fail_closed = false;
+    }
+}
+
+impl Drop for ContextEvidenceQuotaReservation {
+    fn drop(&mut self) {
+        if let Some(guard) = self.guard.take() {
+            if self.fail_closed {
+                // The blocking owner panicked or vanished after mutation could
+                // begin. Keep both pending and reserved charged permanently;
+                // a fresh process measurement is the only safe recovery.
+                return;
+            }
+            if self.pending_bytes != 0 {
+                let _accounting = guard.receipt_debt_mutex.lock().unwrap();
+                guard.settle_pending_admission_locked(self.pending_bytes);
+                guard.rearm_if_measurement_crossed_locked(self.measurement_epoch);
+                guard.release_reserved_locked(self.releasable_bytes);
+            }
+        }
+    }
+}
+
+/// Independently owned part of a receipt transaction's reservation. Rotation
+/// moves this component into its blocking publication worker so cancellation of
+/// the async writer cannot release quota while that worker still owns staged or
+/// canonical successor bytes.
+struct ContextEvidenceQuotaComponent {
+    guard: Option<std::sync::Arc<QuotaGuard>>,
+    reserved_bytes: u64,
+    retained_bytes: u64,
+    measurement_epoch: u64,
+}
+
+impl ContextEvidenceQuotaComponent {
+    fn mark_bytes_may_persist(&mut self, bytes: usize) {
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        debug_assert!(
+            bytes <= self.reserved_bytes,
+            "receipt physical component exceeded its admitted bound"
+        );
+        self.retained_bytes = self
+            .retained_bytes
+            .max(bytes.min(self.reserved_bytes));
+    }
+
+    fn clear_after_confirmed_cleanup(&mut self) {
+        self.retained_bytes = 0;
+    }
+}
+
+impl Drop for ContextEvidenceQuotaComponent {
+    fn drop(&mut self) {
+        if let Some(guard) = self.guard.take() {
+            guard.settle_component_admission(
+                self.reserved_bytes,
+                self.retained_bytes,
+                self.measurement_epoch,
+            );
+        }
+    }
 }
 
 /// Deterministic one-shot pause after a matching frame is durable but before
@@ -411,6 +718,8 @@ pub struct WalWriterHandle {
     quota: Option<std::sync::Arc<QuotaGuard>>,
     #[cfg(test)]
     test_ack_gate: Option<TestAckGate>,
+    #[cfg(test)]
+    test_receipt_decision_gate: Option<TestAckGate>,
 }
 
 type WriterStartupSignal =
@@ -452,10 +761,11 @@ pub(crate) type ReadyWalWriter = (
 ///
 /// Admission is rejected when `last_measured + reserved + payload > ceiling`
 /// (projected-sum test).  `reserved` counts every byte admitted since the last
-/// disk walk.  Unlike the previous counter, `reserved` is never blindly reset
-/// to zero — after a walk it is reduced to only the bytes that arrived DURING
-/// the walk (those are not yet captured in `last_measured`), preventing the
-/// "bytes lost during disk walk" race.
+/// disk walk. Unlike the previous counter, `reserved` is never blindly reset
+/// to zero — after a walk it retains every admission not proven to be present
+/// in the new measured baseline, including bytes arriving during the walk.
+/// This prevents both the "bytes lost during disk walk" race and reset-time
+/// erasure of an admission already handed to a caller.
 ///
 /// The projected-sum check is performed inside a CAS loop: the loop reads the
 /// current `reserved`, checks the projected total, and atomically increments
@@ -478,12 +788,32 @@ pub struct QuotaGuard {
     /// Re-measure threshold (default 1 MiB).  When `reserved` crosses this
     /// after a successful CAS-admission, the guard walks the home directory.
     remeasure_threshold: u64,
-    /// Projected-pending bytes: every admitted write increments this.  After
-    /// each disk walk it is reduced to only the bytes that arrived DURING the
-    /// walk, preserving them for the next projected-sum check.
+    /// Projected-pending bytes: every admitted write increments this. After a
+    /// disk walk it retains admissions not proven to be represented by the new
+    /// measured baseline.
     reserved: std::sync::atomic::AtomicU64,
-    /// Separate first-measure/reset trigger. This is deliberately not encoded
-    /// in `reserved`: synthetic trigger bytes must never count against quota.
+    /// Exact subset of `reserved` whose request has not reached a writer-
+    /// terminal state. A measurement may fold settled bytes into its disk
+    /// baseline, but it must never let unrelated home growth consume this set.
+    pending_reserved: std::sync::atomic::AtomicU64,
+    /// Monotonic measurement generation captured by every pending owner. A
+    /// terminal transition that crossed a measurement re-arms measurement so
+    /// a conservatively retained pending floor cannot become a sticky overcount.
+    measurement_epoch: std::sync::atomic::AtomicU64,
+    /// Serializes admissions with measurement rebases and operator reset.
+    /// Writes remain asynchronous; only the small accounting decision is
+    /// serialized so no accepted CAS increment can be overwritten by either
+    /// boundary.
+    admission_mutex: std::sync::Mutex<()>,
+    /// Exact subset of `reserved` owned by indeterminate receipt-ledger
+    /// objects. Only a capability-bound unlink plus parent sync may release
+    /// this subset without a new whole-home measurement.
+    receipt_debt_reserved: std::sync::atomic::AtomicU64,
+    /// Accounting-state boundary shared by measurement, writer-terminal
+    /// pending ownership, and exact receipt-debt transitions.
+    receipt_debt_mutex: std::sync::Mutex<()>,
+    /// Separate measurement trigger. This is deliberately not encoded in
+    /// `reserved`: synthetic trigger bytes must never count against quota.
     needs_measurement: std::sync::atomic::AtomicBool,
     last_measured: std::sync::atomic::AtomicU64,
     breached: std::sync::atomic::AtomicBool,
@@ -501,6 +831,11 @@ impl QuotaGuard {
             ceiling: ceiling_bytes,
             remeasure_threshold,
             reserved: std::sync::atomic::AtomicU64::new(0),
+            pending_reserved: std::sync::atomic::AtomicU64::new(0),
+            measurement_epoch: std::sync::atomic::AtomicU64::new(0),
+            admission_mutex: std::sync::Mutex::new(()),
+            receipt_debt_reserved: std::sync::atomic::AtomicU64::new(0),
+            receipt_debt_mutex: std::sync::Mutex::new(()),
             needs_measurement: std::sync::atomic::AtomicBool::new(true),
             last_measured: std::sync::atomic::AtomicU64::new(0),
             breached: std::sync::atomic::AtomicBool::new(false),
@@ -509,22 +844,65 @@ impl QuotaGuard {
         }
     }
 
-    /// Check whether one more payload of `payload_bytes` can be admitted.
-    ///
-    /// Admission uses a projected-sum CAS loop: this payload is admitted only
-    /// when `last_measured + reserved + payload_bytes <= ceiling`.  The CAS
-    /// loop re-checks the sum with the latest `reserved` on every retry, so
-    /// two concurrent near-ceiling payloads whose combined size exceeds the
-    /// ceiling cannot both be admitted.
-    ///
-    /// Returns `Err(QuotaExceeded)` on any projected or measured violation.
-    /// The breached flag is sticky — once set, all subsequent calls fail
-    /// without a disk walk until `reset()` is called.
-    pub fn try_admit(&self, payload_bytes: u64) -> Result<(), WalError> {
+    /// Test-only raw admission primitive. Production must obtain one of the
+    /// RAII owners below in the same critical section as admission so every
+    /// pending byte belongs to a concrete writer request until terminal.
+    #[cfg(test)]
+    fn try_admit(&self, payload_bytes: u64) -> Result<(), WalError> {
+        let _admission = self.admission_mutex.lock().unwrap();
+        self.try_admit_locked(payload_bytes)
+    }
+
+    /// Admit a generic writer request and materialize its terminal owner
+    /// before releasing the admission boundary.  A future measurement is then
+    /// able to retain this exact request as pending rather than treating its
+    /// aggregate bytes as foreign growth.
+    fn reserve_pending_admission(
+        guard: &std::sync::Arc<Self>,
+        payload_bytes: u64,
+    ) -> Result<QuotaPendingAdmission, WalError> {
+        let _admission = guard.admission_mutex.lock().unwrap();
+        guard.try_admit_locked(payload_bytes)?;
+        Ok(QuotaPendingAdmission::new(
+            std::sync::Arc::clone(guard),
+            payload_bytes,
+        ))
+    }
+
+    /// Reserve a receipt transaction under the same admission boundary that
+    /// increments its pending floor.  Receipt ownership is more granular than
+    /// a generic request because its blocking transaction may split into
+    /// independently terminal publication components.
+    fn reserve_context_evidence_admission(
+        guard: &std::sync::Arc<Self>,
+        payload_bytes: u64,
+    ) -> Result<ContextEvidenceQuotaReservation, WalError> {
         use std::sync::atomic::Ordering;
 
-        // Fast path: sticky breach flag avoids the CAS loop and any locking.
-        if self.breached.load(Ordering::Acquire) {
+        let _admission = guard.admission_mutex.lock().unwrap();
+        guard.try_admit_locked(payload_bytes)?;
+        Ok(ContextEvidenceQuotaReservation {
+            guard: Some(std::sync::Arc::clone(guard)),
+            admitted_bytes: payload_bytes,
+            owned_bytes: payload_bytes,
+            pending_bytes: payload_bytes,
+            measurement_epoch: guard.measurement_epoch.load(Ordering::Acquire),
+            releasable_bytes: payload_bytes,
+            fail_closed: false,
+        })
+    }
+
+    /// Caller holds `admission_mutex`.  This is the only code path that
+    /// mutates the projected reservation counters, so reservation ownership
+    /// can be constructed atomically with the corresponding pending floor.
+    fn try_admit_locked(&self, payload_bytes: u64) -> Result<(), WalError> {
+        use std::sync::atomic::Ordering;
+
+        // Fast path inside the admission boundary: a sticky breach avoids the
+        // CAS loop and disk measurement unless exact cleanup invalidated it.
+        if self.breached.load(Ordering::Acquire)
+            && !self.needs_measurement.load(Ordering::Acquire)
+        {
             return Err(WalError::QuotaExceeded {
                 used: self.last_measured.load(Ordering::Acquire),
                 ceiling: self.ceiling,
@@ -542,7 +920,9 @@ impl QuotaGuard {
             let projected = used
                 .saturating_add(cur_reserved)
                 .saturating_add(payload_bytes);
-            if projected > self.ceiling {
+            if projected > self.ceiling
+                && !self.needs_measurement.load(Ordering::Acquire)
+            {
                 return Err(WalError::QuotaExceeded {
                     used,
                     ceiling: self.ceiling,
@@ -550,7 +930,12 @@ impl QuotaGuard {
             }
             match self.reserved.compare_exchange_weak(
                 cur_reserved,
-                cur_reserved + payload_bytes,
+                cur_reserved.checked_add(payload_bytes).ok_or(
+                    WalError::QuotaExceeded {
+                        used,
+                        ceiling: self.ceiling,
+                    },
+                )?,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
@@ -571,6 +956,11 @@ impl QuotaGuard {
                 }
             }
         }
+        let _ = self.pending_reserved.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |pending| Some(pending.saturating_add(payload_bytes)),
+        );
 
         // ── Re-measure gate (WAL-QUOTA-FAILCLOSED-01) ───────────────────────
         // When `reserved` crosses the threshold, one thread walks the disk and
@@ -586,13 +976,12 @@ impl QuotaGuard {
                 is_measuring = self.measure_done.wait_while(is_measuring, |m| *m).unwrap();
                 drop(is_measuring);
             } else {
-                // Winner: note how many bytes existed in `reserved` BEFORE the
-                // walk.  Bytes added by other threads DURING the walk may not
-                // yet be on disk and must be kept in `reserved` so they are
-                // counted in future projected-sum checks (not silently dropped).
+                // Freeze writer-terminal ownership across the walk. A request
+                // may physically write while this lock is held, but its pending
+                // token cannot settle until publication; therefore it remains
+                // conservatively charged whether or not the walk observed it.
                 *is_measuring = true;
-                let was_unmeasured = self.needs_measurement.load(Ordering::SeqCst);
-                let pre_walk_reserved = self.reserved.load(Ordering::SeqCst);
+                let receipt_debt = self.receipt_debt_mutex.lock().unwrap();
                 drop(is_measuring); // release while the disk walk runs
 
                 let used = crate::daemon::quota::measure_dir(&self.home);
@@ -601,40 +990,38 @@ impl QuotaGuard {
                 // atomically by the next admission that acquires the gate.
                 let mut is_measuring = self.measure_mutex.lock().unwrap();
                 let post_walk = self.reserved.load(Ordering::SeqCst);
-                // Bytes admitted during the walk are not yet captured in `used`;
-                // retain them so they count against the ceiling next time.
-                let during_walk = post_walk.saturating_sub(pre_walk_reserved);
-                // Bytes reserved BEFORE the walk that the walk did NOT observe on
-                // disk (admitted but not yet fsynced — the caller writes after
-                // try_admit returns).  If we dropped these, `last_measured +
-                // reserved` would fall below the true committed+pending total and
-                // a concurrent near-ceiling admission could slip past the
-                // projected-sum check — fail-OPEN.  Keep them in `reserved` until
-                // a later walk sees them land in `used`.  Converges to zero once
-                // the bytes are on disk (used >= old_measured + pre_walk_reserved).
-                let old_measured = self.last_measured.load(Ordering::SeqCst);
-                let unflushed_pre_walk = old_measured
-                    .saturating_add(pre_walk_reserved)
-                    .saturating_sub(used);
-                // During the first/reset measurement no admitted caller has
-                // returned yet, so NONE of the reservations can be present on
-                // disk. Existing home usage must not cancel those pending bytes.
-                let new_reserved = if was_unmeasured {
-                    post_walk
-                } else {
-                    during_walk.saturating_add(unflushed_pre_walk)
-                };
+                // Only writer-terminal requests may be folded into `used`.
+                // Every still-owned request remains an exact separate floor,
+                // even if unrelated home growth or an early physical write was
+                // also observed. This is the attribution boundary an aggregate
+                // directory size alone cannot provide.
+                let pending_floor = self.pending_reserved.load(Ordering::SeqCst);
                 self.last_measured.store(used, Ordering::SeqCst);
-                self.needs_measurement.store(false, Ordering::SeqCst);
-                let over = used.saturating_add(new_reserved) > self.ceiling;
-                // Set breach BEFORE resetting reserved: any thread that sees the
-                // post-reset (small) value of `reserved` via a concurrent CAS
-                // will observe breached=true on its subsequent SeqCst load,
-                // eliminating the window where a thread slips past the check.
+                // Never overwrite an increment that landed after `post_walk`.
+                // Admissions are serialized today, while this CAS also keeps
+                // the rebase correct if that implementation detail changes.
+                // A concurrent release may make `observed < post_walk`; keeping
+                // the conservative base then overcounts rather than erasing a
+                // live reservation.
+                let published_reserved =
+                    self.publish_rebased_reserved(post_walk, pending_floor);
+                let _ = self.measurement_epoch.fetch_update(
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    |epoch| Some(epoch.saturating_add(1)),
+                );
+                let over = used.saturating_add(published_reserved) > self.ceiling;
                 if over {
                     self.breached.store(true, Ordering::SeqCst);
+                } else {
+                    self.breached.store(false, Ordering::SeqCst);
                 }
-                self.reserved.store(new_reserved, Ordering::SeqCst);
+                self.needs_measurement.store(false, Ordering::SeqCst);
+                self.receipt_debt_reserved.store(0, Ordering::SeqCst);
+                if over {
+                    self.release_unqueued_admission_locked(payload_bytes);
+                }
+                drop(receipt_debt);
                 *is_measuring = false;
                 drop(is_measuring);
                 self.measure_done.notify_all();
@@ -652,6 +1039,8 @@ impl QuotaGuard {
         // between our CAS-admission and the re-measure gate entry (for threads
         // where cur_reserved < threshold after a walk reset `reserved`).
         if self.breached.load(Ordering::SeqCst) {
+            let _accounting = self.receipt_debt_mutex.lock().unwrap();
+            self.release_unqueued_admission_locked(payload_bytes);
             return Err(WalError::QuotaExceeded {
                 used: self.last_measured.load(Ordering::Acquire),
                 ceiling: self.ceiling,
@@ -661,34 +1050,162 @@ impl QuotaGuard {
         Ok(())
     }
 
+    fn publish_rebased_reserved(&self, post_walk: u64, pending_floor: u64) -> u64 {
+        use std::sync::atomic::Ordering;
+        let mut observed = self.reserved.load(Ordering::SeqCst);
+        loop {
+            let carry_after_snapshot = observed.saturating_sub(post_walk);
+            // This is a floor, not a sampled estimate: every pending byte is
+            // owned by a concrete request or receipt component whose terminal
+            // transition takes `receipt_debt_mutex`. Keep that exact floor in
+            // every CAS retry so unrelated observed growth cannot replace an
+            // older returned-but-not-terminal reservation.
+            let exact_pending_floor = self
+                .pending_reserved
+                .load(Ordering::SeqCst)
+                .max(pending_floor);
+            let candidate = exact_pending_floor.saturating_add(carry_after_snapshot);
+            match self.reserved.compare_exchange_weak(
+                observed,
+                candidate,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return candidate,
+                Err(current) => observed = current,
+            }
+        }
+    }
+
     /// Clear the sticky breached flag. Used by `neoth doctor --fix` after
     /// the operator manually freed disk space.
     pub fn reset(&self) {
         use std::sync::atomic::Ordering;
-        // Keep concurrent callers closed while replacing the measurement
-        // baseline. `breached=false` is published last, after the next-call
-        // measurement trigger and zero counters are visible.
+        let _admission = self.admission_mutex.lock().unwrap();
+        let _receipt_debt = self.receipt_debt_mutex.lock().unwrap();
+        // Keep concurrent callers closed while scheduling a baseline refresh.
+        // Reservations are ownership already handed to callers and
+        // may not have reached the writer queue yet; clearing either counter
+        // here would let those accepted writes land without a quota charge.
+        // The next walk replaces the measured baseline and retains the exact
+        // writer-terminal pending subset independently of what it observes.
+        // `breached=false` is published last.
         self.breached.store(true, Ordering::SeqCst);
         self.needs_measurement.store(true, Ordering::SeqCst);
-        self.reserved.store(0, Ordering::SeqCst);
-        self.last_measured.store(0, Ordering::SeqCst);
         self.breached.store(false, Ordering::SeqCst);
     }
 
-    /// Release a previously admitted reservation.  Called when `try_admit`
-    /// succeeded but the subsequent channel send failed (WriterClosed or
-    /// WriterBackpressured), so the frame was never queued and the bytes must
-    /// not permanently inflate `reserved`.
-    ///
-    /// Uses saturating arithmetic: a bug-induced underflow clamps to 0 rather
-    /// than wrapping to near-`u64::MAX`, which would permanently seal the guard.
-    pub(crate) fn release_reserved(&self, bytes: u64) {
+    fn release_reserved_locked(&self, bytes: u64) {
         use std::sync::atomic::Ordering;
         let _ = self
             .reserved
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
                 Some(cur.saturating_sub(bytes))
             });
+    }
+
+    fn settle_pending_admission_locked(&self, bytes: u64) {
+        use std::sync::atomic::Ordering;
+        let _ = self.pending_reserved.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |pending| Some(pending.saturating_sub(bytes)),
+        );
+    }
+
+    fn rearm_if_measurement_crossed_locked(&self, admitted_epoch: u64) {
+        use std::sync::atomic::Ordering;
+        let current = self.measurement_epoch.load(Ordering::Acquire);
+        if current != admitted_epoch || current == u64::MAX {
+            // The walk retained this request as pending. Its later terminal
+            // transition may have been observed physically as well, so force a
+            // fresh fold before trusting a sticky breach or projected baseline.
+            self.needs_measurement.store(true, Ordering::Release);
+        }
+    }
+
+    fn settle_pending_admission(&self, bytes: u64, admitted_epoch: u64) {
+        let _accounting = self.receipt_debt_mutex.lock().unwrap();
+        self.settle_pending_admission_locked(bytes);
+        self.rearm_if_measurement_crossed_locked(admitted_epoch);
+    }
+
+    fn release_unqueued_admission_locked(&self, bytes: u64) {
+        self.settle_pending_admission_locked(bytes);
+        self.release_reserved_locked(bytes);
+    }
+
+    fn release_unqueued_admission(&self, bytes: u64) {
+        let _accounting = self.receipt_debt_mutex.lock().unwrap();
+        self.release_unqueued_admission_locked(bytes);
+    }
+
+    fn settle_component_admission(
+        &self,
+        reserved_bytes: u64,
+        retained_bytes: u64,
+        admitted_epoch: u64,
+    ) {
+        let _accounting = self.receipt_debt_mutex.lock().unwrap();
+        self.settle_pending_admission_locked(reserved_bytes);
+        self.rearm_if_measurement_crossed_locked(admitted_epoch);
+        self.release_reserved_locked(reserved_bytes.saturating_sub(retained_bytes));
+    }
+
+    fn mark_receipt_debt_locked(&self, bytes: u64) {
+        use std::sync::atomic::Ordering;
+        if bytes == 0 {
+            return;
+        }
+        let _ = self.receipt_debt_reserved.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |current| Some(current.saturating_add(bytes)),
+        );
+    }
+
+    fn release_receipt_debt_locked(&self, bytes: u64) {
+        use std::sync::atomic::Ordering;
+        if bytes == 0 {
+            return;
+        }
+        let current = self.receipt_debt_reserved.load(Ordering::Acquire);
+        let releasable = current.min(bytes);
+        self.receipt_debt_reserved
+            .store(current - releasable, Ordering::Release);
+        if releasable != 0 {
+            self.release_reserved_locked(releasable);
+        }
+        if releasable != bytes {
+            // A prior measurement already folded some or all of this exact
+            // object into `last_measured`. Never subtract a different live
+            // reservation; force an ownership-aware remeasurement.
+            self.invalidate_measured_baseline_locked(bytes - releasable);
+        }
+    }
+
+    fn invalidate_measured_baseline_locked(&self, reclaimed_bytes: u64) {
+        if reclaimed_bytes != 0 {
+            // These exact objects were durably removed, but their charge may
+            // live in `last_measured` or an already-settled reservation. Never
+            // subtract an unclassified counter directly; the next whole-home
+            // measurement replaces the baseline while retaining every request
+            // that has not reached a writer-terminal state.
+            self.needs_measurement
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    #[cfg(test)]
+    fn mark_receipt_debt(&self, bytes: u64) {
+        let _receipt_debt = self.receipt_debt_mutex.lock().unwrap();
+        self.mark_receipt_debt_locked(bytes);
+    }
+
+    #[cfg(test)]
+    fn release_receipt_debt(&self, bytes: u64) {
+        let _receipt_debt = self.receipt_debt_mutex.lock().unwrap();
+        self.release_receipt_debt_locked(bytes);
     }
 }
 
@@ -705,6 +1222,12 @@ impl WalWriterHandle {
     #[cfg(test)]
     pub(crate) fn with_test_ack_gate(mut self, gate: TestAckGate) -> Self {
         self.test_ack_gate = Some(gate);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_test_receipt_decision_gate(mut self, gate: TestAckGate) -> Self {
+        self.test_receipt_decision_gate = Some(gate);
         self
     }
 
@@ -752,31 +1275,36 @@ impl WalWriterHandle {
         payload: Vec<u8>,
         force_authentication_marker: bool,
     ) -> Result<u64, WalError> {
+        refuse_generic_context_evidence_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
         let admitted = payload.len() as u64;
-        if let Some(guard) = self.quota.as_ref() {
-            guard.try_admit(admitted)?;
-        }
+        let quota_admission = if let Some(guard) = self.quota.as_ref() {
+            Some(QuotaGuard::reserve_pending_admission(guard, admitted)?)
+        } else {
+            None
+        };
         let (ack_tx, ack_rx) = oneshot::channel();
-        if self
+        let request = WriteRequest {
+            header,
+            payload,
+            ack: ack_tx,
+            force_authentication_marker,
+            context_evidence_receipt_once: None,
+            quota_admission,
+            #[cfg(test)]
+            test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)]
+            test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+        };
+        if let Err(mut error) = self
             .tx
-            .send(WriteRequest {
-                header,
-                payload,
-                ack: ack_tx,
-                force_authentication_marker,
-                #[cfg(test)]
-                test_ack_gate: self.test_ack_gate.clone(),
-            })
+            .send(request)
             .await
-            .is_err()
         {
-            // Frame never reached the writer task — release the reservation so
-            // phantom bytes don't permanently tighten the projected-sum check.
-            if let Some(guard) = self.quota.as_ref() {
-                guard.release_reserved(admitted);
+            if let Some(admission) = error.0.quota_admission.take() {
+                admission.release_unqueued();
             }
             return Err(WalError::WriterClosed);
         }
@@ -793,32 +1321,122 @@ impl WalWriterHandle {
         header: EventHeaderV2,
         payload: Vec<u8>,
     ) -> Result<u64, WalError> {
+        refuse_generic_context_evidence_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
         let admitted = payload.len() as u64;
-        if let Some(guard) = self.quota.as_ref() {
-            guard.try_admit(admitted)?;
-        }
+        let quota_admission = if let Some(guard) = self.quota.as_ref() {
+            Some(QuotaGuard::reserve_pending_admission(guard, admitted)?)
+        } else {
+            None
+        };
         let (ack_tx, ack_rx) = oneshot::channel();
-        if self
-            .tx
-            .blocking_send(WriteRequest {
-                header,
-                payload,
-                ack: ack_tx,
-                force_authentication_marker: false,
-                #[cfg(test)]
-                test_ack_gate: self.test_ack_gate.clone(),
-            })
-            .is_err()
-        {
-            if let Some(guard) = self.quota.as_ref() {
-                guard.release_reserved(admitted);
+        let request = WriteRequest {
+            header,
+            payload,
+            ack: ack_tx,
+            force_authentication_marker: false,
+            context_evidence_receipt_once: None,
+            quota_admission,
+            #[cfg(test)]
+            test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)]
+            test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+        };
+        if let Err(mut error) = self.tx.blocking_send(request) {
+            if let Some(admission) = error.0.quota_admission.take() {
+                admission.release_unqueued();
             }
             return Err(WalError::WriterClosed);
         }
         ack_rx.blocking_recv().map_err(|_| WalError::WriterClosed)?
+    }
+
+    /// Append the closed Context Connector receipt exactly once for this
+    /// instance home, acknowledging only authenticated durable evidence.
+    ///
+    /// This synchronous adapter is reserved for connector-control work already
+    /// running on a dedicated blocking worker. The writer task, not this
+    /// caller, owns the cross-process decision. Under that authority it reads
+    /// one fixed authenticated manifest and at most one fixed shard, then
+    /// records the exact closed `0x27` frame in the canonical receipt ledger.
+    /// It never scans primary-WAL history. A replay of the identical handle and
+    /// payload succeeds without writing another frame; a different payload for
+    /// the same handle fails closed. Admission reserves the ledger's complete
+    /// bounded crash transaction and reconciles it to the exact retained bytes
+    /// only after the uncancellable blocking owner reaches a terminal state.
+    pub(crate) fn append_context_evidence_receipt_once_blocking(
+        &self,
+        receipt_handle: &[u8; 32],
+        receipt: crate::wal::events::ContextEvidenceReceipt,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.authentication_markers_enabled,
+            "context_evidence_receipt_requires_authenticated_writer"
+        );
+        anyhow::ensure!(
+            receipt.matches_opaque_handle(receipt_handle),
+            "context_evidence_receipt_handle_mismatch"
+        );
+        let payload = receipt
+            .encode()
+            .map_err(|_| anyhow::anyhow!("context_evidence_receipt_encoding_refused"))?;
+        if payload.len() > MAX_PAYLOAD_BYTES {
+            anyhow::bail!("context_evidence_receipt_encoding_refused");
+        }
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            &payload,
+        )
+        .event_subtype(crate::wal::events::ExtendedSubtype::ContextEvidenceReceipt as u8)
+        .build();
+        let admitted = crate::wal::context_evidence_receipts::MAX_TRANSACTION_BYTES;
+        let quota_reservation = if let Some(guard) = self.quota.as_ref() {
+            QuotaGuard::reserve_context_evidence_admission(guard, admitted)
+                .map_err(|_| anyhow::anyhow!("context_evidence_receipt_quota_refused"))?
+        } else {
+            ContextEvidenceQuotaReservation {
+                guard: None,
+                admitted_bytes: admitted,
+                owned_bytes: admitted,
+                pending_bytes: 0,
+                measurement_epoch: 0,
+                releasable_bytes: admitted,
+                fail_closed: false,
+            }
+        };
+        let (ack_tx, ack_rx) = oneshot::channel();
+        let request = WriteRequest {
+            header,
+            payload,
+            ack: ack_tx,
+            force_authentication_marker: false,
+            context_evidence_receipt_once: Some(ContextEvidenceReceiptOnce {
+                receipt_handle: *receipt_handle,
+                expected: receipt,
+                quota_reservation,
+            }),
+            quota_admission: None,
+            #[cfg(test)]
+            test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)]
+            test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+        };
+        if let Err(mut error) = self.tx.blocking_send(request) {
+            let once = error
+                .0
+                .context_evidence_receipt_once
+                .take()
+                .expect("closed receipt request must retain its quota owner");
+            once.quota_reservation.release_unqueued();
+            anyhow::bail!("context_evidence_receipt_writer_unavailable");
+        }
+        match ack_rx.blocking_recv() {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(_)) => anyhow::bail!("context_evidence_receipt_append_failed"),
+            Err(_) => anyhow::bail!("context_evidence_receipt_writer_unavailable"),
+        }
     }
 
     /// K-Perf-2 2026-05-17: fire-and-forget append for high-cadence
@@ -880,35 +1498,46 @@ impl WalWriterHandle {
     /// `append` is always preferred when available because the
     /// caller learns the offset + can surface fsync failure.
     pub fn try_append_sync(&self, header: EventHeaderV2, payload: Vec<u8>) -> Result<(), WalError> {
+        refuse_generic_context_evidence_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
         let admitted = payload.len() as u64;
-        if let Some(guard) = self.quota.as_ref() {
-            guard.try_admit(admitted)?;
-        }
+        let quota_admission = if let Some(guard) = self.quota.as_ref() {
+            Some(QuotaGuard::reserve_pending_admission(guard, admitted)?)
+        } else {
+            None
+        };
         let (ack_tx, _ack_rx_drop) = oneshot::channel();
         match self.tx.try_send(WriteRequest {
             header,
             payload,
             ack: ack_tx,
             force_authentication_marker: false,
+            context_evidence_receipt_once: None,
+            quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)]
+            test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         }) {
             Ok(()) => Ok(()),
-            Err(e) => {
-                // Frame never queued — release the reservation so
-                // phantom bytes don't permanently tighten the projected-sum check.
-                if let Some(guard) = self.quota.as_ref() {
-                    guard.release_reserved(admitted);
+            Err(error) => {
+                let (result, mut request) = match error {
+                    mpsc::error::TrySendError::Full(request) => (
+                        WalError::WriterBackpressured {
+                            capacity: DEFAULT_CHANNEL_CAPACITY,
+                        },
+                        request,
+                    ),
+                    mpsc::error::TrySendError::Closed(request) => {
+                        (WalError::WriterClosed, request)
+                    }
+                };
+                if let Some(admission) = request.quota_admission.take() {
+                    admission.release_unqueued();
                 }
-                Err(match e {
-                    mpsc::error::TrySendError::Full(_) => WalError::WriterBackpressured {
-                        capacity: DEFAULT_CHANNEL_CAPACITY,
-                    },
-                    mpsc::error::TrySendError::Closed(_) => WalError::WriterClosed,
-                })
+                Err(result)
             }
         }
     }
@@ -918,35 +1547,40 @@ impl WalWriterHandle {
         header: EventHeaderV2,
         payload: Vec<u8>,
     ) -> Result<(), WalError> {
+        refuse_generic_context_evidence_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
         let admitted = payload.len() as u64;
-        if let Some(guard) = self.quota.as_ref() {
-            guard.try_admit(admitted)?;
-        }
+        let quota_admission = if let Some(guard) = self.quota.as_ref() {
+            Some(QuotaGuard::reserve_pending_admission(guard, admitted)?)
+        } else {
+            None
+        };
         // Construct the oneshot but immediately drop the receiver.
         // The writer task tries to send through it after fsync, sees
         // the receiver dropped, and logs at debug — same path as a
         // caller that times out. No new writer-task code needed.
         let (ack_tx, _ack_rx_drop) = oneshot::channel();
-        if self
+        let request = WriteRequest {
+            header,
+            payload,
+            ack: ack_tx,
+            force_authentication_marker: false,
+            context_evidence_receipt_once: None,
+            quota_admission,
+            #[cfg(test)]
+            test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)]
+            test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+        };
+        if let Err(mut error) = self
             .tx
-            .send(WriteRequest {
-                header,
-                payload,
-                ack: ack_tx,
-                force_authentication_marker: false,
-                #[cfg(test)]
-                test_ack_gate: self.test_ack_gate.clone(),
-            })
+            .send(request)
             .await
-            .is_err()
         {
-            // Frame never reached the writer task — release the reservation so
-            // phantom bytes don't permanently tighten the projected-sum check.
-            if let Some(guard) = self.quota.as_ref() {
-                guard.release_reserved(admitted);
+            if let Some(admission) = error.0.quota_admission.take() {
+                admission.release_unqueued();
             }
             return Err(WalError::WriterClosed);
         }
@@ -1115,6 +1749,7 @@ pub(crate) fn closed_test_writer() -> WalWriterHandle {
         authentication_markers_enabled: false,
         quota: None,
         test_ack_gate: None,
+        test_receipt_decision_gate: None,
     }
 }
 
@@ -1528,6 +2163,8 @@ fn spawn_with_policy_and_compression_at_home(
             quota: None,
             #[cfg(test)]
             test_ack_gate: None,
+            #[cfg(test)]
+            test_receipt_decision_gate: None,
         },
         join,
     ))
@@ -1567,6 +2204,10 @@ struct OpenedSegment {
     /// Cross-process rewrite exclusion. Kept beside `file` so callers cannot
     /// accidentally retain one without the other.
     segment_rewrite_lock: std::fs::File,
+    /// Receipt rotation transfers the complete home authority into the
+    /// uncancellable blocking publisher and receives it back only after that
+    /// worker has reached a terminal state.
+    receipt_authority: Option<ContextEvidenceReceiptAuthority>,
 }
 
 /// Pick #36 (Session 14): bookkeeping for the deferred
@@ -1601,11 +2242,23 @@ fn new_segment_header_bytes(
     }
 }
 
-async fn open_segment(path: &Path, new_header: Vec<u8>) -> Result<OpenedSegment, WalError> {
-    let segment_rewrite_lock = super::redact::lock_segment_for_rewrite(path).map_err(|error| {
-        std::io::Error::other(format!("lock WAL segment for writer: {error:#}"))
-    })?;
-    open_segment_with_lock_mode(path, segment_rewrite_lock, true, new_header).await
+async fn open_segment(
+    path: &Path,
+    new_header: Vec<u8>,
+    predecessor_rewrite_lock: std::fs::File,
+    receipt_authority: Option<ContextEvidenceReceiptAuthority>,
+    receipt_quota_component: Option<ContextEvidenceQuotaComponent>,
+) -> Result<OpenedSegment, WalError> {
+    open_segment_with_lock_mode(
+        path,
+        None,
+        true,
+        new_header,
+        Some(predecessor_rewrite_lock),
+        receipt_authority,
+        receipt_quota_component,
+    )
+    .await
 }
 
 /// Open a segment after its stable sidecar lock has already been acquired.
@@ -1616,81 +2269,134 @@ async fn open_segment_with_lock(
     segment_rewrite_lock: std::fs::File,
     new_header: Vec<u8>,
 ) -> Result<OpenedSegment, WalError> {
-    open_segment_with_lock_mode(path, segment_rewrite_lock, false, new_header).await
+    open_segment_with_lock_mode(
+        path,
+        Some(segment_rewrite_lock),
+        false,
+        new_header,
+        None,
+        None,
+        None,
+    )
+    .await
 }
 
 async fn open_segment_with_lock_mode(
     path: &Path,
-    segment_rewrite_lock: std::fs::File,
+    segment_rewrite_lock: Option<std::fs::File>,
     create_new_only: bool,
     new_header: Vec<u8>,
+    predecessor_rewrite_lock: Option<std::fs::File>,
+    receipt_authority: Option<ContextEvidenceReceiptAuthority>,
+    receipt_quota_component: Option<ContextEvidenceQuotaComponent>,
 ) -> Result<OpenedSegment, WalError> {
     let owned_path = path.to_path_buf();
-    let (file, is_new) = tokio::task::spawn_blocking(move || {
-        open_segment_capability_bound(&owned_path, create_new_only, &new_header)
-    })
-    .await
-    .map_err(|error| {
-        WalError::Io(std::io::Error::other(format!(
-            "join capability-bound WAL open: {error}"
-        )))
-    })??;
+    let (file, is_new, segment_rewrite_lock, receipt_authority) =
+        tokio::task::spawn_blocking(move || {
+            // All mutation-lifetime owners live inside this blocking job. A
+            // dropped/aborted async waiter cannot cancel `spawn_blocking`, so
+            // keeping the stable segment lock, receipt authority and split
+            // prefix quota here prevents publication after their release.
+            let segment_rewrite_lock = match segment_rewrite_lock {
+                Some(lock) => lock,
+                None => super::redact::lock_segment_for_rewrite(&owned_path).map_err(|error| {
+                    std::io::Error::other(format!("lock WAL segment for writer: {error:#}"))
+                })?,
+            };
+            let mut receipt_quota_component = receipt_quota_component;
+            let opened = open_segment_capability_bound_with_publication_owner(
+                &owned_path,
+                create_new_only,
+                &new_header,
+                receipt_quota_component.as_mut(),
+            );
+            // The predecessor binding was hashed into the successor prefix.
+            // Keep its stable rewrite exclusion until publication or rollback
+            // is terminal; otherwise outer-task cancellation could unlock and
+            // mutate the predecessor while this detached worker still commits
+            // a stale cross-segment binding.
+            drop(predecessor_rewrite_lock);
+            let (file, is_new) = opened?;
+            // The split component drops in this worker: on success it releases
+            // only the unused part of its ceiling, and on every error it keeps
+            // ownership until cleanup/publication is terminal.
+            drop(receipt_quota_component);
+            Ok::<_, WalError>((file, is_new, segment_rewrite_lock, receipt_authority))
+        })
+        .await
+        .map_err(|error| {
+            WalError::Io(std::io::Error::other(format!(
+                "join capability-bound WAL open: {error}"
+            )))
+        })??;
 
     Ok(OpenedSegment {
         file: File::from_std(file),
         is_new,
         segment_rewrite_lock,
+        receipt_authority,
     })
 }
 
 fn cleanup_uncommitted_segment(
     parent: &cap_std::fs::Dir,
     name: &std::ffi::OsStr,
-    display_path: &Path,
+    stage_display: &Path,
+    target_path: &Path,
+    binding: crate::skills::store::BoundChildObject,
 ) -> Result<(), String> {
-    let mut cleanup_failures = Vec::new();
-    if let Err(error) = parent.remove_file(name)
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        cleanup_failures.push(format!("remove exact new leaf: {error}"));
-    }
-    #[cfg(unix)]
-    if let Err(error) = crate::skills::store::sync_parent_directory(
-        parent,
-        display_path.parent().unwrap_or(display_path),
-    ) {
-        cleanup_failures.push(format!("sync parent after rollback: {error:#}"));
-    }
-
-    if cleanup_failures.is_empty() {
-        return Ok(());
-    }
-    Err(format!(
-        "rollback of uncommitted WAL segment {} failed: {}",
-        display_path.display(),
-        cleanup_failures.join("; ")
-    ))
+    #[cfg(test)]
+    inject_segment_create_failure(target_path, TestSegmentCreateFailure::StageCleanup)
+        .map_err(|error| {
+            format!(
+                "rollback of uncommitted WAL segment {} failed: {error}",
+                target_path.display()
+            )
+        })?;
+    binding
+        .remove_bound_file(parent, name, stage_display)
+        .map_err(|error| {
+            format!(
+                "rollback of uncommitted WAL segment {} failed: {error:#}",
+                target_path.display()
+            )
+        })
 }
 
 fn rollback_uncommitted_segment(
     parent: &cap_std::fs::Dir,
     name: &std::ffi::OsStr,
-    display_path: &Path,
+    stage_display: &Path,
+    target_path: &Path,
+    binding: crate::skills::store::BoundChildObject,
     primary: std::io::Error,
-) -> WalError {
-    match cleanup_uncommitted_segment(parent, name, display_path) {
-        Ok(()) => WalError::Io(primary),
-        Err(cleanup) => WalError::Io(std::io::Error::new(
-            primary.kind(),
-            format!("{primary}; {cleanup}"),
-        )),
+) -> (WalError, bool) {
+    match cleanup_uncommitted_segment(parent, name, stage_display, target_path, binding) {
+        Ok(()) => (WalError::Io(primary), true),
+        Err(cleanup) => (
+            WalError::Io(std::io::Error::new(
+                primary.kind(),
+                format!("{primary}; {cleanup}"),
+            )),
+            false,
+        ),
     }
 }
 
+#[cfg(test)]
 fn open_segment_capability_bound(
     path: &Path,
     create_new_only: bool,
     new_header: &[u8],
+) -> Result<(std::fs::File, bool), WalError> {
+    open_segment_capability_bound_with_publication_owner(path, create_new_only, new_header, None)
+}
+
+fn open_segment_capability_bound_with_publication_owner(
+    path: &Path,
+    create_new_only: bool,
+    new_header: &[u8],
+    mut receipt_quota_component: Option<&mut ContextEvidenceQuotaComponent>,
 ) -> Result<(std::fs::File, bool), WalError> {
     let parent = path.parent().ok_or_else(|| {
         WalError::Io(std::io::Error::new(
@@ -1809,20 +2515,32 @@ fn open_segment_capability_bound(
         ));
         match open(&candidate, true, true) {
             Ok(file) => {
-                staged = Some((candidate, file));
+                let stage_display = root.display_path.join(&candidate);
+                let binding = crate::skills::store::bind_open_regular_file_for_removal(
+                    &root.dir,
+                    &candidate,
+                    &file,
+                    &stage_display,
+                )
+                .map_err(|error| {
+                    WalError::Io(std::io::Error::other(format!(
+                        "bind private WAL publication stage {}: {error:#}",
+                        stage_display.display()
+                    )))
+                })?;
+                staged = Some((candidate, stage_display, file, binding));
                 break;
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error.into()),
         }
     }
-    let (stage_name, mut stage) = staged.ok_or_else(|| {
+    let (stage_name, stage_display, mut stage, stage_binding) = staged.ok_or_else(|| {
         WalError::Io(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
             "could not allocate a private WAL publication stage",
         ))
     })?;
-    let stage_display = root.display_path.join(&stage_name);
 
     let prepare = (|| -> std::io::Result<()> {
         validate_regular(&stage)?;
@@ -1839,6 +2557,13 @@ fn open_segment_capability_bound(
         use std::io::Write as _;
         #[cfg(test)]
         inject_segment_create_failure(path, TestSegmentCreateFailure::HeaderWrite)?;
+        // From the first write onward a partial or complete private stage may
+        // consume disk even if the write itself reports an error. The split
+        // component lives in this blocking worker and is cleared only after
+        // exact-object cleanup is durably confirmed.
+        if let Some(component) = receipt_quota_component.as_deref_mut() {
+            component.mark_bytes_may_persist(new_header.len());
+        }
         stage.write_all(new_header)?;
         #[cfg(test)]
         inject_segment_create_failure(path, TestSegmentCreateFailure::FileSync)?;
@@ -1849,15 +2574,24 @@ fn open_segment_capability_bound(
     })();
     if let Err(error) = prepare {
         drop(stage);
-        return Err(rollback_uncommitted_segment(
+        let (rollback_error, cleaned) = rollback_uncommitted_segment(
             &root.dir,
             &stage_name,
+            &stage_display,
             path,
+            stage_binding,
             error,
-        ));
+        );
+        if cleaned
+            && let Some(component) = receipt_quota_component.as_deref_mut()
+        {
+            component.clear_after_confirmed_cleanup();
+        }
+        return Err(rollback_error);
     }
 
-    if let Err(error) = crate::skills::store::publish_open_regular_file_child(
+    let mut committed = false;
+    let publication = crate::skills::store::publish_open_regular_file_child_observed(
         &root.dir,
         &stage,
         &stage_name,
@@ -1865,31 +2599,42 @@ fn open_segment_capability_bound(
         name,
         &stage_display,
         path,
-    ) {
-        let target_exists = match root.dir.symlink_metadata(name) {
-            Ok(_) => true,
-            Err(inspect_error) if inspect_error.kind() == std::io::ErrorKind::NotFound => false,
-            Err(inspect_error) => {
-                drop(stage);
-                return Err(rollback_uncommitted_segment(
-                    &root.dir,
-                    &stage_name,
-                    path,
-                    std::io::Error::new(
-                        inspect_error.kind(),
-                        format!(
-                            "publish WAL segment {} failed: {error:#}; inspect target after failure: {inspect_error}",
-                            path.display()
-                        ),
-                    ),
-                ));
-            }
-        };
+        || committed = true,
+    );
+    if let Err(error) = publication {
         drop(stage);
+        if committed {
+            // The store callback is inside the atomic rename primitive and
+            // runs before all fallible target validation. The canonical prefix
+            // is therefore retained and the quota component must stay charged;
+            // attempting stage-name cleanup here would target a name that no
+            // longer owns the bound object.
+            drop(stage_binding);
+            return Err(WalError::Io(std::io::Error::other(format!(
+                "validate committed WAL segment {}: {error:#}",
+                path.display()
+            ))));
+        }
+
+        let (target_exists, inspect_failure) = match root.dir.symlink_metadata(name) {
+            Ok(_) => (true, None),
+            Err(inspect_error) if inspect_error.kind() == std::io::ErrorKind::NotFound => {
+                (false, None)
+            }
+            Err(inspect_error) => (false, Some(inspect_error)),
+        };
         let publish_error = if target_exists {
             std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
                 format!("WAL segment target already exists: {}", path.display()),
+            )
+        } else if let Some(inspect_error) = inspect_failure {
+            std::io::Error::new(
+                inspect_error.kind(),
+                format!(
+                    "publish WAL segment {} failed: {error:#}; inspect target after failure: {inspect_error}",
+                    path.display()
+                ),
             )
         } else {
             std::io::Error::other(format!(
@@ -1897,17 +2642,26 @@ fn open_segment_capability_bound(
                 path.display()
             ))
         };
-        if let Err(cleanup) = cleanup_uncommitted_segment(&root.dir, &stage_name, path) {
-            return Err(WalError::Io(std::io::Error::new(
-                publish_error.kind(),
-                format!("{publish_error}; {cleanup}"),
-            )));
+        let (rollback_error, cleaned) = rollback_uncommitted_segment(
+            &root.dir,
+            &stage_name,
+            &stage_display,
+            path,
+            stage_binding,
+            publish_error,
+        );
+        if cleaned
+            && let Some(component) = receipt_quota_component.as_deref_mut()
+        {
+            component.clear_after_confirmed_cleanup();
         }
-        if target_exists && !create_new_only {
+        if cleaned && target_exists && !create_new_only {
             return Ok((open_existing()?, false));
         }
-        return Err(WalError::Io(publish_error));
+        return Err(rollback_error);
     }
+    debug_assert!(committed, "successful WAL publication omitted its commit callback");
+    drop(stage_binding);
 
     // Rename makes only the complete, private, file-synced header visible.
     // A directory-sync error occurs after commit, so the canonical segment is
@@ -1916,11 +2670,11 @@ fn open_segment_capability_bound(
     {
         #[cfg(test)]
         {
-            let mut target = TEST_FAIL_SEGMENT_PARENT_SYNC_AT
+            let mut targets = TEST_FAIL_SEGMENT_PARENT_SYNC_AT
                 .lock()
                 .expect("segment parent-sync test hook poisoned");
-            if target.as_deref() == Some(parent) {
-                *target = None;
+            if let Some(index) = targets.iter().position(|target| target == parent) {
+                targets.swap_remove(index);
                 return Err(WalError::Io(std::io::Error::other(
                     "injected WAL segment parent-directory sync failure",
                 )));
@@ -1964,7 +2718,7 @@ struct WriterState {
     /// Stable sidecar exclusion held for the active segment's complete
     /// lifecycle. It deliberately outlives atomic inode replacement during
     /// compression finalization and is swapped only after the old file closes.
-    segment_rewrite_lock: std::fs::File,
+    segment_rewrite_lock: Option<std::fs::File>,
     /// Path of the active segment on disk.
     path: PathBuf,
     /// Bytes already written to the active segment (including its header).
@@ -2100,6 +2854,59 @@ fn compaction_recovery_error(reason: impl Into<String>) -> WalError {
     WalError::CompactionStateUnavailable {
         reason: reason.into(),
     }
+}
+
+fn context_evidence_receipt_authority_sentinel(home: &Path) -> PathBuf {
+    home.join("wal")
+        .join(CONTEXT_EVIDENCE_RECEIPT_AUTHORITY_SENTINEL)
+}
+
+async fn acquire_context_evidence_receipt_authority(
+    home: &Path,
+) -> Result<ContextEvidenceReceiptAuthority, WalError> {
+    let process_authority =
+        std::sync::Arc::clone(&*CONTEXT_EVIDENCE_RECEIPT_PROCESS_AUTHORITY);
+    let process_guard = match process_authority.clone().try_lock_owned() {
+        Ok(guard) => guard,
+        Err(_) => {
+            #[cfg(test)]
+            notify_context_evidence_receipt_authority_contention_for_test(home);
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                process_authority.lock_owned(),
+            )
+            .await
+            .map_err(|_| {
+                compaction_recovery_error(
+                    "Context Evidence receipt process authority remained busy for >5s",
+                )
+            })?
+        }
+    };
+    let sentinel = context_evidence_receipt_authority_sentinel(home);
+    let file_guard = tokio::task::spawn_blocking(move || {
+        super::redact::lock_segment_for_rewrite(&sentinel)
+    })
+        .await
+        .map_err(|error| {
+            compaction_recovery_error(format!(
+                "Context Evidence receipt authority task failed: {error}"
+            ))
+        })?
+        .map_err(|error| {
+            compaction_recovery_error(format!(
+                "acquire capability-bound Context Evidence receipt authority: {error:#}"
+            ))
+        })?;
+    Ok(ContextEvidenceReceiptAuthority {
+        _process_guard: process_guard,
+        _file_guard: file_guard,
+    })
+}
+
+struct ContextEvidenceReceiptAuthority {
+    _process_guard: tokio::sync::OwnedMutexGuard<()>,
+    _file_guard: std::fs::File,
 }
 
 fn validate_hmac_writer_authority(
@@ -2369,6 +3176,7 @@ async fn emit_compaction_marker(
     state: &mut WriterState,
     compaction_state: &mut crate::wal::compaction::CompactionState,
     key: &[u8],
+    receipt_quota_reservation: Option<&mut ContextEvidenceQuotaReservation>,
 ) -> Result<(), WalError> {
     if compaction_state.frames() == 0 {
         return Ok(());
@@ -2394,11 +3202,23 @@ async fn emit_compaction_marker(
     .flags(crate::wal::EventFlags::SYNTHETIC)
     .build();
     let marker_frame = encode_frame(&marker_header, &payload_bytes);
+    if marker_frame.len() > MAX_COMPACTION_MARKER_FRAME_BYTES {
+        return Err(compaction_recovery_error(format!(
+            "writer-generated compaction marker is {} bytes, above the {}-byte transaction ceiling",
+            marker_frame.len(),
+            MAX_COMPACTION_MARKER_FRAME_BYTES
+        )));
+    }
     state.ensure_frame_fits(marker_frame.len())?;
     #[cfg(test)]
     inject_compaction_marker_write_failure(&state.path)?;
-    write_and_sync(state.active_file_mut()?, &marker_frame).await?;
-    if state.compression == CompressionPolicy::Zstd3 {
+    let compression = state.compression;
+    let active_file = state.active_file_mut()?;
+    if let Some(reservation) = receipt_quota_reservation {
+        reservation.consume(marker_frame.len());
+    }
+    write_and_sync(active_file, &marker_frame).await?;
+    if compression == CompressionPolicy::Zstd3 {
         state.pending_frames.extend_from_slice(&marker_frame);
     }
     state.offset += marker_frame.len() as u64;
@@ -2502,9 +3322,33 @@ async fn rotate(
     home: &Path,
     compaction_state: &mut Option<crate::wal::compaction::CompactionState>,
     hmac_key: Option<&[u8]>,
+    mut receipt_quota_reservation: Option<&mut ContextEvidenceQuotaReservation>,
+    mut receipt_authority: Option<&mut Option<ContextEvidenceReceiptAuthority>>,
 ) -> Result<(), WalError> {
+    if receipt_quota_reservation.is_some() != receipt_authority.is_some() {
+        return Err(compaction_recovery_error(
+            "receipt rotation lost either authority or prefix quota ownership",
+        ));
+    }
+    if receipt_authority
+        .as_deref()
+        .is_some_and(Option::is_none)
+    {
+        return Err(compaction_recovery_error(
+            "receipt rotation reached publication without its acquired home authority",
+        ));
+    }
+    if receipt_quota_reservation.is_some()
+        && compaction_state
+            .as_ref()
+            .is_some_and(|state| state.frames() > 0)
+    {
+        return Err(compaction_recovery_error(
+            "receipt-triggered rotation requires its pre-scan HMAC window to be closed",
+        ));
+    }
     if let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key) {
-        emit_compaction_marker(state, compaction_state, key).await?;
+        emit_compaction_marker(state, compaction_state, key, None).await?;
     }
 
     // Final-sync the live raw segment before a zstd finalizer atomically
@@ -2614,14 +3458,15 @@ async fn rotate(
     successor_prefix.extend_from_slice(&new_header);
     successor_prefix.extend_from_slice(&link_frame);
     successor_prefix.extend_from_slice(&marker_frame);
-    if successor_prefix.len() > crate::wal::scan::LEGACY_SAFE_MAX_SEGMENT_PHYSICAL_BYTES {
+    if successor_prefix.len() > MAX_ROTATION_SUCCESSOR_PREFIX_BYTES {
         return Err(WalError::Io(std::io::Error::other(format!(
-            "authenticated WAL successor prefix is {} bytes, above the {}-byte recovery ceiling",
+            "authenticated WAL successor prefix is {} bytes, above the {}-byte transaction ceiling",
             successor_prefix.len(),
-            crate::wal::scan::LEGACY_SAFE_MAX_SEGMENT_PHYSICAL_BYTES
+            MAX_ROTATION_SUCCESSOR_PREFIX_BYTES
         ))));
     }
-    let successor_offset = u64::try_from(successor_prefix.len())
+    let successor_prefix_len = successor_prefix.len();
+    let successor_offset = u64::try_from(successor_prefix_len)
         .map_err(|_| std::io::Error::other("successor prefix length exceeds u64"))?;
 
     info!(
@@ -2633,7 +3478,41 @@ async fn rotate(
         "WAL segment rollover",
     );
 
-    let opened = open_segment(&next_path, successor_prefix).await?;
+    let receipt_quota_component = receipt_quota_reservation
+        .as_deref_mut()
+        .map(|reservation| {
+            reservation.split_component(MAX_ROTATION_SUCCESSOR_PREFIX_BYTES)
+        })
+        .transpose()?;
+    let owned_receipt_authority = receipt_authority
+        .as_deref_mut()
+        .and_then(|authority_slot| authority_slot.take());
+    let predecessor_rewrite_lock = state.segment_rewrite_lock.take().ok_or_else(|| {
+        WalError::Io(std::io::Error::other(
+            "WAL rotation lost the active predecessor rewrite lock",
+        ))
+    })?;
+    let opened = open_segment(
+        &next_path,
+        successor_prefix,
+        predecessor_rewrite_lock,
+        owned_receipt_authority,
+        receipt_quota_component,
+    )
+    .await?;
+    let mut opened = opened;
+    if let Some(authority_slot) = receipt_authority {
+        *authority_slot = opened.receipt_authority.take();
+        if authority_slot.is_none() {
+            return Err(compaction_recovery_error(
+                "receipt rotation publisher did not return its home authority",
+            ));
+        }
+    } else if opened.receipt_authority.is_some() {
+        return Err(compaction_recovery_error(
+            "non-receipt rotation unexpectedly acquired receipt authority",
+        ));
+    }
     let is_new = opened.is_new;
     // Declare the guard before the append handle: locals drop in reverse
     // declaration order, so every early-return path closes `new_file` first.
@@ -2648,14 +3527,13 @@ async fn rotate(
             ),
         )));
     }
-
     #[cfg(windows)]
     let new_file = File::from_std(super::win_native::duplicate_append_only_file(&new_file)?);
 
     // Close the old append handle before releasing its rewrite guard. The next
     // guard is already held, so no segment is ever active without exclusion.
     state.file = Some(new_file);
-    state.segment_rewrite_lock = next_segment_lock;
+    state.segment_rewrite_lock = Some(next_segment_lock);
     state.path = next_path;
     state.seq = next_seq;
     state.opened_at_ns = now_ns;
@@ -2885,7 +3763,7 @@ async fn run_writer(
 
     let mut state = WriterState {
         file: Some(file),
-        segment_rewrite_lock,
+        segment_rewrite_lock: Some(segment_rewrite_lock),
         path: segment_path,
         offset,
         seq,
@@ -2937,6 +3815,8 @@ async fn run_writer(
             &hmac_home,
             &mut compaction_state,
             hmac_key,
+            None,
+            None,
         )
         .await?;
     }
@@ -2986,7 +3866,7 @@ async fn run_writer(
         && let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key)
     {
         validate_hmac_writer_authority(hmac_authority.as_ref())?;
-        emit_compaction_marker(&mut state, compaction_state, key).await?;
+        emit_compaction_marker(&mut state, compaction_state, key, None).await?;
     }
 
     if let Some(startup) = startup
@@ -3006,9 +3886,129 @@ async fn run_writer(
     // drain. This flag tracks whether ANY batchable frame has been
     // written without a sync since the last sync.
     let mut pending_unsynced = false;
+    let mut receipt_quota_debt =
+        crate::wal::context_evidence_receipts::ReceiptQuotaDebt::default();
 
-    while let Some(req) = rx.recv().await {
+    while let Some(mut req) = rx.recv().await {
+        let is_receipt = is_context_evidence_receipt_header(&req.header);
+        if is_receipt != req.context_evidence_receipt_once.is_some()
+            || (is_receipt && req.force_authentication_marker)
+        {
+            if let Some(admission) = req.quota_admission.take() {
+                admission.settle();
+            }
+            let _ = req.ack.send(Err(WalError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Context Evidence receipt request omitted its authenticated append-once authority",
+            ))));
+            continue;
+        }
         validate_hmac_writer_authority(hmac_authority.as_ref())?;
+        if let Some(mut once) = req.context_evidence_receipt_once.take() {
+            let authority = match acquire_context_evidence_receipt_authority(&hmac_home).await {
+                Ok(authority) => authority,
+                Err(error) => {
+                    if let Some(admission) = req.quota_admission.take() {
+                        admission.settle();
+                    }
+                    let _ = req.ack.send(Err(error));
+                    continue;
+                }
+            };
+            #[cfg(test)]
+            if let Some(gate) = req.test_receipt_decision_gate.as_ref() {
+                gate.pause_before_ack(req.header.event_type).await;
+            }
+
+            let ledger_home = hmac_home.clone();
+            let exact_frame = encode_frame(&req.header, &req.payload);
+            let mut transaction_debt = std::mem::take(&mut receipt_quota_debt);
+            let transaction = tokio::task::spawn_blocking(move || {
+                let quota_guard = once.quota_reservation.guard.clone();
+                let _receipt_mutation = quota_guard
+                    .as_ref()
+                    .map(|guard| guard.receipt_debt_mutex.lock().unwrap());
+                // From here the worker, not the cancellable async actor, owns
+                // the home authority and quota. A panic or dropped JoinHandle
+                // therefore keeps the complete admitted bound charged until
+                // this blocking owner itself terminates.
+                once.arm_quota_fail_closed();
+                match crate::wal::context_evidence_receipts::append_once_with_quota_debt(
+                    &ledger_home,
+                    &once.receipt_handle,
+                    &once.expected,
+                    &exact_frame,
+                    &mut transaction_debt,
+                ) {
+                    Ok(outcome) => {
+                        once.reconcile_quota_after_terminal(
+                            outcome.retained_bytes(),
+                            outcome.reclaimed_debt_bytes(),
+                            outcome
+                                .reclaimed_bytes()
+                                .saturating_sub(outcome.reclaimed_debt_bytes()),
+                            false,
+                        );
+                        drop(once);
+                        Ok((authority, outcome.decision(), transaction_debt))
+                    }
+                    Err(error) => {
+                        once.reconcile_quota_after_terminal(
+                            error.retained_bytes(),
+                            error.reclaimed_debt_bytes(),
+                            error
+                                .reclaimed_bytes()
+                                .saturating_sub(error.reclaimed_debt_bytes()),
+                            true,
+                        );
+                        drop(once);
+                        Err(transaction_debt)
+                    }
+                }
+            })
+            .await;
+            let (authority, _decision, recovered_debt) = match transaction {
+                Ok(Ok(outcome)) => outcome,
+                Ok(Err(debt)) => {
+                    receipt_quota_debt = debt;
+                    // This category is intentionally content-free. The RPC and
+                    // startup replay paths must never inherit a local path,
+                    // opaque handle, payload field, or account identifier from
+                    // a forensic ledger diagnostic.
+                    if let Some(admission) = req.quota_admission.take() {
+                        admission.settle();
+                    }
+                    let _ = req.ack.send(Err(compaction_recovery_error(
+                        "authenticated Context Evidence receipt ledger transaction refused",
+                    )));
+                    continue;
+                }
+                Err(error) => {
+                    if let Some(admission) = req.quota_admission.take() {
+                        admission.settle();
+                    }
+                    let _ = req.ack.send(Err(compaction_recovery_error(
+                        "authenticated Context Evidence receipt ledger worker failed",
+                    )));
+                    return Err(compaction_recovery_error(format!(
+                        "Context Evidence receipt ledger blocking task failed: {error}"
+                    )));
+                }
+            };
+            receipt_quota_debt = recovered_debt;
+            validate_hmac_writer_authority(hmac_authority.as_ref())?;
+            #[cfg(test)]
+            if let Some(gate) = req.test_ack_gate.as_ref() {
+                gate.pause_before_ack(req.header.event_type).await;
+            }
+            if let Some(admission) = req.quota_admission.take() {
+                admission.settle();
+            }
+            let _ = req.ack.send(Ok(state.offset));
+            drop(authority);
+            continue;
+        }
+        let mut context_evidence_receipt_authority = None;
         let frame = encode_frame(&req.header, &req.payload);
         let frame_triggers_marker = compaction_state.as_ref().is_some_and(|state| {
             state.frames().saturating_add(1) >= crate::wal::compaction::MAX_FRAMES_BETWEEN_MARKERS
@@ -3016,6 +4016,9 @@ async fn run_writer(
                     >= crate::wal::compaction::MAX_BYTES_BETWEEN_MARKERS
         });
         if req.force_authentication_marker && (compaction_state.is_none() || hmac_key.is_none()) {
+            if let Some(admission) = req.quota_admission.take() {
+                admission.settle();
+            }
             let _ = req.ack.send(Err(compaction_recovery_error(
                 "forced authenticated append reached a writer without HMAC compaction state",
             )));
@@ -3042,12 +4045,23 @@ async fn run_writer(
                 state.active_file_mut()?.sync_data().await?;
                 pending_unsynced = false;
             }
+            let receipt_reservation = req
+                .context_evidence_receipt_once
+                .as_mut()
+                .map(|once| &mut once.quota_reservation);
+            let receipt_authority_slot = if is_receipt {
+                Some(&mut context_evidence_receipt_authority)
+            } else {
+                None
+            };
             rotate(
                 &mut state,
                 reason,
                 &hmac_home,
                 &mut compaction_state,
                 hmac_key,
+                receipt_reservation,
+                receipt_authority_slot,
             )
             .await?;
         }
@@ -3055,13 +4069,21 @@ async fn run_writer(
         validate_hmac_writer_authority(hmac_authority.as_ref())?;
         if let Err(error) = state.ensure_frame_and_marker_fit(frame.len(), marker_reserve) {
             let completion_error = std::io::Error::new(error.kind(), error.to_string());
+            if let Some(admission) = req.quota_admission.take() {
+                admission.settle();
+            }
             let _ = req.ack.send(Err(WalError::Io(error)));
             return Err(WalError::Io(completion_error));
         }
         let immediate = crate::wal::events::needs_immediate_sync(req.header.event_type);
+        let compression = state.compression;
+        // Resolve the live file before its actual write. Context Evidence
+        // receipts never reach this primary-WAL path; their bounded ledger
+        // transaction returned or continued above.
+        let active_file = state.active_file_mut()?;
         // Workstream F: compressed segments buffer frames in-memory;
         // the file write happens on finalize (rotate/shutdown).
-        let result = if state.compression == CompressionPolicy::Zstd3 {
+        let result = if compression == CompressionPolicy::Zstd3 {
             // For compressed segments we also write frames immediately to
             // a temp staging area so recovery still works on unclean shutdown.
             // However we keep the design simple: write raw frames to the file
@@ -3075,9 +4097,9 @@ async fn run_writer(
             // compression may change the later representation, never weaken
             // the acknowledgement contract.
             let r = if immediate {
-                write_and_sync(state.active_file_mut()?, &frame).await
+                write_and_sync(active_file, &frame).await
             } else {
-                write_only(state.active_file_mut()?, &frame).await
+                write_only(active_file, &frame).await
             };
             if r.is_ok() {
                 state.pending_frames.extend_from_slice(&frame);
@@ -3089,7 +4111,7 @@ async fn run_writer(
             // after `write_all`, which durably commits BOTH this frame
             // AND any preceding batchable frames that landed in the OS
             // page cache. So `pending_unsynced` is cleared by this op.
-            let r = write_and_sync(state.active_file_mut()?, &frame).await;
+            let r = write_and_sync(active_file, &frame).await;
             if r.is_ok() {
                 pending_unsynced = false;
             }
@@ -3098,7 +4120,7 @@ async fn run_writer(
             // Batchable frame — skip the per-frame fsync. Mark
             // pending so the next immediate frame OR shutdown drain
             // can commit it.
-            let r = write_only(state.active_file_mut()?, &frame).await;
+            let r = write_only(active_file, &frame).await;
             if r.is_ok() {
                 pending_unsynced = true;
             }
@@ -3119,14 +4141,26 @@ async fn run_writer(
                     state_c.update(&frame);
                     if state_c.should_emit() || req.force_authentication_marker {
                         validate_hmac_writer_authority(hmac_authority.as_ref())?;
-                        if let Err(marker_error) =
-                            emit_compaction_marker(&mut state, state_c, key).await
+                        let receipt_reservation = req
+                            .context_evidence_receipt_once
+                            .as_mut()
+                            .map(|once| &mut once.quota_reservation);
+                        if let Err(marker_error) = emit_compaction_marker(
+                            &mut state,
+                            state_c,
+                            key,
+                            receipt_reservation,
+                        )
+                        .await
                         {
                             // The triggering operator frame may already be durable,
                             // but its mandatory authenticity marker is not. Abort
                             // the writer and explicitly reject this append. A
                             // restart rebuilds the unfinished window from disk.
                             let completion_reason = marker_error.to_string();
+                            if let Some(admission) = req.quota_admission.take() {
+                                admission.settle();
+                            }
                             let _ = req.ack.send(Err(marker_error));
                             return Err(WalError::Io(std::io::Error::other(format!(
                                 "mandatory compaction marker transaction failed: \
@@ -3141,24 +4175,35 @@ async fn run_writer(
                 if let Some(gate) = req.test_ack_gate.as_ref() {
                     gate.pause_before_ack(req.header.event_type).await;
                 }
+                if let Some(admission) = req.quota_admission.take() {
+                    admission.settle();
+                }
                 if req.ack.send(Ok(written_at)).is_err() {
                     tracing::debug!(
                         offset = written_at,
                         "ack receiver dropped before WAL write confirmed (caller likely timed out)"
                     );
                 }
+                drop(context_evidence_receipt_authority);
             }
             Err(e) => {
                 error!(error = %e, "WAL frame write failed");
                 if state.is_fixed() {
                     let completion_error =
                         WalError::Io(std::io::Error::new(e.kind(), e.to_string()));
+                    if let Some(admission) = req.quota_admission.take() {
+                        admission.settle();
+                    }
                     let _ = req.ack.send(Err(WalError::Io(e)));
                     return Err(completion_error);
+                }
+                if let Some(admission) = req.quota_admission.take() {
+                    admission.settle();
                 }
                 if req.ack.send(Err(WalError::Io(e))).is_err() {
                     tracing::debug!("ack receiver dropped for failed WAL write");
                 }
+                drop(context_evidence_receipt_authority);
                 // Continue; next caller may still succeed (e.g. transient ENOSPC clears).
             }
         }
@@ -3168,7 +4213,7 @@ async fn run_writer(
         && let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key)
     {
         validate_hmac_writer_authority(hmac_authority.as_ref())?;
-        emit_compaction_marker(&mut state, compaction_state, key).await?;
+        emit_compaction_marker(&mut state, compaction_state, key, None).await?;
         pending_unsynced = false;
     }
 
@@ -3930,6 +4975,57 @@ mod tests {
         header
     }
 
+    fn context_evidence_receipt(
+        handle: [u8; 32],
+        policy_revision: u64,
+        lifecycle_revision: u64,
+    ) -> crate::wal::events::ContextEvidenceReceipt {
+        crate::wal::events::ContextEvidenceReceipt::new(
+            hex::encode(handle),
+            crate::wal::events::ContextEvidenceReceiptKind::LocalImport,
+            policy_revision,
+            lifecycle_revision,
+            28_400_000,
+        )
+        .expect("construct closed Context Evidence receipt")
+    }
+
+    async fn append_context_evidence_receipt_once_for_test(
+        writer: &WalWriterHandle,
+        handle: [u8; 32],
+        receipt: crate::wal::events::ContextEvidenceReceipt,
+    ) -> anyhow::Result<()> {
+        let writer = writer.clone();
+        tokio::task::spawn_blocking(move || {
+            writer.append_context_evidence_receipt_once_blocking(&handle, receipt)
+        })
+        .await
+        .expect("join blocking Context Evidence receipt append")
+    }
+
+    async fn wait_for_context_evidence_receipt_authority_contention(
+        reached: std::sync::mpsc::Receiver<()>,
+    ) {
+        tokio::task::spawn_blocking(move || {
+            reached
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("second receipt writer must contend while the first holds authority");
+        })
+        .await
+        .expect("join receipt-authority contention observer");
+    }
+
+    fn assert_single_authenticated_context_evidence_receipt(
+        home: &Path,
+        handle: &[u8; 32],
+        expected: &crate::wal::events::ContextEvidenceReceipt,
+    ) {
+        assert!(
+            crate::wal::context_evidence_receipts::contains_for_test(home, handle, expected)
+                .expect("bounded authenticated Context Evidence receipt lookup")
+        );
+    }
+
     fn spawn_test_writer_at_home(
         segment: PathBuf,
         home: &Path,
@@ -4239,6 +5335,7 @@ mod tests {
             authentication_markers_enabled: false,
             quota: None,
             test_ack_gate: None,
+            test_receipt_decision_gate: None,
         };
 
         let payload = b"x".to_vec();
@@ -4268,6 +5365,7 @@ mod tests {
             authentication_markers_enabled: false,
             quota: None,
             test_ack_gate: None,
+            test_receipt_decision_gate: None,
         };
         assert!(
             !dead.is_alive(),
@@ -5049,6 +6147,303 @@ mod tests {
         );
     }
 
+    #[test]
+    fn receipt_debt_cleanup_never_releases_unclassified_reservations() {
+        use std::sync::atomic::Ordering;
+
+        let dir = tempdir().unwrap();
+        let guard = QuotaGuard::new(dir.path().to_path_buf(), 4096);
+        guard.reserved.store(500, Ordering::Release);
+        guard.needs_measurement.store(false, Ordering::Release);
+        guard.mark_receipt_debt(100);
+
+        guard.release_receipt_debt(130);
+
+        assert_eq!(guard.receipt_debt_reserved.load(Ordering::Acquire), 0);
+        assert_eq!(
+            guard.reserved.load(Ordering::Acquire),
+            400,
+            "only the classified 100-byte receipt debt may be released"
+        );
+        assert!(
+            guard.needs_measurement.load(Ordering::Acquire),
+            "measured or otherwise unclassified cleanup must refresh the baseline"
+        );
+    }
+
+    #[test]
+    fn ordinary_receipt_cleanup_invalidates_instead_of_releasing_the_baseline() {
+        use std::sync::atomic::Ordering;
+
+        let dir = tempdir().unwrap();
+        let guard = QuotaGuard::new(dir.path().to_path_buf(), 4096);
+        guard.last_measured.store(300, Ordering::Release);
+        guard.reserved.store(80, Ordering::Release);
+        guard.needs_measurement.store(false, Ordering::Release);
+        let _receipt_debt = guard.receipt_debt_mutex.lock().unwrap();
+
+        guard.invalidate_measured_baseline_locked(25);
+
+        assert_eq!(guard.last_measured.load(Ordering::Acquire), 300);
+        assert_eq!(guard.reserved.load(Ordering::Acquire), 80);
+        assert!(guard.needs_measurement.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn invalidated_baseline_is_remeasured_before_stale_projected_refusal() {
+        use std::sync::atomic::Ordering;
+
+        let dir = tempdir().unwrap();
+        let guard = QuotaGuard::new(dir.path().to_path_buf(), 64);
+        guard.last_measured.store(1024, Ordering::Release);
+        guard.reserved.store(0, Ordering::Release);
+        guard.breached.store(true, Ordering::Release);
+        let receipt_debt = guard.receipt_debt_mutex.lock().unwrap();
+        guard.invalidate_measured_baseline_locked(1024);
+        drop(receipt_debt);
+
+        assert!(
+            guard.try_admit(1).is_ok(),
+            "an exact-cleanup invalidation must measure the empty home before trusting stale usage"
+        );
+        assert_eq!(guard.last_measured.load(Ordering::Acquire), 0);
+        assert_eq!(guard.reserved.load(Ordering::Acquire), 1);
+        assert!(!guard.breached.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn measurement_rebase_preserves_post_snapshot_admissions() {
+        use std::sync::atomic::Ordering;
+
+        let dir = tempdir().unwrap();
+        let guard = QuotaGuard::new(dir.path().to_path_buf(), 4096);
+        guard.reserved.store(177, Ordering::Release);
+        assert_eq!(
+            guard.publish_rebased_reserved(100, 40),
+            117,
+            "the 77 bytes admitted after the snapshot must survive rebasing"
+        );
+        assert_eq!(guard.reserved.load(Ordering::Acquire), 117);
+
+        guard.reserved.store(80, Ordering::Release);
+        assert_eq!(
+            guard.publish_rebased_reserved(100, 40),
+            40,
+            "a concurrent release may be conservatively overcounted but must not undercut the base"
+        );
+    }
+
+    #[test]
+    fn reset_waits_for_the_active_admission_boundary() {
+        let dir = tempdir().unwrap();
+        let guard = std::sync::Arc::new(QuotaGuard::new(
+            dir.path().to_path_buf(),
+            4096,
+        ));
+        let admission = guard.admission_mutex.lock().unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let reset_guard = std::sync::Arc::clone(&guard);
+        let reset = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            reset_guard.reset();
+            done_tx.send(()).unwrap();
+        });
+        started_rx.recv().unwrap();
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_err(),
+            "reset must not erase an admission while its accounting boundary is active"
+        );
+        drop(admission);
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        reset.join().unwrap();
+    }
+
+    #[test]
+    fn reset_preserves_admissions_issued_before_queue_handoff() {
+        use std::sync::atomic::Ordering;
+
+        let dir = tempdir().unwrap();
+        let guard = QuotaGuard::new(dir.path().to_path_buf(), 4096);
+        guard.try_admit(0).unwrap();
+        guard.try_admit(123).unwrap();
+        guard.mark_receipt_debt(23);
+
+        // Model the exact post-try_admit/pre-send window: the caller owns an
+        // accepted reservation, but no writer request is required to exist yet.
+        guard.reset();
+
+        assert_eq!(
+            guard.reserved.load(Ordering::Acquire),
+            123,
+            "reset must not erase a reservation already issued to a caller"
+        );
+        assert_eq!(guard.pending_reserved.load(Ordering::Acquire), 123);
+        assert_eq!(
+            guard.receipt_debt_reserved.load(Ordering::Acquire),
+            23,
+            "reset must preserve the exact receipt-debt subset classification"
+        );
+        assert_eq!(guard.last_measured.load(Ordering::Acquire), 0);
+        assert!(guard.needs_measurement.load(Ordering::Acquire));
+        assert!(!guard.breached.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn unrelated_home_growth_cannot_consume_an_older_pending_admission() {
+        use std::sync::atomic::Ordering;
+        use std::sync::Arc;
+
+        let dir = tempdir().unwrap();
+        let guard = Arc::new(QuotaGuard::new(dir.path().to_path_buf(), 300));
+        guard.try_admit(0).unwrap();
+        let older_request = QuotaGuard::reserve_pending_admission(&guard, 100)
+            .expect("older request owns its reservation before queue handoff");
+        std::fs::write(dir.path().join("unrelated-growth"), vec![0u8; 100]).unwrap();
+        guard.reset();
+
+        let newer_request = QuotaGuard::reserve_pending_admission(&guard, 1)
+            .expect("foreign growth must not erase the older queued owner");
+        assert_eq!(guard.last_measured.load(Ordering::Acquire), 100);
+        assert_eq!(guard.pending_reserved.load(Ordering::Acquire), 101);
+        assert_eq!(guard.reserved.load(Ordering::Acquire), 101);
+
+        let exact_ceiling_request = QuotaGuard::reserve_pending_admission(&guard, 99)
+            .expect("exact projected ceiling fits");
+        assert!(
+            matches!(
+                QuotaGuard::reserve_pending_admission(&guard, 1),
+                Err(WalError::QuotaExceeded { .. })
+            ),
+            "external bytes plus every pending owner must enforce the ceiling"
+        );
+
+        // Terminal handling is request-specific.  Settling the older request
+        // cannot release the newer queued requests and re-arms a fresh fold
+        // because the older owner predates the rebase.
+        older_request.settle();
+        assert_eq!(guard.pending_reserved.load(Ordering::Acquire), 100);
+        assert!(guard.needs_measurement.load(Ordering::Acquire));
+        drop(newer_request);
+        drop(exact_ceiling_request);
+    }
+
+    #[test]
+    fn terminal_after_measurement_rearms_a_conservative_pending_breach() {
+        use std::sync::atomic::Ordering;
+
+        let dir = tempdir().unwrap();
+        let guard = std::sync::Arc::new(QuotaGuard::new(
+            dir.path().to_path_buf(),
+            150,
+        ));
+        guard.try_admit(100).unwrap();
+        let admission = QuotaPendingAdmission::new(std::sync::Arc::clone(&guard), 100);
+        std::fs::write(dir.path().join("landed-before-terminal"), vec![0u8; 100]).unwrap();
+        guard.reset();
+
+        assert!(matches!(
+            guard.try_admit(1),
+            Err(WalError::QuotaExceeded { .. })
+        ));
+        assert!(guard.breached.load(Ordering::Acquire));
+        admission.settle();
+        assert_eq!(guard.pending_reserved.load(Ordering::Acquire), 0);
+        assert!(
+            guard.needs_measurement.load(Ordering::Acquire),
+            "a terminal owner that crossed a walk must re-arm exact measurement"
+        );
+
+        guard
+            .try_admit(1)
+            .expect("fresh measurement must clear the conservative double count");
+        assert_eq!(guard.last_measured.load(Ordering::Acquire), 100);
+        assert_eq!(guard.reserved.load(Ordering::Acquire), 1);
+        assert!(!guard.breached.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn reset_rebaseline_does_not_double_count_an_admitted_persisted_write() {
+        use std::sync::atomic::Ordering;
+
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let segment = wal.join("quota-reset-000001.wal");
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn reset-rebaseline writer");
+        let baseline = crate::daemon::quota::measure_dir(home.path());
+        let payload = vec![b'r'; 64 * 1024];
+        let admitted = payload.len() as u64;
+        let ceiling = baseline.saturating_add(admitted + admitted / 2);
+        let quota = std::sync::Arc::new(QuotaGuard::new(
+            home.path().to_path_buf(),
+            ceiling,
+        ));
+        let writer = writer.with_quota_guard(std::sync::Arc::clone(&quota));
+
+        // Deliberately split the normal handle path at its accounting handoff:
+        // admission returns, reset runs, and only then is the owned request
+        // placed in the real writer queue.
+        quota.try_admit(admitted).unwrap();
+        let quota_admission =
+            QuotaPendingAdmission::new(std::sync::Arc::clone(&quota), admitted);
+        quota.reset();
+        assert_eq!(quota.reserved.load(Ordering::Acquire), admitted);
+        assert_eq!(quota.pending_reserved.load(Ordering::Acquire), admitted);
+        let (ack_tx, ack_rx) = oneshot::channel();
+        writer
+            .tx
+            .send(WriteRequest {
+                header: header_for(payload.len() as u32, 91),
+                payload: payload.clone(),
+                ack: ack_tx,
+                force_authentication_marker: false,
+                context_evidence_receipt_once: None,
+                quota_admission: Some(quota_admission),
+                test_ack_gate: None,
+                test_receipt_decision_gate: None,
+            })
+            .await
+            .expect("enqueue the already-admitted request after reset");
+        ack_rx
+            .await
+            .expect("writer must return an acknowledgement")
+            .expect("already-admitted request must persist");
+        drop(writer);
+        join.await.expect("join reset-rebaseline writer");
+        assert_eq!(quota.pending_reserved.load(Ordering::Acquire), 0);
+
+        let bytes = read(&segment).await.unwrap();
+        let decoded = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).expect("decode persisted request");
+        assert_eq!(decoded.payload, payload.as_slice());
+        let landed = crate::daemon::quota::measure_dir(home.path());
+        assert!(
+            landed.saturating_add(1) <= ceiling,
+            "control requires genuine disk usage to remain below the ceiling"
+        );
+
+        quota
+            .try_admit(1)
+            .expect("rebaseline must absorb the landed reservation exactly once");
+        assert_eq!(quota.last_measured.load(Ordering::Acquire), landed);
+        assert_eq!(
+            quota.reserved.load(Ordering::Acquire),
+            1,
+            "only the new, not-yet-enqueued byte may remain reserved"
+        );
+        assert!(!quota.breached.load(Ordering::Acquire));
+    }
+
     /// WAL-QUOTA-FAILCLOSED-01 (projected-sum test): two concurrent payloads
     /// whose SUM exceeds the ceiling must not both be admitted, even when each
     /// individual payload is below the ceiling.  The CAS loop inside try_admit
@@ -5557,6 +6952,389 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn context_evidence_receipt_uses_bounded_ledger_across_primary_wal_rotation() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let first = wal.join("context-runtime-000001.wal");
+        let policy = RotationPolicy {
+            max_bytes: RotationPolicy::DEFAULT_MAX_BYTES,
+            max_age_ns: 0,
+        };
+        let (writer, join) = spawn_test_writer_at_home(
+            first,
+            home.path(),
+            policy,
+            CompressionPolicy::None,
+        )
+        .expect("spawn rotating Context Evidence writer");
+        let handle = [0xA3; 32];
+        let receipt = context_evidence_receipt(handle, 17, 29);
+        let generic_payload = receipt.encode().unwrap();
+        let generic_header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            &generic_payload,
+        )
+        .event_subtype(crate::wal::events::ExtendedSubtype::ContextEvidenceReceipt as u8)
+        .build();
+        let generic_error = writer
+            .append(generic_header, generic_payload)
+            .await
+            .expect_err("generic append must not bypass receipt authority");
+        assert!(
+            generic_error.to_string().contains("append-once writer API"),
+            "unexpected generic receipt refusal: {generic_error}"
+        );
+
+        append_context_evidence_receipt_once_for_test(&writer, handle, receipt.clone())
+            .await
+            .expect("append first receipt to bounded ledger");
+        writer
+            .append(header_for(1, 81), vec![b'x'])
+            .await
+            .expect("rotate primary WAL after ledger append");
+        append_context_evidence_receipt_once_for_test(&writer, handle, receipt.clone())
+            .await
+            .expect("deduplicate ledger receipt after primary-WAL rotation");
+
+        drop(writer);
+        join.await.expect("join rotating Context Evidence writer");
+        let segment_count = std::fs::read_dir(&wal)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("wal"))
+            .count();
+        assert!(segment_count >= 2, "fixture must exercise a real primary-WAL rotation");
+        assert_single_authenticated_context_evidence_receipt(
+            home.path(),
+            &handle,
+            &receipt,
+        );
+
+        let mut primary_wal_receipts = 0usize;
+        crate::wal::scan::for_each_frame_at_home(
+            home.path(),
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                    && frame.header.event_subtype
+                        == crate::wal::events::ExtendedSubtype::ContextEvidenceReceipt as u8
+                {
+                    primary_wal_receipts += 1;
+                }
+                Ok(())
+            },
+        )
+        .expect("scan complete primary WAL only in regression test");
+        assert_eq!(
+            primary_wal_receipts, 0,
+            "the canonical ledger must not duplicate receipt evidence into primary WAL"
+        );
+    }
+
+    #[tokio::test]
+    async fn context_evidence_receipt_quota_refuses_before_ledger_mutation() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("context-ledger-quota-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn quota-bound Context Evidence writer");
+        let quota = std::sync::Arc::new(QuotaGuard::new(
+            home.path().to_path_buf(),
+            crate::wal::context_evidence_receipts::MAX_TRANSACTION_BYTES - 1,
+        ));
+        quota
+            .reserved
+            .store(0, std::sync::atomic::Ordering::Release);
+        quota
+            .last_measured
+            .store(0, std::sync::atomic::Ordering::Release);
+        quota
+            .needs_measurement
+            .store(false, std::sync::atomic::Ordering::Release);
+        let writer = writer.with_quota_guard(quota.clone());
+        let handle = [0xA7; 32];
+        let receipt = context_evidence_receipt(handle, 31, 37);
+
+        let error = append_context_evidence_receipt_once_for_test(
+            &writer,
+            handle,
+            receipt,
+        )
+        .await
+        .expect_err("transaction bound must be admitted before ledger initialization");
+        assert_eq!(error.to_string(), "context_evidence_receipt_quota_refused");
+        assert_eq!(
+            quota
+                .reserved
+                .load(std::sync::atomic::Ordering::Acquire),
+            0,
+            "refused admission must not retain phantom quota"
+        );
+        assert!(
+            !wal.join("context-evidence-receipts").exists(),
+            "quota refusal must precede canonical ledger mutation"
+        );
+        drop(writer);
+        join.await.expect("join quota-bound Context Evidence writer");
+    }
+
+    #[test]
+    fn closed_receipt_writer_releases_the_complete_unqueued_admission() {
+        use std::sync::atomic::Ordering;
+
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let dir = tempdir().unwrap();
+        let guard = std::sync::Arc::new(QuotaGuard::new(
+            dir.path().to_path_buf(),
+            crate::wal::context_evidence_receipts::MAX_TRANSACTION_BYTES * 2,
+        ));
+        guard.reserved.store(0, Ordering::Release);
+        guard.last_measured.store(0, Ordering::Release);
+        guard.needs_measurement.store(false, Ordering::Release);
+        let writer = WalWriterHandle {
+            tx,
+            authentication_markers_enabled: true,
+            quota: Some(std::sync::Arc::clone(&guard)),
+            test_ack_gate: None,
+            test_receipt_decision_gate: None,
+        };
+        let handle = [0xA8; 32];
+        let receipt = context_evidence_receipt(handle, 41, 43);
+
+        let error = writer
+            .append_context_evidence_receipt_once_blocking(&handle, receipt)
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "context_evidence_receipt_writer_unavailable"
+        );
+        assert_eq!(guard.reserved.load(Ordering::Acquire), 0);
+        assert_eq!(guard.receipt_debt_reserved.load(Ordering::Acquire), 0);
+        assert!(!dir.path().join("wal").join("context-evidence-receipts").exists());
+    }
+
+    #[tokio::test]
+    async fn concurrent_home_writers_append_one_identical_context_evidence_receipt() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (first, first_join) = spawn_test_writer_at_home(
+            wal.join("context-race-a-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn first racing Context Evidence writer");
+        let (second, second_join) = spawn_test_writer_at_home(
+            wal.join("context-race-b-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn second racing Context Evidence writer");
+        let decision_gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let first = first.with_test_receipt_decision_gate(decision_gate.clone());
+        let handle = [0xAF; 32];
+        let receipt = context_evidence_receipt(handle, 79, 83);
+
+        let first_writer = first.clone();
+        let first_receipt = receipt.clone();
+        let first_append = tokio::task::spawn_blocking(move || {
+            first_writer
+                .append_context_evidence_receipt_once_blocking(&handle, first_receipt)
+        });
+        decision_gate.wait_until_durable().await;
+
+        let contended =
+            observe_context_evidence_receipt_authority_contention_for_test(home.path());
+        let second_writer = second.clone();
+        let second_receipt = receipt.clone();
+        let second_append = tokio::task::spawn_blocking(move || {
+            second_writer
+                .append_context_evidence_receipt_once_blocking(&handle, second_receipt)
+        });
+        wait_for_context_evidence_receipt_authority_contention(contended).await;
+        decision_gate.release();
+
+        first_append
+            .await
+            .expect("join first concurrent receipt caller")
+            .expect("first identical receipt caller succeeds");
+        second_append
+            .await
+            .expect("join second concurrent receipt caller")
+            .expect("second identical receipt caller deduplicates successfully");
+        drop(first);
+        drop(second);
+        first_join.await.expect("join first racing writer");
+        second_join.await.expect("join second racing writer");
+        assert_single_authenticated_context_evidence_receipt(
+            home.path(),
+            &handle,
+            &receipt,
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_home_writers_reject_same_handle_with_different_payload() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (first, first_join) = spawn_test_writer_at_home(
+            wal.join("context-collision-a-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn first collision Context Evidence writer");
+        let (second, second_join) = spawn_test_writer_at_home(
+            wal.join("context-collision-b-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn second collision Context Evidence writer");
+        let decision_gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let first = first.with_test_receipt_decision_gate(decision_gate.clone());
+        let handle = [0xB0; 32];
+        let winning_receipt = context_evidence_receipt(handle, 89, 97);
+        let conflicting_receipt = context_evidence_receipt(handle, 101, 103);
+
+        let first_writer = first.clone();
+        let first_receipt = winning_receipt.clone();
+        let first_append = tokio::task::spawn_blocking(move || {
+            first_writer
+                .append_context_evidence_receipt_once_blocking(&handle, first_receipt)
+        });
+        decision_gate.wait_until_durable().await;
+
+        let contended =
+            observe_context_evidence_receipt_authority_contention_for_test(home.path());
+        let second_writer = second.clone();
+        let second_receipt = conflicting_receipt.clone();
+        let second_append = tokio::task::spawn_blocking(move || {
+            second_writer
+                .append_context_evidence_receipt_once_blocking(&handle, second_receipt)
+        });
+        wait_for_context_evidence_receipt_authority_contention(contended).await;
+        decision_gate.release();
+
+        first_append
+            .await
+            .expect("join winning receipt caller")
+            .expect("authority holder must append the winning receipt");
+        let collision = second_append
+            .await
+            .expect("join conflicting receipt caller")
+            .expect_err("second payload for the same handle must fail closed");
+        assert_eq!(
+            collision.to_string(),
+            "context_evidence_receipt_append_failed"
+        );
+        drop(first);
+        drop(second);
+        first_join.await.expect("join first collision writer");
+        second_join.await.expect("join second collision writer");
+        assert_single_authenticated_context_evidence_receipt(
+            home.path(),
+            &handle,
+            &winning_receipt,
+        );
+    }
+
+    #[tokio::test]
+    async fn context_evidence_receipt_authority_holds_capability_file_lock() {
+        let home = tempdir().unwrap();
+        std::fs::create_dir(home.path().join("wal")).unwrap();
+        let authority = acquire_context_evidence_receipt_authority(home.path())
+            .await
+            .expect("acquire receipt authority");
+        let sentinel = context_evidence_receipt_authority_sentinel(home.path());
+        let lock_path = super::super::redact::segment_rewrite_lock_path(&sentinel);
+        let held = crate::util::locked_file::try_lock_file_once(
+            &lock_path,
+            "Context Evidence receipt authority probe",
+        )
+        .expect("probe held receipt file authority");
+        assert!(
+            held.is_none(),
+            "the process guard must not substitute for the cross-process file lock"
+        );
+
+        drop(authority);
+        let released = crate::util::locked_file::try_lock_file_once(
+            &lock_path,
+            "released Context Evidence receipt authority probe",
+        )
+        .expect("probe released receipt file authority");
+        assert!(released.is_some(), "dropping authority must release the file lock");
+    }
+
+    #[tokio::test]
+    async fn context_evidence_receipt_survives_durable_pre_ack_writer_abort() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let segment = wal.join("context-runtime-000001.wal");
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn Context Evidence writer");
+        let gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let handle = [0xB4; 32];
+        let receipt = context_evidence_receipt(handle, 31, 47);
+        let append_writer = writer.clone();
+        let append_receipt = receipt.clone();
+        let in_flight = tokio::task::spawn_blocking(move || {
+            append_writer
+                .append_context_evidence_receipt_once_blocking(&handle, append_receipt)
+        });
+
+        gate.wait_until_durable().await;
+        join.abort();
+        assert!(join.await.is_err(), "writer fixture must abort before ACK");
+        let error = in_flight
+            .await
+            .expect("join blocked receipt caller")
+            .expect_err("aborted writer cannot deliver the first ACK");
+        assert!(
+            !format!("{error:#}").contains(&hex::encode(handle)),
+            "opaque receipt handles must never enter errors"
+        );
+        drop(writer);
+
+        let (writer, join) = spawn_test_writer_at_home(
+            segment,
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("restart Context Evidence writer after lost ACK");
+        append_context_evidence_receipt_once_for_test(&writer, handle, receipt.clone())
+            .await
+            .expect("restart replay must observe durable authenticated receipt");
+        drop(writer);
+        join.await.expect("join restarted Context Evidence writer");
+        assert_single_authenticated_context_evidence_receipt(
+            home.path(),
+            &handle,
+            &receipt,
+        );
+    }
+
+    #[tokio::test]
     async fn home_writer_completion_surfaces_shutdown_marker_failure() {
         let home = tempdir().unwrap();
         let wal = home.path().join("wal");
@@ -5918,6 +7696,7 @@ mod tests {
             authentication_markers_enabled: false,
             quota: Some(Arc::clone(&guard)),
             test_ack_gate: None,
+            test_receipt_decision_gate: None,
         };
 
         // try_admit succeeds (0 + 0 + 600 KiB ≤ 1 MiB ceiling), then

@@ -94,6 +94,35 @@ fn run_after_bound_file_revalidation_for_test() {
     });
 }
 
+#[cfg(test)]
+static TEST_FAIL_OPEN_FILE_POST_COMMIT_VALIDATION_AT: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Inject a failure after an open regular-file stage has been atomically
+/// renamed, but before the publisher validates the committed target identity.
+/// This is keyed by the operator-facing target path so parallel tests cannot
+/// consume one another's failure.
+#[cfg(test)]
+pub(crate) fn fail_open_file_post_commit_validation_for_test(target: &Path) {
+    let mut targets = TEST_FAIL_OPEN_FILE_POST_COMMIT_VALIDATION_AT
+        .lock()
+        .expect("open-file post-commit validation test hook poisoned");
+    targets.retain(|candidate| candidate != target);
+    targets.push(target.to_path_buf());
+}
+
+#[cfg(test)]
+fn inject_open_file_post_commit_validation_failure(target: &Path) -> Result<()> {
+    let mut targets = TEST_FAIL_OPEN_FILE_POST_COMMIT_VALIDATION_AT
+        .lock()
+        .expect("open-file post-commit validation test hook poisoned");
+    if let Some(index) = targets.iter().position(|candidate| candidate == target) {
+        targets.swap_remove(index);
+        anyhow::bail!("injected open-file post-commit validation failure");
+    }
+    Ok(())
+}
+
 /// Open directory plus the operator-facing absolute namespace path. Security
 /// decisions use `dir`; `display_path` is reporting-only.
 pub(crate) struct BoundDirectory {
@@ -1000,6 +1029,36 @@ pub(crate) fn bind_regular_file_for_removal(
     Ok(removal_binding)
 }
 
+/// Bind exact-object removal authority to an already-open regular file.
+///
+/// Publication stages need to retain their original append-capable handle for
+/// the eventual canonical writer while also owning a separate deletion handle
+/// for fail-closed rollback. Comparing both kernel identities prevents cleanup
+/// from targeting a same-name replacement introduced between creation and
+/// binding.
+pub(crate) fn bind_open_regular_file_for_removal(
+    parent: &Dir,
+    name: &OsStr,
+    opened: &File,
+    display_path: &Path,
+) -> Result<BoundChildObject> {
+    let opened_metadata = opened
+        .metadata()
+        .with_context(|| format!("inspect open regular file {}", display_path.display()))?;
+    anyhow::ensure!(
+        opened_metadata.is_file() && !cap_metadata_is_link_like(&opened_metadata),
+        "open removal source is not a real regular file: {}",
+        display_path.display()
+    );
+    let binding = bind_child_object(parent, name, display_path)?;
+    anyhow::ensure!(
+        child_identity_token(&opened_metadata)? == binding.identity_token(),
+        "open regular file changed while its removal authority was being bound: {}",
+        display_path.display()
+    );
+    Ok(binding)
+}
+
 /// Open and bind one regular file for a non-destructive durability operation.
 ///
 /// This requests read/write data access but deliberately not Windows `DELETE`;
@@ -1338,6 +1397,36 @@ pub(crate) fn publish_open_regular_file_child(
     source_display: &Path,
     target_display: &Path,
 ) -> Result<()> {
+    publish_open_regular_file_child_observed(
+        source_parent,
+        source,
+        source_name,
+        target_parent,
+        target_name,
+        source_display,
+        target_display,
+        || {},
+    )
+}
+
+/// Publish an already-open regular-file stage and report the exact atomic
+/// commit boundary to its owner.
+///
+/// `on_commit` runs exactly once after the kernel rename/handle-rename succeeds
+/// and before any fallible post-commit target validation. It is never called on
+/// a pre-commit error. This lets a caller transfer lock/quota ownership at the
+/// only point where the new canonical object can begin consuming durable
+/// resources, including when validation subsequently fails.
+pub(crate) fn publish_open_regular_file_child_observed(
+    source_parent: &Dir,
+    source: &File,
+    source_name: &OsStr,
+    target_parent: &Dir,
+    target_name: &OsStr,
+    source_display: &Path,
+    target_display: &Path,
+    on_commit: impl FnOnce(),
+) -> Result<()> {
     #[cfg(windows)]
     let _ = source_parent;
     validate_child_name(source_name)?;
@@ -1411,6 +1500,17 @@ pub(crate) fn publish_open_regular_file_child(
     {
         windows_rename_open_handle(source, target_parent, target_name, false, target_display)?;
     }
+    #[cfg(not(any(unix, windows)))]
+    compile_error!(
+        "observed regular-file publication requires an atomic Unix rename or Windows handle rename"
+    );
+    // Both supported platform branches reach this point only after their one
+    // atomic namespace commit succeeded. Keep the callback before every
+    // fallible post-commit lookup so callers cannot release ownership merely
+    // because validation reports an error after the object became visible.
+    on_commit();
+    #[cfg(test)]
+    inject_open_file_post_commit_validation_failure(target_display)?;
     let published_metadata = target_parent
         .symlink_metadata(target_name)
         .with_context(|| {
@@ -2937,6 +3037,135 @@ mod tests {
         std::fs::rename(&stage, directory.join(displaced_name)).unwrap();
         std::fs::write(&stage, replacement).unwrap();
         std::fs::set_permissions(&stage, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    #[test]
+    fn open_file_publication_observer_runs_once_after_atomic_commit() {
+        let temp = tempdir().unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        let stage_name = OsStr::new("stage.tmp");
+        let target_name = OsStr::new("published.wal");
+        let stage_display = temp.path().join(stage_name);
+        let target_display = temp.path().join(target_name);
+        let (mut stage, _binding) = create_private_regular_file_child_create_new(
+            &root.dir,
+            stage_name,
+            &stage_display,
+        )
+        .unwrap();
+        use std::io::Write as _;
+        stage.write_all(b"complete authenticated prefix").unwrap();
+        stage.sync_all().unwrap();
+        let mut commits = 0usize;
+
+        publish_open_regular_file_child_observed(
+            &root.dir,
+            &stage,
+            stage_name,
+            &root.dir,
+            target_name,
+            &stage_display,
+            &target_display,
+            || {
+                commits += 1;
+                assert!(
+                    !stage_display.exists(),
+                    "commit observer must run after the source name is gone"
+                );
+                assert_eq!(
+                    std::fs::read(&target_display).unwrap(),
+                    b"complete authenticated prefix",
+                    "commit observer must see the complete canonical object"
+                );
+            },
+        )
+        .unwrap();
+
+        assert_eq!(commits, 1, "one rename must produce exactly one callback");
+    }
+
+    #[test]
+    fn open_file_publication_observer_never_runs_before_commit() {
+        let temp = tempdir().unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        let stage_name = OsStr::new("stage.tmp");
+        let target_name = OsStr::new("published.wal");
+        let stage_display = temp.path().join(stage_name);
+        let target_display = temp.path().join(target_name);
+        std::fs::write(&target_display, b"pre-existing target").unwrap();
+        let (mut stage, _binding) = create_private_regular_file_child_create_new(
+            &root.dir,
+            stage_name,
+            &stage_display,
+        )
+        .unwrap();
+        use std::io::Write as _;
+        stage.write_all(b"uncommitted prefix").unwrap();
+        stage.sync_all().unwrap();
+        let mut commits = 0usize;
+
+        publish_open_regular_file_child_observed(
+            &root.dir,
+            &stage,
+            stage_name,
+            &root.dir,
+            target_name,
+            &stage_display,
+            &target_display,
+            || commits += 1,
+        )
+        .expect_err("exclusive publication must refuse an existing target");
+
+        assert_eq!(commits, 0, "a failed rename must not claim publication");
+        assert_eq!(std::fs::read(&target_display).unwrap(), b"pre-existing target");
+        assert_eq!(std::fs::read(&stage_display).unwrap(), b"uncommitted prefix");
+    }
+
+    #[test]
+    fn open_file_publication_observer_precedes_post_commit_validation_failure() {
+        let temp = tempdir().unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        let stage_name = OsStr::new("stage.tmp");
+        let target_name = OsStr::new("published.wal");
+        let stage_display = temp.path().join(stage_name);
+        let target_display = temp.path().join(target_name);
+        let (mut stage, _binding) = create_private_regular_file_child_create_new(
+            &root.dir,
+            stage_name,
+            &stage_display,
+        )
+        .unwrap();
+        use std::io::Write as _;
+        stage.write_all(b"committed prefix").unwrap();
+        stage.sync_all().unwrap();
+        fail_open_file_post_commit_validation_for_test(&target_display);
+        let mut commits = 0usize;
+
+        let error = publish_open_regular_file_child_observed(
+            &root.dir,
+            &stage,
+            stage_name,
+            &root.dir,
+            target_name,
+            &stage_display,
+            &target_display,
+            || commits += 1,
+        )
+        .expect_err("injected validation failure follows the atomic commit");
+
+        assert!(
+            format!("{error:#}").contains("post-commit validation failure"),
+            "{error:#}"
+        );
+        assert_eq!(commits, 1, "the committed object must be reported once");
+        assert!(!stage_display.exists());
+        assert_eq!(std::fs::read(&target_display).unwrap(), b"committed prefix");
     }
 
     #[test]
