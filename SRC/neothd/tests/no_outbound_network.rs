@@ -1295,9 +1295,7 @@ fn command(
     limits: &GraphifyRunLimits,
 ) -> Result<(::tokio::process::Command, Self)> {
     if !environment.overrides.is_empty() {
-        return ::std::result::Result::Err(::anyhow::Error::msg(
-            LINUX_GRAPHIFY_NETWORK_ERROR,
-        ));
+        return ::std::result::Result::Err(::anyhow::Error::msg(LINUX_GRAPHIFY_NETWORK_ERROR));
     }
     Self::ensure_manager_available()?;
     let systemd_run = trusted_linux_systemd_tool("systemd-run")?;
@@ -4636,7 +4634,13 @@ fn ast_network_gate_allows_only_the_exact_wired_graphify_libc_denial_contract() 
             .is_empty(),
         "CRLF checkout normalization must preserve the exact Graphify token contract"
     );
-    let live_windows_checkout = include_str!("../src/graphify_runner.rs").replace('\n', "\r\n");
+    let live_graphify = include_str!("../src/graphify_runner.rs");
+    assert!(
+        forbidden_network_constructions_with_boundaries(&live_graphify, false, false, true)
+            .is_empty(),
+        "the live Graphify source must retain its exact LF denial-probe contract"
+    );
+    let live_windows_checkout = live_graphify.replace('\n', "\r\n");
     assert!(
         forbidden_network_constructions_with_boundaries(
             &live_windows_checkout,
@@ -4646,6 +4650,41 @@ fn ast_network_gate_allows_only_the_exact_wired_graphify_libc_denial_contract() 
         )
         .is_empty(),
         "the live Graphify source must retain its exact CRLF-safe denial-probe contract"
+    );
+    let live_guardian_bypass = live_graphify.replacen(
+        ".arg(LINUX_GRAPHIFY_GUARD_FLAG)",
+        ".arg(\"--uncontained\")",
+        1,
+    );
+    assert!(
+        !forbidden_network_constructions_with_boundaries(
+            &live_guardian_bypass,
+            false,
+            false,
+            true,
+        )
+        .is_empty(),
+        "the live guardian dispatch must remain wired to the fixed containment flag"
+    );
+    let live_probe_bypass = live_graphify.replacen(
+        "verify_linux_graphify_address_family_denied(\"AF_INET\", ::libc::AF_INET)?;",
+        "return Ok(());",
+        1,
+    );
+    assert!(
+        !forbidden_network_constructions_with_boundaries(&live_probe_bypass, false, false, true)
+            .is_empty(),
+        "the live denial probes must remain reachable before Graphify execution"
+    );
+    let live_wrong_family = live_graphify.replacen(
+        "verify_linux_graphify_address_family_denied(\"AF_UNIX\", ::libc::AF_UNIX)?;",
+        "verify_linux_graphify_address_family_denied(\"AF_UNIX\", ::libc::AF_INET)?;",
+        1,
+    );
+    assert!(
+        !forbidden_network_constructions_with_boundaries(&live_wrong_family, false, false, true)
+            .is_empty(),
+        "the live AF_UNIX denial probe must retain its exact address family"
     );
     assert_eq!(
         forbidden_network_constructions_in_production(&complete)
