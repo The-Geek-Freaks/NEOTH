@@ -507,11 +507,8 @@ fn open_approved_root(path: &Path) -> Result<ApprovedImportRoot, LocalImportErro
             Component::Normal(name) => {
                 let name =
                     CString::new(name.as_bytes()).map_err(|_| LocalImportError::AmbiguousRoot)?;
-                let next =
-                    openat2_root_component(&current, &name, root_component_open_flags())?;
-                let metadata = next
-                    .metadata()
-                    .map_err(|_| LocalImportError::Unavailable)?;
+                let next = openat2_root_component(&current, &name, root_component_open_flags())?;
+                let metadata = next.metadata().map_err(|_| LocalImportError::Unavailable)?;
                 if metadata.file_type().is_symlink() {
                     return Err(LocalImportError::SymlinkOrReparsePoint);
                 }
