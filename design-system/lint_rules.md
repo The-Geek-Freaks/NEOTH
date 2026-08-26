@@ -8,22 +8,24 @@ Slint application. Production tokens remain in
 ## Portability contract
 
 Every rule is assigned exactly one class. `gate-now` is the only class that
-means checked-in automation exists: it is limited to the four G2 token rules.
+means checked-in automation exists: it covers the four G2 token rules and the
+bounded ADOPT31-G5a motion source checks documented below.
 All other rows need the stated reviewer evidence; they are not automated passes.
 
 | Class | Meaning | Automated now |
 |---|---|---|
-| `gate-now` | Deterministic G2 source gate. | Yes: rules 51-54 only. |
+| `gate-now` | Deterministic source gate. | Yes: rules 51-54 and bounded G5a motion checks. |
 | `source-review` | Inspect the indicated Slint source/property pattern. | No. |
 | `text-review` | Inspect operator-visible UI copy and its structure. | No. |
 | `screenshot-required` | Inspect a target-platform render/runtime observation. | No. |
 | `DOM-not-applicable` | Requires browser DOM/JS/HTML/ARIA semantics absent from Slint. This is not a pass. | No. |
 
-`SRC/_gui_lint.ps1` and `SRC/_gui_lint.bat` provide only the four G2 checks
-listed as `gate-now`, including their narrow fixture self-test. They do not
-validate this full taxonomy or close ADOPT31-G1, ADOPT31-G4, G5-G7, or broader
-GUI/accessibility Road work. Release readiness still needs manual evidence and
-the separately required remote exact-head gates.
+`SRC/_gui_lint.ps1` and `SRC/_gui_lint.bat` provide the four G2 checks and the
+bounded G5a source checks listed as `gate-now`, including narrow fixture
+self-tests. They do not validate this full taxonomy or close ADOPT31-G1,
+ADOPT31-G4, the remainder of G5-G7, or broader GUI/accessibility Road work.
+Release readiness still needs manual evidence and the separately required
+remote exact-head gates.
 
 ## Rule catalog
 
@@ -91,6 +93,43 @@ impeccable's browser engine can execute against Slint.
 | 57 | `codex-grid-background` | Inspect generic dot-grid/line-grid background decoration. | `screenshot-required` |
 | 58 | `theater-slop-phrase` | Review UI strings for theatre-style future/tomorrow claims. | `text-review` |
 | 59 | `image-hover-transform` | Review hover/animation declarations for image scale/lift. | `source-review` |
+
+## ADOPT31-G5a bounded motion source gate
+
+G5a is deliberately a small executable-source gate, not a visual-motion
+certification. It runs after the same nested comment and string-literal masking
+used by the G2 source lint; words in comments or UI text cannot create or
+approve a motion finding.
+
+The gate emits only these motion rule identifiers:
+
+| Rule | Detects | Fail-closed allowance condition |
+|---|---|---|
+| `motion-bounce-spring` | An executable `animate` block containing `spring` or `bounce`. | A source-local exact baseline entry hashes the complete canonical animate block. |
+| `motion-layout-animation` | `animate width`, `height`, `x`, `y`, `padding`, or `spacing`. | A source-local exact baseline entry hashes the complete canonical animate block. |
+| `motion-marquee` | A direct `x` or `y` assignment driven by `animation-tick()`. | A source-local exact baseline entry hashes the canonical assignment. |
+| `motion-pulse-guard` | A direct `opacity` or `scale` assignment driven by `animation-tick()`. | The expression must contain `Theme.animation-mode == 0` before the tick path and match an exact baseline entry. |
+
+The checked-in production baseline is
+[`gui_motion_allowlist.json`](gui_motion_allowlist.json). It is intentionally
+not a glob list. Each entry binds a normalized GUI-relative `.slint` path, rule,
+property, SHA-256 fingerprint of the whitespace-canonical executable expression,
+reason, and its required reduced-motion contract. JSON schema, duplicate keys,
+unsafe paths, unknown rules/properties, malformed fingerprints, absent source
+files, and stale entries are fatal. Any executable expression change therefore
+creates an unallowlisted finding instead of silently inheriting an approval.
+
+The baseline is limited to transitions and semantic status pulses found in the
+scoped G5a audit. It does not allow a new spring/bounce effect, marquee, or
+continuous pulse by category. `Theme.animation-mode == 0` is the required
+static-safe branch for a continuous opacity/scale expression; duration-based
+layout entries separately document the existing theme duration-to-0ms contract.
+
+`SRC/gui_lint_fixtures/` contains positive and negative static self-test cases:
+an exact allowed transition; one failure each for bounce/spring, layout,
+marquee, and missing pulse guard; comment/string decoys; and a changed approved
+expression. These fixtures are source-gate evidence only. They are not a Slint
+compiler, runtime, accessibility, or reduced-motion rendering proof.
 
 ## Attribution and adaptation boundary
 

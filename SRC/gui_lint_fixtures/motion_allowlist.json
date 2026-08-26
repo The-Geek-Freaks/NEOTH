@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "rule": "motion-layout-animation",
+      "path": "motion.slint",
+      "property": "width",
+      "expression_fingerprint": "sha256:609aa181935cb00dc9da7b5fa4c67350758e922e21e9f17c0de6c9580b2d1f72",
+      "reason": "Fixture proves the exact reviewed layout animation path.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves the fixture duration to 0ms."
+    },
+    {
+      "rule": "motion-pulse-guard",
+      "path": "motion.slint",
+      "property": "opacity",
+      "expression_fingerprint": "sha256:a3955574afa48d8b7153275e1755e8b592f437c24421e959c2448c0abd541535",
+      "reason": "Fixture proves a guarded semantic pulse with a static outer fallback.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 selects a static value before animation-tick()."
+    }
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "rule": "motion-layout-animation",
+      "path": "activity.slint",
+      "property": "width",
+      "expression_fingerprint": "sha256:85f4d9fe0ae807a9662857605b92d9de5fce97124924aed586610875f7d2f3e9",
+      "reason": "Activity panel uses a bounded open and close transition.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-pulse-guard",
+      "path": "activity.slint",
+      "property": "opacity",
+      "expression_fingerprint": "sha256:1127758d293b0bddd3cd1dbfb28f7f4ae1cb8c0f6424c8833de1a3908c7e5445",
+      "reason": "Active task dot communicates live activity to the operator.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 selects static opacity before animation-tick()."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "app_shell.slint",
+      "property": "height",
+      "expression_fingerprint": "sha256:de4396b19fe4f72c66339ee07faccf432a575f9b2959fa517c4927f565aa4ee1",
+      "reason": "The active navigation marker expands only on a state change.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "chat.slint",
+      "property": "height",
+      "expression_fingerprint": "sha256:7d9642ae10e70929f6c65c2f79d164645bbf3bf4068fdb4a05e18f26a89eb90e",
+      "reason": "Chat rows use a bounded fast height transition for state changes.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "chat.slint",
+      "property": "height",
+      "expression_fingerprint": "sha256:de4396b19fe4f72c66339ee07faccf432a575f9b2959fa517c4927f565aa4ee1",
+      "reason": "Chat expansion uses a bounded base-duration height transition.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "components.slint",
+      "property": "width",
+      "expression_fingerprint": "sha256:f2e24b9ac0181efd14a50d75e1c469bbc23d2c3cb4690b7c3f6f1aa586135738",
+      "reason": "Component underline feedback is a bounded micro transition.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "components.slint",
+      "property": "height",
+      "expression_fingerprint": "sha256:de4396b19fe4f72c66339ee07faccf432a575f9b2959fa517c4927f565aa4ee1",
+      "reason": "Expandable component content uses a bounded base transition.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "components.slint",
+      "property": "width",
+      "expression_fingerprint": "sha256:b2fc21a91474ad0127b19b1efb90d8656be8f6e1911c43e792a746b57ae68c2a",
+      "reason": "Component progress width reflects bounded screen-min updates.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "components.slint",
+      "property": "height",
+      "expression_fingerprint": "sha256:7d9642ae10e70929f6c65c2f79d164645bbf3bf4068fdb4a05e18f26a89eb90e",
+      "reason": "Component selection marker uses a bounded fast transition.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-pulse-guard",
+      "path": "components.slint",
+      "property": "opacity",
+      "expression_fingerprint": "sha256:a8d8ac842809590315b1c42efa534db0d0cfe78dedfddf7c526f0f83877c7afc",
+      "reason": "Shared status LED pulse is semantic state feedback, not decoration.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 selects static opacity before animation-tick()."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "loop.slint",
+      "property": "width",
+      "expression_fingerprint": "sha256:b1a1c3644a4e801df034e6ec4f0c179dc6e3bcb63c4c75e9b6e3621ceeba1d84",
+      "reason": "Convergence progress changes with a bounded slow width transition.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "memory_graph.slint",
+      "property": "width",
+      "expression_fingerprint": "sha256:4809181081002257c5e551a2f50390f9015759dcdfb60fb0dcc4947b58f4074b",
+      "reason": "Memory graph node width follows bounded graph-state updates.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "memory_graph.slint",
+      "property": "height",
+      "expression_fingerprint": "sha256:7d9642ae10e70929f6c65c2f79d164645bbf3bf4068fdb4a05e18f26a89eb90e",
+      "reason": "Memory graph node height follows bounded graph-state updates.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "overlay.slint",
+      "property": "height",
+      "expression_fingerprint": "sha256:41202eb22362dc1a883469fc6bd8ba9ed29a9f2893330ed8b1b7c3936f605152",
+      "reason": "Overlay sections reveal only during bounded state transitions.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "wal_inspector.slint",
+      "property": "height",
+      "expression_fingerprint": "sha256:7d9642ae10e70929f6c65c2f79d164645bbf3bf4068fdb4a05e18f26a89eb90e",
+      "reason": "WAL inspector activity marker follows bounded state changes.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    },
+    {
+      "rule": "motion-layout-animation",
+      "path": "wal_timeline.slint",
+      "property": "width",
+      "expression_fingerprint": "sha256:4809181081002257c5e551a2f50390f9015759dcdfb60fb0dcc4947b58f4074b",
+      "reason": "WAL timeline selection rail has a bounded width transition.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves Theme.duration-* to 0ms."
+    }
+  ]
+}

@@ -95,6 +95,7 @@ or accessibility pass.
    [`AUDIT_CHECKLIST.md`](AUDIT_CHECKLIST.md); a missing render, accessibility,
    or remote exact-head gate is incomplete, not a pass.
 
-The current automated GUI lint covers only the four G2 token-drift checks. It
-does not prove visual quality, accessibility, responsiveness, or a functional
-UI action.
+The current automated GUI lint covers the four G2 token-drift checks plus the
+bounded G5a motion source checks backed by the exact reviewed baseline. It does
+not prove visual quality, accessibility, responsiveness, runtime motion
+behavior, or a functional UI action.
