@@ -1435,8 +1435,7 @@ fn reviewed_graphify_libc_probe_contract(file: &syn::File) -> Option<Range<usize
             _ => None,
         });
         let function = matches.next()?;
-        if matches.next().is_some() || !graphify_function_tokens_match(function, expected)
-        {
+        if matches.next().is_some() || !graphify_function_tokens_match(function, expected) {
             return None;
         }
         if name == "verify_linux_graphify_address_family_denied" {
@@ -1551,11 +1550,7 @@ struct BailMacroDefinitionVisitor {
 
 impl<'ast> Visit<'ast> for BailMacroDefinitionVisitor {
     fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
-        if item
-            .ident
-            .as_ref()
-            .is_some_and(|name| *name == "bail")
-        {
+        if item.ident.as_ref().is_some_and(|name| *name == "bail") {
             self.found = true;
         }
         visit::visit_item_macro(self, item);
@@ -1563,26 +1558,37 @@ impl<'ast> Visit<'ast> for BailMacroDefinitionVisitor {
 }
 
 fn graphify_function_tokens_match(function: &syn::ItemFn, expected: &str) -> bool {
-    let mut actual = function.clone();
-    actual
-        .attrs
-        .retain(|attribute| !attribute.path().is_ident("doc"));
-    graphify_tokens_match(&actual, expected)
+    let Ok(expected) = syn::parse_str::<syn::ItemFn>(expected) else {
+        return false;
+    };
+    graphify_function_token_string(function) == graphify_function_token_string(&expected)
 }
 
 fn graphify_impl_function_tokens_match(function: &syn::ImplItemFn, expected: &str) -> bool {
-    let mut actual = function.clone();
-    actual
-        .attrs
-        .retain(|attribute| !attribute.path().is_ident("doc"));
-    graphify_tokens_match(&actual, expected)
-}
-
-fn graphify_tokens_match<T: ToTokens>(actual: &T, expected: &str) -> bool {
-    let Ok(expected) = expected.parse::<proc_macro2::TokenStream>() else {
+    let wrapped = format!("impl GraphifyContract {{ {expected} }}");
+    let Ok(expected) = syn::parse_str::<syn::ItemImpl>(&wrapped) else {
         return false;
     };
-    actual.to_token_stream().to_string() == expected.to_string()
+    let [ImplItem::Fn(expected)] = expected.items.as_slice() else {
+        return false;
+    };
+    graphify_impl_function_token_string(function) == graphify_impl_function_token_string(expected)
+}
+
+fn graphify_function_token_string(function: &syn::ItemFn) -> String {
+    let mut normalized = function.clone();
+    normalized
+        .attrs
+        .retain(|attribute| !attribute.path().is_ident("doc"));
+    normalized.into_token_stream().to_string()
+}
+
+fn graphify_impl_function_token_string(function: &syn::ImplItemFn) -> String {
+    let mut normalized = function.clone();
+    normalized
+        .attrs
+        .retain(|attribute| !attribute.path().is_ident("doc"));
+    normalized.into_token_stream().to_string()
 }
 
 fn graphify_systemd_command_contract_is_exact(file: &syn::File) -> bool {
@@ -1604,9 +1610,7 @@ fn graphify_systemd_command_contract_is_exact(file: &syn::File) -> bool {
         })
         .flat_map(|implementation| implementation.items.iter())
         .filter_map(|item| match item {
-            syn::ImplItem::Fn(function) if function.sig.ident == "command" => {
-                Some(function)
-            }
+            syn::ImplItem::Fn(function) if function.sig.ident == "command" => Some(function),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -4607,6 +4611,20 @@ fn ast_network_gate_allows_only_the_exact_wired_graphify_libc_denial_contract() 
     assert!(graphify_binary_main_contract_is_exact(
         GRAPHIFY_BINARY_MAIN_CONTRACT
     ));
+    let live_main_windows_checkout = include_str!("../src/main.rs").replace('\n', "\r\n");
+    assert!(
+        graphify_binary_main_contract_is_exact(&live_main_windows_checkout),
+        "the live main guardian dispatch must remain exact under CRLF checkout normalization"
+    );
+    let mutated_live_main = live_main_windows_checkout.replacen(
+        "::neothd::graphify_runner::run_linux_graphify_containment_guard_if_requested()",
+        "::std::option::Option::None",
+        1,
+    );
+    assert!(
+        !graphify_binary_main_contract_is_exact(&mutated_live_main),
+        "CRLF normalization must not admit a removed live guardian dispatch"
+    );
     let complete = graphify_contract_fixture();
     assert!(
         forbidden_network_constructions_with_boundaries(&complete, false, false, true).is_empty(),
