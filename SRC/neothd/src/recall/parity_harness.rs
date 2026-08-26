@@ -29,6 +29,12 @@ use super::{
         load_operator_anchor_evidence_link_bytes,
         load_operator_anchor_evidence_link_with_provenance,
     },
+    parity_batch_plan::{
+        FOUR_GRADER_BATCH_PLAN_PURPOSE, FOUR_GRADER_COUNT, FourGraderBatchItem,
+        FourGraderBatchPlan, FourGraderBatchResultArtifact,
+        FourGraderInputDigestFile, SignedFourGraderBatchResultReceipt,
+        parse_four_grader_input_digests, validate_plan_shape,
+    },
     parity_candidate_evidence::{
         ValidatedCandidateEvidence, validate_persisted_candidate_evidence_metadata,
     },
@@ -51,6 +57,8 @@ const CANDIDATE_EVIDENCE_MANIFEST_FILE: &str = "candidate-evidence-manifest.json
 const CANDIDATE_EVIDENCE_RECEIPT_FILE: &str = "candidate-evidence-receipt.json";
 const CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE: &str = "candidate-evidence-receipt-pubkey.txt";
 const CANDIDATE_EVIDENCE_CANDIDATES_FILE: &str = "candidate-evidence-candidates.jsonl";
+const FOUR_GRADER_BATCH_INPUT_FILE: &str = "four-grader-batch-input-digests.json";
+const FOUR_GRADER_BATCH_PLAN_FILE: &str = "four-grader-batch-plan.json";
 const LOCK_FILE: &str = ".parity-harness.lock";
 
 /// Capability-bound run namespace. Its root directory and advisory lock are
@@ -72,6 +80,22 @@ impl BoundParityRun {
         let (lock, lock_identity) = crate::skills::store::open_or_create_bound_lockfile(
             &root.dir, std::ffi::OsStr::new(LOCK_FILE), &lock_display,
         )?;
+        lock.try_lock().context("parity run is already being modified")?;
+        Ok(Self { root, lock, lock_identity })
+    }
+
+    /// Read-only consumers must never create a run, state, or lockfile as a
+    /// side effect of a failed verification request.
+    fn open_existing(run_dir: &Path) -> Result<Self> {
+        let anchor = run_dir.parent().context("parity run directory has no trusted parent")?;
+        let root = crate::skills::store::open_bound_directory_from_trusted_anchor(
+            anchor, run_dir, false, "existing parity run",
+        )?.context("parity run directory does not exist")?;
+        let lock_display = root.display_path.join(LOCK_FILE);
+        let (lock, lock_identity) = crate::skills::store::open_bound_regular_file(
+            &root.dir, std::ffi::OsStr::new(LOCK_FILE), &lock_display,
+        )?;
+        let lock = lock.into_std();
         lock.try_lock().context("parity run is already being modified")?;
         Ok(Self { root, lock, lock_identity })
     }
@@ -217,6 +241,17 @@ pub struct OperatorAnchorRunBinding {
     pub gate_eligible: bool,
 }
 
+/// Redacted validation projection for externally attested four-grader results.
+/// It does not persist grades, make a report, or alter gate authority; callers
+/// still use the existing signed import-receipt path for actual grade ingest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FourGraderBatchResultSummary {
+    pub batch_plan_sha256: String,
+    pub result_artifacts: Vec<FourGraderBatchResultArtifact>,
+    pub result_receipt_verified: bool,
+    pub gate_eligible: bool,
+}
+
 /// Canonical state provenance. Publication bookkeeping stays in
 /// `ParityRunState::report_sha256` and is deliberately excluded so an auditor
 /// can recompute this digest from every persisted state generation.
@@ -274,6 +309,7 @@ pub fn plan_run(
     let run = BoundParityRun::open_or_create(run_dir)?;
     let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
     validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?;
     Ok(manifest)
 }
 
@@ -325,6 +361,27 @@ fn plan_run_locked(
     run.create_child(MANIFEST_FILE, &serde_json::to_vec(&manifest)?)?;
     let state = empty_state_for_manifest(&manifest)?;
     run.create_child(STATE_FILE, &serde_json::to_vec(&state)?)?;
+    Ok(manifest)
+}
+
+fn load_existing_run_manifest(
+    run: &BoundParityRun,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+) -> Result<ParityRunManifest> {
+    verify_bound_inputs(grader_config, config_bytes, goldset, goldset_bytes)?;
+    let bytes = run.read_child(MANIFEST_FILE, 1024 * 1024)?;
+    let manifest: ParityRunManifest = serde_json::from_slice(&bytes)
+        .context("parse existing bound parity manifest")?;
+    validate_manifest(&manifest)?;
+    if !manifest_matches_inputs(&manifest, grader_config, config_bytes, goldset_bytes) {
+        anyhow::bail!("existing parity run binds different config/goldset/roster bytes");
+    }
+    let state = load_state_for_manifest(run, &manifest)?;
+    validate_state_imports(run, &state, grader_config, goldset)?;
+    run.revalidate_lock()?;
     Ok(manifest)
 }
 
@@ -412,6 +469,7 @@ pub fn ingest_operator_anchor_evidence(
         64 * 1024,
     )?;
     validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?;
     Ok(binding)
 }
 
@@ -634,6 +692,226 @@ fn validate_operator_anchor_binding(
     Ok(())
 }
 
+/// Create or reopen the immutable four-grader offline execution plan. The
+/// supplied digests name externally prepared prompts/requests but never grant
+/// this process provider, network, credential, or dispatch authority.
+pub fn plan_four_grader_batch(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    input_digest_bytes: &[u8],
+) -> Result<FourGraderBatchPlan> {
+    let run = BoundParityRun::open_or_create(run_dir)?;
+    let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
+    validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    let inputs = parse_four_grader_input_digests(input_digest_bytes)?;
+    let anchor_binding = read_bound_immutable_run_child(
+        &run, OPERATOR_ANCHOR_BINDING_FILE, 64 * 1024,
+    )?.context("four-grader batch plan requires a complete operator anchor ingest")?;
+    let anchor: OperatorAnchorRunBinding = serde_json::from_slice(&anchor_binding.bytes)
+        .map_err(|_| anyhow::anyhow!("parse immutable operator anchor batch binding"))?;
+    validate_operator_anchor_binding(&anchor, &manifest)?;
+    let plan = four_grader_batch_plan_for(
+        &manifest,
+        grader_config,
+        &anchor,
+        sha256_bytes(&anchor_binding.bytes),
+        &inputs,
+    )?;
+    anchor_binding.revalidate(&run, OPERATOR_ANCHOR_BINDING_FILE)?;
+    run.revalidate_lock()?;
+    create_immutable_run_child(
+        &run, FOUR_GRADER_BATCH_INPUT_FILE, input_digest_bytes, 64 * 1024,
+    )?;
+    anchor_binding.revalidate(&run, OPERATOR_ANCHOR_BINDING_FILE)?;
+    run.revalidate_lock()?;
+    create_immutable_run_child(
+        &run, FOUR_GRADER_BATCH_PLAN_FILE,
+        &plan.canonical_bytes()?, 64 * 1024,
+    )?;
+    let verified = validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?
+        .context("four-grader batch plan disappeared after immutable publish")?;
+    Ok(verified.plan)
+}
+
+/// Verify exactly four offline result sheets against an immutable batch plan
+/// and externally supplied Ed25519 receipt. This is intentionally a
+/// verification/export seam: it persists neither results nor a gate verdict.
+/// Grade persistence remains the existing offline ingest plus signed import
+/// receipt path, preventing this contract from adding report authority.
+pub fn validate_attested_four_grader_batch_results(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    receipt: &SignedFourGraderBatchResultReceipt,
+    expected_receipt_pubkey_b64: &str,
+    result_bytes: &[Vec<u8>],
+) -> Result<FourGraderBatchResultSummary> {
+    let run = BoundParityRun::open_existing(run_dir)?;
+    let manifest = load_existing_run_manifest(
+        &run, grader_config, config_bytes, goldset, goldset_bytes,
+    )?;
+    validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    let verified_plan = validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?
+        .context("attested batch results require an immutable four-grader batch plan")?;
+    let plan = &verified_plan.plan;
+    if result_bytes.len() != FOUR_GRADER_COUNT {
+        anyhow::bail!("attested batch result verification requires exactly four result files");
+    }
+    let mut results = Vec::with_capacity(FOUR_GRADER_COUNT);
+    for bytes in result_bytes {
+        if bytes.len() as u64 > MAX_GRADES_BYTES {
+            anyhow::bail!("attested batch result exceeds the bounded grade byte limit");
+        }
+        let grades = super::goldset::load_grades_bytes(bytes, "attested four-grader batch result")?;
+        let grader_id = validate_single_grader_matrix(grader_config, goldset, &grades)?;
+        results.push(FourGraderBatchResultArtifact {
+            grader_id,
+            result_sha256: sha256_bytes(bytes),
+            record_count: grades.len(),
+        });
+    }
+    results.sort_by(|left, right| left.grader_id.cmp(&right.grader_id));
+    if results.windows(2).any(|pair| pair[0].grader_id == pair[1].grader_id) {
+        anyhow::bail!("attested batch results contain duplicate grader output");
+    }
+    let plan_ids = plan.items.iter().map(|item| item.grader_id.as_str()).collect::<Vec<_>>();
+    let result_ids = results.iter().map(|result| result.grader_id.as_str()).collect::<Vec<_>>();
+    if result_ids != plan_ids
+        || results.iter().zip(&plan.items).any(|(result, item)| result.record_count != item.expected_record_count)
+    {
+        anyhow::bail!("attested batch results do not exactly cover the planned four grader outputs");
+    }
+    receipt.verify(expected_receipt_pubkey_b64)?;
+    if receipt.body.run_id != manifest.run_id
+        || receipt.body.run_manifest_sha256 != sha256_json(&manifest)?
+        || receipt.body.batch_plan_sha256 != sha256_bytes(&verified_plan.plan_bytes)
+        || receipt.body.results != results
+    {
+        anyhow::bail!("attested batch result receipt does not exactly bind this run, plan, and result bytes");
+    }
+    let summary = FourGraderBatchResultSummary {
+        batch_plan_sha256: sha256_bytes(&verified_plan.plan_bytes),
+        result_artifacts: results,
+        result_receipt_verified: true,
+        gate_eligible: false,
+    };
+    verified_plan.revalidate(&run)?;
+    Ok(summary)
+}
+
+fn four_grader_batch_plan_for(
+    manifest: &ParityRunManifest,
+    grader_config: &ValidatedGraderConfigFile,
+    anchor: &OperatorAnchorRunBinding,
+    anchor_binding_sha256: String,
+    inputs: &FourGraderInputDigestFile,
+) -> Result<FourGraderBatchPlan> {
+    if grader_config.graders().len() != FOUR_GRADER_COUNT {
+        anyhow::bail!("four-grader batch plan requires exactly four validated graders");
+    }
+    let mut graders = grader_config.graders().iter().collect::<Vec<_>>();
+    graders.sort_by(|left, right| left.grader_id.cmp(&right.grader_id));
+    let input_ids = inputs.inputs.iter().map(|input| input.grader_id.as_str()).collect::<Vec<_>>();
+    let grader_ids = graders.iter().map(|grader| grader.grader_id.as_str()).collect::<Vec<_>>();
+    if input_ids != grader_ids {
+        anyhow::bail!("four-grader input digests do not exactly cover the validated roster");
+    }
+    let items = graders.into_iter().zip(&inputs.inputs).map(|(grader, input)| {
+        Ok(FourGraderBatchItem {
+            grader_id: grader.grader_id.clone(),
+            provider: serde_json::to_string(&grader.provider)?.trim_matches('"').to_owned(),
+            model_id: grader.model_id.clone(),
+            family: serde_json::to_string(&grader.family)?.trim_matches('"').to_owned(),
+            grader_config_sha256: sha256_json(grader)?,
+            prompt_sha256: input.prompt_sha256.clone(),
+            input_sha256: input.input_sha256.clone(),
+            expected_record_count: EXPECTED_GOLDSET_QUERIES * 2,
+        })
+    }).collect::<Result<Vec<_>>>()?;
+    let plan = FourGraderBatchPlan {
+        schema_version: super::parity_batch_plan::FOUR_GRADER_BATCH_SCHEMA_VERSION,
+        purpose: FOUR_GRADER_BATCH_PLAN_PURPOSE.into(),
+        run_id: manifest.run_id.clone(),
+        run_manifest_sha256: sha256_json(manifest)?,
+        config_sha256: manifest.config_sha256.clone(),
+        goldset_sha256: manifest.goldset_sha256.clone(),
+        operator_anchor_binding_sha256: anchor_binding_sha256,
+        operator_anchor_sha256: anchor.operator_anchor_sha256.clone(),
+        operator_anchor_link_sha256: anchor.operator_anchor_link_sha256.clone(),
+        candidate_manifest_sha256: anchor.candidate_manifest_sha256.clone(),
+        candidate_receipt_sha256: anchor.candidate_receipt_sha256.clone(),
+        candidate_receipt_pubkey_sha256: anchor.candidate_receipt_pubkey_sha256.clone(),
+        candidate_vector_sha256: anchor.candidate_vector_sha256.clone(),
+        items,
+        gate_eligible: false,
+    };
+    validate_plan_shape(&plan)?;
+    Ok(plan)
+}
+
+struct ValidatedFourGraderBatchPlan {
+    plan: FourGraderBatchPlan,
+    plan_bytes: Vec<u8>,
+    input_artifact: BoundImmutableRunChild,
+    plan_artifact: BoundImmutableRunChild,
+    anchor_binding: BoundImmutableRunChild,
+}
+
+impl ValidatedFourGraderBatchPlan {
+    fn revalidate(&self, run: &BoundParityRun) -> Result<()> {
+        self.input_artifact.revalidate(run, FOUR_GRADER_BATCH_INPUT_FILE)?;
+        self.plan_artifact.revalidate(run, FOUR_GRADER_BATCH_PLAN_FILE)?;
+        self.anchor_binding.revalidate(run, OPERATOR_ANCHOR_BINDING_FILE)?;
+        run.revalidate_lock()
+    }
+}
+
+fn validate_four_grader_batch_plan_if_present(
+    run: &BoundParityRun,
+    manifest: &ParityRunManifest,
+    grader_config: &ValidatedGraderConfigFile,
+) -> Result<Option<ValidatedFourGraderBatchPlan>> {
+    let input = read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_INPUT_FILE, 64 * 1024)?;
+    let plan = read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_PLAN_FILE, 64 * 1024)?;
+    if input.is_none() && plan.is_none() { return Ok(None); }
+    let (input, plan) = match (input, plan) {
+        (Some(input), Some(plan)) => (input, plan),
+        _ => anyhow::bail!("incomplete four-grader batch plan; retry batch-plan with identical artifacts or use a fresh run"),
+    };
+    let inputs = parse_four_grader_input_digests(&input.bytes)?;
+    let stored: FourGraderBatchPlan = serde_json::from_slice(&plan.bytes)
+        .map_err(|_| anyhow::anyhow!("parse immutable four-grader batch plan"))?;
+    validate_plan_shape(&stored)?;
+    let anchor_binding = read_bound_immutable_run_child(run, OPERATOR_ANCHOR_BINDING_FILE, 64 * 1024)?
+        .context("four-grader batch plan has no complete operator anchor binding")?;
+    let anchor: OperatorAnchorRunBinding = serde_json::from_slice(&anchor_binding.bytes)
+        .map_err(|_| anyhow::anyhow!("parse immutable operator anchor batch binding"))?;
+    validate_operator_anchor_binding(&anchor, manifest)?;
+    let expected = four_grader_batch_plan_for(
+        manifest, grader_config, &anchor, sha256_bytes(&anchor_binding.bytes), &inputs,
+    )?;
+    if stored != expected {
+        anyhow::bail!("immutable four-grader batch plan does not exactly match run provenance and input digests");
+    }
+    if plan.bytes != expected.canonical_bytes()? {
+        anyhow::bail!("immutable four-grader batch plan is not the exact canonical plan bytes");
+    }
+    let verified = ValidatedFourGraderBatchPlan {
+        plan: stored,
+        plan_bytes: plan.bytes.clone(),
+        input_artifact: input,
+        plan_artifact: plan,
+        anchor_binding,
+    };
+    verified.revalidate(run)?;
+    Ok(Some(verified))
+}
+
 /// Import one explicit, offline grade file. A byte-identical retry is a no-op;
 /// a second or altered file for the same grader is rejected.
 pub fn ingest_offline_grades(
@@ -647,6 +925,7 @@ pub fn ingest_offline_grades(
     let run = BoundParityRun::open_or_create(run_dir)?;
     let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
     validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?;
     let state_bytes = run.read_child(STATE_FILE, 1024 * 1024)?;
     let mut state = load_state_for_manifest(&run, &manifest)?;
     validate_state_imports(&run, &state, grader_config, goldset)?;
@@ -726,6 +1005,7 @@ pub fn build_report(
     let run_dir = BoundParityRun::open_or_create(run_dir)?;
     let manifest = plan_run_locked(&run_dir, grader_config, config_bytes, goldset, goldset_bytes)?;
     validate_operator_anchor_artifacts_if_present(&run_dir, &manifest, grader_config, goldset)?;
+    validate_four_grader_batch_plan_if_present(&run_dir, &manifest, grader_config)?;
     let state_bytes = run_dir.read_child(STATE_FILE, 1024 * 1024)?;
     let mut state = load_state_for_manifest(&run_dir, &manifest)?;
     validate_state_imports(&run_dir, &state, grader_config, goldset)?;

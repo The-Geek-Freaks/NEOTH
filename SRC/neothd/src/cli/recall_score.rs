@@ -23,8 +23,8 @@ use crate::recall::parity_run::{ParityRunResult, compute_parity_run};
 use crate::recall::{
     goldset::{MAX_GOLDSET_BYTES, MAX_GRADER_CONFIG_BYTES},
     parity_harness::{
-        build_report, ingest_offline_grades, ingest_operator_anchor_evidence, plan_run,
-        read_offline_input,
+        build_report, ingest_offline_grades, ingest_operator_anchor_evidence, plan_four_grader_batch,
+        plan_run, read_offline_input, validate_attested_four_grader_batch_results,
     },
     parity_anchor::{
         MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES, load_operator_anchor_bytes,
@@ -32,6 +32,7 @@ use crate::recall::{
     },
     parity_candidate_evidence::{load_imported_candidate_evidence, summarize_candidate_evidence},
     parity_import_receipt::{MAX_PARITY_IMPORT_RECEIPT_BYTES, parse_signed_parity_import_receipt},
+    parity_batch_plan::{MAX_FOUR_GRADER_BATCH_BYTES, parse_signed_four_grader_batch_result_receipt},
 };
 
 #[derive(Args, Debug, Clone)]
@@ -161,6 +162,35 @@ pub enum RecallParityHarnessOperation {
         #[arg(long = "operator-anchor-link", value_name = "PATH")]
         operator_anchor_link: PathBuf,
     },
+    /// Persist an offline-only execution plan for exactly four validated
+    /// graders. It exports hashes, never prompts, credentials, or provider work.
+    BatchPlan {
+        #[arg(long, value_name = "DIR")]
+        run_dir: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+        #[arg(long = "batch-input-digests", value_name = "PATH")]
+        batch_input_digests: PathBuf,
+    },
+    /// Verify four externally produced grade files against an immutable batch
+    /// plan and a detached out-of-band Ed25519 result receipt. This command
+    /// does not dispatch providers, ingest grades, or change a gate.
+    BatchResultsVerify {
+        #[arg(long, value_name = "DIR")]
+        run_dir: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+        #[arg(long = "batch-result-receipt", value_name = "PATH")]
+        batch_result_receipt: PathBuf,
+        #[arg(long = "expected-batch-result-pubkey", value_name = "BASE64")]
+        expected_batch_result_pubkey: String,
+        #[arg(long = "result", required = true, num_args = 4, value_name = "PATH")]
+        results: Vec<PathBuf>,
+    },
 }
 
 pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<()> {
@@ -180,7 +210,9 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
         | RecallParityHarnessOperation::Report { grader_config, goldset, .. }
         | RecallParityHarnessOperation::Show { grader_config, goldset, .. }
         | RecallParityHarnessOperation::AnchorValidate { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::AnchorIngest { grader_config, goldset, .. } => {
+        | RecallParityHarnessOperation::AnchorIngest { grader_config, goldset, .. }
+        | RecallParityHarnessOperation::BatchPlan { grader_config, goldset, .. }
+        | RecallParityHarnessOperation::BatchResultsVerify { grader_config, goldset, .. } => {
             (grader_config, goldset)
         }
         RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
@@ -263,6 +295,37 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                         &link_bytes,
                     )?;
                     render_harness_json(&binding, &output)?;
+                }
+                RecallParityHarnessOperation::BatchPlan {
+                    run_dir, batch_input_digests, ..
+                } => {
+                    let input_bytes = read_offline_input(
+                        &batch_input_digests,
+                        MAX_FOUR_GRADER_BATCH_BYTES as u64,
+                        "four-grader batch input digests",
+                    )?;
+                    let plan = plan_four_grader_batch(
+                        &run_dir, &config, &config_bytes, &entries, &goldset_bytes, &input_bytes,
+                    )?;
+                    render_harness_json(&plan.export()?, &output)?;
+                }
+                RecallParityHarnessOperation::BatchResultsVerify {
+                    run_dir, batch_result_receipt, expected_batch_result_pubkey, results, ..
+                } => {
+                    let receipt_bytes = read_offline_input(
+                        &batch_result_receipt,
+                        MAX_FOUR_GRADER_BATCH_BYTES as u64,
+                        "signed four-grader batch result receipt",
+                    )?;
+                    let receipt = parse_signed_four_grader_batch_result_receipt(&receipt_bytes)?;
+                    let result_bytes = results.iter().map(|path| read_offline_input(
+                        path, crate::recall::goldset::MAX_GRADES_BYTES, "attested four-grader result",
+                    )).collect::<Result<Vec<_>>>()?;
+                    let summary = validate_attested_four_grader_batch_results(
+                        &run_dir, &config, &config_bytes, &entries, &goldset_bytes,
+                        &receipt, &expected_batch_result_pubkey, &result_bytes,
+                    )?;
+                    render_harness_json(&summary, &output)?;
                 }
                 RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
                     unreachable!("candidate evidence returns before config/goldset input loading")

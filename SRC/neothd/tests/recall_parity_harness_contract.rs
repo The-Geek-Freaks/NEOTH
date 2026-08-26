@@ -7,6 +7,7 @@
 const HARNESS: &str = include_str!("../src/recall/parity_harness.rs");
 const ANCHOR: &str = include_str!("../src/recall/parity_anchor.rs");
 const CANDIDATE_EVIDENCE: &str = include_str!("../src/recall/parity_candidate_evidence.rs");
+const BATCH: &str = include_str!("../src/recall/parity_batch_plan.rs");
 const RECEIPT: &str = include_str!("../src/recall/parity_import_receipt.rs");
 const CLI: &str = include_str!("../src/cli/recall_score.rs");
 
@@ -171,6 +172,7 @@ fn bound_operator_anchor_ingest_stays_immutable_redacted_and_non_gate() {
         "candidate_receipt_sha256",
         "candidate_receipt_pubkey_sha256",
         "candidate_vector_sha256",
+        "canonical_sha256",
         "CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE",
         "receipt.verify(expected_receipt_pubkey_b64)",
     ] {
@@ -189,4 +191,46 @@ fn bound_operator_anchor_ingest_stays_immutable_redacted_and_non_gate() {
     }
     assert!(CLI.contains("AnchorIngest"));
     assert!(CLI.contains("long = \"operator-anchor-link\""));
+}
+
+#[test]
+fn four_grader_batch_stays_offline_attested_and_non_gate() {
+    for forbidden in ["File::open(", "fs::copy", "fs::rename", "reqwest", "Command::", "wal::writer", "build_report("] {
+        assert!(
+            !BATCH.contains(forbidden),
+            "four-grader batch contract must not acquire {forbidden} authority"
+        );
+    }
+    for required in [
+        "FOUR_GRADER_COUNT: usize = 4",
+        "FOUR_GRADER_BATCH_PLAN_PURPOSE",
+        "FOUR_GRADER_BATCH_RESULT_RECEIPT_PURPOSE",
+        "run_manifest_sha256",
+        "operator_anchor_binding_sha256",
+        "candidate_vector_sha256",
+        "prompt_sha256",
+        "input_sha256",
+        "strictly sorted by unique grader_id",
+        "verify_b64",
+        "gate_eligible: bool",
+        "deny_unknown_fields",
+    ] {
+        assert!(BATCH.contains(required), "four-grader batch contract lost {required}");
+    }
+    for required in [
+        "plan_four_grader_batch",
+        "validate_attested_four_grader_batch_results",
+        "validate_four_grader_batch_plan_if_present",
+        "FOUR_GRADER_BATCH_PLAN_FILE",
+        "immutable four-grader batch plan is not the exact canonical plan bytes",
+        "result_receipt_verified: true",
+        "gate_eligible: false",
+        "existing offline ingest plus signed import",
+    ] {
+        assert!(HARNESS.contains(required), "four-grader harness seam lost {required}");
+    }
+    assert!(CLI.contains("BatchPlan"));
+    assert!(CLI.contains("BatchResultsVerify"));
+    assert!(CLI.contains("long = \"expected-batch-result-pubkey\""));
+    assert!(CLI.contains("num_args = 4"));
 }
