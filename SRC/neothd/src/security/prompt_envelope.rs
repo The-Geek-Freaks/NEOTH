@@ -24,6 +24,7 @@ const PROMPT_ENVELOPE_TRUST: &str = "untrusted_data_only";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PromptEnvelopePurpose {
+    CouncilSelfReflect,
     SubAgentPrimary,
     SubAgentQa,
     SubAgentRetry,
@@ -32,6 +33,10 @@ pub(crate) enum PromptEnvelopePurpose {
 impl PromptEnvelopePurpose {
     fn expected_fields(self) -> &'static [PromptFieldKind] {
         match self {
+            Self::CouncilSelfReflect => &[
+                PromptFieldKind::OriginalQuestion,
+                PromptFieldKind::PriorAnswer,
+            ],
             Self::SubAgentPrimary => &[PromptFieldKind::OperatorTask],
             Self::SubAgentQa => &[
                 PromptFieldKind::QaContract,
@@ -48,6 +53,7 @@ impl PromptEnvelopePurpose {
 
     fn as_str(self) -> &'static str {
         match self {
+            Self::CouncilSelfReflect => "council_self_reflect",
             Self::SubAgentPrimary => "sub_agent_primary",
             Self::SubAgentQa => "sub_agent_qa",
             Self::SubAgentRetry => "sub_agent_retry",
@@ -60,6 +66,8 @@ impl PromptEnvelopePurpose {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PromptFieldKind {
+    OriginalQuestion,
+    PriorAnswer,
     QaContract,
     OperatorTask,
     Candidate,
@@ -70,7 +78,8 @@ pub(crate) enum PromptFieldKind {
 impl PromptFieldKind {
     fn max_bytes(self) -> usize {
         match self {
-            Self::OperatorTask => MAX_OPERATOR_TASK_BYTES,
+            Self::OperatorTask | Self::OriginalQuestion => MAX_OPERATOR_TASK_BYTES,
+            Self::PriorAnswer => MAX_CANDIDATE_BYTES,
             Self::QaContract => MAX_QA_CONTRACT_BYTES,
             Self::Candidate | Self::PreviousCandidate => MAX_CANDIDATE_BYTES,
             Self::QaFailures => MAX_QA_FAILURE_BYTES,
@@ -79,6 +88,8 @@ impl PromptFieldKind {
 
     fn as_str(self) -> &'static str {
         match self {
+            Self::OriginalQuestion => "original_question",
+            Self::PriorAnswer => "prior_answer",
             Self::QaContract => "qa_contract",
             Self::OperatorTask => "operator_task",
             Self::Candidate => "candidate",
