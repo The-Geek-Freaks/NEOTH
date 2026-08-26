@@ -19,6 +19,9 @@ pub(crate) const MAX_DOCUMENT_TITLE_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_EMAIL_SUBJECT_BYTES: usize = 4 * 1024;
 pub(crate) const MAX_EMAIL_BODY_BYTES: usize = 8_000;
 pub(crate) const MAX_SKILL_EXTRACTION_EXCERPT_BYTES: usize = 2 * 1024;
+pub(crate) const MAX_DOCTOR_DIAGNOSTIC_FINDINGS_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_DOCTOR_DIAGNOSTIC_DETAIL_BYTES: usize = 8 * 1024;
+pub(crate) const MAX_DOCTOR_DIAGNOSTIC_FINDINGS_COUNT: usize = 128;
 pub(crate) const MAX_PROMPT_ENVELOPE_DATA_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_RENDERED_BYTES: usize = 384 * 1024;
 
@@ -30,6 +33,7 @@ const PROMPT_ENVELOPE_TRUST: &str = "untrusted_data_only";
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PromptEnvelopePurpose {
     ArxivAbstractSummary,
+    DoctorDiagnose,
     EmailThreatTiebreak,
     SkillAutoExtract,
     ChatClarificationReissue,
@@ -51,6 +55,7 @@ impl PromptEnvelopePurpose {
                 PromptFieldKind::DocumentTitle,
                 PromptFieldKind::DocumentAbstract,
             ],
+            Self::DoctorDiagnose => &[PromptFieldKind::DiagnosticFindings],
             Self::EmailThreatTiebreak => &[
                 PromptFieldKind::EmailSubject,
                 PromptFieldKind::EmailBody,
@@ -89,6 +94,7 @@ impl PromptEnvelopePurpose {
     fn as_str(self) -> &'static str {
         match self {
             Self::ArxivAbstractSummary => "arxiv_abstract_summary",
+            Self::DoctorDiagnose => "doctor_diagnose",
             Self::EmailThreatTiebreak => "email_threat_tiebreak",
             Self::SkillAutoExtract => "skill_auto_extract",
             Self::ChatClarificationReissue => "chat_clarification_reissue",
@@ -112,6 +118,7 @@ impl PromptEnvelopePurpose {
 pub(crate) enum PromptFieldKind {
     DocumentTitle,
     DocumentAbstract,
+    DiagnosticFindings,
     EmailSubject,
     EmailBody,
     SkillExtractionQuery,
@@ -133,6 +140,7 @@ impl PromptFieldKind {
         match self {
             Self::DocumentTitle => MAX_DOCUMENT_TITLE_BYTES,
             Self::DocumentAbstract => MAX_QA_CONTRACT_BYTES,
+            Self::DiagnosticFindings => MAX_DOCTOR_DIAGNOSTIC_FINDINGS_BYTES,
             Self::EmailSubject => MAX_EMAIL_SUBJECT_BYTES,
             Self::EmailBody => MAX_EMAIL_BODY_BYTES,
             Self::SkillExtractionQuery | Self::SkillExtractionContext => {
@@ -153,6 +161,7 @@ impl PromptFieldKind {
         match self {
             Self::DocumentTitle => "document_title",
             Self::DocumentAbstract => "document_abstract",
+            Self::DiagnosticFindings => "diagnostic_findings",
             Self::EmailSubject => "email_subject",
             Self::EmailBody => "email_body",
             Self::SkillExtractionQuery => "skill_extraction_query",
