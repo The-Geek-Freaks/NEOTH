@@ -26,6 +26,7 @@ const PROMPT_ENVELOPE_TRUST: &str = "untrusted_data_only";
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PromptEnvelopePurpose {
     ChatClarificationReissue,
+    ChatHemisphereLiveTest,
     ChatSessionNaming,
     CouncilGroundTruthAssertions,
     CouncilGroundTruthQuestion,
@@ -43,6 +44,7 @@ impl PromptEnvelopePurpose {
                 PromptFieldKind::OriginalQuestion,
                 PromptFieldKind::ClarificationAnswer,
             ],
+            Self::ChatHemisphereLiveTest => &[PromptFieldKind::OriginalQuestion],
             Self::ChatSessionNaming => &[PromptFieldKind::SessionOpening],
             Self::CouncilGroundTruthAssertions => &[PromptFieldKind::GroundTruthAssertions],
             Self::CouncilGroundTruthQuestion => &[PromptFieldKind::OriginalQuestion],
@@ -68,6 +70,7 @@ impl PromptEnvelopePurpose {
     fn as_str(self) -> &'static str {
         match self {
             Self::ChatClarificationReissue => "chat_clarification_reissue",
+            Self::ChatHemisphereLiveTest => "chat_hemisphere_live_test",
             Self::ChatSessionNaming => "chat_session_naming",
             Self::CouncilGroundTruthAssertions => "council_ground_truth_assertions",
             Self::CouncilGroundTruthQuestion => "council_ground_truth_question",
