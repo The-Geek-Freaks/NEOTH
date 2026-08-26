@@ -14,6 +14,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -156,12 +157,50 @@ impl SignedCandidateEvidenceReceipt {
 pub struct ValidatedCandidateEvidence {
     manifest: CandidateEvidenceManifest,
     candidates: Vec<MinedCandidate>,
+    manifest_sha256: String,
+    receipt_sha256: String,
+    manifest_bytes: Vec<u8>,
+    receipt_bytes: Vec<u8>,
+    candidate_bytes: Vec<u8>,
+    expected_receipt_pubkey_b64: String,
+    expected_receipt_pubkey_sha256: String,
 }
 
 impl ValidatedCandidateEvidence {
     pub fn manifest(&self) -> &CandidateEvidenceManifest { &self.manifest }
 
     pub fn candidates(&self) -> &[MinedCandidate] { &self.candidates }
+
+    /// Digest of the exact signed manifest bytes read through the retained
+    /// capability. This is safe provenance metadata, never raw source content.
+    pub fn manifest_sha256(&self) -> &str { &self.manifest_sha256 }
+
+    /// Digest of the exact signed receipt bytes. Persisting this lets a later
+    /// operator-review binding retain the verified evidence identity alongside
+    /// a separately persisted immutable receipt copy, never mutable run state.
+    pub fn receipt_sha256(&self) -> &str { &self.receipt_sha256 }
+
+    /// Exact, already verified manifest bytes. The manifest carries metadata
+    /// and hashes only, never raw transcript/WAL source bytes.
+    pub fn manifest_bytes(&self) -> &[u8] { &self.manifest_bytes }
+
+    /// Exact detached receipt bytes. Keeping this allows a run-local immutable
+    /// provenance copy without retaining raw source data or a signing key.
+    pub fn receipt_bytes(&self) -> &[u8] { &self.receipt_bytes }
+
+    /// Exact candidate vector bytes already bound by the signed manifest. The
+    /// vector is opaque metadata (IDs, offsets, lengths, hashes), never raw
+    /// transcript/WAL source data.
+    pub fn candidate_bytes(&self) -> &[u8] { &self.candidate_bytes }
+
+    /// Canonical base64 encoding of the explicit, decoded Ed25519 public key
+    /// used to verify the receipt. This public value is retained only so a
+    /// bound run can re-verify its immutable receipt on every reopen.
+    pub fn expected_receipt_pubkey_b64(&self) -> &str { &self.expected_receipt_pubkey_b64 }
+
+    /// SHA-256 fingerprint of the canonical decoded expected Ed25519 public
+    /// key used for this verification. It is safe trust-anchor provenance.
+    pub fn expected_receipt_pubkey_sha256(&self) -> &str { &self.expected_receipt_pubkey_sha256 }
 }
 
 /// Safe report projection. The raw source and candidate spans are never
@@ -178,6 +217,18 @@ pub struct CandidateEvidenceSummary {
     pub evidence_receipt_verified: bool,
     pub operator_labeling_required: bool,
     pub gate_eligible: bool,
+}
+
+/// Revalidated, raw-free candidate membership recovered from immutable run
+/// artifacts. The run retains the canonical public verification key separately
+/// from this metadata, so every reopen can re-check the detached signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PersistedCandidateEvidenceMetadata {
+    candidate_ids: Vec<String>,
+}
+
+impl PersistedCandidateEvidenceMetadata {
+    pub(crate) fn candidate_ids(&self) -> &[String] { &self.candidate_ids }
 }
 
 /// Capability-bound imported evidence namespace. Its directory is bound once
@@ -234,6 +285,8 @@ pub fn load_imported_candidate_evidence(
         &manifest_bytes,
         expected_receipt_pubkey_b64,
     )?;
+    let (expected_receipt_pubkey_b64, expected_receipt_pubkey_sha256) =
+        canonical_receipt_pubkey(expected_receipt_pubkey_b64)?;
 
     let source = bundle.read_child(SOURCE_FILE, MAX_CANDIDATE_SOURCE_BYTES)?;
     if source.len() != manifest.source_bytes || sha256_bytes(&source) != manifest.source_sha256 {
@@ -250,7 +303,17 @@ pub fn load_imported_candidate_evidence(
     }
     validate_candidate_spans(&candidates, &source)?;
 
-    Ok(ValidatedCandidateEvidence { manifest, candidates })
+    Ok(ValidatedCandidateEvidence {
+        manifest,
+        candidates,
+        manifest_sha256: sha256_bytes(&manifest_bytes),
+        receipt_sha256: sha256_bytes(&receipt_bytes),
+        manifest_bytes,
+        receipt_bytes,
+        candidate_bytes,
+        expected_receipt_pubkey_b64,
+        expected_receipt_pubkey_sha256,
+    })
 }
 
 pub fn summarize_candidate_evidence(
@@ -280,6 +343,14 @@ fn validate_receipt_for_manifest(
     expected_pubkey_b64: &str,
 ) -> Result<()> {
     receipt.verify(expected_pubkey_b64)?;
+    validate_receipt_matches_manifest(receipt, manifest, manifest_bytes)
+}
+
+fn validate_receipt_matches_manifest(
+    receipt: &SignedCandidateEvidenceReceipt,
+    manifest: &CandidateEvidenceManifest,
+    manifest_bytes: &[u8],
+) -> Result<()> {
     let body = &receipt.body;
     if body.manifest_sha256 != sha256_bytes(manifest_bytes)
         || body.bundle_id != manifest.bundle_id
@@ -292,6 +363,61 @@ fn validate_receipt_for_manifest(
         anyhow::bail!("signed candidate evidence receipt does not exactly bind this manifest");
     }
     Ok(())
+}
+
+/// Revalidate the immutable metadata retained by an anchor-ingested run. This
+/// intentionally does not retain or reopen `source.evidence`; the original
+/// intake verified every span against that raw source before persistence, while
+/// the run preserves only the signature-bound candidate membership vector.
+pub(crate) fn validate_persisted_candidate_evidence_metadata(
+    manifest_bytes: &[u8],
+    receipt_bytes: &[u8],
+    candidate_bytes: &[u8],
+    expected_receipt_pubkey_b64: &str,
+    expected_manifest_sha256: &str,
+    expected_receipt_sha256: &str,
+    expected_receipt_pubkey_sha256: &str,
+) -> Result<PersistedCandidateEvidenceMetadata> {
+    validate_sha256(expected_manifest_sha256, "persisted candidate manifest")?;
+    validate_sha256(expected_receipt_sha256, "persisted candidate receipt")?;
+    validate_sha256(expected_receipt_pubkey_sha256, "persisted candidate receipt public key")?;
+    if sha256_bytes(manifest_bytes) != expected_manifest_sha256
+        || sha256_bytes(receipt_bytes) != expected_receipt_sha256
+    {
+        anyhow::bail!("persisted candidate evidence metadata does not match run binding hashes");
+    }
+    let manifest: CandidateEvidenceManifest = serde_json::from_slice(manifest_bytes)
+        .map_err(|_| anyhow::anyhow!("parse persisted candidate evidence manifest"))?;
+    validate_manifest(&manifest)?;
+    let receipt: SignedCandidateEvidenceReceipt = serde_json::from_slice(receipt_bytes)
+        .map_err(|_| anyhow::anyhow!("parse persisted candidate evidence receipt"))?;
+    receipt.validate_shape()?;
+    let (_, actual_receipt_pubkey_sha256) = canonical_receipt_pubkey(expected_receipt_pubkey_b64)?;
+    if actual_receipt_pubkey_sha256 != expected_receipt_pubkey_sha256 {
+        anyhow::bail!("persisted candidate receipt public key does not match run binding hash");
+    }
+    receipt.verify(expected_receipt_pubkey_b64)?;
+    validate_receipt_matches_manifest(&receipt, &manifest, manifest_bytes)?;
+    if sha256_bytes(candidate_bytes) != manifest.candidates_sha256 {
+        anyhow::bail!("persisted candidate vector does not match signed manifest SHA256");
+    }
+    let candidates = parse_candidates(candidate_bytes)?;
+    if candidates.len() != manifest.candidate_count {
+        anyhow::bail!("persisted candidate vector count does not match signed manifest");
+    }
+    Ok(PersistedCandidateEvidenceMetadata {
+        candidate_ids: candidates.into_iter().map(|candidate| candidate.candidate_id).collect(),
+    })
+}
+
+fn canonical_receipt_pubkey(expected_pubkey_b64: &str) -> Result<(String, String)> {
+    let bytes = STANDARD
+        .decode(expected_pubkey_b64)
+        .map_err(|_| anyhow::anyhow!("expected candidate evidence public key is not valid base64"))?;
+    if bytes.len() != 32 {
+        anyhow::bail!("expected candidate evidence public key has an invalid Ed25519 length");
+    }
+    Ok((STANDARD.encode(&bytes), sha256_bytes(&bytes)))
 }
 
 fn validate_manifest(manifest: &CandidateEvidenceManifest) -> Result<()> {
@@ -396,6 +522,17 @@ fn sha256_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::recall::{
+        goldset::{
+            GoldsetCategory, GoldsetEntry, GradedSystem, GraderConfig, GraderConfigFile,
+            GraderFamily, GraderGrade, GraderProvider,
+        },
+        parity_anchor::{
+            OPERATOR_ANCHOR_EVIDENCE_LINK_PURPOSE, OPERATOR_ANCHOR_EVIDENCE_LINK_SCHEMA_VERSION,
+            OPERATOR_ANCHOR_GRADER_ID, OperatorAnchorCandidateLink, OperatorAnchorEvidenceLink,
+            load_operator_anchor_bytes, load_operator_anchor_evidence_link_bytes,
+        },
+    };
 
     fn candidate(id: &str, source: &[u8], offset: usize, len: usize) -> MinedCandidate {
         MinedCandidate {
@@ -428,6 +565,58 @@ mod tests {
         )
     }
 
+    fn anchor_goldset() -> Vec<GoldsetEntry> {
+        (0..100)
+            .map(|index| GoldsetEntry {
+                query_id: format!("q{index:03}"),
+                query_text: "q".into(),
+                category: GoldsetCategory::Recall,
+                expected_sources: vec![],
+                expected_response: String::new(),
+            })
+            .collect()
+    }
+
+    fn anchor_config() -> crate::recall::goldset::ValidatedGraderConfigFile {
+        GraderConfigFile {
+            schema_version: 1,
+            graders: vec![
+                GraderConfig {
+                    grader_id: "shared".into(),
+                    provider: GraderProvider::Anthropic,
+                    model_id: "shared".into(),
+                    family: GraderFamily::AnthropicOpenaiGoogle,
+                },
+                GraderConfig {
+                    grader_id: "external".into(),
+                    provider: GraderProvider::Mistral,
+                    model_id: "external".into(),
+                    family: GraderFamily::IndependentExternal,
+                },
+            ],
+        }
+        .into_validated()
+        .unwrap()
+    }
+
+    fn operator_anchor_bytes() -> Vec<u8> {
+        (0..20)
+            .flat_map(|index| [GradedSystem::Neoth, GradedSystem::Reference].map(|system| GraderGrade {
+                query_id: format!("q{index:03}"),
+                grader_id: OPERATOR_ANCHOR_GRADER_ID.into(),
+                system,
+                factual: 3,
+                completeness: 3,
+                on_tone: 3,
+                usefulness: 3,
+                brevity: 3,
+            }))
+            .map(|grade| serde_json::to_string(&grade).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes()
+    }
+
     fn signed_receipt(manifest: &CandidateEvidenceManifest, manifest_bytes: &[u8]) -> (SignedCandidateEvidenceReceipt, String) {
         let key = ed25519_dalek::SigningKey::from_bytes(&[31; 32]);
         let mut receipt = SignedCandidateEvidenceReceipt {
@@ -456,7 +645,17 @@ mod tests {
         validate_manifest(&manifest).unwrap();
         let parsed = parse_candidates(&candidate_bytes).unwrap();
         validate_candidate_spans(&parsed, source).unwrap();
-        let summary = summarize_candidate_evidence(&ValidatedCandidateEvidence { manifest, candidates: parsed });
+        let summary = summarize_candidate_evidence(&ValidatedCandidateEvidence {
+            manifest,
+            candidates: parsed,
+            manifest_sha256: "a".repeat(64),
+            receipt_sha256: "b".repeat(64),
+            manifest_bytes: Vec::new(),
+            receipt_bytes: Vec::new(),
+            candidate_bytes: Vec::new(),
+            expected_receipt_pubkey_b64: String::new(),
+            expected_receipt_pubkey_sha256: "c".repeat(64),
+        });
         let rendered = serde_json::to_string(&summary).unwrap();
         assert!(!rendered.contains("operator secret"));
         assert!(summary.operator_labeling_required);
@@ -497,6 +696,68 @@ mod tests {
             manifest.candidates_sha256,
         );
         assert_eq!(String::from_utf8(receipt.canonical_bytes().unwrap()).unwrap(), expected);
+    }
+
+    #[test]
+    fn operator_link_requires_all_twenty_labels_and_verified_candidate_provenance() {
+        let anchor_bytes = operator_anchor_bytes();
+        let anchor = load_operator_anchor_bytes(
+            &anchor_bytes,
+            "fixture",
+            &anchor_goldset(),
+            &anchor_config(),
+        )
+        .unwrap();
+        let evidence = ValidatedCandidateEvidence {
+            manifest: CandidateEvidenceManifest {
+                schema_version: CANDIDATE_EVIDENCE_SCHEMA_VERSION,
+                purpose: CANDIDATE_EVIDENCE_PURPOSE.into(),
+                bundle_id: "fixture-bundle".into(),
+                source_kind: CandidateEvidenceSourceKind::TranscriptExport,
+                source_sha256: "a".repeat(64),
+                source_bytes: 100,
+                candidates_sha256: "b".repeat(64),
+                candidate_count: 20,
+            },
+            candidates: (0..20)
+                .map(|index| MinedCandidate {
+                    candidate_id: format!("cand-{index:03}"),
+                    source_offset: index,
+                    source_len: 1,
+                    source_span_sha256: "c".repeat(64),
+                })
+                .collect(),
+            manifest_sha256: "d".repeat(64),
+            receipt_sha256: "e".repeat(64),
+            manifest_bytes: Vec::new(),
+            receipt_bytes: Vec::new(),
+            candidate_bytes: Vec::new(),
+            expected_receipt_pubkey_b64: String::new(),
+            expected_receipt_pubkey_sha256: "f".repeat(64),
+        };
+        let link = OperatorAnchorEvidenceLink {
+            schema_version: OPERATOR_ANCHOR_EVIDENCE_LINK_SCHEMA_VERSION,
+            purpose: OPERATOR_ANCHOR_EVIDENCE_LINK_PURPOSE.into(),
+            candidate_manifest_sha256: evidence.manifest_sha256().to_owned(),
+            candidate_receipt_sha256: evidence.receipt_sha256().to_owned(),
+            operator_anchor_sha256: sha256_bytes(&anchor_bytes),
+            links: (0..20)
+                .map(|index| OperatorAnchorCandidateLink {
+                    query_id: format!("q{index:03}"),
+                    candidate_id: format!("cand-{index:03}"),
+                })
+                .collect(),
+        };
+        let link_bytes = serde_json::to_vec(&link).unwrap();
+        assert!(load_operator_anchor_evidence_link_bytes(&link_bytes, &anchor_bytes, &anchor, &evidence).is_ok());
+        let mut incomplete = link;
+        incomplete.links.pop();
+        assert!(load_operator_anchor_evidence_link_bytes(
+            &serde_json::to_vec(&incomplete).unwrap(),
+            &anchor_bytes,
+            &anchor,
+            &evidence,
+        ).is_err());
     }
 
     #[test]

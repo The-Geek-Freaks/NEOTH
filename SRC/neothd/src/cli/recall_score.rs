@@ -23,10 +23,13 @@ use crate::recall::parity_run::{ParityRunResult, compute_parity_run};
 use crate::recall::{
     goldset::{MAX_GOLDSET_BYTES, MAX_GRADER_CONFIG_BYTES},
     parity_harness::{
-        build_report, ingest_offline_grades, plan_run,
+        build_report, ingest_offline_grades, ingest_operator_anchor_evidence, plan_run,
         read_offline_input,
     },
-    parity_anchor::{load_operator_anchor_bytes, summarize_operator_anchor},
+    parity_anchor::{
+        MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES, load_operator_anchor_bytes,
+        summarize_operator_anchor,
+    },
     parity_candidate_evidence::{load_imported_candidate_evidence, summarize_candidate_evidence},
     parity_import_receipt::{MAX_PARITY_IMPORT_RECEIPT_BYTES, parse_signed_parity_import_receipt},
 };
@@ -139,6 +142,25 @@ pub enum RecallParityHarnessOperation {
         #[arg(long = "expected-evidence-receipt-pubkey", value_name = "BASE64")]
         expected_evidence_receipt_pubkey: String,
     },
+    /// Bind one complete 20-query × two-system operator-anchor label set to a
+    /// previously signature-verified candidate-evidence bundle. The resulting
+    /// run artifact remains non-gate-eligible and contains no raw source text.
+    AnchorIngest {
+        #[arg(long, value_name = "DIR")]
+        run_dir: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+        #[arg(long = "evidence-dir", value_name = "DIR")]
+        evidence_dir: PathBuf,
+        #[arg(long = "expected-evidence-receipt-pubkey", value_name = "BASE64")]
+        expected_evidence_receipt_pubkey: String,
+        #[arg(long = "operator-anchor", value_name = "PATH")]
+        operator_anchor: PathBuf,
+        #[arg(long = "operator-anchor-link", value_name = "PATH")]
+        operator_anchor_link: PathBuf,
+    },
 }
 
 pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<()> {
@@ -157,7 +179,8 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
         | RecallParityHarnessOperation::Ingest { grader_config, goldset, .. }
         | RecallParityHarnessOperation::Report { grader_config, goldset, .. }
         | RecallParityHarnessOperation::Show { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::AnchorValidate { grader_config, goldset, .. } => {
+        | RecallParityHarnessOperation::AnchorValidate { grader_config, goldset, .. }
+        | RecallParityHarnessOperation::AnchorIngest { grader_config, goldset, .. } => {
             (grader_config, goldset)
         }
         RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
@@ -206,6 +229,40 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                         &config,
                     )?;
                     render_harness_json(&summarize_operator_anchor(&anchor, &anchor_bytes), &output)?;
+                }
+                RecallParityHarnessOperation::AnchorIngest {
+                    run_dir,
+                    evidence_dir,
+                    expected_evidence_receipt_pubkey,
+                    operator_anchor,
+                    operator_anchor_link,
+                    ..
+                } => {
+                    let candidate_evidence = load_imported_candidate_evidence(
+                        &evidence_dir,
+                        &expected_evidence_receipt_pubkey,
+                    )?;
+                    let anchor_bytes = read_offline_input(
+                        &operator_anchor,
+                        crate::recall::goldset::MAX_GRADES_BYTES,
+                        "operator anchor labels",
+                    )?;
+                    let link_bytes = read_offline_input(
+                        &operator_anchor_link,
+                        MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES as u64,
+                        "operator anchor evidence link",
+                    )?;
+                    let binding = ingest_operator_anchor_evidence(
+                        &run_dir,
+                        &config,
+                        &config_bytes,
+                        &entries,
+                        &goldset_bytes,
+                        &candidate_evidence,
+                        &anchor_bytes,
+                        &link_bytes,
+                    )?;
+                    render_harness_json(&binding, &output)?;
                 }
                 RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
                     unreachable!("candidate evidence returns before config/goldset input loading")

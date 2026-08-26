@@ -24,6 +24,14 @@ use super::{
         EXPECTED_GOLDSET_QUERIES, MAX_GRADES_BYTES, MAX_GRADERS,
     },
     parity::Dimension,
+    parity_anchor::{
+        ValidatedOperatorAnchorEvidenceLink, load_operator_anchor_bytes,
+        load_operator_anchor_evidence_link_bytes,
+        load_operator_anchor_evidence_link_with_provenance,
+    },
+    parity_candidate_evidence::{
+        ValidatedCandidateEvidence, validate_persisted_candidate_evidence_metadata,
+    },
     parity_import_receipt::{SignedParityImportReceipt, validate_run_id},
     parity_run::compute_parity_run,
 };
@@ -36,6 +44,13 @@ const MANIFEST_FILE: &str = "manifest.json";
 const STATE_FILE: &str = "state.json";
 const REPORT_FILE: &str = "report.json";
 const IMPORTS_DIR: &str = "imports";
+const OPERATOR_ANCHOR_FILE: &str = "operator-anchor.jsonl";
+const OPERATOR_ANCHOR_LINK_FILE: &str = "operator-anchor-link.json";
+const OPERATOR_ANCHOR_BINDING_FILE: &str = "operator-anchor-binding.json";
+const CANDIDATE_EVIDENCE_MANIFEST_FILE: &str = "candidate-evidence-manifest.json";
+const CANDIDATE_EVIDENCE_RECEIPT_FILE: &str = "candidate-evidence-receipt.json";
+const CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE: &str = "candidate-evidence-receipt-pubkey.txt";
+const CANDIDATE_EVIDENCE_CANDIDATES_FILE: &str = "candidate-evidence-candidates.jsonl";
 const LOCK_FILE: &str = ".parity-harness.lock";
 
 /// Capability-bound run namespace. Its root directory and advisory lock are
@@ -182,6 +197,26 @@ pub struct ImportedGradeFile {
     pub record_count: usize,
 }
 
+/// Immutable, redacted run-local binding for a complete operator-label anchor.
+/// It records hashes and counts only: neither raw candidate source data nor
+/// label/grading payloads are rendered by this summary or used as a gate input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorAnchorRunBinding {
+    pub schema_version: u32,
+    pub run_manifest_sha256: String,
+    pub operator_anchor_sha256: String,
+    pub operator_anchor_link_sha256: String,
+    pub candidate_manifest_sha256: String,
+    pub candidate_receipt_sha256: String,
+    pub candidate_receipt_pubkey_sha256: String,
+    pub candidate_vector_sha256: String,
+    pub label_record_count: usize,
+    pub linked_candidate_count: usize,
+    pub operator_labels_complete: bool,
+    pub gate_eligible: bool,
+}
+
 /// Canonical state provenance. Publication bookkeeping stays in
 /// `ParityRunState::report_sha256` and is deliberately excluded so an auditor
 /// can recompute this digest from every persisted state generation.
@@ -237,7 +272,9 @@ pub fn plan_run(
     goldset_bytes: &[u8],
 ) -> Result<ParityRunManifest> {
     let run = BoundParityRun::open_or_create(run_dir)?;
-    plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)
+    let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
+    validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    Ok(manifest)
 }
 
 fn plan_run_locked(
@@ -300,6 +337,303 @@ fn empty_state_for_manifest(manifest: &ParityRunManifest) -> Result<ParityRunSta
     })
 }
 
+/// Persist a complete 20×2 operator-label anchor and its verified candidate
+/// evidence link as immutable, capability-relative run artifacts. This is an
+/// idempotent review-provenance step only: it does not add grades, change state,
+/// create a report, or make the existing parity gate eligible to pass.
+pub fn ingest_operator_anchor_evidence(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    candidate_evidence: &ValidatedCandidateEvidence,
+    operator_anchor_bytes: &[u8],
+    operator_anchor_link_bytes: &[u8],
+) -> Result<OperatorAnchorRunBinding> {
+    let run = BoundParityRun::open_or_create(run_dir)?;
+    let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
+    let anchor = load_operator_anchor_bytes(
+        operator_anchor_bytes,
+        "bound operator anchor import",
+        goldset,
+        grader_config,
+    )?;
+    let link = load_operator_anchor_evidence_link_bytes(
+        operator_anchor_link_bytes,
+        operator_anchor_bytes,
+        &anchor,
+        candidate_evidence,
+    )?;
+    let binding = operator_anchor_binding(
+        &manifest,
+        candidate_evidence,
+        operator_anchor_bytes,
+        operator_anchor_link_bytes,
+        &link,
+        anchor.grades().len(),
+    )?;
+
+    create_immutable_run_child(
+        &run,
+        CANDIDATE_EVIDENCE_MANIFEST_FILE,
+        candidate_evidence.manifest_bytes(),
+        1024 * 1024,
+    )?;
+    create_immutable_run_child(
+        &run,
+        CANDIDATE_EVIDENCE_CANDIDATES_FILE,
+        candidate_evidence.candidate_bytes(),
+        1024 * 1024,
+    )?;
+    create_immutable_run_child(
+        &run,
+        CANDIDATE_EVIDENCE_RECEIPT_FILE,
+        candidate_evidence.receipt_bytes(),
+        64 * 1024,
+    )?;
+    create_immutable_run_child(
+        &run,
+        CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE,
+        candidate_evidence.expected_receipt_pubkey_b64().as_bytes(),
+        128,
+    )?;
+    create_immutable_run_child(&run, OPERATOR_ANCHOR_FILE, operator_anchor_bytes, MAX_GRADES_BYTES as usize)?;
+    create_immutable_run_child(
+        &run,
+        OPERATOR_ANCHOR_LINK_FILE,
+        operator_anchor_link_bytes,
+        64 * 1024,
+    )?;
+    create_immutable_run_child(
+        &run,
+        OPERATOR_ANCHOR_BINDING_FILE,
+        &serde_json::to_vec(&binding).context("serialize operator anchor run binding")?,
+        64 * 1024,
+    )?;
+    validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    Ok(binding)
+}
+
+fn operator_anchor_binding(
+    manifest: &ParityRunManifest,
+    candidate_evidence: &ValidatedCandidateEvidence,
+    operator_anchor_bytes: &[u8],
+    operator_anchor_link_bytes: &[u8],
+    link: &ValidatedOperatorAnchorEvidenceLink,
+    label_record_count: usize,
+) -> Result<OperatorAnchorRunBinding> {
+    let linked_candidate_count = link.link().links.len();
+    if label_record_count != 40 || linked_candidate_count != 20 {
+        anyhow::bail!("operator anchor binding requires complete 20-query × two-system labels");
+    }
+    Ok(OperatorAnchorRunBinding {
+        schema_version: PARITY_HARNESS_SCHEMA_VERSION,
+        run_manifest_sha256: sha256_json(manifest)?,
+        operator_anchor_sha256: sha256_bytes(operator_anchor_bytes),
+        operator_anchor_link_sha256: sha256_bytes(operator_anchor_link_bytes),
+        candidate_manifest_sha256: candidate_evidence.manifest_sha256().to_owned(),
+        candidate_receipt_sha256: candidate_evidence.receipt_sha256().to_owned(),
+        candidate_receipt_pubkey_sha256: candidate_evidence.expected_receipt_pubkey_sha256().to_owned(),
+        candidate_vector_sha256: sha256_bytes(candidate_evidence.candidate_bytes()),
+        label_record_count,
+        linked_candidate_count,
+        operator_labels_complete: true,
+        // This run-local review binding has no authority to change the existing
+        // fail-closed scoring gate. A future correction/report slice must prove
+        // its own complete provenance and retain that gate separately.
+        gate_eligible: false,
+    })
+}
+
+fn create_immutable_run_child(
+    run: &BoundParityRun,
+    name: &str,
+    bytes: &[u8],
+    max_bytes: usize,
+) -> Result<()> {
+    if bytes.len() > max_bytes {
+        anyhow::bail!("operator anchor artifact exceeds its bounded run contract");
+    }
+    match read_bound_immutable_run_child(run, name, max_bytes)? {
+        Some(existing) if existing.bytes == bytes => Ok(()),
+        Some(_) => anyhow::bail!("run already contains a different immutable operator anchor artifact"),
+        None => {
+            run.create_child(name, bytes)?;
+            if read_bound_immutable_run_child(run, name, max_bytes)?
+                .as_ref()
+                .map(|artifact| artifact.bytes.as_slice()) != Some(bytes)
+            {
+                anyhow::bail!("new immutable operator anchor artifact failed exact byte verification");
+            }
+            Ok(())
+        }
+    }
+}
+
+struct BoundImmutableRunChild {
+    bytes: Vec<u8>,
+    identity: crate::skills::store::BoundChildObject,
+}
+
+impl BoundImmutableRunChild {
+    fn revalidate(&self, run: &BoundParityRun, name: &str) -> Result<()> {
+        if !self.identity.matches_regular_file_child_readonly(
+            &run.root.dir,
+            std::ffi::OsStr::new(name),
+            &run.child_display(name),
+        )? {
+            anyhow::bail!("immutable run artifact identity changed before aggregate return");
+        }
+        Ok(())
+    }
+}
+
+fn read_bound_immutable_run_child(
+    run: &BoundParityRun,
+    name: &str,
+    max_bytes: usize,
+) -> Result<Option<BoundImmutableRunChild>> {
+    match run.root.dir.symlink_metadata(std::ffi::OsStr::new(name)) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("inspect immutable run artifact {}", run.child_display(name).display())),
+    }
+    run.revalidate_lock()?;
+    let (mut file, binding) = crate::skills::store::open_bound_regular_file(
+        &run.root.dir,
+        std::ffi::OsStr::new(name),
+        &run.child_display(name),
+    )?;
+    let mut bytes = Vec::new();
+    file.take((max_bytes as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read immutable run artifact {}", run.child_display(name).display()))?;
+    if bytes.len() > max_bytes {
+        anyhow::bail!("immutable run artifact exceeds its bounded contract");
+    }
+    if !binding.matches_regular_file_child_readonly(
+        &run.root.dir,
+        std::ffi::OsStr::new(name),
+        &run.child_display(name),
+    )? {
+        anyhow::bail!("immutable run artifact identity changed before return");
+    }
+    run.revalidate_lock()?;
+    Ok(Some(BoundImmutableRunChild { bytes, identity: binding }))
+}
+
+fn validate_operator_anchor_artifacts_if_present(
+    run: &BoundParityRun,
+    manifest: &ParityRunManifest,
+    grader_config: &ValidatedGraderConfigFile,
+    goldset: &[GoldsetEntry],
+) -> Result<()> {
+    let artifact_contracts = [
+        (CANDIDATE_EVIDENCE_MANIFEST_FILE, 1024 * 1024),
+        (CANDIDATE_EVIDENCE_RECEIPT_FILE, 64 * 1024),
+        (CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE, 128),
+        (CANDIDATE_EVIDENCE_CANDIDATES_FILE, 1024 * 1024),
+        (OPERATOR_ANCHOR_FILE, MAX_GRADES_BYTES as usize),
+        (OPERATOR_ANCHOR_LINK_FILE, 64 * 1024),
+        (OPERATOR_ANCHOR_BINDING_FILE, 64 * 1024),
+    ];
+    let present = artifact_contracts
+        .iter()
+        .map(|(name, max_bytes)| read_bound_immutable_run_child(run, name, *max_bytes))
+        .collect::<Result<Vec<_>>>()?;
+    if present.iter().all(Option::is_none) {
+        return Ok(());
+    }
+    if present.iter().any(Option::is_none) {
+        anyhow::bail!("incomplete operator anchor ingest; retry anchor-ingest with identical artifacts or use a fresh run");
+    }
+    let mut values = present.into_iter().map(Option::unwrap);
+    let candidate_manifest = values.next().expect("fixed anchor artifact count");
+    let candidate_receipt = values.next().expect("fixed anchor artifact count");
+    let candidate_receipt_pubkey = values.next().expect("fixed anchor artifact count");
+    let candidate_vector = values.next().expect("fixed anchor artifact count");
+    let anchor_bytes = values.next().expect("fixed anchor artifact count");
+    let link_bytes = values.next().expect("fixed anchor artifact count");
+    let binding_bytes = values.next().expect("fixed anchor artifact count");
+    let binding: OperatorAnchorRunBinding = serde_json::from_slice(&binding_bytes.bytes)
+        .map_err(|_| anyhow::anyhow!("parse immutable operator anchor run binding"))?;
+    validate_operator_anchor_binding(&binding, manifest)?;
+    let candidate_metadata = validate_persisted_candidate_evidence_metadata(
+        &candidate_manifest.bytes,
+        &candidate_receipt.bytes,
+        &candidate_vector.bytes,
+        std::str::from_utf8(&candidate_receipt_pubkey.bytes)
+            .map_err(|_| anyhow::anyhow!("persisted candidate receipt public key is not UTF-8"))?,
+        &binding.candidate_manifest_sha256,
+        &binding.candidate_receipt_sha256,
+        &binding.candidate_receipt_pubkey_sha256,
+    )?;
+    if sha256_bytes(&candidate_vector.bytes) != binding.candidate_vector_sha256 {
+        anyhow::bail!("operator anchor binding candidate vector SHA256 mismatch");
+    }
+    let anchor = load_operator_anchor_bytes(
+        &anchor_bytes.bytes,
+        "persisted operator anchor",
+        goldset,
+        grader_config,
+    )?;
+    let link = load_operator_anchor_evidence_link_with_provenance(
+        &link_bytes.bytes,
+        &anchor_bytes.bytes,
+        &anchor,
+        &binding.candidate_manifest_sha256,
+        &binding.candidate_receipt_sha256,
+        candidate_metadata.candidate_ids(),
+    )?;
+    if sha256_bytes(&anchor_bytes.bytes) != binding.operator_anchor_sha256
+        || sha256_bytes(&link_bytes.bytes) != binding.operator_anchor_link_sha256
+        || link.link().links.len() != binding.linked_candidate_count
+        || anchor.grades().len() != binding.label_record_count
+    {
+        anyhow::bail!("operator anchor binding does not match immutable anchor artifacts");
+    }
+    for ((name, _), child) in artifact_contracts.iter().zip([
+        &candidate_manifest,
+        &candidate_receipt,
+        &candidate_receipt_pubkey,
+        &candidate_vector,
+        &anchor_bytes,
+        &link_bytes,
+        &binding_bytes,
+    ]) {
+        child.revalidate(run, name)?;
+    }
+    run.revalidate_lock()?;
+    Ok(())
+}
+
+fn validate_operator_anchor_binding(
+    binding: &OperatorAnchorRunBinding,
+    manifest: &ParityRunManifest,
+) -> Result<()> {
+    if binding.schema_version != PARITY_HARNESS_SCHEMA_VERSION
+        || binding.run_manifest_sha256 != sha256_json(manifest)?
+        || binding.label_record_count != 40
+        || binding.linked_candidate_count != 20
+        || !binding.operator_labels_complete
+        || binding.gate_eligible
+    {
+        anyhow::bail!("operator anchor binding is not a complete non-gate artifact for this run");
+    }
+    for (value, label) in [
+        (&binding.operator_anchor_sha256, "operator anchor"),
+        (&binding.operator_anchor_link_sha256, "operator anchor link"),
+        (&binding.candidate_manifest_sha256, "candidate manifest"),
+        (&binding.candidate_receipt_sha256, "candidate receipt"),
+        (&binding.candidate_receipt_pubkey_sha256, "candidate receipt public key"),
+        (&binding.candidate_vector_sha256, "candidate vector"),
+    ] {
+        validate_sha256(value, label)?;
+    }
+    Ok(())
+}
+
 /// Import one explicit, offline grade file. A byte-identical retry is a no-op;
 /// a second or altered file for the same grader is rejected.
 pub fn ingest_offline_grades(
@@ -312,6 +646,7 @@ pub fn ingest_offline_grades(
 ) -> Result<ParityRunState> {
     let run = BoundParityRun::open_or_create(run_dir)?;
     let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
+    validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     let state_bytes = run.read_child(STATE_FILE, 1024 * 1024)?;
     let mut state = load_state_for_manifest(&run, &manifest)?;
     validate_state_imports(&run, &state, grader_config, goldset)?;
@@ -390,6 +725,7 @@ pub fn build_report(
 ) -> Result<ParityHarnessReport> {
     let run_dir = BoundParityRun::open_or_create(run_dir)?;
     let manifest = plan_run_locked(&run_dir, grader_config, config_bytes, goldset, goldset_bytes)?;
+    validate_operator_anchor_artifacts_if_present(&run_dir, &manifest, grader_config, goldset)?;
     let state_bytes = run_dir.read_child(STATE_FILE, 1024 * 1024)?;
     let mut state = load_state_for_manifest(&run_dir, &manifest)?;
     validate_state_imports(&run_dir, &state, grader_config, goldset)?;
@@ -737,6 +1073,18 @@ mod tests {
         PARITY_IMPORT_RECEIPT_PURPOSE, PARITY_IMPORT_RECEIPT_SCHEMA_VERSION,
         ParityImportReceiptBody, SignedParityImportReceipt,
     };
+    use crate::recall::{
+        parity_anchor::{
+            OPERATOR_ANCHOR_EVIDENCE_LINK_PURPOSE, OPERATOR_ANCHOR_EVIDENCE_LINK_SCHEMA_VERSION,
+            OPERATOR_ANCHOR_GRADER_ID, OperatorAnchorCandidateLink, OperatorAnchorEvidenceLink,
+        },
+        parity_candidate_evidence::{
+            CANDIDATE_EVIDENCE_PURPOSE, CANDIDATE_EVIDENCE_RECEIPT_PURPOSE,
+            CANDIDATE_EVIDENCE_RECEIPT_SCHEMA_VERSION, CANDIDATE_EVIDENCE_SCHEMA_VERSION,
+            CandidateEvidenceManifest, CandidateEvidenceReceiptBody, CandidateEvidenceSourceKind,
+            MinedCandidate, SignedCandidateEvidenceReceipt, load_imported_candidate_evidence,
+        },
+    };
 
     fn roster() -> ValidatedGraderConfigFile {
         GraderConfigFile { schema_version: 1, graders: vec![
@@ -774,6 +1122,91 @@ mod tests {
         receipt.signature_b64 = crate::wal::signing::sign_b64(&key, &receipt.canonical_bytes().unwrap());
     }
 
+    fn candidate_evidence_fixture() -> (tempfile::TempDir, ValidatedCandidateEvidence, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let source = b"01234567890123456789";
+        let candidates = (0..20)
+            .map(|index| MinedCandidate {
+                candidate_id: format!("cand-{index:03}"),
+                source_offset: index,
+                source_len: 1,
+                source_span_sha256: sha256_bytes(&source[index..index + 1]),
+            })
+            .collect::<Vec<_>>();
+        let candidate_bytes = candidates
+            .iter()
+            .map(|candidate| serde_json::to_string(candidate).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes();
+        let manifest = CandidateEvidenceManifest {
+            schema_version: CANDIDATE_EVIDENCE_SCHEMA_VERSION,
+            purpose: CANDIDATE_EVIDENCE_PURPOSE.into(),
+            bundle_id: "anchor-fixture".into(),
+            source_kind: CandidateEvidenceSourceKind::TranscriptExport,
+            source_sha256: sha256_bytes(source),
+            source_bytes: source.len(),
+            candidates_sha256: sha256_bytes(&candidate_bytes),
+            candidate_count: candidates.len(),
+        };
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        let signer = ed25519_dalek::SigningKey::from_bytes(&[29; 32]);
+        let mut receipt = SignedCandidateEvidenceReceipt {
+            body: CandidateEvidenceReceiptBody {
+                schema_version: CANDIDATE_EVIDENCE_RECEIPT_SCHEMA_VERSION,
+                purpose: CANDIDATE_EVIDENCE_RECEIPT_PURPOSE.into(),
+                bundle_id: manifest.bundle_id.clone(),
+                manifest_sha256: sha256_bytes(&manifest_bytes),
+                source_kind: manifest.source_kind,
+                source_sha256: manifest.source_sha256.clone(),
+                source_bytes: manifest.source_bytes,
+                candidates_sha256: manifest.candidates_sha256.clone(),
+                candidate_count: manifest.candidate_count,
+            },
+            signature_b64: String::new(),
+        };
+        receipt.signature_b64 = crate::wal::signing::sign_b64(&signer, &receipt.canonical_bytes().unwrap());
+        std::fs::write(directory.path().join("candidate-evidence-manifest.json"), &manifest_bytes).unwrap();
+        std::fs::write(directory.path().join("candidate-evidence-receipt.json"), serde_json::to_vec(&receipt).unwrap()).unwrap();
+        std::fs::write(directory.path().join("source.evidence"), source).unwrap();
+        std::fs::write(directory.path().join("candidates.jsonl"), &candidate_bytes).unwrap();
+        let pubkey = crate::wal::signing::pubkey_b64(&signer);
+        let evidence = load_imported_candidate_evidence(directory.path(), &pubkey).unwrap();
+        (directory, evidence, pubkey)
+    }
+
+    fn operator_anchor_inputs(evidence: &ValidatedCandidateEvidence) -> (Vec<u8>, Vec<u8>) {
+        let anchor_bytes = (0..20)
+            .flat_map(|index| [GradedSystem::Neoth, GradedSystem::Reference].map(|system| GraderGrade {
+                query_id: format!("q-{index}"),
+                grader_id: OPERATOR_ANCHOR_GRADER_ID.into(),
+                system,
+                factual: 3,
+                completeness: 3,
+                on_tone: 3,
+                usefulness: 3,
+                brevity: 3,
+            }))
+            .map(|grade| serde_json::to_string(&grade).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes();
+        let mut queries = (0..20).map(|index| format!("q-{index}")).collect::<Vec<_>>();
+        queries.sort();
+        let link = OperatorAnchorEvidenceLink {
+            schema_version: OPERATOR_ANCHOR_EVIDENCE_LINK_SCHEMA_VERSION,
+            purpose: OPERATOR_ANCHOR_EVIDENCE_LINK_PURPOSE.into(),
+            candidate_manifest_sha256: evidence.manifest_sha256().to_owned(),
+            candidate_receipt_sha256: evidence.receipt_sha256().to_owned(),
+            operator_anchor_sha256: sha256_bytes(&anchor_bytes),
+            links: queries.into_iter().enumerate().map(|(index, query_id)| OperatorAnchorCandidateLink {
+                query_id,
+                candidate_id: format!("cand-{index:03}"),
+            }).collect(),
+        };
+        (anchor_bytes, serde_json::to_vec(&link).unwrap())
+    }
+
     #[test]
     fn plan_ingest_report_is_idempotent_and_tamper_rejecting() {
         let dir = tempfile::tempdir().unwrap();
@@ -796,6 +1229,69 @@ mod tests {
         assert!(report.derived_gate_passed);
         assert_eq!(report.family_bias_clusters.len(), 2);
         assert!(report.derived_gate_passed);
+    }
+
+    #[test]
+    fn anchor_ingest_persists_complete_redacted_provenance_and_resumes_only_identically() {
+        let run = tempfile::tempdir().unwrap();
+        let (_candidate_dir, evidence, _pubkey) = candidate_evidence_fixture();
+        let config = roster();
+        let entries = goldset();
+        let config_bytes = serde_json::to_vec(&GraderConfigFile { schema_version: 1, graders: config.graders().to_vec() }).unwrap();
+        let goldset_bytes = entries.iter().map(|entry| serde_json::to_string(entry).unwrap()).collect::<Vec<_>>().join("\n").into_bytes();
+        let (anchor_bytes, link_bytes) = operator_anchor_inputs(&evidence);
+        let first = ingest_operator_anchor_evidence(
+            run.path(), &config, &config_bytes, &entries, &goldset_bytes,
+            &evidence, &anchor_bytes, &link_bytes,
+        ).unwrap();
+        let retry = ingest_operator_anchor_evidence(
+            run.path(), &config, &config_bytes, &entries, &goldset_bytes,
+            &evidence, &anchor_bytes, &link_bytes,
+        ).unwrap();
+        assert_eq!(first, retry);
+        assert!(first.operator_labels_complete);
+        assert!(!first.gate_eligible);
+        for name in [
+            CANDIDATE_EVIDENCE_MANIFEST_FILE,
+            CANDIDATE_EVIDENCE_RECEIPT_FILE,
+            CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE,
+            CANDIDATE_EVIDENCE_CANDIDATES_FILE,
+            OPERATOR_ANCHOR_FILE,
+            OPERATOR_ANCHOR_LINK_FILE,
+            OPERATOR_ANCHOR_BINDING_FILE,
+        ] {
+            assert!(run.path().join(name).is_file(), "missing immutable anchor artifact {name}");
+        }
+        plan_run(run.path(), &config, &config_bytes, &entries, &goldset_bytes).unwrap();
+        let mut altered_anchor = anchor_bytes.clone();
+        altered_anchor.push(b'\n');
+        assert!(ingest_operator_anchor_evidence(
+            run.path(), &config, &config_bytes, &entries, &goldset_bytes,
+            &evidence, &altered_anchor, &link_bytes,
+        ).is_err());
+
+        let partial_run = tempfile::tempdir().unwrap();
+        plan_run(partial_run.path(), &config, &config_bytes, &entries, &goldset_bytes).unwrap();
+        let bound = BoundParityRun::open_or_create(partial_run.path()).unwrap();
+        create_immutable_run_child(
+            &bound,
+            CANDIDATE_EVIDENCE_MANIFEST_FILE,
+            evidence.manifest_bytes(),
+            1024 * 1024,
+        ).unwrap();
+        drop(bound);
+        assert!(plan_run(partial_run.path(), &config, &config_bytes, &entries, &goldset_bytes).is_err());
+        assert!(ingest_operator_anchor_evidence(
+            partial_run.path(), &config, &config_bytes, &entries, &goldset_bytes,
+            &evidence, &anchor_bytes, &link_bytes,
+        ).is_ok());
+
+        let receipt_path = run.path().join(CANDIDATE_EVIDENCE_RECEIPT_FILE);
+        let mut tampered_receipt: SignedCandidateEvidenceReceipt =
+            serde_json::from_slice(&std::fs::read(&receipt_path).unwrap()).unwrap();
+        tampered_receipt.signature_b64 = "A".repeat(88);
+        std::fs::write(&receipt_path, serde_json::to_vec(&tampered_receipt).unwrap()).unwrap();
+        assert!(plan_run(run.path(), &config, &config_bytes, &entries, &goldset_bytes).is_err());
     }
 
     #[test]

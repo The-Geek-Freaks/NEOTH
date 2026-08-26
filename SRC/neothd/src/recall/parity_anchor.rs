@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::{
@@ -17,6 +17,7 @@ use super::{
         EXPECTED_GOLDSET_QUERIES, MAX_GRADES_BYTES,
     },
     parity::Dimension,
+    parity_candidate_evidence::ValidatedCandidateEvidence,
     parity_run::compute_parity_run,
 };
 
@@ -27,6 +28,9 @@ pub const OPERATOR_ANCHOR_QUERY_COUNT: usize = 20;
 /// SPEC §4: all shared-family graders must exceed this signed Likert delta.
 pub const FAMILY_BIAS_THRESHOLD: f64 = 0.5;
 const OPERATOR_ANCHOR_RECORD_COUNT: usize = OPERATOR_ANCHOR_QUERY_COUNT * 2;
+pub const OPERATOR_ANCHOR_EVIDENCE_LINK_SCHEMA_VERSION: u32 = 1;
+pub const OPERATOR_ANCHOR_EVIDENCE_LINK_PURPOSE: &str = "neoth-recall-parity-operator-anchor-link/v1";
+pub const MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES: usize = 64 * 1024;
 
 /// Validated manual labels. The artifact intentionally reuses the existing
 /// grade JSONL schema so all five Likert bounds and system tags have one parser.
@@ -58,6 +62,39 @@ pub struct OperatorAnchorSummary {
     pub source_sha256: String,
     pub goldset_sha256: String,
     pub roster_sha256: String,
+}
+
+/// One opaque candidate-to-goldset selection made by the operator. Candidate
+/// IDs and query IDs are stable identifiers only; no transcript/WAL content is
+/// permitted in this link artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorAnchorCandidateLink {
+    pub query_id: String,
+    pub candidate_id: String,
+}
+
+/// External operator-review provenance. The link carries the exact hashes of
+/// the already signature-verified candidate bundle and of the exact 20×2
+/// label bytes. It is persisted only after all joins are complete.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorAnchorEvidenceLink {
+    pub schema_version: u32,
+    pub purpose: String,
+    pub candidate_manifest_sha256: String,
+    pub candidate_receipt_sha256: String,
+    pub operator_anchor_sha256: String,
+    pub links: Vec<OperatorAnchorCandidateLink>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedOperatorAnchorEvidenceLink {
+    link: OperatorAnchorEvidenceLink,
+}
+
+impl ValidatedOperatorAnchorEvidenceLink {
+    pub fn link(&self) -> &OperatorAnchorEvidenceLink { &self.link }
 }
 
 /// Per shared-family grader / dimension delta to the operator's manual labels.
@@ -153,6 +190,93 @@ pub fn summarize_operator_anchor(
         goldset_sha256: anchor.goldset_sha256.clone(),
         roster_sha256: anchor.roster_sha256.clone(),
     }
+}
+
+/// Validate a bounded operator selection link against both the complete
+/// operator anchor and the previously signature-verified imported candidate
+/// evidence. The link is intentionally not a gate input: it only permits the
+/// caller to persist immutable review provenance after all twenty labels exist.
+pub fn load_operator_anchor_evidence_link_bytes(
+    bytes: &[u8],
+    anchor_bytes: &[u8],
+    anchor: &ValidatedOperatorAnchor,
+    candidate_evidence: &ValidatedCandidateEvidence,
+) -> Result<ValidatedOperatorAnchorEvidenceLink> {
+    let candidate_ids = candidate_evidence
+        .candidates()
+        .iter()
+        .map(|candidate| candidate.candidate_id.clone())
+        .collect::<Vec<_>>();
+    load_operator_anchor_evidence_link_with_provenance(
+        bytes,
+        anchor_bytes,
+        anchor,
+        candidate_evidence.manifest_sha256(),
+        candidate_evidence.receipt_sha256(),
+        &candidate_ids,
+    )
+}
+
+/// Same strict link validation for metadata re-opened from immutable run
+/// artifacts. The caller supplies only candidate IDs and signed provenance
+/// digests, never raw transcript/WAL source bytes.
+pub(crate) fn load_operator_anchor_evidence_link_with_provenance(
+    bytes: &[u8],
+    anchor_bytes: &[u8],
+    anchor: &ValidatedOperatorAnchor,
+    candidate_manifest_sha256: &str,
+    candidate_receipt_sha256: &str,
+    candidate_ids: &[String],
+) -> Result<ValidatedOperatorAnchorEvidenceLink> {
+    if bytes.len() > MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES {
+        anyhow::bail!("operator anchor evidence link exceeds the bounded byte limit");
+    }
+    let link: OperatorAnchorEvidenceLink = serde_json::from_slice(bytes)
+        .map_err(|_| anyhow::anyhow!("parse operator anchor evidence link"))?;
+    if link.schema_version != OPERATOR_ANCHOR_EVIDENCE_LINK_SCHEMA_VERSION
+        || link.purpose != OPERATOR_ANCHOR_EVIDENCE_LINK_PURPOSE
+    {
+        anyhow::bail!("operator anchor evidence link has unsupported schema or purpose");
+    }
+    validate_sha256(&link.candidate_manifest_sha256, "operator anchor candidate manifest")?;
+    validate_sha256(&link.candidate_receipt_sha256, "operator anchor candidate receipt")?;
+    validate_sha256(&link.operator_anchor_sha256, "operator anchor source")?;
+    if link.candidate_manifest_sha256 != candidate_manifest_sha256
+        || link.candidate_receipt_sha256 != candidate_receipt_sha256
+        || link.operator_anchor_sha256 != sha256_bytes(anchor_bytes)
+    {
+        anyhow::bail!("operator anchor evidence link does not bind the verified candidate evidence and label bytes");
+    }
+    if link.links.len() != OPERATOR_ANCHOR_QUERY_COUNT {
+        anyhow::bail!("operator anchor evidence link must bind exactly 20 labeled queries");
+    }
+    let anchor_queries: BTreeSet<&str> = anchor.query_ids().iter().map(String::as_str).collect();
+    let candidates: BTreeSet<&str> = candidate_ids.iter().map(String::as_str).collect();
+    let mut linked_queries = BTreeSet::new();
+    let mut linked_candidates = BTreeSet::new();
+    let mut prior_query: Option<&str> = None;
+    for item in &link.links {
+        if let Some(previous) = prior_query {
+            if item.query_id.as_str() <= previous {
+                anyhow::bail!("operator anchor evidence links must be strictly sorted by unique query_id");
+            }
+        }
+        prior_query = Some(item.query_id.as_str());
+        if !anchor_queries.contains(item.query_id.as_str())
+            || !linked_queries.insert(item.query_id.as_str())
+        {
+            anyhow::bail!("operator anchor evidence link contains an unknown or duplicate anchor query");
+        }
+        if !candidates.contains(item.candidate_id.as_str())
+            || !linked_candidates.insert(item.candidate_id.as_str())
+        {
+            anyhow::bail!("operator anchor evidence link contains an unknown or duplicate evidence candidate");
+        }
+    }
+    if linked_queries != anchor_queries {
+        anyhow::bail!("operator anchor evidence link does not cover the complete 20-query label set");
+    }
+    Ok(ValidatedOperatorAnchorEvidenceLink { link })
 }
 
 /// Compute the P1-08 calibration deltas for the three-or-more shared-family
@@ -253,6 +377,17 @@ fn canonical_roster_sha256(grader_config: &ValidatedGraderConfigFile) -> Result<
     Ok(hex::encode(Sha256::digest(
         serde_json::to_vec(&canonical).context("serialize canonical operator-anchor roster")?,
     )))
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+fn validate_sha256(value: &str, label: &str) -> Result<()> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
+        anyhow::bail!("{label} SHA256 must be 64 lowercase hexadecimal characters");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

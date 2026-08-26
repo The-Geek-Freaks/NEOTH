@@ -105,6 +105,10 @@ fn operator_anchor_is_bounded_offline_and_never_claims_to_change_the_gate() {
 
 #[test]
 fn candidate_evidence_is_capability_bound_redacted_and_requires_operator_labels() {
+    let candidate_production = CANDIDATE_EVIDENCE
+        .split("#[cfg(test)]")
+        .next()
+        .expect("candidate evidence production source");
     for forbidden in [
         "File::open(",
         "fs::copy",
@@ -116,7 +120,7 @@ fn candidate_evidence_is_capability_bound_redacted_and_requires_operator_labels(
         "GoldsetEntry",
     ] {
         assert!(
-            !CANDIDATE_EVIDENCE.contains(forbidden),
+            !candidate_production.contains(forbidden),
             "candidate evidence must not acquire ambient/raw/gate authority: {forbidden}"
         );
     }
@@ -129,6 +133,8 @@ fn candidate_evidence_is_capability_bound_redacted_and_requires_operator_labels(
         "CANDIDATE_EVIDENCE_RECEIPT_PURPOSE",
         "pub fn canonical_bytes",
         "verify_b64",
+        "expected_receipt_pubkey_sha256",
+        "candidate_bytes",
         "operator_labeling_required: true",
         "gate_eligible: false",
         "deny_unknown_fields",
@@ -141,4 +147,46 @@ fn candidate_evidence_is_capability_bound_redacted_and_requires_operator_labels(
     assert!(CLI.contains("CandidateEvidenceValidate"));
     assert!(CLI.contains("long = \"evidence-dir\""));
     assert!(CLI.contains("long = \"expected-evidence-receipt-pubkey\""));
+}
+
+#[test]
+fn bound_operator_anchor_ingest_stays_immutable_redacted_and_non_gate() {
+    let anchor_ingest = HARNESS
+        .split("pub fn ingest_operator_anchor_evidence")
+        .nth(1)
+        .and_then(|tail| tail.split("/// Import one explicit, offline grade file").next())
+        .expect("operator anchor ingest source");
+    for forbidden in ["File::open(", "fs::copy", "fs::remove_file", "fs::rename", "reqwest", "wal::writer", "build_report("] {
+        assert!(
+            !anchor_ingest.contains(forbidden),
+            "bound operator anchor ingest must not acquire {forbidden} authority"
+        );
+    }
+    for required in [
+        "BoundParityRun::open_or_create",
+        "load_operator_anchor_evidence_link_bytes",
+        "create_immutable_run_child",
+        "operator_labels_complete: true",
+        "gate_eligible: false",
+        "candidate_receipt_sha256",
+        "candidate_receipt_pubkey_sha256",
+        "candidate_vector_sha256",
+        "CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE",
+        "receipt.verify(expected_receipt_pubkey_b64)",
+    ] {
+        assert!(anchor_ingest.contains(required), "operator anchor ingest lost {required}");
+    }
+    assert!(HARNESS.contains("validate_operator_anchor_artifacts_if_present"));
+    for required in [
+        "OperatorAnchorEvidenceLink",
+        "OPERATOR_ANCHOR_EVIDENCE_LINK_PURPOSE",
+        "candidate_manifest_sha256",
+        "candidate_receipt_sha256",
+        "operator_anchor_sha256",
+        "strictly sorted by unique query_id",
+    ] {
+        assert!(ANCHOR.contains(required), "operator-anchor link lost {required}");
+    }
+    assert!(CLI.contains("AnchorIngest"));
+    assert!(CLI.contains("long = \"operator-anchor-link\""));
 }
