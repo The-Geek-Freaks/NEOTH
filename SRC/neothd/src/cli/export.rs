@@ -1,10 +1,10 @@
 //! `neoth export` — operator data dump. Phase 33c BS-8.
 //!
 //! Produces a JSONL-or-MD bundle of every event NEOTH stores about the
-//! operator plus a canonical typed `communication_profile.json` (or explicit
-//! absent marker). `--subject` instead emits a communication-only bundle for
-//! one exact pseudonymous channel subject. Pure read; pairs with `neoth backup`
-//! for the full operator GDPR right-to-export surface.
+//! operator plus a redacted `communication_profile.json` (or explicit absent
+//! marker). It never exports communication-profile subjects, evidence, or
+//! declared context. Pure read; pairs with `neoth backup` for the full operator
+//! GDPR right-to-export surface.
 
 use std::path::PathBuf;
 
@@ -35,14 +35,15 @@ pub struct ExportArgs {
     #[arg(long, value_name = "DIR")]
     pub home: Option<PathBuf>,
 
-    /// Export only this exact pseudonymous communication-profile subject.
-    /// Obtain handles with `--list-subjects`. This mode excludes operator-wide
-    /// memory tables and archives from the bundle.
+    /// Reserved private-DSAR selector. Generic export has no authenticated
+    /// private DSAR authority, so this currently fails without reading or
+    /// writing local state.
     #[arg(long, value_name = "SUBJECT", conflicts_with = "list_subjects")]
     pub subject: Option<String>,
 
-    /// Strictly inventory pseudonymous communication-profile subject handles.
-    /// No export directory is created and no profile content is printed.
+    /// Reserved private-DSAR inventory. Generic export has no authenticated
+    /// private DSAR authority, so this currently fails without reading or
+    /// printing local state.
     #[arg(long, conflicts_with_all = ["subject", "out", "since"])]
     pub list_subjects: bool,
 
@@ -52,13 +53,8 @@ pub struct ExportArgs {
 }
 
 pub async fn run_export(args: ExportArgs) -> Result<()> {
+    ensure_generic_export_authority(&args)?;
     let home = args.home.unwrap_or_else(FreedomConfig::default_neoth_home);
-
-    if args.list_subjects {
-        let inventory = export::communication_profile_inventory(&home)
-            .with_context(|| format!("inventory communication profiles in {}", home.display()))?;
-        return render_subject_inventory(&inventory, &args.output);
-    }
 
     let out = args.out.unwrap_or_else(export::default_export_dir);
     let format = export::ExportFormat::from_str(&args.format).ok_or_else(|| {
@@ -66,18 +62,8 @@ pub async fn run_export(args: ExportArgs) -> Result<()> {
     })?;
     let since = export::parse_since(args.since.as_deref())?;
 
-    let summary = match args.subject.as_deref() {
-        Some(subject) => export::run_communication_subject_export(&home, &out, subject)
-            .with_context(|| {
-                format!(
-                    "export selected communication subject {} → {}",
-                    home.display(),
-                    out.display()
-                )
-            })?,
-        None => export::run_export(&home, &out, format, since)
-            .with_context(|| format!("export {} → {}", home.display(), out.display()))?,
-    };
+    let summary = export::run_export(&home, &out, format, since)
+        .with_context(|| format!("export {} → {}", home.display(), out.display()))?;
 
     match args.output {
         OutputFormat::Json => {
@@ -91,14 +77,7 @@ pub async fn run_export(args: ExportArgs) -> Result<()> {
             println!("  idx_longterm       : {}", summary.longterm_rows);
             println!("  idx_groundtruth    : {}", summary.groundtruth_rows);
             println!(
-                "  communication      : {} selected subject(s), {} dimension(s), {} evidence record(s), {} context record(s)",
-                summary.communication_profile_subjects,
-                summary.communication_profile_dimensions,
-                summary.communication_profile_evidence_records,
-                summary.communication_profile_declared_context_records,
-            );
-            println!(
-                "  communication file : schema={} state={} state_schema={}",
+                "  communication file : schema={} state={} state_schema={} redacted={}",
                 summary.communication_profile_export_schema_version,
                 if summary.communication_profile_state_present {
                     "present"
@@ -108,24 +87,7 @@ pub async fn run_export(args: ExportArgs) -> Result<()> {
                 summary
                     .communication_profile_state_schema_version
                     .map_or_else(|| "-".to_owned(), |version| version.to_string()),
-            );
-            println!(
-                "  subject selector   : sha256:{} ({})",
-                &summary.communication_profile_subject_sha256
-                    [..summary.communication_profile_subject_sha256.len().min(16)],
-                if summary.communication_profile_operator_subject {
-                    "operator"
-                } else {
-                    "pseudonymous channel subject"
-                },
-            );
-            println!(
-                "  bundle scope       : {}",
-                if summary.communication_profile_only {
-                    "selected communication profile only"
-                } else {
-                    "operator data plus operator communication profile"
-                }
+                summary.communication_profile_redacted,
             );
             println!("  archive files      : {}", summary.archive_files_copied);
         }
@@ -133,44 +95,11 @@ pub async fn run_export(args: ExportArgs) -> Result<()> {
     Ok(())
 }
 
-fn render_subject_inventory(
-    inventory: &export::CommunicationProfileInventory,
-    output: &OutputFormat,
-) -> Result<()> {
-    match output {
-        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(inventory)?),
-        OutputFormat::Jsonl => println!("{}", serde_json::to_string(inventory)?),
-        OutputFormat::Table => {
-            println!("# Communication-profile subject inventory");
-            println!(
-                "  state              : {}",
-                if inventory.state_present {
-                    "present"
-                } else {
-                    "absent"
-                }
-            );
-            if inventory.subjects.is_empty() {
-                println!("  No communication-profile subjects stored.");
-            } else {
-                println!("  Handles are pseudonymous exact selectors; case-sensitive and private.");
-                for subject in &inventory.subjects {
-                    println!(
-                        "  {}  sha256:{}  kind={}  dimensions={} evidence={} context={}",
-                        subject.subject_handle,
-                        &subject.subject_sha256[..subject.subject_sha256.len().min(16)],
-                        if subject.operator_subject {
-                            "operator"
-                        } else {
-                            "channel"
-                        },
-                        subject.dimensions,
-                        subject.evidence_records,
-                        subject.declared_context_records,
-                    );
-                }
-            }
-        }
+/// Reject unimplemented private-subject export modes before resolving a home,
+/// creating an output path, reading state, or rendering any output.
+fn ensure_generic_export_authority(args: &ExportArgs) -> Result<()> {
+    if args.subject.is_some() || args.list_subjects {
+        return Err(export::private_dsar_authority_unavailable());
     }
     Ok(())
 }
@@ -178,7 +107,7 @@ fn render_subject_inventory(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn subject_selector_and_inventory_are_explicit_cli_modes() {
+    fn private_dsar_flags_remain_parser_compatible() {
         use crate::cli::{Cli, Commands};
         use clap::Parser;
 
@@ -207,5 +136,40 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn private_dsar_flags_fail_closed_before_export_io() {
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("must-not-write");
+        let home = root.path().join("must-not-read");
+        let base = ExportArgs {
+            out: Some(output.clone()),
+            since: None,
+            format: "jsonl".to_owned(),
+            home: Some(home.clone()),
+            subject: None,
+            list_subjects: false,
+            output: OutputFormat::Table,
+        };
+
+        for args in [
+            ExportArgs {
+                subject: Some("native:matrix:private-handle".to_owned()),
+                ..base.clone()
+            },
+            ExportArgs {
+                list_subjects: true,
+                ..base
+            },
+        ] {
+            let error = ensure_generic_export_authority(&args).unwrap_err();
+            assert!(error
+                .downcast_ref::<export::PrivateDsarAuthorityUnavailable>()
+                .is_some());
+            assert_eq!(error.to_string(), "private DSAR authority unavailable");
+        }
+        assert!(!output.exists());
+        assert!(!home.exists());
     }
 }

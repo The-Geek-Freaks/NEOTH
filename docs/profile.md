@@ -113,7 +113,7 @@ n8n API Incognito controls are not yet parity-complete.
 | Doctor | Wired communication-state readiness/integrity check | Strict schema, typed evidence, subject isolation and private permissions; reports counts without profile content |
 | `neoth memory --forget <topic>` | Separate memory cascade with explicit communication metadata | Never erases communication state because typed evidence is not topic-addressable; points to the dedicated erase command |
 | `neoth memory erase-communication-profile` | Wired dry-run/`--confirm` erasure for one exact subject; omission defaults to operator | `--subject` accepts a case-sensitive pseudonymous handle; metadata-only audit hashes the selected subject |
-| `neoth export` | Writes schema-versioned `communication_profile.json` in JSONL and Markdown bundles | Normal export is operator-only; explicit `--subject` is communication-only and never bulk-includes channel subjects |
+| `neoth export` | Writes the V2 redacted `communication_profile.json` in JSONL and Markdown bundles | It contains only active concrete accommodations plus schema/presence/redaction metadata; `--subject` and `--list-subjects` fail because generic export has no authenticated private-DSAR authority |
 
 These remaining parity gaps keep `GOLD-R4-11` open in the Gold roadmap.
 `profile.communication.cluster_sync` is reserved and defaults to `false`; no
@@ -214,17 +214,21 @@ SQLite/WAL-backed memory and fact-profile data. It never covers the separate
 communication JSON state because typed presentation evidence is not
 topic-addressable; the command reports that boundary explicitly. Use
 `neoth memory erase-communication-profile` for a no-write operator inventory
-and add `--confirm` for complete operator-subject erasure. For another channel
-subject, obtain its pseudonymous handle with `neoth export --list-subjects` and
-pass that exact handle through `--subject`; unknown or case-mismatched handles
-fail closed.
+and add `--confirm` for complete operator-subject erasure. A channel-subject
+DSAR export requires an independently authenticated private-DSAR authority;
+the generic export CLI neither enumerates pseudonymous handles nor supplies
+that authority.
 
-The general `neoth export` command writes `communication_profile.json` for both
-output formats. Normal export is schema-versioned, operator-subject-only and
-carries explicit absent markers when no state exists; it never serializes the
-whole subject map. `neoth export --subject <handle>` writes only that exact
-communication subject and excludes operator-wide memory/archive files; its
-destination must be empty. `--since` does not filter this current-state record.
+The general `neoth export` command writes the V2 redacted
+`communication_profile.json` for both output formats. It contains only active
+concrete operator accommodations and non-sensitive schema, presence and
+redaction metadata; it never emits a subject handle, session, hash, evidence,
+scope, provenance, confidence, timestamp, declared context, or any count of
+those records. An absent state has an explicit redacted absent marker. Private
+`--subject <handle>` and `--list-subjects` modes remain parser-compatible but
+fail before state read, output creation or stdout because no authenticated
+private-DSAR authority is implemented. `--since` does not filter this
+current-state record.
 The separate general `idx_profile` fact-claim set is not yet exported, so
 complete fact-profile export remains an open Gold requirement.
 

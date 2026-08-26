@@ -1146,14 +1146,14 @@ Browse the WAL event-type registry. Self-documenting audit trail — `neoth even
 
 ## `neoth export`
 
-GDPR-style operator data export — JSONL or markdown dump of every row NEOTH stores about the operator, plus a copy of the archive. Phase 33c BS-8
+GDPR-style operator data export — JSONL or markdown dump of operator data, archive copy, and a V2 redacted communication record. That record contains only active concrete accommodations plus schema/presence/redaction metadata; it never serializes communication subjects, evidence, hashes, scopes, provenance, confidence, timestamps, or declared context. Phase 33c BS-8
 
 - `--out <DIR>` — Output directory. Default: `~/.neoth/exports/neoth-export-<UTC>/`
 - `--since <DATE>` — Filter to events at-or-after this date. Format `YYYY-MM-DD`. Defaults to "everything ever recorded"
 - `--format <FORMAT>` — Output format. `jsonl` = one event per line (default, lossless). `md` = human-readable digest grouped by day
 - `--home <DIR>` — Override the `~/.neoth/` home dir (mostly for tests)
-- `--subject <SUBJECT>` — Export only this exact pseudonymous communication-profile subject. Obtain handles with `--list-subjects`. This mode excludes operator-wide memory tables and archives from the bundle
-- `--list-subjects` — Strictly inventory pseudonymous communication-profile subject handles. No export directory is created and no profile content is printed
+- `--subject <SUBJECT>` — Reserved private-DSAR selector. Generic export has no authenticated private-DSAR authority, so this fails before reading state, creating output, or printing a handle
+- `--list-subjects` — Reserved private-DSAR inventory. Generic export has no authenticated private-DSAR authority, so this fails before reading state, creating output, or printing a handle
 
 ## `neoth fact-check`
 
@@ -1925,7 +1925,7 @@ Inspect the assembled NEOTH.md operator context
 
 Preview or confirm erasure of one complete typed communication profile. This is intentionally separate from topic forget because typed presentation evidence is not topic-addressable
 
-- `--subject <SUBJECT>` — Exact, case-sensitive pseudonymous handle from `neoth export --list-subjects`. Defaults to `operator`
+- `--subject <SUBJECT>` — Exact, case-sensitive private subject handle. Generic `neoth export --list-subjects` does not expose handles, and this option does not establish DSAR authority. Defaults to `operator`
 - `--confirm` — Required to erase. Without this flag the command is a dry-run
 - `--home <DIR>` — Override `~/.neoth/` (primarily for isolated verification)
 

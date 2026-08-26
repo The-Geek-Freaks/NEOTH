@@ -169,11 +169,12 @@ the local declaration history. Use
 audited privacy operation. `neoth profile communication reset` remains the
 lower-level profile control for the same subject.
 
-Shared channel workspaces can contain additional pseudonymous subjects. Run
-`neoth export --list-subjects` to inventory their exact handles, then use
-`--subject <handle>` on export or erasure. Unknown/case-mismatched handles fail
-closed. A selected-subject export contains only `communication_profile.json` in
-an empty destination; it never copies operator memory or archives.
+Shared channel workspaces can contain additional pseudonymous subjects, but the
+generic export CLI has no authenticated private-DSAR authority for them.
+`neoth export --list-subjects` and `neoth export --subject <handle>` are kept
+only for parser compatibility and fail closed before reading state, creating an
+output directory, or printing a handle. No local or sovereignty-based shortcut
+acts as DSAR authority.
 
 Inspect and control the effective state through the CLI:
 
@@ -197,8 +198,10 @@ communication state, typed evidence, subject isolation and private permissions
 without exposing profile content. GUI/Buddy controls, channel-side Incognito
 controls, cluster synchronization and a general `idx_profile` claim export are
 still open Gold gaps. Communication state has its own explicit preview/confirm
-erasure command, an operator-scoped default export, and an exact single-subject
-DSAR export; channel subjects are never bulk-exported. Topic forget
+erasure command and a redacted default export. The generic export contains only
+active concrete accommodations plus non-sensitive schema/presence/redaction
+metadata; it has no single-subject DSAR export until a separate authenticated
+authority is implemented. Topic forget
 intentionally reports that typed communication evidence is not
 topic-addressable. Authenticated direct n8n `/api/provider/call` requests use
 the fixed local operator subject and accept `incognito: true` for zero profile

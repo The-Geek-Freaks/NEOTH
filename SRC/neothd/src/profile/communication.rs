@@ -453,6 +453,23 @@ pub struct SubjectCommunicationProfile {
     pub declared_context: Option<DeclaredContext>,
 }
 
+/// Versioned, one-way projection for a generic operator export.
+///
+/// This is deliberately not a persistence type. It publishes only active,
+/// concrete presentation accommodations for the operator-global subject. In
+/// particular it has no subject identifier, evidence, confidence, scope,
+/// provenance, timing, or declared-context field.
+pub const REDACTED_EXPORT_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct RedactedCommunicationProfileExport {
+    pub export_schema_version: u32,
+    pub state_present: bool,
+    pub state_schema_version: Option<u32>,
+    pub redacted: bool,
+    pub active_accommodations: Vec<PreferenceValue>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommunicationState {
@@ -1004,6 +1021,41 @@ fn with_state_lock<T>(home: &Path, action: impl FnOnce() -> Result<T>) -> Result
 /// [`load_subject`] which short-circuits before touching the filesystem.
 pub fn load_state(home: &Path) -> Result<CommunicationState> {
     with_state_lock(home, || load_state_unlocked(home))
+}
+
+/// Strictly load and project the generic export record while holding the same
+/// state lock as persistence. The returned DTO intentionally cannot carry the
+/// persisted subject, evidence, or declared-context model.
+pub fn load_redacted_export(home: &Path) -> Result<RedactedCommunicationProfileExport> {
+    with_state_lock(home, || {
+        let path = state_path(home);
+        let state_present = path
+            .try_exists()
+            .with_context(|| format!("inspect communication profile at {}", path.display()))?;
+        let state = load_state_unlocked(home)?;
+        Ok(project_redacted_export(&state, state_present))
+    })
+}
+
+fn project_redacted_export(
+    state: &CommunicationState,
+    state_present: bool,
+) -> RedactedCommunicationProfileExport {
+    let active_accommodations = state
+        .subjects
+        .get(COMMUNICATION_OPERATOR_SUBJECT)
+        .into_iter()
+        .flat_map(|subject| subject.estimates.iter())
+        .filter_map(|(_, estimate)| estimate.active.then_some(estimate.selected))
+        .collect();
+
+    RedactedCommunicationProfileExport {
+        export_schema_version: REDACTED_EXPORT_SCHEMA_VERSION,
+        state_present,
+        state_schema_version: state_present.then_some(state.schema_version),
+        redacted: true,
+        active_accommodations,
+    }
 }
 
 pub fn load_subject(
