@@ -3068,32 +3068,37 @@ pub struct CostSessionData {
 }
 
 /// Parse `neoth cost top-sessions --output json` (array of row objects;
-/// tolerant of field-name drift by probing common keys).
-pub fn parse_cost_sessions(json: &str) -> Vec<CostSessionData> {
-    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let Some(rows) = v.as_array().cloned().or_else(|| {
+/// tolerant of field-name drift by probing common keys). `None` preserves a
+/// malformed response as unavailable instead of forging a valid empty list.
+pub fn parse_cost_sessions(json: &str) -> Option<Vec<CostSessionData>> {
+    let v = serde_json::from_str::<serde_json::Value>(json).ok()?;
+    let rows = v.as_array().or_else(|| {
         v.get("sessions")
             .or_else(|| v.get("rows"))
             .and_then(|x| x.as_array())
-            .cloned()
-    }) else {
-        return Vec::new();
-    };
-    fn s(v: &serde_json::Value, keys: &[&str]) -> String {
-        for k in keys {
-            if let Some(x) = v.get(k) {
-                if let Some(t) = x.as_str() {
-                    return t.to_string();
-                }
-                if x.is_number() {
-                    return x.to_string();
-                }
+    })?;
+    fn text(v: &serde_json::Value, keys: &[&str]) -> Option<String> {
+        keys.iter()
+            .find_map(|key| v.get(key).and_then(serde_json::Value::as_str))
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    }
+    fn count(v: &serde_json::Value, keys: &[&str]) -> Option<String> {
+        keys.iter().find_map(|key| {
+            let value = v.get(key)?;
+            if let Some(count) = value.as_u64() {
+                return Some(count.to_string());
             }
-        }
-        String::new()
+            let count = value.as_str()?.parse::<u64>().ok()?;
+            Some(count.to_string())
+        })
     }
     rows.iter()
+        .take(8)
         .map(|r| {
+            if !r.is_object() {
+                return None;
+            }
             // `models` is an array; surface the first (usually only) one.
             let model = r
                 .get("models")
@@ -3101,23 +3106,23 @@ pub fn parse_cost_sessions(json: &str) -> Vec<CostSessionData> {
                 .and_then(|a| a.first())
                 .and_then(|x| x.as_str())
                 .map(str::to_string)
-                .unwrap_or_else(|| s(r, &["provider", "model"]));
-            CostSessionData {
-                session: s(r, &["session", "session_id", "id"])
-                    .chars()
-                    .take(18)
-                    .collect(),
+                .or_else(|| text(r, &["provider", "model"]))
+                .unwrap_or_default();
+            let session: String = text(r, &["session", "session_id", "id"])?
+                .chars()
+                .take(18)
+                .collect();
+            let tokens = count(r, &["total_tokens", "tokens", "output_tokens"])?;
+            let responses = count(r, &["responses"])?;
+            Some(CostSessionData {
+                session,
                 provider: model,
-                tokens: s(r, &["total_tokens", "tokens", "output_tokens"]),
+                tokens,
                 // top-sessions ranks by tokens, not currency — show the
                 // response count in the cost column (honest, not a fake $).
-                cost: match s(r, &["responses"]).as_str() {
-                    "" => s(r, &["cost", "total_eur", "eur"]),
-                    n => format!("{n} resp"),
-                },
-            }
+                cost: format!("{responses} resp"),
+            })
         })
-        .take(8)
         .collect()
 }
 
@@ -3125,14 +3130,632 @@ pub fn parse_cost_sessions(json: &str) -> Vec<CostSessionData> {
 pub fn parse_usage_rollup(json: &str) -> Option<(f64, u64)> {
     let v = serde_json::from_str::<serde_json::Value>(json).ok()?;
     let cost = v.get("total_cost_usd")?.as_f64()?;
-    let tokens = v
-        .get("total_input_tokens")
-        .and_then(|x| x.as_u64())
-        .unwrap_or(0)
-        + v.get("total_output_tokens")
-            .and_then(|x| x.as_u64())
-            .unwrap_or(0);
+    if !cost.is_finite() || cost < 0.0 {
+        return None;
+    }
+    let input = v.get("total_input_tokens")?.as_u64()?;
+    let output = v.get("total_output_tokens")?.as_u64()?;
+    let tokens = input.checked_add(output)?;
     Some((cost, tokens))
+}
+
+// ── ADOPT31-D2 — workflow cost rollup ───────────────────────────────────────
+
+/// The GUI accepts at most the backend's published workflow rows.  This is a
+/// byte limit, rather than a character limit, because the subprocess boundary
+/// transports bytes and an oversized valid-UTF-8 response is still an
+/// allocation-pressure input.
+pub const MAX_WORKFLOW_ROLLUP_JSON_BYTES: usize = 1024 * 1024;
+/// Kept in lockstep with `daemon::usage_log::MAX_WORKFLOW_ROLLUP_ROWS`.
+pub const MAX_WORKFLOW_ROLLUP_ROWS: usize = 8;
+const MAX_WORKFLOW_ROLLUP_UNKNOWN_TOP_LEVEL_FIELDS: usize = 8;
+const MAX_VISIBLE_WORKFLOW_ROWS: usize = 3;
+// Reassociation tolerance is never allowed to become display-significant just
+// because an untrusted envelope advertises a huge event count. Legitimate
+// backend regrouping remains many orders of magnitude below these limits.
+const MAX_WORKFLOW_COST_ABSOLUTE_DRIFT_USD: f64 = 1.0e-9;
+const MAX_WORKFLOW_COST_RELATIVE_DRIFT: f64 = 1.0e-10;
+
+/// A workflow breakdown is deliberately tri-state.  Older daemons predate the
+/// schema; a daemon advertising schema 1 must provide a valid schema-1 body.
+/// The latter never degrades into a plausible all-zero breakdown.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WorkflowUsageParse {
+    Valid(WorkflowUsageRollup),
+    LegacyDaemon,
+    Invalid,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowUsageRollup {
+    pub rows: Vec<WorkflowUsageRow>,
+    pub other: Option<WorkflowUsageOther>,
+    pub totals: WorkflowUsageTotals,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowUsageRow {
+    /// Closed, presentation-safe label selected by this GUI.  The daemon's
+    /// JSON value is never copied to the display surface.
+    pub label: &'static str,
+    pub is_unclassified: bool,
+    pub totals: WorkflowUsageTotals,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowUsageOther {
+    pub omitted_workflow_count: u64,
+    pub totals: WorkflowUsageTotals,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowUsageTotals {
+    pub call_count: u64,
+    pub ok_count: u64,
+    pub err_count: u64,
+    pub known_cost_usd: f64,
+    pub known_cost_count: u64,
+    pub unknown_cost_count: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub unknown_input_token_count: u64,
+    pub unknown_output_token_count: u64,
+    pub automated_count: u64,
+    pub human_count: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkflowKindWire {
+    ChatTurn,
+    ChatPostReply,
+    DeepResearch,
+    SessionNaming,
+    BackgroundSession,
+    CouncilDeliberation,
+    McpAgentLoop,
+    N8nProviderCall,
+    ClusterDelegated,
+    HistoryCompaction,
+    TeacherEscalation,
+    RefusalRecovery,
+    ScheduledMaintenance,
+    Unclassified,
+}
+
+impl WorkflowKindWire {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ChatTurn => "Chat turn",
+            Self::ChatPostReply => "Post-reply work",
+            Self::DeepResearch => "Deep research",
+            Self::SessionNaming => "Session naming",
+            Self::BackgroundSession => "Background session",
+            Self::CouncilDeliberation => "Council deliberation",
+            Self::McpAgentLoop => "MCP agent loop",
+            Self::N8nProviderCall => "n8n provider call",
+            Self::ClusterDelegated => "Cluster delegation",
+            Self::HistoryCompaction => "History compaction",
+            Self::TeacherEscalation => "Teacher escalation",
+            Self::RefusalRecovery => "Refusal recovery",
+            Self::ScheduledMaintenance => "Scheduled maintenance",
+            Self::Unclassified => "Unclassified",
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct WorkflowRollupEnvelopeWire {
+    since_unix: i64,
+    until_unix: i64,
+    total_call_count: u64,
+    total_ok_count: u64,
+    total_err_count: u64,
+    total_input_tokens: u64,
+    total_output_tokens: u64,
+    total_cost_usd: f64,
+    total_unknown_input_token_count: u64,
+    total_unknown_output_token_count: u64,
+    total_unknown_cost_count: u64,
+    total_automated_count: u64,
+    total_human_count: u64,
+    burn_rate_usd_per_day: f64,
+    projected_monthly_usd: f64,
+    total_cache_savings_usd: f64,
+    workflow_rollup_schema: Option<u16>,
+    per_workflow: Vec<WorkflowUsageRowWire>,
+    #[serde(default)]
+    workflow_other: Option<WorkflowUsageOtherWire>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct WorkflowUsageRowWire {
+    workflow: WorkflowKindWire,
+    #[serde(flatten)]
+    totals: WorkflowUsageTotalsWire,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct WorkflowUsageOtherWire {
+    omitted_workflow_count: u64,
+    #[serde(flatten)]
+    totals: WorkflowUsageTotalsWire,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct WorkflowUsageTotalsWire {
+    call_count: u64,
+    ok_count: u64,
+    err_count: u64,
+    known_cost_usd: f64,
+    known_cost_count: u64,
+    unknown_cost_count: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+    unknown_input_token_count: u64,
+    unknown_output_token_count: u64,
+    automated_count: u64,
+    human_count: u64,
+}
+
+impl TryFrom<WorkflowUsageTotalsWire> for WorkflowUsageTotals {
+    type Error = ();
+
+    fn try_from(value: WorkflowUsageTotalsWire) -> Result<Self, Self::Error> {
+        // Every source event has a success result, a cost state, a session
+        // class, and an input/output-token state.  These relations make a
+        // corrupted row fail closed rather than displaying forged cost data.
+        let outcomes = value.ok_count.checked_add(value.err_count).ok_or(())?;
+        let cost_states = value
+            .known_cost_count
+            .checked_add(value.unknown_cost_count)
+            .ok_or(())?;
+        let session_classes = value
+            .automated_count
+            .checked_add(value.human_count)
+            .ok_or(())?;
+        value
+            .input_tokens
+            .checked_add(value.output_tokens)
+            .ok_or(())?;
+        if outcomes != value.call_count
+            || cost_states != value.call_count
+            || session_classes != value.call_count
+            || value.unknown_input_token_count > value.call_count
+            || value.unknown_output_token_count > value.call_count
+            || (value.known_cost_count == 0 && value.known_cost_usd != 0.0)
+            || !value.known_cost_usd.is_finite()
+            || value.known_cost_usd < 0.0
+        {
+            return Err(());
+        }
+        Ok(Self {
+            call_count: value.call_count,
+            ok_count: value.ok_count,
+            err_count: value.err_count,
+            known_cost_usd: value.known_cost_usd,
+            known_cost_count: value.known_cost_count,
+            unknown_cost_count: value.unknown_cost_count,
+            input_tokens: value.input_tokens,
+            output_tokens: value.output_tokens,
+            unknown_input_token_count: value.unknown_input_token_count,
+            unknown_output_token_count: value.unknown_output_token_count,
+            automated_count: value.automated_count,
+            human_count: value.human_count,
+        })
+    }
+}
+
+impl WorkflowUsageTotals {
+    fn zero() -> Self {
+        Self {
+            call_count: 0,
+            ok_count: 0,
+            err_count: 0,
+            known_cost_usd: 0.0,
+            known_cost_count: 0,
+            unknown_cost_count: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            unknown_input_token_count: 0,
+            unknown_output_token_count: 0,
+            automated_count: 0,
+            human_count: 0,
+        }
+    }
+
+    fn checked_add_assign(&mut self, other: &Self) -> Option<()> {
+        self.call_count = self.call_count.checked_add(other.call_count)?;
+        self.ok_count = self.ok_count.checked_add(other.ok_count)?;
+        self.err_count = self.err_count.checked_add(other.err_count)?;
+        self.known_cost_usd += other.known_cost_usd;
+        if !self.known_cost_usd.is_finite() || self.known_cost_usd < 0.0 {
+            return None;
+        }
+        self.known_cost_count = self.known_cost_count.checked_add(other.known_cost_count)?;
+        self.unknown_cost_count = self
+            .unknown_cost_count
+            .checked_add(other.unknown_cost_count)?;
+        self.input_tokens = self.input_tokens.checked_add(other.input_tokens)?;
+        self.output_tokens = self.output_tokens.checked_add(other.output_tokens)?;
+        self.input_tokens.checked_add(self.output_tokens)?;
+        self.unknown_input_token_count = self
+            .unknown_input_token_count
+            .checked_add(other.unknown_input_token_count)?;
+        self.unknown_output_token_count = self
+            .unknown_output_token_count
+            .checked_add(other.unknown_output_token_count)?;
+        self.automated_count = self.automated_count.checked_add(other.automated_count)?;
+        self.human_count = self.human_count.checked_add(other.human_count)?;
+        Some(())
+    }
+}
+
+fn workflow_totals_match(
+    expected: &WorkflowUsageTotals,
+    aggregated: &WorkflowUsageTotals,
+    emitted_cost_terms: usize,
+) -> bool {
+    let costs_match = if expected.known_cost_usd == aggregated.known_cost_usd {
+        true
+    } else {
+        // The daemon visits events chronologically for the top total but groups
+        // them by workflow before emitting rows. Addition of non-negative f64
+        // values is order-sensitive, so exact bit equality would reject valid
+        // regroupings. Bound equivalence to the standard forward-error budget
+        // for both event-order sums plus the at-most-nine emitted subtotal
+        // additions. The ratio form cannot overflow for finite non-negative
+        // totals. If the advertised count is too large for a useful bound, only
+        // the exact-equality branch above is accepted.
+        let scale = expected.known_cost_usd.max(aggregated.known_cost_usd);
+        let rounding_steps = u64::try_from(emitted_cost_terms).ok().and_then(|terms| {
+            expected
+                .known_cost_count
+                .checked_mul(2)
+                .and_then(|steps| steps.checked_add(terms))
+        });
+        rounding_steps.is_some_and(|steps| {
+            let accumulated_error = (steps as f64) * f64::EPSILON;
+            let difference = (expected.known_cost_usd - aggregated.known_cost_usd).abs();
+            accumulated_error < 0.5
+                && scale > 0.0
+                && difference <= MAX_WORKFLOW_COST_ABSOLUTE_DRIFT_USD
+                && difference / scale <= MAX_WORKFLOW_COST_RELATIVE_DRIFT
+                && difference / scale <= accumulated_error / (1.0 - accumulated_error)
+        })
+    };
+    costs_match
+        && expected.call_count == aggregated.call_count
+        && expected.ok_count == aggregated.ok_count
+        && expected.err_count == aggregated.err_count
+        && expected.known_cost_count == aggregated.known_cost_count
+        && expected.unknown_cost_count == aggregated.unknown_cost_count
+        && expected.input_tokens == aggregated.input_tokens
+        && expected.output_tokens == aggregated.output_tokens
+        && expected.unknown_input_token_count == aggregated.unknown_input_token_count
+        && expected.unknown_output_token_count == aggregated.unknown_output_token_count
+        && expected.automated_count == aggregated.automated_count
+        && expected.human_count == aggregated.human_count
+}
+
+/// Decode the additive ADOPT31-D2 part of `neoth usage --format json`.
+///
+/// A small bounded number of unknown top-level fields is ignored so ordinary
+/// additions to the long-lived usage envelope remain forward compatible.
+/// Schema-1 totals, rows, and `workflow_other` are one strict envelope: their
+/// only displayable workflow values are the closed enum above, and any
+/// malformed, inconsistent, or over-cap response is Invalid.
+pub fn parse_workflow_usage_rollup(json: &str) -> WorkflowUsageParse {
+    if json.len() > MAX_WORKFLOW_ROLLUP_JSON_BYTES {
+        return WorkflowUsageParse::Invalid;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return WorkflowUsageParse::Invalid;
+    };
+    let Some(object) = value.as_object() else {
+        return WorkflowUsageParse::Invalid;
+    };
+    match object.get("workflow_rollup_schema") {
+        None | Some(serde_json::Value::Null) => return WorkflowUsageParse::LegacyDaemon,
+        Some(_) => {}
+    }
+    const KNOWN_TOP_LEVEL_KEYS: [&str; 24] = [
+        "since_unix",
+        "until_unix",
+        "total_call_count",
+        "total_ok_count",
+        "total_err_count",
+        "total_input_tokens",
+        "total_output_tokens",
+        "total_cost_usd",
+        "total_unknown_input_token_count",
+        "total_unknown_output_token_count",
+        "total_unknown_cost_count",
+        "total_p50_latency_ms",
+        "total_p90_latency_ms",
+        "burn_rate_usd_per_day",
+        "projected_monthly_usd",
+        "total_cache_creation_tokens",
+        "total_cache_read_tokens",
+        "total_cache_savings_usd",
+        "total_automated_count",
+        "total_human_count",
+        "per_provider",
+        "workflow_rollup_schema",
+        "per_workflow",
+        "workflow_other",
+    ];
+    let unknown_top_level = object
+        .keys()
+        .filter(|key| !KNOWN_TOP_LEVEL_KEYS.contains(&key.as_str()))
+        .take(MAX_WORKFLOW_ROLLUP_UNKNOWN_TOP_LEVEL_FIELDS + 1)
+        .count();
+    if object.len()
+        > KNOWN_TOP_LEVEL_KEYS.len() + MAX_WORKFLOW_ROLLUP_UNKNOWN_TOP_LEVEL_FIELDS
+        || unknown_top_level > MAX_WORKFLOW_ROLLUP_UNKNOWN_TOP_LEVEL_FIELDS
+    {
+        return WorkflowUsageParse::Invalid;
+    }
+    // Serde cannot combine `deny_unknown_fields` with the flattened totals
+    // shape.  Keep the wire layout flat, and enforce the same strictness here
+    // before typed deserialization.  Top-level fields deliberately remain
+    // additive/forward-compatible.
+    const TOTAL_KEYS: [&str; 12] = [
+        "call_count",
+        "ok_count",
+        "err_count",
+        "known_cost_usd",
+        "known_cost_count",
+        "unknown_cost_count",
+        "input_tokens",
+        "output_tokens",
+        "unknown_input_token_count",
+        "unknown_output_token_count",
+        "automated_count",
+        "human_count",
+    ];
+    let only_keys = |row: &serde_json::Value, extra: Option<&str>| {
+        row.as_object().is_some_and(|row| {
+            row.keys().all(|key| {
+                TOTAL_KEYS.contains(&key.as_str())
+                    || extra.is_some_and(|allowed| key.as_str() == allowed)
+            })
+        })
+    };
+    let Some(workflows) = object.get("per_workflow").and_then(serde_json::Value::as_array)
+    else {
+        return WorkflowUsageParse::Invalid;
+    };
+    if workflows.len() > MAX_WORKFLOW_ROLLUP_ROWS
+        || !workflows
+        .iter()
+        .all(|row| only_keys(row, Some("workflow")))
+        || object
+            .get("workflow_other")
+            .is_some_and(|other| {
+                !other.is_null() && !only_keys(other, Some("omitted_workflow_count"))
+            })
+    {
+        return WorkflowUsageParse::Invalid;
+    }
+    let Ok(envelope) = serde_json::from_value::<WorkflowRollupEnvelopeWire>(value) else {
+        return WorkflowUsageParse::Invalid;
+    };
+    if envelope.workflow_rollup_schema != Some(1)
+        || envelope.since_unix > envelope.until_unix
+        || [
+            envelope.total_cost_usd,
+            envelope.burn_rate_usd_per_day,
+            envelope.projected_monthly_usd,
+            envelope.total_cache_savings_usd,
+        ]
+        .into_iter()
+        .any(|cost| !cost.is_finite() || cost < 0.0)
+    {
+        return WorkflowUsageParse::Invalid;
+    }
+
+    let Some(total_known_cost_count) = envelope
+        .total_call_count
+        .checked_sub(envelope.total_unknown_cost_count)
+    else {
+        return WorkflowUsageParse::Invalid;
+    };
+    let Ok(totals) = WorkflowUsageTotals::try_from(WorkflowUsageTotalsWire {
+        call_count: envelope.total_call_count,
+        ok_count: envelope.total_ok_count,
+        err_count: envelope.total_err_count,
+        known_cost_usd: envelope.total_cost_usd,
+        known_cost_count: total_known_cost_count,
+        unknown_cost_count: envelope.total_unknown_cost_count,
+        input_tokens: envelope.total_input_tokens,
+        output_tokens: envelope.total_output_tokens,
+        unknown_input_token_count: envelope.total_unknown_input_token_count,
+        unknown_output_token_count: envelope.total_unknown_output_token_count,
+        automated_count: envelope.total_automated_count,
+        human_count: envelope.total_human_count,
+    }) else {
+        return WorkflowUsageParse::Invalid;
+    };
+
+    let mut kinds = std::collections::HashSet::with_capacity(envelope.per_workflow.len());
+    let mut rows = Vec::with_capacity(envelope.per_workflow.len());
+    for row in envelope.per_workflow {
+        if !kinds.insert(row.workflow) {
+            return WorkflowUsageParse::Invalid;
+        }
+        let Ok(totals) = WorkflowUsageTotals::try_from(row.totals) else {
+            return WorkflowUsageParse::Invalid;
+        };
+        if totals.call_count == 0 {
+            return WorkflowUsageParse::Invalid;
+        }
+        rows.push(WorkflowUsageRow {
+            label: row.workflow.label(),
+            is_unclassified: row.workflow == WorkflowKindWire::Unclassified,
+            totals,
+        });
+    }
+    let other = match envelope.workflow_other {
+        Some(other) => {
+            if other.omitted_workflow_count == 0
+                || other.omitted_workflow_count > other.totals.call_count
+            {
+                return WorkflowUsageParse::Invalid;
+            }
+            match WorkflowUsageTotals::try_from(other.totals) {
+                Ok(totals) if totals.call_count > 0 => Some(WorkflowUsageOther {
+                    omitted_workflow_count: other.omitted_workflow_count,
+                    totals,
+                }),
+                Ok(_) | Err(()) => return WorkflowUsageParse::Invalid,
+            }
+        }
+        None => None,
+    };
+    let mut aggregated = WorkflowUsageTotals::zero();
+    for row in &rows {
+        if aggregated.checked_add_assign(&row.totals).is_none() {
+            return WorkflowUsageParse::Invalid;
+        }
+    }
+    if let Some(other) = &other
+        && aggregated.checked_add_assign(&other.totals).is_none()
+    {
+        return WorkflowUsageParse::Invalid;
+    }
+    let cost_terms = rows.len() + usize::from(other.is_some());
+    if !workflow_totals_match(&totals, &aggregated, cost_terms) {
+        return WorkflowUsageParse::Invalid;
+    }
+    let rollup = WorkflowUsageRollup {
+        rows,
+        other,
+        totals,
+    };
+    if total_unknown_cost(&rollup).is_none() {
+        return WorkflowUsageParse::Invalid;
+    }
+    WorkflowUsageParse::Valid(rollup)
+}
+
+fn format_workflow_cost(totals: &WorkflowUsageTotals) -> String {
+    match (totals.known_cost_count, totals.unknown_cost_count) {
+        (0, 0) => "no priced calls".to_string(),
+        (0, unknown) => format!("{unknown} unpriced"),
+        (_, 0) => format!("${:.4} known", totals.known_cost_usd),
+        (_, unknown) => format!("${:.4} known + {unknown} unpriced", totals.known_cost_usd),
+    }
+}
+
+fn total_unknown_cost(rollup: &WorkflowUsageRollup) -> Option<u64> {
+    rollup
+        .rows
+        .iter()
+        .map(|row| row.totals.unknown_cost_count)
+        .chain(rollup.other.iter().map(|other| other.totals.unknown_cost_count))
+        .try_fold(0_u64, |total, count| total.checked_add(count))
+}
+
+/// Render a bounded, static-label workflow breakdown for the existing 24-hour
+/// card.  In particular, `unknown_cost_count` is rendered as "unpriced" and
+/// is never silently converted into `$0.0000`.
+pub fn format_workflow_usage_summary(parsed: &WorkflowUsageParse) -> String {
+    match parsed {
+        WorkflowUsageParse::LegacyDaemon => {
+            "Workflow breakdown unavailable — legacy daemon.".to_string()
+        }
+        WorkflowUsageParse::Invalid => {
+            "Workflow breakdown unavailable — invalid daemon response.".to_string()
+        }
+        WorkflowUsageParse::Valid(rollup) => {
+            let Some(unpriced) = total_unknown_cost(rollup) else {
+                return "Workflow breakdown unavailable — invalid daemon response.".to_string();
+            };
+            if rollup.rows.is_empty() && rollup.other.is_none() {
+                return "Workflow usage: no calls in the last 24h.".to_string();
+            }
+
+            let mut lines = Vec::new();
+            // `unclassified` is an ordinary closed workflow row, but it must
+            // remain visible rather than disappearing behind the three-row
+            // presentation cap.  It replaces the last selected row instead
+            // of adding a fourth workflow row.
+            let mut visible_rows: Vec<&WorkflowUsageRow> = rollup
+                .rows
+                .iter()
+                .take(MAX_VISIBLE_WORKFLOW_ROWS)
+                .collect();
+            if let Some(unclassified) = rollup.rows.iter().find(|row| row.is_unclassified)
+                && !visible_rows.iter().any(|row| row.is_unclassified)
+            {
+                if visible_rows.len() == MAX_VISIBLE_WORKFLOW_ROWS {
+                    let _ = visible_rows.pop();
+                }
+                visible_rows.push(unclassified);
+            }
+            for row in &visible_rows {
+                lines.push(format!(
+                    "{}: {} calls · {}",
+                    row.label,
+                    row.totals.call_count,
+                    format_workflow_cost(&row.totals)
+                ));
+            }
+            let hidden_rows = rollup.rows.len().saturating_sub(visible_rows.len());
+            if hidden_rows > 0 {
+                lines.push(format!("{hidden_rows} additional classified workflows."));
+            }
+            if let Some(other) = &rollup.other {
+                lines.push(format!(
+                    "Other: {} workflows · {} calls · {}",
+                    other.omitted_workflow_count,
+                    other.totals.call_count,
+                    format_workflow_cost(&other.totals)
+                ));
+            }
+            if unpriced > 0 {
+                lines.push(format!(
+                    "Unpriced: {unpriced} calls; known costs remain partial."
+                ));
+            }
+            lines.join("\n")
+        }
+    }
+}
+
+/// Return a truthful seven-day suffix for the existing overview sparkline.
+/// The caller supplies all daily parse results rather than retrying or reading
+/// local usage files; the daemon CLI remains the only data producer.
+pub fn format_workflow_week_truth(days: &[WorkflowUsageParse]) -> String {
+    if days.iter().any(|day| matches!(day, WorkflowUsageParse::Invalid)) {
+        return "workflow invalid".to_string();
+    }
+    let valid: Vec<&WorkflowUsageRollup> = days
+        .iter()
+        .filter_map(|day| match day {
+            WorkflowUsageParse::Valid(rollup) => Some(rollup),
+            WorkflowUsageParse::LegacyDaemon | WorkflowUsageParse::Invalid => None,
+        })
+        .collect();
+    if valid.is_empty() {
+        return "workflow legacy".to_string();
+    }
+    let unpriced = valid
+        .iter()
+        .try_fold(0_u64, |total, rollup| {
+            total_unknown_cost(rollup).and_then(|count| total.checked_add(count))
+        });
+    let Some(unpriced) = unpriced else {
+        return "workflow invalid".to_string();
+    };
+    if unpriced > 0 {
+        format!("workflow unpriced: {unpriced}")
+    } else if valid.len() == days.len() {
+        "workflow complete".to_string()
+    } else {
+        "workflow partial legacy".to_string()
+    }
 }
 
 // ── Memory graph (H2) — parse + deterministic force layout ───────────────────
@@ -3954,6 +4577,31 @@ pub fn parse_meter(json: &str) -> (String, String, String, String, f32) {
     };
 
     (tokens_in, tokens_out, responses, cost, fraction)
+}
+
+/// Strict form for the bounded D2 Overview probe. All displayed counters and
+/// cost are required, token arithmetic must not overflow, and malformed JSON
+/// stays explicitly unavailable at the caller.
+pub fn parse_meter_checked(json: &str) -> Option<(String, String, String, String, f32)> {
+    if json.len() > MAX_WORKFLOW_ROLLUP_JSON_BYTES {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(json).ok()?;
+    let input = value.get("input_tokens_total")?.as_u64()?;
+    let output = value.get("output_tokens_total")?.as_u64()?;
+    input.checked_add(output)?;
+    value.get("provider_responses")?.as_u64()?;
+    let cost = value.get("cost_usd")?.as_f64()?;
+    if !cost.is_finite() || cost < 0.0 {
+        return None;
+    }
+    if value
+        .get("daily_cap_tokens")
+        .is_some_and(|cap| cap.as_u64().is_none())
+    {
+        return None;
+    }
+    Some(parse_meter(json))
 }
 
 /// Parse `neoth hemispheres show --output json` into a Vec of (role, provider, model, ok).
@@ -8819,6 +9467,25 @@ mod tests {
     }
 
     #[test]
+    fn bounded_overview_meter_rejects_missing_negative_and_overflowed_values() {
+        let valid = r#"{"input_tokens_total":500,"output_tokens_total":100,
+            "provider_responses":1,"cost_usd":0.25,"daily_cap_tokens":1000}"#;
+        assert!(parse_meter_checked(valid).is_some());
+        assert!(parse_meter_checked("{}").is_none());
+        assert!(parse_meter_checked(
+            r#"{"input_tokens_total":1,"output_tokens_total":1,
+                "provider_responses":1,"cost_usd":-0.01}"#
+        )
+        .is_none());
+        assert!(parse_meter_checked(&format!(
+            r#"{{"input_tokens_total":{},"output_tokens_total":1,
+                "provider_responses":1,"cost_usd":0.0}}"#,
+            u64::MAX
+        ))
+        .is_none());
+    }
+
+    #[test]
     fn parse_hemispheres_three_roles() {
         let json = r#"[{"role":"left","provider":"claude_cli","model":"claude-opus-4-7","status":"active"},{"role":"right","provider":"gemini","model":"gemini-2-5","status":"active"},{"role":"cerebellum","provider":"codex","model":"o3","status":"idle"}]"#;
         let hemis = super::parse_overview_hemispheres(json);
@@ -10086,6 +10753,423 @@ mod tests {
         assert_eq!(parse_usage_rollup(json), Some((0.12, 150)));
         assert_eq!(parse_usage_rollup("junk"), None);
         assert_eq!(parse_usage_rollup("{}"), None);
+        assert_eq!(
+            parse_usage_rollup(
+                r#"{"total_cost_usd":-1.0,"total_input_tokens":1,
+                    "total_output_tokens":1}"#
+            ),
+            None
+        );
+        assert_eq!(
+            parse_usage_rollup(&format!(
+                r#"{{"total_cost_usd":0.0,"total_input_tokens":{},
+                    "total_output_tokens":1}}"#,
+                u64::MAX
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn workflow_usage_rollup_is_typed_bounded_and_truthful_about_unpriced_cost() {
+        let json = r#"{
+            "since_unix":0,"until_unix":1,"total_call_count":6,
+            "total_ok_count":5,"total_err_count":1,"total_input_tokens":31,
+            "total_output_tokens":18,"total_cost_usd":0.125,
+            "total_unknown_input_token_count":1,"total_unknown_output_token_count":1,
+            "total_unknown_cost_count":5,"total_automated_count":4,
+            "total_human_count":2,"burn_rate_usd_per_day":0.0,
+            "projected_monthly_usd":0.0,"total_cache_savings_usd":0.0,
+            "workflow_rollup_schema":1,
+            "per_workflow":[
+                {"workflow":"chat_turn","call_count":2,"ok_count":2,"err_count":0,
+                 "known_cost_usd":0.125,"known_cost_count":1,"unknown_cost_count":1,
+                 "input_tokens":20,"output_tokens":10,"unknown_input_token_count":0,
+                 "unknown_output_token_count":0,"automated_count":1,"human_count":1},
+                {"workflow":"unclassified","call_count":1,"ok_count":0,"err_count":1,
+                 "known_cost_usd":0.0,"known_cost_count":0,"unknown_cost_count":1,
+                 "input_tokens":4,"output_tokens":0,"unknown_input_token_count":1,
+                 "unknown_output_token_count":1,"automated_count":0,"human_count":1}
+            ],
+            "workflow_other":{"omitted_workflow_count":2,"call_count":3,"ok_count":3,
+                "err_count":0,"known_cost_usd":0.0,"known_cost_count":0,
+                "unknown_cost_count":3,"input_tokens":7,"output_tokens":8,
+                "unknown_input_token_count":0,"unknown_output_token_count":0,
+                "automated_count":3,"human_count":0},
+            "future_top_level_field":"ignored"
+        }"#;
+        let parsed = parse_workflow_usage_rollup(json);
+        let WorkflowUsageParse::Valid(rollup) = &parsed else {
+            panic!("schema-1 workflow response should parse");
+        };
+        assert_eq!(rollup.rows.len(), 2);
+        assert_eq!(rollup.rows[0].label, "Chat turn");
+        let rendered = format_workflow_usage_summary(&parsed);
+        assert!(rendered.contains("Chat turn: 2 calls · $0.1250 known + 1 unpriced"));
+        assert!(rendered.contains("Unclassified: 1 calls · 1 unpriced"));
+        assert!(rendered.contains("Other: 2 workflows · 3 calls · 3 unpriced"));
+        assert!(rendered.contains("Unpriced: 5 calls; known costs remain partial."));
+        assert!(!rendered.contains("Unclassified: 1 calls · $0.0000"));
+    }
+
+    #[test]
+    fn workflow_usage_rollup_accepts_backend_optional_other_as_null() {
+        let empty = r#"{"since_unix":0,"until_unix":1,"total_call_count":0,
+            "total_ok_count":0,"total_err_count":0,"total_input_tokens":0,
+            "total_output_tokens":0,"total_cost_usd":0.0,
+            "total_unknown_input_token_count":0,"total_unknown_output_token_count":0,
+            "total_unknown_cost_count":0,"total_automated_count":0,"total_human_count":0,
+            "burn_rate_usd_per_day":0.0,"projected_monthly_usd":0.0,
+            "total_cache_savings_usd":0.0,"workflow_rollup_schema":1,
+            "per_workflow":[],"workflow_other":null}"#;
+        assert!(matches!(
+            parse_workflow_usage_rollup(empty),
+            WorkflowUsageParse::Valid(WorkflowUsageRollup { other: None, .. })
+        ));
+        let populated = r#"{"since_unix":0,"until_unix":1,"total_call_count":1,
+            "total_ok_count":1,"total_err_count":0,"total_input_tokens":1,
+            "total_output_tokens":1,"total_cost_usd":0.0,
+            "total_unknown_input_token_count":0,"total_unknown_output_token_count":0,
+            "total_unknown_cost_count":0,"total_automated_count":0,"total_human_count":1,
+            "burn_rate_usd_per_day":0.0,"projected_monthly_usd":0.0,
+            "total_cache_savings_usd":0.0,"workflow_rollup_schema":1,"per_workflow":[
+            {"workflow":"chat_turn","call_count":1,"ok_count":1,"err_count":0,
+            "known_cost_usd":0.0,"known_cost_count":1,"unknown_cost_count":0,
+            "input_tokens":1,"output_tokens":1,"unknown_input_token_count":0,
+            "unknown_output_token_count":0,"automated_count":0,"human_count":1}],
+            "workflow_other":null}"#;
+        assert!(matches!(
+            parse_workflow_usage_rollup(populated),
+            WorkflowUsageParse::Valid(WorkflowUsageRollup { other: None, .. })
+        ));
+        let invalid_scalar = r#"{"workflow_rollup_schema":1,"per_workflow":[],"workflow_other":0}"#;
+        assert!(matches!(
+            parse_workflow_usage_rollup(invalid_scalar),
+            WorkflowUsageParse::Invalid
+        ));
+    }
+
+    #[test]
+    fn workflow_usage_rollup_keeps_legacy_distinct_from_bad_schema_one() {
+        assert!(matches!(
+            parse_workflow_usage_rollup(r#"{"total_cost_usd":0.0}"#),
+            WorkflowUsageParse::LegacyDaemon
+        ));
+        assert!(matches!(
+            parse_workflow_usage_rollup(r#"{"workflow_rollup_schema":null}"#),
+            WorkflowUsageParse::LegacyDaemon
+        ));
+        assert!(matches!(
+            parse_workflow_usage_rollup(r#"{"workflow_rollup_schema":1}"#),
+            WorkflowUsageParse::Invalid
+        ));
+        assert!(matches!(
+            parse_workflow_usage_rollup(
+                r#"{"workflow_rollup_schema":1,"per_workflow":[{"workflow":"operator_supplied",
+                "call_count":0,"ok_count":0,"err_count":0,"known_cost_usd":0.0,
+                "known_cost_count":0,"unknown_cost_count":0,"input_tokens":0,"output_tokens":0,
+                "unknown_input_token_count":0,"unknown_output_token_count":0,"automated_count":0,
+                "human_count":0}]}"#
+            ),
+            WorkflowUsageParse::Invalid
+        ));
+    }
+
+    #[test]
+    fn workflow_usage_rollup_rejects_overcap_unknown_row_fields_and_invalid_relations() {
+        let row = serde_json::json!({
+            "workflow":"chat_turn", "call_count":0, "ok_count":0, "err_count":0,
+            "known_cost_usd":0.0, "known_cost_count":0, "unknown_cost_count":0,
+            "input_tokens":0, "output_tokens":0, "unknown_input_token_count":0,
+            "unknown_output_token_count":0, "automated_count":0, "human_count":0
+        });
+        let overcap = serde_json::json!({
+            "workflow_rollup_schema": 1,
+            "per_workflow": vec![row; MAX_WORKFLOW_ROLLUP_ROWS + 1]
+        });
+        assert!(matches!(
+            parse_workflow_usage_rollup(&overcap.to_string()),
+            WorkflowUsageParse::Invalid
+        ));
+        let unexpected = r#"{"workflow_rollup_schema":1,"per_workflow":[
+            {"workflow":"chat_turn","call_count":1,"ok_count":1,"err_count":0,
+            "known_cost_usd":0.0,"known_cost_count":1,"unknown_cost_count":0,
+            "input_tokens":0,"output_tokens":0,"unknown_input_token_count":0,
+            "unknown_output_token_count":0,"automated_count":1,"human_count":0,
+            "operator_label":"not allowed"}]}"#;
+        assert!(matches!(
+            parse_workflow_usage_rollup(unexpected),
+            WorkflowUsageParse::Invalid
+        ));
+        let inconsistent = r#"{"workflow_rollup_schema":1,"per_workflow":[
+            {"workflow":"chat_turn","call_count":1,"ok_count":1,"err_count":1,
+            "known_cost_usd":0.0,"known_cost_count":1,"unknown_cost_count":0,
+            "input_tokens":0,"output_tokens":0,"unknown_input_token_count":0,
+            "unknown_output_token_count":0,"automated_count":1,"human_count":0}]}"#;
+        assert!(matches!(
+            parse_workflow_usage_rollup(inconsistent),
+            WorkflowUsageParse::Invalid
+        ));
+        let impossible_cost = r#"{"workflow_rollup_schema":1,"per_workflow":[
+            {"workflow":"chat_turn","call_count":1,"ok_count":1,"err_count":0,
+            "known_cost_usd":0.1,"known_cost_count":0,"unknown_cost_count":1,
+            "input_tokens":0,"output_tokens":0,"unknown_input_token_count":0,
+            "unknown_output_token_count":0,"automated_count":1,"human_count":0}]}"#;
+        assert!(matches!(
+            parse_workflow_usage_rollup(impossible_cost),
+            WorkflowUsageParse::Invalid
+        ));
+    }
+
+    #[test]
+    fn workflow_usage_rollup_rejects_cross_row_unpriced_overflow() {
+        let maximum = u64::MAX;
+        let totals = |workflow| {
+            serde_json::json!({
+                "workflow": workflow, "call_count": maximum, "ok_count": maximum,
+                "err_count": 0, "known_cost_usd": 0.0, "known_cost_count": 0,
+                "unknown_cost_count": maximum, "input_tokens": 0, "output_tokens": 0,
+                "unknown_input_token_count": 0, "unknown_output_token_count": 0,
+                "automated_count": maximum, "human_count": 0
+            })
+        };
+        let json = serde_json::json!({
+            "workflow_rollup_schema": 1,
+            "per_workflow": [totals("chat_turn"), totals("deep_research")]
+        });
+        assert!(matches!(
+            parse_workflow_usage_rollup(&json.to_string()),
+            WorkflowUsageParse::Invalid
+        ));
+    }
+
+    #[test]
+    fn workflow_usage_rollup_rejects_top_level_fanout_mismatch_and_numeric_abuse() {
+        let valid_empty = || {
+            serde_json::json!({
+                "since_unix": 0, "until_unix": 1,
+                "total_call_count": 0, "total_ok_count": 0, "total_err_count": 0,
+                "total_input_tokens": 0, "total_output_tokens": 0,
+                "total_cost_usd": 0.0, "total_unknown_input_token_count": 0,
+                "total_unknown_output_token_count": 0, "total_unknown_cost_count": 0,
+                "total_automated_count": 0, "total_human_count": 0,
+                "burn_rate_usd_per_day": 0.0, "projected_monthly_usd": 0.0,
+                "total_cache_savings_usd": 0.0, "workflow_rollup_schema": 1,
+                "per_workflow": [], "workflow_other": null
+            })
+        };
+
+        let mut fanout = valid_empty();
+        let object = fanout.as_object_mut().unwrap();
+        for index in 0..=MAX_WORKFLOW_ROLLUP_UNKNOWN_TOP_LEVEL_FIELDS {
+            object.insert(format!("future_{index}"), serde_json::Value::Bool(true));
+        }
+        assert!(matches!(
+            parse_workflow_usage_rollup(&fanout.to_string()),
+            WorkflowUsageParse::Invalid
+        ));
+
+        let mut mismatch = valid_empty();
+        let object = mismatch.as_object_mut().unwrap();
+        object.insert("total_call_count".into(), 1_u64.into());
+        object.insert("total_ok_count".into(), 1_u64.into());
+        object.insert("total_automated_count".into(), 1_u64.into());
+        assert!(matches!(
+            parse_workflow_usage_rollup(&mismatch.to_string()),
+            WorkflowUsageParse::Invalid
+        ));
+
+        let mut negative = valid_empty();
+        negative.as_object_mut().unwrap().insert(
+            "total_cost_usd".into(),
+            serde_json::Value::from(-0.01),
+        );
+        assert!(matches!(
+            parse_workflow_usage_rollup(&negative.to_string()),
+            WorkflowUsageParse::Invalid
+        ));
+        assert!(matches!(
+            parse_workflow_usage_rollup(
+                r#"{"workflow_rollup_schema":1,"total_cost_usd":1e400}"#
+            ),
+            WorkflowUsageParse::Invalid
+        ));
+
+        let mut token_overflow = valid_empty();
+        let object = token_overflow.as_object_mut().unwrap();
+        object.insert("total_input_tokens".into(), u64::MAX.into());
+        object.insert("total_output_tokens".into(), 1_u64.into());
+        assert!(matches!(
+            parse_workflow_usage_rollup(&token_overflow.to_string()),
+            WorkflowUsageParse::Invalid
+        ));
+    }
+
+    #[test]
+    fn workflow_usage_rollup_accepts_only_proven_f64_regrouping_drift() {
+        // Backend top totals visit events in chronological order, while the
+        // workflow rows sum each group first. These are the two results of
+        // regrouping 1,000 non-negative 0.01 costs across two workflows.
+        let row = |workflow: &str, known_cost_usd: f64| {
+            serde_json::json!({
+                "workflow": workflow,
+                "call_count": 500,
+                "ok_count": 500,
+                "err_count": 0,
+                "known_cost_usd": known_cost_usd,
+                "known_cost_count": 500,
+                "unknown_cost_count": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "unknown_input_token_count": 0,
+                "unknown_output_token_count": 0,
+                "automated_count": 500,
+                "human_count": 0
+            })
+        };
+        let mut regrouped = serde_json::json!({
+            "since_unix": 0,
+            "until_unix": 1,
+            "total_call_count": 1000,
+            "total_ok_count": 1000,
+            "total_err_count": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_cost_usd": 9.999999999999831_f64,
+            "total_unknown_input_token_count": 0,
+            "total_unknown_output_token_count": 0,
+            "total_unknown_cost_count": 0,
+            "total_automated_count": 1000,
+            "total_human_count": 0,
+            "burn_rate_usd_per_day": 0.0,
+            "projected_monthly_usd": 0.0,
+            "total_cache_savings_usd": 0.0,
+            "workflow_rollup_schema": 1,
+            "per_workflow": [
+                row("chat_turn", 4.999999999999938_f64),
+                row("deep_research", 4.999999999999938_f64)
+            ],
+            "workflow_other": null
+        });
+        assert!(matches!(
+            parse_workflow_usage_rollup(&regrouped.to_string()),
+            WorkflowUsageParse::Valid(_)
+        ));
+
+        regrouped.as_object_mut().unwrap().insert(
+            "total_cost_usd".into(),
+            serde_json::Value::from(10.0001_f64),
+        );
+        assert!(matches!(
+            parse_workflow_usage_rollup(&regrouped.to_string()),
+            WorkflowUsageParse::Invalid
+        ));
+    }
+
+    #[test]
+    fn workflow_usage_rollup_rejects_unbounded_cost_error_budget() {
+        let large_but_nonoverflowing = 1_000_000_000_000_000_u64;
+        let material_mismatch = serde_json::json!({
+            "since_unix": 0,
+            "until_unix": 1,
+            "total_call_count": large_but_nonoverflowing,
+            "total_ok_count": large_but_nonoverflowing,
+            "total_err_count": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_cost_usd": 1.0,
+            "total_unknown_input_token_count": 0,
+            "total_unknown_output_token_count": 0,
+            "total_unknown_cost_count": 0,
+            "total_automated_count": large_but_nonoverflowing,
+            "total_human_count": 0,
+            "burn_rate_usd_per_day": 0.0,
+            "projected_monthly_usd": 0.0,
+            "total_cache_savings_usd": 0.0,
+            "workflow_rollup_schema": 1,
+            "per_workflow": [{
+                "workflow": "chat_turn",
+                "call_count": large_but_nonoverflowing,
+                "ok_count": large_but_nonoverflowing,
+                "err_count": 0,
+                "known_cost_usd": 1.5,
+                "known_cost_count": large_but_nonoverflowing,
+                "unknown_cost_count": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "unknown_input_token_count": 0,
+                "unknown_output_token_count": 0,
+                "automated_count": large_but_nonoverflowing,
+                "human_count": 0
+            }],
+            "workflow_other": null
+        });
+        assert!(matches!(
+            parse_workflow_usage_rollup(&material_mismatch.to_string()),
+            WorkflowUsageParse::Invalid
+        ));
+
+        let maximum = u64::MAX;
+        let json = serde_json::json!({
+            "since_unix": 0,
+            "until_unix": 1,
+            "total_call_count": maximum,
+            "total_ok_count": maximum,
+            "total_err_count": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_cost_usd": f64::MAX,
+            "total_unknown_input_token_count": 0,
+            "total_unknown_output_token_count": 0,
+            "total_unknown_cost_count": 0,
+            "total_automated_count": maximum,
+            "total_human_count": 0,
+            "burn_rate_usd_per_day": 0.0,
+            "projected_monthly_usd": 0.0,
+            "total_cache_savings_usd": 0.0,
+            "workflow_rollup_schema": 1,
+            "per_workflow": [{
+                "workflow": "chat_turn",
+                "call_count": maximum,
+                "ok_count": maximum,
+                "err_count": 0,
+                "known_cost_usd": f64::MAX / 2.0,
+                "known_cost_count": maximum,
+                "unknown_cost_count": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "unknown_input_token_count": 0,
+                "unknown_output_token_count": 0,
+                "automated_count": maximum,
+                "human_count": 0
+            }],
+            "workflow_other": null
+        });
+        assert!(matches!(
+            parse_workflow_usage_rollup(&json.to_string()),
+            WorkflowUsageParse::Invalid
+        ));
+    }
+
+    #[test]
+    fn workflow_usage_rollup_rejects_payload_above_one_mib_before_decoding() {
+        let oversized = " ".repeat(MAX_WORKFLOW_ROLLUP_JSON_BYTES + 1);
+        assert!(matches!(
+            parse_workflow_usage_rollup(&oversized),
+            WorkflowUsageParse::Invalid
+        ));
+    }
+
+    #[test]
+    fn workflow_week_truth_keeps_legacy_invalid_and_unpriced_states_visible() {
+        assert_eq!(
+            format_workflow_week_truth(&[WorkflowUsageParse::LegacyDaemon]),
+            "workflow legacy"
+        );
+        assert_eq!(
+            format_workflow_week_truth(&[WorkflowUsageParse::Invalid]),
+            "workflow invalid"
+        );
     }
 
     #[test]
@@ -10093,14 +11177,24 @@ mod tests {
         let arr = r#"[{"session_id":"abcdef1234567890XYZ","models":["claude_cli/opus"],
             "input_tokens":1000,"output_tokens":234,"total_tokens":1234,
             "responses":7,"last_ts_unix":1}]"#;
-        let rows = parse_cost_sessions(arr);
+        let rows = parse_cost_sessions(arr).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].session.chars().count(), 18, "session id capped");
         assert_eq!(rows[0].provider, "claude_cli/opus");
         assert_eq!(rows[0].tokens, "1234");
         assert_eq!(rows[0].cost, "7 resp");
-        assert!(parse_cost_sessions("{}").is_empty());
-        assert!(parse_cost_sessions("junk").is_empty());
+        assert_eq!(
+            parse_cost_sessions("[]"),
+            Some(Vec::<CostSessionData>::new())
+        );
+        assert!(parse_cost_sessions("{}").is_none());
+        assert!(parse_cost_sessions("junk").is_none());
+        assert!(parse_cost_sessions("[0]").is_none());
+        assert!(parse_cost_sessions(r#"[{"provider":"model-only"}]"#).is_none());
+        assert!(parse_cost_sessions(
+            r#"[{"session_id":"x","total_tokens":-1,"responses":1}]"#
+        )
+        .is_none());
     }
 
     #[test]

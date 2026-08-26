@@ -235,6 +235,10 @@ export component MainWindow inherits Window {
     // Format: "<calls> calls (ok=<x>, err=<y>), <cost> (<pct>% of cap)"
     // — populated by a subprocess probe to `neoth usage --format json`.
     in property <string> usage-summary: "Loading usage…";
+    // ADOPT31-D2 — bounded, typed workflow accounting from that same JSON
+    // response.  It is a separate truth string so unpriced/legacy/invalid
+    // states cannot be represented as a deceptive zero-cost total.
+    in property <string> usage-workflow-summary: "Loading workflow breakdown…";
     // GOLD-WIRE-10b: live token-budget meter rendered for the dashboard.
     // Populated by a subprocess probe to `neoth meter --json`.
     in property <string> budget-summary: "Loading budget…";
@@ -1567,10 +1571,13 @@ export component MainWindow inherits Window {
             // QM-9 Phase 3 — usage rollup tile. Mirrors the hardware
             // card layout so the visual rhythm carries from
             // "what hardware do you have" → "what did you spend".
-            // Populated by the probe_usage_via_subprocess worker
+            // Populated by the typed usage worker
             // thread on window-create + every USAGE_REFRESH_INTERVAL.
             Card {
-                preferred-height: 100px;
+                // Worst truthful state is three rows plus classified-other,
+                // output-only Other, and an unpriced note.  Reserve enough
+                // space to avoid clipping that information.
+                preferred-height: 180px;
                 VerticalBox {
                     padding: Theme.space-base;
                     spacing: Theme.space-tight;
@@ -1584,6 +1591,13 @@ export component MainWindow inherits Window {
                     }
                     Text {
                         text: root.usage-summary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: root.usage-workflow-summary;
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-caption;
                         color: Theme.text-muted;

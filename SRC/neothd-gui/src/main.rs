@@ -78,6 +78,12 @@ static CHAT_CONSENT_UI_REVISION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 static OVERVIEW_CONSENT_UI_REVISION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
+// D2 overview cost probes intentionally permit one replacement worker while a
+// prior bounded refresh is still winding down.  Its output is presentation
+// state, so the newest operator refresh must win even if an older worker
+// completes last.
+static USAGE_OVERVIEW_UI_REVISION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 const CHAT_STREAM_STDOUT_MAX_BYTES: usize = 32 * 1024 * 1024;
 
@@ -618,6 +624,7 @@ mod chat_stream_phase;
 mod gui_action;
 mod gui_stream;
 mod panel_logic;
+mod trusted_probe_supervisor;
 mod tray;
 mod wizard_logic;
 
@@ -1233,6 +1240,16 @@ fn unchanged_board_snapshot_does_not_emit_activity_change() {
 }
 
 fn main() -> Result<()> {
+    // Must run before tracing, Slint, or any GUI state: the private probe
+    // guardian is an internal fixed-mode child and must never fall through
+    // into normal application initialisation on malformed control input.
+    match trusted_probe_supervisor::run_internal_guardian_if_requested() {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(error) => {
+            return Err(anyhow::anyhow!(error.as_static_message()));
+        }
+    }
     #[cfg(target_os = "linux")]
     if let Some(exit_code) = chat_child_supervisor::run_linux_manager_helper_if_requested() {
         std::process::exit(exit_code);
@@ -1265,6 +1282,7 @@ fn main() -> Result<()> {
         .is_some_and(|handoff| handoff.parent_commit);
 
     let window = MainWindow::new()?;
+    D2_USAGE_WINDOW_LIVE.store(true, std::sync::atomic::Ordering::Release);
     hydrate_durable_background_notices(&window, &neoth_dir);
     {
         // Seed the existing Channel Activity surface from the same strict,
@@ -1674,37 +1692,80 @@ fn main() -> Result<()> {
     // Placeholder string shows until the first probe lands via
     // invoke_from_event_loop.
     window.set_usage_summary("Loading usage…".into());
+    window.set_usage_workflow_summary("Loading workflow breakdown…".into());
     let weak_usage = window.as_weak();
-    std::thread::spawn(move || {
-        loop {
-            let summary = probe_usage_via_subprocess();
+    let usage_probe_cancellation = trusted_probe_supervisor::ProbeCancellation::new();
+    let usage_probe_shutdown = usage_probe_cancellation.clone();
+    let usage_probe_worker = std::thread::Builder::new()
+        .name("neoth-usage-refresh".into())
+        .spawn(move || loop {
+            if !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire) {
+                usage_probe_cancellation.cancel();
+                break;
+            }
+            let usage = probe_usage_view_via_subprocess(&usage_probe_cancellation);
             let weak = weak_usage.clone();
-            let _ = slint::invoke_from_event_loop(move || {
+            let cancellation = usage_probe_cancellation.clone();
+            let dispatch = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
-                    w.set_usage_summary(summary.into());
+                    w.set_usage_summary(usage.summary.into());
+                    w.set_usage_workflow_summary(usage.workflow_summary.into());
+                } else {
+                    cancellation.cancel();
                 }
             });
-            std::thread::sleep(USAGE_REFRESH_INTERVAL);
-        }
-    });
+            if dispatch.is_err() {
+                usage_probe_cancellation.cancel();
+                break;
+            }
+            if !wait_for_usage_refresh(
+                &usage_probe_cancellation,
+                USAGE_REFRESH_INTERVAL,
+            ) {
+                break;
+            }
+        })
+        .map_err(|_| anyhow::anyhow!("usage probe worker could not start"))?;
 
     // GOLD-WIRE-10b: live budget meter probe — same refresh-loop shape
     // as usage. Re-fires every BUDGET_REFRESH_INTERVAL so the dashboard
     // tile stays current as provider calls land in the daemon.
     window.set_budget_summary("Loading budget…".into());
     let weak_budget = window.as_weak();
-    std::thread::spawn(move || {
-        loop {
-            let summary = probe_budget_via_subprocess();
+    let budget_probe_cancellation = trusted_probe_supervisor::ProbeCancellation::new();
+    let budget_probe_shutdown = budget_probe_cancellation.clone();
+    let budget_probe_worker = std::thread::Builder::new()
+        .name("neoth-budget-refresh".into())
+        .spawn(move || loop {
+            if !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire) {
+                budget_probe_cancellation.cancel();
+                break;
+            }
+            let summary = probe_budget_via_subprocess(&budget_probe_cancellation);
             let weak = weak_budget.clone();
-            let _ = slint::invoke_from_event_loop(move || {
+            let cancellation = budget_probe_cancellation.clone();
+            let dispatch = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
                     w.set_budget_summary(summary.into());
+                } else {
+                    cancellation.cancel();
                 }
             });
-            std::thread::sleep(BUDGET_REFRESH_INTERVAL);
-        }
-    });
+            if dispatch.is_err() {
+                budget_probe_cancellation.cancel();
+                break;
+            }
+            if !wait_for_usage_refresh(
+                &budget_probe_cancellation,
+                BUDGET_REFRESH_INTERVAL,
+            ) {
+                break;
+            }
+        })
+        .map_err(|_| "budget probe worker could not start");
+    if let Err(error) = &budget_probe_worker {
+        window.set_budget_summary(format!("Budget unavailable — {error}.").into());
+    }
 
     // QM-8 Phase 2: preset list probe — same refresh-loop shape as
     // usage. Lighter cadence (5min) since presets change rarely.
@@ -7115,28 +7176,58 @@ fn main() -> Result<()> {
     // One worker thread per click; all subprocess work stays off the event loop.
     // The initial probe fires immediately on first entry (triggered below by
     // the on_overview_refresh_clicked callback — also called from Rust on startup).
+    let usage_overview_workers = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let weak_ov = window.as_weak();
+    let usage_overview_workers_for_refresh = std::sync::Arc::clone(&usage_overview_workers);
     window.on_overview_refresh_clicked(move || {
         let Some(w0) = weak_ov.upgrade() else {
             return;
         };
+        let usage_overview_revision = USAGE_OVERVIEW_UI_REVISION
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            + 1;
         // Clear stale timestamp while loading.
         w0.set_ov_refreshed_at("loading…".into());
+        clear_usage_overview(&w0, "Refreshing usage…");
         let weak = weak_ov.clone();
-        std::thread::spawn(move || {
-            refresh_overview(weak.clone());
-            refresh_overview_cost(weak);
-        });
+        let cost_weak = weak.clone();
+        std::thread::spawn(move || refresh_overview(weak));
+        if let Err(error) = spawn_usage_overview_worker(
+            &usage_overview_workers_for_refresh,
+            cost_weak,
+            usage_overview_revision,
+        ) {
+            if USAGE_OVERVIEW_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
+                == usage_overview_revision
+            {
+                clear_usage_overview(&w0, "workflow invalid · weekly usage unavailable");
+            }
+            push_toast(&weak_ov, "warn", "Usage refresh unavailable", error);
+        }
     });
 
     // Fire the overview probe once at startup so the panel is populated
     // the first time the operator switches to it.
     {
         let weak_ov_init = window.as_weak();
-        std::thread::spawn(move || {
-            refresh_overview(weak_ov_init.clone());
-            refresh_overview_cost(weak_ov_init);
-        });
+        let cost_weak = weak_ov_init.clone();
+        let usage_overview_revision = USAGE_OVERVIEW_UI_REVISION
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            + 1;
+        clear_usage_overview(&window, "Refreshing usage…");
+        std::thread::spawn(move || refresh_overview(weak_ov_init));
+        if let Err(error) = spawn_usage_overview_worker(
+            &usage_overview_workers,
+            cost_weak,
+            usage_overview_revision,
+        ) {
+            if USAGE_OVERVIEW_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
+                == usage_overview_revision
+            {
+                clear_usage_overview(&window, "workflow invalid · weekly usage unavailable");
+            }
+            tracing::warn!(error, "initial usage overview worker could not start");
+        }
     }
 
     // ── Design Wave 4a — n8n panel callbacks ─────────────────────────────────
@@ -14244,6 +14335,28 @@ fn main() -> Result<()> {
     });
 
     let run_result = window.run();
+    D2_USAGE_WINDOW_LIVE.store(false, std::sync::atomic::Ordering::Release);
+    usage_probe_shutdown.cancel();
+    budget_probe_shutdown.cancel();
+    if usage_probe_worker.join().is_err() {
+        tracing::warn!("usage probe worker terminated unexpectedly");
+    }
+    if let Ok(worker) = budget_probe_worker
+        && worker.join().is_err()
+    {
+        tracing::warn!("budget probe worker terminated unexpectedly");
+    }
+    let usage_overview_worker_handles = {
+        let mut workers = usage_overview_workers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        std::mem::take(&mut *workers)
+    };
+    for worker in usage_overview_worker_handles {
+        if worker.join().is_err() {
+            tracing::warn!("usage overview worker terminated unexpectedly");
+        }
+    }
     let chat_shutdown_result = shutdown_gui_chat_runtime(
         chat_stream.as_ref(),
         chat_launch_gate.as_ref(),
@@ -16578,6 +16691,69 @@ fn run_neothd_probe(args: &[&str]) -> String {
         }
         None => "neothd binary not on PATH.".to_string(),
     }
+}
+
+// ADOPT31-D2 reads the cost rollup from a daemon subprocess, an untrusted I/O
+// boundary even though the binary was resolved locally.  `Command::output()`
+// would buffer arbitrarily large stdout/stderr before the JSON parser gets its
+// 1 MiB limit, so usage probes have their own bounded capture and deadline.
+fn wait_for_usage_refresh(
+    cancellation: &trusted_probe_supervisor::ProbeCancellation,
+    duration: std::time::Duration,
+) -> bool {
+    let Some(deadline) = std::time::Instant::now().checked_add(duration) else {
+        cancellation.cancel();
+        return false;
+    };
+    while std::time::Instant::now() < deadline {
+        if cancellation.is_cancelled()
+            || !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire)
+        {
+            cancellation.cancel();
+            return false;
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        std::thread::sleep(remaining.min(std::time::Duration::from_millis(100)));
+    }
+    true
+}
+
+/// Run one read-only dashboard JSON probe with a hard stdout/stderr budget and a
+/// short deadline through the owned, platform-aware probe supervisor.
+fn run_bounded_dashboard_json_probe(
+    args: &[&str],
+    cancellation: &trusted_probe_supervisor::ProbeCancellation,
+) -> std::result::Result<String, &'static str> {
+    use trusted_probe_supervisor::run as run_trusted_probe;
+
+    let Some(bin) = which_trusted_usage_neothd() else {
+        return Err("daemon not found");
+    };
+    let mut command = spawn_neothd_plain(&bin);
+    // The call sites below are internal literals plus decimal timestamps; this
+    // guard makes an accidental future reuse with a different command fail
+    // closed before any subprocess is launched.
+    let exact_dashboard_json = match args {
+        ["meter", "--format", "json"]
+        | ["cost", "top-sessions", "--output", "json"]
+        | ["usage", "--format", "json", "--days", "1"] => true,
+        ["usage", "--since-unix", since, "--until-unix", until, "--format", "json"] => {
+            since
+                .parse::<u64>()
+                .ok()
+                .zip(until.parse::<u64>().ok())
+                .is_some_and(|(since, until)| since <= until)
+        }
+        _ => false,
+    };
+    if !exact_dashboard_json {
+        return Err("dashboard probe command rejected");
+    }
+    command.args(args);
+    let policy = trusted_probe_supervisor::fixed_usage_probe_policy();
+    let output = run_trusted_probe(&mut command, policy, cancellation)
+        .map_err(|error| error.as_static_message())?;
+    String::from_utf8(output.stdout).map_err(|_| "dashboard probe returned non-UTF-8 JSON")
 }
 
 /// Build the argv for a live, proposal-bound SourceEdit apply.
@@ -22587,6 +22763,8 @@ pub const BINARY_MISSING_MESSAGE: &str = "Chat unavailable — public `neoth` bi
 /// Operators wanting faster refresh use `neoth usage --format
 /// json` in a `watch -n 1` loop.
 pub const USAGE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+static D2_USAGE_WINDOW_LIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// GOLD-WIRE-10b: how often the dashboard tile re-fires the
 /// `neoth meter --json` subprocess. 15s gives a near-live budget
@@ -24451,15 +24629,189 @@ mod chat_subprocess_tests {
     }
 
     #[test]
+    fn shape_usage_summary_keeps_unpriced_cost_distinct_from_zero() {
+        let s = crate::shape_usage_summary(
+            r#"{"total_call_count":1,"total_ok_count":1,"total_err_count":0,
+                "total_cost_usd":0.0,"total_unknown_cost_count":1}"#,
+        );
+        assert!(s.contains("1 unpriced"));
+        assert!(s.contains("$0.0000 known"));
+    }
+
+    #[test]
     fn shape_usage_summary_malformed_json_returns_error_string() {
         let s = crate::shape_usage_summary("{not json");
         assert!(s.contains("malformed"));
     }
 
     #[test]
-    fn shape_usage_summary_missing_fields_defaults_to_zero() {
+    fn shape_usage_summary_missing_fields_never_default_to_zero() {
         let s = crate::shape_usage_summary("{}");
-        assert!(s.contains("No usage"));
+        assert!(s.contains("malformed"));
+        assert!(crate::shape_usage_summary(
+            r#"{"total_call_count":1,"total_ok_count":1,"total_err_count":1,
+                "total_cost_usd":0.0}"#
+        )
+        .contains("malformed"));
+        assert!(crate::shape_usage_summary(
+            r#"{"total_call_count":1,"total_ok_count":1,"total_err_count":0,
+                "total_cost_usd":-1.0}"#
+        )
+        .contains("malformed"));
+    }
+
+    #[test]
+    fn d2_usage_workers_are_owned_by_the_window_lifecycle() {
+        let source = include_str!("main.rs");
+        let periodic = source
+            .split("let usage_probe_worker = std::thread::Builder::new()")
+            .nth(1)
+            .and_then(|tail| tail.split("// GOLD-WIRE-10b").next())
+            .unwrap();
+        for contract in [
+            "D2_USAGE_WINDOW_LIVE.load",
+            "usage_probe_cancellation.cancel();",
+            "if dispatch.is_err()",
+            "wait_for_usage_refresh(",
+        ] {
+            assert!(periodic.contains(contract), "missing periodic lifecycle contract: {contract}");
+        }
+
+        let budget = source
+            .split("let budget_probe_worker = std::thread::Builder::new()")
+            .nth(1)
+            .and_then(|tail| tail.split("// QM-8 Phase 2").next())
+            .unwrap();
+        for contract in [
+            "D2_USAGE_WINDOW_LIVE.load",
+            "budget_probe_cancellation.cancel();",
+            "if dispatch.is_err()",
+            "wait_for_usage_refresh(",
+        ] {
+            assert!(budget.contains(contract), "missing budget lifecycle contract: {contract}");
+        }
+
+        let run = source.find("let run_result = window.run();").unwrap();
+        let close = source[run..]
+            .find("D2_USAGE_WINDOW_LIVE.store(false")
+            .map(|offset| run + offset)
+            .unwrap();
+        let cancel = source[close..]
+            .find("usage_probe_shutdown.cancel();")
+            .map(|offset| close + offset)
+            .unwrap();
+        let join = source[cancel..]
+            .find("usage_probe_worker.join()")
+            .map(|offset| cancel + offset)
+            .unwrap();
+        let budget_cancel = source[close..]
+            .find("budget_probe_shutdown.cancel();")
+            .map(|offset| close + offset)
+            .unwrap();
+        let budget_owner = source[budget_cancel..]
+            .find("if let Ok(worker) = budget_probe_worker")
+            .map(|offset| budget_cancel + offset)
+            .unwrap();
+        let budget_join = source[budget_owner..]
+            .find("worker.join()")
+            .map(|offset| budget_owner + offset)
+            .unwrap();
+        assert!(run < close && close < cancel && cancel < join);
+        assert!(
+            close < budget_cancel && budget_cancel < budget_owner && budget_owner < budget_join
+        );
+        let overview_take = source[join..]
+            .find("std::mem::take(&mut *workers)")
+            .map(|offset| join + offset)
+            .unwrap();
+        let overview_join = source[overview_take..]
+            .find("worker.join()")
+            .map(|offset| overview_take + offset)
+            .unwrap();
+        assert!(join < overview_take && overview_take < overview_join);
+
+        let overview_registry = source
+            .split("fn spawn_usage_overview_worker(")
+            .nth(1)
+            .and_then(|tail| tail.split("fn refresh_overview_cost(").next())
+            .unwrap();
+        for contract in [
+            "MAX_USAGE_OVERVIEW_WORKERS",
+            "worker.is_finished()",
+            "neoth-usage-overview",
+            "workers.push(worker)",
+            "revision: u64",
+        ] {
+            assert!(
+                overview_registry.contains(contract),
+                "missing overview worker ownership contract: {contract}"
+            );
+        }
+
+        let weekly = source
+            .split("fn refresh_overview_cost(")
+            .nth(1)
+            .and_then(|tail| tail.split("fn refresh_overview(").next())
+            .unwrap();
+        for contract in [
+            "neoth-usage-window-liveness",
+            "D2_USAGE_WINDOW_LIVE.load",
+            "liveness_cancellation.cancel();",
+            "if cancellation.is_cancelled()",
+            "cancellation.cancel();",
+            "liveness_watcher.join()",
+            "checked_usage_cost_add(week_cost, cost)",
+            "cost\", \"top-sessions\", \"--output\", \"json",
+            "dispatch_usage_overview_unavailable(weak, revision)",
+            "USAGE_OVERVIEW_UI_REVISION.load",
+            "parse_cost_sessions",
+            "parse_meter_checked",
+            "sessions unavailable",
+            "meter unavailable",
+        ] {
+            assert!(weekly.contains(contract), "missing weekly lifecycle contract: {contract}");
+        }
+        assert!(!weekly.contains("unwrap_or_default()"));
+        assert!(!weekly.contains("unwrap_or((0.0, 0))"));
+        assert!(!source.contains("refresh_overview_cost_sessions"));
+
+        let latest_wins = source
+            .split("fn refresh_overview_cost(")
+            .nth(1)
+            .and_then(|tail| tail.split("fn refresh_overview(").next())
+            .unwrap();
+        assert!(latest_wins.contains("USAGE_OVERVIEW_UI_REVISION.load"));
+        assert!(latest_wins.contains("!= revision"));
+        assert!(!source.contains(
+            "run_neothd_probe(&[\"cost\", \"top-sessions\", \"--output\", \"json\"])",
+        ));
+
+        let generic_overview = source
+            .split("fn refresh_overview(")
+            .nth(1)
+            .and_then(|tail| tail.split("fn probe_hardware_via_subprocess(").next())
+            .unwrap();
+        assert!(!generic_overview.contains("[\"meter\", \"--format\", \"json\"]"));
+        assert!(!generic_overview.contains("set_ov_cost("));
+        assert!(!generic_overview.contains("set_ov_tokens_in("));
+
+        let budget_probe = source
+            .split("fn probe_budget_via_subprocess(")
+            .nth(1)
+            .and_then(|tail| tail.split("fn apply_active_preset_via_subprocess(").next())
+            .unwrap();
+        assert!(budget_probe.contains("run_bounded_dashboard_json_probe"));
+        assert!(!budget_probe.contains(".output()"));
+        assert!(!budget_probe.contains("which_neothd()"));
+    }
+
+    #[test]
+    fn d2_weekly_cost_accumulation_fails_closed_on_non_finite_values() {
+        assert_eq!(checked_usage_cost_add(1.25, 2.5), Some(3.75));
+        assert_eq!(checked_usage_cost_add(f64::MAX, f64::MAX), None);
+        assert_eq!(checked_usage_cost_add(f64::INFINITY, 1.0), None);
+        assert_eq!(checked_usage_cost_add(1.0, f64::NAN), None);
+        assert_eq!(checked_usage_cost_add(1.0, -0.01), None);
     }
 
     // ── QM-8 Phase 2 preset summary tests ───────────────────────────────
@@ -25359,10 +25711,74 @@ fn refresh_chat_consent(weak: slint::Weak<MainWindow>) {
 /// WAL token ledger + a 7-day usage sparkline (one rollup probe per
 /// day; overview refresh is manual/startup so seven quick subprocesses
 /// are fine). Rides the same triggers as refresh_overview.
-fn refresh_overview_cost(weak: slint::Weak<MainWindow>) {
-    use slint::VecModel;
-    let sessions_out = run_neothd_probe(&["cost", "top-sessions", "--output", "json"]);
-    let sessions = panel_logic::parse_cost_sessions(&sessions_out);
+const MAX_USAGE_OVERVIEW_WORKERS: usize = 2;
+
+fn clear_usage_overview(window: &MainWindow, label: &str) {
+    window.set_ov_tokens_in("unavailable".into());
+    window.set_ov_tokens_out("unavailable".into());
+    window.set_ov_responses("unavailable".into());
+    window.set_ov_cost("unavailable".into());
+    window.set_ov_token_fraction(0.0);
+    window.set_ov_usage_days(slint::ModelRc::new(std::rc::Rc::new(
+        slint::VecModel::from(Vec::<f32>::new()),
+    )));
+    window.set_ov_usage_days_label(label.into());
+    window.set_ov_cost_sessions(slint::ModelRc::new(std::rc::Rc::new(
+        slint::VecModel::from(Vec::<CostSessionRow>::new()),
+    )));
+}
+
+fn dispatch_usage_overview_unavailable(weak: slint::Weak<MainWindow>, revision: u64) {
+    let _ = slint::invoke_from_event_loop(move || {
+        if USAGE_OVERVIEW_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+            return;
+        }
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        clear_usage_overview(&window, "workflow invalid · weekly usage unavailable");
+    });
+}
+
+fn spawn_usage_overview_worker(
+    workers: &std::sync::Arc<std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>>,
+    weak: slint::Weak<MainWindow>,
+    revision: u64,
+) -> std::result::Result<(), &'static str> {
+    let mut workers = workers
+        .lock()
+        .map_err(|_| "usage worker registry is unavailable")?;
+    let prior = std::mem::take(&mut *workers);
+    for worker in prior {
+        if worker.is_finished() {
+            let _ = worker.join();
+        } else {
+            workers.push(worker);
+        }
+    }
+    if workers.len() >= MAX_USAGE_OVERVIEW_WORKERS {
+        return Err("a bounded usage refresh is already running");
+    }
+    let worker = std::thread::Builder::new()
+        .name("neoth-usage-overview".into())
+        .spawn(move || refresh_overview_cost(weak, revision))
+        .map_err(|_| "usage overview worker could not start")?;
+    workers.push(worker);
+    Ok(())
+}
+
+fn checked_usage_cost_add(total: f64, cost: f64) -> Option<f64> {
+    if !total.is_finite() || total < 0.0 || !cost.is_finite() || cost < 0.0 {
+        return None;
+    }
+    let next = total + cost;
+    (next.is_finite() && next >= 0.0).then_some(next)
+}
+
+fn refresh_overview_cost(weak: slint::Weak<MainWindow>, revision: u64) {
+    if !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -25370,20 +25786,105 @@ fn refresh_overview_cost(weak: slint::Weak<MainWindow>) {
         .unwrap_or(0);
     let mut days: Vec<f64> = Vec::with_capacity(7);
     let mut week_cost = 0.0_f64;
+    let mut workflow_days = Vec::with_capacity(7);
+    let cancellation = trusted_probe_supervisor::ProbeCancellation::new();
+    let liveness_cancellation = cancellation.clone();
+    let Ok(liveness_watcher) = std::thread::Builder::new()
+        .name("neoth-usage-window-liveness".into())
+        .spawn(move || {
+            while !liveness_cancellation.is_cancelled() {
+                if !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire)
+                {
+                    liveness_cancellation.cancel();
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        })
+    else {
+        dispatch_usage_overview_unavailable(weak, revision);
+        return;
+    };
+    let meter = run_bounded_dashboard_json_probe(&["meter", "--format", "json"], &cancellation)
+        .ok()
+        .and_then(|output| panel_logic::parse_meter_checked(&output));
+    let meter_available = meter.is_some();
+    let (tokens_in, tokens_out, responses, meter_cost, token_fraction) = meter.unwrap_or_else(|| {
+        (
+            "unavailable".to_string(),
+            "unavailable".to_string(),
+            "unavailable".to_string(),
+            "unavailable".to_string(),
+            0.0,
+        )
+    });
+    let (sessions, sessions_available) = match run_bounded_dashboard_json_probe(
+        &["cost", "top-sessions", "--output", "json"],
+        &cancellation,
+    ) {
+        Ok(output) => match panel_logic::parse_cost_sessions(&output) {
+            Some(sessions) => (sessions, true),
+            None => (Vec::new(), false),
+        },
+        Err(_) => (Vec::new(), false),
+    };
+    let mut series_valid = true;
     for i in (0..7).rev() {
+        if cancellation.is_cancelled() {
+            series_valid = false;
+            break;
+        }
         let until = now - i * 86_400;
         let since = until - 86_400;
-        let out = run_neothd_probe(&[
-            "usage",
-            "--since-unix",
-            &since.to_string(),
-            "--until-unix",
-            &until.to_string(),
-            "--format",
-            "json",
-        ]);
-        let (cost, tokens) = panel_logic::parse_usage_rollup(&out).unwrap_or((0.0, 0));
-        week_cost += cost;
+        let out = match run_bounded_dashboard_json_probe(
+            &[
+                "usage",
+                "--since-unix",
+                &since.to_string(),
+                "--until-unix",
+                &until.to_string(),
+                "--format",
+                "json",
+            ],
+            &cancellation,
+        ) {
+            Ok(out) => out,
+            Err(_) => {
+                workflow_days.push(panel_logic::WorkflowUsageParse::Invalid);
+                series_valid = false;
+                break;
+            }
+        };
+        let workflow = panel_logic::parse_workflow_usage_rollup(&out);
+        if matches!(workflow, panel_logic::WorkflowUsageParse::Invalid) {
+            workflow_days.push(workflow);
+            series_valid = false;
+            break;
+        }
+        let usage_totals = match &workflow {
+            panel_logic::WorkflowUsageParse::Valid(rollup) => rollup
+                .totals
+                .input_tokens
+                .checked_add(rollup.totals.output_tokens)
+                .map(|tokens| (rollup.totals.known_cost_usd, tokens)),
+            panel_logic::WorkflowUsageParse::LegacyDaemon => {
+                panel_logic::parse_usage_rollup(&out)
+                    .filter(|(cost, _)| cost.is_finite() && *cost >= 0.0)
+            }
+            panel_logic::WorkflowUsageParse::Invalid => None,
+        };
+        let Some((cost, tokens)) = usage_totals else {
+            workflow_days.push(panel_logic::WorkflowUsageParse::Invalid);
+            series_valid = false;
+            break;
+        };
+        let Some(next_week_cost) = checked_usage_cost_add(week_cost, cost) else {
+            workflow_days.push(panel_logic::WorkflowUsageParse::Invalid);
+            series_valid = false;
+            break;
+        };
+        workflow_days.push(workflow);
+        week_cost = next_week_cost;
         // Sparkline follows spend when priced, tokens otherwise.
         days.push(if cost > 0.0 {
             cost
@@ -25391,28 +25892,72 @@ fn refresh_overview_cost(weak: slint::Weak<MainWindow>) {
             tokens as f64 / 1000.0
         });
     }
-    let max_day = days.iter().cloned().fold(0.0_f64, f64::max).max(1e-9);
-    let bars: Vec<f32> = days.iter().map(|d| (d / max_day) as f32).collect();
-    let label = if week_cost > 0.0 {
+    cancellation.cancel();
+    let _ = liveness_watcher.join();
+    let max_day = days.iter().copied().reduce(f64::max);
+    let bars: Vec<f32> = if !series_valid {
+        Vec::new()
+    } else {
+        match max_day {
+            Some(maximum) if maximum > 0.0 => {
+                days.iter().map(|day| (day / maximum) as f32).collect()
+            }
+            Some(_) => vec![0.0; days.len()],
+            None => Vec::new(),
+        }
+    };
+    let cost_label = if !series_valid {
+        "weekly usage unavailable".to_string()
+    } else if week_cost > 0.0 {
         format!("usd {week_cost:.2} this week")
     } else {
         "no priced spend this week".to_string()
     };
+    // The existing seven-day surface is still based on the daemon's aggregate
+    // total, but the caption must not make an unknown workflow cost look like
+    // a zero-cost workflow.  The typed parser reads only CLI JSON, never the
+    // usage JSONL/WAL or the human table output.
+    // The state comes first because the existing Overview caption is a
+    // single-line elided field.  On a narrow window, `unpriced`, `legacy`, or
+    // `invalid` must remain visible rather than being clipped after a normal
+    // looking spend total.
+    let mut label = format!(
+        "{} · {cost_label}",
+        panel_logic::format_workflow_week_truth(&workflow_days)
+    );
+    if !sessions_available {
+        label.push_str(" · sessions unavailable");
+    }
+    if !meter_available {
+        label.push_str(" · meter unavailable");
+    }
 
     let _ = slint::invoke_from_event_loop(move || {
+        if USAGE_OVERVIEW_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+            return;
+        }
         let Some(w) = weak.upgrade() else { return };
-        let rows: Vec<CostSessionRow> = sessions
+        let session_rows: Vec<CostSessionRow> = sessions
             .into_iter()
-            .map(|s| CostSessionRow {
-                session: s.session.into(),
-                provider: s.provider.into(),
-                tokens: s.tokens.into(),
-                cost: s.cost.into(),
+            .map(|session| CostSessionRow {
+                session: session.session.into(),
+                provider: session.provider.into(),
+                tokens: session.tokens.into(),
+                cost: session.cost.into(),
             })
             .collect();
-        w.set_ov_cost_sessions(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
-        w.set_ov_usage_days(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(bars))));
+        w.set_ov_usage_days(slint::ModelRc::new(std::rc::Rc::new(
+            slint::VecModel::from(bars),
+        )));
         w.set_ov_usage_days_label(label.as_str().into());
+        w.set_ov_cost_sessions(slint::ModelRc::new(std::rc::Rc::new(
+            slint::VecModel::from(session_rows),
+        )));
+        w.set_ov_tokens_in(tokens_in.into());
+        w.set_ov_tokens_out(tokens_out.into());
+        w.set_ov_responses(responses.into());
+        w.set_ov_cost(meter_cost.into());
+        w.set_ov_token_fraction(token_fraction);
     });
 }
 
@@ -25459,7 +26004,6 @@ fn refresh_overview(weak: slint::Weak<MainWindow>) {
 
     // Fire all JSON probes.
     let status_json = run(&["status", "--output", "json"]);
-    let meter_json = run(&["meter", "--format", "json"]);
     let hemi_json = run(&["hemispheres", "show", "--output", "json"]);
     let agents_json = run(&["agents", "list", "--output", "json"]);
     let skills_json = run(&["skills", "list", "--output", "json"]);
@@ -25469,7 +26013,6 @@ fn refresh_overview(weak: slint::Weak<MainWindow>) {
     // Parse — all pure fns in panel_logic.
     let (mode, autonomy, ch_health, wal_bytes, tier_counts, daemon_state) =
         panel_logic::parse_overview_status(&status_json);
-    let (tok_in, tok_out, responses, cost, tok_fraction) = panel_logic::parse_meter(&meter_json);
     let hemis = panel_logic::parse_overview_hemispheres(&hemi_json);
     let (agents_count, agent_names) = panel_logic::parse_agents(&agents_json);
     let (skills_count, skill_names) = panel_logic::parse_overview_skills(&skills_json);
@@ -25505,13 +26048,6 @@ fn refresh_overview(weak: slint::Weak<MainWindow>) {
         w.set_ov_channel_health(ch_health.into());
         w.set_ov_wal_bytes(wal_bytes.into());
         w.set_ov_tier_counts(tier_counts.into());
-
-        // TOKENS
-        w.set_ov_tokens_in(tok_in.into());
-        w.set_ov_tokens_out(tok_out.into());
-        w.set_ov_responses(responses.into());
-        w.set_ov_cost(cost.into());
-        w.set_ov_token_fraction(tok_fraction);
 
         // HEMISPHERES — build the [HemiCard] model
         {
@@ -25631,29 +26167,61 @@ fn shape_hardware_footer(table: &str) -> String {
 /// usage --format json` surface the CLI ships. Returns an operator-
 /// readable one-line summary on success, or a clear error string
 /// when the subprocess can't run / fails / returns malformed JSON.
-fn probe_usage_via_subprocess() -> String {
-    let candidate = which_neothd();
-    let Some(bin) = candidate else {
-        return "Usage unavailable — `neothd` binary not on PATH.".to_string();
-    };
-    let output = spawn_neothd_plain(&bin)
-        .arg("usage")
-        .arg("--format")
-        .arg("json")
-        .arg("--days")
-        .arg("1")
-        .output();
-    match output {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            shape_usage_summary(&stdout)
+struct UsageProbeView {
+    summary: String,
+    workflow_summary: String,
+}
+
+fn probe_usage_view_via_subprocess(
+    cancellation: &trusted_probe_supervisor::ProbeCancellation,
+) -> UsageProbeView {
+    match run_bounded_dashboard_json_probe(
+        &["usage", "--format", "json", "--days", "1"],
+        cancellation,
+    ) {
+        Ok(stdout) => {
+            let workflow = panel_logic::parse_workflow_usage_rollup(&stdout);
+            let summary = match &workflow {
+                panel_logic::WorkflowUsageParse::Valid(rollup) => {
+                    shape_strict_usage_summary(&rollup.totals)
+                }
+                panel_logic::WorkflowUsageParse::LegacyDaemon => {
+                    format!("{} · legacy workflow schema", shape_usage_summary(&stdout))
+                }
+                panel_logic::WorkflowUsageParse::Invalid => {
+                    "Usage unavailable — invalid daemon response.".to_string()
+                }
+            };
+            UsageProbeView {
+                summary,
+                workflow_summary: panel_logic::format_workflow_usage_summary(&workflow),
+            }
         }
-        Ok(out) => format!(
-            "Usage probe failed (exit {}): {}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
-        ),
-        Err(e) => format!("Usage probe could not start: {e}"),
+        Err(reason) => UsageProbeView {
+            summary: format!("Usage unavailable — {reason}."),
+            workflow_summary: "Workflow breakdown unavailable — usage probe failed.".to_string(),
+        },
+    }
+}
+
+fn shape_strict_usage_summary(totals: &panel_logic::WorkflowUsageTotals) -> String {
+    if totals.call_count == 0 {
+        return "No usage in the last 24h.".to_string();
+    }
+    if totals.unknown_cost_count > 0 {
+        format!(
+            "Last 24h: {} calls (ok={}, err={}), ${:.4} known + {} unpriced",
+            totals.call_count,
+            totals.ok_count,
+            totals.err_count,
+            totals.known_cost_usd,
+            totals.unknown_cost_count,
+        )
+    } else {
+        format!(
+            "Last 24h: {} calls (ok={}, err={}), ${:.4}",
+            totals.call_count, totals.ok_count, totals.err_count, totals.known_cost_usd,
+        )
     }
 }
 
@@ -25664,45 +26232,54 @@ pub fn shape_usage_summary(json: &str) -> String {
     let Ok(val) = serde_json::from_str::<serde_json::Value>(json) else {
         return "Usage: malformed response".to_string();
     };
-    let calls = val
-        .get("total_call_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let ok = val
-        .get("total_ok_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let err = val
-        .get("total_err_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let cost = val
-        .get("total_cost_usd")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0);
+    let Some(calls) = val.get("total_call_count").and_then(|v| v.as_u64()) else {
+        return "Usage: malformed response".to_string();
+    };
+    let Some(ok) = val.get("total_ok_count").and_then(|v| v.as_u64()) else {
+        return "Usage: malformed response".to_string();
+    };
+    let Some(err) = val.get("total_err_count").and_then(|v| v.as_u64()) else {
+        return "Usage: malformed response".to_string();
+    };
+    let Some(cost) = val.get("total_cost_usd").and_then(|v| v.as_f64()) else {
+        return "Usage: malformed response".to_string();
+    };
+    if !cost.is_finite()
+        || cost < 0.0
+        || ok.checked_add(err) != Some(calls)
+        || (calls == 0 && cost != 0.0)
+    {
+        return "Usage: malformed response".to_string();
+    }
+    let unknown_cost = val
+        .get("total_unknown_cost_count")
+        .and_then(|v| v.as_u64());
+    if unknown_cost.is_some_and(|unknown| unknown > calls) {
+        return "Usage: malformed response".to_string();
+    }
     if calls == 0 {
         return "No usage in the last 24h.".to_string();
     }
-    format!("Last 24h: {calls} calls (ok={ok}, err={err}), ${cost:.4}")
+    match unknown_cost {
+        Some(unknown_cost) if unknown_cost > 0 => format!(
+            "Last 24h: {calls} calls (ok={ok}, err={err}), ${cost:.4} known + {unknown_cost} unpriced"
+        ),
+        Some(_) => format!("Last 24h: {calls} calls (ok={ok}, err={err}), ${cost:.4}"),
+        None => format!(
+            "Last 24h: {calls} calls (ok={ok}, err={err}), ${cost:.4} known · legacy pricing coverage unknown"
+        ),
+    }
 }
 
 /// GOLD-WIRE-10b: probe the daemon's live token-budget meter via the
 /// same `neoth meter --json` surface the CLI ships. Returns an operator-
 /// readable one-line summary, or a clear error string when the subprocess
 /// can't run / fails / returns malformed JSON.
-fn probe_budget_via_subprocess() -> String {
-    let candidate = which_neothd();
-    let Some(bin) = candidate else {
-        return "Budget unavailable — `neothd` binary not on PATH.".to_string();
-    };
-    let output = spawn_neothd_plain(&bin)
-        .arg("meter")
-        .arg("--format")
-        .arg("json")
-        .output();
-    match output {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
+fn probe_budget_via_subprocess(
+    cancellation: &trusted_probe_supervisor::ProbeCancellation,
+) -> String {
+    match run_bounded_dashboard_json_probe(&["meter", "--format", "json"], cancellation) {
+        Ok(stdout) => {
             let panel = panel_logic::parse_usage_meter(&stdout);
             if panel.available {
                 format!("{} · {} · {}", panel.responses, panel.tokens, panel.note)
@@ -25710,12 +26287,7 @@ fn probe_budget_via_subprocess() -> String {
                 "Budget unavailable — daemon may not be running.".to_string()
             }
         }
-        Ok(out) => format!(
-            "Budget probe failed (exit {}): {}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
-        ),
-        Err(e) => format!("Budget probe could not start: {e}"),
+        Err(error) => format!("Budget unavailable — {error}."),
     }
 }
 
@@ -27462,6 +28034,69 @@ mod interface_preference_tests {
     }
 
     #[test]
+    fn trusted_usage_resolver_accepts_only_a_canonical_gui_sibling() {
+        let root = tempfile::tempdir().unwrap();
+        let packaged = root.path().join("packaged");
+        let path_only = root.path().join("path-only");
+        std::fs::create_dir_all(&packaged).unwrap();
+        std::fs::create_dir_all(&path_only).unwrap();
+        let gui = packaged.join(if cfg!(windows) {
+            "neothd-gui.exe"
+        } else {
+            "neothd-gui"
+        });
+        std::fs::write(&gui, b"gui").unwrap();
+        let public_name = if cfg!(windows) { "neoth.exe" } else { "neoth" };
+        let path_lookalike = path_only.join(public_name);
+        std::fs::write(&path_lookalike, b"path lookalike").unwrap();
+        assert_eq!(resolve_trusted_usage_neothd(Some(&gui)), None);
+
+        // A sibling-looking link is not a packaged executable when its
+        // canonical target escapes the canonical GUI directory. Windows may
+        // disallow symlink creation without Developer Mode; that host simply
+        // skips this filesystem capability check while the source contract
+        // remains platform-independent.
+        let escaped_sibling = packaged.join(public_name);
+        let link_created = {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&path_lookalike, &escaped_sibling).is_ok()
+            }
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_file(&path_lookalike, &escaped_sibling).is_ok()
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                false
+            }
+        };
+        if link_created {
+            assert_eq!(resolve_trusted_usage_neothd(Some(&gui)), None);
+            std::fs::remove_file(&escaped_sibling).unwrap();
+        }
+
+        let compatibility_name = if cfg!(windows) {
+            "neothd.exe"
+        } else {
+            "neothd"
+        };
+        let compatibility = packaged.join(compatibility_name);
+        std::fs::write(&compatibility, b"compatibility").unwrap();
+        assert_eq!(
+            resolve_trusted_usage_neothd(Some(&gui)),
+            compatibility.canonicalize().ok()
+        );
+
+        let public = packaged.join(public_name);
+        std::fs::write(&public, b"public").unwrap();
+        assert_eq!(
+            resolve_trusted_usage_neothd(Some(&gui)),
+            public.canonicalize().ok()
+        );
+    }
+
+    #[test]
     fn mode_cards_keep_radio_accessibility_and_keyboard_contract() {
         let ui = include_str!("../ui/components.slint");
         let mode_card = ui
@@ -27528,6 +28163,27 @@ fn which_neothd() -> Option<PathBuf> {
     let current_exe = std::env::current_exe().ok();
     let path_env = std::env::var_os("PATH");
     resolve_neothd(current_exe.as_deref(), path_env.as_deref())
+}
+
+/// Resolve the executable admitted to the D2 bounded-probe authority. Unlike
+/// ordinary GUI actions, this security-sensitive path never consults PATH: it
+/// accepts only a canonical public/compatibility sibling of this exact GUI.
+fn resolve_trusted_usage_neothd(current_exe: Option<&Path>) -> Option<PathBuf> {
+    let gui = std::fs::canonicalize(current_exe?).ok()?;
+    let directory = gui.parent()?;
+    for executable in neothd_executable_names() {
+        if let Some(canonical) =
+            trusted_probe_supervisor::canonical_trusted_sibling(directory, executable)
+        {
+            return Some(canonical);
+        }
+    }
+    None
+}
+
+fn which_trusted_usage_neothd() -> Option<PathBuf> {
+    let current_exe = std::env::current_exe().ok();
+    resolve_trusted_usage_neothd(current_exe.as_deref())
 }
 
 /// GOLD-ADAPT-OH-01 — locate the `neoth-migrate` helper binary (PATH
