@@ -7335,6 +7335,7 @@ dependencies = [
  "predicates",
  "proc-macro2",
  "proptest",
+ "quote",
  "qrcode",
  "quick-xml 0.41.0",
  "rand 0.9.4",

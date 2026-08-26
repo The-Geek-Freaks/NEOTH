@@ -180,6 +180,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use proc_macro2::{Delimiter, TokenTree};
+use quote::ToTokens;
 use syn::visit::{self, Visit};
 use syn::{
     Attribute, Expr, ForeignItem, ImplItem, Item, Local, Meta, TraitItem, Type, UseTree,
@@ -425,7 +426,7 @@ fn graphify_library_module_contract_is_exact(content: &str) -> bool {
         .items
         .iter()
         .filter_map(|item| match item {
-            Item::Mod(module) if module.ident.to_string() == "graphify_runner" => Some(module),
+            Item::Mod(module) if module.ident == "graphify_runner" => Some(module),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -454,14 +455,14 @@ fn graphify_binary_main_contract_is_exact(content: &str) -> bool {
         .items
         .iter()
         .filter_map(|item| match item {
-            Item::Fn(function) if function.sig.ident.to_string() == "main" => Some(function),
+            Item::Fn(function) if function.sig.ident == "main" => Some(function),
             _ => None,
         })
         .collect::<Vec<_>>();
     let [main] = mains.as_slice() else {
         return false;
     };
-    graphify_function_tokens_match(content, main, GRAPHIFY_BINARY_MAIN_CONTRACT)
+    graphify_function_tokens_match(main, GRAPHIFY_BINARY_MAIN_CONTRACT)
 }
 
 struct NamedFunctionCounter<'name> {
@@ -471,7 +472,7 @@ struct NamedFunctionCounter<'name> {
 
 impl<'ast> Visit<'ast> for NamedFunctionCounter<'_> {
     fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
-        if function.sig.ident.to_string() == self.name {
+        if function.sig.ident == self.name {
             self.count += 1;
         }
         visit::visit_item_fn(self, function);
@@ -777,7 +778,7 @@ fn forbidden_network_constructions_with_boundaries(
     };
     let test_only_ranges = test_only_item_ranges(content).unwrap_or_default();
     let reviewed_graphify_socket_call = if allows_graphify_denial_probe {
-        reviewed_graphify_libc_probe_contract(&file, content)
+        reviewed_graphify_libc_probe_contract(&file)
     } else {
         None
     };
@@ -1420,7 +1421,7 @@ fn graphify_contract_fixture() -> String {
     )
 }
 
-fn reviewed_graphify_libc_probe_contract(file: &syn::File, content: &str) -> Option<Range<usize>> {
+fn reviewed_graphify_libc_probe_contract(file: &syn::File) -> Option<Range<usize>> {
     let mut counts = GraphifyContractFunctionCounter::default();
     counts.visit_file(file);
     if counts.counts.iter().any(|count| *count != 1) || !graphify_macro_environment_is_exact(file) {
@@ -1430,11 +1431,11 @@ fn reviewed_graphify_libc_probe_contract(file: &syn::File, content: &str) -> Opt
     let mut helper = None;
     for (name, expected) in GRAPHIFY_CONTRACT_FUNCTIONS {
         let mut matches = file.items.iter().filter_map(|item| match item {
-            Item::Fn(function) if function.sig.ident.to_string() == name => Some(function),
+            Item::Fn(function) if function.sig.ident == name => Some(function),
             _ => None,
         });
         let function = matches.next()?;
-        if matches.next().is_some() || !graphify_function_tokens_match(content, function, expected)
+        if matches.next().is_some() || !graphify_function_tokens_match(function, expected)
         {
             return None;
         }
@@ -1442,7 +1443,7 @@ fn reviewed_graphify_libc_probe_contract(file: &syn::File, content: &str) -> Opt
             helper = Some(function);
         }
     }
-    if !graphify_systemd_command_contract_is_exact(file, content) {
+    if !graphify_systemd_command_contract_is_exact(file) {
         return None;
     }
 
@@ -1553,7 +1554,7 @@ impl<'ast> Visit<'ast> for BailMacroDefinitionVisitor {
         if item
             .ident
             .as_ref()
-            .is_some_and(|name| name.to_string() == "bail")
+            .is_some_and(|name| *name == "bail")
         {
             self.found = true;
         }
@@ -1561,58 +1562,30 @@ impl<'ast> Visit<'ast> for BailMacroDefinitionVisitor {
     }
 }
 
-fn graphify_function_tokens_match(content: &str, function: &syn::ItemFn, expected: &str) -> bool {
-    let start = function
+fn graphify_function_tokens_match(function: &syn::ItemFn, expected: &str) -> bool {
+    let mut actual = function.clone();
+    actual
         .attrs
-        .iter()
-        .find(|attribute| !attribute.path().is_ident("doc"))
-        .map(|attribute| attribute.span())
-        .or_else(|| match &function.vis {
-            syn::Visibility::Inherited => None,
-            visibility => Some(visibility.span()),
-        })
-        .unwrap_or_else(|| function.sig.span())
-        .byte_range()
-        .start;
-    let end = function.block.span().byte_range().end;
-    graphify_source_tokens_match(content, start..end, expected)
+        .retain(|attribute| !attribute.path().is_ident("doc"));
+    graphify_tokens_match(&actual, expected)
 }
 
-fn graphify_impl_function_tokens_match(
-    content: &str,
-    function: &syn::ImplItemFn,
-    expected: &str,
-) -> bool {
-    let start = function
+fn graphify_impl_function_tokens_match(function: &syn::ImplItemFn, expected: &str) -> bool {
+    let mut actual = function.clone();
+    actual
         .attrs
-        .iter()
-        .find(|attribute| !attribute.path().is_ident("doc"))
-        .map(|attribute| attribute.span())
-        .or_else(|| match &function.vis {
-            syn::Visibility::Inherited => None,
-            visibility => Some(visibility.span()),
-        })
-        .unwrap_or_else(|| function.sig.span())
-        .byte_range()
-        .start;
-    let end = function.block.span().byte_range().end;
-    graphify_source_tokens_match(content, start..end, expected)
+        .retain(|attribute| !attribute.path().is_ident("doc"));
+    graphify_tokens_match(&actual, expected)
 }
 
-fn graphify_source_tokens_match(content: &str, range: Range<usize>, expected: &str) -> bool {
-    let Some(actual) = content.get(range) else {
-        return false;
-    };
-    let Ok(actual) = actual.parse::<proc_macro2::TokenStream>() else {
-        return false;
-    };
+fn graphify_tokens_match<T: ToTokens>(actual: &T, expected: &str) -> bool {
     let Ok(expected) = expected.parse::<proc_macro2::TokenStream>() else {
         return false;
     };
-    actual.to_string() == expected.to_string()
+    actual.to_token_stream().to_string() == expected.to_string()
 }
 
-fn graphify_systemd_command_contract_is_exact(file: &syn::File, content: &str) -> bool {
+fn graphify_systemd_command_contract_is_exact(file: &syn::File) -> bool {
     let commands = file
         .items
         .iter()
@@ -1631,7 +1604,7 @@ fn graphify_systemd_command_contract_is_exact(file: &syn::File, content: &str) -
         })
         .flat_map(|implementation| implementation.items.iter())
         .filter_map(|item| match item {
-            syn::ImplItem::Fn(function) if function.sig.ident.to_string() == "command" => {
+            syn::ImplItem::Fn(function) if function.sig.ident == "command" => {
                 Some(function)
             }
             _ => None,
@@ -1640,7 +1613,7 @@ fn graphify_systemd_command_contract_is_exact(file: &syn::File, content: &str) -
     let [command] = commands.as_slice() else {
         return false;
     };
-    graphify_impl_function_tokens_match(content, command, GRAPHIFY_SYSTEMD_COMMAND_CONTRACT)
+    graphify_impl_function_tokens_match(command, GRAPHIFY_SYSTEMD_COMMAND_CONTRACT)
 }
 
 fn graphify_linux_cfg_is_exact(attributes: &[Attribute]) -> bool {
@@ -1669,7 +1642,7 @@ struct GraphifyContractFunctionCounter {
 impl<'ast> Visit<'ast> for GraphifyContractFunctionCounter {
     fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
         for (index, (name, _)) in GRAPHIFY_CONTRACT_FUNCTIONS.iter().enumerate() {
-            if function.sig.ident.to_string() == *name {
+            if function.sig.ident == *name {
                 self.counts[index] += 1;
             }
         }
@@ -4644,6 +4617,17 @@ fn ast_network_gate_allows_only_the_exact_wired_graphify_libc_denial_contract() 
         forbidden_network_constructions_with_boundaries(&windows_checkout, false, false, true,)
             .is_empty(),
         "CRLF checkout normalization must preserve the exact Graphify token contract"
+    );
+    let live_windows_checkout = include_str!("../src/graphify_runner.rs").replace('\n', "\r\n");
+    assert!(
+        forbidden_network_constructions_with_boundaries(
+            &live_windows_checkout,
+            false,
+            false,
+            true,
+        )
+        .is_empty(),
+        "the live Graphify source must retain its exact CRLF-safe denial-probe contract"
     );
     assert_eq!(
         forbidden_network_constructions_in_production(&complete)

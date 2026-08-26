@@ -752,6 +752,7 @@ optional = true
 
 [dev-dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }
+quote        = "1"
 syn          = { version = "2", features = ["full", "visit"] }
 tokio        = { version = "1", features = ["test-util", "macros", "rt-multi-thread", "fs", "io-util", "sync", "time"] }
 # tempfile moved to regular [dependencies] above for the V03-09
