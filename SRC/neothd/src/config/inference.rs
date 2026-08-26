@@ -1502,7 +1502,10 @@ model: local-model
     fn canonical_provider_roster_round_trips_every_wire_id() {
         assert_eq!(InferenceProvider::ALL.len(), 13);
         for provider in InferenceProvider::ALL {
-            assert_eq!(InferenceProvider::from_str(provider.as_str()), Some(*provider));
+            assert_eq!(
+                InferenceProvider::from_str(provider.as_str()),
+                Some(*provider)
+            );
         }
         assert!(InferenceProvider::from_str("hermes").is_none());
         assert!(InferenceProvider::from_str("openclaw").is_none());

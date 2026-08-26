@@ -2841,9 +2841,11 @@ mod tests {
         assert_eq!(migrate(&mut conn, 35, 36).unwrap(), 36);
         migration_v35_to_v36(&conn).unwrap();
         let migrated_rows: i64 = conn
-            .query_row("SELECT COUNT(*) FROM transcript_mining_provenance", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM transcript_mining_provenance",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(migrated_rows, 0, "v36 must never backfill legacy raw turns");
 
@@ -2866,10 +2868,14 @@ mod tests {
              VALUES ('legacy-row','lifecycle-legacy',1,zeroblob(32),zeroblob(32),'operator','operator_raw_text_v1','hours24','pending',1,2)",
             [],
         ).is_err(), "a v35 raw row must remain legacy-unbound without a modern witness");
-        assert!(conn.execute(
-            "UPDATE raw_turns SET transcript_mining_authority_epoch=1 WHERE id=1",
-            [],
-        ).is_err(), "a legacy raw row must never be upgraded after migration");
+        assert!(
+            conn.execute(
+                "UPDATE raw_turns SET transcript_mining_authority_epoch=1 WHERE id=1",
+                [],
+            )
+            .is_err(),
+            "a legacy raw row must never be upgraded after migration"
+        );
         conn.execute(
             "INSERT INTO raw_turns
                 (session_id,role,ts_unix,text,transcript_mining_authority_epoch)
@@ -2892,8 +2898,14 @@ mod tests {
             [],
         )
         .unwrap();
-        assert!(conn.execute("UPDATE raw_turns SET text='changed' WHERE id=2", []).is_err());
-        assert!(conn.execute("UPDATE raw_turns SET id=3 WHERE id=2", []).is_err());
+        assert!(
+            conn.execute("UPDATE raw_turns SET text='changed' WHERE id=2", [])
+                .is_err()
+        );
+        assert!(
+            conn.execute("UPDATE raw_turns SET id=3 WHERE id=2", [])
+                .is_err()
+        );
         assert!(conn.execute(
             "INSERT INTO transcript_mining_provenance
                 (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,raw_text_sha256,raw_role,source_kind,retention,lifecycle,created_at_unix,expires_at_unix)
@@ -2917,7 +2929,8 @@ mod tests {
             "UPDATE transcript_mining_provenance SET lifecycle='cancelled',revoked_at_unix=2 WHERE provenance_id='provenance-1'",
             [],
         ).is_err());
-        conn.execute("DELETE FROM raw_turns WHERE id=2", []).unwrap();
+        conn.execute("DELETE FROM raw_turns WHERE id=2", [])
+            .unwrap();
         let lifecycle: (String, Option<i64>) = conn
             .query_row(
                 "SELECT lifecycle,revoked_at_unix FROM transcript_mining_provenance WHERE provenance_id='provenance-1'",
@@ -2963,14 +2976,20 @@ mod tests {
             "DELETE FROM transcript_mining_revocation_receipts WHERE provenance_id='provenance-1'",
             [],
         ).is_err());
-        assert!(conn.execute(
-            "DELETE FROM transcript_mining_provenance WHERE provenance_id='provenance-1'",
-            [],
-        ).is_err());
-        assert!(conn.execute(
-            "DELETE FROM transcript_mining_wal_outbox WHERE outbox_id='outbox-1'",
-            [],
-        ).is_err());
+        assert!(
+            conn.execute(
+                "DELETE FROM transcript_mining_provenance WHERE provenance_id='provenance-1'",
+                [],
+            )
+            .is_err()
+        );
+        assert!(
+            conn.execute(
+                "DELETE FROM transcript_mining_wal_outbox WHERE outbox_id='outbox-1'",
+                [],
+            )
+            .is_err()
+        );
         let receipts: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM transcript_mining_revocation_receipts WHERE provenance_id='provenance-1'",
@@ -3005,7 +3024,8 @@ mod tests {
             "UPDATE transcript_mining_provenance SET lifecycle='revoked',revoked_at_unix=2 WHERE provenance_id='provenance-2'",
             [],
         ).is_err());
-        conn.execute("DELETE FROM raw_turns WHERE id=3", []).unwrap();
+        conn.execute("DELETE FROM raw_turns WHERE id=3", [])
+            .unwrap();
         let active_delete_lifecycle: String = conn
             .query_row(
                 "SELECT lifecycle FROM transcript_mining_provenance WHERE provenance_id='provenance-2'",
@@ -3028,7 +3048,9 @@ mod tests {
         ] {
             let columns = |database: &Connection| {
                 database
-                    .prepare("SELECT name,type,\"notnull\",pk FROM pragma_table_info(?1) ORDER BY cid")
+                    .prepare(
+                        "SELECT name,type,\"notnull\",pk FROM pragma_table_info(?1) ORDER BY cid",
+                    )
                     .unwrap()
                     .query_map([table], |row| {
                         Ok((
@@ -3056,7 +3078,9 @@ mod tests {
                      ORDER BY type,name",
                 )
                 .unwrap()
-                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
                 .unwrap()
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .unwrap()
@@ -3075,7 +3099,10 @@ mod tests {
                         |row| row.get(0),
                     )
                     .unwrap();
-                assert!(sql.trim_end().ends_with("STRICT"), "{table} must remain strict");
+                assert!(
+                    sql.trim_end().ends_with("STRICT"),
+                    "{table} must remain strict"
+                );
             }
         }
     }

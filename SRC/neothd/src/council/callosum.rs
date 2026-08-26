@@ -435,11 +435,9 @@ mod tests {
     async fn oversized_question_is_rejected_before_cerebellum_or_budget_charge() {
         let cere = MockCerebellum::returning("must not be returned");
         let budget = crate::council::BudgetToken::new(1);
-        let oversized =
-            "x".repeat(crate::security::prompt_envelope::MAX_OPERATOR_TASK_BYTES + 1);
+        let oversized = "x".repeat(crate::security::prompt_envelope::MAX_OPERATOR_TASK_BYTES + 1);
 
-        let verdict =
-            resolve_with_profile_budget(&oversized, "L", "R", None, &cere, &budget).await;
+        let verdict = resolve_with_profile_budget(&oversized, "L", "R", None, &cere, &budget).await;
 
         assert_eq!(cere.call_count.load(Ordering::SeqCst), 0);
         assert_eq!(budget.used(), 0);
@@ -501,8 +499,7 @@ mod tests {
     #[test]
     fn build_synthesis_prompt_with_profile_empty_or_whitespace_skips_section() {
         let with_empty = build_synthesis_prompt_with_profile("Q", "L", "R", Some("")).unwrap();
-        let with_ws =
-            build_synthesis_prompt_with_profile("Q", "L", "R", Some("   \n  ")).unwrap();
+        let with_ws = build_synthesis_prompt_with_profile("Q", "L", "R", Some("   \n  ")).unwrap();
         let without = build_synthesis_prompt_with_profile("Q", "L", "R", None).unwrap();
         assert_eq!(with_empty, without);
         assert_eq!(with_ws, without);

@@ -103,8 +103,6 @@ fn adversarial_contract_covers_markup_controls_confusables_and_limits() {
             "missing adversarial case: {required}"
         );
     }
-    assert!(
-        RUNTIME.contains("initial_qa_and_retry_keep_adversarial_values_inside_typed_fields")
-    );
+    assert!(RUNTIME.contains("initial_qa_and_retry_keep_adversarial_values_inside_typed_fields"));
     assert!(RUNTIME.contains("request_contract_is_bounded_before_any_provider_call"));
 }

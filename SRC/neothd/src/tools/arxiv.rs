@@ -279,7 +279,10 @@ mod tests {
     fn response_body_rejects_oversized_declared_length_before_reading() {
         let err = preflight_response_content_length(Some(MAX_ARXIV_RESPONSE_BYTES as u64 + 1))
             .unwrap_err();
-        assert_eq!(err.to_string(), "arxiv response exceeds configured size limit");
+        assert_eq!(
+            err.to_string(),
+            "arxiv response exceeds configured size limit"
+        );
     }
 
     #[test]
@@ -289,7 +292,10 @@ mod tests {
         append_response_chunk(&mut body, &vec![b'x'; MAX_ARXIV_RESPONSE_BYTES - 1])
             .expect("under-limit chunk accepted");
         let err = append_response_chunk(&mut body, b"xx").unwrap_err();
-        assert_eq!(err.to_string(), "arxiv response exceeds configured size limit");
+        assert_eq!(
+            err.to_string(),
+            "arxiv response exceeds configured size limit"
+        );
         assert_eq!(body.len(), MAX_ARXIV_RESPONSE_BYTES - 1);
     }
 
@@ -308,7 +314,10 @@ mod tests {
             "<entry><id>two</id></entry></feed>"
         );
         let err = parse_atom(xml, 1).unwrap_err();
-        assert_eq!(err.to_string(), "arxiv response exceeds requested entry limit");
+        assert_eq!(
+            err.to_string(),
+            "arxiv response exceeds requested entry limit"
+        );
     }
 
     #[test]
@@ -318,7 +327,10 @@ mod tests {
             "<entry><id>truncated</id></feed>"
         );
         let err = parse_atom(xml, MAX_ARXIV_RESULTS).unwrap_err();
-        assert_eq!(err.to_string(), "arxiv response contains an unterminated entry");
+        assert_eq!(
+            err.to_string(),
+            "arxiv response contains an unterminated entry"
+        );
     }
 
     #[tokio::test]

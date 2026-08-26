@@ -7,11 +7,7 @@
 //! operator must turn a selected span into a separately reviewed goldset entry
 //! before it can reach any recall-parity scorer.
 
-use std::{
-    collections::BTreeSet,
-    ffi::OsStr,
-    path::Path,
-};
+use std::{collections::BTreeSet, ffi::OsStr, path::Path};
 
 use anyhow::{Context, Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -28,7 +24,8 @@ pub const CANDIDATE_EVIDENCE_SCHEMA_VERSION: u32 = 1;
 /// Domain-separation string for candidate-evidence manifests.
 pub const CANDIDATE_EVIDENCE_PURPOSE: &str = "neoth-recall-parity-candidate-evidence/v1";
 pub const CANDIDATE_EVIDENCE_RECEIPT_SCHEMA_VERSION: u32 = 1;
-pub const CANDIDATE_EVIDENCE_RECEIPT_PURPOSE: &str = "neoth-recall-parity-candidate-evidence-receipt/v1";
+pub const CANDIDATE_EVIDENCE_RECEIPT_PURPOSE: &str =
+    "neoth-recall-parity-candidate-evidence-receipt/v1";
 /// A source export is intentionally capped: this is a review queue, never a
 /// general transcript/WAL ingestion path.
 pub const MAX_CANDIDATE_SOURCE_BYTES: usize = 32 * 1024 * 1024;
@@ -103,7 +100,8 @@ impl SignedCandidateEvidenceReceipt {
     /// External candidate miners/signers must sign these bytes, not a freshly
     /// pretty-printed or map-reordered rendering of the receipt body.
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
-        serde_json::to_vec(&self.body).context("serialize canonical candidate evidence receipt body")
+        serde_json::to_vec(&self.body)
+            .context("serialize canonical candidate evidence receipt body")
     }
 
     fn validate_shape(&self) -> Result<()> {
@@ -117,19 +115,37 @@ impl SignedCandidateEvidenceReceipt {
         if !is_valid_id(&body.bundle_id) {
             anyhow::bail!("candidate evidence receipt bundle_id is not canonical");
         }
-        validate_sha256(&body.manifest_sha256, "candidate evidence receipt manifest_sha256")?;
-        validate_sha256(&body.source_sha256, "candidate evidence receipt source_sha256")?;
-        validate_sha256(&body.candidates_sha256, "candidate evidence receipt candidates_sha256")?;
-        if body.source_bytes == 0 || body.source_bytes > MAX_CANDIDATE_SOURCE_BYTES
-            || body.candidate_count == 0 || body.candidate_count > MAX_CANDIDATE_RECORDS
+        validate_sha256(
+            &body.manifest_sha256,
+            "candidate evidence receipt manifest_sha256",
+        )?;
+        validate_sha256(
+            &body.source_sha256,
+            "candidate evidence receipt source_sha256",
+        )?;
+        validate_sha256(
+            &body.candidates_sha256,
+            "candidate evidence receipt candidates_sha256",
+        )?;
+        if body.source_bytes == 0
+            || body.source_bytes > MAX_CANDIDATE_SOURCE_BYTES
+            || body.candidate_count == 0
+            || body.candidate_count > MAX_CANDIDATE_RECORDS
         {
-            anyhow::bail!("candidate evidence receipt exceeds bounded source or candidate contract");
+            anyhow::bail!(
+                "candidate evidence receipt exceeds bounded source or candidate contract"
+            );
         }
         if self.signature_b64.is_empty()
             || self.signature_b64.len() > MAX_CANDIDATE_EVIDENCE_SIGNATURE_BYTES
-            || self.signature_b64.bytes().any(|byte| byte.is_ascii_whitespace())
+            || self
+                .signature_b64
+                .bytes()
+                .any(|byte| byte.is_ascii_whitespace())
         {
-            anyhow::bail!("candidate evidence receipt signature must be bounded non-whitespace base64");
+            anyhow::bail!(
+                "candidate evidence receipt signature must be bounded non-whitespace base64"
+            );
         }
         Ok(())
     }
@@ -138,9 +154,13 @@ impl SignedCandidateEvidenceReceipt {
         self.validate_shape()?;
         if expected_pubkey_b64.is_empty()
             || expected_pubkey_b64.len() > MAX_CANDIDATE_EVIDENCE_PUBKEY_BYTES
-            || expected_pubkey_b64.bytes().any(|byte| byte.is_ascii_whitespace())
+            || expected_pubkey_b64
+                .bytes()
+                .any(|byte| byte.is_ascii_whitespace())
         {
-            anyhow::bail!("expected candidate evidence public key must be bounded non-whitespace base64");
+            anyhow::bail!(
+                "expected candidate evidence public key must be bounded non-whitespace base64"
+            );
         }
         crate::wal::signing::verify_b64(
             expected_pubkey_b64,
@@ -167,40 +187,58 @@ pub struct ValidatedCandidateEvidence {
 }
 
 impl ValidatedCandidateEvidence {
-    pub fn manifest(&self) -> &CandidateEvidenceManifest { &self.manifest }
+    pub fn manifest(&self) -> &CandidateEvidenceManifest {
+        &self.manifest
+    }
 
-    pub fn candidates(&self) -> &[MinedCandidate] { &self.candidates }
+    pub fn candidates(&self) -> &[MinedCandidate] {
+        &self.candidates
+    }
 
     /// Digest of the exact signed manifest bytes read through the retained
     /// capability. This is safe provenance metadata, never raw source content.
-    pub fn manifest_sha256(&self) -> &str { &self.manifest_sha256 }
+    pub fn manifest_sha256(&self) -> &str {
+        &self.manifest_sha256
+    }
 
     /// Digest of the exact signed receipt bytes. Persisting this lets a later
     /// operator-review binding retain the verified evidence identity alongside
     /// a separately persisted immutable receipt copy, never mutable run state.
-    pub fn receipt_sha256(&self) -> &str { &self.receipt_sha256 }
+    pub fn receipt_sha256(&self) -> &str {
+        &self.receipt_sha256
+    }
 
     /// Exact, already verified manifest bytes. The manifest carries metadata
     /// and hashes only, never raw transcript/WAL source bytes.
-    pub fn manifest_bytes(&self) -> &[u8] { &self.manifest_bytes }
+    pub fn manifest_bytes(&self) -> &[u8] {
+        &self.manifest_bytes
+    }
 
     /// Exact detached receipt bytes. Keeping this allows a run-local immutable
     /// provenance copy without retaining raw source data or a signing key.
-    pub fn receipt_bytes(&self) -> &[u8] { &self.receipt_bytes }
+    pub fn receipt_bytes(&self) -> &[u8] {
+        &self.receipt_bytes
+    }
 
     /// Exact candidate vector bytes already bound by the signed manifest. The
     /// vector is opaque metadata (IDs, offsets, lengths, hashes), never raw
     /// transcript/WAL source data.
-    pub fn candidate_bytes(&self) -> &[u8] { &self.candidate_bytes }
+    pub fn candidate_bytes(&self) -> &[u8] {
+        &self.candidate_bytes
+    }
 
     /// Canonical base64 encoding of the explicit, decoded Ed25519 public key
     /// used to verify the receipt. This public value is retained only so a
     /// bound run can re-verify its immutable receipt on every reopen.
-    pub fn expected_receipt_pubkey_b64(&self) -> &str { &self.expected_receipt_pubkey_b64 }
+    pub fn expected_receipt_pubkey_b64(&self) -> &str {
+        &self.expected_receipt_pubkey_b64
+    }
 
     /// SHA-256 fingerprint of the canonical decoded expected Ed25519 public
     /// key used for this verification. It is safe trust-anchor provenance.
-    pub fn expected_receipt_pubkey_sha256(&self) -> &str { &self.expected_receipt_pubkey_sha256 }
+    pub fn expected_receipt_pubkey_sha256(&self) -> &str {
+        &self.expected_receipt_pubkey_sha256
+    }
 }
 
 /// Safe report projection. The raw source and candidate spans are never
@@ -228,7 +266,9 @@ pub(crate) struct PersistedCandidateEvidenceMetadata {
 }
 
 impl PersistedCandidateEvidenceMetadata {
-    pub(crate) fn candidate_ids(&self) -> &[String] { &self.candidate_ids }
+    pub(crate) fn candidate_ids(&self) -> &[String] {
+        &self.candidate_ids
+    }
 }
 
 /// Capability-bound imported evidence namespace. Its directory is bound once
@@ -380,7 +420,10 @@ pub(crate) fn validate_persisted_candidate_evidence_metadata(
 ) -> Result<PersistedCandidateEvidenceMetadata> {
     validate_sha256(expected_manifest_sha256, "persisted candidate manifest")?;
     validate_sha256(expected_receipt_sha256, "persisted candidate receipt")?;
-    validate_sha256(expected_receipt_pubkey_sha256, "persisted candidate receipt public key")?;
+    validate_sha256(
+        expected_receipt_pubkey_sha256,
+        "persisted candidate receipt public key",
+    )?;
     if sha256_bytes(manifest_bytes) != expected_manifest_sha256
         || sha256_bytes(receipt_bytes) != expected_receipt_sha256
     {
@@ -406,14 +449,17 @@ pub(crate) fn validate_persisted_candidate_evidence_metadata(
         anyhow::bail!("persisted candidate vector count does not match signed manifest");
     }
     Ok(PersistedCandidateEvidenceMetadata {
-        candidate_ids: candidates.into_iter().map(|candidate| candidate.candidate_id).collect(),
+        candidate_ids: candidates
+            .into_iter()
+            .map(|candidate| candidate.candidate_id)
+            .collect(),
     })
 }
 
 fn canonical_receipt_pubkey(expected_pubkey_b64: &str) -> Result<(String, String)> {
-    let bytes = STANDARD
-        .decode(expected_pubkey_b64)
-        .map_err(|_| anyhow::anyhow!("expected candidate evidence public key is not valid base64"))?;
+    let bytes = STANDARD.decode(expected_pubkey_b64).map_err(|_| {
+        anyhow::anyhow!("expected candidate evidence public key is not valid base64")
+    })?;
     if bytes.len() != 32 {
         anyhow::bail!("expected candidate evidence public key has an invalid Ed25519 length");
     }
@@ -429,13 +475,18 @@ fn validate_manifest(manifest: &CandidateEvidenceManifest) -> Result<()> {
         );
     }
     if manifest.purpose != CANDIDATE_EVIDENCE_PURPOSE {
-        anyhow::bail!("candidate evidence manifest purpose is not the P1-08 candidate-evidence domain");
+        anyhow::bail!(
+            "candidate evidence manifest purpose is not the P1-08 candidate-evidence domain"
+        );
     }
     if !is_valid_id(&manifest.bundle_id) {
         anyhow::bail!("candidate evidence bundle_id is not canonical");
     }
     validate_sha256(&manifest.source_sha256, "candidate evidence source_sha256")?;
-    validate_sha256(&manifest.candidates_sha256, "candidate evidence candidates_sha256")?;
+    validate_sha256(
+        &manifest.candidates_sha256,
+        "candidate evidence candidates_sha256",
+    )?;
     if manifest.source_bytes == 0 || manifest.source_bytes > MAX_CANDIDATE_SOURCE_BYTES {
         anyhow::bail!("candidate evidence source_bytes exceeds the bounded source contract");
     }
@@ -460,15 +511,26 @@ fn parse_candidates(bytes: &[u8]) -> Result<Vec<MinedCandidate>> {
         let candidate: MinedCandidate = serde_json::from_str(line)
             .map_err(|_| anyhow::anyhow!("parse candidate evidence line {}", index + 1))?;
         if !is_valid_id(&candidate.candidate_id) {
-            anyhow::bail!("candidate evidence line {} has noncanonical candidate_id", index + 1);
+            anyhow::bail!(
+                "candidate evidence line {} has noncanonical candidate_id",
+                index + 1
+            );
         }
-        validate_sha256(&candidate.source_span_sha256, "candidate evidence source_span_sha256")?;
+        validate_sha256(
+            &candidate.source_span_sha256,
+            "candidate evidence source_span_sha256",
+        )?;
         if candidate.source_len == 0 {
-            anyhow::bail!("candidate evidence line {} has an empty source span", index + 1);
+            anyhow::bail!(
+                "candidate evidence line {} has an empty source span",
+                index + 1
+            );
         }
         if let Some(previous) = &prior_id {
             if candidate.candidate_id.as_str() <= previous.as_str() {
-                anyhow::bail!("candidate evidence records must be strictly sorted by unique candidate_id");
+                anyhow::bail!(
+                    "candidate evidence records must be strictly sorted by unique candidate_id"
+                );
             }
         }
         prior_id = Some(candidate.candidate_id.clone());
@@ -505,11 +567,17 @@ fn is_valid_id(value: &str) -> bool {
     !bytes.is_empty()
         && bytes.len() <= 64
         && bytes[0].is_ascii_alphanumeric()
-        && bytes.iter().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn validate_sha256(value: &str, field: &str) -> Result<()> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')) {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
         anyhow::bail!("{field} must be exactly 64 lowercase hexadecimal characters");
     }
     Ok(())
@@ -543,7 +611,10 @@ mod tests {
         }
     }
 
-    fn bundle(source: &[u8], candidates: &[MinedCandidate]) -> (CandidateEvidenceManifest, Vec<u8>) {
+    fn bundle(
+        source: &[u8],
+        candidates: &[MinedCandidate],
+    ) -> (CandidateEvidenceManifest, Vec<u8>) {
         let candidate_bytes = candidates
             .iter()
             .map(|candidate| serde_json::to_string(candidate).unwrap())
@@ -601,23 +672,28 @@ mod tests {
 
     fn operator_anchor_bytes() -> Vec<u8> {
         (0..20)
-            .flat_map(|index| [GradedSystem::Neoth, GradedSystem::Reference].map(|system| GraderGrade {
-                query_id: format!("q{index:03}"),
-                grader_id: OPERATOR_ANCHOR_GRADER_ID.into(),
-                system,
-                factual: 3,
-                completeness: 3,
-                on_tone: 3,
-                usefulness: 3,
-                brevity: 3,
-            }))
+            .flat_map(|index| {
+                [GradedSystem::Neoth, GradedSystem::Reference].map(|system| GraderGrade {
+                    query_id: format!("q{index:03}"),
+                    grader_id: OPERATOR_ANCHOR_GRADER_ID.into(),
+                    system,
+                    factual: 3,
+                    completeness: 3,
+                    on_tone: 3,
+                    usefulness: 3,
+                    brevity: 3,
+                })
+            })
             .map(|grade| serde_json::to_string(&grade).unwrap())
             .collect::<Vec<_>>()
             .join("\n")
             .into_bytes()
     }
 
-    fn signed_receipt(manifest: &CandidateEvidenceManifest, manifest_bytes: &[u8]) -> (SignedCandidateEvidenceReceipt, String) {
+    fn signed_receipt(
+        manifest: &CandidateEvidenceManifest,
+        manifest_bytes: &[u8],
+    ) -> (SignedCandidateEvidenceReceipt, String) {
         let key = ed25519_dalek::SigningKey::from_bytes(&[31; 32]);
         let mut receipt = SignedCandidateEvidenceReceipt {
             body: CandidateEvidenceReceiptBody {
@@ -633,7 +709,8 @@ mod tests {
             },
             signature_b64: String::new(),
         };
-        receipt.signature_b64 = crate::wal::signing::sign_b64(&key, &receipt.canonical_bytes().unwrap());
+        receipt.signature_b64 =
+            crate::wal::signing::sign_b64(&key, &receipt.canonical_bytes().unwrap());
         (receipt, crate::wal::signing::pubkey_b64(&key))
     }
 
@@ -674,10 +751,15 @@ mod tests {
         let mut substituted = manifest.clone();
         substituted.bundle_id = "other-bundle".into();
         let substituted_bytes = serde_json::to_vec(&substituted).unwrap();
-        assert!(validate_receipt_for_manifest(&receipt, &substituted, &substituted_bytes, &public_key).is_err());
-        let error = serde_json::from_slice::<CandidateEvidenceManifest>(br#"{"schema_version":"TRANSCRIPT_SECRET"}"#)
-            .map_err(|_| anyhow::anyhow!("parse candidate evidence manifest"))
-            .unwrap_err();
+        assert!(
+            validate_receipt_for_manifest(&receipt, &substituted, &substituted_bytes, &public_key)
+                .is_err()
+        );
+        let error = serde_json::from_slice::<CandidateEvidenceManifest>(
+            br#"{"schema_version":"TRANSCRIPT_SECRET"}"#,
+        )
+        .map_err(|_| anyhow::anyhow!("parse candidate evidence manifest"))
+        .unwrap_err();
         assert!(!format!("{error:#}").contains("TRANSCRIPT_SECRET"));
     }
 
@@ -695,7 +777,10 @@ mod tests {
             sha256_bytes(source),
             manifest.candidates_sha256,
         );
-        assert_eq!(String::from_utf8(receipt.canonical_bytes().unwrap()).unwrap(), expected);
+        assert_eq!(
+            String::from_utf8(receipt.canonical_bytes().unwrap()).unwrap(),
+            expected
+        );
     }
 
     #[test]
@@ -749,23 +834,40 @@ mod tests {
                 .collect(),
         };
         let link_bytes = serde_json::to_vec(&link).unwrap();
-        assert!(load_operator_anchor_evidence_link_bytes(&link_bytes, &anchor_bytes, &anchor, &evidence).is_ok());
+        assert!(
+            load_operator_anchor_evidence_link_bytes(
+                &link_bytes,
+                &anchor_bytes,
+                &anchor,
+                &evidence
+            )
+            .is_ok()
+        );
         let mut incomplete = link;
         incomplete.links.pop();
-        assert!(load_operator_anchor_evidence_link_bytes(
-            &serde_json::to_vec(&incomplete).unwrap(),
-            &anchor_bytes,
-            &anchor,
-            &evidence,
-        ).is_err());
+        assert!(
+            load_operator_anchor_evidence_link_bytes(
+                &serde_json::to_vec(&incomplete).unwrap(),
+                &anchor_bytes,
+                &anchor,
+                &evidence,
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn span_hash_count_order_and_unknown_fields_fail_closed() {
         let source = b"0123456789";
-        let candidates = vec![candidate("cand-b", source, 0, 2), candidate("cand-a", source, 2, 2)];
+        let candidates = vec![
+            candidate("cand-b", source, 0, 2),
+            candidate("cand-a", source, 2, 2),
+        ];
         let (_, bytes) = bundle(source, &candidates);
-        assert!(parse_candidates(&bytes).is_err(), "unsorted candidate IDs must fail");
+        assert!(
+            parse_candidates(&bytes).is_err(),
+            "unsorted candidate IDs must fail"
+        );
 
         let candidate = candidate("cand-a", source, 0, 2);
         let mut wrong_hash = candidate.clone();

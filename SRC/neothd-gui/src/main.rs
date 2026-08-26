@@ -624,8 +624,8 @@ mod chat_stream_phase;
 mod gui_action;
 mod gui_stream;
 mod panel_logic;
-mod trusted_probe_supervisor;
 mod tray;
+mod trusted_probe_supervisor;
 mod wizard_logic;
 
 use buddy_activity::GuiActivity;
@@ -1702,31 +1702,30 @@ fn main() -> Result<()> {
     let usage_probe_shutdown = usage_probe_cancellation.clone();
     let usage_probe_worker = std::thread::Builder::new()
         .name("neoth-usage-refresh".into())
-        .spawn(move || loop {
-            if !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire) {
-                usage_probe_cancellation.cancel();
-                break;
-            }
-            let usage = probe_usage_view_via_subprocess(&usage_probe_cancellation);
-            let weak = weak_usage.clone();
-            let cancellation = usage_probe_cancellation.clone();
-            let dispatch = slint::invoke_from_event_loop(move || {
-                if let Some(w) = weak.upgrade() {
-                    w.set_usage_summary(usage.summary.into());
-                    w.set_usage_workflow_summary(usage.workflow_summary.into());
-                } else {
-                    cancellation.cancel();
+        .spawn(move || {
+            loop {
+                if !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire) {
+                    usage_probe_cancellation.cancel();
+                    break;
                 }
-            });
-            if dispatch.is_err() {
-                usage_probe_cancellation.cancel();
-                break;
-            }
-            if !wait_for_usage_refresh(
-                &usage_probe_cancellation,
-                USAGE_REFRESH_INTERVAL,
-            ) {
-                break;
+                let usage = probe_usage_view_via_subprocess(&usage_probe_cancellation);
+                let weak = weak_usage.clone();
+                let cancellation = usage_probe_cancellation.clone();
+                let dispatch = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_usage_summary(usage.summary.into());
+                        w.set_usage_workflow_summary(usage.workflow_summary.into());
+                    } else {
+                        cancellation.cancel();
+                    }
+                });
+                if dispatch.is_err() {
+                    usage_probe_cancellation.cancel();
+                    break;
+                }
+                if !wait_for_usage_refresh(&usage_probe_cancellation, USAGE_REFRESH_INTERVAL) {
+                    break;
+                }
             }
         })
         .map_err(|_| anyhow::anyhow!("usage probe worker could not start"))?;
@@ -1740,30 +1739,29 @@ fn main() -> Result<()> {
     let budget_probe_shutdown = budget_probe_cancellation.clone();
     let budget_probe_worker = std::thread::Builder::new()
         .name("neoth-budget-refresh".into())
-        .spawn(move || loop {
-            if !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire) {
-                budget_probe_cancellation.cancel();
-                break;
-            }
-            let summary = probe_budget_via_subprocess(&budget_probe_cancellation);
-            let weak = weak_budget.clone();
-            let cancellation = budget_probe_cancellation.clone();
-            let dispatch = slint::invoke_from_event_loop(move || {
-                if let Some(w) = weak.upgrade() {
-                    w.set_budget_summary(summary.into());
-                } else {
-                    cancellation.cancel();
+        .spawn(move || {
+            loop {
+                if !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire) {
+                    budget_probe_cancellation.cancel();
+                    break;
                 }
-            });
-            if dispatch.is_err() {
-                budget_probe_cancellation.cancel();
-                break;
-            }
-            if !wait_for_usage_refresh(
-                &budget_probe_cancellation,
-                BUDGET_REFRESH_INTERVAL,
-            ) {
-                break;
+                let summary = probe_budget_via_subprocess(&budget_probe_cancellation);
+                let weak = weak_budget.clone();
+                let cancellation = budget_probe_cancellation.clone();
+                let dispatch = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_budget_summary(summary.into());
+                    } else {
+                        cancellation.cancel();
+                    }
+                });
+                if dispatch.is_err() {
+                    budget_probe_cancellation.cancel();
+                    break;
+                }
+                if !wait_for_usage_refresh(&budget_probe_cancellation, BUDGET_REFRESH_INTERVAL) {
+                    break;
+                }
             }
         })
         .map_err(|_| "budget probe worker could not start");
@@ -1913,11 +1911,10 @@ fn main() -> Result<()> {
         match read_freedom_yaml(&neoth_dir.join("freedom.yaml")) {
             Ok(cfg) => {
                 window.set_operator_id(cfg.operator_id.into());
-                let provider_choice = neothd::config::inference::InferenceProvider::from_str(
-                    &cfg.provider_kind,
-                )
-                .map(|provider| provider.as_str().to_string())
-                .unwrap_or(cfg.provider_kind);
+                let provider_choice =
+                    neothd::config::inference::InferenceProvider::from_str(&cfg.provider_kind)
+                        .map(|provider| provider.as_str().to_string())
+                        .unwrap_or(cfg.provider_kind);
                 window.set_provider_choice(provider_choice.into());
                 window.set_autonomy_choice(cfg.autonomy.into());
                 // Pre-topology configs were necessarily single-provider. Keep
@@ -1945,14 +1942,18 @@ fn main() -> Result<()> {
                     if let Some(provider) = left.provider {
                         window.set_hemisphere_left_provider(provider.as_str().into());
                     }
-                    window.set_hemisphere_left_model(left.model.as_deref().unwrap_or_default().into());
+                    window.set_hemisphere_left_model(
+                        left.model.as_deref().unwrap_or_default().into(),
+                    );
                     let right = topology.slot_for(neothd::config::inference::HemisphereRole::Right);
                     if let Some(provider) = right.provider {
                         window.set_hemisphere_right_provider(provider.as_str().into());
                     }
-                    window.set_hemisphere_right_model(right.model.as_deref().unwrap_or_default().into());
-                    let cerebellum = topology
-                        .slot_for(neothd::config::inference::HemisphereRole::Cerebellum);
+                    window.set_hemisphere_right_model(
+                        right.model.as_deref().unwrap_or_default().into(),
+                    );
+                    let cerebellum =
+                        topology.slot_for(neothd::config::inference::HemisphereRole::Cerebellum);
                     if let Some(provider) = cerebellum.provider {
                         window.set_hemisphere_cerebellum_provider(provider.as_str().into());
                     }
@@ -7253,9 +7254,8 @@ fn main() -> Result<()> {
         let Some(w0) = weak_ov.upgrade() else {
             return;
         };
-        let usage_overview_revision = USAGE_OVERVIEW_UI_REVISION
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
-            + 1;
+        let usage_overview_revision =
+            USAGE_OVERVIEW_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
         // Clear stale timestamp while loading.
         w0.set_ov_refreshed_at("loading…".into());
         clear_usage_overview(&w0, "Refreshing usage…");
@@ -7281,16 +7281,13 @@ fn main() -> Result<()> {
     {
         let weak_ov_init = window.as_weak();
         let cost_weak = weak_ov_init.clone();
-        let usage_overview_revision = USAGE_OVERVIEW_UI_REVISION
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
-            + 1;
+        let usage_overview_revision =
+            USAGE_OVERVIEW_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
         clear_usage_overview(&window, "Refreshing usage…");
         std::thread::spawn(move || refresh_overview(weak_ov_init));
-        if let Err(error) = spawn_usage_overview_worker(
-            &usage_overview_workers,
-            cost_weak,
-            usage_overview_revision,
-        ) {
+        if let Err(error) =
+            spawn_usage_overview_worker(&usage_overview_workers, cost_weak, usage_overview_revision)
+        {
             if USAGE_OVERVIEW_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
                 == usage_overview_revision
             {
@@ -15132,7 +15129,10 @@ fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBu
     let mut inference = mapping_field_or_empty(root_map, &inference_key, "inference")?;
     for (key, value) in wizard_inference_fields(state)? {
         let key = serde_yaml::Value::from(key);
-        if matches!(key.as_str(), Some("left" | "right" | "cerebellum" | "default_slot")) {
+        if matches!(
+            key.as_str(),
+            Some("left" | "right" | "cerebellum" | "default_slot")
+        ) {
             let mut slot = mapping_field_or_empty(&inference, &key, "inference slot")?;
             // Legacy inline slot keys are migrated by write_credentials_yaml
             // before this public transaction. Never retain a secret in
@@ -15156,9 +15156,9 @@ fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBu
     for slot_name in ["default_slot", "left", "right", "cerebellum"] {
         let slot_key = serde_yaml::Value::from(slot_name);
         if let Some(slot) = inference.get_mut(&slot_key) {
-            let slot = slot
-                .as_mapping_mut()
-                .with_context(|| format!("freedom.yaml inference.{slot_name} is not a YAML mapping"))?;
+            let slot = slot.as_mapping_mut().with_context(|| {
+                format!("freedom.yaml inference.{slot_name} is not a YAML mapping")
+            })?;
             slot.remove(&serde_yaml::Value::from("key"));
         }
     }
@@ -15323,14 +15323,15 @@ fn write_credentials_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<Op
     let provider_key = (state.hemisphere_use_single && !state.provider_key.is_empty())
         .then(|| state.provider_key.clone());
     let inference_default_slot_key = provider_key.clone();
-    let inference_left_key = (!state.hemisphere_use_single && !state.hemisphere_left_key.is_empty())
-        .then(|| state.hemisphere_left_key.clone());
-    let inference_right_key =
-        (!state.hemisphere_use_single && !state.hemisphere_right_key.is_empty())
-            .then(|| state.hemisphere_right_key.clone());
-    let inference_cerebellum_key =
-        (!state.hemisphere_use_single && !state.hemisphere_cerebellum_key.is_empty())
-            .then(|| state.hemisphere_cerebellum_key.clone());
+    let inference_left_key = (!state.hemisphere_use_single
+        && !state.hemisphere_left_key.is_empty())
+    .then(|| state.hemisphere_left_key.clone());
+    let inference_right_key = (!state.hemisphere_use_single
+        && !state.hemisphere_right_key.is_empty())
+    .then(|| state.hemisphere_right_key.clone());
+    let inference_cerebellum_key = (!state.hemisphere_use_single
+        && !state.hemisphere_cerebellum_key.is_empty())
+    .then(|| state.hemisphere_cerebellum_key.clone());
     let telegram_token = (state.enable_telegram && !state.telegram_token.is_empty())
         .then(|| state.telegram_token.clone());
     let additions = CredentialsYaml {
@@ -17163,13 +17164,19 @@ fn run_bounded_dashboard_json_probe(
         ["meter", "--format", "json"]
         | ["cost", "top-sessions", "--output", "json"]
         | ["usage", "--format", "json", "--days", "1"] => true,
-        ["usage", "--since-unix", since, "--until-unix", until, "--format", "json"] => {
-            since
-                .parse::<u64>()
-                .ok()
-                .zip(until.parse::<u64>().ok())
-                .is_some_and(|(since, until)| since <= until)
-        }
+        [
+            "usage",
+            "--since-unix",
+            since,
+            "--until-unix",
+            until,
+            "--format",
+            "json",
+        ] => since
+            .parse::<u64>()
+            .ok()
+            .zip(until.parse::<u64>().ok())
+            .is_some_and(|(since, until)| since <= until),
         _ => false,
     };
     if !exact_dashboard_json {
@@ -20435,9 +20442,7 @@ fn apply_provider_ids(window: &MainWindow, reported_ids: Vec<String>) {
     let rows: Vec<slint::SharedString> = ids.iter().cloned().map(Into::into).collect();
     window.set_provider_ids(ModelRc::new(VecModel::from(rows)));
     window.set_provider_choice_index(idx);
-    let role_index = |provider: &str| {
-        ids.iter().position(|id| id == provider).unwrap_or(0) as i32
-    };
+    let role_index = |provider: &str| ids.iter().position(|id| id == provider).unwrap_or(0) as i32;
     window.set_hemisphere_left_provider_index(role_index(
         window.get_hemisphere_left_provider().as_str(),
     ));
@@ -25118,16 +25123,20 @@ mod chat_subprocess_tests {
     fn shape_usage_summary_missing_fields_never_default_to_zero() {
         let s = crate::shape_usage_summary("{}");
         assert!(s.contains("malformed"));
-        assert!(crate::shape_usage_summary(
-            r#"{"total_call_count":1,"total_ok_count":1,"total_err_count":1,
+        assert!(
+            crate::shape_usage_summary(
+                r#"{"total_call_count":1,"total_ok_count":1,"total_err_count":1,
                 "total_cost_usd":0.0}"#
-        )
-        .contains("malformed"));
-        assert!(crate::shape_usage_summary(
-            r#"{"total_call_count":1,"total_ok_count":1,"total_err_count":0,
+            )
+            .contains("malformed")
+        );
+        assert!(
+            crate::shape_usage_summary(
+                r#"{"total_call_count":1,"total_ok_count":1,"total_err_count":0,
                 "total_cost_usd":-1.0}"#
-        )
-        .contains("malformed"));
+            )
+            .contains("malformed")
+        );
     }
 
     #[test]
@@ -25144,7 +25153,10 @@ mod chat_subprocess_tests {
             "if dispatch.is_err()",
             "wait_for_usage_refresh(",
         ] {
-            assert!(periodic.contains(contract), "missing periodic lifecycle contract: {contract}");
+            assert!(
+                periodic.contains(contract),
+                "missing periodic lifecycle contract: {contract}"
+            );
         }
 
         let budget = source
@@ -25158,7 +25170,10 @@ mod chat_subprocess_tests {
             "if dispatch.is_err()",
             "wait_for_usage_refresh(",
         ] {
-            assert!(budget.contains(contract), "missing budget lifecycle contract: {contract}");
+            assert!(
+                budget.contains(contract),
+                "missing budget lifecycle contract: {contract}"
+            );
         }
 
         let run = source.find("let run_result = window.run();").unwrap();
@@ -25239,7 +25254,10 @@ mod chat_subprocess_tests {
             "sessions unavailable",
             "meter unavailable",
         ] {
-            assert!(weekly.contains(contract), "missing weekly lifecycle contract: {contract}");
+            assert!(
+                weekly.contains(contract),
+                "missing weekly lifecycle contract: {contract}"
+            );
         }
         assert!(!weekly.contains("unwrap_or_default()"));
         assert!(!weekly.contains("unwrap_or((0.0, 0))"));
@@ -25252,9 +25270,11 @@ mod chat_subprocess_tests {
             .unwrap();
         assert!(latest_wins.contains("USAGE_OVERVIEW_UI_REVISION.load"));
         assert!(latest_wins.contains("!= revision"));
-        assert!(!source.contains(
-            "run_neothd_probe(&[\"cost\", \"top-sessions\", \"--output\", \"json\"])",
-        ));
+        assert!(
+            !source.contains(
+                "run_neothd_probe(&[\"cost\", \"top-sessions\", \"--output\", \"json\"])",
+            )
+        );
 
         let generic_overview = source
             .split("fn refresh_overview(")
@@ -26263,8 +26283,7 @@ fn refresh_overview_cost(weak: slint::Weak<MainWindow>, revision: u64) {
         .name("neoth-usage-window-liveness".into())
         .spawn(move || {
             while !liveness_cancellation.is_cancelled() {
-                if !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire)
-                {
+                if !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire) {
                     liveness_cancellation.cancel();
                     break;
                 }
@@ -26279,15 +26298,16 @@ fn refresh_overview_cost(weak: slint::Weak<MainWindow>, revision: u64) {
         .ok()
         .and_then(|output| panel_logic::parse_meter_checked(&output));
     let meter_available = meter.is_some();
-    let (tokens_in, tokens_out, responses, meter_cost, token_fraction) = meter.unwrap_or_else(|| {
-        (
-            "unavailable".to_string(),
-            "unavailable".to_string(),
-            "unavailable".to_string(),
-            "unavailable".to_string(),
-            0.0,
-        )
-    });
+    let (tokens_in, tokens_out, responses, meter_cost, token_fraction) =
+        meter.unwrap_or_else(|| {
+            (
+                "unavailable".to_string(),
+                "unavailable".to_string(),
+                "unavailable".to_string(),
+                "unavailable".to_string(),
+                0.0,
+            )
+        });
     let (sessions, sessions_available) = match run_bounded_dashboard_json_probe(
         &["cost", "top-sessions", "--output", "json"],
         &cancellation,
@@ -26337,10 +26357,8 @@ fn refresh_overview_cost(weak: slint::Weak<MainWindow>, revision: u64) {
                 .input_tokens
                 .checked_add(rollup.totals.output_tokens)
                 .map(|tokens| (rollup.totals.known_cost_usd, tokens)),
-            panel_logic::WorkflowUsageParse::LegacyDaemon => {
-                panel_logic::parse_usage_rollup(&out)
-                    .filter(|(cost, _)| cost.is_finite() && *cost >= 0.0)
-            }
+            panel_logic::WorkflowUsageParse::LegacyDaemon => panel_logic::parse_usage_rollup(&out)
+                .filter(|(cost, _)| cost.is_finite() && *cost >= 0.0),
             panel_logic::WorkflowUsageParse::Invalid => None,
         };
         let Some((cost, tokens)) = usage_totals else {
@@ -26721,9 +26739,7 @@ pub fn shape_usage_summary(json: &str) -> String {
     {
         return "Usage: malformed response".to_string();
     }
-    let unknown_cost = val
-        .get("total_unknown_cost_count")
-        .and_then(|v| v.as_u64());
+    let unknown_cost = val.get("total_unknown_cost_count").and_then(|v| v.as_u64());
     if unknown_cost.is_some_and(|unknown| unknown > calls) {
         return "Usage: malformed response".to_string();
     }
@@ -29734,9 +29750,14 @@ mod tests {
         state.hemisphere_right_model = "gemini-3.1-pro".into();
 
         let fields = wizard_inference_fields(&state).expect("canonical topology");
-        let fields = fields.into_iter().collect::<std::collections::HashMap<_, _>>();
+        let fields = fields
+            .into_iter()
+            .collect::<std::collections::HashMap<_, _>>();
         assert_eq!(fields["mode"].as_str(), Some("custom"));
-        assert_eq!(fields["default_slot"]["model"].as_str(), Some("claude-sonnet"));
+        assert_eq!(
+            fields["default_slot"]["model"].as_str(),
+            Some("claude-sonnet")
+        );
         assert_eq!(fields["left"]["provider"].as_str(), Some("claude_cli"));
         assert_eq!(fields["right"]["model"].as_str(), Some("gemini-3.1-pro"));
         assert_eq!(
@@ -29752,14 +29773,19 @@ mod tests {
         state.hemisphere_shared_model = "claude-opus".into();
 
         let fields = wizard_inference_fields(&state).expect("single topology");
-        let fields = fields.into_iter().collect::<std::collections::HashMap<_, _>>();
+        let fields = fields
+            .into_iter()
+            .collect::<std::collections::HashMap<_, _>>();
         assert_eq!(fields.len(), 2);
         assert_eq!(fields["mode"].as_str(), Some("single"));
         assert_eq!(
             fields["default_slot"]["provider"].as_str(),
             Some("claude_cli")
         );
-        assert_eq!(fields["default_slot"]["model"].as_str(), Some("claude-opus"));
+        assert_eq!(
+            fields["default_slot"]["model"].as_str(),
+            Some("claude-opus")
+        );
     }
 
     #[test]

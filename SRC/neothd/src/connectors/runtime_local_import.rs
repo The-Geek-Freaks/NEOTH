@@ -152,10 +152,7 @@ impl RuntimeLocalImport {
 
     /// Release only this runtime's still-uncommitted outer-operation
     /// reservation. Accepted outcomes are immutable in the Store.
-    pub(crate) fn release_apply_outcome(
-        &mut self,
-        key: &ContextImportApplyKey,
-    ) -> Result<()> {
+    pub(crate) fn release_apply_outcome(&mut self, key: &ContextImportApplyKey) -> Result<()> {
         let lease = self.acquire_live_operation_lease()?;
         self.store
             .release_local_import_apply_outcome(&self.runtime_binding, &lease, key)
@@ -246,7 +243,9 @@ impl RuntimeLocalImport {
                 || reread.policy_revision() != retained.plan.policy_revision()
                 || reread.parser_revision() != retained.plan.parser_revision()
             {
-                bail!("local-import source changed after planning; a new explicit plan is required");
+                bail!(
+                    "local-import source changed after planning; a new explicit plan is required"
+                );
             }
             let evidence = UntrustedExternalEvidenceBatch::from_local_import_plan(&retained.plan)?;
             self.store.commit_local_import_evidence_with_outcome(
@@ -566,11 +565,13 @@ mod tests {
             fail: true,
         };
         assert!(runtime.replay_receipts(&mut failing).is_err());
-        assert!(runtime
-            .query_apply_outcome(&key)
-            .unwrap()
-            .unwrap()
-            .audit_pending());
+        assert!(
+            runtime
+                .query_apply_outcome(&key)
+                .unwrap()
+                .unwrap()
+                .audit_pending()
+        );
 
         let mut recovered = RecordingWal {
             delivered: 0,
@@ -593,9 +594,11 @@ mod tests {
         let plan = runtime.plan_import(Path::new("selected.txt")).unwrap();
         std::fs::write(&source, "second").unwrap();
 
-        assert!(runtime
-            .confirm_import_with_outcome(plan, plan, &key)
-            .is_err());
+        assert!(
+            runtime
+                .confirm_import_with_outcome(plan, plan, &key)
+                .is_err()
+        );
         assert_eq!(runtime.query_apply_outcome(&key).unwrap(), None);
     }
 
@@ -604,13 +607,8 @@ mod tests {
         let root = crate::test_env::canonical_tempdir().unwrap();
         std::fs::write(root.path().join("selected.txt"), "restart outcome").unwrap();
         let (instance, subject) = identity();
-        let binding = test_context_import_runtime_fixture(
-            instance.clone(),
-            subject.clone(),
-            7,
-            11,
-        )
-        .unwrap();
+        let binding =
+            test_context_import_runtime_fixture(instance.clone(), subject.clone(), 7, 11).unwrap();
         let capability = issue_operator_import_capability(
             approve_import_root(root.path()).unwrap(),
             [31; 32],
@@ -641,11 +639,13 @@ mod tests {
             fail: false,
         };
         assert_eq!(recovery.replay_receipts(&mut wal).unwrap(), 1);
-        assert!(!recovery
-            .query_apply_outcome(&key)
-            .unwrap()
-            .unwrap()
-            .audit_pending());
+        assert!(
+            !recovery
+                .query_apply_outcome(&key)
+                .unwrap()
+                .unwrap()
+                .audit_pending()
+        );
     }
 
     #[test]

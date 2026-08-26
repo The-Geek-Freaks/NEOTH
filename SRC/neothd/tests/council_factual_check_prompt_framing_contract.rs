@@ -207,15 +207,22 @@ fn factual_check_serializes_each_provider_bound_value_once_without_raw_fallback(
             "missing factual framing control: {required}"
         );
     }
-    let preflight = builder.find("preflight_assertions_json(assertions)?").unwrap();
+    let preflight = builder
+        .find("preflight_assertions_json(assertions)?")
+        .unwrap();
     let serialize = builder.find("serde_json::to_string(assertions)").unwrap();
-    assert!(preflight < serialize, "bound assertions before JSON allocation");
+    assert!(
+        preflight < serialize,
+        "bound assertions before JSON allocation"
+    );
 }
 
 #[test]
 fn orchestrator_rejects_framing_before_provider_scheduling_or_budget_charge() {
     let preflight = function_body(ORCHESTRATOR, "pub async fn run_debate_with_depth_budget(");
-    let validate = preflight.find("try_embed_ground_truth_tag(prompt, assertions)").unwrap();
+    let validate = preflight
+        .find("try_embed_ground_truth_tag(prompt, assertions)")
+        .unwrap();
     let scheduler = preflight.find("let mut tasks: FuturesUnordered").unwrap();
     let provider = preflight.find("run_one(").unwrap();
     assert!(validate < scheduler && scheduler < provider);

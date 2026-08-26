@@ -999,10 +999,7 @@ mod tests {
             "the rejected manifest must not create a public Skills namespace"
         );
         assert!(
-            !home
-                .path()
-                .join(".neoth-skill-mutation.json")
-                .exists(),
+            !home.path().join(".neoth-skill-mutation.json").exists(),
             "the rejected manifest must not create a mutation journal"
         );
     }

@@ -816,12 +816,9 @@ fn load_authenticated_home_segment(
         display.display(),
         parsed.segment_seq()
     );
-    let (header_len, logical) = logical_segment_bytes_with_key_capped(
-        &raw,
-        segment_key,
-        limits.max_segment_logical_bytes,
-    )
-    .with_context(|| format!("reconstruct home-bound WAL segment {}", display.display()))?;
+    let (header_len, logical) =
+        logical_segment_bytes_with_key_capped(&raw, segment_key, limits.max_segment_logical_bytes)
+            .with_context(|| format!("reconstruct home-bound WAL segment {}", display.display()))?;
     let logical = logical.into_owned();
     let physical_len =
         u64::try_from(raw.len()).context("WAL segment physical length exceeds u64")?;
@@ -839,9 +836,8 @@ fn load_authenticated_home_segment(
             name,
             &logical,
             header_len,
-            trusted_rotation_signers.context(
-                "strict rotation signers are missing under strict authentication",
-            )?,
+            trusted_rotation_signers
+                .context("strict rotation signers are missing under strict authentication")?,
         )
         .with_context(|| {
             format!(
@@ -849,8 +845,7 @@ fn load_authenticated_home_segment(
                 display.display()
             )
         })?;
-    let allow_torn_tail =
-        ends_namespace && !parsed.is_sealed() && !require_complete_authentication;
+    let allow_torn_tail = ends_namespace && !parsed.is_sealed() && !require_complete_authentication;
     let authenticated_through = if is_strict_rotation_evidence {
         logical.len()
     } else {

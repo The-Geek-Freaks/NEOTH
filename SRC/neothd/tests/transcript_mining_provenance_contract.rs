@@ -41,7 +41,9 @@ fn migration_contract_keeps_legacy_unbound_and_raw_text_out_of_provenance() {
     assert!(migration.contains("fn migration_v35_to_v36"));
     assert!(migration.contains("CREATE TABLE IF NOT EXISTS transcript_mining_provenance"));
     assert!(migration.contains("transcript_mining_raw_turn_deleted"));
-    assert!(migration.contains("WHERE raw_turn_id = OLD.id AND lifecycle IN ('pending', 'active')"));
+    assert!(
+        migration.contains("WHERE raw_turn_id = OLD.id AND lifecycle IN ('pending', 'active')")
+    );
     assert!(store.contains("pub const SCHEMA_VERSION: i64 = 36;"));
     assert!(store.contains("CREATE TABLE IF NOT EXISTS transcript_mining_wal_outbox"));
     assert!(store.contains("raw_text_sha256 BLOB NOT NULL"));

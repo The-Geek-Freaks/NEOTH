@@ -271,8 +271,13 @@ fn store_bridge_is_exactly_untrusted_connector_evidence_and_outbox_backed() {
 
 #[test]
 fn restart_replay_is_binding_and_store_only() {
-    let start = RUNTIME.find("pub(crate) struct ContextEvidenceReplayRuntime").unwrap();
-    let end = start + RUNTIME[start..].find("#[cfg(all(test, not(windows)))]").unwrap();
+    let start = RUNTIME
+        .find("pub(crate) struct ContextEvidenceReplayRuntime")
+        .unwrap();
+    let end = start
+        + RUNTIME[start..]
+            .find("#[cfg(all(test, not(windows)))]")
+            .unwrap();
     let replay = &RUNTIME[start..end];
     assert!(replay.contains("runtime_binding: ContextImportRuntimeBinding"));
     assert!(replay.contains("store: ContextStore"));
@@ -303,7 +308,10 @@ fn outer_apply_outcome_is_bounded_opaque_and_atomically_committed() {
         "context-import-outcome-confirmation",
         "context-import-outcome-{}",
     ] {
-        assert!(STORE.contains(required), "missing durable outcome invariant: {required}");
+        assert!(
+            STORE.contains(required),
+            "missing durable outcome invariant: {required}"
+        );
     }
     for required in [
         "pub(crate) fn reserve_apply_outcome",
@@ -311,21 +319,28 @@ fn outer_apply_outcome_is_bounded_opaque_and_atomically_committed() {
         "pub(crate) fn release_apply_outcome",
         "pub(crate) fn confirm_import_with_outcome",
     ] {
-        assert!(RUNTIME.contains(required), "missing runtime outcome API: {required}");
+        assert!(
+            RUNTIME.contains(required),
+            "missing runtime outcome API: {required}"
+        );
     }
     let start = STORE
         .find("pub(crate) struct ContextImportApplyOutcome")
         .unwrap();
-    let end = start + STORE[start..].find("impl ContextImportApplyOutcome").unwrap();
+    let end = start
+        + STORE[start..]
+            .find("impl ContextImportApplyOutcome")
+            .unwrap();
     let outcome = &STORE[start..end];
     assert!(outcome.contains("accepted: bool"));
     assert!(outcome.contains("audit_pending: bool"));
     for forbidden in ["path", "content", "plan", "source_ref", "object_id"] {
-        assert!(!outcome.contains(forbidden), "outcome must not contain {forbidden}");
+        assert!(
+            !outcome.contains(forbidden),
+            "outcome must not contain {forbidden}"
+        );
     }
-    assert!(STORE.contains(
-        "ContextEvidence receipts require the exact runtime-bound replay path"
-    ));
+    assert!(STORE.contains("ContextEvidence receipts require the exact runtime-bound replay path"));
 }
 
 #[test]

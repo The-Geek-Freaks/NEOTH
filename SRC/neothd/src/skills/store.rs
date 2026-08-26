@@ -811,7 +811,10 @@ pub(crate) fn open_bound_real_child_dir(
 ) -> Result<(Dir, BoundChildObject)> {
     let child = open_real_child_dir(parent, name, display_path)?;
     let opened_identity = child_identity_token(&child.dir_metadata().with_context(|| {
-        format!("inspect opened bound child directory {}", display_path.display())
+        format!(
+            "inspect opened bound child directory {}",
+            display_path.display()
+        )
     })?)?;
     let binding = bind_child_object(parent, name, display_path)?;
     anyhow::ensure!(
@@ -1173,7 +1176,10 @@ pub(crate) fn open_or_create_bound_lockfile(
     match parent.symlink_metadata(name) {
         Ok(metadata) => {
             if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
-                anyhow::bail!("bound lockfile is not a real regular file: {}", display_path.display());
+                anyhow::bail!(
+                    "bound lockfile is not a real regular file: {}",
+                    display_path.display()
+                );
             }
             let (file, binding) = open_bound_lockfile_readwrite(parent, name, display_path)?;
             Ok((file.into_std(), binding))
@@ -1194,7 +1200,9 @@ pub(crate) fn open_or_create_bound_lockfile(
             let (file, binding) = open_bound_lockfile_readwrite(parent, name, display_path)?;
             Ok((file.into_std(), binding))
         }
-        Err(error) => Err(error).with_context(|| format!("inspect bound lockfile {}", display_path.display())),
+        Err(error) => {
+            Err(error).with_context(|| format!("inspect bound lockfile {}", display_path.display()))
+        }
     }
 }
 
@@ -1226,13 +1234,19 @@ fn open_bound_lockfile_readwrite(
         options.custom_flags(libc::O_NONBLOCK);
     }
     let file = parent.open_with(name, &options).with_context(|| {
-        format!("open bound lockfile without following links {}", display_path.display())
+        format!(
+            "open bound lockfile without following links {}",
+            display_path.display()
+        )
     })?;
-    let metadata = file.metadata().with_context(|| {
-        format!("inspect bound lockfile {}", display_path.display())
-    })?;
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("inspect bound lockfile {}", display_path.display()))?;
     if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
-        anyhow::bail!("bound lockfile is not a real regular file: {}", display_path.display());
+        anyhow::bail!(
+            "bound lockfile is not a real regular file: {}",
+            display_path.display()
+        );
     }
     let binding = BoundChildObject {
         identity_token: child_identity_token(&metadata)?,
@@ -1241,7 +1255,10 @@ fn open_bound_lockfile_readwrite(
         })?),
     };
     if !binding.matches_regular_file_child_readonly(parent, name, display_path)? {
-        anyhow::bail!("bound lockfile changed while its identity was being acquired: {}", display_path.display());
+        anyhow::bail!(
+            "bound lockfile changed while its identity was being acquired: {}",
+            display_path.display()
+        );
     }
     Ok((file, binding))
 }
@@ -3170,12 +3187,9 @@ mod tests {
         let target_name = OsStr::new("published.wal");
         let stage_display = temp.path().join(stage_name);
         let target_display = temp.path().join(target_name);
-        let (mut stage, _binding) = create_private_regular_file_child_create_new(
-            &root.dir,
-            stage_name,
-            &stage_display,
-        )
-        .unwrap();
+        let (mut stage, _binding) =
+            create_private_regular_file_child_create_new(&root.dir, stage_name, &stage_display)
+                .unwrap();
         use std::io::Write as _;
         stage.write_all(b"complete authenticated prefix").unwrap();
         stage.sync_all().unwrap();
@@ -3218,12 +3232,9 @@ mod tests {
         let stage_display = temp.path().join(stage_name);
         let target_display = temp.path().join(target_name);
         std::fs::write(&target_display, b"pre-existing target").unwrap();
-        let (mut stage, _binding) = create_private_regular_file_child_create_new(
-            &root.dir,
-            stage_name,
-            &stage_display,
-        )
-        .unwrap();
+        let (mut stage, _binding) =
+            create_private_regular_file_child_create_new(&root.dir, stage_name, &stage_display)
+                .unwrap();
         use std::io::Write as _;
         stage.write_all(b"uncommitted prefix").unwrap();
         stage.sync_all().unwrap();
@@ -3242,8 +3253,14 @@ mod tests {
         .expect_err("exclusive publication must refuse an existing target");
 
         assert_eq!(commits, 0, "a failed rename must not claim publication");
-        assert_eq!(std::fs::read(&target_display).unwrap(), b"pre-existing target");
-        assert_eq!(std::fs::read(&stage_display).unwrap(), b"uncommitted prefix");
+        assert_eq!(
+            std::fs::read(&target_display).unwrap(),
+            b"pre-existing target"
+        );
+        assert_eq!(
+            std::fs::read(&stage_display).unwrap(),
+            b"uncommitted prefix"
+        );
     }
 
     #[test]
@@ -3256,12 +3273,9 @@ mod tests {
         let target_name = OsStr::new("published.wal");
         let stage_display = temp.path().join(stage_name);
         let target_display = temp.path().join(target_name);
-        let (mut stage, _binding) = create_private_regular_file_child_create_new(
-            &root.dir,
-            stage_name,
-            &stage_display,
-        )
-        .unwrap();
+        let (mut stage, _binding) =
+            create_private_regular_file_child_create_new(&root.dir, stage_name, &stage_display)
+                .unwrap();
         use std::io::Write as _;
         stage.write_all(b"committed prefix").unwrap();
         stage.sync_all().unwrap();

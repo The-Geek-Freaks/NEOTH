@@ -261,10 +261,7 @@ pub(crate) struct ContextImportApplyKey {
 }
 
 impl ContextImportApplyKey {
-    pub(crate) const fn new(
-        operation_key: [u8; 32],
-        confirmation_nonce: [u8; 32],
-    ) -> Self {
+    pub(crate) const fn new(operation_key: [u8; 32], confirmation_nonce: [u8; 32]) -> Self {
         Self {
             operation_key,
             confirmation_nonce,
@@ -556,12 +553,8 @@ impl ContextStore {
     ) -> Result<ContextImportApplyOutcome> {
         let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
         let scope = self.scope(&account);
-        let digests = context_import_outcome_digests(
-            &scope,
-            &self.lookup_key,
-            runtime_binding,
-            key,
-        );
+        let digests =
+            context_import_outcome_digests(&scope, &self.lookup_key, runtime_binding, key);
         lease.with_context_import_commit_permit(|| {
             let tx = self
                 .conn
@@ -660,12 +653,8 @@ impl ContextStore {
     ) -> Result<()> {
         let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
         let scope = self.scope(&account);
-        let digests = context_import_outcome_digests(
-            &scope,
-            &self.lookup_key,
-            runtime_binding,
-            key,
-        );
+        let digests =
+            context_import_outcome_digests(&scope, &self.lookup_key, runtime_binding, key);
         lease.with_context_import_commit_permit(|| {
             let tx = self
                 .conn
@@ -704,12 +693,8 @@ impl ContextStore {
     ) -> Result<Option<ContextImportApplyOutcome>> {
         let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
         let scope = self.scope(&account);
-        let digests = context_import_outcome_digests(
-            &scope,
-            &self.lookup_key,
-            runtime_binding,
-            key,
-        );
+        let digests =
+            context_import_outcome_digests(&scope, &self.lookup_key, runtime_binding, key);
         lease.with_context_import_commit_permit(|| {
             load_context_import_outcome(&self.conn, &scope, &digests)
         })
@@ -759,18 +744,16 @@ impl ContextStore {
         evidence: UntrustedExternalEvidenceBatch,
     ) -> Result<ContextImportApplyOutcome> {
         let account = validate_context_import_runtime_pair(runtime_binding, lease)?;
-        if !evidence.evidence_binding.matches_runtime_binding(runtime_binding)
+        if !evidence
+            .evidence_binding
+            .matches_runtime_binding(runtime_binding)
             || !evidence.evidence_binding.matches_operation_lease(lease)
         {
             bail!("local-import evidence is not bound to this runtime pair");
         }
         let scope = self.scope(&account);
-        let digests = context_import_outcome_digests(
-            &scope,
-            &self.lookup_key,
-            runtime_binding,
-            key,
-        );
+        let digests =
+            context_import_outcome_digests(&scope, &self.lookup_key, runtime_binding, key);
         let mut batch = local_import_evidence_batch(evidence);
         // The outer operation identity remains a durable no-duplicate marker
         // even after its content-free result ages out of the bounded 64-row
@@ -915,12 +898,7 @@ impl ContextStore {
         limits: StoreLimits,
     ) -> Result<()> {
         self.commit_batch_with_limits_and_context_evidence_receipt(
-            account,
-            batch,
-            limits,
-            false,
-            None,
-            None,
+            account, batch, limits, false, None, None,
         )?;
         Ok(())
     }
@@ -942,12 +920,11 @@ impl ContextStore {
         if preflight.batch_seen {
             return outcome_digests
                 .map(|digests| {
-                    let outcome = load_context_import_outcome(
-                        &self.conn,
-                        &self.scope(account),
-                        digests,
-                    )?
-                    .ok_or_else(|| anyhow!("applied context batch has no durable outcome"))?;
+                    let outcome =
+                        load_context_import_outcome(&self.conn, &self.scope(account), digests)?
+                            .ok_or_else(|| {
+                                anyhow!("applied context batch has no durable outcome")
+                            })?;
                     if !outcome.accepted {
                         bail!("applied context batch has only an uncommitted outcome reservation");
                     }
@@ -983,14 +960,14 @@ impl ContextStore {
                 tx.commit()?;
                 return outcome_digests
                     .map(|digests| {
-                        let outcome = load_context_import_outcome(
-                            &self.conn,
-                            &scope,
-                            digests,
-                        )?
-                        .ok_or_else(|| anyhow!("applied context batch has no durable outcome"))?;
+                        let outcome = load_context_import_outcome(&self.conn, &scope, digests)?
+                            .ok_or_else(|| {
+                                anyhow!("applied context batch has no durable outcome")
+                            })?;
                         if !outcome.accepted {
-                            bail!("applied context batch has only an uncommitted outcome reservation");
+                            bail!(
+                                "applied context batch has only an uncommitted outcome reservation"
+                            );
                         }
                         Ok::<_, anyhow::Error>(outcome)
                     })
@@ -1458,11 +1435,7 @@ fn context_import_binding_digest_for_revisions(
     let mut binding = Vec::with_capacity(16);
     binding.extend_from_slice(&policy_revision.to_be_bytes());
     binding.extend_from_slice(&lifecycle_revision.to_be_bytes());
-    scope.binary_pseudonym(
-        lookup_key,
-        b"context-import-outcome-binding",
-        &binding,
-    )
+    scope.binary_pseudonym(lookup_key, b"context-import-outcome-binding", &binding)
 }
 
 fn load_context_import_outcome(
@@ -1553,10 +1526,7 @@ const EXPECTED_TABLE_SQL: &[(&str, &str)] = &[
         "audit_outbox",
         "CREATE TABLE audit_outbox (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL, policy_revision INTEGER, lifecycle_revision INTEGER, CHECK((receipt_code=4 AND policy_revision IS NOT NULL AND policy_revision>0 AND lifecycle_revision IS NOT NULL AND lifecycle_revision>0) OR (receipt_code<>4 AND policy_revision IS NULL AND lifecycle_revision IS NULL)), FOREIGN KEY(event_id) REFERENCES events(event_id) ON DELETE CASCADE, UNIQUE(scope_key, mutation_key))",
     ),
-    (
-        "context_import_outcomes",
-        CONTEXT_IMPORT_OUTCOME_SQL,
-    ),
+    ("context_import_outcomes", CONTEXT_IMPORT_OUTCOME_SQL),
     (
         "cursors",
         "CREATE TABLE cursors (scope_key BLOB NOT NULL, cursor_key BLOB NOT NULL, mutation_key BLOB NOT NULL, value BLOB NOT NULL, updated_at_ms INTEGER NOT NULL, PRIMARY KEY(scope_key, cursor_key), UNIQUE(scope_key, mutation_key))",
@@ -3218,20 +3188,18 @@ mod tests {
         let mut store = store();
         let binding = local_import_binding("operator");
         for value in 0_u8..64 {
-            let lease = binding
-                .acquire_context_import_operation_lease()
-                .unwrap();
+            let lease = binding.acquire_context_import_operation_lease().unwrap();
             let outcome = store
                 .reserve_local_import_apply_outcome(&binding, &lease, &apply_key(value))
                 .unwrap();
             assert!(!outcome.accepted());
         }
-        let lease = binding
-            .acquire_context_import_operation_lease()
-            .unwrap();
-        assert!(store
-            .reserve_local_import_apply_outcome(&binding, &lease, &apply_key(64))
-            .is_err());
+        let lease = binding.acquire_context_import_operation_lease().unwrap();
+        assert!(
+            store
+                .reserve_local_import_apply_outcome(&binding, &lease, &apply_key(64))
+                .is_err()
+        );
         assert_eq!(
             store
                 .conn
@@ -3244,7 +3212,8 @@ mod tests {
         assert_eq!(
             store
                 .conn
-                .query_row("SELECT COUNT(*) FROM events", [], |row| row.get::<_, i64>(0))
+                .query_row("SELECT COUNT(*) FROM events", [], |row| row
+                    .get::<_, i64>(0))
                 .unwrap(),
             0
         );
@@ -3266,9 +3235,7 @@ mod tests {
         let mut store = ContextStore::open_at(&path, test_master_key()).unwrap();
         let binding = local_import_binding("operator");
         for value in 0_u8..64 {
-            let lease = binding
-                .acquire_context_import_operation_lease()
-                .unwrap();
+            let lease = binding.acquire_context_import_operation_lease().unwrap();
             store
                 .reserve_local_import_apply_outcome(&binding, &lease, &apply_key(value))
                 .unwrap();
@@ -3291,19 +3258,12 @@ mod tests {
             .unwrap();
         assert_eq!(
             reopened
-                .reclaim_uncommitted_local_import_apply_outcomes(
-                    &recovered_binding,
-                    &lease,
-                )
+                .reclaim_uncommitted_local_import_apply_outcomes(&recovered_binding, &lease,)
                 .unwrap(),
             64
         );
         let outcome = reopened
-            .reserve_local_import_apply_outcome(
-                &recovered_binding,
-                &lease,
-                &apply_key(64),
-            )
+            .reserve_local_import_apply_outcome(&recovered_binding, &lease, &apply_key(64))
             .unwrap();
         assert!(!outcome.accepted());
         assert_eq!(
@@ -3465,20 +3425,23 @@ mod tests {
             operations: vec![put("union-scope-cap-mutation", b"bounded")],
         };
 
-        assert!(store
-            .commit_batch_with_limits(
-                &account(),
-                &batch,
-                StoreLimits {
-                    max_scopes: 1,
-                    max_bytes: MAX_STORE_BYTES,
-                },
-            )
-            .is_err());
+        assert!(
+            store
+                .commit_batch_with_limits(
+                    &account(),
+                    &batch,
+                    StoreLimits {
+                        max_scopes: 1,
+                        max_bytes: MAX_STORE_BYTES,
+                    },
+                )
+                .is_err()
+        );
         assert_eq!(
             store
                 .conn
-                .query_row("SELECT COUNT(*) FROM scopes", [], |row| row.get::<_, i64>(0))
+                .query_row("SELECT COUNT(*) FROM scopes", [], |row| row
+                    .get::<_, i64>(0))
                 .unwrap(),
             0
         );

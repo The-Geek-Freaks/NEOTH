@@ -114,9 +114,7 @@ fn build_review_prompt(
             max_bytes: crate::security::prompt_envelope::MAX_PLAN_REVIEW_TEXT_BYTES,
         });
     }
-    if critique_so_far.len()
-        > crate::security::prompt_envelope::MAX_PLAN_REVIEW_CRITIQUES_BYTES
-    {
+    if critique_so_far.len() > crate::security::prompt_envelope::MAX_PLAN_REVIEW_CRITIQUES_BYTES {
         return Err(PromptEnvelopeError::FieldTooLarge {
             kind: PromptFieldKind::PriorCritiques,
             actual_bytes: critique_so_far.len(),
@@ -520,9 +518,7 @@ mod tests {
         let aws_key = concat!("AKIA", "\u{200b}", "IOSFODNN7EXAMPLE");
         let unbroken_aws_key = concat!("AKIA", "IOSFODNN7EXAMPLE");
         let normal_text = "retain the signed authorization proof";
-        let mut replies = vec![format!(
-            "REVISE: {normal_text}; provider echoed {aws_key}"
-        )];
+        let mut replies = vec![format!("REVISE: {normal_text}; provider echoed {aws_key}")];
         replies.extend(
             (1..MAX_REVIEW_ROUNDS)
                 .map(|round| format!("REVISE: remaining issue for round {round}")),

@@ -21,8 +21,8 @@ use sha2::{Digest as _, Sha256};
 
 use super::{
     goldset::{
-        GoldsetEntry, GradedSystem, GraderFamily, GraderGrade, ValidatedGraderConfigFile,
-        EXPECTED_GOLDSET_QUERIES, MAX_GRADES_BYTES, MAX_GRADERS,
+        EXPECTED_GOLDSET_QUERIES, GoldsetEntry, GradedSystem, GraderFamily, GraderGrade,
+        MAX_GRADERS, MAX_GRADES_BYTES, ValidatedGraderConfigFile,
     },
     parity::Dimension,
     parity_anchor::{
@@ -33,9 +33,8 @@ use super::{
     },
     parity_batch_plan::{
         FOUR_GRADER_BATCH_PLAN_PURPOSE, FOUR_GRADER_COUNT, FourGraderBatchItem,
-        FourGraderBatchPlan, FourGraderBatchResultArtifact,
-        FourGraderInputDigestFile, SignedFourGraderBatchResultReceipt,
-        parse_four_grader_input_digests, validate_plan_shape,
+        FourGraderBatchPlan, FourGraderBatchResultArtifact, FourGraderInputDigestFile,
+        SignedFourGraderBatchResultReceipt, parse_four_grader_input_digests, validate_plan_shape,
     },
     parity_candidate_evidence::{
         ValidatedCandidateEvidence, validate_persisted_candidate_evidence_metadata,
@@ -73,7 +72,8 @@ const ATTESTED_GATE_IMPORT_PUBKEY_FILE: &str = "attested-gate-import-receipt-pub
 const ATTESTED_GATE_PUBLICATION_RECEIPT_FILE: &str = "attested-gate-publication-receipt.json";
 const LOCK_FILE: &str = ".parity-harness.lock";
 pub const ATTESTED_FAMILY_BIAS_SUMMARY_SCHEMA_VERSION: u32 = 1;
-pub const ATTESTED_FAMILY_BIAS_EXPORT_PURPOSE: &str = "neoth-recall-parity-attested-family-bias-summary/v1";
+pub const ATTESTED_FAMILY_BIAS_EXPORT_PURPOSE: &str =
+    "neoth-recall-parity-attested-family-bias-summary/v1";
 pub const ATTESTED_PARITY_GATE_REPORT_PURPOSE: &str = "neoth-recall-parity-attested-gate-report/v1";
 pub const ATTESTED_PARITY_GATE_REPORT_SCHEMA_VERSION: u32 = 1;
 
@@ -88,88 +88,147 @@ struct BoundParityRun {
 
 impl BoundParityRun {
     fn open_or_create(run_dir: &Path) -> Result<Self> {
-        let anchor = run_dir.parent().context("parity run directory has no trusted parent")?;
+        let anchor = run_dir
+            .parent()
+            .context("parity run directory has no trusted parent")?;
         let root = crate::skills::store::open_bound_directory_from_trusted_anchor(
-            anchor, run_dir, true, "parity run",
-        )?.context("parity run directory was not created")?;
+            anchor,
+            run_dir,
+            true,
+            "parity run",
+        )?
+        .context("parity run directory was not created")?;
         let lock_display = root.display_path.join(LOCK_FILE);
         let (lock, lock_identity) = crate::skills::store::open_or_create_bound_lockfile(
-            &root.dir, std::ffi::OsStr::new(LOCK_FILE), &lock_display,
+            &root.dir,
+            std::ffi::OsStr::new(LOCK_FILE),
+            &lock_display,
         )?;
-        lock.try_lock().context("parity run is already being modified")?;
-        Ok(Self { root, lock, lock_identity })
+        lock.try_lock()
+            .context("parity run is already being modified")?;
+        Ok(Self {
+            root,
+            lock,
+            lock_identity,
+        })
     }
 
     /// Read-only consumers must never create a run, state, or lockfile as a
     /// side effect of a failed verification request.
     fn open_existing(run_dir: &Path) -> Result<Self> {
-        let anchor = run_dir.parent().context("parity run directory has no trusted parent")?;
+        let anchor = run_dir
+            .parent()
+            .context("parity run directory has no trusted parent")?;
         let root = crate::skills::store::open_bound_directory_from_trusted_anchor(
-            anchor, run_dir, false, "existing parity run",
-        )?.context("parity run directory does not exist")?;
+            anchor,
+            run_dir,
+            false,
+            "existing parity run",
+        )?
+        .context("parity run directory does not exist")?;
         let lock_display = root.display_path.join(LOCK_FILE);
         let (lock, lock_identity) = crate::skills::store::open_bound_regular_file(
-            &root.dir, std::ffi::OsStr::new(LOCK_FILE), &lock_display,
+            &root.dir,
+            std::ffi::OsStr::new(LOCK_FILE),
+            &lock_display,
         )?;
         let lock = lock.into_std();
-        lock.try_lock().context("parity run is already being modified")?;
-        Ok(Self { root, lock, lock_identity })
+        lock.try_lock()
+            .context("parity run is already being modified")?;
+        Ok(Self {
+            root,
+            lock,
+            lock_identity,
+        })
     }
 
     fn revalidate_lock(&self) -> Result<()> {
         if !self.lock_identity.matches_regular_file_child_readonly(
-            &self.root.dir, std::ffi::OsStr::new(LOCK_FILE), &self.root.display_path.join(LOCK_FILE),
+            &self.root.dir,
+            std::ffi::OsStr::new(LOCK_FILE),
+            &self.root.display_path.join(LOCK_FILE),
         )? {
             anyhow::bail!("parity run lock identity changed before publication");
         }
         Ok(())
     }
 
-    fn child_display(&self, name: &str) -> PathBuf { self.root.display_path.join(name) }
+    fn child_display(&self, name: &str) -> PathBuf {
+        self.root.display_path.join(name)
+    }
 
     fn read_child(&self, name: &str, max: usize) -> Result<Vec<u8>> {
         crate::skills::store::read_regular_file_bounded(
-            &self.root.dir, std::ffi::OsStr::new(name), &self.child_display(name), max,
+            &self.root.dir,
+            std::ffi::OsStr::new(name),
+            &self.child_display(name),
+            max,
         )
     }
 
     fn read_child_if_present(&self, name: &str, max: usize) -> Result<Option<Vec<u8>>> {
         match self.root.dir.symlink_metadata(std::ffi::OsStr::new(name)) {
             Ok(metadata) => {
-                if !metadata.is_file() { anyhow::bail!("parity run child is not a regular file: {}", self.child_display(name).display()); }
+                if !metadata.is_file() {
+                    anyhow::bail!(
+                        "parity run child is not a regular file: {}",
+                        self.child_display(name).display()
+                    );
+                }
                 self.read_child(name, max).map(Some)
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error).with_context(|| format!("inspect parity run child {}", self.child_display(name).display())),
+            Err(error) => Err(error).with_context(|| {
+                format!(
+                    "inspect parity run child {}",
+                    self.child_display(name).display()
+                )
+            }),
         }
     }
 
     fn create_child(&self, name: &str, bytes: &[u8]) -> Result<()> {
         self.revalidate_lock()?;
         crate::skills::store::atomic_write_private_child_create_new(
-            &self.root.dir, std::ffi::OsStr::new(name), &self.child_display(name), bytes,
+            &self.root.dir,
+            std::ffi::OsStr::new(name),
+            &self.child_display(name),
+            bytes,
         )?;
         self.revalidate_lock()
     }
 
-    fn replace_child_if_matches(&self, name: &str, expected_old: &[u8], bytes: &[u8]) -> Result<()> {
+    fn replace_child_if_matches(
+        &self,
+        name: &str,
+        expected_old: &[u8],
+        bytes: &[u8],
+    ) -> Result<()> {
         self.revalidate_lock()?;
         crate::skills::store::replace_existing_regular_file_if_matches_report(
-            &self.root.dir, std::ffi::OsStr::new(name), &self.child_display(name), expected_old, bytes,
+            &self.root.dir,
+            std::ffi::OsStr::new(name),
+            &self.child_display(name),
+            expected_old,
+            bytes,
         )?;
         self.revalidate_lock()
     }
 
     fn open_imports(&self) -> Result<cap_std::fs::Dir> {
         crate::skills::store::open_real_child_dir(
-            &self.root.dir, std::ffi::OsStr::new(IMPORTS_DIR), &self.child_display(IMPORTS_DIR),
+            &self.root.dir,
+            std::ffi::OsStr::new(IMPORTS_DIR),
+            &self.child_display(IMPORTS_DIR),
         )
     }
 
     fn open_or_create_imports_locked(&self) -> Result<cap_std::fs::Dir> {
         self.revalidate_lock()?;
         let imports = crate::skills::store::open_or_create_private_child_dir(
-            &self.root.dir, std::ffi::OsStr::new(IMPORTS_DIR), &self.child_display(IMPORTS_DIR),
+            &self.root.dir,
+            std::ffi::OsStr::new(IMPORTS_DIR),
+            &self.child_display(IMPORTS_DIR),
         )?;
         self.revalidate_lock()?;
         Ok(imports)
@@ -177,7 +236,9 @@ impl BoundParityRun {
 }
 
 impl Drop for BoundParityRun {
-    fn drop(&mut self) { let _ = self.lock.unlock(); }
+    fn drop(&mut self) {
+        let _ = self.lock.unlock();
+    }
 }
 
 /// Read a caller-selected offline input once, with an explicit byte cap. The
@@ -188,9 +249,12 @@ pub fn read_offline_input(path: &Path, max_bytes: u64, label: &str) -> Result<Ve
     let mut reader = File::open(path)
         .with_context(|| format!("open explicit offline {label} {}", path.display()))?
         .take(max_bytes.saturating_add(1));
-    reader.read_to_end(&mut bytes)
+    reader
+        .read_to_end(&mut bytes)
         .with_context(|| format!("read explicit offline {label} {}", path.display()))?;
-    if bytes.len() as u64 > max_bytes { anyhow::bail!("explicit offline {label} exceeds byte limit"); }
+    if bytes.len() as u64 > max_bytes {
+        anyhow::bail!("explicit offline {label} exceeds byte limit");
+    }
     Ok(bytes)
 }
 
@@ -454,7 +518,12 @@ pub fn plan_run(
     let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
     validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?;
-    validate_four_grader_batch_result_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    validate_four_grader_batch_result_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+    )?;
     Ok(manifest)
 }
 
@@ -470,26 +539,35 @@ fn plan_run_locked(
         anyhow::bail!("harness refuses a non-canonical goldset");
     }
     if let Some(bytes) = run.read_child_if_present(MANIFEST_FILE, 1024 * 1024)? {
-        let stored: ParityRunManifest = serde_json::from_slice(&bytes).context("parse bound parity manifest")?;
+        let stored: ParityRunManifest =
+            serde_json::from_slice(&bytes).context("parse bound parity manifest")?;
         validate_manifest(&stored)?;
         if !manifest_matches_inputs(&stored, grader_config, config_bytes, goldset_bytes) {
             anyhow::bail!(
                 "run directory already binds different config/goldset/roster bytes; create a new run directory"
             );
         }
-        let state = if run.read_child_if_present(STATE_FILE, 1024 * 1024)?.is_none() {
+        let state = if run
+            .read_child_if_present(STATE_FILE, 1024 * 1024)?
+            .is_none()
+        {
             // The only valid creation-window recovery: a manifest was synced
             // but initial state publication never began. No state generation,
             // report, or import may exist. Otherwise we must fail closed rather
             // than reconstruct an empty state over an interrupted ingest.
-            if run.read_child_if_present(REPORT_FILE, 1024 * 1024)?.is_some()
+            if run
+                .read_child_if_present(REPORT_FILE, 1024 * 1024)?
+                .is_some()
                 || crate::skills::store::open_real_child_dir_if_present(
                     &run.root.dir,
                     std::ffi::OsStr::new(IMPORTS_DIR),
                     &run.child_display(IMPORTS_DIR),
-                )?.is_some()
+                )?
+                .is_some()
             {
-                anyhow::bail!("manifest without state has later run artifacts; replan in a fresh run directory");
+                anyhow::bail!(
+                    "manifest without state has later run artifacts; replan in a fresh run directory"
+                );
             }
             let state = empty_state_for_manifest(&stored)?;
             run.create_child(STATE_FILE, &serde_json::to_vec(&state)?)?;
@@ -518,8 +596,8 @@ fn load_existing_run_manifest(
 ) -> Result<ParityRunManifest> {
     verify_bound_inputs(grader_config, config_bytes, goldset, goldset_bytes)?;
     let bytes = run.read_child(MANIFEST_FILE, 1024 * 1024)?;
-    let manifest: ParityRunManifest = serde_json::from_slice(&bytes)
-        .context("parse existing bound parity manifest")?;
+    let manifest: ParityRunManifest =
+        serde_json::from_slice(&bytes).context("parse existing bound parity manifest")?;
     validate_manifest(&manifest)?;
     if !manifest_matches_inputs(&manifest, grader_config, config_bytes, goldset_bytes) {
         anyhow::bail!("existing parity run binds different config/goldset/roster bytes");
@@ -600,7 +678,12 @@ pub fn ingest_operator_anchor_evidence(
         candidate_evidence.expected_receipt_pubkey_b64().as_bytes(),
         128,
     )?;
-    create_immutable_run_child(&run, OPERATOR_ANCHOR_FILE, operator_anchor_bytes, MAX_GRADES_BYTES as usize)?;
+    create_immutable_run_child(
+        &run,
+        OPERATOR_ANCHOR_FILE,
+        operator_anchor_bytes,
+        MAX_GRADES_BYTES as usize,
+    )?;
     create_immutable_run_child(
         &run,
         OPERATOR_ANCHOR_LINK_FILE,
@@ -615,7 +698,12 @@ pub fn ingest_operator_anchor_evidence(
     )?;
     validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?;
-    validate_four_grader_batch_result_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    validate_four_grader_batch_result_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+    )?;
     Ok(binding)
 }
 
@@ -638,7 +726,9 @@ fn operator_anchor_binding(
         operator_anchor_link_sha256: sha256_bytes(operator_anchor_link_bytes),
         candidate_manifest_sha256: candidate_evidence.manifest_sha256().to_owned(),
         candidate_receipt_sha256: candidate_evidence.receipt_sha256().to_owned(),
-        candidate_receipt_pubkey_sha256: candidate_evidence.expected_receipt_pubkey_sha256().to_owned(),
+        candidate_receipt_pubkey_sha256: candidate_evidence
+            .expected_receipt_pubkey_sha256()
+            .to_owned(),
         candidate_vector_sha256: sha256_bytes(candidate_evidence.candidate_bytes()),
         label_record_count,
         linked_candidate_count,
@@ -661,14 +751,19 @@ fn create_immutable_run_child(
     }
     match read_bound_immutable_run_child(run, name, max_bytes)? {
         Some(existing) if existing.bytes == bytes => Ok(()),
-        Some(_) => anyhow::bail!("run already contains a different immutable operator anchor artifact"),
+        Some(_) => {
+            anyhow::bail!("run already contains a different immutable operator anchor artifact")
+        }
         None => {
             run.create_child(name, bytes)?;
             if read_bound_immutable_run_child(run, name, max_bytes)?
                 .as_ref()
-                .map(|artifact| artifact.bytes.as_slice()) != Some(bytes)
+                .map(|artifact| artifact.bytes.as_slice())
+                != Some(bytes)
             {
-                anyhow::bail!("new immutable operator anchor artifact failed exact byte verification");
+                anyhow::bail!(
+                    "new immutable operator anchor artifact failed exact byte verification"
+                );
             }
             Ok(())
         }
@@ -701,7 +796,14 @@ fn read_bound_immutable_run_child(
     match run.root.dir.symlink_metadata(std::ffi::OsStr::new(name)) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).with_context(|| format!("inspect immutable run artifact {}", run.child_display(name).display())),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "inspect immutable run artifact {}",
+                    run.child_display(name).display()
+                )
+            });
+        }
     }
     run.revalidate_lock()?;
     let (mut file, binding) = crate::skills::store::open_bound_regular_file(
@@ -712,7 +814,12 @@ fn read_bound_immutable_run_child(
     let mut bytes = Vec::new();
     file.take((max_bytes as u64).saturating_add(1))
         .read_to_end(&mut bytes)
-        .with_context(|| format!("read immutable run artifact {}", run.child_display(name).display()))?;
+        .with_context(|| {
+            format!(
+                "read immutable run artifact {}",
+                run.child_display(name).display()
+            )
+        })?;
     if bytes.len() > max_bytes {
         anyhow::bail!("immutable run artifact exceeds its bounded contract");
     }
@@ -724,7 +831,10 @@ fn read_bound_immutable_run_child(
         anyhow::bail!("immutable run artifact identity changed before return");
     }
     run.revalidate_lock()?;
-    Ok(Some(BoundImmutableRunChild { bytes, identity: binding }))
+    Ok(Some(BoundImmutableRunChild {
+        bytes,
+        identity: binding,
+    }))
 }
 
 fn validate_operator_anchor_artifacts_if_present(
@@ -733,9 +843,8 @@ fn validate_operator_anchor_artifacts_if_present(
     grader_config: &ValidatedGraderConfigFile,
     goldset: &[GoldsetEntry],
 ) -> Result<()> {
-    let _ = load_validated_operator_anchor_artifacts_if_present(
-        run, manifest, grader_config, goldset,
-    )?;
+    let _ =
+        load_validated_operator_anchor_artifacts_if_present(run, manifest, grader_config, goldset)?;
     Ok(())
 }
 
@@ -764,7 +873,9 @@ fn load_validated_operator_anchor_artifacts_if_present(
         return Ok(None);
     }
     if present.iter().any(Option::is_none) {
-        anyhow::bail!("incomplete operator anchor ingest; retry anchor-ingest with identical artifacts or use a fresh run");
+        anyhow::bail!(
+            "incomplete operator anchor ingest; retry anchor-ingest with identical artifacts or use a fresh run"
+        );
     }
     let mut values = present.into_iter().map(Option::unwrap);
     let candidate_manifest = values.next().expect("fixed anchor artifact count");
@@ -844,7 +955,10 @@ impl ValidatedOperatorAnchorEvidenceGroup {
         for (name, child) in [
             (CANDIDATE_EVIDENCE_MANIFEST_FILE, &self.candidate_manifest),
             (CANDIDATE_EVIDENCE_RECEIPT_FILE, &self.candidate_receipt),
-            (CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE, &self.candidate_receipt_pubkey),
+            (
+                CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE,
+                &self.candidate_receipt_pubkey,
+            ),
             (CANDIDATE_EVIDENCE_CANDIDATES_FILE, &self.candidate_vector),
             (OPERATOR_ANCHOR_FILE, &self.anchor_artifact),
             (OPERATOR_ANCHOR_LINK_FILE, &self.anchor_link),
@@ -874,7 +988,10 @@ fn validate_operator_anchor_binding(
         (&binding.operator_anchor_link_sha256, "operator anchor link"),
         (&binding.candidate_manifest_sha256, "candidate manifest"),
         (&binding.candidate_receipt_sha256, "candidate receipt"),
-        (&binding.candidate_receipt_pubkey_sha256, "candidate receipt public key"),
+        (
+            &binding.candidate_receipt_pubkey_sha256,
+            "candidate receipt public key",
+        ),
         (&binding.candidate_vector_sha256, "candidate vector"),
     ] {
         validate_sha256(value, label)?;
@@ -897,9 +1014,9 @@ pub fn plan_four_grader_batch(
     let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
     validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     let inputs = parse_four_grader_input_digests(input_digest_bytes)?;
-    let anchor_binding = read_bound_immutable_run_child(
-        &run, OPERATOR_ANCHOR_BINDING_FILE, 64 * 1024,
-    )?.context("four-grader batch plan requires a complete operator anchor ingest")?;
+    let anchor_binding =
+        read_bound_immutable_run_child(&run, OPERATOR_ANCHOR_BINDING_FILE, 64 * 1024)?
+            .context("four-grader batch plan requires a complete operator anchor ingest")?;
     let anchor: OperatorAnchorRunBinding = serde_json::from_slice(&anchor_binding.bytes)
         .map_err(|_| anyhow::anyhow!("parse immutable operator anchor batch binding"))?;
     validate_operator_anchor_binding(&anchor, &manifest)?;
@@ -913,17 +1030,27 @@ pub fn plan_four_grader_batch(
     anchor_binding.revalidate(&run, OPERATOR_ANCHOR_BINDING_FILE)?;
     run.revalidate_lock()?;
     create_immutable_run_child(
-        &run, FOUR_GRADER_BATCH_INPUT_FILE, input_digest_bytes, 64 * 1024,
+        &run,
+        FOUR_GRADER_BATCH_INPUT_FILE,
+        input_digest_bytes,
+        64 * 1024,
     )?;
     anchor_binding.revalidate(&run, OPERATOR_ANCHOR_BINDING_FILE)?;
     run.revalidate_lock()?;
     create_immutable_run_child(
-        &run, FOUR_GRADER_BATCH_PLAN_FILE,
-        &plan.canonical_bytes()?, 64 * 1024,
+        &run,
+        FOUR_GRADER_BATCH_PLAN_FILE,
+        &plan.canonical_bytes()?,
+        64 * 1024,
     )?;
     let verified = validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?
         .context("four-grader batch plan disappeared after immutable publish")?;
-    validate_four_grader_batch_result_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    validate_four_grader_batch_result_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+    )?;
     Ok(verified.plan)
 }
 
@@ -943,14 +1070,18 @@ pub fn validate_attested_four_grader_batch_results(
     result_bytes: &[Vec<u8>],
 ) -> Result<FourGraderBatchResultSummary> {
     let run = BoundParityRun::open_existing(run_dir)?;
-    let manifest = load_existing_run_manifest(
-        &run, grader_config, config_bytes, goldset, goldset_bytes,
-    )?;
+    let manifest =
+        load_existing_run_manifest(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
     validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     let verified_plan = validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?
         .context("attested batch results require an immutable four-grader batch plan")?;
     let plan = &verified_plan.plan;
-    validate_four_grader_batch_result_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    validate_four_grader_batch_result_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+    )?;
     if result_bytes.len() != FOUR_GRADER_COUNT {
         anyhow::bail!("attested batch result verification requires exactly four result files");
     }
@@ -968,15 +1099,30 @@ pub fn validate_attested_four_grader_batch_results(
         });
     }
     results.sort_by(|left, right| left.grader_id.cmp(&right.grader_id));
-    if results.windows(2).any(|pair| pair[0].grader_id == pair[1].grader_id) {
+    if results
+        .windows(2)
+        .any(|pair| pair[0].grader_id == pair[1].grader_id)
+    {
         anyhow::bail!("attested batch results contain duplicate grader output");
     }
-    let plan_ids = plan.items.iter().map(|item| item.grader_id.as_str()).collect::<Vec<_>>();
-    let result_ids = results.iter().map(|result| result.grader_id.as_str()).collect::<Vec<_>>();
+    let plan_ids = plan
+        .items
+        .iter()
+        .map(|item| item.grader_id.as_str())
+        .collect::<Vec<_>>();
+    let result_ids = results
+        .iter()
+        .map(|result| result.grader_id.as_str())
+        .collect::<Vec<_>>();
     if result_ids != plan_ids
-        || results.iter().zip(&plan.items).any(|(result, item)| result.record_count != item.expected_record_count)
+        || results
+            .iter()
+            .zip(&plan.items)
+            .any(|(result, item)| result.record_count != item.expected_record_count)
     {
-        anyhow::bail!("attested batch results do not exactly cover the planned four grader outputs");
+        anyhow::bail!(
+            "attested batch results do not exactly cover the planned four grader outputs"
+        );
     }
     receipt.verify(expected_receipt_pubkey_b64)?;
     if receipt.body.run_id != manifest.run_id
@@ -984,7 +1130,9 @@ pub fn validate_attested_four_grader_batch_results(
         || receipt.body.batch_plan_sha256 != sha256_bytes(&verified_plan.plan_bytes)
         || receipt.body.results != results
     {
-        anyhow::bail!("attested batch result receipt does not exactly bind this run, plan, and result bytes");
+        anyhow::bail!(
+            "attested batch result receipt does not exactly bind this run, plan, and result bytes"
+        );
     }
     let summary = FourGraderBatchResultSummary {
         batch_plan_sha256: sha256_bytes(&verified_plan.plan_bytes),
@@ -1011,42 +1159,61 @@ pub fn ingest_attested_four_grader_batch_results(
     result_bytes: &[Vec<u8>],
 ) -> Result<FourGraderBatchResultBinding> {
     let run = BoundParityRun::open_existing(run_dir)?;
-    let manifest = load_existing_run_manifest(
-        &run, grader_config, config_bytes, goldset, goldset_bytes,
-    )?;
+    let manifest =
+        load_existing_run_manifest(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
     validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     let verified_plan = validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?
         .context("attested batch result ingest requires an immutable four-grader batch plan")?;
     let (results, canonical_pubkey, receipt_pubkey_sha256) = validate_batch_result_inputs(
-        &manifest, grader_config, goldset, &verified_plan, receipt,
-        expected_receipt_pubkey_b64, result_bytes,
+        &manifest,
+        grader_config,
+        goldset,
+        &verified_plan,
+        receipt,
+        expected_receipt_pubkey_b64,
+        result_bytes,
     )?;
     let state_bytes = run.read_child(STATE_FILE, 1024 * 1024)?;
     let mut state = load_state_for_manifest(&run, &manifest)?;
     validate_state_imports(&run, &state, grader_config, goldset)?;
-    let mut expected_imports = results.iter().map(|(artifact, _)| ImportedGradeFile {
-        grader_id: artifact.grader_id.clone(),
-        source_sha256: artifact.result_sha256.clone(),
-        record_count: artifact.record_count,
-    }).collect::<Vec<_>>();
+    let mut expected_imports = results
+        .iter()
+        .map(|(artifact, _)| ImportedGradeFile {
+            grader_id: artifact.grader_id.clone(),
+            source_sha256: artifact.result_sha256.clone(),
+            record_count: artifact.record_count,
+        })
+        .collect::<Vec<_>>();
     expected_imports.sort_by(|left, right| left.grader_id.cmp(&right.grader_id));
     if !state.imported_grades.is_empty() && state.imported_grades != expected_imports {
-        anyhow::bail!("attested four-grader batch result ingest cannot mix with prior grade imports");
+        anyhow::bail!(
+            "attested four-grader batch result ingest cannot mix with prior grade imports"
+        );
     }
-    let receipt_bytes = serde_json::to_vec(receipt).context("serialize attested batch result receipt")?;
+    let receipt_bytes =
+        serde_json::to_vec(receipt).context("serialize attested batch result receipt")?;
     for (index, (_, bytes)) in results.iter().enumerate() {
         verified_plan.revalidate(&run)?;
         create_immutable_run_child(
-            &run, &batch_result_file_name(index), bytes, MAX_GRADES_BYTES as usize,
+            &run,
+            &batch_result_file_name(index),
+            bytes,
+            MAX_GRADES_BYTES as usize,
         )?;
     }
     verified_plan.revalidate(&run)?;
     create_immutable_run_child(
-        &run, FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE, &receipt_bytes, 64 * 1024,
+        &run,
+        FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE,
+        &receipt_bytes,
+        64 * 1024,
     )?;
     verified_plan.revalidate(&run)?;
     create_immutable_run_child(
-        &run, FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE, canonical_pubkey.as_bytes(), 128,
+        &run,
+        FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE,
+        canonical_pubkey.as_bytes(),
+        128,
     )?;
     let mut imports = Vec::with_capacity(FOUR_GRADER_COUNT);
     for (artifact, bytes) in &results {
@@ -1073,17 +1240,27 @@ pub fn ingest_attested_four_grader_batch_results(
         batch_plan_sha256: sha256_bytes(&verified_plan.plan_bytes),
         result_receipt_sha256: sha256_bytes(&receipt_bytes),
         result_receipt_pubkey_sha256: receipt_pubkey_sha256,
-        result_artifacts: results.iter().map(|(artifact, _)| artifact.clone()).collect(),
+        result_artifacts: results
+            .iter()
+            .map(|(artifact, _)| artifact.clone())
+            .collect(),
         imported_grades: imports,
         state_evidence_sha256,
         gate_eligible: false,
     };
     verified_plan.revalidate(&run)?;
     create_immutable_run_child(
-        &run, FOUR_GRADER_BATCH_RESULT_BINDING_FILE,
-        &serde_json::to_vec(&binding).context("serialize four-grader batch result binding")?, 64 * 1024,
+        &run,
+        FOUR_GRADER_BATCH_RESULT_BINDING_FILE,
+        &serde_json::to_vec(&binding).context("serialize four-grader batch result binding")?,
+        64 * 1024,
     )?;
-    validate_four_grader_batch_result_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    validate_four_grader_batch_result_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+    )?;
     Ok(binding)
 }
 
@@ -1095,72 +1272,124 @@ fn validate_batch_result_inputs(
     receipt: &SignedFourGraderBatchResultReceipt,
     expected_receipt_pubkey_b64: &str,
     result_bytes: &[Vec<u8>],
-) -> Result<(Vec<(FourGraderBatchResultArtifact, Vec<u8>)>, String, String)> {
+) -> Result<(
+    Vec<(FourGraderBatchResultArtifact, Vec<u8>)>,
+    String,
+    String,
+)> {
     if result_bytes.len() != FOUR_GRADER_COUNT {
         anyhow::bail!("attested batch result ingest requires exactly four result files");
     }
-    let (canonical_pubkey, receipt_pubkey_sha256) = canonical_batch_result_pubkey(expected_receipt_pubkey_b64)?;
+    let (canonical_pubkey, receipt_pubkey_sha256) =
+        canonical_batch_result_pubkey(expected_receipt_pubkey_b64)?;
     let mut results = Vec::with_capacity(FOUR_GRADER_COUNT);
     for bytes in result_bytes {
-        if bytes.len() as u64 > MAX_GRADES_BYTES { anyhow::bail!("attested batch result exceeds bounded grade byte limit"); }
+        if bytes.len() as u64 > MAX_GRADES_BYTES {
+            anyhow::bail!("attested batch result exceeds bounded grade byte limit");
+        }
         let grades = super::goldset::load_grades_bytes(bytes, "attested four-grader batch result")?;
         let grader_id = validate_single_grader_matrix(grader_config, goldset, &grades)?;
-        results.push((FourGraderBatchResultArtifact {
-            grader_id,
-            result_sha256: sha256_bytes(bytes),
-            record_count: grades.len(),
-        }, bytes.clone()));
+        results.push((
+            FourGraderBatchResultArtifact {
+                grader_id,
+                result_sha256: sha256_bytes(bytes),
+                record_count: grades.len(),
+            },
+            bytes.clone(),
+        ));
     }
     results.sort_by(|left, right| left.0.grader_id.cmp(&right.0.grader_id));
-    if results.windows(2).any(|pair| pair[0].0.grader_id == pair[1].0.grader_id) {
+    if results
+        .windows(2)
+        .any(|pair| pair[0].0.grader_id == pair[1].0.grader_id)
+    {
         anyhow::bail!("attested batch results contain duplicate grader output");
     }
-    let expected_ids = verified_plan.plan.items.iter().map(|item| item.grader_id.as_str()).collect::<Vec<_>>();
-    let actual_ids = results.iter().map(|(item, _)| item.grader_id.as_str()).collect::<Vec<_>>();
-    if actual_ids != expected_ids || results.iter().zip(&verified_plan.plan.items)
-        .any(|((item, _), plan_item)| item.record_count != plan_item.expected_record_count)
+    let expected_ids = verified_plan
+        .plan
+        .items
+        .iter()
+        .map(|item| item.grader_id.as_str())
+        .collect::<Vec<_>>();
+    let actual_ids = results
+        .iter()
+        .map(|(item, _)| item.grader_id.as_str())
+        .collect::<Vec<_>>();
+    if actual_ids != expected_ids
+        || results
+            .iter()
+            .zip(&verified_plan.plan.items)
+            .any(|((item, _), plan_item)| item.record_count != plan_item.expected_record_count)
     {
         anyhow::bail!("attested batch results do not exactly cover planned grader outputs");
     }
-    let artifacts = results.iter().map(|(artifact, _)| artifact.clone()).collect::<Vec<_>>();
+    let artifacts = results
+        .iter()
+        .map(|(artifact, _)| artifact.clone())
+        .collect::<Vec<_>>();
     receipt.verify(expected_receipt_pubkey_b64)?;
     if receipt.body.run_id != manifest.run_id
         || receipt.body.run_manifest_sha256 != sha256_json(manifest)?
         || receipt.body.batch_plan_sha256 != sha256_bytes(&verified_plan.plan_bytes)
         || receipt.body.results != artifacts
     {
-        anyhow::bail!("attested batch result receipt does not exactly bind this run, plan, and result bytes");
+        anyhow::bail!(
+            "attested batch result receipt does not exactly bind this run, plan, and result bytes"
+        );
     }
     Ok((results, canonical_pubkey, receipt_pubkey_sha256))
 }
 
 fn canonical_batch_result_pubkey(value: &str) -> Result<(String, String)> {
-    let bytes = STANDARD.decode(value)
-        .map_err(|_| anyhow::anyhow!("expected batch result receipt public key is not valid base64"))?;
-    if bytes.len() != 32 { anyhow::bail!("expected batch result receipt public key has invalid Ed25519 length"); }
+    let bytes = STANDARD.decode(value).map_err(|_| {
+        anyhow::anyhow!("expected batch result receipt public key is not valid base64")
+    })?;
+    if bytes.len() != 32 {
+        anyhow::bail!("expected batch result receipt public key has invalid Ed25519 length");
+    }
     Ok((STANDARD.encode(&bytes), sha256_bytes(&bytes)))
 }
 
-fn batch_result_file_name(index: usize) -> String { format!("four-grader-batch-result-{index:02}.jsonl") }
+fn batch_result_file_name(index: usize) -> String {
+    format!("four-grader-batch-result-{index:02}.jsonl")
+}
 
-fn stage_attested_import(run: &BoundParityRun, record: &ImportedGradeFile, bytes: &[u8]) -> Result<()> {
+fn stage_attested_import(
+    run: &BoundParityRun,
+    record: &ImportedGradeFile,
+    bytes: &[u8],
+) -> Result<()> {
     let imports = run.open_or_create_imports_locked()?;
     let name = format!("{}.jsonl", record.source_sha256);
     let display = run.child_display(IMPORTS_DIR).join(&name);
     match imports.symlink_metadata(std::ffi::OsStr::new(&name)) {
         Ok(_) => {
-            if crate::skills::store::read_regular_file_bounded(&imports, std::ffi::OsStr::new(&name), &display, MAX_GRADES_BYTES as usize)? != bytes {
-                anyhow::bail!("existing attested imported grade artifact does not match its SHA256 filename");
+            if crate::skills::store::read_regular_file_bounded(
+                &imports,
+                std::ffi::OsStr::new(&name),
+                &display,
+                MAX_GRADES_BYTES as usize,
+            )? != bytes
+            {
+                anyhow::bail!(
+                    "existing attested imported grade artifact does not match its SHA256 filename"
+                );
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             run.revalidate_lock()?;
             crate::skills::store::atomic_write_private_child_create_new(
-                &imports, std::ffi::OsStr::new(&name), &display, bytes,
+                &imports,
+                std::ffi::OsStr::new(&name),
+                &display,
+                bytes,
             )?;
             run.revalidate_lock()?;
         }
-        Err(error) => return Err(error).with_context(|| format!("inspect attested import {}", display.display())),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect attested import {}", display.display()));
+        }
     }
     Ok(())
 }
@@ -1172,7 +1401,10 @@ fn validate_four_grader_batch_result_artifacts_if_present(
     goldset: &[GoldsetEntry],
 ) -> Result<()> {
     let _ = load_validated_four_grader_batch_result_artifacts_if_present(
-        run, manifest, grader_config, goldset,
+        run,
+        manifest,
+        grader_config,
+        goldset,
     )?;
     Ok(())
 }
@@ -1184,14 +1416,36 @@ fn load_validated_four_grader_batch_result_artifacts_if_present(
     goldset: &[GoldsetEntry],
 ) -> Result<Option<ValidatedAttestedFourGraderBatchResults>> {
     let mut artifacts = (0..FOUR_GRADER_COUNT)
-        .map(|index| read_bound_immutable_run_child(run, &batch_result_file_name(index), MAX_GRADES_BYTES as usize))
+        .map(|index| {
+            read_bound_immutable_run_child(
+                run,
+                &batch_result_file_name(index),
+                MAX_GRADES_BYTES as usize,
+            )
+        })
         .collect::<Result<Vec<_>>>()?;
-    artifacts.push(read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE, 64 * 1024)?);
-    artifacts.push(read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE, 128)?);
-    artifacts.push(read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_RESULT_BINDING_FILE, 64 * 1024)?);
-    if artifacts.iter().all(Option::is_none) { return Ok(None); }
+    artifacts.push(read_bound_immutable_run_child(
+        run,
+        FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE,
+        64 * 1024,
+    )?);
+    artifacts.push(read_bound_immutable_run_child(
+        run,
+        FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE,
+        128,
+    )?);
+    artifacts.push(read_bound_immutable_run_child(
+        run,
+        FOUR_GRADER_BATCH_RESULT_BINDING_FILE,
+        64 * 1024,
+    )?);
+    if artifacts.iter().all(Option::is_none) {
+        return Ok(None);
+    }
     if artifacts.iter().any(Option::is_none) {
-        anyhow::bail!("incomplete four-grader batch result ingest; retry with identical artifacts or use a fresh run");
+        anyhow::bail!(
+            "incomplete four-grader batch result ingest; retry with identical artifacts or use a fresh run"
+        );
     }
     let mut values = artifacts.into_iter().map(Option::unwrap);
     let result0 = values.next().expect("fixed batch result artifact count");
@@ -1219,7 +1473,10 @@ fn load_validated_four_grader_batch_result_artifacts_if_present(
     let mut parsed = Vec::with_capacity(FOUR_GRADER_COUNT);
     let mut grades_by_result = Vec::with_capacity(FOUR_GRADER_COUNT);
     for child in &result_artifacts {
-        let grades = super::goldset::load_grades_bytes(&child.bytes, "persisted attested four-grader batch result")?;
+        let grades = super::goldset::load_grades_bytes(
+            &child.bytes,
+            "persisted attested four-grader batch result",
+        )?;
         let grader_id = validate_single_grader_matrix(grader_config, goldset, &grades)?;
         parsed.push(FourGraderBatchResultArtifact {
             grader_id,
@@ -1228,7 +1485,9 @@ fn load_validated_four_grader_batch_result_artifacts_if_present(
         });
         grades_by_result.push(grades);
     }
-    if parsed.windows(2).any(|pair| pair[0].grader_id >= pair[1].grader_id)
+    if parsed
+        .windows(2)
+        .any(|pair| pair[0].grader_id >= pair[1].grader_id)
         || parsed != binding.result_artifacts
         || receipt.body.run_id != manifest.run_id
         || receipt.body.run_manifest_sha256 != sha256_json(manifest)?
@@ -1236,14 +1495,29 @@ fn load_validated_four_grader_batch_result_artifacts_if_present(
         || receipt.body.results != parsed
         || sha256_bytes(&receipt_bytes.bytes) != binding.result_receipt_sha256
     {
-        anyhow::bail!("immutable four-grader batch result artifacts do not exactly match provenance binding");
+        anyhow::bail!(
+            "immutable four-grader batch result artifacts do not exactly match provenance binding"
+        );
     }
-    let plan_ids = verified_plan.plan.items.iter().map(|item| item.grader_id.as_str()).collect::<Vec<_>>();
-    let parsed_ids = parsed.iter().map(|item| item.grader_id.as_str()).collect::<Vec<_>>();
-    if parsed_ids != plan_ids || parsed.iter().zip(&verified_plan.plan.items)
-        .any(|(result, item)| result.record_count != item.expected_record_count)
+    let plan_ids = verified_plan
+        .plan
+        .items
+        .iter()
+        .map(|item| item.grader_id.as_str())
+        .collect::<Vec<_>>();
+    let parsed_ids = parsed
+        .iter()
+        .map(|item| item.grader_id.as_str())
+        .collect::<Vec<_>>();
+    if parsed_ids != plan_ids
+        || parsed
+            .iter()
+            .zip(&verified_plan.plan.items)
+            .any(|(result, item)| result.record_count != item.expected_record_count)
     {
-        anyhow::bail!("immutable four-grader batch results do not exactly cover the planned roster");
+        anyhow::bail!(
+            "immutable four-grader batch results do not exactly cover the planned roster"
+        );
     }
     let state_bytes = read_bound_immutable_run_child(run, STATE_FILE, 1024 * 1024)?
         .context("four-grader batch result binding has no state artifact")?;
@@ -1251,13 +1525,19 @@ fn load_validated_four_grader_batch_result_artifacts_if_present(
     let pinned_imports = read_pinned_attested_imports(run, &state, grader_config, goldset)?;
     if state.imported_grades != binding.imported_grades
         || sha256_json(&state_evidence(&state))? != binding.state_evidence_sha256
-        || binding.imported_grades.iter().zip(&parsed).any(|(import, result)| {
-            import.grader_id != result.grader_id
-                || import.source_sha256 != result.result_sha256
-                || import.record_count != result.record_count
-        })
+        || binding
+            .imported_grades
+            .iter()
+            .zip(&parsed)
+            .any(|(import, result)| {
+                import.grader_id != result.grader_id
+                    || import.source_sha256 != result.result_sha256
+                    || import.record_count != result.record_count
+            })
     {
-        anyhow::bail!("four-grader batch result binding does not match current imported grade state");
+        anyhow::bail!(
+            "four-grader batch result binding does not match current imported grade state"
+        );
     }
     let verified = ValidatedAttestedFourGraderBatchResults {
         plan: verified_plan,
@@ -1299,9 +1579,12 @@ impl ValidatedAttestedFourGraderBatchResults {
         for (index, artifact) in self.result_artifacts.iter().enumerate() {
             artifact.revalidate(run, &batch_result_file_name(index))?;
         }
-        self.receipt_artifact.revalidate(run, FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE)?;
-        self.pubkey_artifact.revalidate(run, FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE)?;
-        self.binding_artifact.revalidate(run, FOUR_GRADER_BATCH_RESULT_BINDING_FILE)?;
+        self.receipt_artifact
+            .revalidate(run, FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE)?;
+        self.pubkey_artifact
+            .revalidate(run, FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE)?;
+        self.binding_artifact
+            .revalidate(run, FOUR_GRADER_BATCH_RESULT_BINDING_FILE)?;
         self.state_artifact.revalidate(run, STATE_FILE)?;
         self.imports.revalidate(run)?;
         self.plan.revalidate(run)?;
@@ -1320,20 +1603,31 @@ pub fn summarize_attested_four_grader_family_bias(
     goldset_bytes: &[u8],
 ) -> Result<AttestedFamilyBiasSummary> {
     let run = BoundParityRun::open_existing(run_dir)?;
-    let manifest = load_existing_run_manifest(
-        &run, grader_config, config_bytes, goldset, goldset_bytes,
-    )?;
+    let manifest =
+        load_existing_run_manifest(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
     let anchor_group = load_validated_operator_anchor_artifacts_if_present(
-        &run, &manifest, grader_config, goldset,
-    )?.context("attested family-bias summary requires a complete operator anchor provenance group")?;
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+    )?
+    .context("attested family-bias summary requires a complete operator anchor provenance group")?;
     let results = load_validated_four_grader_batch_result_artifacts_if_present(
-        &run, &manifest, grader_config, goldset,
-    )?.context("attested family-bias summary requires a complete batch result group")?;
-    if sha256_bytes(&anchor_group.anchor_artifact.bytes) != results.plan.plan.operator_anchor_sha256 {
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+    )?
+    .context("attested family-bias summary requires a complete batch result group")?;
+    if sha256_bytes(&anchor_group.anchor_artifact.bytes) != results.plan.plan.operator_anchor_sha256
+    {
         anyhow::bail!("attested family-bias summary anchor does not match the verified batch plan");
     }
     let summary = attested_family_bias_summary_from_validated(
-        &manifest, grader_config, &anchor_group, &results,
+        &manifest,
+        grader_config,
+        &anchor_group,
+        &results,
     )?;
     anchor_group.revalidate(&run)?;
     results.revalidate(&run)?;
@@ -1347,11 +1641,8 @@ fn attested_family_bias_summary_from_validated(
     anchor_group: &ValidatedOperatorAnchorEvidenceGroup,
     results: &ValidatedAttestedFourGraderBatchResults,
 ) -> Result<AttestedFamilyBiasSummary> {
-    let clusters = cluster_attested_four_grader_family_bias(
-        grader_config,
-        &anchor_group.anchor,
-        results,
-    )?;
+    let clusters =
+        cluster_attested_four_grader_family_bias(grader_config, &anchor_group.anchor, results)?;
     let observations_per_grader = OPERATOR_ANCHOR_QUERY_COUNT
         .checked_mul(2)
         .context("attested family-bias observation count overflow")?;
@@ -1384,20 +1675,29 @@ pub fn build_attested_parity_gate_report(
     expected_import_receipt_pubkey_b64: &str,
 ) -> Result<AttestedParityGateReport> {
     let run = BoundParityRun::open_existing(run_dir)?;
-    let manifest = load_existing_run_manifest(
-        &run, grader_config, config_bytes, goldset, goldset_bytes,
-    )?;
+    let manifest =
+        load_existing_run_manifest(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
     let anchor_group = load_validated_operator_anchor_artifacts_if_present(
-        &run, &manifest, grader_config, goldset,
-    )?.context("attested gate report requires complete operator anchor provenance")?;
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+    )?
+    .context("attested gate report requires complete operator anchor provenance")?;
     let results = load_validated_four_grader_batch_result_artifacts_if_present(
-        &run, &manifest, grader_config, goldset,
-    )?.context("attested gate report requires complete attested four-grader results")?;
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+    )?
+    .context("attested gate report requires complete attested four-grader results")?;
     if sha256_bytes(&anchor_group.anchor_artifact.bytes) != results.plan.plan.operator_anchor_sha256
         || grader_config.graders().len() != FOUR_GRADER_COUNT
         || results.state.imported_grades.len() != FOUR_GRADER_COUNT
     {
-        anyhow::bail!("attested gate report requires one exact anchored result matrix for each of four configured graders");
+        anyhow::bail!(
+            "attested gate report requires one exact anchored result matrix for each of four configured graders"
+        );
     }
     if import_receipt_bytes.len() > MAX_PARITY_IMPORT_RECEIPT_BYTES {
         anyhow::bail!("attested gate report import receipt exceeds its bounded contract");
@@ -1412,17 +1712,24 @@ pub fn build_attested_parity_gate_report(
     let (canonical_pubkey, import_receipt_pubkey_sha256) =
         canonical_batch_result_pubkey(expected_import_receipt_pubkey_b64)?;
     let family_bias = attested_family_bias_summary_from_validated(
-        &manifest, grader_config, &anchor_group, &results,
+        &manifest,
+        grader_config,
+        &anchor_group,
+        &results,
     )?;
     let bias_policy_passed = attested_family_bias_policy_passes(&family_bias)?;
-    let all_grades = results.grades_by_result.iter().flatten().cloned().collect::<Vec<_>>();
+    let all_grades = results
+        .grades_by_result
+        .iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
     let parity = compute_parity_run(grader_config, goldset, &all_grades)
         .context("compute existing authoritative fail-closed recall-parity verdict")?;
     ensure_finite_gate_metric(parity.aggregate, "attested gate aggregate")?;
     ensure_finite_gate_metric(parity.mean_kappa, "attested gate mean kappa")?;
-    let gate_eligible = parity.verdict.passed
-        && parity.independent_external_family_gate_met
-        && bias_policy_passed;
+    let gate_eligible =
+        parity.verdict.passed && parity.independent_external_family_gate_met && bias_policy_passed;
     let report = AttestedParityGateReport {
         schema_version: ATTESTED_PARITY_GATE_REPORT_SCHEMA_VERSION,
         purpose: ATTESTED_PARITY_GATE_REPORT_PURPOSE.into(),
@@ -1441,7 +1748,8 @@ pub fn build_attested_parity_gate_report(
         bias_policy_passed,
         gate_eligible,
     };
-    let report_bytes = serde_json::to_vec(&report).context("serialize attested parity gate report")?;
+    let report_bytes =
+        serde_json::to_vec(&report).context("serialize attested parity gate report")?;
     let publication = AttestedParityGatePublicationReceipt {
         schema_version: ATTESTED_PARITY_GATE_REPORT_SCHEMA_VERSION,
         run_manifest_sha256: sha256_json(&manifest)?,
@@ -1455,13 +1763,22 @@ pub fn build_attested_parity_gate_report(
     anchor_group.revalidate(&run)?;
     results.revalidate(&run)?;
     publish_attested_gate_report(
-        &run, &anchor_group, &results, &report_bytes, import_receipt_bytes,
-        &canonical_pubkey, &publication,
+        &run,
+        &anchor_group,
+        &results,
+        &report_bytes,
+        import_receipt_bytes,
+        &canonical_pubkey,
+        &publication,
     )?;
     anchor_group.revalidate(&run)?;
     let reopened = load_validated_four_grader_batch_result_artifacts_if_present(
-        &run, &manifest, grader_config, goldset,
-    )?.context("attested gate report state changed during publication")?;
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+    )?
+    .context("attested gate report state changed during publication")?;
     validate_attested_gate_publication_if_present(&run, &manifest, &reopened, &report)?;
     anchor_group.revalidate(&run)?;
     reopened.revalidate(&run)?;
@@ -1479,35 +1796,53 @@ fn attested_family_bias_policy_passes(summary: &AttestedFamilyBiasSummary) -> Re
     {
         anyhow::bail!("attested family-bias policy received an incomplete non-gate summary");
     }
-    let shared = summary.clusters.iter()
+    let shared = summary
+        .clusters
+        .iter()
         .find(|cluster| cluster.evidence_kind == AttestedFamilyEvidenceKind::SameFamilyCorrelation)
         .context("attested family-bias policy requires a shared-family cluster")?;
-    let external = summary.clusters.iter()
-        .find(|cluster| cluster.evidence_kind == AttestedFamilyEvidenceKind::IndependentExternalFamilyEvidence)
+    let external = summary
+        .clusters
+        .iter()
+        .find(|cluster| {
+            cluster.evidence_kind == AttestedFamilyEvidenceKind::IndependentExternalFamilyEvidence
+        })
         .context("attested family-bias policy requires independent external-family evidence")?;
-    if shared.grader_ids.len() < 3 || external.grader_ids.is_empty()
+    if shared.grader_ids.len() < 3
+        || external.grader_ids.is_empty()
         || shared.dimensions.len() != Dimension::ALL.len()
         || external.dimensions.len() != Dimension::ALL.len()
     {
-        anyhow::bail!("attested family-bias policy requires complete shared and external family coverage");
+        anyhow::bail!(
+            "attested family-bias policy requires complete shared and external family coverage"
+        );
     }
     for dimension in &shared.dimensions {
         if dimension.per_grader_mean_grader_minus_operator.len() != shared.grader_ids.len()
-            || dimension.observation_count != summary.observations_per_grader * shared.grader_ids.len()
+            || dimension.observation_count
+                != summary.observations_per_grader * shared.grader_ids.len()
         {
             anyhow::bail!("attested family-bias policy has incomplete shared-family evidence");
         }
-        let same_positive = dimension.per_grader_mean_grader_minus_operator.iter()
+        let same_positive = dimension
+            .per_grader_mean_grader_minus_operator
+            .iter()
             .all(|entry| entry.mean_grader_minus_operator > FAMILY_BIAS_THRESHOLD);
-        let same_negative = dimension.per_grader_mean_grader_minus_operator.iter()
+        let same_negative = dimension
+            .per_grader_mean_grader_minus_operator
+            .iter()
             .all(|entry| entry.mean_grader_minus_operator < -FAMILY_BIAS_THRESHOLD);
-        if same_positive || same_negative { return Ok(false); }
+        if same_positive || same_negative {
+            return Ok(false);
+        }
     }
     Ok(true)
 }
 
 fn ensure_finite_gate_metric(value: f64, label: &str) -> Result<()> {
-    if !value.is_finite() { anyhow::bail!("{label} is not finite"); }
+    if !value.is_finite() {
+        anyhow::bail!("{label} is not finite");
+    }
     Ok(())
 }
 
@@ -1521,7 +1856,12 @@ fn publish_attested_gate_report(
     publication: &AttestedParityGatePublicationReceipt,
 ) -> Result<()> {
     let report_sha256 = sha256_bytes(report_bytes);
-    if results.state.report_sha256.as_deref().is_some_and(|existing| existing != report_sha256.as_str()) {
+    if results
+        .state
+        .report_sha256
+        .as_deref()
+        .is_some_and(|existing| existing != report_sha256.as_str())
+    {
         anyhow::bail!("attested gate report refuses a stale state report binding");
     }
     anchor_group.revalidate(run)?;
@@ -1530,19 +1870,26 @@ fn publish_attested_gate_report(
     anchor_group.revalidate(run)?;
     results.revalidate(run)?;
     create_immutable_run_child(
-        run, ATTESTED_GATE_IMPORT_RECEIPT_FILE, import_receipt_bytes,
+        run,
+        ATTESTED_GATE_IMPORT_RECEIPT_FILE,
+        import_receipt_bytes,
         MAX_PARITY_IMPORT_RECEIPT_BYTES,
     )?;
     anchor_group.revalidate(run)?;
     results.revalidate(run)?;
     create_immutable_run_child(
-        run, ATTESTED_GATE_IMPORT_PUBKEY_FILE, canonical_pubkey.as_bytes(), 128,
+        run,
+        ATTESTED_GATE_IMPORT_PUBKEY_FILE,
+        canonical_pubkey.as_bytes(),
+        128,
     )?;
     anchor_group.revalidate(run)?;
     results.revalidate(run)?;
     create_immutable_run_child(
-        run, ATTESTED_GATE_PUBLICATION_RECEIPT_FILE,
-        &serde_json::to_vec(publication).context("serialize attested gate publication receipt")?, 64 * 1024,
+        run,
+        ATTESTED_GATE_PUBLICATION_RECEIPT_FILE,
+        &serde_json::to_vec(publication).context("serialize attested gate publication receipt")?,
+        64 * 1024,
     )?;
     match &results.state.report_sha256 {
         None => {
@@ -1565,12 +1912,17 @@ fn publish_attested_gate_report(
 fn reject_legacy_report_mutation_after_attested_gate(run: &BoundParityRun) -> Result<()> {
     for (name, max_bytes) in [
         (ATTESTED_GATE_REPORT_FILE, 64 * 1024),
-        (ATTESTED_GATE_IMPORT_RECEIPT_FILE, MAX_PARITY_IMPORT_RECEIPT_BYTES),
+        (
+            ATTESTED_GATE_IMPORT_RECEIPT_FILE,
+            MAX_PARITY_IMPORT_RECEIPT_BYTES,
+        ),
         (ATTESTED_GATE_IMPORT_PUBKEY_FILE, 128),
         (ATTESTED_GATE_PUBLICATION_RECEIPT_FILE, 64 * 1024),
     ] {
         if read_bound_immutable_run_child(run, name, max_bytes)?.is_some() {
-            anyhow::bail!("legacy report cannot mutate a run with attested gate publication evidence");
+            anyhow::bail!(
+                "legacy report cannot mutate a run with attested gate publication evidence"
+            );
         }
     }
     Ok(())
@@ -1584,16 +1936,24 @@ fn validate_attested_gate_publication_if_present(
 ) -> Result<()> {
     let contracts = [
         (ATTESTED_GATE_REPORT_FILE, 64 * 1024),
-        (ATTESTED_GATE_IMPORT_RECEIPT_FILE, MAX_PARITY_IMPORT_RECEIPT_BYTES),
+        (
+            ATTESTED_GATE_IMPORT_RECEIPT_FILE,
+            MAX_PARITY_IMPORT_RECEIPT_BYTES,
+        ),
         (ATTESTED_GATE_IMPORT_PUBKEY_FILE, 128),
         (ATTESTED_GATE_PUBLICATION_RECEIPT_FILE, 64 * 1024),
     ];
-    let artifacts = contracts.iter()
+    let artifacts = contracts
+        .iter()
         .map(|(name, max)| read_bound_immutable_run_child(run, name, *max))
         .collect::<Result<Vec<_>>>()?;
-    if artifacts.iter().all(Option::is_none) { return Ok(()); }
+    if artifacts.iter().all(Option::is_none) {
+        return Ok(());
+    }
     if artifacts.iter().any(Option::is_none) {
-        anyhow::bail!("incomplete attested gate report publication; retry only with identical receipt evidence");
+        anyhow::bail!(
+            "incomplete attested gate report publication; retry only with identical receipt evidence"
+        );
     }
     let mut values = artifacts.into_iter().map(Option::unwrap);
     let report_artifact = values.next().expect("fixed attested gate artifact count");
@@ -1602,11 +1962,15 @@ fn validate_attested_gate_publication_if_present(
     let publication_artifact = values.next().expect("fixed attested gate artifact count");
     let report: AttestedParityGateReport = serde_json::from_slice(&report_artifact.bytes)
         .map_err(|_| anyhow::anyhow!("parse immutable attested gate report"))?;
-    if report != *expected_report || report.schema_version != ATTESTED_PARITY_GATE_REPORT_SCHEMA_VERSION
+    if report != *expected_report
+        || report.schema_version != ATTESTED_PARITY_GATE_REPORT_SCHEMA_VERSION
         || report.purpose != ATTESTED_PARITY_GATE_REPORT_PURPOSE
-        || !report.aggregate.is_finite() || !report.mean_kappa.is_finite()
+        || !report.aggregate.is_finite()
+        || !report.mean_kappa.is_finite()
     {
-        anyhow::bail!("immutable attested gate report does not match the fully validated transition");
+        anyhow::bail!(
+            "immutable attested gate report does not match the fully validated transition"
+        );
     }
     let receipt = parse_signed_parity_import_receipt(&import_receipt_artifact.bytes)?;
     let pubkey = std::str::from_utf8(&pubkey_artifact.bytes)
@@ -1614,8 +1978,9 @@ fn validate_attested_gate_publication_if_present(
     let (_, pubkey_sha256) = canonical_batch_result_pubkey(pubkey)?;
     receipt.verify(pubkey)?;
     verify_external_import_receipt(manifest, &results.state.imported_grades, &receipt, pubkey)?;
-    let publication: AttestedParityGatePublicationReceipt = serde_json::from_slice(&publication_artifact.bytes)
-        .map_err(|_| anyhow::anyhow!("parse immutable attested gate publication receipt"))?;
+    let publication: AttestedParityGatePublicationReceipt =
+        serde_json::from_slice(&publication_artifact.bytes)
+            .map_err(|_| anyhow::anyhow!("parse immutable attested gate publication receipt"))?;
     let report_sha256 = sha256_bytes(&report_artifact.bytes);
     if publication.schema_version != ATTESTED_PARITY_GATE_REPORT_SCHEMA_VERSION
         || publication.run_manifest_sha256 != sha256_json(manifest)?
@@ -1632,7 +1997,9 @@ fn validate_attested_gate_publication_if_present(
         || report.imported_grades != results.state.imported_grades
         || results.state.report_sha256.as_deref() != Some(report_sha256.as_str())
     {
-        anyhow::bail!("immutable attested gate publication receipt does not bind current validated evidence");
+        anyhow::bail!(
+            "immutable attested gate publication receipt does not bind current validated evidence"
+        );
     }
     for ((name, _), artifact) in contracts.iter().zip([
         &report_artifact,
@@ -1658,14 +2025,21 @@ fn cluster_attested_four_grader_family_bias(
         || results.grades_by_result.len() != FOUR_GRADER_COUNT
         || operator_anchor.grades().len() != expected_anchor_observations
     {
-        anyhow::bail!("attested family-bias analysis requires exact 20-query by four-grader coverage");
+        anyhow::bail!(
+            "attested family-bias analysis requires exact 20-query by four-grader coverage"
+        );
     }
     let mut roster = BTreeMap::new();
     let mut has_shared = false;
     let mut has_external = false;
     for grader in grader_config.graders() {
-        if roster.insert(grader.grader_id.as_str(), grader.family).is_some() {
-            anyhow::bail!("attested family-bias analysis found duplicate validated roster identity");
+        if roster
+            .insert(grader.grader_id.as_str(), grader.family)
+            .is_some()
+        {
+            anyhow::bail!(
+                "attested family-bias analysis found duplicate validated roster identity"
+            );
         }
         match grader.family {
             GraderFamily::AnthropicOpenaiGoogle => has_shared = true,
@@ -1676,10 +2050,13 @@ fn cluster_attested_four_grader_family_bias(
         anyhow::bail!("attested family-bias analysis requires both verified grader families");
     }
     for plan_item in &results.plan.plan.items {
-        let family = roster.get(plan_item.grader_id.as_str())
+        let family = roster
+            .get(plan_item.grader_id.as_str())
             .context("attested family-bias batch plan has an unverified grader identity")?;
         if plan_item.family != attested_family_name(*family) {
-            anyhow::bail!("attested family-bias batch plan family does not match the validated roster");
+            anyhow::bail!(
+                "attested family-bias batch plan family does not match the validated roster"
+            );
         }
     }
     let mut automated = BTreeMap::new();
@@ -1690,31 +2067,45 @@ fn cluster_attested_four_grader_family_bias(
             matches!(grade.system, GradedSystem::Neoth),
         );
         if automated.insert(key, grade).is_some() {
-            anyhow::bail!("attested family-bias analysis found duplicate persisted grade observation");
+            anyhow::bail!(
+                "attested family-bias analysis found duplicate persisted grade observation"
+            );
         }
     }
     let mut deltas: BTreeMap<(String, String, String), (i64, usize)> = BTreeMap::new();
     let mut coverage = 0usize;
     for anchor_grade in operator_anchor.grades() {
         for (grader_id, family) in &roster {
-            let automated_grade = automated.get(&(
-                anchor_grade.query_id.as_str(),
-                *grader_id,
-                matches!(anchor_grade.system, GradedSystem::Neoth),
-            )).context("attested family-bias analysis has incomplete anchor coverage")?;
-            coverage = coverage.checked_add(1).context("attested family-bias coverage overflow")?;
+            let automated_grade = automated
+                .get(&(
+                    anchor_grade.query_id.as_str(),
+                    *grader_id,
+                    matches!(anchor_grade.system, GradedSystem::Neoth),
+                ))
+                .context("attested family-bias analysis has incomplete anchor coverage")?;
+            coverage = coverage
+                .checked_add(1)
+                .context("attested family-bias coverage overflow")?;
             for dimension in Dimension::ALL {
-                let entry = deltas.entry((
-                    attested_family_name(*family).to_owned(),
-                    (*grader_id).to_owned(),
-                    dimension.as_str().to_owned(),
-                )).or_default();
-                entry.0 = entry.0.checked_add(
-                    i64::from(automated_grade.score(dimension))
-                        .checked_sub(i64::from(anchor_grade.score(dimension)))
-                        .context("attested family-bias delta overflow")?,
-                ).context("attested family-bias delta sum overflow")?;
-                entry.1 = entry.1.checked_add(1).context("attested family-bias observation overflow")?;
+                let entry = deltas
+                    .entry((
+                        attested_family_name(*family).to_owned(),
+                        (*grader_id).to_owned(),
+                        dimension.as_str().to_owned(),
+                    ))
+                    .or_default();
+                entry.0 = entry
+                    .0
+                    .checked_add(
+                        i64::from(automated_grade.score(dimension))
+                            .checked_sub(i64::from(anchor_grade.score(dimension)))
+                            .context("attested family-bias delta overflow")?,
+                    )
+                    .context("attested family-bias delta sum overflow")?;
+                entry.1 = entry
+                    .1
+                    .checked_add(1)
+                    .context("attested family-bias observation overflow")?;
             }
         }
     }
@@ -1722,11 +2113,16 @@ fn cluster_attested_four_grader_family_bias(
         .checked_mul(FOUR_GRADER_COUNT)
         .context("attested family-bias expected coverage overflow")?;
     if coverage != expected_coverage {
-        anyhow::bail!("attested family-bias analysis did not observe exact 20-query by four-grader coverage");
+        anyhow::bail!(
+            "attested family-bias analysis did not observe exact 20-query by four-grader coverage"
+        );
     }
     let mut families: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (grader_id, family) in roster {
-        families.entry(attested_family_name(family).to_owned()).or_default().push(grader_id.to_owned());
+        families
+            .entry(attested_family_name(family).to_owned())
+            .or_default()
+            .push(grader_id.to_owned());
     }
     let mut clusters = Vec::with_capacity(families.len());
     for (family, grader_ids) in families {
@@ -1736,21 +2132,36 @@ fn cluster_attested_four_grader_family_bias(
             let mut total = 0i64;
             let mut total_count = 0usize;
             for grader_id in &grader_ids {
-                let (sum, count) = deltas.get(&(family.clone(), grader_id.clone(), dimension.as_str().to_owned()))
+                let (sum, count) = deltas
+                    .get(&(
+                        family.clone(),
+                        grader_id.clone(),
+                        dimension.as_str().to_owned(),
+                    ))
                     .context("attested family-bias analysis lost a validated delta bucket")?;
                 if *count != expected_anchor_observations {
-                    anyhow::bail!("attested family-bias analysis has incomplete per-grader anchor coverage");
+                    anyhow::bail!(
+                        "attested family-bias analysis has incomplete per-grader anchor coverage"
+                    );
                 }
-                total = total.checked_add(*sum).context("attested family-bias aggregate overflow")?;
-                total_count = total_count.checked_add(*count).context("attested family-bias aggregate count overflow")?;
+                total = total
+                    .checked_add(*sum)
+                    .context("attested family-bias aggregate overflow")?;
+                total_count = total_count
+                    .checked_add(*count)
+                    .context("attested family-bias aggregate count overflow")?;
                 per_grader.push(AttestedGraderBiasDelta {
                     grader_id: grader_id.clone(),
                     mean_grader_minus_operator: bounded_mean(*sum, *count)?,
                 });
             }
             let family_mean = bounded_mean(total, total_count)?;
-            let same_direction = per_grader.iter().all(|entry| entry.mean_grader_minus_operator > 0.0)
-                || per_grader.iter().all(|entry| entry.mean_grader_minus_operator < 0.0);
+            let same_direction = per_grader
+                .iter()
+                .all(|entry| entry.mean_grader_minus_operator > 0.0)
+                || per_grader
+                    .iter()
+                    .all(|entry| entry.mean_grader_minus_operator < 0.0);
             dimensions.push(AttestedFamilyBiasDimension {
                 dimension: dimension.as_str().to_owned(),
                 observation_count: total_count,
@@ -1783,9 +2194,13 @@ fn attested_family_name(family: GraderFamily) -> &'static str {
 }
 
 fn bounded_mean(sum: i64, count: usize) -> Result<f64> {
-    if count == 0 { anyhow::bail!("attested family-bias mean has no observations"); }
+    if count == 0 {
+        anyhow::bail!("attested family-bias mean has no observations");
+    }
     let mean = sum as f64 / count as f64;
-    if !mean.is_finite() { anyhow::bail!("attested family-bias mean is not finite"); }
+    if !mean.is_finite() {
+        anyhow::bail!("attested family-bias mean is not finite");
+    }
     Ok(mean)
 }
 
@@ -1815,7 +2230,9 @@ impl PinnedAttestedImports {
                 std::ffi::OsStr::new(&entry.name),
                 &run.child_display(IMPORTS_DIR).join(&entry.name),
             )? {
-                anyhow::bail!("attested imported grade artifact identity changed before aggregate return");
+                anyhow::bail!(
+                    "attested imported grade artifact identity changed before aggregate return"
+                );
             }
         }
         Ok(())
@@ -1838,13 +2255,18 @@ fn read_pinned_attested_imports(
         let name = format!("{}.jsonl", import.source_sha256);
         let display = run.child_display(IMPORTS_DIR).join(&name);
         let (mut file, identity) = crate::skills::store::open_bound_regular_file(
-            &dir, std::ffi::OsStr::new(&name), &display,
+            &dir,
+            std::ffi::OsStr::new(&name),
+            &display,
         )?;
         let mut bytes = Vec::new();
-        file.take(MAX_GRADES_BYTES.saturating_add(1)).read_to_end(&mut bytes)
+        file.take(MAX_GRADES_BYTES.saturating_add(1))
+            .read_to_end(&mut bytes)
             .with_context(|| format!("read attested import {}", display.display()))?;
         if bytes.len() as u64 > MAX_GRADES_BYTES || sha256_bytes(&bytes) != import.source_sha256 {
-            anyhow::bail!("attested imported grade artifact does not match its bounded SHA256 contract");
+            anyhow::bail!(
+                "attested imported grade artifact does not match its bounded SHA256 contract"
+            );
         }
         let grades = super::goldset::load_grades_bytes(&bytes, "pinned attested grade import")?;
         let grader_id = validate_single_grader_matrix(grader_config, goldset, &grades)?;
@@ -1853,7 +2275,11 @@ fn read_pinned_attested_imports(
         }
         entries.push(BoundAttestedImport { name, identity });
     }
-    Ok(PinnedAttestedImports { dir, directory_identity, entries })
+    Ok(PinnedAttestedImports {
+        dir,
+        directory_identity,
+        entries,
+    })
 }
 
 fn validate_batch_result_binding(
@@ -1868,13 +2294,23 @@ fn validate_batch_result_binding(
         || binding.imported_grades.len() != FOUR_GRADER_COUNT
         || binding.gate_eligible
     {
-        anyhow::bail!("four-grader batch result binding is not complete non-gate provenance for this run");
+        anyhow::bail!(
+            "four-grader batch result binding is not complete non-gate provenance for this run"
+        );
     }
     for (value, label) in [
         (&binding.result_receipt_sha256, "batch result receipt"),
-        (&binding.result_receipt_pubkey_sha256, "batch result public key"),
-        (&binding.state_evidence_sha256, "batch result state evidence"),
-    ] { validate_sha256(value, label)?; }
+        (
+            &binding.result_receipt_pubkey_sha256,
+            "batch result public key",
+        ),
+        (
+            &binding.state_evidence_sha256,
+            "batch result state evidence",
+        ),
+    ] {
+        validate_sha256(value, label)?;
+    }
     Ok(())
 }
 
@@ -1890,23 +2326,38 @@ fn four_grader_batch_plan_for(
     }
     let mut graders = grader_config.graders().iter().collect::<Vec<_>>();
     graders.sort_by(|left, right| left.grader_id.cmp(&right.grader_id));
-    let input_ids = inputs.inputs.iter().map(|input| input.grader_id.as_str()).collect::<Vec<_>>();
-    let grader_ids = graders.iter().map(|grader| grader.grader_id.as_str()).collect::<Vec<_>>();
+    let input_ids = inputs
+        .inputs
+        .iter()
+        .map(|input| input.grader_id.as_str())
+        .collect::<Vec<_>>();
+    let grader_ids = graders
+        .iter()
+        .map(|grader| grader.grader_id.as_str())
+        .collect::<Vec<_>>();
     if input_ids != grader_ids {
         anyhow::bail!("four-grader input digests do not exactly cover the validated roster");
     }
-    let items = graders.into_iter().zip(&inputs.inputs).map(|(grader, input)| {
-        Ok(FourGraderBatchItem {
-            grader_id: grader.grader_id.clone(),
-            provider: serde_json::to_string(&grader.provider)?.trim_matches('"').to_owned(),
-            model_id: grader.model_id.clone(),
-            family: serde_json::to_string(&grader.family)?.trim_matches('"').to_owned(),
-            grader_config_sha256: sha256_json(grader)?,
-            prompt_sha256: input.prompt_sha256.clone(),
-            input_sha256: input.input_sha256.clone(),
-            expected_record_count: EXPECTED_GOLDSET_QUERIES * 2,
+    let items = graders
+        .into_iter()
+        .zip(&inputs.inputs)
+        .map(|(grader, input)| {
+            Ok(FourGraderBatchItem {
+                grader_id: grader.grader_id.clone(),
+                provider: serde_json::to_string(&grader.provider)?
+                    .trim_matches('"')
+                    .to_owned(),
+                model_id: grader.model_id.clone(),
+                family: serde_json::to_string(&grader.family)?
+                    .trim_matches('"')
+                    .to_owned(),
+                grader_config_sha256: sha256_json(grader)?,
+                prompt_sha256: input.prompt_sha256.clone(),
+                input_sha256: input.input_sha256.clone(),
+                expected_record_count: EXPECTED_GOLDSET_QUERIES * 2,
+            })
         })
-    }).collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()?;
     let plan = FourGraderBatchPlan {
         schema_version: super::parity_batch_plan::FOUR_GRADER_BATCH_SCHEMA_VERSION,
         purpose: FOUR_GRADER_BATCH_PLAN_PURPOSE.into(),
@@ -1938,9 +2389,12 @@ struct ValidatedFourGraderBatchPlan {
 
 impl ValidatedFourGraderBatchPlan {
     fn revalidate(&self, run: &BoundParityRun) -> Result<()> {
-        self.input_artifact.revalidate(run, FOUR_GRADER_BATCH_INPUT_FILE)?;
-        self.plan_artifact.revalidate(run, FOUR_GRADER_BATCH_PLAN_FILE)?;
-        self.anchor_binding.revalidate(run, OPERATOR_ANCHOR_BINDING_FILE)?;
+        self.input_artifact
+            .revalidate(run, FOUR_GRADER_BATCH_INPUT_FILE)?;
+        self.plan_artifact
+            .revalidate(run, FOUR_GRADER_BATCH_PLAN_FILE)?;
+        self.anchor_binding
+            .revalidate(run, OPERATOR_ANCHOR_BINDING_FILE)?;
         run.revalidate_lock()
     }
 }
@@ -1952,25 +2406,36 @@ fn validate_four_grader_batch_plan_if_present(
 ) -> Result<Option<ValidatedFourGraderBatchPlan>> {
     let input = read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_INPUT_FILE, 64 * 1024)?;
     let plan = read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_PLAN_FILE, 64 * 1024)?;
-    if input.is_none() && plan.is_none() { return Ok(None); }
+    if input.is_none() && plan.is_none() {
+        return Ok(None);
+    }
     let (input, plan) = match (input, plan) {
         (Some(input), Some(plan)) => (input, plan),
-        _ => anyhow::bail!("incomplete four-grader batch plan; retry batch-plan with identical artifacts or use a fresh run"),
+        _ => anyhow::bail!(
+            "incomplete four-grader batch plan; retry batch-plan with identical artifacts or use a fresh run"
+        ),
     };
     let inputs = parse_four_grader_input_digests(&input.bytes)?;
     let stored: FourGraderBatchPlan = serde_json::from_slice(&plan.bytes)
         .map_err(|_| anyhow::anyhow!("parse immutable four-grader batch plan"))?;
     validate_plan_shape(&stored)?;
-    let anchor_binding = read_bound_immutable_run_child(run, OPERATOR_ANCHOR_BINDING_FILE, 64 * 1024)?
-        .context("four-grader batch plan has no complete operator anchor binding")?;
+    let anchor_binding =
+        read_bound_immutable_run_child(run, OPERATOR_ANCHOR_BINDING_FILE, 64 * 1024)?
+            .context("four-grader batch plan has no complete operator anchor binding")?;
     let anchor: OperatorAnchorRunBinding = serde_json::from_slice(&anchor_binding.bytes)
         .map_err(|_| anyhow::anyhow!("parse immutable operator anchor batch binding"))?;
     validate_operator_anchor_binding(&anchor, manifest)?;
     let expected = four_grader_batch_plan_for(
-        manifest, grader_config, &anchor, sha256_bytes(&anchor_binding.bytes), &inputs,
+        manifest,
+        grader_config,
+        &anchor,
+        sha256_bytes(&anchor_binding.bytes),
+        &inputs,
     )?;
     if stored != expected {
-        anyhow::bail!("immutable four-grader batch plan does not exactly match run provenance and input digests");
+        anyhow::bail!(
+            "immutable four-grader batch plan does not exactly match run provenance and input digests"
+        );
     }
     if plan.bytes != expected.canonical_bytes()? {
         anyhow::bail!("immutable four-grader batch plan is not the exact canonical plan bytes");
@@ -2000,7 +2465,12 @@ pub fn ingest_offline_grades(
     let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
     validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?;
-    validate_four_grader_batch_result_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    validate_four_grader_batch_result_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+    )?;
     let state_bytes = run.read_child(STATE_FILE, 1024 * 1024)?;
     let mut state = load_state_for_manifest(&run, &manifest)?;
     validate_state_imports(&run, &state, grader_config, goldset)?;
@@ -2036,10 +2506,15 @@ pub fn ingest_offline_grades(
     match imports.symlink_metadata(std::ffi::OsStr::new(&import_name)) {
         Ok(_) => {
             let stored = crate::skills::store::read_regular_file_bounded(
-                &imports, std::ffi::OsStr::new(&import_name), &import_display, MAX_GRADES_BYTES as usize,
+                &imports,
+                std::ffi::OsStr::new(&import_name),
+                &import_display,
+                MAX_GRADES_BYTES as usize,
             )?;
             if stored != grade_bytes {
-                anyhow::bail!("existing imported grade artifact does not match its SHA256 filename");
+                anyhow::bail!(
+                    "existing imported grade artifact does not match its SHA256 filename"
+                );
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -2047,20 +2522,31 @@ pub fn ingest_offline_grades(
             // creates the immutable import exactly once through `imports`.
             run.revalidate_lock()?;
             crate::skills::store::atomic_write_private_child_create_new(
-                &imports, std::ffi::OsStr::new(&import_name), &import_display, grade_bytes,
+                &imports,
+                std::ffi::OsStr::new(&import_name),
+                &import_display,
+                grade_bytes,
             )?;
             let stored = crate::skills::store::read_regular_file_bounded(
-                &imports, std::ffi::OsStr::new(&import_name), &import_display, MAX_GRADES_BYTES as usize,
+                &imports,
+                std::ffi::OsStr::new(&import_name),
+                &import_display,
+                MAX_GRADES_BYTES as usize,
             )?;
             if stored != grade_bytes {
                 anyhow::bail!("new imported grade artifact failed exact byte verification");
             }
             run.revalidate_lock()?;
         }
-        Err(error) => return Err(error).with_context(|| format!("inspect staged import {}", import_display.display())),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect staged import {}", import_display.display()));
+        }
     }
     state.imported_grades.push(record);
-    state.imported_grades.sort_by(|a, b| a.grader_id.cmp(&b.grader_id));
+    state
+        .imported_grades
+        .sort_by(|a, b| a.grader_id.cmp(&b.grader_id));
     state.report_sha256 = None;
     run.replace_child_if_matches(STATE_FILE, &state_bytes, &serde_json::to_vec(&state)?)?;
     Ok(state)
@@ -2078,10 +2564,21 @@ pub fn build_report(
     expected_receipt_pubkey_b64: &str,
 ) -> Result<ParityHarnessReport> {
     let run_dir = BoundParityRun::open_or_create(run_dir)?;
-    let manifest = plan_run_locked(&run_dir, grader_config, config_bytes, goldset, goldset_bytes)?;
+    let manifest = plan_run_locked(
+        &run_dir,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+    )?;
     validate_operator_anchor_artifacts_if_present(&run_dir, &manifest, grader_config, goldset)?;
     validate_four_grader_batch_plan_if_present(&run_dir, &manifest, grader_config)?;
-    validate_four_grader_batch_result_artifacts_if_present(&run_dir, &manifest, grader_config, goldset)?;
+    validate_four_grader_batch_result_artifacts_if_present(
+        &run_dir,
+        &manifest,
+        grader_config,
+        goldset,
+    )?;
     reject_legacy_report_mutation_after_attested_gate(&run_dir)?;
     let state_bytes = run_dir.read_child(STATE_FILE, 1024 * 1024)?;
     let mut state = load_state_for_manifest(&run_dir, &manifest)?;
@@ -2093,7 +2590,8 @@ pub fn build_report(
     if state.imported_grades.len() != grader_config.graders().len() {
         anyhow::bail!(
             "report requires one exact offline grade artifact for every validated grader ({} imported, {} configured)",
-            state.imported_grades.len(), grader_config.graders().len()
+            state.imported_grades.len(),
+            grader_config.graders().len()
         );
     }
     verify_external_import_receipt(
@@ -2107,9 +2605,17 @@ pub fn build_report(
     for import in &state.imported_grades {
         let imports = run_dir.open_imports()?;
         let name = format!("{}.jsonl", import.source_sha256);
-        let bytes = crate::skills::store::read_regular_file_bounded(&imports, std::ffi::OsStr::new(&name), &run_dir.child_display(IMPORTS_DIR).join(&name), MAX_GRADES_BYTES as usize)?;
+        let bytes = crate::skills::store::read_regular_file_bounded(
+            &imports,
+            std::ffi::OsStr::new(&name),
+            &run_dir.child_display(IMPORTS_DIR).join(&name),
+            MAX_GRADES_BYTES as usize,
+        )?;
         if sha256_bytes(&bytes) != import.source_sha256 {
-            anyhow::bail!("imported grade artifact for {:?} failed SHA256 verification", import.grader_id);
+            anyhow::bail!(
+                "imported grade artifact for {:?} failed SHA256 verification",
+                import.grader_id
+            );
         }
         let grades = super::goldset::load_grades_bytes(&bytes, "stored offline grade import")?;
         let grader_id = validate_single_grader_matrix(grader_config, goldset, &grades)?;
@@ -2198,11 +2704,13 @@ fn verify_bound_inputs(
     goldset: &[GoldsetEntry],
     goldset_bytes: &[u8],
 ) -> Result<()> {
-    let parsed_config = super::goldset::load_grader_config_bytes(config_bytes, "harness config bytes")?;
+    let parsed_config =
+        super::goldset::load_grader_config_bytes(config_bytes, "harness config bytes")?;
     if &parsed_config != grader_config {
         anyhow::bail!("validated grader config does not match the SHA256-bound config bytes");
     }
-    let parsed_goldset = super::goldset::load_goldset_bytes(goldset_bytes, "harness goldset bytes")?;
+    let parsed_goldset =
+        super::goldset::load_goldset_bytes(goldset_bytes, "harness goldset bytes")?;
     if parsed_goldset != goldset {
         anyhow::bail!("goldset does not match the SHA256-bound goldset bytes");
     }
@@ -2221,7 +2729,10 @@ fn validate_manifest(manifest: &ParityRunManifest) -> Result<()> {
     }
     let mut ids = BTreeSet::new();
     for grader in &manifest.graders {
-        if grader.grader_id.is_empty() || grader.grader_id.len() > 64 || !ids.insert(&grader.grader_id) {
+        if grader.grader_id.is_empty()
+            || grader.grader_id.len() > 64
+            || !ids.insert(&grader.grader_id)
+        {
             anyhow::bail!("manifest has invalid or duplicate grader identity");
         }
     }
@@ -2239,25 +2750,37 @@ fn verify_external_import_receipt(
         || receipt.body.manifest_sha256 != sha256_json(manifest)?
         || receipt.body.imports != imports
     {
-        anyhow::bail!("signed parity import receipt does not exactly bind this complete run import set");
+        anyhow::bail!(
+            "signed parity import receipt does not exactly bind this complete run import set"
+        );
     }
     Ok(())
 }
 
-fn load_state_for_manifest(run: &BoundParityRun, manifest: &ParityRunManifest) -> Result<ParityRunState> {
+fn load_state_for_manifest(
+    run: &BoundParityRun,
+    manifest: &ParityRunManifest,
+) -> Result<ParityRunState> {
     parse_state_for_manifest(&run.read_child(STATE_FILE, 1024 * 1024)?, manifest)
 }
 
 fn parse_state_for_manifest(bytes: &[u8], manifest: &ParityRunManifest) -> Result<ParityRunState> {
-    let state: ParityRunState = serde_json::from_slice(bytes).context("parse bound parity state")?;
-    if state.schema_version != PARITY_HARNESS_SCHEMA_VERSION || state.manifest_sha256 != sha256_json(manifest)? {
+    let state: ParityRunState =
+        serde_json::from_slice(bytes).context("parse bound parity state")?;
+    if state.schema_version != PARITY_HARNESS_SCHEMA_VERSION
+        || state.manifest_sha256 != sha256_json(manifest)?
+    {
         anyhow::bail!("state does not bind the current run manifest");
     }
     if state.imported_grades.len() > MAX_HARNESS_GRADE_FILES {
         anyhow::bail!("state has too many imported grade artifacts");
     }
     let mut graders = BTreeSet::new();
-    let roster: BTreeSet<&str> = manifest.graders.iter().map(|grader| grader.grader_id.as_str()).collect();
+    let roster: BTreeSet<&str> = manifest
+        .graders
+        .iter()
+        .map(|grader| grader.grader_id.as_str())
+        .collect();
     let mut prior: Option<&str> = None;
     for import in &state.imported_grades {
         validate_sha256(&import.source_sha256, "imported grade")?;
@@ -2292,15 +2815,26 @@ fn validate_state_imports(
     grader_config: &ValidatedGraderConfigFile,
     goldset: &[GoldsetEntry],
 ) -> Result<()> {
-    if state.imported_grades.is_empty() { return Ok(()); }
+    if state.imported_grades.is_empty() {
+        return Ok(());
+    }
     let imports = run.open_imports()?;
     for import in &state.imported_grades {
         let name = format!("{}.jsonl", import.source_sha256);
-        let bytes = crate::skills::store::read_regular_file_bounded(&imports, std::ffi::OsStr::new(&name), &run.child_display(IMPORTS_DIR).join(&name), MAX_GRADES_BYTES as usize)?;
+        let bytes = crate::skills::store::read_regular_file_bounded(
+            &imports,
+            std::ffi::OsStr::new(&name),
+            &run.child_display(IMPORTS_DIR).join(&name),
+            MAX_GRADES_BYTES as usize,
+        )?;
         if sha256_bytes(&bytes) != import.source_sha256 {
-            anyhow::bail!("stored import {:?} failed SHA256 verification", import.grader_id);
+            anyhow::bail!(
+                "stored import {:?} failed SHA256 verification",
+                import.grader_id
+            );
         }
-        let grades = super::goldset::load_grades_bytes(&bytes, "stored staged parity grade import")?;
+        let grades =
+            super::goldset::load_grades_bytes(&bytes, "stored staged parity grade import")?;
         let grader_id = validate_single_grader_matrix(grader_config, goldset, &grades)?;
         if grader_id != import.grader_id || grades.len() != import.record_count {
             anyhow::bail!("stored import metadata does not match its validated grade matrix");
@@ -2314,22 +2848,41 @@ fn validate_single_grader_matrix(
     goldset: &[GoldsetEntry],
     grades: &[GraderGrade],
 ) -> Result<String> {
-    let expected_records = goldset.len().checked_mul(2).context("grade matrix size overflow")?;
+    let expected_records = goldset
+        .len()
+        .checked_mul(2)
+        .context("grade matrix size overflow")?;
     if grades.len() != expected_records {
-        anyhow::bail!("each offline grade artifact must contain exactly {expected_records} records");
+        anyhow::bail!(
+            "each offline grade artifact must contain exactly {expected_records} records"
+        );
     }
-    let grader_id = grades.first().context("offline grade artifact is empty")?.grader_id.clone();
-    if !grader_config.graders().iter().any(|grader| grader.grader_id == grader_id) {
+    let grader_id = grades
+        .first()
+        .context("offline grade artifact is empty")?
+        .grader_id
+        .clone();
+    if !grader_config
+        .graders()
+        .iter()
+        .any(|grader| grader.grader_id == grader_id)
+    {
         anyhow::bail!("offline grade artifact names a grader absent from the validated roster");
     }
-    let goldset_ids: BTreeSet<&str> = goldset.iter().map(|entry| entry.query_id.as_str()).collect();
+    let goldset_ids: BTreeSet<&str> = goldset
+        .iter()
+        .map(|entry| entry.query_id.as_str())
+        .collect();
     let mut pairs = BTreeSet::new();
     for grade in grades {
         grade.validate()?;
         if grade.grader_id != grader_id || !goldset_ids.contains(grade.query_id.as_str()) {
             anyhow::bail!("offline grade artifact is not a single exact roster/goldset matrix");
         }
-        let system = match grade.system { GradedSystem::Neoth => "neoth", GradedSystem::Reference => "reference" };
+        let system = match grade.system {
+            GradedSystem::Neoth => "neoth",
+            GradedSystem::Reference => "reference",
+        };
         if !pairs.insert((grade.query_id.as_str(), system)) {
             anyhow::bail!("offline grade artifact has duplicate query/system observations");
         }
@@ -2344,20 +2897,38 @@ fn cluster_family_bias(
     grader_config: &ValidatedGraderConfigFile,
     grades: &[GraderGrade],
 ) -> Result<Vec<FamilyBiasCluster>> {
-    let family_by_grader: BTreeMap<&str, String> = grader_config.graders().iter().map(|grader| {
-        (grader.grader_id.as_str(), serde_json::to_string(&grader.family)
-            .expect("family serialization is infallible").trim_matches('"').to_owned())
-    }).collect();
+    let family_by_grader: BTreeMap<&str, String> = grader_config
+        .graders()
+        .iter()
+        .map(|grader| {
+            (
+                grader.grader_id.as_str(),
+                serde_json::to_string(&grader.family)
+                    .expect("family serialization is infallible")
+                    .trim_matches('"')
+                    .to_owned(),
+            )
+        })
+        .collect();
     let mut totals: BTreeMap<(String, String, String), (u64, u64)> = BTreeMap::new();
     let mut family_totals: BTreeMap<(String, String, String), (u64, u64)> = BTreeMap::new();
     for grade in grades {
-        let family = family_by_grader.get(grade.grader_id.as_str())
-            .context("grade references a non-validated grader during clustering")?.clone();
-        let system = match grade.system { GradedSystem::Neoth => "neoth", GradedSystem::Reference => "reference" };
+        let family = family_by_grader
+            .get(grade.grader_id.as_str())
+            .context("grade references a non-validated grader during clustering")?
+            .clone();
+        let system = match grade.system {
+            GradedSystem::Neoth => "neoth",
+            GradedSystem::Reference => "reference",
+        };
         for dimension in Dimension::ALL {
             let key = (system.to_owned(), dimension.as_str().to_owned());
             accumulate_total(&mut totals, key.clone(), grade.score(dimension))?;
-            accumulate_family(&mut family_totals, (family.clone(), key.0, key.1), grade.score(dimension))?;
+            accumulate_family(
+                &mut family_totals,
+                (family.clone(), key.0, key.1),
+                grade.score(dimension),
+            )?;
         }
     }
     let mut family_grader_counts: BTreeMap<String, usize> = BTreeMap::new();
@@ -2370,22 +2941,30 @@ fn cluster_family_bias(
         for system in ["neoth", "reference"] {
             for dimension in Dimension::ALL {
                 let key = (system.to_owned(), dimension.as_str().to_owned());
-                let (all_sum, all_count) = totals.get(&key).context("missing aggregate cluster bucket")?;
-                let (family_sum, family_count) = family_totals.get(&(family.clone(), key.0.clone(), key.1.clone()))
+                let (all_sum, all_count) = totals
+                    .get(&key)
+                    .context("missing aggregate cluster bucket")?;
+                let (family_sum, family_count) = family_totals
+                    .get(&(family.clone(), key.0.clone(), key.1.clone()))
                     .context("missing family cluster bucket")?;
                 let all_mean = *all_sum as f64 / *all_count as f64;
                 let family_mean = *family_sum as f64 / *family_count as f64;
                 dimensions.push(FamilyBiasDimension {
                     system: system.to_owned(),
                     dimension: dimension.as_str().to_owned(),
-                    observation_count: usize::try_from(*family_count).context("family observation count overflow")?,
+                    observation_count: usize::try_from(*family_count)
+                        .context("family observation count overflow")?,
                     family_mean,
                     all_grader_mean: all_mean,
                     signed_bias: family_mean - all_mean,
                 });
             }
         }
-        clusters.push(FamilyBiasCluster { family, grader_count, dimensions });
+        clusters.push(FamilyBiasCluster {
+            family,
+            grader_count,
+            dimensions,
+        });
     }
     Ok(clusters)
 }
@@ -2396,7 +2975,10 @@ fn accumulate_total(
     score: u8,
 ) -> Result<()> {
     let entry = target.entry((String::new(), key.0, key.1)).or_default();
-    entry.0 = entry.0.checked_add(u64::from(score)).context("score sum overflow")?;
+    entry.0 = entry
+        .0
+        .checked_add(u64::from(score))
+        .context("score sum overflow")?;
     entry.1 = entry.1.checked_add(1).context("score count overflow")?;
     Ok(())
 }
@@ -2407,28 +2989,41 @@ fn accumulate_family(
     score: u8,
 ) -> Result<()> {
     let entry = target.entry(key).or_default();
-    entry.0 = entry.0.checked_add(u64::from(score)).context("score sum overflow")?;
+    entry.0 = entry
+        .0
+        .checked_add(u64::from(score))
+        .context("score sum overflow")?;
     entry.1 = entry.1.checked_add(1).context("score count overflow")?;
     Ok(())
 }
 
 fn validate_sha256(value: &str, label: &str) -> Result<()> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
         anyhow::bail!("{label} SHA256 must be 64 lowercase hexadecimal characters");
     }
     Ok(())
 }
 
-fn sha256_bytes(bytes: &[u8]) -> String { hex::encode(Sha256::digest(bytes)) }
+fn sha256_bytes(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
 
 fn sha256_json<T: Serialize>(value: &T) -> Result<String> {
-    Ok(sha256_bytes(&serde_json::to_vec(value).context("serialize deterministic harness data")?))
+    Ok(sha256_bytes(
+        &serde_json::to_vec(value).context("serialize deterministic harness data")?,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::recall::goldset::{GraderConfig, GraderConfigFile, GraderFamily, GraderProvider, GoldsetCategory};
+    use crate::recall::goldset::{
+        GoldsetCategory, GraderConfig, GraderConfigFile, GraderFamily, GraderProvider,
+    };
     use crate::recall::parity_import_receipt::{
         PARITY_IMPORT_RECEIPT_PURPOSE, PARITY_IMPORT_RECEIPT_SCHEMA_VERSION,
         ParityImportReceiptBody, SignedParityImportReceipt,
@@ -2447,21 +3042,76 @@ mod tests {
     };
 
     fn roster() -> ValidatedGraderConfigFile {
-        GraderConfigFile { schema_version: 1, graders: vec![
-            GraderConfig { grader_id: "shared".into(), provider: GraderProvider::Openai, model_id: "model-a".into(), family: GraderFamily::AnthropicOpenaiGoogle },
-            GraderConfig { grader_id: "external".into(), provider: GraderProvider::Mistral, model_id: "model-b".into(), family: GraderFamily::IndependentExternal },
-        ] }.into_validated().unwrap()
+        GraderConfigFile {
+            schema_version: 1,
+            graders: vec![
+                GraderConfig {
+                    grader_id: "shared".into(),
+                    provider: GraderProvider::Openai,
+                    model_id: "model-a".into(),
+                    family: GraderFamily::AnthropicOpenaiGoogle,
+                },
+                GraderConfig {
+                    grader_id: "external".into(),
+                    provider: GraderProvider::Mistral,
+                    model_id: "model-b".into(),
+                    family: GraderFamily::IndependentExternal,
+                },
+            ],
+        }
+        .into_validated()
+        .unwrap()
     }
 
     fn goldset() -> Vec<GoldsetEntry> {
-        (0..EXPECTED_GOLDSET_QUERIES).map(|i| GoldsetEntry { query_id: format!("q-{i}"), query_text: "q".into(), category: GoldsetCategory::Recall, expected_sources: vec![], expected_response: String::new() }).collect()
+        (0..EXPECTED_GOLDSET_QUERIES)
+            .map(|i| GoldsetEntry {
+                query_id: format!("q-{i}"),
+                query_text: "q".into(),
+                category: GoldsetCategory::Recall,
+                expected_sources: vec![],
+                expected_response: String::new(),
+            })
+            .collect()
     }
 
     fn grades(grader_id: &str) -> Vec<u8> {
-        goldset().iter().flat_map(|entry| [GraderGrade { query_id: entry.query_id.clone(), grader_id: grader_id.into(), system: GradedSystem::Neoth, factual: 5, completeness: 5, on_tone: 5, usefulness: 5, brevity: 5 }, GraderGrade { query_id: entry.query_id.clone(), grader_id: grader_id.into(), system: GradedSystem::Reference, factual: 5, completeness: 5, on_tone: 5, usefulness: 5, brevity: 5 }]).map(|grade| serde_json::to_string(&grade).unwrap()).collect::<Vec<_>>().join("\n").into_bytes()
+        goldset()
+            .iter()
+            .flat_map(|entry| {
+                [
+                    GraderGrade {
+                        query_id: entry.query_id.clone(),
+                        grader_id: grader_id.into(),
+                        system: GradedSystem::Neoth,
+                        factual: 5,
+                        completeness: 5,
+                        on_tone: 5,
+                        usefulness: 5,
+                        brevity: 5,
+                    },
+                    GraderGrade {
+                        query_id: entry.query_id.clone(),
+                        grader_id: grader_id.into(),
+                        system: GradedSystem::Reference,
+                        factual: 5,
+                        completeness: 5,
+                        on_tone: 5,
+                        usefulness: 5,
+                        brevity: 5,
+                    },
+                ]
+            })
+            .map(|grade| serde_json::to_string(&grade).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes()
     }
 
-    fn signed_receipt(manifest: &ParityRunManifest, imports: Vec<ImportedGradeFile>) -> (SignedParityImportReceipt, String) {
+    fn signed_receipt(
+        manifest: &ParityRunManifest,
+        imports: Vec<ImportedGradeFile>,
+    ) -> (SignedParityImportReceipt, String) {
         let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
         let mut receipt = SignedParityImportReceipt {
             body: ParityImportReceiptBody {
@@ -2473,13 +3123,15 @@ mod tests {
             },
             signature_b64: String::new(),
         };
-        receipt.signature_b64 = crate::wal::signing::sign_b64(&key, &receipt.canonical_bytes().unwrap());
+        receipt.signature_b64 =
+            crate::wal::signing::sign_b64(&key, &receipt.canonical_bytes().unwrap());
         (receipt, crate::wal::signing::pubkey_b64(&key))
     }
 
     fn resign(receipt: &mut SignedParityImportReceipt) {
         let key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
-        receipt.signature_b64 = crate::wal::signing::sign_b64(&key, &receipt.canonical_bytes().unwrap());
+        receipt.signature_b64 =
+            crate::wal::signing::sign_b64(&key, &receipt.canonical_bytes().unwrap());
     }
 
     fn candidate_evidence_fixture() -> (tempfile::TempDir, ValidatedCandidateEvidence, String) {
@@ -2525,9 +3177,18 @@ mod tests {
             },
             signature_b64: String::new(),
         };
-        receipt.signature_b64 = crate::wal::signing::sign_b64(&signer, &receipt.canonical_bytes().unwrap());
-        std::fs::write(directory.path().join("candidate-evidence-manifest.json"), &manifest_bytes).unwrap();
-        std::fs::write(directory.path().join("candidate-evidence-receipt.json"), serde_json::to_vec(&receipt).unwrap()).unwrap();
+        receipt.signature_b64 =
+            crate::wal::signing::sign_b64(&signer, &receipt.canonical_bytes().unwrap());
+        std::fs::write(
+            directory.path().join("candidate-evidence-manifest.json"),
+            &manifest_bytes,
+        )
+        .unwrap();
+        std::fs::write(
+            directory.path().join("candidate-evidence-receipt.json"),
+            serde_json::to_vec(&receipt).unwrap(),
+        )
+        .unwrap();
         std::fs::write(directory.path().join("source.evidence"), source).unwrap();
         std::fs::write(directory.path().join("candidates.jsonl"), &candidate_bytes).unwrap();
         let pubkey = crate::wal::signing::pubkey_b64(&signer);
@@ -2537,21 +3198,25 @@ mod tests {
 
     fn operator_anchor_inputs(evidence: &ValidatedCandidateEvidence) -> (Vec<u8>, Vec<u8>) {
         let anchor_bytes = (0..20)
-            .flat_map(|index| [GradedSystem::Neoth, GradedSystem::Reference].map(|system| GraderGrade {
-                query_id: format!("q-{index}"),
-                grader_id: OPERATOR_ANCHOR_GRADER_ID.into(),
-                system,
-                factual: 3,
-                completeness: 3,
-                on_tone: 3,
-                usefulness: 3,
-                brevity: 3,
-            }))
+            .flat_map(|index| {
+                [GradedSystem::Neoth, GradedSystem::Reference].map(|system| GraderGrade {
+                    query_id: format!("q-{index}"),
+                    grader_id: OPERATOR_ANCHOR_GRADER_ID.into(),
+                    system,
+                    factual: 3,
+                    completeness: 3,
+                    on_tone: 3,
+                    usefulness: 3,
+                    brevity: 3,
+                })
+            })
             .map(|grade| serde_json::to_string(&grade).unwrap())
             .collect::<Vec<_>>()
             .join("\n")
             .into_bytes();
-        let mut queries = (0..20).map(|index| format!("q-{index}")).collect::<Vec<_>>();
+        let mut queries = (0..20)
+            .map(|index| format!("q-{index}"))
+            .collect::<Vec<_>>();
         queries.sort();
         let link = OperatorAnchorEvidenceLink {
             schema_version: OPERATOR_ANCHOR_EVIDENCE_LINK_SCHEMA_VERSION,
@@ -2559,10 +3224,14 @@ mod tests {
             candidate_manifest_sha256: evidence.manifest_sha256().to_owned(),
             candidate_receipt_sha256: evidence.receipt_sha256().to_owned(),
             operator_anchor_sha256: sha256_bytes(&anchor_bytes),
-            links: queries.into_iter().enumerate().map(|(index, query_id)| OperatorAnchorCandidateLink {
-                query_id,
-                candidate_id: format!("cand-{index:03}"),
-            }).collect(),
+            links: queries
+                .into_iter()
+                .enumerate()
+                .map(|(index, query_id)| OperatorAnchorCandidateLink {
+                    query_id,
+                    candidate_id: format!("cand-{index:03}"),
+                })
+                .collect(),
         };
         (anchor_bytes, serde_json::to_vec(&link).unwrap())
     }
@@ -2577,22 +3246,77 @@ mod tests {
     #[test]
     fn plan_ingest_report_is_idempotent_and_tamper_rejecting() {
         let dir = tempfile::tempdir().unwrap();
-        let config = roster(); let goldset = goldset();
-        let config_bytes = serde_json::to_vec(&GraderConfigFile { schema_version: 1, graders: config.graders().to_vec() }).unwrap();
-        let goldset_bytes = goldset.iter().map(|entry| serde_json::to_string(entry).unwrap()).collect::<Vec<_>>().join("\n").into_bytes();
-        let manifest = plan_run(dir.path(), &config, config_bytes, &goldset, goldset_bytes).unwrap();
-        let first = ingest_offline_grades(dir.path(), &config, config_bytes, &goldset, goldset_bytes, &grades("shared")).unwrap();
-        let retry = ingest_offline_grades(dir.path(), &config, config_bytes, &goldset, goldset_bytes, &grades("shared")).unwrap();
+        let config = roster();
+        let goldset = goldset();
+        let config_bytes = serde_json::to_vec(&GraderConfigFile {
+            schema_version: 1,
+            graders: config.graders().to_vec(),
+        })
+        .unwrap();
+        let goldset_bytes = goldset
+            .iter()
+            .map(|entry| serde_json::to_string(entry).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes();
+        let manifest =
+            plan_run(dir.path(), &config, config_bytes, &goldset, goldset_bytes).unwrap();
+        let first = ingest_offline_grades(
+            dir.path(),
+            &config,
+            config_bytes,
+            &goldset,
+            goldset_bytes,
+            &grades("shared"),
+        )
+        .unwrap();
+        let retry = ingest_offline_grades(
+            dir.path(),
+            &config,
+            config_bytes,
+            &goldset,
+            goldset_bytes,
+            &grades("shared"),
+        )
+        .unwrap();
         assert_eq!(first, retry);
-        let complete = ingest_offline_grades(dir.path(), &config, config_bytes, &goldset, goldset_bytes, &grades("external")).unwrap();
+        let complete = ingest_offline_grades(
+            dir.path(),
+            &config,
+            config_bytes,
+            &goldset,
+            goldset_bytes,
+            &grades("external"),
+        )
+        .unwrap();
         let (receipt, pubkey) = signed_receipt(&manifest, complete.imported_grades.clone());
-        let report = build_report(dir.path(), &config, config_bytes, &goldset, goldset_bytes, &receipt, &pubkey).unwrap();
-        let retry_report = build_report(dir.path(), &config, config_bytes, &goldset, goldset_bytes, &receipt, &pubkey).unwrap();
+        let report = build_report(
+            dir.path(),
+            &config,
+            config_bytes,
+            &goldset,
+            goldset_bytes,
+            &receipt,
+            &pubkey,
+        )
+        .unwrap();
+        let retry_report = build_report(
+            dir.path(),
+            &config,
+            config_bytes,
+            &goldset,
+            goldset_bytes,
+            &receipt,
+            &pubkey,
+        )
+        .unwrap();
         assert_eq!(report, retry_report);
-        let persisted: ParityRunState = serde_json::from_slice(
-            &std::fs::read(dir.path().join(STATE_FILE)).unwrap(),
-        ).unwrap();
-        assert_eq!(report.state_evidence_sha256, sha256_json(&state_evidence(&persisted)).unwrap());
+        let persisted: ParityRunState =
+            serde_json::from_slice(&std::fs::read(dir.path().join(STATE_FILE)).unwrap()).unwrap();
+        assert_eq!(
+            report.state_evidence_sha256,
+            sha256_json(&state_evidence(&persisted)).unwrap()
+        );
         assert!(report.derived_gate_passed);
         assert_eq!(report.family_bias_clusters.len(), 2);
         assert!(report.derived_gate_passed);
@@ -2604,17 +3328,40 @@ mod tests {
         let (_candidate_dir, evidence, _pubkey) = candidate_evidence_fixture();
         let config = roster();
         let entries = goldset();
-        let config_bytes = serde_json::to_vec(&GraderConfigFile { schema_version: 1, graders: config.graders().to_vec() }).unwrap();
-        let goldset_bytes = entries.iter().map(|entry| serde_json::to_string(entry).unwrap()).collect::<Vec<_>>().join("\n").into_bytes();
+        let config_bytes = serde_json::to_vec(&GraderConfigFile {
+            schema_version: 1,
+            graders: config.graders().to_vec(),
+        })
+        .unwrap();
+        let goldset_bytes = entries
+            .iter()
+            .map(|entry| serde_json::to_string(entry).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes();
         let (anchor_bytes, link_bytes) = operator_anchor_inputs(&evidence);
         let first = ingest_operator_anchor_evidence(
-            run.path(), &config, &config_bytes, &entries, &goldset_bytes,
-            &evidence, &anchor_bytes, &link_bytes,
-        ).unwrap();
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &evidence,
+            &anchor_bytes,
+            &link_bytes,
+        )
+        .unwrap();
         let retry = ingest_operator_anchor_evidence(
-            run.path(), &config, &config_bytes, &entries, &goldset_bytes,
-            &evidence, &anchor_bytes, &link_bytes,
-        ).unwrap();
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &evidence,
+            &anchor_bytes,
+            &link_bytes,
+        )
+        .unwrap();
         assert_eq!(first, retry);
         assert!(first.operator_labels_complete);
         assert!(!first.gate_eligible);
@@ -2627,63 +3374,143 @@ mod tests {
             OPERATOR_ANCHOR_LINK_FILE,
             OPERATOR_ANCHOR_BINDING_FILE,
         ] {
-            assert!(run.path().join(name).is_file(), "missing immutable anchor artifact {name}");
+            assert!(
+                run.path().join(name).is_file(),
+                "missing immutable anchor artifact {name}"
+            );
         }
         plan_run(run.path(), &config, &config_bytes, &entries, &goldset_bytes).unwrap();
         let mut altered_anchor = anchor_bytes.clone();
         altered_anchor.push(b'\n');
-        assert!(ingest_operator_anchor_evidence(
-            run.path(), &config, &config_bytes, &entries, &goldset_bytes,
-            &evidence, &altered_anchor, &link_bytes,
-        ).is_err());
+        assert!(
+            ingest_operator_anchor_evidence(
+                run.path(),
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                &evidence,
+                &altered_anchor,
+                &link_bytes,
+            )
+            .is_err()
+        );
 
         let partial_run = tempfile::tempdir().unwrap();
-        plan_run(partial_run.path(), &config, &config_bytes, &entries, &goldset_bytes).unwrap();
+        plan_run(
+            partial_run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+        )
+        .unwrap();
         let bound = BoundParityRun::open_or_create(partial_run.path()).unwrap();
         create_immutable_run_child(
             &bound,
             CANDIDATE_EVIDENCE_MANIFEST_FILE,
             evidence.manifest_bytes(),
             1024 * 1024,
-        ).unwrap();
+        )
+        .unwrap();
         drop(bound);
-        assert!(plan_run(partial_run.path(), &config, &config_bytes, &entries, &goldset_bytes).is_err());
-        assert!(ingest_operator_anchor_evidence(
-            partial_run.path(), &config, &config_bytes, &entries, &goldset_bytes,
-            &evidence, &anchor_bytes, &link_bytes,
-        ).is_ok());
+        assert!(
+            plan_run(
+                partial_run.path(),
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes
+            )
+            .is_err()
+        );
+        assert!(
+            ingest_operator_anchor_evidence(
+                partial_run.path(),
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                &evidence,
+                &anchor_bytes,
+                &link_bytes,
+            )
+            .is_ok()
+        );
 
         let receipt_path = run.path().join(CANDIDATE_EVIDENCE_RECEIPT_FILE);
         let mut tampered_receipt: SignedCandidateEvidenceReceipt =
             serde_json::from_slice(&std::fs::read(&receipt_path).unwrap()).unwrap();
         tampered_receipt.signature_b64 = "A".repeat(88);
-        std::fs::write(&receipt_path, serde_json::to_vec(&tampered_receipt).unwrap()).unwrap();
+        std::fs::write(
+            &receipt_path,
+            serde_json::to_vec(&tampered_receipt).unwrap(),
+        )
+        .unwrap();
         assert!(plan_run(run.path(), &config, &config_bytes, &entries, &goldset_bytes).is_err());
     }
 
     #[test]
     fn report_rejects_validly_resigned_receipts_for_another_run_or_import_set() {
         let dir = tempfile::tempdir().unwrap();
-        let config = roster(); let goldset = goldset();
-        let config_bytes = serde_json::to_vec(&GraderConfigFile { schema_version: 1, graders: config.graders().to_vec() }).unwrap();
-        let goldset_bytes = goldset.iter().map(|entry| serde_json::to_string(entry).unwrap()).collect::<Vec<_>>().join("\n").into_bytes();
-        let manifest = plan_run(dir.path(), &config, &config_bytes, &goldset, &goldset_bytes).unwrap();
-        ingest_offline_grades(dir.path(), &config, &config_bytes, &goldset, &goldset_bytes, &grades("shared")).unwrap();
-        let complete = ingest_offline_grades(dir.path(), &config, &config_bytes, &goldset, &goldset_bytes, &grades("external")).unwrap();
+        let config = roster();
+        let goldset = goldset();
+        let config_bytes = serde_json::to_vec(&GraderConfigFile {
+            schema_version: 1,
+            graders: config.graders().to_vec(),
+        })
+        .unwrap();
+        let goldset_bytes = goldset
+            .iter()
+            .map(|entry| serde_json::to_string(entry).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes();
+        let manifest =
+            plan_run(dir.path(), &config, &config_bytes, &goldset, &goldset_bytes).unwrap();
+        ingest_offline_grades(
+            dir.path(),
+            &config,
+            &config_bytes,
+            &goldset,
+            &goldset_bytes,
+            &grades("shared"),
+        )
+        .unwrap();
+        let complete = ingest_offline_grades(
+            dir.path(),
+            &config,
+            &config_bytes,
+            &goldset,
+            &goldset_bytes,
+            &grades("external"),
+        )
+        .unwrap();
         let (receipt, pubkey) = signed_receipt(&manifest, complete.imported_grades);
         let mutations: [fn(&mut SignedParityImportReceipt); 4] = [
             |receipt: &mut SignedParityImportReceipt| receipt.body.run_id = "a".repeat(32),
             |receipt: &mut SignedParityImportReceipt| receipt.body.manifest_sha256 = "b".repeat(64),
-            |receipt: &mut SignedParityImportReceipt| { receipt.body.imports.pop(); },
+            |receipt: &mut SignedParityImportReceipt| {
+                receipt.body.imports.pop();
+            },
             |receipt: &mut SignedParityImportReceipt| receipt.body.imports.swap(0, 1),
         ];
         for mutate in mutations {
             let mut altered = receipt.clone();
             mutate(&mut altered);
             resign(&mut altered);
-            assert!(build_report(
-                dir.path(), &config, &config_bytes, &goldset, &goldset_bytes, &altered, &pubkey,
-            ).is_err());
+            assert!(
+                build_report(
+                    dir.path(),
+                    &config,
+                    &config_bytes,
+                    &goldset,
+                    &goldset_bytes,
+                    &altered,
+                    &pubkey,
+                )
+                .is_err()
+            );
         }
     }
 
@@ -2693,9 +3520,19 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let dir = tempfile::tempdir().unwrap();
-        let config = roster(); let goldset = goldset();
-        let config_bytes = serde_json::to_vec(&GraderConfigFile { schema_version: 1, graders: config.graders().to_vec() }).unwrap();
-        let goldset_bytes = goldset.iter().map(|entry| serde_json::to_string(entry).unwrap()).collect::<Vec<_>>().join("\n").into_bytes();
+        let config = roster();
+        let goldset = goldset();
+        let config_bytes = serde_json::to_vec(&GraderConfigFile {
+            schema_version: 1,
+            graders: config.graders().to_vec(),
+        })
+        .unwrap();
+        let goldset_bytes = goldset
+            .iter()
+            .map(|entry| serde_json::to_string(entry).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes();
         plan_run(dir.path(), &config, &config_bytes, &goldset, &goldset_bytes).unwrap();
         let bound = BoundParityRun::open_or_create(dir.path()).unwrap();
         let lock = dir.path().join(LOCK_FILE);
@@ -2706,9 +3543,17 @@ mod tests {
 
         std::fs::remove_file(lock).unwrap();
         symlink(dir.path(), dir.path().join(IMPORTS_DIR)).unwrap();
-        assert!(ingest_offline_grades(
-            dir.path(), &config, &config_bytes, &goldset, &goldset_bytes, &grades("shared"),
-        ).is_err());
+        assert!(
+            ingest_offline_grades(
+                dir.path(),
+                &config,
+                &config_bytes,
+                &goldset,
+                &goldset_bytes,
+                &grades("shared"),
+            )
+            .is_err()
+        );
     }
 
     #[cfg(unix)]
@@ -2718,9 +3563,19 @@ mod tests {
         let visible_ancestor = parent.path().join("visible-ancestor");
         std::fs::create_dir(&visible_ancestor).unwrap();
         let run_path = visible_ancestor.join("run");
-        let config = roster(); let goldset = goldset();
-        let config_bytes = serde_json::to_vec(&GraderConfigFile { schema_version: 1, graders: config.graders().to_vec() }).unwrap();
-        let goldset_bytes = goldset.iter().map(|entry| serde_json::to_string(entry).unwrap()).collect::<Vec<_>>().join("\n").into_bytes();
+        let config = roster();
+        let goldset = goldset();
+        let config_bytes = serde_json::to_vec(&GraderConfigFile {
+            schema_version: 1,
+            graders: config.graders().to_vec(),
+        })
+        .unwrap();
+        let goldset_bytes = goldset
+            .iter()
+            .map(|entry| serde_json::to_string(entry).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes();
         plan_run(&run_path, &config, &config_bytes, &goldset, &goldset_bytes).unwrap();
         let bound = BoundParityRun::open_or_create(&run_path).unwrap();
         let retained_ancestor = parent.path().join("retained-ancestor");
@@ -2728,7 +3583,12 @@ mod tests {
         std::fs::create_dir(&visible_ancestor).unwrap();
         std::fs::create_dir(&run_path).unwrap();
         bound.create_child("bound-only.json", b"{}").unwrap();
-        assert!(retained_ancestor.join("run").join("bound-only.json").is_file());
+        assert!(
+            retained_ancestor
+                .join("run")
+                .join("bound-only.json")
+                .is_file()
+        );
         assert!(!run_path.join("bound-only.json").exists());
     }
 }

@@ -164,9 +164,11 @@ mod tests {
             },
         ] {
             let error = ensure_generic_export_authority(&args).unwrap_err();
-            assert!(error
-                .downcast_ref::<export::PrivateDsarAuthorityUnavailable>()
-                .is_some());
+            assert!(
+                error
+                    .downcast_ref::<export::PrivateDsarAuthorityUnavailable>()
+                    .is_some()
+            );
             assert_eq!(error.to_string(), "private DSAR authority unavailable");
         }
         assert!(!output.exists());

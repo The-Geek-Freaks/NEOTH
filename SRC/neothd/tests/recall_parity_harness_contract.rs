@@ -37,7 +37,13 @@ fn bound_run_artifact_io_never_reresolves_ambient_paths() {
         .split("/// Read a caller-selected offline input")
         .next()
         .expect("bound run source prefix");
-    for forbidden in ["File::open(", "fs::copy", "fs::remove_file", "fs::rename", ".exists("] {
+    for forbidden in [
+        "File::open(",
+        "fs::copy",
+        "fs::remove_file",
+        "fs::rename",
+        ".exists(",
+    ] {
         assert!(
             !boundary.contains(forbidden),
             "bound run artifact path must not use ambient persistence API {forbidden}"
@@ -52,7 +58,10 @@ fn bound_run_artifact_io_never_reresolves_ambient_paths() {
         "matches_regular_file_child_readonly",
         "open_or_create_imports_locked",
     ] {
-        assert!(boundary.contains(required), "bound run lost required capability primitive {required}");
+        assert!(
+            boundary.contains(required),
+            "bound run lost required capability primitive {required}"
+        );
     }
     assert!(HARNESS.contains("state_evidence_sha256"));
 }
@@ -69,7 +78,10 @@ fn receipt_v2_contract_requires_external_complete_signed_evidence() {
         "validate_run_id",
         "validate_sha256",
     ] {
-        assert!(RECEIPT.contains(required), "receipt contract lost {required}");
+        assert!(
+            RECEIPT.contains(required),
+            "receipt contract lost {required}"
+        );
     }
     for required in [
         "getrandom::getrandom",
@@ -79,7 +91,10 @@ fn receipt_v2_contract_requires_external_complete_signed_evidence() {
         "long = \"import-receipt\"",
         "long = \"expected-receipt-pubkey\"",
     ] {
-        assert!(HARNESS.contains(required) || CLI.contains(required), "receipt provenance path lost {required}");
+        assert!(
+            HARNESS.contains(required) || CLI.contains(required),
+            "receipt provenance path lost {required}"
+        );
     }
 }
 
@@ -101,7 +116,10 @@ fn operator_anchor_is_bounded_offline_and_never_claims_to_change_the_gate() {
         "canonical_goldset_sha256",
         "canonical_roster_sha256",
     ] {
-        assert!(ANCHOR.contains(required), "operator-anchor contract lost {required}");
+        assert!(
+            ANCHOR.contains(required),
+            "operator-anchor contract lost {required}"
+        );
     }
 }
 
@@ -156,9 +174,20 @@ fn bound_operator_anchor_ingest_stays_immutable_redacted_and_non_gate() {
     let anchor_ingest = HARNESS
         .split("pub fn ingest_operator_anchor_evidence")
         .nth(1)
-        .and_then(|tail| tail.split("/// Import one explicit, offline grade file").next())
+        .and_then(|tail| {
+            tail.split("/// Import one explicit, offline grade file")
+                .next()
+        })
         .expect("operator anchor ingest source");
-    for forbidden in ["File::open(", "fs::copy", "fs::remove_file", "fs::rename", "reqwest", "wal::writer", "build_report("] {
+    for forbidden in [
+        "File::open(",
+        "fs::copy",
+        "fs::remove_file",
+        "fs::rename",
+        "reqwest",
+        "wal::writer",
+        "build_report(",
+    ] {
         assert!(
             !anchor_ingest.contains(forbidden),
             "bound operator anchor ingest must not acquire {forbidden} authority"
@@ -177,7 +206,10 @@ fn bound_operator_anchor_ingest_stays_immutable_redacted_and_non_gate() {
         "CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE",
         "receipt.verify(expected_receipt_pubkey_b64)",
     ] {
-        assert!(anchor_ingest.contains(required), "operator anchor ingest lost {required}");
+        assert!(
+            anchor_ingest.contains(required),
+            "operator anchor ingest lost {required}"
+        );
     }
     assert!(HARNESS.contains("validate_operator_anchor_artifacts_if_present"));
     for required in [
@@ -188,7 +220,10 @@ fn bound_operator_anchor_ingest_stays_immutable_redacted_and_non_gate() {
         "operator_anchor_sha256",
         "strictly sorted by unique query_id",
     ] {
-        assert!(ANCHOR.contains(required), "operator-anchor link lost {required}");
+        assert!(
+            ANCHOR.contains(required),
+            "operator-anchor link lost {required}"
+        );
     }
     assert!(CLI.contains("AnchorIngest"));
     assert!(CLI.contains("long = \"operator-anchor-link\""));
@@ -196,7 +231,15 @@ fn bound_operator_anchor_ingest_stays_immutable_redacted_and_non_gate() {
 
 #[test]
 fn four_grader_batch_stays_offline_attested_and_non_gate() {
-    for forbidden in ["File::open(", "fs::copy", "fs::rename", "reqwest", "Command::", "wal::writer", "build_report("] {
+    for forbidden in [
+        "File::open(",
+        "fs::copy",
+        "fs::rename",
+        "reqwest",
+        "Command::",
+        "wal::writer",
+        "build_report(",
+    ] {
         assert!(
             !BATCH.contains(forbidden),
             "four-grader batch contract must not acquire {forbidden} authority"
@@ -216,7 +259,10 @@ fn four_grader_batch_stays_offline_attested_and_non_gate() {
         "gate_eligible: bool",
         "deny_unknown_fields",
     ] {
-        assert!(BATCH.contains(required), "four-grader batch contract lost {required}");
+        assert!(
+            BATCH.contains(required),
+            "four-grader batch contract lost {required}"
+        );
     }
     for required in [
         "plan_four_grader_batch",
@@ -228,7 +274,10 @@ fn four_grader_batch_stays_offline_attested_and_non_gate() {
         "gate_eligible: false",
         "existing offline ingest plus signed import",
     ] {
-        assert!(HARNESS.contains(required), "four-grader harness seam lost {required}");
+        assert!(
+            HARNESS.contains(required),
+            "four-grader harness seam lost {required}"
+        );
     }
     assert!(CLI.contains("BatchPlan"));
     assert!(CLI.contains("BatchResultsVerify"));
@@ -244,8 +293,17 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
         .nth(1)
         .and_then(|tail| tail.split("fn validate_batch_result_inputs").next())
         .expect("batch result ingest source");
-    for forbidden in ["File::open(", "reqwest", "Command::", "wal::writer", "build_report("] {
-        assert!(!ingest.contains(forbidden), "batch result ingest acquired {forbidden} authority");
+    for forbidden in [
+        "File::open(",
+        "reqwest",
+        "Command::",
+        "wal::writer",
+        "build_report(",
+    ] {
+        assert!(
+            !ingest.contains(forbidden),
+            "batch result ingest acquired {forbidden} authority"
+        );
     }
     for required in [
         "validate_batch_result_inputs",
@@ -260,7 +318,10 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
         "state_evidence_sha256",
         "gate_eligible: false",
     ] {
-        assert!(ingest.contains(required), "batch result ingest lost {required}");
+        assert!(
+            ingest.contains(required),
+            "batch result ingest lost {required}"
+        );
     }
     for required in [
         "incomplete four-grader batch result ingest",
@@ -273,7 +334,10 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
         "directory_identity.matches_child",
         "attested imports directory identity changed",
     ] {
-        assert!(HARNESS.contains(required), "batch result reopen fence lost {required}");
+        assert!(
+            HARNESS.contains(required),
+            "batch result reopen fence lost {required}"
+        );
     }
     for required in [
         "pub(crate) fn open_bound_real_child_dir",
@@ -283,7 +347,10 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
         "opened_identity == binding.identity_token()",
         "binding.matches_child(parent, name, display_path)?",
     ] {
-        assert!(STORE.contains(required), "bound child-directory helper lost {required}");
+        assert!(
+            STORE.contains(required),
+            "bound child-directory helper lost {required}"
+        );
     }
     assert!(
         HARNESS.contains("open_bound_real_child_dir("),
@@ -296,9 +363,21 @@ fn attested_family_bias_export_is_read_only_pinned_and_non_gate() {
     let summary = HARNESS
         .split("pub fn summarize_attested_four_grader_family_bias")
         .nth(1)
-        .and_then(|tail| tail.split("fn cluster_attested_four_grader_family_bias").next())
+        .and_then(|tail| {
+            tail.split("fn cluster_attested_four_grader_family_bias")
+                .next()
+        })
         .expect("attested family-bias summary source");
-    for forbidden in ["open_or_create", "create_child(", "replace_child", "File::open(", "reqwest", "Command::", "wal::writer", "build_report("] {
+    for forbidden in [
+        "open_or_create",
+        "create_child(",
+        "replace_child",
+        "File::open(",
+        "reqwest",
+        "Command::",
+        "wal::writer",
+        "build_report(",
+    ] {
         assert!(
             !summary.contains(forbidden),
             "attested family-bias summary acquired mutable/ambient authority {forbidden}"
@@ -319,7 +398,10 @@ fn attested_family_bias_export_is_read_only_pinned_and_non_gate() {
         "result_binding_sha256",
         "canonical_bytes",
     ] {
-        assert!(summary.contains(required) || HARNESS.contains(required), "family-bias summary lost {required}");
+        assert!(
+            summary.contains(required) || HARNESS.contains(required),
+            "family-bias summary lost {required}"
+        );
     }
     for required in [
         "struct ValidatedOperatorAnchorEvidenceGroup",
@@ -331,7 +413,10 @@ fn attested_family_bias_export_is_read_only_pinned_and_non_gate() {
         "binding_artifact",
         "group.revalidate(run)?",
     ] {
-        assert!(HARNESS.contains(required), "anchor provenance retain/revalidate fence lost {required}");
+        assert!(
+            HARNESS.contains(required),
+            "anchor provenance retain/revalidate fence lost {required}"
+        );
     }
     let clustering = HARNESS
         .split("fn cluster_attested_four_grader_family_bias")
@@ -349,7 +434,10 @@ fn attested_family_bias_export_is_read_only_pinned_and_non_gate() {
         "IndependentExternalFamilyEvidence",
         "SameFamilyCorrelation",
     ] {
-        assert!(clustering.contains(required), "family-bias adversarial/determinism fence lost {required}");
+        assert!(
+            clustering.contains(required),
+            "family-bias adversarial/determinism fence lost {required}"
+        );
     }
     assert!(CLI.contains("BatchFamilyBias"));
     assert!(CLI.contains("summary.export()?"));
@@ -362,8 +450,18 @@ fn attested_gate_report_is_the_only_full_evidence_publish_transition() {
         .nth(1)
         .and_then(|tail| tail.split("fn attested_family_bias_policy_passes").next())
         .expect("attested gate-report source");
-    for forbidden in ["BoundParityRun::open_or_create", "File::open(", "reqwest", "Command::", "wal::writer", "build_report("] {
-        assert!(!gate.contains(forbidden), "attested gate report acquired ambient authority {forbidden}");
+    for forbidden in [
+        "BoundParityRun::open_or_create",
+        "File::open(",
+        "reqwest",
+        "Command::",
+        "wal::writer",
+        "build_report(",
+    ] {
+        assert!(
+            !gate.contains(forbidden),
+            "attested gate report acquired ambient authority {forbidden}"
+        );
     }
     for required in [
         "BoundParityRun::open_existing",
@@ -382,7 +480,10 @@ fn attested_gate_report_is_the_only_full_evidence_publish_transition() {
         "reopened.revalidate",
         "gate_eligible",
     ] {
-        assert!(gate.contains(required), "attested gate transition lost {required}");
+        assert!(
+            gate.contains(required),
+            "attested gate transition lost {required}"
+        );
     }
     for required in [
         "ATTESTED_GATE_REPORT_FILE",
@@ -397,7 +498,10 @@ fn attested_gate_report_is_the_only_full_evidence_publish_transition() {
         "reject_legacy_report_mutation_after_attested_gate",
         "legacy report cannot mutate a run with attested gate publication evidence",
     ] {
-        assert!(HARNESS.contains(required), "attested gate crash-safe receipt/state fence lost {required}");
+        assert!(
+            HARNESS.contains(required),
+            "attested gate crash-safe receipt/state fence lost {required}"
+        );
     }
     assert!(CLI.contains("AttestedGateReport"));
     assert!(CLI.contains("long = \"import-receipt\""));
@@ -405,13 +509,19 @@ fn attested_gate_report_is_the_only_full_evidence_publish_transition() {
     let publish = HARNESS
         .split("fn publish_attested_gate_report")
         .nth(1)
-        .and_then(|tail| tail.split("fn reject_legacy_report_mutation_after_attested_gate").next())
+        .and_then(|tail| {
+            tail.split("fn reject_legacy_report_mutation_after_attested_gate")
+                .next()
+        })
         .expect("attested gate publish source");
     let state_publish = publish
         .split("None => {")
         .nth(1)
         .and_then(|tail| tail.split("run.replace_child_if_matches").next())
         .expect("attested gate state publish fence");
-    assert!(state_publish.contains("anchor_group.revalidate(run)?;\n            results.revalidate(run)?;"));
+    assert!(
+        state_publish
+            .contains("anchor_group.revalidate(run)?;\n            results.revalidate(run)?;")
+    );
     assert!(gate.matches("anchor_group.revalidate(&run)?;").count() >= 2);
 }

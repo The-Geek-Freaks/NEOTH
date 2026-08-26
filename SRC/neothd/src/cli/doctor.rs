@@ -402,11 +402,13 @@ fn build_diagnosis_prompt(
         ]
         .into_iter()
         .try_fold(0usize, |total, bytes| total.checked_add(bytes))
-        .ok_or(crate::security::prompt_envelope::PromptEnvelopeError::FieldTooLarge {
-            kind,
-            actual_bytes: usize::MAX,
-            max_bytes,
-        })?;
+        .ok_or(
+            crate::security::prompt_envelope::PromptEnvelopeError::FieldTooLarge {
+                kind,
+                actual_bytes: usize::MAX,
+                max_bytes,
+            },
+        )?;
         let actual_bytes = findings.len().checked_add(line_bytes).ok_or(
             crate::security::prompt_envelope::PromptEnvelopeError::FieldTooLarge {
                 kind,
@@ -691,31 +693,35 @@ mod tests {
 
         assert!(matches!(
             build_diagnosis_prompt(&refs),
-            Err(crate::security::prompt_envelope::PromptEnvelopeError::FieldTooLarge {
-                kind: crate::security::prompt_envelope::PromptFieldKind::DiagnosticFindings,
-                ..
-            })
+            Err(
+                crate::security::prompt_envelope::PromptEnvelopeError::FieldTooLarge {
+                    kind: crate::security::prompt_envelope::PromptFieldKind::DiagnosticFindings,
+                    ..
+                }
+            )
         ));
     }
 
     #[test]
     fn too_many_diagnosis_findings_fail_before_provider_setup() {
-        let outcomes: Vec<CheckOutcome> =
-            (0..=crate::security::prompt_envelope::MAX_DOCTOR_DIAGNOSTIC_FINDINGS_COUNT)
-                .map(|_| CheckOutcome {
-                    name: "small",
-                    status: CheckStatus::Warn,
-                    detail: "detail".to_string(),
-                })
-                .collect();
+        let outcomes: Vec<CheckOutcome> = (0
+            ..=crate::security::prompt_envelope::MAX_DOCTOR_DIAGNOSTIC_FINDINGS_COUNT)
+            .map(|_| CheckOutcome {
+                name: "small",
+                status: CheckStatus::Warn,
+                detail: "detail".to_string(),
+            })
+            .collect();
         let refs: Vec<&CheckOutcome> = outcomes.iter().collect();
 
         assert!(matches!(
             build_diagnosis_prompt(&refs),
-            Err(crate::security::prompt_envelope::PromptEnvelopeError::FieldTooLarge {
-                kind: crate::security::prompt_envelope::PromptFieldKind::DiagnosticFindings,
-                ..
-            })
+            Err(
+                crate::security::prompt_envelope::PromptEnvelopeError::FieldTooLarge {
+                    kind: crate::security::prompt_envelope::PromptFieldKind::DiagnosticFindings,
+                    ..
+                }
+            )
         ));
     }
 
@@ -738,10 +744,12 @@ mod tests {
 
     #[test]
     fn diagnosis_builder_precedes_provider_audit_and_dispatch_in_real_code() {
-        let body = masked_function_body(include_str!("doctor.rs"), "async fn diagnose_with_llm(")
-            .unwrap();
+        let body =
+            masked_function_body(include_str!("doctor.rs"), "async fn diagnose_with_llm(").unwrap();
         let builder = body.find("build_diagnosis_prompt(&problems)").unwrap();
-        let config_load = body.find("FreedomConfig::load_from_path(&config_path)").unwrap();
+        let config_load = body
+            .find("FreedomConfig::load_from_path(&config_path)")
+            .unwrap();
         let provider_factory = body.find("from_config_for_utility_at(").unwrap();
         let audit = body.find("interactive_one_shot_at_home(").unwrap();
         let complete = body.find("provider.complete(req)").unwrap();

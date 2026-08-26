@@ -174,9 +174,11 @@ impl WorkflowKey {
             (Some("n8n.provider_call"), Some("n8n_api"), Some("n8n_provider_call")) => {
                 WorkflowKind::N8nProviderCall
             }
-            (Some("cluster.delegated_task"), Some("cluster_executor"), Some("cluster_delegated")) => {
-                WorkflowKind::ClusterDelegated
-            }
+            (
+                Some("cluster.delegated_task"),
+                Some("cluster_executor"),
+                Some("cluster_delegated"),
+            ) => WorkflowKind::ClusterDelegated,
             _ => WorkflowKind::Unclassified,
         };
         Self(kind)
@@ -878,10 +880,12 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
                 ev.source.as_deref(),
                 ev.call_type.as_deref(),
             );
-            let totals = workflows.entry(workflow).or_insert_with(|| PerWorkflowTotals {
-                workflow,
-                ..Default::default()
-            });
+            let totals = workflows
+                .entry(workflow)
+                .or_insert_with(|| PerWorkflowTotals {
+                    workflow,
+                    ..Default::default()
+                });
             accumulate_workflow_totals(totals, &ev, event_known_cost);
         }
     }
@@ -906,10 +910,8 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
     }
     // VIEW-02 — spend rate over the window → USD/day + 30-day projection.
     let window_secs = (until_unix - since_unix).max(1) as f64;
-    roll.burn_rate_usd_per_day = finite_nonnegative_product(
-        roll.total_cost_usd,
-        86_400.0 / window_secs,
-    );
+    roll.burn_rate_usd_per_day =
+        finite_nonnegative_product(roll.total_cost_usd, 86_400.0 / window_secs);
     roll.projected_monthly_usd = finite_nonnegative_product(roll.burn_rate_usd_per_day, 30.0);
     let (per_workflow, workflow_other) = finalize_workflow_rows(workflows);
     roll.per_workflow = per_workflow;
@@ -1664,24 +1666,82 @@ mod tests {
     #[test]
     fn workflow_key_requires_the_complete_exact_audited_triple() {
         let cases = [
-            (("chat_provider_round", Some("chat"), Some("chat_provider_round")), WorkflowKind::ChatTurn),
-            (("chat_post_reply_round", Some("chat"), Some("chat_post_reply_round")), WorkflowKind::ChatPostReply),
-            (("deep_research_round", Some("chat"), Some("deep_research_round")), WorkflowKind::DeepResearch),
-            (("session_naming", Some("chat"), Some("session_naming")), WorkflowKind::SessionNaming),
-            (("background_session", Some("chat"), Some("background_session")), WorkflowKind::BackgroundSession),
-            (("council_leaf", Some("chat"), Some("chat_provider_round")), WorkflowKind::CouncilDeliberation),
-            (("n8n.provider_call", Some("n8n_api"), Some("n8n_provider_call")), WorkflowKind::N8nProviderCall),
-            (("cluster.delegated_task", Some("cluster_executor"), Some("cluster_delegated")), WorkflowKind::ClusterDelegated),
+            (
+                (
+                    "chat_provider_round",
+                    Some("chat"),
+                    Some("chat_provider_round"),
+                ),
+                WorkflowKind::ChatTurn,
+            ),
+            (
+                (
+                    "chat_post_reply_round",
+                    Some("chat"),
+                    Some("chat_post_reply_round"),
+                ),
+                WorkflowKind::ChatPostReply,
+            ),
+            (
+                (
+                    "deep_research_round",
+                    Some("chat"),
+                    Some("deep_research_round"),
+                ),
+                WorkflowKind::DeepResearch,
+            ),
+            (
+                ("session_naming", Some("chat"), Some("session_naming")),
+                WorkflowKind::SessionNaming,
+            ),
+            (
+                (
+                    "background_session",
+                    Some("chat"),
+                    Some("background_session"),
+                ),
+                WorkflowKind::BackgroundSession,
+            ),
+            (
+                ("council_leaf", Some("chat"), Some("chat_provider_round")),
+                WorkflowKind::CouncilDeliberation,
+            ),
+            (
+                (
+                    "n8n.provider_call",
+                    Some("n8n_api"),
+                    Some("n8n_provider_call"),
+                ),
+                WorkflowKind::N8nProviderCall,
+            ),
+            (
+                (
+                    "cluster.delegated_task",
+                    Some("cluster_executor"),
+                    Some("cluster_delegated"),
+                ),
+                WorkflowKind::ClusterDelegated,
+            ),
         ];
         for ((scope, source, call_type), expected) in cases {
-            assert_eq!(WorkflowKey::from_audited(Some(scope), source, call_type), WorkflowKey(expected));
+            assert_eq!(
+                WorkflowKey::from_audited(Some(scope), source, call_type),
+                WorkflowKey(expected)
+            );
         }
         assert_eq!(
-            WorkflowKey::from_audited(Some("chat_provider_round"), Some("chat"), Some("future_call_type")),
+            WorkflowKey::from_audited(
+                Some("chat_provider_round"),
+                Some("chat"),
+                Some("future_call_type")
+            ),
             WorkflowKey(WorkflowKind::Unclassified),
             "a matching prefix or two matching fields must never classify a row"
         );
-        assert_eq!(WorkflowKey::from_audited(None, None, None), WorkflowKey(WorkflowKind::Unclassified));
+        assert_eq!(
+            WorkflowKey::from_audited(None, None, None),
+            WorkflowKey(WorkflowKind::Unclassified)
+        );
     }
 
     #[test]
@@ -1706,7 +1766,11 @@ mod tests {
             .unwrap();
         }
         let roll = aggregate(dir.path(), 0, 200);
-        let row = roll.per_workflow.iter().find(|row| row.workflow == WorkflowKey(WorkflowKind::ChatTurn)).unwrap();
+        let row = roll
+            .per_workflow
+            .iter()
+            .find(|row| row.workflow == WorkflowKey(WorkflowKind::ChatTurn))
+            .unwrap();
         assert_eq!(row.known_cost_usd, 0.0);
         assert_eq!(row.known_cost_count, 1);
         assert_eq!(row.unknown_cost_count, 2);
@@ -1736,7 +1800,11 @@ mod tests {
             .unwrap();
         }
         let roll = aggregate(dir.path(), 0, 200);
-        let workflow = roll.per_workflow.iter().find(|row| row.workflow.as_str() == "chat_turn").unwrap();
+        let workflow = roll
+            .per_workflow
+            .iter()
+            .find(|row| row.workflow.as_str() == "chat_turn")
+            .unwrap();
         assert!(roll.total_cost_usd.is_finite());
         assert_eq!(roll.total_cost_usd, f64::MAX);
         assert_eq!(roll.total_unknown_cost_count, 1);
@@ -1787,9 +1855,11 @@ mod tests {
         let roll = aggregate(dir.path(), 0, 200);
         assert_eq!(roll.total_cost_usd, f64::MAX);
         assert_eq!(roll.total_unknown_cost_count, 1);
-        assert!(roll.per_provider.iter().all(|row| {
-            row.cost_usd == f64::MAX && row.unknown_cost_count == 0
-        }));
+        assert!(
+            roll.per_provider
+                .iter()
+                .all(|row| { row.cost_usd == f64::MAX && row.unknown_cost_count == 0 })
+        );
         assert!(roll.per_workflow.iter().all(|row| {
             row.known_cost_usd == f64::MAX
                 && row.known_cost_count == 1
@@ -1861,9 +1931,22 @@ mod tests {
         let normal_home = tempdir().unwrap();
         let repaired_home = tempdir().unwrap();
         let normal = provider_terminal_event(
-            100, "unknown_provider", "unknown_model", Some(1), Some(2), 3, false, None, None,
-            true, &"b".repeat(64), "provider_error", "n8n.provider_call", Some("n8n_api"),
-            Some("n8n_provider_call"), false,
+            100,
+            "unknown_provider",
+            "unknown_model",
+            Some(1),
+            Some(2),
+            3,
+            false,
+            None,
+            None,
+            true,
+            &"b".repeat(64),
+            "provider_error",
+            "n8n.provider_call",
+            Some("n8n_api"),
+            Some("n8n_provider_call"),
+            false,
         );
         append(normal_home.path(), &normal).unwrap();
         let payload = serde_json::json!({
@@ -1884,20 +1967,13 @@ mod tests {
             "output_tokens": 2_u64,
         });
         let payload = serde_json::to_vec(&payload).unwrap();
-        let header = crate::wal::HeaderBuilder::new(
-            crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
-            &payload,
-        )
-        .build();
-        let mut segment = crate::wal::segment_header::SegmentHeader::new(
-            1,
-            1,
-            1,
-            100_000_000_000,
-            [0; 16],
-        )
-        .to_le_bytes()
-        .to_vec();
+        let header =
+            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_PROVIDER_ERROR, &payload)
+                .build();
+        let mut segment =
+            crate::wal::segment_header::SegmentHeader::new(1, 1, 1, 100_000_000_000, [0; 16])
+                .to_le_bytes()
+                .to_vec();
         segment.extend_from_slice(&crate::wal::frame::encode_frame(&header, &payload));
         let wal_dir = repaired_home.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();

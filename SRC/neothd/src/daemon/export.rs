@@ -142,12 +142,13 @@ pub fn run_export(
     format: ExportFormat,
     since_unix_ns: i64,
 ) -> Result<ExportSummary> {
-    let communication = crate::profile::communication::load_redacted_export(home).with_context(|| {
-        format!(
-            "strictly load communication profile for redacted export from {}",
-            crate::profile::communication::state_path(home).display()
-        )
-    })?;
+    let communication =
+        crate::profile::communication::load_redacted_export(home).with_context(|| {
+            format!(
+                "strictly load communication profile for redacted export from {}",
+                crate::profile::communication::state_path(home).display()
+            )
+        })?;
 
     std::fs::create_dir_all(output_dir)
         .with_context(|| format!("create export dir {}", output_dir.display()))?;
@@ -587,17 +588,23 @@ mod tests {
         let communication: serde_json::Value = serde_json::from_str(&communication).unwrap();
         assert_eq!(communication["export_schema_version"], 2);
         assert_eq!(communication["state_present"], false);
-        assert_eq!(communication["state_schema_version"], serde_json::Value::Null);
+        assert_eq!(
+            communication["state_schema_version"],
+            serde_json::Value::Null
+        );
         assert_eq!(communication["redacted"], true);
-        assert_eq!(communication["active_accommodations"], serde_json::json!([]));
+        assert_eq!(
+            communication["active_accommodations"],
+            serde_json::json!([])
+        );
         assert_eq!(s.archive_files_copied, 0);
     }
 
     #[test]
     fn communication_export_v2_contains_only_active_concrete_accommodations() {
         use crate::profile::communication::{
-            DeclaredContext, DeclaredContextKind, DeclaredContextPromptUse,
-            DirectnessPreference, PreferenceValue, StructurePreference,
+            DeclaredContext, DeclaredContextKind, DeclaredContextPromptUse, DirectnessPreference,
+            PreferenceValue, StructurePreference,
         };
 
         let home = tempdir().unwrap();
@@ -656,12 +663,12 @@ mod tests {
             .get_mut(&crate::profile::communication::CommunicationDimension::Structure)
             .unwrap()
             .active = false;
-        operator
-            .declared_context
-            .as_mut()
+        operator.declared_context.as_mut().unwrap().revoked_at_unix = Some(1_700_000_004);
+        state
+            .subjects
+            .get_mut("other-human")
             .unwrap()
-            .revoked_at_unix = Some(1_700_000_004);
-        state.subjects.get_mut("other-human").unwrap().declared_context = Some(DeclaredContext {
+            .declared_context = Some(DeclaredContext {
             kind: DeclaredContextKind::Adhd,
             explicitly_asserted_by_operator: true,
             source_event_hash: hex::encode([5; 32]),
@@ -728,7 +735,10 @@ mod tests {
             declared_hash.as_str(),
             active_declared_hash.as_str(),
         ] {
-            assert!(!body.contains(forbidden), "redacted export leaked {forbidden}");
+            assert!(
+                !body.contains(forbidden),
+                "redacted export leaked {forbidden}"
+            );
         }
     }
 

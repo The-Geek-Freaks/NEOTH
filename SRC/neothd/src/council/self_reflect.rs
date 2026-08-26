@@ -451,8 +451,7 @@ mod tests {
         assert!(!prompt.contains('\u{202e}'));
 
         let envelope_start = prompt.find("{\"schema\":").unwrap();
-        let envelope: serde_json::Value =
-            serde_json::from_str(&prompt[envelope_start..]).unwrap();
+        let envelope: serde_json::Value = serde_json::from_str(&prompt[envelope_start..]).unwrap();
         assert_eq!(envelope["purpose"], "council_self_reflect");
         assert_eq!(envelope["trust"], "untrusted_data_only");
         assert_eq!(envelope["fields"][0]["kind"], "original_question");
@@ -468,8 +467,7 @@ mod tests {
 
         assert_eq!(first, second);
         let envelope_start = first.find("{\"schema\":").unwrap();
-        let envelope: serde_json::Value =
-            serde_json::from_str(&first[envelope_start..]).unwrap();
+        let envelope: serde_json::Value = serde_json::from_str(&first[envelope_start..]).unwrap();
         assert_eq!(envelope["fields"][0]["kind"], "original_question");
         assert_eq!(envelope["fields"][1]["kind"], "prior_answer");
     }
@@ -479,9 +477,7 @@ mod tests {
         let provider = CountingProvider {
             calls: AtomicUsize::new(0),
         };
-        let oversized = "x".repeat(
-            crate::security::prompt_envelope::MAX_OPERATOR_TASK_BYTES + 1,
-        );
+        let oversized = "x".repeat(crate::security::prompt_envelope::MAX_OPERATOR_TASK_BYTES + 1);
 
         let result = refine(&oversized, "Original answer", &provider).await;
 
@@ -497,8 +493,7 @@ mod tests {
             calls: AtomicUsize::new(0),
         };
         let budget = crate::council::BudgetToken::new(1);
-        let oversized =
-            "x".repeat(crate::security::prompt_envelope::MAX_CANDIDATE_BYTES + 1);
+        let oversized = "x".repeat(crate::security::prompt_envelope::MAX_CANDIDATE_BYTES + 1);
 
         let result = refine_with_budget("question", &oversized, &provider, &budget).await;
 

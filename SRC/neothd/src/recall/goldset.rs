@@ -466,18 +466,15 @@ pub fn load_grader_config(path: &Path) -> Result<ValidatedGraderConfigFile> {
 /// Parse and validate an already bounded grader-config payload. This is used by
 /// the offline parity harness so the exact bytes fingerprinted into a run
 /// manifest are the same bytes admitted to the scorer (no second file read).
-pub fn load_grader_config_bytes(
-    bytes: &[u8],
-    source: &str,
-) -> Result<ValidatedGraderConfigFile> {
+pub fn load_grader_config_bytes(bytes: &[u8], source: &str) -> Result<ValidatedGraderConfigFile> {
     if bytes.len() as u64 > MAX_GRADER_CONFIG_BYTES {
         return Err(GraderConfigError::ConfigTooLarge {
             max_bytes: MAX_GRADER_CONFIG_BYTES,
         }
         .into());
     }
-    let config: GraderConfigFile = serde_json::from_slice(bytes)
-        .with_context(|| format!("parse grader config {source}"))?;
+    let config: GraderConfigFile =
+        serde_json::from_slice(bytes).with_context(|| format!("parse grader config {source}"))?;
     config
         .into_validated()
         .with_context(|| format!("validate grader config {source}"))
@@ -575,8 +572,8 @@ pub fn load_goldset_bytes(bytes: &[u8], source: &str) -> Result<Vec<GoldsetEntry
     if bytes.len() as u64 > MAX_GOLDSET_BYTES {
         anyhow::bail!("goldset {source} exceeds the {MAX_GOLDSET_BYTES}-byte limit");
     }
-    let text = std::str::from_utf8(bytes)
-        .with_context(|| format!("decode goldset {source} as UTF-8"))?;
+    let text =
+        std::str::from_utf8(bytes).with_context(|| format!("decode goldset {source} as UTF-8"))?;
     let mut out = Vec::with_capacity(EXPECTED_GOLDSET_QUERIES);
     for (i, line) in text.lines().enumerate() {
         let line = line.trim();
@@ -605,8 +602,8 @@ pub fn load_grades_bytes(bytes: &[u8], source: &str) -> Result<Vec<GraderGrade>>
     if bytes.len() as u64 > MAX_GRADES_BYTES {
         anyhow::bail!("grades {source} exceeds the {MAX_GRADES_BYTES}-byte limit");
     }
-    let text = std::str::from_utf8(bytes)
-        .with_context(|| format!("decode grades {source} as UTF-8"))?;
+    let text =
+        std::str::from_utf8(bytes).with_context(|| format!("decode grades {source} as UTF-8"))?;
     let mut out = Vec::with_capacity(EXPECTED_GOLDSET_QUERIES * 2);
     for (i, line) in text.lines().enumerate() {
         let line = line.trim();

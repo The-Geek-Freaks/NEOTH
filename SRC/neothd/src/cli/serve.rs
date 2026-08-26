@@ -475,10 +475,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
 
     #[cfg(unix)]
     let connector_control_replay_enabled = config.context_connectors.enabled
-        && config.context_connectors.registered_accounts.iter().any(|account| {
-            account.configuration.connector_id == crate::connectors::ConnectorId::LocalImport
-                && account.lifecycle.admits_context_import()
-        });
+        && config
+            .context_connectors
+            .registered_accounts
+            .iter()
+            .any(|account| {
+                account.configuration.connector_id == crate::connectors::ConnectorId::LocalImport
+                    && account.lifecycle.admits_context_import()
+            });
     #[cfg(unix)]
     let connector_control_plane = Arc::new(
         crate::connectors::control_plane::ConnectorControlPlane::from_config(

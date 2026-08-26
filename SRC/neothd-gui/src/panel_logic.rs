@@ -3490,8 +3490,7 @@ pub fn parse_workflow_usage_rollup(json: &str) -> WorkflowUsageParse {
         .filter(|key| !KNOWN_TOP_LEVEL_KEYS.contains(&key.as_str()))
         .take(MAX_WORKFLOW_ROLLUP_UNKNOWN_TOP_LEVEL_FIELDS + 1)
         .count();
-    if object.len()
-        > KNOWN_TOP_LEVEL_KEYS.len() + MAX_WORKFLOW_ROLLUP_UNKNOWN_TOP_LEVEL_FIELDS
+    if object.len() > KNOWN_TOP_LEVEL_KEYS.len() + MAX_WORKFLOW_ROLLUP_UNKNOWN_TOP_LEVEL_FIELDS
         || unknown_top_level > MAX_WORKFLOW_ROLLUP_UNKNOWN_TOP_LEVEL_FIELDS
     {
         return WorkflowUsageParse::Invalid;
@@ -3522,19 +3521,17 @@ pub fn parse_workflow_usage_rollup(json: &str) -> WorkflowUsageParse {
             })
         })
     };
-    let Some(workflows) = object.get("per_workflow").and_then(serde_json::Value::as_array)
+    let Some(workflows) = object
+        .get("per_workflow")
+        .and_then(serde_json::Value::as_array)
     else {
         return WorkflowUsageParse::Invalid;
     };
     if workflows.len() > MAX_WORKFLOW_ROLLUP_ROWS
-        || !workflows
-        .iter()
-        .all(|row| only_keys(row, Some("workflow")))
-        || object
-            .get("workflow_other")
-            .is_some_and(|other| {
-                !other.is_null() && !only_keys(other, Some("omitted_workflow_count"))
-            })
+        || !workflows.iter().all(|row| only_keys(row, Some("workflow")))
+        || object.get("workflow_other").is_some_and(|other| {
+            !other.is_null() && !only_keys(other, Some("omitted_workflow_count"))
+        })
     {
         return WorkflowUsageParse::Invalid;
     }
@@ -3653,7 +3650,12 @@ fn total_unknown_cost(rollup: &WorkflowUsageRollup) -> Option<u64> {
         .rows
         .iter()
         .map(|row| row.totals.unknown_cost_count)
-        .chain(rollup.other.iter().map(|other| other.totals.unknown_cost_count))
+        .chain(
+            rollup
+                .other
+                .iter()
+                .map(|other| other.totals.unknown_cost_count),
+        )
         .try_fold(0_u64, |total, count| total.checked_add(count))
 }
 
@@ -3681,11 +3683,8 @@ pub fn format_workflow_usage_summary(parsed: &WorkflowUsageParse) -> String {
             // remain visible rather than disappearing behind the three-row
             // presentation cap.  It replaces the last selected row instead
             // of adding a fourth workflow row.
-            let mut visible_rows: Vec<&WorkflowUsageRow> = rollup
-                .rows
-                .iter()
-                .take(MAX_VISIBLE_WORKFLOW_ROWS)
-                .collect();
+            let mut visible_rows: Vec<&WorkflowUsageRow> =
+                rollup.rows.iter().take(MAX_VISIBLE_WORKFLOW_ROWS).collect();
             if let Some(unclassified) = rollup.rows.iter().find(|row| row.is_unclassified)
                 && !visible_rows.iter().any(|row| row.is_unclassified)
             {
@@ -3728,7 +3727,10 @@ pub fn format_workflow_usage_summary(parsed: &WorkflowUsageParse) -> String {
 /// The caller supplies all daily parse results rather than retrying or reading
 /// local usage files; the daemon CLI remains the only data producer.
 pub fn format_workflow_week_truth(days: &[WorkflowUsageParse]) -> String {
-    if days.iter().any(|day| matches!(day, WorkflowUsageParse::Invalid)) {
+    if days
+        .iter()
+        .any(|day| matches!(day, WorkflowUsageParse::Invalid))
+    {
         return "workflow invalid".to_string();
     }
     let valid: Vec<&WorkflowUsageRollup> = days
@@ -3741,11 +3743,9 @@ pub fn format_workflow_week_truth(days: &[WorkflowUsageParse]) -> String {
     if valid.is_empty() {
         return "workflow legacy".to_string();
     }
-    let unpriced = valid
-        .iter()
-        .try_fold(0_u64, |total, rollup| {
-            total_unknown_cost(rollup).and_then(|count| total.checked_add(count))
-        });
+    let unpriced = valid.iter().try_fold(0_u64, |total, rollup| {
+        total_unknown_cost(rollup).and_then(|count| total.checked_add(count))
+    });
     let Some(unpriced) = unpriced else {
         return "workflow invalid".to_string();
     };
@@ -9472,17 +9472,21 @@ mod tests {
             "provider_responses":1,"cost_usd":0.25,"daily_cap_tokens":1000}"#;
         assert!(parse_meter_checked(valid).is_some());
         assert!(parse_meter_checked("{}").is_none());
-        assert!(parse_meter_checked(
-            r#"{"input_tokens_total":1,"output_tokens_total":1,
+        assert!(
+            parse_meter_checked(
+                r#"{"input_tokens_total":1,"output_tokens_total":1,
                 "provider_responses":1,"cost_usd":-0.01}"#
-        )
-        .is_none());
-        assert!(parse_meter_checked(&format!(
-            r#"{{"input_tokens_total":{},"output_tokens_total":1,
+            )
+            .is_none()
+        );
+        assert!(
+            parse_meter_checked(&format!(
+                r#"{{"input_tokens_total":{},"output_tokens_total":1,
                 "provider_responses":1,"cost_usd":0.0}}"#,
-            u64::MAX
-        ))
-        .is_none());
+                u64::MAX
+            ))
+            .is_none()
+        );
     }
 
     #[test]
@@ -10980,18 +10984,16 @@ mod tests {
         ));
 
         let mut negative = valid_empty();
-        negative.as_object_mut().unwrap().insert(
-            "total_cost_usd".into(),
-            serde_json::Value::from(-0.01),
-        );
+        negative
+            .as_object_mut()
+            .unwrap()
+            .insert("total_cost_usd".into(), serde_json::Value::from(-0.01));
         assert!(matches!(
             parse_workflow_usage_rollup(&negative.to_string()),
             WorkflowUsageParse::Invalid
         ));
         assert!(matches!(
-            parse_workflow_usage_rollup(
-                r#"{"workflow_rollup_schema":1,"total_cost_usd":1e400}"#
-            ),
+            parse_workflow_usage_rollup(r#"{"workflow_rollup_schema":1,"total_cost_usd":1e400}"#),
             WorkflowUsageParse::Invalid
         ));
 
@@ -11191,10 +11193,10 @@ mod tests {
         assert!(parse_cost_sessions("junk").is_none());
         assert!(parse_cost_sessions("[0]").is_none());
         assert!(parse_cost_sessions(r#"[{"provider":"model-only"}]"#).is_none());
-        assert!(parse_cost_sessions(
-            r#"[{"session_id":"x","total_tokens":-1,"responses":1}]"#
-        )
-        .is_none());
+        assert!(
+            parse_cost_sessions(r#"[{"session_id":"x","total_tokens":-1,"responses":1}]"#)
+                .is_none()
+        );
     }
 
     #[test]

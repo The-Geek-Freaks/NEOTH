@@ -30,7 +30,7 @@ use hmac::{Hmac, Mac};
 use sha2::{Digest as _, Sha256};
 
 use crate::skills::store;
-use crate::wal::events::{ContextEvidenceReceipt, ExtendedSubtype, EVENT_TYPE_EXTENDED};
+use crate::wal::events::{ContextEvidenceReceipt, EVENT_TYPE_EXTENDED, ExtendedSubtype};
 
 const LEDGER_DIR: &str = "context-evidence-receipts";
 const ANCHOR_DIR: &str = "context-evidence-receipt-anchors";
@@ -57,7 +57,8 @@ const SHARD_HEADER_BYTES: usize = 56;
 const SHARD_BYTES: usize = SHARD_HEADER_BYTES + RECORDS_BYTES + TAG_BYTES;
 const MANIFEST_HEADER_BYTES: usize = 68;
 const MANIFEST_ENTRY_BYTES: usize = 44;
-const MANIFEST_BYTES: usize = MANIFEST_HEADER_BYTES + SHARD_COUNT * MANIFEST_ENTRY_BYTES + TAG_BYTES;
+const MANIFEST_BYTES: usize =
+    MANIFEST_HEADER_BYTES + SHARD_COUNT * MANIFEST_ENTRY_BYTES + TAG_BYTES;
 const PENDING_PREFIX_BYTES: usize = 128;
 const PENDING_BYTES: usize = PENDING_PREFIX_BYTES + MANIFEST_BYTES + TAG_BYTES;
 const ANCHOR_BYTES: usize = 116;
@@ -68,17 +69,17 @@ const ANCHOR_BYTES: usize = 116;
 pub(crate) const MAX_DIRECTORY_ENTRIES: usize = 1024;
 pub(crate) const MAX_OPERATION_DIRECTORY_ENTRIES: usize = MAX_DIRECTORY_ENTRIES * 6;
 pub(crate) const MAX_OPERATION_FILE_READS: usize = 14;
-pub(crate) const MAX_OPERATION_READ_BYTES: usize = MANIFEST_BYTES * 4 + SHARD_BYTES * 4 + PENDING_BYTES;
+pub(crate) const MAX_OPERATION_READ_BYTES: usize =
+    MANIFEST_BYTES * 4 + SHARD_BYTES * 4 + PENDING_BYTES;
 // Recovery may have to publish the manifest + anchor of one authenticated
 // pending predecessor before the requested handle can start its own complete
 // transaction.  Admission covers both bounded phases, including first-key
 // initialization, before either phase is allowed to extend a file.
-pub(crate) const MAX_TRANSACTION_BYTES: u64 =
-    (MAX_LEDGER_KEY_FILE_BYTES
-        + PENDING_BYTES
-        + SHARD_BYTES
-        + MANIFEST_BYTES * 2
-        + ANCHOR_BYTES * 2) as u64;
+pub(crate) const MAX_TRANSACTION_BYTES: u64 = (MAX_LEDGER_KEY_FILE_BYTES
+    + PENDING_BYTES
+    + SHARD_BYTES
+    + MANIFEST_BYTES * 2
+    + ANCHOR_BYTES * 2) as u64;
 
 const MAX_LEDGER_KEY_FILE_BYTES: usize = 512;
 const MAX_RECOVERY_ORPHANS: usize = 2;
@@ -131,7 +132,11 @@ pub(crate) enum TestTransactionFailure {
 
 #[cfg(test)]
 static TEST_CANONICAL_WRITE_FAILURES: std::sync::Mutex<
-    Vec<(std::path::PathBuf, TestCanonicalObject, TestCanonicalWriteFailure)>,
+    Vec<(
+        std::path::PathBuf,
+        TestCanonicalObject,
+        TestCanonicalWriteFailure,
+    )>,
 > = std::sync::Mutex::new(Vec::new());
 
 #[cfg(test)]
@@ -187,13 +192,15 @@ fn inject_canonical_write_failure(
     let mut failures = TEST_CANONICAL_WRITE_FAILURES
         .lock()
         .expect("receipt canonical-write test hook poisoned");
-    if let Some(index) = failures.iter().position(
-        |(candidate_parent, candidate_object, candidate_failure)| {
-            candidate_parent == parent
-                && *candidate_object == object
-                && *candidate_failure == failure
-        },
-    ) {
+    if let Some(index) =
+        failures
+            .iter()
+            .position(|(candidate_parent, candidate_object, candidate_failure)| {
+                candidate_parent == parent
+                    && *candidate_object == object
+                    && *candidate_failure == failure
+            })
+    {
         failures.swap_remove(index);
         anyhow::bail!("injected receipt canonical-write failure at {failure:?}");
     }
@@ -215,10 +222,9 @@ fn inject_transaction_failure(
     let mut failures = TEST_TRANSACTION_FAILURES
         .lock()
         .expect("receipt transaction test hook poisoned");
-    if let Some(index) = failures
-        .iter()
-        .position(|(candidate, candidate_failure)| candidate == home && *candidate_failure == failure)
-    {
+    if let Some(index) = failures.iter().position(|(candidate, candidate_failure)| {
+        candidate == home && *candidate_failure == failure
+    }) {
         failures.swap_remove(index);
         anyhow::bail!("injected receipt transaction failure at {failure:?}");
     }
@@ -247,28 +253,38 @@ pub(crate) struct AppendOutcome {
 
 impl AppendOutcome {
     #[must_use]
-    pub(crate) const fn decision(&self) -> AppendDecision { self.decision }
+    pub(crate) const fn decision(&self) -> AppendDecision {
+        self.decision
+    }
 
     #[must_use]
-    pub(crate) const fn retained_bytes(&self) -> u64 { self.retained_bytes }
+    pub(crate) const fn retained_bytes(&self) -> u64 {
+        self.retained_bytes
+    }
 
     /// Bytes from a prior indeterminate receipt transaction that this
     /// authenticated operation capability-bound, removed, and parent-synced.
     /// The writer releases at most its in-memory receipt debt, never an
     /// unrelated quota reservation.
     #[must_use]
-    pub(crate) const fn reclaimed_bytes(&self) -> u64 { self.reclaimed_bytes }
+    pub(crate) const fn reclaimed_bytes(&self) -> u64 {
+        self.reclaimed_bytes
+    }
 
     /// Portion of the success-path retained objects that replaced exact
     /// pre-existing objects.  The writer uses this only to transfer a still
     /// live receipt-debt reservation; it is never extra physical growth.
     #[must_use]
-    pub(crate) const fn replacement_bytes(&self) -> u64 { self.replacement_bytes }
+    pub(crate) const fn replacement_bytes(&self) -> u64 {
+        self.replacement_bytes
+    }
 
     /// Exact still-unmeasured receipt-debt bytes whose capability-bound
     /// objects were removed and whose parent directories were synced.
     #[must_use]
-    pub(crate) const fn reclaimed_debt_bytes(&self) -> u64 { self.reclaimed_debt_bytes }
+    pub(crate) const fn reclaimed_debt_bytes(&self) -> u64 {
+        self.reclaimed_debt_bytes
+    }
 }
 
 /// Internal failure accounting.  The writer maps `cause` to its stable
@@ -284,13 +300,19 @@ pub(crate) struct AppendFailure {
 
 impl AppendFailure {
     #[must_use]
-    pub(crate) const fn retained_bytes(&self) -> u64 { self.retained_bytes }
+    pub(crate) const fn retained_bytes(&self) -> u64 {
+        self.retained_bytes
+    }
 
     #[must_use]
-    pub(crate) const fn reclaimed_bytes(&self) -> u64 { self.reclaimed_bytes }
+    pub(crate) const fn reclaimed_bytes(&self) -> u64 {
+        self.reclaimed_bytes
+    }
 
     #[must_use]
-    pub(crate) const fn reclaimed_debt_bytes(&self) -> u64 { self.reclaimed_debt_bytes }
+    pub(crate) const fn reclaimed_debt_bytes(&self) -> u64 {
+        self.reclaimed_debt_bytes
+    }
 }
 
 impl std::fmt::Display for AppendFailure {
@@ -300,7 +322,9 @@ impl std::fmt::Display for AppendFailure {
 }
 
 impl std::error::Error for AppendFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(self.cause.root_cause()) }
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.cause.root_cause())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -623,16 +647,34 @@ struct IoBudget {
 
 impl IoBudget {
     fn entry(&mut self) -> Result<()> {
-        self.entries = self.entries.checked_add(1).context("receipt ledger entry budget overflow")?;
-        anyhow::ensure!(self.entries <= MAX_OPERATION_DIRECTORY_ENTRIES, "receipt ledger operation entry budget exceeded");
+        self.entries = self
+            .entries
+            .checked_add(1)
+            .context("receipt ledger entry budget overflow")?;
+        anyhow::ensure!(
+            self.entries <= MAX_OPERATION_DIRECTORY_ENTRIES,
+            "receipt ledger operation entry budget exceeded"
+        );
         Ok(())
     }
 
     fn read(&mut self, bytes: usize) -> Result<()> {
-        self.files = self.files.checked_add(1).context("receipt ledger file-read budget overflow")?;
-        self.bytes = self.bytes.checked_add(bytes).context("receipt ledger byte-read budget overflow")?;
-        anyhow::ensure!(self.files <= MAX_OPERATION_FILE_READS, "receipt ledger file-read budget exceeded");
-        anyhow::ensure!(self.bytes <= MAX_OPERATION_READ_BYTES, "receipt ledger byte-read budget exceeded");
+        self.files = self
+            .files
+            .checked_add(1)
+            .context("receipt ledger file-read budget overflow")?;
+        self.bytes = self
+            .bytes
+            .checked_add(bytes)
+            .context("receipt ledger byte-read budget overflow")?;
+        anyhow::ensure!(
+            self.files <= MAX_OPERATION_FILE_READS,
+            "receipt ledger file-read budget exceeded"
+        );
+        anyhow::ensure!(
+            self.bytes <= MAX_OPERATION_READ_BYTES,
+            "receipt ledger byte-read budget exceeded"
+        );
         Ok(())
     }
 }
@@ -667,82 +709,113 @@ pub(crate) fn append_once_with_quota_debt(
 ) -> std::result::Result<AppendOutcome, AppendFailure> {
     let mut accounting = MutationAccounting::default();
     let result = (|| -> Result<AppendDecision> {
-    validate_exact_frame(handle, expected, exact_frame)?;
-    let mut budget = IoBudget::default();
-    let ledger = open_ledger_directory(home)?;
-    let mut entries = list_entries(&ledger.dir, &ledger.display_path, &mut budget)?;
-    recover_windows_empty_stages(&ledger, &entries, &mut budget)?;
-    entries = list_entries(&ledger.dir, &ledger.display_path, &mut budget)?;
-    validate_names(&entries)?;
-    let key = load_or_initialize_key(&ledger, &entries, &mut budget, &mut accounting)?;
+        validate_exact_frame(handle, expected, exact_frame)?;
+        let mut budget = IoBudget::default();
+        let ledger = open_ledger_directory(home)?;
+        let mut entries = list_entries(&ledger.dir, &ledger.display_path, &mut budget)?;
+        recover_windows_empty_stages(&ledger, &entries, &mut budget)?;
+        entries = list_entries(&ledger.dir, &ledger.display_path, &mut budget)?;
+        validate_names(&entries)?;
+        let key = load_or_initialize_key(&ledger, &entries, &mut budget, &mut accounting)?;
 
-    let mut state = recover_state(&ledger, &key, &mut budget, &mut accounting)?;
-    let prior_generation = state.as_ref().map(|manifest| manifest.generation);
-    let shard_index = shard_for_handle(&key, handle) as usize;
+        let mut state = recover_state(&ledger, &key, &mut budget, &mut accounting)?;
+        let prior_generation = state.as_ref().map(|manifest| manifest.generation);
+        let shard_index = shard_for_handle(&key, handle) as usize;
 
-    let active_entry = state
-        .as_ref()
-        .map(|manifest| manifest.entries[shard_index])
-        .unwrap_or(ManifestEntry::EMPTY);
-    let active_generation = state.as_ref().map_or(0, |manifest| manifest.generation);
-    let mut shard = if active_entry.present {
-        read_shard_for_entry(&ledger, shard_index as u8, active_entry, &key, &mut budget)?
-    } else {
-        empty_shard(shard_index as u8, active_generation.checked_add(1).context("receipt ledger generation overflow")?)
-    };
+        let active_entry = state
+            .as_ref()
+            .map(|manifest| manifest.entries[shard_index])
+            .unwrap_or(ManifestEntry::EMPTY);
+        let active_generation = state.as_ref().map_or(0, |manifest| manifest.generation);
+        let mut shard = if active_entry.present {
+            read_shard_for_entry(&ledger, shard_index as u8, active_entry, &key, &mut budget)?
+        } else {
+            empty_shard(
+                shard_index as u8,
+                active_generation
+                    .checked_add(1)
+                    .context("receipt ledger generation overflow")?,
+            )
+        };
 
-    let old_total = state.as_ref().map_or(0u32, |manifest| manifest.total_records);
-    match shard.handles.binary_search(handle) {
-        Ok(position) => {
-            let stored = receipt_at(&shard, position)?;
-            anyhow::ensure!(stored == *expected, "receipt ledger handle payload collision");
-            return Ok(AppendDecision::AlreadyPresent);
+        let old_total = state
+            .as_ref()
+            .map_or(0u32, |manifest| manifest.total_records);
+        match shard.handles.binary_search(handle) {
+            Ok(position) => {
+                let stored = receipt_at(&shard, position)?;
+                anyhow::ensure!(
+                    stored == *expected,
+                    "receipt ledger handle payload collision"
+                );
+                return Ok(AppendDecision::AlreadyPresent);
+            }
+            Err(position) => {
+                // Both the global and selected-shard caps are checked before the
+                // in-memory record move, never after a persistable state changes.
+                ensure_insert_capacity(old_total, shard.count)?;
+                insert_record(&mut shard, position, handle, exact_frame)?;
+            }
         }
-        Err(position) => {
-            // Both the global and selected-shard caps are checked before the
-            // in-memory record move, never after a persistable state changes.
-            ensure_insert_capacity(old_total, shard.count)?;
-            insert_record(&mut shard, position, handle, exact_frame)?;
+
+        let next_generation = active_generation
+            .checked_add(1)
+            .context("receipt ledger generation overflow")?;
+        let new_slot = if active_entry.present {
+            active_entry.slot ^ 1
+        } else {
+            0
+        };
+        shard.generation = next_generation;
+        shard.slot = new_slot;
+        finalize_shard(&mut shard, &key)?;
+        let shard_sha = sha256(&shard.bytes);
+
+        let old_manifest_sha = state
+            .as_ref()
+            .map_or(ZERO_SHA, |manifest| sha256(&manifest.bytes));
+        let mut new_manifest = next_manifest(
+            state.as_ref(),
+            next_generation,
+            shard_index,
+            new_slot,
+            shard.count,
+            shard_sha,
+        )?;
+        finalize_manifest(&mut new_manifest, &key)?;
+        let pending = Pending {
+            old_manifest_sha256: old_manifest_sha,
+            new_generation: next_generation,
+            shard: shard_index as u8,
+            slot: new_slot,
+            new_shard_sha256: shard_sha,
+            new_manifest_sha256: sha256(&new_manifest.bytes),
+            manifest: new_manifest,
+        };
+
+        write_transaction(&ledger, &key, &pending, &shard, &mut accounting)?;
+        publish_anchor(
+            &ledger,
+            &key,
+            &pending.manifest,
+            &mut budget,
+            &mut accounting,
+        )?;
+        remove_pending_accounted(&ledger, &mut accounting)?;
+        // Re-open only after a fully committed transaction; the local binding is
+        // intentionally not retained in an unbounded cache.
+        state = Some(pending.manifest);
+        cleanup_after_commit(
+            &ledger,
+            &key,
+            state.as_ref().expect("just committed manifest"),
+            &mut budget,
+            &mut accounting,
+        )?;
+        if let Some(generation) = prior_generation {
+            remove_anchor(&ledger, generation, &mut accounting)?;
         }
-    }
-
-    let next_generation = active_generation.checked_add(1).context("receipt ledger generation overflow")?;
-    let new_slot = if active_entry.present { active_entry.slot ^ 1 } else { 0 };
-    shard.generation = next_generation;
-    shard.slot = new_slot;
-    finalize_shard(&mut shard, &key)?;
-    let shard_sha = sha256(&shard.bytes);
-
-    let old_manifest_sha = state.as_ref().map_or(ZERO_SHA, |manifest| sha256(&manifest.bytes));
-    let mut new_manifest = next_manifest(state.as_ref(), next_generation, shard_index, new_slot, shard.count, shard_sha)?;
-    finalize_manifest(&mut new_manifest, &key)?;
-    let pending = Pending {
-        old_manifest_sha256: old_manifest_sha,
-        new_generation: next_generation,
-        shard: shard_index as u8,
-        slot: new_slot,
-        new_shard_sha256: shard_sha,
-        new_manifest_sha256: sha256(&new_manifest.bytes),
-        manifest: new_manifest,
-    };
-
-    write_transaction(&ledger, &key, &pending, &shard, &mut accounting)?;
-    publish_anchor(&ledger, &key, &pending.manifest, &mut budget, &mut accounting)?;
-    remove_pending_accounted(&ledger, &mut accounting)?;
-    // Re-open only after a fully committed transaction; the local binding is
-    // intentionally not retained in an unbounded cache.
-    state = Some(pending.manifest);
-    cleanup_after_commit(
-        &ledger,
-        &key,
-        state.as_ref().expect("just committed manifest"),
-        &mut budget,
-        &mut accounting,
-    )?;
-    if let Some(generation) = prior_generation {
-        remove_anchor(&ledger, generation, &mut accounting)?;
-    }
-    Ok(AppendDecision::Appended)
+        Ok(AppendDecision::Appended)
     })();
     let debt_reclaim = match quota_debt.reconcile_removals(&accounting.removed_preexisting) {
         Ok(reclaim) => reclaim,
@@ -816,10 +889,22 @@ pub(crate) fn contains_for_test(
     recover_windows_empty_stages(&ledger, &stages, &mut budget)?;
     let names = list_entries(&ledger.dir, &ledger.display_path, &mut budget)?;
     validate_names(&names)?;
-    anyhow::ensure!(names.iter().any(|name| name == LEDGER_KEY), "receipt ledger key is missing");
-    anyhow::ensure!(!names.iter().any(|name| name == PENDING), "receipt ledger has unresolved pending evidence");
+    anyhow::ensure!(
+        names.iter().any(|name| name == LEDGER_KEY),
+        "receipt ledger key is missing"
+    );
+    anyhow::ensure!(
+        !names.iter().any(|name| name == PENDING),
+        "receipt ledger has unresolved pending evidence"
+    );
     let key_display = ledger.display_path.join(LEDGER_KEY);
-    let key_body = read_child(&ledger.dir, LEDGER_KEY, &key_display, MAX_LEDGER_KEY_FILE_BYTES, &mut budget)?;
+    let key_body = read_child(
+        &ledger.dir,
+        LEDGER_KEY,
+        &key_display,
+        MAX_LEDGER_KEY_FILE_BYTES,
+        &mut budget,
+    )?;
     let key: [u8; 32] = crate::wal::compaction::maybe_unwrap_dpapi(&key_body, &key_display)?
         .try_into()
         .map_err(|_| anyhow::anyhow!("receipt ledger key has invalid length"))?;
@@ -836,15 +921,22 @@ pub(crate) fn contains_for_test(
         read_accounting.retained_bytes()? == 0 && read_accounting.reclaimed_bytes() == 0,
         "test-only receipt lookup attempted a ledger mutation"
     );
-    let Some(active) = choose_active_manifest(&mut manifests)? else { return Ok(false); };
+    let Some(active) = choose_active_manifest(&mut manifests)? else {
+        return Ok(false);
+    };
     require_anchor(&ledger, &key, &active, &mut budget)?;
     let shard_index = shard_for_handle(&key, handle) as usize;
     let entry = active.entries[shard_index];
-    if !entry.present { return Ok(false); }
+    if !entry.present {
+        return Ok(false);
+    }
     let shard = read_shard_for_entry(&ledger, shard_index as u8, entry, &key, &mut budget)?;
     match shard.handles.binary_search(handle) {
         Ok(position) => {
-            anyhow::ensure!(receipt_at(&shard, position)? == *expected, "receipt ledger handle payload collision");
+            anyhow::ensure!(
+                receipt_at(&shard, position)? == *expected,
+                "receipt ledger handle payload collision"
+            );
             Ok(true)
         }
         Err(_) => Ok(false),
@@ -947,20 +1039,14 @@ pub(crate) fn read_authenticated_ledger(
             if !entry.present {
                 None
             } else {
-                let shard = read_shard_for_entry(
-                    &ledger,
-                    shard_index as u8,
-                    entry,
-                    &key,
-                    &mut budget,
-                )?;
+                let shard =
+                    read_shard_for_entry(&ledger, shard_index as u8, entry, &key, &mut budget)?;
                 match shard.handles.binary_search(handle) {
                     Err(_) => None,
                     Ok(position) => {
                         let raw_record = record_at(&shard.bytes, position)?;
-                        let frame_len = usize::from(u16::from_le_bytes(
-                            raw_record[..2].try_into().unwrap(),
-                        ));
+                        let frame_len =
+                            usize::from(u16::from_le_bytes(raw_record[..2].try_into().unwrap()));
                         anyhow::ensure!(
                             frame_len <= FRAME_MAX_BYTES,
                             "receipt ledger frame length exceeds its fixed record"
@@ -1019,8 +1105,8 @@ fn read_required_anchor(
         "receipt ledger read anchor namespace is oversized"
     );
     let expected = anchor_file_name(manifest.generation);
-    let predecessor = (manifest.previous_generation != 0)
-        .then(|| anchor_file_name(manifest.previous_generation));
+    let predecessor =
+        (manifest.previous_generation != 0).then(|| anchor_file_name(manifest.previous_generation));
     anyhow::ensure!(
         names.iter().all(|name| {
             name == &expected || predecessor.as_ref().is_some_and(|prior| name == prior)
@@ -1037,16 +1123,32 @@ fn open_ledger_directory(home: &Path) -> Result<store::BoundDirectory> {
     let wal = home.join("wal");
     let ledger = wal.join(LEDGER_DIR);
     let anchor = home.parent().unwrap_or(home);
-    store::open_bound_directory_from_trusted_anchor(anchor, &ledger, true, "Context Evidence receipt ledger")?
-        .context("Context Evidence receipt ledger directory is unavailable")
+    store::open_bound_directory_from_trusted_anchor(
+        anchor,
+        &ledger,
+        true,
+        "Context Evidence receipt ledger",
+    )?
+    .context("Context Evidence receipt ledger directory is unavailable")
 }
 
-fn open_anchor_directory_for_ledger(ledger: &store::BoundDirectory, create: bool) -> Result<store::BoundDirectory> {
-    let wal = ledger.display_path.parent().context("receipt ledger has no WAL parent")?;
+fn open_anchor_directory_for_ledger(
+    ledger: &store::BoundDirectory,
+    create: bool,
+) -> Result<store::BoundDirectory> {
+    let wal = ledger
+        .display_path
+        .parent()
+        .context("receipt ledger has no WAL parent")?;
     let home = wal.parent().context("receipt WAL has no home parent")?;
     let anchor = wal.join(ANCHOR_DIR);
-    store::open_bound_directory_from_trusted_anchor(home, &anchor, create, "Context Evidence receipt external anchor")?
-        .context("Context Evidence receipt external anchor directory is unavailable")
+    store::open_bound_directory_from_trusted_anchor(
+        home,
+        &anchor,
+        create,
+        "Context Evidence receipt external anchor",
+    )?
+    .context("Context Evidence receipt external anchor directory is unavailable")
 }
 
 fn anchor_file_name(generation: u64) -> String {
@@ -1073,7 +1175,10 @@ fn anchor_bytes(key: &[u8; 32], manifest: &Manifest) -> Vec<u8> {
 }
 
 fn validate_anchor(bytes: &[u8], key: &[u8; 32], manifest: &Manifest) -> Result<()> {
-    anyhow::ensure!(bytes.len() == ANCHOR_BYTES, "receipt ledger anchor has non-fixed size");
+    anyhow::ensure!(
+        bytes.len() == ANCHOR_BYTES,
+        "receipt ledger anchor has non-fixed size"
+    );
     verify_tag(key, DOMAIN_ANCHOR, bytes)?;
     anyhow::ensure!(
         &bytes[..8] == ANCHOR_MAGIC
@@ -1081,9 +1186,18 @@ fn validate_anchor(bytes: &[u8], key: &[u8; 32], manifest: &Manifest) -> Result<
             && bytes[10..12].iter().all(|byte| *byte == 0),
         "receipt ledger anchor header is invalid"
     );
-    anyhow::ensure!(u64::from_le_bytes(bytes[12..20].try_into().unwrap()) == manifest.generation, "receipt ledger anchor generation mismatch");
-    anyhow::ensure!(bytes[20..52] == sha256(key), "receipt ledger anchor key fingerprint mismatch");
-    anyhow::ensure!(bytes[52..84] == sha256(&manifest.bytes), "receipt ledger anchor manifest fingerprint mismatch");
+    anyhow::ensure!(
+        u64::from_le_bytes(bytes[12..20].try_into().unwrap()) == manifest.generation,
+        "receipt ledger anchor generation mismatch"
+    );
+    anyhow::ensure!(
+        bytes[20..52] == sha256(key),
+        "receipt ledger anchor key fingerprint mismatch"
+    );
+    anyhow::ensure!(
+        bytes[52..84] == sha256(&manifest.bytes),
+        "receipt ledger anchor manifest fingerprint mismatch"
+    );
     Ok(())
 }
 
@@ -1098,11 +1212,16 @@ fn publish_anchor(
     let stages = list_entries(&wal.dir, &wal.display_path, budget)?;
     recover_windows_empty_stages(&wal, &stages, budget)?;
     let names = list_entries(&wal.dir, &wal.display_path, budget)?;
-    anyhow::ensure!(names.len() <= 2, "receipt ledger anchor publication namespace is oversized");
     anyhow::ensure!(
-        names.iter().all(|candidate| parse_anchor_name(candidate).is_some_and(|generation| {
-            generation == manifest.generation || generation == manifest.previous_generation
-        })),
+        names.len() <= 2,
+        "receipt ledger anchor publication namespace is oversized"
+    );
+    anyhow::ensure!(
+        names.iter().all(
+            |candidate| parse_anchor_name(candidate).is_some_and(|generation| {
+                generation == manifest.generation || generation == manifest.previous_generation
+            })
+        ),
         "receipt ledger anchor publication namespace is not the authenticated adjacent transition"
     );
     let name = anchor_file_name(manifest.generation);
@@ -1130,16 +1249,27 @@ fn publish_anchor(
     }
 }
 
-fn require_anchor(ledger: &store::BoundDirectory, key: &[u8; 32], manifest: &Manifest, budget: &mut IoBudget) -> Result<()> {
+fn require_anchor(
+    ledger: &store::BoundDirectory,
+    key: &[u8; 32],
+    manifest: &Manifest,
+    budget: &mut IoBudget,
+) -> Result<()> {
     let wal = open_anchor_directory_for_ledger(ledger, false)?;
     let stages = list_entries(&wal.dir, &wal.display_path, budget)?;
     recover_windows_empty_stages(&wal, &stages, budget)?;
     let names = list_entries(&wal.dir, &wal.display_path, budget)?;
-    anyhow::ensure!(names.len() <= 4, "receipt ledger anchor directory entry cap exceeded");
-    let expected = anchor_file_name(manifest.generation);
-    let predecessor = (manifest.previous_generation != 0).then(|| anchor_file_name(manifest.previous_generation));
     anyhow::ensure!(
-        names.iter().all(|name| name == &expected || predecessor.as_ref().is_some_and(|prior| name == prior)),
+        names.len() <= 4,
+        "receipt ledger anchor directory entry cap exceeded"
+    );
+    let expected = anchor_file_name(manifest.generation);
+    let predecessor =
+        (manifest.previous_generation != 0).then(|| anchor_file_name(manifest.previous_generation));
+    anyhow::ensure!(
+        names.iter().all(
+            |name| name == &expected || predecessor.as_ref().is_some_and(|prior| name == prior)
+        ),
         "receipt ledger anchor namespace has rollback/replay evidence"
     );
     let display = wal.display_path.join(&expected);
@@ -1156,25 +1286,30 @@ fn remove_anchor(
     let name = anchor_file_name(generation);
     let display = wal.display_path.join(&name);
     match wal.dir.symlink_metadata(OsStr::new(&name)) {
-        Ok(_) => remove_exact_accounted(
-            &wal,
-            ObjectNamespace::Anchor,
-            &name,
-            accounting,
-        ),
+        Ok(_) => remove_exact_accounted(&wal, ObjectNamespace::Anchor, &name, accounting),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).with_context(|| format!("inspect old receipt ledger anchor {}", display.display())),
+        Err(error) => Err(error)
+            .with_context(|| format!("inspect old receipt ledger anchor {}", display.display())),
     }
 }
 
 fn list_entries(dir: &Dir, display: &Path, budget: &mut IoBudget) -> Result<Vec<String>> {
     let mut names = Vec::new();
-    for entry in dir.entries().with_context(|| format!("enumerate receipt ledger {}", display.display()))? {
-        let entry = entry.with_context(|| format!("read receipt ledger entry under {}", display.display()))?;
+    for entry in dir
+        .entries()
+        .with_context(|| format!("enumerate receipt ledger {}", display.display()))?
+    {
+        let entry = entry
+            .with_context(|| format!("read receipt ledger entry under {}", display.display()))?;
         budget.entry()?;
-        anyhow::ensure!(names.len() < MAX_DIRECTORY_ENTRIES, "receipt ledger directory entry cap exceeded");
+        anyhow::ensure!(
+            names.len() < MAX_DIRECTORY_ENTRIES,
+            "receipt ledger directory entry cap exceeded"
+        );
         let name = entry.file_name();
-        let name = name.to_str().context("receipt ledger entry name is not UTF-8")?;
+        let name = name
+            .to_str()
+            .context("receipt ledger entry name is not UTF-8")?;
         names.push(name.to_owned());
     }
     names.sort_unstable();
@@ -1188,12 +1323,23 @@ fn recover_windows_empty_stages(
     _budget: &mut IoBudget,
 ) -> Result<()> {
     for name in names {
-        let Some(uuid) = name.strip_prefix(".neoth-private-empty-") else { continue; };
-        anyhow::ensure!(uuid::Uuid::parse_str(uuid).is_ok(), "unexpected receipt ledger Windows stage name");
+        let Some(uuid) = name.strip_prefix(".neoth-private-empty-") else {
+            continue;
+        };
+        anyhow::ensure!(
+            uuid::Uuid::parse_str(uuid).is_ok(),
+            "unexpected receipt ledger Windows stage name"
+        );
         let display = directory.display_path.join(name);
-        let (file, binding) = store::open_bound_regular_file(&directory.dir, OsStr::new(name), &display)?;
-        let metadata = file.metadata().context("inspect receipt ledger Windows stage")?;
-        anyhow::ensure!(metadata.len() == 0, "non-empty receipt ledger Windows stage is ambiguous");
+        let (file, binding) =
+            store::open_bound_regular_file(&directory.dir, OsStr::new(name), &display)?;
+        let metadata = file
+            .metadata()
+            .context("inspect receipt ledger Windows stage")?;
+        anyhow::ensure!(
+            metadata.len() == 0,
+            "non-empty receipt ledger Windows stage is ambiguous"
+        );
         crate::wal::win_native::verify_private_dacl(&display)
             .context("receipt ledger Windows stage private DACL verification failed")?;
         drop(file);
@@ -1215,7 +1361,10 @@ fn recover_windows_empty_stages(
 fn validate_names(names: &[String]) -> Result<()> {
     for name in names {
         anyhow::ensure!(
-            name == LEDGER_KEY || name == PENDING || parse_manifest_name(name).is_some() || parse_shard_name(name).is_some(),
+            name == LEDGER_KEY
+                || name == PENDING
+                || parse_manifest_name(name).is_some()
+                || parse_shard_name(name).is_some(),
             "unexpected receipt ledger namespace entry"
         );
     }
@@ -1230,12 +1379,23 @@ fn load_or_initialize_key(
 ) -> Result<[u8; 32]> {
     let key_display = ledger.display_path.join(LEDGER_KEY);
     if names.iter().any(|name| name == LEDGER_KEY) {
-        let body = read_child(&ledger.dir, LEDGER_KEY, &key_display, MAX_LEDGER_KEY_FILE_BYTES, budget)?;
+        let body = read_child(
+            &ledger.dir,
+            LEDGER_KEY,
+            &key_display,
+            MAX_LEDGER_KEY_FILE_BYTES,
+            budget,
+        )?;
         let raw = crate::wal::compaction::maybe_unwrap_dpapi(&body, &key_display)
             .context("decode stable Context Evidence receipt ledger key")?;
-        return raw.try_into().map_err(|_| anyhow::anyhow!("Context Evidence receipt ledger key has invalid length"));
+        return raw.try_into().map_err(|_| {
+            anyhow::anyhow!("Context Evidence receipt ledger key has invalid length")
+        });
     }
-    anyhow::ensure!(names.is_empty(), "Context Evidence receipt ledger key is missing beside durable evidence");
+    anyhow::ensure!(
+        names.is_empty(),
+        "Context Evidence receipt ledger key is missing beside durable evidence"
+    );
     let mut raw = [0u8; 32];
     getrandom::getrandom(&mut raw).context("OS RNG unavailable for receipt ledger key")?;
     let encoded = crate::wal::compaction::encode_key_for_storage(&key_display, &raw)
@@ -1266,7 +1426,13 @@ fn recover_state(
     let pending_name = names.iter().any(|name| name == PENDING);
     let pending = if pending_name {
         let pending_display = ledger.display_path.join(PENDING);
-        let bytes = read_child(&ledger.dir, PENDING, &pending_display, PENDING_BYTES, budget)?;
+        let bytes = read_child(
+            &ledger.dir,
+            PENDING,
+            &pending_display,
+            PENDING_BYTES,
+            budget,
+        )?;
         match parse_pending(&bytes, key) {
             Ok(pending) => Some(pending),
             Err(_) => {
@@ -1326,19 +1492,17 @@ fn read_manifests(
             let manifest = match parse_manifest(&bytes, key) {
                 Ok(manifest) => manifest,
                 Err(_error)
-                    if pending.is_some_and(|pending| parse_manifest_name(name) == Some(pending.new_generation)) => {
-                        // The pending journal fully authenticates the exact
-                        // successor bytes. A direct canonical manifest that
-                        // tore before its file sync is therefore safely
-                        // removed and re-published from that journal.
-                        remove_exact_accounted(
-                            ledger,
-                            ObjectNamespace::Ledger,
-                            name,
-                            accounting,
-                        )?;
-                        continue;
-                    }
+                    if pending.is_some_and(|pending| {
+                        parse_manifest_name(name) == Some(pending.new_generation)
+                    }) =>
+                {
+                    // The pending journal fully authenticates the exact
+                    // successor bytes. A direct canonical manifest that
+                    // tore before its file sync is therefore safely
+                    // removed and re-published from that journal.
+                    remove_exact_accounted(ledger, ObjectNamespace::Ledger, name, accounting)?;
+                    continue;
+                }
                 Err(error) => return Err(error),
             };
             anyhow::ensure!(
@@ -1373,7 +1537,10 @@ fn recover_torn_pending(
                 anyhow::bail!("torn receipt ledger pending has successor shard evidence");
             };
             let entry = active.entries[shard as usize];
-            anyhow::ensure!(entry.present && entry.slot == slot && entry.generation == generation, "torn receipt ledger pending has unbound shard evidence");
+            anyhow::ensure!(
+                entry.present && entry.slot == slot && entry.generation == generation,
+                "torn receipt ledger pending has unbound shard evidence"
+            );
         }
     }
     remove_pending_accounted(ledger, accounting)
@@ -1387,7 +1554,10 @@ fn recover_pending(
     budget: &mut IoBudget,
     accounting: &mut MutationAccounting,
 ) -> Result<()> {
-    anyhow::ensure!(manifests.len() <= 2, "receipt ledger pending state has too many manifests");
+    anyhow::ensure!(
+        manifests.len() <= 2,
+        "receipt ledger pending state has too many manifests"
+    );
     let manifest_name = manifest_file_name(pending.new_generation);
     let shard_name = shard_file_name(pending.shard, pending.slot, pending.new_generation);
     let old_index = manifests
@@ -1403,9 +1573,16 @@ fn recover_pending(
             old.generation == pending.manifest.previous_generation
                 && pending.manifest.previous_sha256 == sha256(&old.bytes)
         }
-        None => pending.old_manifest_sha256 == ZERO_SHA && pending.manifest.previous_generation == 0 && pending.manifest.previous_sha256 == ZERO_SHA,
+        None => {
+            pending.old_manifest_sha256 == ZERO_SHA
+                && pending.manifest.previous_generation == 0
+                && pending.manifest.previous_sha256 == ZERO_SHA
+        }
     };
-    anyhow::ensure!(old_is_bound, "receipt ledger pending state does not bind its old manifest");
+    anyhow::ensure!(
+        old_is_bound,
+        "receipt ledger pending state does not bind its old manifest"
+    );
 
     if let Some(index) = new_index {
         let committed = &manifests[index];
@@ -1424,7 +1601,10 @@ fn recover_pending(
         remove_pending_accounted(ledger, accounting)?;
         return Ok(());
     }
-    anyhow::ensure!(manifests.len() <= 1 && old_index.is_some() == (pending.old_manifest_sha256 != ZERO_SHA), "receipt ledger pending has an unbound manifest");
+    anyhow::ensure!(
+        manifests.len() <= 1 && old_index.is_some() == (pending.old_manifest_sha256 != ZERO_SHA),
+        "receipt ledger pending has an unbound manifest"
+    );
     let shard_display = ledger.display_path.join(&shard_name);
     match ledger.dir.symlink_metadata(OsStr::new(&shard_name)) {
         Ok(_) => {
@@ -1435,12 +1615,7 @@ fn recover_pending(
                 // proves no successor manifest exists.  A direct canonical
                 // shard that tore before sync can therefore be removed with
                 // its exact journal and retried from the old manifest.
-                remove_exact_accounted(
-                    ledger,
-                    ObjectNamespace::Ledger,
-                    &shard_name,
-                    accounting,
-                )?;
+                remove_exact_accounted(ledger, ObjectNamespace::Ledger, &shard_name, accounting)?;
                 remove_pending_accounted(ledger, accounting)?;
                 return Ok(());
             }
@@ -1479,7 +1654,10 @@ fn validate_pending_shard(
     let bytes = read_child(&ledger.dir, shard_name, &display, SHARD_BYTES, budget)?;
     let entry = pending.manifest.entries[pending.shard as usize];
     let _ = parse_shard(&bytes, pending.shard, entry, key)?;
-    anyhow::ensure!(sha256(&bytes) == pending.new_shard_sha256, "receipt ledger pending shard digest mismatch");
+    anyhow::ensure!(
+        sha256(&bytes) == pending.new_shard_sha256,
+        "receipt ledger pending shard digest mismatch"
+    );
     Ok(())
 }
 
@@ -1506,7 +1684,8 @@ fn choose_active_manifest(manifests: &mut Vec<Manifest>) -> Result<Option<Manife
             let older = &manifests[0];
             let newer = &manifests[1];
             anyhow::ensure!(
-                newer.previous_generation == older.generation && newer.previous_sha256 == sha256(&older.bytes),
+                newer.previous_generation == older.generation
+                    && newer.previous_sha256 == sha256(&older.bytes),
                 "receipt ledger manifests are not one authenticated generation chain"
             );
             Ok(manifests.pop())
@@ -1528,39 +1707,50 @@ fn cleanup_after_commit(
     for name in &names {
         if let Some(generation) = parse_manifest_name(name) {
             if generation != active.generation {
-                anyhow::ensure!(generation < active.generation, "receipt ledger manifest replay/rollback evidence detected");
-                remove_exact_accounted(
-                    ledger,
-                    ObjectNamespace::Ledger,
-                    name,
-                    accounting,
-                )?;
+                anyhow::ensure!(
+                    generation < active.generation,
+                    "receipt ledger manifest replay/rollback evidence detected"
+                );
+                remove_exact_accounted(ledger, ObjectNamespace::Ledger, name, accounting)?;
             }
         }
         if let Some((shard, slot, generation)) = parse_shard_name(name) {
             let referenced = active.entries[shard as usize];
-            if !(referenced.present && referenced.slot == slot && referenced.generation == generation) {
-                anyhow::ensure!(generation < active.generation, "receipt ledger future shard evidence detected");
+            if !(referenced.present
+                && referenced.slot == slot
+                && referenced.generation == generation)
+            {
+                anyhow::ensure!(
+                    generation < active.generation,
+                    "receipt ledger future shard evidence detected"
+                );
                 orphan_shards.push((name.clone(), shard, slot, generation));
             }
         }
     }
-    anyhow::ensure!(orphan_shards.len() <= MAX_RECOVERY_ORPHANS, "receipt ledger orphan recovery bound exceeded");
+    anyhow::ensure!(
+        orphan_shards.len() <= MAX_RECOVERY_ORPHANS,
+        "receipt ledger orphan recovery bound exceeded"
+    );
     for (name, shard, slot, generation) in orphan_shards {
         let display = ledger.display_path.join(&name);
         let bytes = read_child(&ledger.dir, &name, &display, SHARD_BYTES, budget)?;
-        anyhow::ensure!(bytes.len() == SHARD_BYTES, "receipt ledger orphan shard has non-fixed size");
+        anyhow::ensure!(
+            bytes.len() == SHARD_BYTES,
+            "receipt ledger orphan shard has non-fixed size"
+        );
         let count = u16::from_le_bytes(bytes[12..14].try_into().unwrap());
-        let entry = ManifestEntry { present: true, slot, count, generation, shard_sha256: sha256(&bytes) };
+        let entry = ManifestEntry {
+            present: true,
+            slot,
+            count,
+            generation,
+            shard_sha256: sha256(&bytes),
+        };
         // A valid but unreferenced old generation can only be discarded after
         // its full fixed object authenticates and validates its own binding.
         let _ = parse_shard(&bytes, shard, entry, key)?;
-        remove_exact_accounted(
-            ledger,
-            ObjectNamespace::Ledger,
-            &name,
-            accounting,
-        )?;
+        remove_exact_accounted(ledger, ObjectNamespace::Ledger, &name, accounting)?;
     }
     Ok(())
 }
@@ -1575,7 +1765,10 @@ fn read_shard_for_entry(
     let name = shard_file_name(shard, entry.slot, entry.generation);
     let display = ledger.display_path.join(&name);
     let bytes = read_child(&ledger.dir, &name, &display, SHARD_BYTES, budget)?;
-    anyhow::ensure!(sha256(&bytes) == entry.shard_sha256, "receipt ledger shard digest mismatch");
+    anyhow::ensure!(
+        sha256(&bytes) == entry.shard_sha256,
+        "receipt ledger shard digest mismatch"
+    );
     parse_shard(&bytes, shard, entry, key)
 }
 
@@ -1590,12 +1783,28 @@ fn empty_shard(shard: u8, generation: u64) -> Shard {
     }
 }
 
-fn insert_record(shard: &mut Shard, position: usize, handle: &[u8; 32], frame: &[u8]) -> Result<()> {
-    anyhow::ensure!(shard.count < RECORDS_PER_SHARD, "receipt ledger shard capacity exhausted");
-    anyhow::ensure!(frame.len() <= FRAME_MAX_BYTES, "receipt ledger frame exceeds fixed record capacity");
+fn insert_record(
+    shard: &mut Shard,
+    position: usize,
+    handle: &[u8; 32],
+    frame: &[u8],
+) -> Result<()> {
+    anyhow::ensure!(
+        shard.count < RECORDS_PER_SHARD,
+        "receipt ledger shard capacity exhausted"
+    );
+    anyhow::ensure!(
+        frame.len() <= FRAME_MAX_BYTES,
+        "receipt ledger frame exceeds fixed record capacity"
+    );
     let records = shard_records_mut(&mut shard.bytes);
-    let from = position.checked_mul(RECORD_BYTES).context("receipt ledger record offset overflow")?;
-    let end = shard.count.checked_mul(RECORD_BYTES).context("receipt ledger record end overflow")?;
+    let from = position
+        .checked_mul(RECORD_BYTES)
+        .context("receipt ledger record offset overflow")?;
+    let end = shard
+        .count
+        .checked_mul(RECORD_BYTES)
+        .context("receipt ledger record end overflow")?;
     records.copy_within(from..end, from + RECORD_BYTES);
     let record = &mut records[from..from + RECORD_BYTES];
     record.fill(0);
@@ -1634,16 +1843,35 @@ fn next_manifest(
     shard_sha256: [u8; SHA_BYTES],
 ) -> Result<Manifest> {
     let (previous_generation, previous_sha256, mut entries, old_total) = match prior {
-        Some(manifest) => (manifest.generation, sha256(&manifest.bytes), manifest.entries, manifest.total_records),
+        Some(manifest) => (
+            manifest.generation,
+            sha256(&manifest.bytes),
+            manifest.entries,
+            manifest.total_records,
+        ),
         None => (0, ZERO_SHA, [ManifestEntry::EMPTY; SHARD_COUNT], 0),
     };
-    anyhow::ensure!(generation > previous_generation, "receipt ledger generation is not monotonic");
-    anyhow::ensure!(count <= RECORDS_PER_SHARD, "receipt ledger shard count overflow");
+    anyhow::ensure!(
+        generation > previous_generation,
+        "receipt ledger generation is not monotonic"
+    );
+    anyhow::ensure!(
+        count <= RECORDS_PER_SHARD,
+        "receipt ledger shard count overflow"
+    );
     let old_count = u32::from(entries[shard].count);
     let new_count = u32::try_from(count).context("receipt ledger shard count conversion")?;
-    let total_records = old_total.checked_sub(old_count).context("receipt ledger manifest total underflow")?
-        .checked_add(new_count).context("receipt ledger manifest total overflow")?;
-    anyhow::ensure!(usize::try_from(total_records).ok().is_some_and(|total| total <= LIFETIME_CAPACITY), "receipt ledger lifetime capacity exhausted");
+    let total_records = old_total
+        .checked_sub(old_count)
+        .context("receipt ledger manifest total underflow")?
+        .checked_add(new_count)
+        .context("receipt ledger manifest total overflow")?;
+    anyhow::ensure!(
+        usize::try_from(total_records)
+            .ok()
+            .is_some_and(|total| total <= LIFETIME_CAPACITY),
+        "receipt ledger lifetime capacity exhausted"
+    );
     entries[shard] = ManifestEntry {
         present: true,
         slot,
@@ -1651,7 +1879,14 @@ fn next_manifest(
         generation,
         shard_sha256,
     };
-    Ok(Manifest { generation, previous_generation, previous_sha256, total_records, entries, bytes: vec![0; MANIFEST_BYTES] })
+    Ok(Manifest {
+        generation,
+        previous_generation,
+        previous_sha256,
+        total_records,
+        entries,
+        bytes: vec![0; MANIFEST_BYTES],
+    })
 }
 
 fn write_transaction(
@@ -1711,7 +1946,8 @@ fn write_new_child_accounted(
     maximum_bytes: u64,
     accounting: &mut MutationAccounting,
 ) -> Result<()> {
-    let actual_bytes = u64::try_from(bytes.len()).context("receipt ledger object length does not fit u64")?;
+    let actual_bytes =
+        u64::try_from(bytes.len()).context("receipt ledger object length does not fit u64")?;
     anyhow::ensure!(
         actual_bytes <= maximum_bytes,
         "receipt ledger object exceeds its precharged maximum"
@@ -1770,14 +2006,16 @@ fn write_new_child(
             test_object,
             TestCanonicalWriteFailure::AfterCreate,
         )?;
-        file.write_all(bytes).with_context(|| "write canonical receipt ledger object")?;
+        file.write_all(bytes)
+            .with_context(|| "write canonical receipt ledger object")?;
         #[cfg(test)]
         inject_canonical_write_failure(
             &directory.display_path,
             test_object,
             TestCanonicalWriteFailure::AfterWrite,
         )?;
-        file.sync_all().with_context(|| "sync canonical receipt ledger object")?;
+        file.sync_all()
+            .with_context(|| "sync canonical receipt ledger object")?;
         #[cfg(test)]
         inject_canonical_write_failure(
             &directory.display_path,
@@ -1785,7 +2023,11 @@ fn write_new_child(
             TestCanonicalWriteFailure::AfterFileSync,
         )?;
         anyhow::ensure!(
-            binding.matches_regular_file_child_readonly(&directory.dir, OsStr::new(name), &display)?,
+            binding.matches_regular_file_child_readonly(
+                &directory.dir,
+                OsStr::new(name),
+                &display
+            )?,
             "canonical receipt ledger object changed before publication"
         );
         store::sync_parent_directory(&directory.dir, &directory.display_path)
@@ -1837,7 +2079,7 @@ fn write_new_child(
                         )),
                     },
                 }
-            },
+            }
             Err(cleanup_error) => CanonicalWrite::PossiblyRetained {
                 bytes: retained_bound,
                 cause: cause.context(format!(
@@ -1865,12 +2107,7 @@ fn remove_pending_accounted(
     ledger: &store::BoundDirectory,
     accounting: &mut MutationAccounting,
 ) -> Result<()> {
-    remove_exact_accounted(
-        ledger,
-        ObjectNamespace::Ledger,
-        PENDING,
-        accounting,
-    )?;
+    remove_exact_accounted(ledger, ObjectNamespace::Ledger, PENDING, accounting)?;
     #[cfg(test)]
     inject_transaction_failure(ledger, TestTransactionFailure::AfterPendingRemoval)?;
     Ok(())
@@ -1878,19 +2115,31 @@ fn remove_pending_accounted(
 
 fn remove_exact_from(directory: &store::BoundDirectory, name: &str) -> Result<u64> {
     let display = directory.display_path.join(name);
-    let (file, read_binding) = store::open_bound_regular_file(&directory.dir, OsStr::new(name), &display)?;
+    let (file, read_binding) =
+        store::open_bound_regular_file(&directory.dir, OsStr::new(name), &display)?;
     let removed_bytes = file
         .metadata()
         .with_context(|| "inspect exact receipt ledger removal length")?
         .len();
-    let removal = store::bind_regular_file_for_removal(&directory.dir, OsStr::new(name), &display, &read_binding)?;
+    let removal = store::bind_regular_file_for_removal(
+        &directory.dir,
+        OsStr::new(name),
+        &display,
+        &read_binding,
+    )?;
     drop(file);
     removal.remove_bound_file(&directory.dir, OsStr::new(name), &display)?;
     store::sync_parent_directory(&directory.dir, &directory.display_path)?;
     Ok(removed_bytes)
 }
 
-fn read_child(dir: &Dir, name: &str, display: &Path, ceiling: usize, budget: &mut IoBudget) -> Result<Vec<u8>> {
+fn read_child(
+    dir: &Dir,
+    name: &str,
+    display: &Path,
+    ceiling: usize,
+    budget: &mut IoBudget,
+) -> Result<Vec<u8>> {
     let mut observed = 0u64;
     let result = store::read_regular_file_bounded_observed(
         dir,
@@ -1902,26 +2151,57 @@ fn read_child(dir: &Dir, name: &str, display: &Path, ceiling: usize, budget: &mu
             Ok(())
         },
     );
-    budget.read(usize::try_from(observed).context("receipt ledger read count does not fit usize")?)?;
+    budget
+        .read(usize::try_from(observed).context("receipt ledger read count does not fit usize")?)?;
     result
 }
 
-fn validate_exact_frame(handle: &[u8; 32], expected: &ContextEvidenceReceipt, frame: &[u8]) -> Result<()> {
-    anyhow::ensure!(frame.len() <= FRAME_MAX_BYTES, "receipt ledger exact frame is oversized");
-    let decoded = crate::wal::frame::decode_frame(frame).context("receipt ledger exact frame does not decode")?;
-    anyhow::ensure!(decoded.header.total_len as usize == frame.len(), "receipt ledger exact frame has trailing bytes");
-    anyhow::ensure!(decoded.header.event_type == EVENT_TYPE_EXTENDED, "receipt ledger frame is not extended");
-    anyhow::ensure!(decoded.header.event_subtype == ExtendedSubtype::ContextEvidenceReceipt as u8, "receipt ledger frame is not ContextEvidenceReceipt");
-    let receipt = ContextEvidenceReceipt::decode(decoded.payload).context("receipt ledger receipt payload is not closed")?;
-    anyhow::ensure!(receipt == *expected && receipt.matches_opaque_handle(handle), "receipt ledger frame does not bind expected opaque receipt");
+fn validate_exact_frame(
+    handle: &[u8; 32],
+    expected: &ContextEvidenceReceipt,
+    frame: &[u8],
+) -> Result<()> {
+    anyhow::ensure!(
+        frame.len() <= FRAME_MAX_BYTES,
+        "receipt ledger exact frame is oversized"
+    );
+    let decoded = crate::wal::frame::decode_frame(frame)
+        .context("receipt ledger exact frame does not decode")?;
+    anyhow::ensure!(
+        decoded.header.total_len as usize == frame.len(),
+        "receipt ledger exact frame has trailing bytes"
+    );
+    anyhow::ensure!(
+        decoded.header.event_type == EVENT_TYPE_EXTENDED,
+        "receipt ledger frame is not extended"
+    );
+    anyhow::ensure!(
+        decoded.header.event_subtype == ExtendedSubtype::ContextEvidenceReceipt as u8,
+        "receipt ledger frame is not ContextEvidenceReceipt"
+    );
+    let receipt = ContextEvidenceReceipt::decode(decoded.payload)
+        .context("receipt ledger receipt payload is not closed")?;
+    anyhow::ensure!(
+        receipt == *expected && receipt.matches_opaque_handle(handle),
+        "receipt ledger frame does not bind expected opaque receipt"
+    );
     Ok(())
 }
 
 fn finalize_shard(shard: &mut Shard, key: &[u8; 32]) -> Result<()> {
-    anyhow::ensure!(shard.count == shard.handles.len(), "receipt ledger shard handle index mismatch");
-    anyhow::ensure!(shard.count <= RECORDS_PER_SHARD, "receipt ledger shard count overflow");
+    anyhow::ensure!(
+        shard.count == shard.handles.len(),
+        "receipt ledger shard handle index mismatch"
+    );
+    anyhow::ensure!(
+        shard.count <= RECORDS_PER_SHARD,
+        "receipt ledger shard count overflow"
+    );
     let bytes = &mut shard.bytes;
-    anyhow::ensure!(bytes.len() == SHARD_BYTES, "receipt ledger shard size mismatch");
+    anyhow::ensure!(
+        bytes.len() == SHARD_BYTES,
+        "receipt ledger shard size mismatch"
+    );
     bytes[..SHARD_HEADER_BYTES].fill(0);
     bytes[..8].copy_from_slice(SHARD_MAGIC);
     bytes[8..10].copy_from_slice(&FORMAT_VERSION.to_le_bytes());
@@ -1936,55 +2216,134 @@ fn finalize_shard(shard: &mut Shard, key: &[u8; 32]) -> Result<()> {
     Ok(())
 }
 
-fn parse_shard(bytes: &[u8], expected_shard: u8, entry: ManifestEntry, key: &[u8; 32]) -> Result<Shard> {
-    anyhow::ensure!(bytes.len() == SHARD_BYTES, "receipt ledger shard has non-fixed size");
+fn parse_shard(
+    bytes: &[u8],
+    expected_shard: u8,
+    entry: ManifestEntry,
+    key: &[u8; 32],
+) -> Result<Shard> {
+    anyhow::ensure!(
+        bytes.len() == SHARD_BYTES,
+        "receipt ledger shard has non-fixed size"
+    );
     verify_tag(key, DOMAIN_SHARD, bytes)?;
-    anyhow::ensure!(&bytes[..8] == SHARD_MAGIC, "receipt ledger shard magic mismatch");
-    anyhow::ensure!(u16::from_le_bytes(bytes[8..10].try_into().unwrap()) == FORMAT_VERSION, "receipt ledger shard version mismatch");
-    anyhow::ensure!(bytes[10] == expected_shard && bytes[11] == entry.slot, "receipt ledger shard placement mismatch");
+    anyhow::ensure!(
+        &bytes[..8] == SHARD_MAGIC,
+        "receipt ledger shard magic mismatch"
+    );
+    anyhow::ensure!(
+        u16::from_le_bytes(bytes[8..10].try_into().unwrap()) == FORMAT_VERSION,
+        "receipt ledger shard version mismatch"
+    );
+    anyhow::ensure!(
+        bytes[10] == expected_shard && bytes[11] == entry.slot,
+        "receipt ledger shard placement mismatch"
+    );
     let count = usize::from(u16::from_le_bytes(bytes[12..14].try_into().unwrap()));
-    anyhow::ensure!(count <= RECORDS_PER_SHARD && bytes[14..16].iter().all(|byte| *byte == 0), "receipt ledger shard count/reserved mismatch");
-    anyhow::ensure!(u64::from_le_bytes(bytes[16..24].try_into().unwrap()) == entry.generation, "receipt ledger shard generation mismatch");
-    anyhow::ensure!(bytes[24..56] == sha256(shard_records(bytes)), "receipt ledger shard records digest mismatch");
-    anyhow::ensure!(entry.count as usize == count, "receipt ledger manifest/shard count mismatch");
+    anyhow::ensure!(
+        count <= RECORDS_PER_SHARD && bytes[14..16].iter().all(|byte| *byte == 0),
+        "receipt ledger shard count/reserved mismatch"
+    );
+    anyhow::ensure!(
+        u64::from_le_bytes(bytes[16..24].try_into().unwrap()) == entry.generation,
+        "receipt ledger shard generation mismatch"
+    );
+    anyhow::ensure!(
+        bytes[24..56] == sha256(shard_records(bytes)),
+        "receipt ledger shard records digest mismatch"
+    );
+    anyhow::ensure!(
+        entry.count as usize == count,
+        "receipt ledger manifest/shard count mismatch"
+    );
     let mut handles = Vec::with_capacity(count);
     let mut previous = None;
     for index in 0..RECORDS_PER_SHARD {
         let record = record_at(bytes, index)?;
         if index < count {
             let (handle, _) = decode_record(record)?;
-            anyhow::ensure!(shard_for_handle(key, &handle) == expected_shard, "receipt ledger record has wrong keyed shard");
+            anyhow::ensure!(
+                shard_for_handle(key, &handle) == expected_shard,
+                "receipt ledger record has wrong keyed shard"
+            );
             if let Some(prior) = previous {
-                anyhow::ensure!(prior < handle, "receipt ledger records are not strictly sorted");
+                anyhow::ensure!(
+                    prior < handle,
+                    "receipt ledger records are not strictly sorted"
+                );
             }
             previous = Some(handle);
             handles.push(handle);
         } else {
-            anyhow::ensure!(record.iter().all(|byte| *byte == 0), "receipt ledger unused record is non-zero");
+            anyhow::ensure!(
+                record.iter().all(|byte| *byte == 0),
+                "receipt ledger unused record is non-zero"
+            );
         }
     }
-    Ok(Shard { shard: expected_shard, slot: entry.slot, generation: entry.generation, count, bytes: bytes.to_vec(), handles })
+    Ok(Shard {
+        shard: expected_shard,
+        slot: entry.slot,
+        generation: entry.generation,
+        count,
+        bytes: bytes.to_vec(),
+        handles,
+    })
 }
 
 fn decode_record(record: &[u8]) -> Result<([u8; 32], ContextEvidenceReceipt)> {
-    anyhow::ensure!(record.len() == RECORD_BYTES, "receipt ledger record size mismatch");
+    anyhow::ensure!(
+        record.len() == RECORD_BYTES,
+        "receipt ledger record size mismatch"
+    );
     let frame_len = usize::from(u16::from_le_bytes(record[..2].try_into().unwrap()));
-    anyhow::ensure!((104..=FRAME_MAX_BYTES).contains(&frame_len), "receipt ledger record frame length invalid");
-    anyhow::ensure!(record[2..8].iter().all(|byte| *byte == 0), "receipt ledger record reserved bytes non-zero");
-    anyhow::ensure!(record[8 + frame_len..].iter().all(|byte| *byte == 0), "receipt ledger record frame padding non-zero");
+    anyhow::ensure!(
+        (104..=FRAME_MAX_BYTES).contains(&frame_len),
+        "receipt ledger record frame length invalid"
+    );
+    anyhow::ensure!(
+        record[2..8].iter().all(|byte| *byte == 0),
+        "receipt ledger record reserved bytes non-zero"
+    );
+    anyhow::ensure!(
+        record[8 + frame_len..].iter().all(|byte| *byte == 0),
+        "receipt ledger record frame padding non-zero"
+    );
     let frame = &record[8..8 + frame_len];
-    let decoded = crate::wal::frame::decode_frame(frame).context("receipt ledger record frame does not decode")?;
-    anyhow::ensure!(decoded.header.total_len as usize == frame_len, "receipt ledger record frame trailing bytes");
-    anyhow::ensure!(decoded.header.event_type == EVENT_TYPE_EXTENDED && decoded.header.event_subtype == ExtendedSubtype::ContextEvidenceReceipt as u8, "receipt ledger record is not ContextEvidenceReceipt");
-    let receipt = ContextEvidenceReceipt::decode(decoded.payload).context("receipt ledger record receipt is not closed")?;
+    let decoded = crate::wal::frame::decode_frame(frame)
+        .context("receipt ledger record frame does not decode")?;
+    anyhow::ensure!(
+        decoded.header.total_len as usize == frame_len,
+        "receipt ledger record frame trailing bytes"
+    );
+    anyhow::ensure!(
+        decoded.header.event_type == EVENT_TYPE_EXTENDED
+            && decoded.header.event_subtype == ExtendedSubtype::ContextEvidenceReceipt as u8,
+        "receipt ledger record is not ContextEvidenceReceipt"
+    );
+    let receipt = ContextEvidenceReceipt::decode(decoded.payload)
+        .context("receipt ledger record receipt is not closed")?;
     let handle = receipt.opaque_handle()?;
     Ok((handle, receipt))
 }
 
 fn finalize_manifest(manifest: &mut Manifest, key: &[u8; 32]) -> Result<()> {
-    anyhow::ensure!(manifest.bytes.len() == MANIFEST_BYTES, "receipt ledger manifest size mismatch");
-    let total: u32 = manifest.entries.iter().map(|entry| u32::from(entry.count)).sum();
-    anyhow::ensure!(total == manifest.total_records && usize::try_from(total).ok().is_some_and(|value| value <= LIFETIME_CAPACITY), "receipt ledger manifest total mismatch");
+    anyhow::ensure!(
+        manifest.bytes.len() == MANIFEST_BYTES,
+        "receipt ledger manifest size mismatch"
+    );
+    let total: u32 = manifest
+        .entries
+        .iter()
+        .map(|entry| u32::from(entry.count))
+        .sum();
+    anyhow::ensure!(
+        total == manifest.total_records
+            && usize::try_from(total)
+                .ok()
+                .is_some_and(|value| value <= LIFETIME_CAPACITY),
+        "receipt ledger manifest total mismatch"
+    );
     let bytes = &mut manifest.bytes;
     bytes[..MANIFEST_HEADER_BYTES].fill(0);
     bytes[..8].copy_from_slice(MANIFEST_MAGIC);
@@ -2008,18 +2367,37 @@ fn finalize_manifest(manifest: &mut Manifest, key: &[u8; 32]) -> Result<()> {
 }
 
 fn parse_manifest(bytes: &[u8], key: &[u8; 32]) -> Result<Manifest> {
-    anyhow::ensure!(bytes.len() == MANIFEST_BYTES, "receipt ledger manifest has non-fixed size");
+    anyhow::ensure!(
+        bytes.len() == MANIFEST_BYTES,
+        "receipt ledger manifest has non-fixed size"
+    );
     verify_tag(key, DOMAIN_FILE, bytes)?;
-    anyhow::ensure!(&bytes[..8] == MANIFEST_MAGIC, "receipt ledger manifest magic mismatch");
-    anyhow::ensure!(u16::from_le_bytes(bytes[8..10].try_into().unwrap()) == FORMAT_VERSION && bytes[10..12].iter().all(|byte| *byte == 0), "receipt ledger manifest version/reserved mismatch");
+    anyhow::ensure!(
+        &bytes[..8] == MANIFEST_MAGIC,
+        "receipt ledger manifest magic mismatch"
+    );
+    anyhow::ensure!(
+        u16::from_le_bytes(bytes[8..10].try_into().unwrap()) == FORMAT_VERSION
+            && bytes[10..12].iter().all(|byte| *byte == 0),
+        "receipt ledger manifest version/reserved mismatch"
+    );
     let generation = u64::from_le_bytes(bytes[12..20].try_into().unwrap());
     let previous_generation = u64::from_le_bytes(bytes[20..28].try_into().unwrap());
     let previous_sha256 = bytes[28..60].try_into().unwrap();
     let total_records = u32::from_le_bytes(bytes[60..64].try_into().unwrap());
-    anyhow::ensure!(u32::from_le_bytes(bytes[64..68].try_into().unwrap()) == LIFETIME_CAPACITY as u32, "receipt ledger manifest capacity mismatch");
-    anyhow::ensure!(generation > previous_generation || (generation == 1 && previous_generation == 0), "receipt ledger manifest generation is invalid");
+    anyhow::ensure!(
+        u32::from_le_bytes(bytes[64..68].try_into().unwrap()) == LIFETIME_CAPACITY as u32,
+        "receipt ledger manifest capacity mismatch"
+    );
+    anyhow::ensure!(
+        generation > previous_generation || (generation == 1 && previous_generation == 0),
+        "receipt ledger manifest generation is invalid"
+    );
     if previous_generation == 0 {
-        anyhow::ensure!(previous_sha256 == ZERO_SHA, "receipt ledger genesis manifest has prior digest");
+        anyhow::ensure!(
+            previous_sha256 == ZERO_SHA,
+            "receipt ledger genesis manifest has prior digest"
+        );
     }
     let mut entries = [ManifestEntry::EMPTY; SHARD_COUNT];
     for (index, entry) in entries.iter_mut().enumerate() {
@@ -2028,23 +2406,60 @@ fn parse_manifest(bytes: &[u8], key: &[u8; 32]) -> Result<Manifest> {
         anyhow::ensure!(present <= 1, "receipt ledger manifest present flag invalid");
         let slot = bytes[offset + 1];
         let count = u16::from_le_bytes(bytes[offset + 2..offset + 4].try_into().unwrap());
-        let entry_generation = u64::from_le_bytes(bytes[offset + 4..offset + 12].try_into().unwrap());
+        let entry_generation =
+            u64::from_le_bytes(bytes[offset + 4..offset + 12].try_into().unwrap());
         let sha = bytes[offset + 12..offset + 44].try_into().unwrap();
         if present == 0 {
-            anyhow::ensure!(slot == 0 && count == 0 && entry_generation == 0 && sha == ZERO_SHA, "receipt ledger absent manifest entry is non-zero");
+            anyhow::ensure!(
+                slot == 0 && count == 0 && entry_generation == 0 && sha == ZERO_SHA,
+                "receipt ledger absent manifest entry is non-zero"
+            );
         } else {
-            anyhow::ensure!(slot < 2 && count > 0 && usize::from(count) <= RECORDS_PER_SHARD && entry_generation > 0 && entry_generation <= generation && sha != ZERO_SHA, "receipt ledger manifest entry invalid");
+            anyhow::ensure!(
+                slot < 2
+                    && count > 0
+                    && usize::from(count) <= RECORDS_PER_SHARD
+                    && entry_generation > 0
+                    && entry_generation <= generation
+                    && sha != ZERO_SHA,
+                "receipt ledger manifest entry invalid"
+            );
         }
-        *entry = ManifestEntry { present: present == 1, slot, count, generation: entry_generation, shard_sha256: sha };
+        *entry = ManifestEntry {
+            present: present == 1,
+            slot,
+            count,
+            generation: entry_generation,
+            shard_sha256: sha,
+        };
     }
     let computed: u32 = entries.iter().map(|entry| u32::from(entry.count)).sum();
-    anyhow::ensure!(computed == total_records && usize::try_from(computed).ok().is_some_and(|value| value <= LIFETIME_CAPACITY), "receipt ledger manifest total is invalid");
-    Ok(Manifest { generation, previous_generation, previous_sha256, total_records, entries, bytes: bytes.to_vec() })
+    anyhow::ensure!(
+        computed == total_records
+            && usize::try_from(computed)
+                .ok()
+                .is_some_and(|value| value <= LIFETIME_CAPACITY),
+        "receipt ledger manifest total is invalid"
+    );
+    Ok(Manifest {
+        generation,
+        previous_generation,
+        previous_sha256,
+        total_records,
+        entries,
+        bytes: bytes.to_vec(),
+    })
 }
 
 fn serialize_pending(pending: &Pending, key: &[u8; 32]) -> Result<Vec<u8>> {
-    anyhow::ensure!(pending.manifest.bytes.len() == MANIFEST_BYTES, "receipt ledger pending manifest size mismatch");
-    anyhow::ensure!(sha256(&pending.manifest.bytes) == pending.new_manifest_sha256, "receipt ledger pending manifest digest mismatch");
+    anyhow::ensure!(
+        pending.manifest.bytes.len() == MANIFEST_BYTES,
+        "receipt ledger pending manifest size mismatch"
+    );
+    anyhow::ensure!(
+        sha256(&pending.manifest.bytes) == pending.new_manifest_sha256,
+        "receipt ledger pending manifest digest mismatch"
+    );
     let mut bytes = vec![0; PENDING_BYTES];
     bytes[..8].copy_from_slice(PENDING_MAGIC);
     bytes[8..10].copy_from_slice(&FORMAT_VERSION.to_le_bytes());
@@ -2055,17 +2470,30 @@ fn serialize_pending(pending: &Pending, key: &[u8; 32]) -> Result<Vec<u8>> {
     bytes[60..92].copy_from_slice(&pending.new_shard_sha256);
     bytes[92..124].copy_from_slice(&pending.new_manifest_sha256);
     bytes[124..128].copy_from_slice(&(MANIFEST_BYTES as u32).to_le_bytes());
-    bytes[PENDING_PREFIX_BYTES..PENDING_PREFIX_BYTES + MANIFEST_BYTES].copy_from_slice(&pending.manifest.bytes);
+    bytes[PENDING_PREFIX_BYTES..PENDING_PREFIX_BYTES + MANIFEST_BYTES]
+        .copy_from_slice(&pending.manifest.bytes);
     let tag = tag(key, DOMAIN_FILE, &bytes[..PENDING_BYTES - TAG_BYTES]);
     bytes[PENDING_BYTES - TAG_BYTES..].copy_from_slice(&tag);
     Ok(bytes)
 }
 
 fn parse_pending(bytes: &[u8], key: &[u8; 32]) -> Result<Pending> {
-    anyhow::ensure!(bytes.len() == PENDING_BYTES, "receipt ledger pending journal has non-fixed size");
+    anyhow::ensure!(
+        bytes.len() == PENDING_BYTES,
+        "receipt ledger pending journal has non-fixed size"
+    );
     verify_tag(key, DOMAIN_FILE, bytes)?;
-    anyhow::ensure!(&bytes[..8] == PENDING_MAGIC && u16::from_le_bytes(bytes[8..10].try_into().unwrap()) == FORMAT_VERSION && bytes[10..12].iter().all(|byte| *byte == 0), "receipt ledger pending journal header invalid");
-    anyhow::ensure!(bytes[54..60].iter().all(|byte| *byte == 0) && u32::from_le_bytes(bytes[124..128].try_into().unwrap()) as usize == MANIFEST_BYTES, "receipt ledger pending journal reserved/length invalid");
+    anyhow::ensure!(
+        &bytes[..8] == PENDING_MAGIC
+            && u16::from_le_bytes(bytes[8..10].try_into().unwrap()) == FORMAT_VERSION
+            && bytes[10..12].iter().all(|byte| *byte == 0),
+        "receipt ledger pending journal header invalid"
+    );
+    anyhow::ensure!(
+        bytes[54..60].iter().all(|byte| *byte == 0)
+            && u32::from_le_bytes(bytes[124..128].try_into().unwrap()) as usize == MANIFEST_BYTES,
+        "receipt ledger pending journal reserved/length invalid"
+    );
     let old_manifest_sha256 = bytes[12..44].try_into().unwrap();
     let new_generation = u64::from_le_bytes(bytes[44..52].try_into().unwrap());
     let shard = bytes[52];
@@ -2073,11 +2501,31 @@ fn parse_pending(bytes: &[u8], key: &[u8; 32]) -> Result<Pending> {
     anyhow::ensure!(slot < 2, "receipt ledger pending slot invalid");
     let new_shard_sha256 = bytes[60..92].try_into().unwrap();
     let new_manifest_sha256 = bytes[92..124].try_into().unwrap();
-    let manifest = parse_manifest(&bytes[PENDING_PREFIX_BYTES..PENDING_PREFIX_BYTES + MANIFEST_BYTES], key)?;
-    anyhow::ensure!(manifest.generation == new_generation && sha256(&manifest.bytes) == new_manifest_sha256, "receipt ledger pending embedded manifest mismatch");
+    let manifest = parse_manifest(
+        &bytes[PENDING_PREFIX_BYTES..PENDING_PREFIX_BYTES + MANIFEST_BYTES],
+        key,
+    )?;
+    anyhow::ensure!(
+        manifest.generation == new_generation && sha256(&manifest.bytes) == new_manifest_sha256,
+        "receipt ledger pending embedded manifest mismatch"
+    );
     let entry = manifest.entries[shard as usize];
-    anyhow::ensure!(entry.present && entry.slot == slot && entry.generation == new_generation && entry.shard_sha256 == new_shard_sha256, "receipt ledger pending shard binding mismatch");
-    Ok(Pending { old_manifest_sha256, new_generation, shard, slot, new_shard_sha256, new_manifest_sha256, manifest })
+    anyhow::ensure!(
+        entry.present
+            && entry.slot == slot
+            && entry.generation == new_generation
+            && entry.shard_sha256 == new_shard_sha256,
+        "receipt ledger pending shard binding mismatch"
+    );
+    Ok(Pending {
+        old_manifest_sha256,
+        new_generation,
+        shard,
+        slot,
+        new_shard_sha256,
+        new_manifest_sha256,
+        manifest,
+    })
 }
 
 fn shard_records(bytes: &[u8]) -> &[u8] {
@@ -2089,7 +2537,10 @@ fn shard_records_mut(bytes: &mut [u8]) -> &mut [u8] {
 }
 
 fn record_at(bytes: &[u8], index: usize) -> Result<&[u8]> {
-    anyhow::ensure!(index < RECORDS_PER_SHARD, "receipt ledger record index out of range");
+    anyhow::ensure!(
+        index < RECORDS_PER_SHARD,
+        "receipt ledger record index out of range"
+    );
     let start = SHARD_HEADER_BYTES + index * RECORD_BYTES;
     Ok(&bytes[start..start + RECORD_BYTES])
 }
@@ -2102,7 +2553,10 @@ fn tag(key: &[u8; 32], domain: &[u8], body: &[u8]) -> [u8; TAG_BYTES] {
 }
 
 fn verify_tag(key: &[u8; 32], domain: &[u8], bytes: &[u8]) -> Result<()> {
-    anyhow::ensure!(bytes.len() >= TAG_BYTES, "receipt ledger authenticated object is too short");
+    anyhow::ensure!(
+        bytes.len() >= TAG_BYTES,
+        "receipt ledger authenticated object is too short"
+    );
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC-SHA256 accepts a 32-byte key");
     mac.update(domain);
     mac.update(&bytes[..bytes.len() - TAG_BYTES]);
@@ -2128,16 +2582,25 @@ fn shard_file_name(shard: u8, slot: u8, generation: u64) -> String {
 
 fn parse_manifest_name(name: &str) -> Option<u64> {
     let inner = name.strip_prefix("manifest-")?.strip_suffix(".v1")?;
-    (inner.len() == 16 && inner.bytes().all(|byte| byte.is_ascii_hexdigit())).then(|| u64::from_str_radix(inner, 16).ok()).flatten()
+    (inner.len() == 16 && inner.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| u64::from_str_radix(inner, 16).ok())
+        .flatten()
 }
 
 fn parse_shard_name(name: &str) -> Option<(u8, u8, u64)> {
     let body = name.strip_prefix("shard-")?.strip_suffix(".v1")?;
     let (shard, rest) = body.split_once("-slot-")?;
     let (slot, generation) = rest.split_once("-gen-")?;
-    let shard = (shard.len() == 2 && shard.bytes().all(|byte| byte.is_ascii_hexdigit())).then(|| u8::from_str_radix(shard, 16).ok()).flatten()?;
-    let slot = (slot.len() == 1).then(|| slot.parse::<u8>().ok()).flatten()?;
-    let generation = (generation.len() == 16 && generation.bytes().all(|byte| byte.is_ascii_hexdigit())).then(|| u64::from_str_radix(generation, 16).ok()).flatten()?;
+    let shard = (shard.len() == 2 && shard.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| u8::from_str_radix(shard, 16).ok())
+        .flatten()?;
+    let slot = (slot.len() == 1)
+        .then(|| slot.parse::<u8>().ok())
+        .flatten()?;
+    let generation = (generation.len() == 16
+        && generation.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    .then(|| u64::from_str_radix(generation, 16).ok())
+    .flatten()?;
     (slot < 2).then_some((shard, slot, generation))
 }
 
@@ -2220,10 +2683,16 @@ mod tests {
     fn generation_names_are_closed_and_bounded() {
         let manifest = manifest_file_name(9);
         assert_eq!(parse_manifest_name(&manifest), Some(9));
-        assert_eq!(parse_manifest_name("manifest-0000000000000009.v1.bak"), None);
+        assert_eq!(
+            parse_manifest_name("manifest-0000000000000009.v1.bak"),
+            None
+        );
         let shard = shard_file_name(0xab, 1, 12);
         assert_eq!(parse_shard_name(&shard), Some((0xab, 1, 12)));
-        assert_eq!(parse_shard_name("shard-ab-slot-2-gen-000000000000000c.v1"), None);
+        assert_eq!(
+            parse_shard_name("shard-ab-slot-2-gen-000000000000000c.v1"),
+            None
+        );
     }
 
     #[test]
@@ -2254,7 +2723,14 @@ mod tests {
             generation: 1,
             shard_sha256: sha256(&shard.bytes),
         };
-        assert_eq!(receipt_at(&parse_shard(&shard.bytes, shard_index, entry, &key).unwrap(), 0).unwrap(), receipt);
+        assert_eq!(
+            receipt_at(
+                &parse_shard(&shard.bytes, shard_index, entry, &key).unwrap(),
+                0
+            )
+            .unwrap(),
+            receipt
+        );
         let mut tampered = shard.bytes.clone();
         tampered[SHARD_HEADER_BYTES + 8] ^= 1;
         assert!(parse_shard(&tampered, shard_index, entry, &key).is_err());
@@ -2304,7 +2780,11 @@ mod tests {
     #[test]
     fn production_reader_authenticates_head_exact_receipt_and_absence() {
         let home = crate::test_env::canonical_tempdir().unwrap();
-        assert!(read_authenticated_ledger(home.path(), None).unwrap().is_none());
+        assert!(
+            read_authenticated_ledger(home.path(), None)
+                .unwrap()
+                .is_none()
+        );
 
         let handle = [0x32; 32];
         let (receipt, frame) = closed_frame(handle);
@@ -2337,11 +2817,26 @@ mod tests {
     fn every_durable_transaction_boundary_recovers_without_a_second_receipt() {
         let cases = [
             (TestTransactionFailure::AfterKey, AppendDecision::Appended),
-            (TestTransactionFailure::AfterPending, AppendDecision::Appended),
-            (TestTransactionFailure::AfterShard, AppendDecision::AlreadyPresent),
-            (TestTransactionFailure::AfterManifest, AppendDecision::AlreadyPresent),
-            (TestTransactionFailure::AfterAnchor, AppendDecision::AlreadyPresent),
-            (TestTransactionFailure::AfterPendingRemoval, AppendDecision::AlreadyPresent),
+            (
+                TestTransactionFailure::AfterPending,
+                AppendDecision::Appended,
+            ),
+            (
+                TestTransactionFailure::AfterShard,
+                AppendDecision::AlreadyPresent,
+            ),
+            (
+                TestTransactionFailure::AfterManifest,
+                AppendDecision::AlreadyPresent,
+            ),
+            (
+                TestTransactionFailure::AfterAnchor,
+                AppendDecision::AlreadyPresent,
+            ),
+            (
+                TestTransactionFailure::AfterPendingRemoval,
+                AppendDecision::AlreadyPresent,
+            ),
         ];
         for (index, (phase, expected_decision)) in cases.into_iter().enumerate() {
             let home = crate::test_env::canonical_tempdir().unwrap();
@@ -2368,37 +2863,19 @@ mod tests {
         let mut debt = ReceiptQuotaDebt::default();
 
         fail_transaction_after_for_test(home.path(), TestTransactionFailure::AfterPending);
-        let first = append_once_with_quota_debt(
-            home.path(),
-            &handle,
-            &receipt,
-            &frame,
-            &mut debt,
-        )
-        .unwrap_err();
+        let first = append_once_with_quota_debt(home.path(), &handle, &receipt, &frame, &mut debt)
+            .unwrap_err();
         assert!(first.retained_bytes() >= PENDING_BYTES as u64);
         assert_eq!(first.reclaimed_debt_bytes(), 0);
 
         fail_transaction_after_for_test(home.path(), TestTransactionFailure::AfterPending);
-        let second = append_once_with_quota_debt(
-            home.path(),
-            &handle,
-            &receipt,
-            &frame,
-            &mut debt,
-        )
-        .unwrap_err();
+        let second = append_once_with_quota_debt(home.path(), &handle, &receipt, &frame, &mut debt)
+            .unwrap_err();
         assert_eq!(second.reclaimed_debt_bytes(), PENDING_BYTES as u64);
         assert_eq!(second.retained_bytes(), PENDING_BYTES as u64);
 
-        let recovered = append_once_with_quota_debt(
-            home.path(),
-            &handle,
-            &receipt,
-            &frame,
-            &mut debt,
-        )
-        .unwrap();
+        let recovered =
+            append_once_with_quota_debt(home.path(), &handle, &receipt, &frame, &mut debt).unwrap();
         assert_eq!(recovered.decision(), AppendDecision::Appended);
         assert_eq!(recovered.reclaimed_debt_bytes(), PENDING_BYTES as u64);
         assert!(recovered.replacement_bytes() <= recovered.reclaimed_bytes());
@@ -2434,7 +2911,10 @@ mod tests {
                 TestCanonicalWriteFailure::RollbackRemove,
             );
             let error = append_once(home.path(), &handle, &receipt, &frame).unwrap_err();
-            assert!(error.retained_bytes() >= object_maximum, "object {object:?}");
+            assert!(
+                error.retained_bytes() >= object_maximum,
+                "object {object:?}"
+            );
             assert!(error.retained_bytes() <= MAX_TRANSACTION_BYTES);
             assert!(bounded_namespace_bytes(home.path()) <= error.retained_bytes());
 
@@ -2484,13 +2964,25 @@ mod tests {
         fail_transaction_after_for_test(home.path(), TestTransactionFailure::AfterManifest);
         append_once(home.path(), &second_handle, &second, &second_frame).unwrap_err();
         let before = namespace_names(&ledger_path(home.path()));
-        assert_eq!(before.iter().filter(|name| parse_manifest_name(name).is_some()).count(), 2);
+        assert_eq!(
+            before
+                .iter()
+                .filter(|name| parse_manifest_name(name).is_some())
+                .count(),
+            2
+        );
         assert!(before.iter().any(|name| name == PENDING));
 
         let recovered = append_once(home.path(), &second_handle, &second, &second_frame).unwrap();
         assert_eq!(recovered.decision(), AppendDecision::AlreadyPresent);
         let after = namespace_names(&ledger_path(home.path()));
-        assert_eq!(after.iter().filter(|name| parse_manifest_name(name).is_some()).count(), 1);
+        assert_eq!(
+            after
+                .iter()
+                .filter(|name| parse_manifest_name(name).is_some())
+                .count(),
+            1
+        );
         assert!(!after.iter().any(|name| name == PENDING));
 
         let active_manifest = after
@@ -2523,7 +3015,8 @@ mod tests {
             .find(|name| parse_shard_name(name).is_some())
             .unwrap()
             .clone();
-        let old_manifest = std::fs::read(ledger_path(home.path()).join(&old_manifest_name)).unwrap();
+        let old_manifest =
+            std::fs::read(ledger_path(home.path()).join(&old_manifest_name)).unwrap();
         let old_shard = std::fs::read(ledger_path(home.path()).join(&old_shard_name)).unwrap();
 
         let second_handle = [0x92; 32];
@@ -2534,7 +3027,11 @@ mod tests {
                 std::fs::remove_file(ledger_path(home.path()).join(name)).unwrap();
             }
         }
-        std::fs::write(ledger_path(home.path()).join(old_manifest_name), old_manifest).unwrap();
+        std::fs::write(
+            ledger_path(home.path()).join(old_manifest_name),
+            old_manifest,
+        )
+        .unwrap();
         std::fs::write(ledger_path(home.path()).join(old_shard_name), old_shard).unwrap();
         assert!(append_once(home.path(), &first_handle, &first, &first_frame).is_err());
 
@@ -2555,7 +3052,8 @@ mod tests {
         let (receipt, frame) = closed_frame(handle);
         append_once(home.path(), &handle, &receipt, &frame).unwrap();
         let key_path = ledger_path(home.path()).join(LEDGER_KEY);
-        let replacement = crate::wal::compaction::encode_key_for_storage(&key_path, &[0x55; 32]).unwrap();
+        let replacement =
+            crate::wal::compaction::encode_key_for_storage(&key_path, &[0x55; 32]).unwrap();
         std::fs::write(&key_path, replacement).unwrap();
         assert!(append_once(home.path(), &handle, &receipt, &frame).is_err());
 
@@ -2567,7 +3065,8 @@ mod tests {
             .into_iter()
             .find(|name| parse_shard_name(name).is_some())
             .unwrap();
-        let stale_shard = std::fs::read(ledger_path(replay.path()).join(&first_shard_name)).unwrap();
+        let stale_shard =
+            std::fs::read(ledger_path(replay.path()).join(&first_shard_name)).unwrap();
         let key_display = ledger_path(replay.path()).join(LEDGER_KEY);
         let key: [u8; 32] = crate::wal::compaction::maybe_unwrap_dpapi(
             &std::fs::read(&key_display).unwrap(),
@@ -2583,7 +3082,9 @@ mod tests {
                 candidate[..2].copy_from_slice(&value.to_le_bytes());
                 candidate
             })
-            .find(|candidate| *candidate != first_handle && shard_for_handle(&key, candidate) == target_shard)
+            .find(|candidate| {
+                *candidate != first_handle && shard_for_handle(&key, candidate) == target_shard
+            })
             .unwrap();
         let (second, second_frame) = closed_frame(second_handle);
         append_once(replay.path(), &second_handle, &second, &second_frame).unwrap();
@@ -2591,7 +3092,11 @@ mod tests {
             .into_iter()
             .find(|name| parse_shard_name(name).is_some())
             .unwrap();
-        std::fs::write(ledger_path(replay.path()).join(current_shard_name), stale_shard).unwrap();
+        std::fs::write(
+            ledger_path(replay.path()).join(current_shard_name),
+            stale_shard,
+        )
+        .unwrap();
         assert!(append_once(replay.path(), &second_handle, &second, &second_frame).is_err());
     }
 

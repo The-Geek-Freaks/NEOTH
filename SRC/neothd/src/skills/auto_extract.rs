@@ -544,8 +544,8 @@ mod tests {
 
     #[tokio::test]
     async fn over_wire_limit_query_rejects_before_provider_call() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         struct CountingProvider(Arc<AtomicUsize>);
 
@@ -788,8 +788,7 @@ mod tests {
         // The distiller receives the typed tool-digest field, not a raw
         // interpolation or the blind response prefix.
         assert!(
-            envelope_field(&prompt_seen, "skill_extraction_context")
-                .contains("shell/run_command"),
+            envelope_field(&prompt_seen, "skill_extraction_context").contains("shell/run_command"),
             "distiller prompt must contain first tool from digest"
         );
         assert!(

@@ -40,7 +40,10 @@ fn connector_control_rpc_uses_its_own_domains_and_no_tcp_or_audit_routes() {
         "SOCKET_BASENAME: &str = \"s\"",
         "MAX_UNIX_SOCKET_PATH_BYTES: usize = 100",
     ] {
-        assert!(RPC.contains(required), "missing private CC RPC boundary: {required}");
+        assert!(
+            RPC.contains(required),
+            "missing private CC RPC boundary: {required}"
+        );
     }
     for forbidden in [
         "crate::daemon::audit_rpc",
@@ -52,7 +55,10 @@ fn connector_control_rpc_uses_its_own_domains_and_no_tcp_or_audit_routes() {
         "AuthenticatedControlSessionIssuer",
         "pub fn daemon_authenticated_session",
     ] {
-        assert!(!RPC.contains(forbidden), "CC RPC must not expose/couple {forbidden}");
+        assert!(
+            !RPC.contains(forbidden),
+            "CC RPC must not expose/couple {forbidden}"
+        );
     }
     assert!(CONTROL.contains("fn daemon_authenticated_session"));
     assert!(!CONTROL.contains("pub(crate) fn daemon_authenticated_session"));
@@ -95,7 +101,10 @@ fn rpc_routes_are_bounded_authenticated_and_keep_import_artifacts_opaque() {
         "confirm_import_with_outcome",
         "reclaim_uncommitted_apply_outcomes",
     ] {
-        assert!(RPC.contains(required), "missing CC RPC safety/route contract: {required}");
+        assert!(
+            RPC.contains(required),
+            "missing CC RPC safety/route contract: {required}"
+        );
     }
     for forbidden in [
         "source_text",
@@ -105,7 +114,10 @@ fn rpc_routes_are_bounded_authenticated_and_keep_import_artifacts_opaque() {
         "TerminalPlanOutcome",
         "outcomes: BTreeMap",
     ] {
-        assert!(!RPC.contains(forbidden), "CC RPC response/WAL must not expose {forbidden}");
+        assert!(
+            !RPC.contains(forbidden),
+            "CC RPC response/WAL must not expose {forbidden}"
+        );
     }
     assert!(
         compact_ascii_whitespace(RPC).contains("registry.pending.remove(&request.plan_id)"),
@@ -140,14 +152,19 @@ fn durable_apply_is_reserved_before_read_and_recovered_before_consumption() {
     let build = RPC
         .find("fn build_pending_plan(")
         .expect("bounded plan builder must exist");
-    let apply = RPC.find("fn apply_import(").expect("apply route must exist");
+    let apply = RPC
+        .find("fn apply_import(")
+        .expect("apply route must exist");
     let reserve = RPC[build..apply]
         .find("runtime.reserve_apply_outcome(apply_key)")
         .expect("outer operation must be durably reserved");
     let read = RPC[build..apply]
         .find("runtime.plan_import(Path::new(&request.relative_path))")
         .expect("capability-bound source read must exist");
-    assert!(reserve < read, "durable capacity must be reserved before source read");
+    assert!(
+        reserve < read,
+        "durable capacity must be reserved before source read"
+    );
 
     let apply_body = &RPC[apply..];
     let query = apply_body
@@ -171,9 +188,7 @@ fn whitespace_stable_plan_consumption_contract_rejects_a_lookup() {
         compact_ascii_whitespace("registry\n  . pending\n  . remove(&request.plan_id)")
             .contains(expected)
     );
-    assert!(
-        !compact_ascii_whitespace("registry.pending.get(&request.plan_id)").contains(expected)
-    );
+    assert!(!compact_ascii_whitespace("registry.pending.get(&request.plan_id)").contains(expected));
 }
 
 #[test]
@@ -181,9 +196,10 @@ fn lifecycle_is_pid_bound_fatal_and_reload_cannot_split_authority() {
     assert!(SERVE.contains("audit_endpoint_nonce"));
     assert!(SERVE.contains("spawn_connector_control_rpc"));
     assert!(SERVE.contains("replay_connector_control_receipts_at_startup"));
-    assert!(SERVE.contains(
-        "recover pending connector-control Context Evidence before endpoint startup"
-    ));
+    assert!(
+        SERVE
+            .contains("recover pending connector-control Context Evidence before endpoint startup")
+    );
     assert!(SERVE.contains("connector_control_rpc_required"));
     assert!(SERVE.contains("connector_control_rpc_guard.take()"));
     assert!(SERVE_TASKS.contains("join_connector_control_rpc(connector_control_rpc_task)"));
@@ -194,9 +210,9 @@ fn lifecycle_is_pid_bound_fatal_and_reload_cannot_split_authority() {
 
 #[test]
 fn windows_is_explicitly_unavailable_without_a_weaker_fallback() {
-    assert!(RPC.contains(
-        "Windows and other non-Unix targets deliberately expose no connector-control"
-    ));
+    assert!(
+        RPC.contains("Windows and other non-Unix targets deliberately expose no connector-control")
+    );
     assert!(RPC.contains("no TCP fallback exists"));
     assert!(RPC.contains("#[cfg(not(unix))]\npub(crate) async fn bind_and_serve"));
     assert!(SERVE.contains("private connector-control RPC unavailable on this platform"));
@@ -220,7 +236,10 @@ fn owned_effects_are_drained_not_aborted_after_discovery_withdrawal() {
         "remove_exact_private_socket_and_empty_ancestors",
         "drop(listener)",
     ] {
-        assert!(RPC.contains(required), "missing owned-effect shutdown rule: {required}");
+        assert!(
+            RPC.contains(required),
+            "missing owned-effect shutdown rule: {required}"
+        );
     }
     assert!(
         !RPC.contains("listener_abort.abort()"),
@@ -247,7 +266,10 @@ fn restart_replay_is_plan_independent_and_uses_the_authenticated_once_sink() {
         "load_existing_master_key_at",
         "owns no root, plan, path, or imported content",
     ] {
-        assert!(RPC.contains(required), "missing restart-safe replay rule: {required}");
+        assert!(
+            RPC.contains(required),
+            "missing restart-safe replay rule: {required}"
+        );
     }
 }
 
@@ -275,6 +297,9 @@ fn rpc_module_carries_executable_boundary_regressions_beyond_source_shape() {
         "#[tokio::test]",
         "#[cfg(unix)]",
     ] {
-        assert!(RPC.contains(required), "missing CC RPC behavioral regression: {required}");
+        assert!(
+            RPC.contains(required),
+            "missing CC RPC behavioral regression: {required}"
+        );
     }
 }

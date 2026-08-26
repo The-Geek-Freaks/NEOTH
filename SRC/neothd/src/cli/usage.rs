@@ -158,10 +158,7 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
     let monthly = format_known_cost(roll.projected_monthly_usd, currency);
     println!(
         "  spend rate: {}/day  ->  projected {}/month   |   latency p50={}ms p90={}ms",
-        burn,
-        monthly,
-        roll.total_p50_latency_ms,
-        roll.total_p90_latency_ms,
+        burn, monthly, roll.total_p50_latency_ms, roll.total_p90_latency_ms,
     );
     if roll.total_unknown_input_token_count > 0
         || roll.total_unknown_output_token_count > 0
@@ -244,7 +241,10 @@ fn print_workflow_table(roll: &UsageRollup, currency: Currency) {
         return;
     }
     println!("\nWorkflow cost attribution (closed audited classes)");
-    println!("{:<24} {:>8} {:>16} {:>10}", "workflow", "calls", "known_cost", "unpriced");
+    println!(
+        "{:<24} {:>8} {:>16} {:>10}",
+        "workflow", "calls", "known_cost", "unpriced"
+    );
     for totals in &roll.per_workflow {
         print_workflow_row(
             totals.workflow.as_str(),

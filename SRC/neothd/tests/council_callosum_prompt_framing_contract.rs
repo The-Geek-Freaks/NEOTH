@@ -73,9 +73,13 @@ fn adversarial_rejection_and_determinism_tests_are_pinned() {
         );
     }
 
-    let budgeted = CALLOSUM.find("pub async fn resolve_with_profile_budget(").unwrap();
+    let budgeted = CALLOSUM
+        .find("pub async fn resolve_with_profile_budget(")
+        .unwrap();
     let budgeted = &CALLOSUM[budgeted..];
-    let build = budgeted.find("build_synthesis_prompt_with_profile(").unwrap();
+    let build = budgeted
+        .find("build_synthesis_prompt_with_profile(")
+        .unwrap();
     let charge = budgeted.find("budget.charge()").unwrap();
     let provider = budgeted.find("ask_with_depth_budget(").unwrap();
     assert!(build < charge && charge < provider);

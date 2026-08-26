@@ -421,7 +421,7 @@ fn preflight_entity_source_text(
     value: &str,
 ) -> std::result::Result<(), crate::security::prompt_envelope::PromptEnvelopeError> {
     use crate::security::prompt_envelope::{
-        PromptEnvelopeError, PromptFieldKind, MAX_MEMORY_ENTITY_SOURCE_TEXT_BYTES,
+        MAX_MEMORY_ENTITY_SOURCE_TEXT_BYTES, PromptEnvelopeError, PromptFieldKind,
     };
 
     if value.len() > MAX_MEMORY_ENTITY_SOURCE_TEXT_BYTES {
@@ -456,7 +456,7 @@ fn build_extraction_prompt_from_prepared(
     text: &str,
 ) -> std::result::Result<String, crate::security::prompt_envelope::PromptEnvelopeError> {
     use crate::security::prompt_envelope::{
-        serialize_untrusted_prompt, PromptEnvelopePurpose, PromptFieldKind, UntrustedPromptField,
+        PromptEnvelopePurpose, PromptFieldKind, UntrustedPromptField, serialize_untrusted_prompt,
     };
 
     let envelope = serialize_untrusted_prompt(
@@ -1183,7 +1183,10 @@ mod tests {
         assert_eq!(request.temperature, None, "mock cannot wire temperature");
         let prompt = request.prompt;
         let source_data = source_text_from_prompt(&prompt);
-        assert_eq!(source_data, crate::security::redact::sanitize_tool_output(&source));
+        assert_eq!(
+            source_data,
+            crate::security::redact::sanitize_tool_output(&source)
+        );
         assert!(source_data.contains("Alice works at Mozilla."));
         assert!(!source_data.contains(aws));
         assert!(!source_data.contains('\u{200b}'));
@@ -1199,12 +1202,18 @@ mod tests {
     #[tokio::test]
     async fn multibyte_source_preflight_blocks_provider_call() {
         let provider = CapturingProvider::new("{\"entities\":[],\"relations\":[]}");
-        let source = "😀".repeat(
-            crate::security::prompt_envelope::MAX_MEMORY_ENTITY_SOURCE_TEXT_BYTES / 4 + 1,
-        );
+        let source = "😀"
+            .repeat(crate::security::prompt_envelope::MAX_MEMORY_ENTITY_SOURCE_TEXT_BYTES / 4 + 1);
 
-        let error = entity_extract(&source, &provider).await.unwrap_err().to_string();
-        assert_eq!(provider.calls(), 0, "raw preflight must precede provider call");
+        let error = entity_extract(&source, &provider)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            provider.calls(),
+            0,
+            "raw preflight must precede provider call"
+        );
         assert_eq!(error, "entity-extraction input rejected");
         assert!(!error.contains(&source));
     }
@@ -1221,8 +1230,15 @@ mod tests {
         assert!(crate::security::redact::sanitize_tool_output(&source).len() > max);
 
         let provider = CapturingProvider::new("{\"entities\":[],\"relations\":[]}");
-        let error = entity_extract(&source, &provider).await.unwrap_err().to_string();
-        assert_eq!(provider.calls(), 0, "post-sanitize cap must precede provider call");
+        let error = entity_extract(&source, &provider)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            provider.calls(),
+            0,
+            "post-sanitize cap must precede provider call"
+        );
         assert_eq!(error, "entity-extraction input rejected");
     }
 
@@ -1241,7 +1257,10 @@ mod tests {
             "entity-extraction provider response rejected: byte limit exceeded"
         );
         assert!(!error.contains(&reply));
-        assert!(!error.contains("malformed"), "parser must not run after cap rejection");
+        assert!(
+            !error.contains("malformed"),
+            "parser must not run after cap rejection"
+        );
     }
 
     #[tokio::test]
@@ -1259,16 +1278,21 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert_eq!(provider.calls(), 1);
-        assert_eq!(error, "entity-extraction provider response rejected: unsafe content");
+        assert_eq!(
+            error,
+            "entity-extraction provider response rejected: unsafe content"
+        );
         assert!(!error.contains(aws));
         assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM idx_entities", [], |row| row.get::<_, i64>(0))
+            conn.query_row("SELECT COUNT(*) FROM idx_entities", [], |row| row
+                .get::<_, i64>(0))
                 .unwrap(),
             0,
             "unsafe provider data must not create entities"
         );
         assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM idx_relations", [], |row| row.get::<_, i64>(0))
+            conn.query_row("SELECT COUNT(*) FROM idx_relations", [], |row| row
+                .get::<_, i64>(0))
                 .unwrap(),
             0,
             "unsafe provider data must not create relations"

@@ -13,8 +13,8 @@ use sha2::{Digest as _, Sha256};
 
 use super::{
     goldset::{
-        GoldsetEntry, GradedSystem, GraderFamily, GraderGrade, ValidatedGraderConfigFile,
-        EXPECTED_GOLDSET_QUERIES, MAX_GRADES_BYTES,
+        EXPECTED_GOLDSET_QUERIES, GoldsetEntry, GradedSystem, GraderFamily, GraderGrade,
+        MAX_GRADES_BYTES, ValidatedGraderConfigFile,
     },
     parity::Dimension,
     parity_candidate_evidence::ValidatedCandidateEvidence,
@@ -29,7 +29,8 @@ pub const OPERATOR_ANCHOR_QUERY_COUNT: usize = 20;
 pub const FAMILY_BIAS_THRESHOLD: f64 = 0.5;
 const OPERATOR_ANCHOR_RECORD_COUNT: usize = OPERATOR_ANCHOR_QUERY_COUNT * 2;
 pub const OPERATOR_ANCHOR_EVIDENCE_LINK_SCHEMA_VERSION: u32 = 1;
-pub const OPERATOR_ANCHOR_EVIDENCE_LINK_PURPOSE: &str = "neoth-recall-parity-operator-anchor-link/v1";
+pub const OPERATOR_ANCHOR_EVIDENCE_LINK_PURPOSE: &str =
+    "neoth-recall-parity-operator-anchor-link/v1";
 pub const MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES: usize = 64 * 1024;
 
 /// Validated manual labels. The artifact intentionally reuses the existing
@@ -43,13 +44,21 @@ pub struct ValidatedOperatorAnchor {
 }
 
 impl ValidatedOperatorAnchor {
-    pub fn grades(&self) -> &[GraderGrade] { &self.grades }
+    pub fn grades(&self) -> &[GraderGrade] {
+        &self.grades
+    }
 
-    pub fn query_ids(&self) -> &[String] { &self.query_ids }
+    pub fn query_ids(&self) -> &[String] {
+        &self.query_ids
+    }
 
-    pub fn goldset_sha256(&self) -> &str { &self.goldset_sha256 }
+    pub fn goldset_sha256(&self) -> &str {
+        &self.goldset_sha256
+    }
 
-    pub fn roster_sha256(&self) -> &str { &self.roster_sha256 }
+    pub fn roster_sha256(&self) -> &str {
+        &self.roster_sha256
+    }
 }
 
 /// Stable summary rendered by the CLI before any evaluator-grade evidence is
@@ -94,7 +103,9 @@ pub struct ValidatedOperatorAnchorEvidenceLink {
 }
 
 impl ValidatedOperatorAnchorEvidenceLink {
-    pub fn link(&self) -> &OperatorAnchorEvidenceLink { &self.link }
+    pub fn link(&self) -> &OperatorAnchorEvidenceLink {
+        &self.link
+    }
 }
 
 /// Per shared-family grader / dimension delta to the operator's manual labels.
@@ -145,7 +156,10 @@ pub fn load_operator_anchor_bytes(
             "operator anchor must contain exactly {OPERATOR_ANCHOR_RECORD_COUNT} records (20 queries × neoth/reference)"
         );
     }
-    let known_queries: BTreeSet<&str> = goldset.iter().map(|entry| entry.query_id.as_str()).collect();
+    let known_queries: BTreeSet<&str> = goldset
+        .iter()
+        .map(|entry| entry.query_id.as_str())
+        .collect();
     let mut query_ids = BTreeSet::new();
     let mut observations = BTreeSet::new();
     for grade in &grades {
@@ -154,7 +168,10 @@ pub fn load_operator_anchor_bytes(
             anyhow::bail!("operator anchor grader_id must be {OPERATOR_ANCHOR_GRADER_ID:?}");
         }
         if !known_queries.contains(grade.query_id.as_str()) {
-            anyhow::bail!("operator anchor contains query absent from canonical goldset: {:?}", grade.query_id);
+            anyhow::bail!(
+                "operator anchor contains query absent from canonical goldset: {:?}",
+                grade.query_id
+            );
         }
         let system = match grade.system {
             GradedSystem::Neoth => "neoth",
@@ -238,14 +255,22 @@ pub(crate) fn load_operator_anchor_evidence_link_with_provenance(
     {
         anyhow::bail!("operator anchor evidence link has unsupported schema or purpose");
     }
-    validate_sha256(&link.candidate_manifest_sha256, "operator anchor candidate manifest")?;
-    validate_sha256(&link.candidate_receipt_sha256, "operator anchor candidate receipt")?;
+    validate_sha256(
+        &link.candidate_manifest_sha256,
+        "operator anchor candidate manifest",
+    )?;
+    validate_sha256(
+        &link.candidate_receipt_sha256,
+        "operator anchor candidate receipt",
+    )?;
     validate_sha256(&link.operator_anchor_sha256, "operator anchor source")?;
     if link.candidate_manifest_sha256 != candidate_manifest_sha256
         || link.candidate_receipt_sha256 != candidate_receipt_sha256
         || link.operator_anchor_sha256 != sha256_bytes(anchor_bytes)
     {
-        anyhow::bail!("operator anchor evidence link does not bind the verified candidate evidence and label bytes");
+        anyhow::bail!(
+            "operator anchor evidence link does not bind the verified candidate evidence and label bytes"
+        );
     }
     if link.links.len() != OPERATOR_ANCHOR_QUERY_COUNT {
         anyhow::bail!("operator anchor evidence link must bind exactly 20 labeled queries");
@@ -258,23 +283,31 @@ pub(crate) fn load_operator_anchor_evidence_link_with_provenance(
     for item in &link.links {
         if let Some(previous) = prior_query {
             if item.query_id.as_str() <= previous {
-                anyhow::bail!("operator anchor evidence links must be strictly sorted by unique query_id");
+                anyhow::bail!(
+                    "operator anchor evidence links must be strictly sorted by unique query_id"
+                );
             }
         }
         prior_query = Some(item.query_id.as_str());
         if !anchor_queries.contains(item.query_id.as_str())
             || !linked_queries.insert(item.query_id.as_str())
         {
-            anyhow::bail!("operator anchor evidence link contains an unknown or duplicate anchor query");
+            anyhow::bail!(
+                "operator anchor evidence link contains an unknown or duplicate anchor query"
+            );
         }
         if !candidates.contains(item.candidate_id.as_str())
             || !linked_candidates.insert(item.candidate_id.as_str())
         {
-            anyhow::bail!("operator anchor evidence link contains an unknown or duplicate evidence candidate");
+            anyhow::bail!(
+                "operator anchor evidence link contains an unknown or duplicate evidence candidate"
+            );
         }
     }
     if linked_queries != anchor_queries {
-        anyhow::bail!("operator anchor evidence link does not cover the complete 20-query label set");
+        anyhow::bail!(
+            "operator anchor evidence link does not cover the complete 20-query label set"
+        );
     }
     Ok(ValidatedOperatorAnchorEvidenceLink { link })
 }
@@ -294,11 +327,21 @@ pub fn assess_shared_family_bias(
     if operator_anchor.roster_sha256() != canonical_roster_sha256(grader_config)? {
         anyhow::bail!("operator anchor was validated for a different grader roster");
     }
-    compute_parity_run(grader_config, goldset, automated_grades)
-        .context("operator-anchor bias analysis requires a complete valid automated grade matrix")?;
+    compute_parity_run(grader_config, goldset, automated_grades).context(
+        "operator-anchor bias analysis requires a complete valid automated grade matrix",
+    )?;
     let automated: BTreeMap<(&str, &str, bool), &GraderGrade> = automated_grades
         .iter()
-        .map(|grade| ((grade.query_id.as_str(), grade.grader_id.as_str(), matches!(grade.system, GradedSystem::Neoth)), grade))
+        .map(|grade| {
+            (
+                (
+                    grade.query_id.as_str(),
+                    grade.grader_id.as_str(),
+                    matches!(grade.system, GradedSystem::Neoth),
+                ),
+                grade,
+            )
+        })
         .collect();
     let mut biases = Vec::new();
     for grader in grader_config.graders() {
@@ -308,12 +351,21 @@ pub fn assess_shared_family_bias(
             let mut count = 0usize;
             for operator_grade in operator_anchor.grades() {
                 let automated_grade = automated
-                    .get(&(operator_grade.query_id.as_str(), grader.grader_id.as_str(), matches!(operator_grade.system, GradedSystem::Neoth)))
+                    .get(&(
+                        operator_grade.query_id.as_str(),
+                        grader.grader_id.as_str(),
+                        matches!(operator_grade.system, GradedSystem::Neoth),
+                    ))
                     .context("complete matrix lost an operator-anchor grader observation")?;
                 sum = sum
-                    .checked_add(i64::from(automated_grade.score(dimension)) - i64::from(operator_grade.score(dimension)))
+                    .checked_add(
+                        i64::from(automated_grade.score(dimension))
+                            - i64::from(operator_grade.score(dimension)),
+                    )
                     .context("operator-anchor bias sum overflow")?;
-                count = count.checked_add(1).context("operator-anchor bias count overflow")?;
+                count = count
+                    .checked_add(1)
+                    .context("operator-anchor bias count overflow")?;
             }
             dimensions.push(DimensionBias {
                 dimension: dimension.as_str().to_owned(),
@@ -333,24 +385,34 @@ pub fn assess_shared_family_bias(
         .cloned()
         .collect();
     shared.sort_by(|a, b| a.grader_id.cmp(&b.grader_id));
-    let shared_ids = shared.iter().map(|bias| bias.grader_id.clone()).collect::<Vec<_>>();
+    let shared_ids = shared
+        .iter()
+        .map(|bias| bias.grader_id.clone())
+        .collect::<Vec<_>>();
     let mut assessments = Vec::new();
     for dimension in Dimension::ALL {
         let per_grader_bias = shared
             .iter()
             .map(|bias| {
-                let value = bias.dimensions.iter()
+                let value = bias
+                    .dimensions
+                    .iter()
                     .find(|entry| entry.dimension == dimension.as_str())
                     .expect("every bias has every dimension")
                     .mean_grader_minus_operator;
                 (bias.grader_id.clone(), value)
             })
             .collect::<Vec<_>>();
-        let same_positive = per_grader_bias.iter().all(|(_, value)| *value > FAMILY_BIAS_THRESHOLD);
-        let same_negative = per_grader_bias.iter().all(|(_, value)| *value < -FAMILY_BIAS_THRESHOLD);
+        let same_positive = per_grader_bias
+            .iter()
+            .all(|(_, value)| *value > FAMILY_BIAS_THRESHOLD);
+        let same_negative = per_grader_bias
+            .iter()
+            .all(|(_, value)| *value < -FAMILY_BIAS_THRESHOLD);
         let consensus_detected = per_grader_bias.len() >= 3 && (same_positive || same_negative);
         let correction = consensus_detected.then(|| {
-            per_grader_bias.iter().map(|(_, value)| value).sum::<f64>() / per_grader_bias.len() as f64
+            per_grader_bias.iter().map(|(_, value)| value).sum::<f64>()
+                / per_grader_bias.len() as f64
         });
         assessments.push(SharedFamilyBiasAssessment {
             dimension: dimension.as_str().to_owned(),
@@ -384,7 +446,11 @@ fn sha256_bytes(bytes: &[u8]) -> String {
 }
 
 fn validate_sha256(value: &str, label: &str) -> Result<()> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
         anyhow::bail!("{label} SHA256 must be 64 lowercase hexadecimal characters");
     }
     Ok(())
@@ -396,32 +462,78 @@ mod tests {
     use crate::recall::goldset::{GoldsetCategory, GraderConfig, GraderConfigFile, GraderProvider};
 
     fn goldset() -> Vec<GoldsetEntry> {
-        (0..EXPECTED_GOLDSET_QUERIES).map(|i| GoldsetEntry {
-            query_id: format!("q{i:03}"), query_text: "q".into(), category: GoldsetCategory::Recall,
-            expected_sources: vec![], expected_response: String::new(),
-        }).collect()
+        (0..EXPECTED_GOLDSET_QUERIES)
+            .map(|i| GoldsetEntry {
+                query_id: format!("q{i:03}"),
+                query_text: "q".into(),
+                category: GoldsetCategory::Recall,
+                expected_sources: vec![],
+                expected_response: String::new(),
+            })
+            .collect()
     }
 
     fn grade(query_id: &str, grader_id: &str, system: GradedSystem, score: u8) -> GraderGrade {
-        GraderGrade { query_id: query_id.into(), grader_id: grader_id.into(), system,
-            factual: score, completeness: score, on_tone: score, usefulness: score, brevity: score }
+        GraderGrade {
+            query_id: query_id.into(),
+            grader_id: grader_id.into(),
+            system,
+            factual: score,
+            completeness: score,
+            on_tone: score,
+            usefulness: score,
+            brevity: score,
+        }
     }
 
     fn anchor_bytes() -> Vec<u8> {
-        (0..OPERATOR_ANCHOR_QUERY_COUNT).flat_map(|i| [
-            grade(&format!("q{i:03}"), OPERATOR_ANCHOR_GRADER_ID, GradedSystem::Neoth, 3),
-            grade(&format!("q{i:03}"), OPERATOR_ANCHOR_GRADER_ID, GradedSystem::Reference, 3),
-        ]).map(|grade| serde_json::to_string(&grade).unwrap()).collect::<Vec<_>>().join("\n").into_bytes()
+        (0..OPERATOR_ANCHOR_QUERY_COUNT)
+            .flat_map(|i| {
+                [
+                    grade(
+                        &format!("q{i:03}"),
+                        OPERATOR_ANCHOR_GRADER_ID,
+                        GradedSystem::Neoth,
+                        3,
+                    ),
+                    grade(
+                        &format!("q{i:03}"),
+                        OPERATOR_ANCHOR_GRADER_ID,
+                        GradedSystem::Reference,
+                        3,
+                    ),
+                ]
+            })
+            .map(|grade| serde_json::to_string(&grade).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes()
     }
 
     #[test]
     fn operator_anchor_requires_twenty_complete_canonical_pairs() {
         let goldset = goldset();
-        let config = GraderConfigFile { schema_version: 1, graders: vec![
-            GraderConfig { grader_id: "shared".into(), provider: GraderProvider::Anthropic, model_id: "shared".into(), family: GraderFamily::AnthropicOpenaiGoogle },
-            GraderConfig { grader_id: "external".into(), provider: GraderProvider::Mistral, model_id: "external".into(), family: GraderFamily::IndependentExternal },
-        ] }.into_validated().unwrap();
-        let anchor = load_operator_anchor_bytes(&anchor_bytes(), "fixture", &goldset, &config).unwrap();
+        let config = GraderConfigFile {
+            schema_version: 1,
+            graders: vec![
+                GraderConfig {
+                    grader_id: "shared".into(),
+                    provider: GraderProvider::Anthropic,
+                    model_id: "shared".into(),
+                    family: GraderFamily::AnthropicOpenaiGoogle,
+                },
+                GraderConfig {
+                    grader_id: "external".into(),
+                    provider: GraderProvider::Mistral,
+                    model_id: "external".into(),
+                    family: GraderFamily::IndependentExternal,
+                },
+            ],
+        }
+        .into_validated()
+        .unwrap();
+        let anchor =
+            load_operator_anchor_bytes(&anchor_bytes(), "fixture", &goldset, &config).unwrap();
         assert_eq!(anchor.query_ids().len(), OPERATOR_ANCHOR_QUERY_COUNT);
         assert_eq!(anchor.grades().len(), OPERATOR_ANCHOR_RECORD_COUNT);
         let mut truncated = anchor_bytes();
@@ -429,29 +541,81 @@ mod tests {
         assert!(load_operator_anchor_bytes(&truncated, "truncated", &goldset, &config).is_err());
         let mut duplicate_goldset = goldset.clone();
         duplicate_goldset[99] = duplicate_goldset[0].clone();
-        assert!(load_operator_anchor_bytes(&anchor_bytes(), "duplicate-goldset", &duplicate_goldset, &config).is_err());
+        assert!(
+            load_operator_anchor_bytes(
+                &anchor_bytes(),
+                "duplicate-goldset",
+                &duplicate_goldset,
+                &config
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn three_shared_graders_with_same_large_bias_get_a_correction_recommendation() {
         let goldset = goldset();
-        let config = GraderConfigFile { schema_version: 1, graders: vec![
-            GraderConfig { grader_id: "a".into(), provider: GraderProvider::Anthropic, model_id: "a".into(), family: GraderFamily::AnthropicOpenaiGoogle },
-            GraderConfig { grader_id: "b".into(), provider: GraderProvider::Openai, model_id: "b".into(), family: GraderFamily::AnthropicOpenaiGoogle },
-            GraderConfig { grader_id: "c".into(), provider: GraderProvider::Google, model_id: "c".into(), family: GraderFamily::AnthropicOpenaiGoogle },
-            GraderConfig { grader_id: "d".into(), provider: GraderProvider::Mistral, model_id: "d".into(), family: GraderFamily::IndependentExternal },
-        ] }.into_validated().unwrap();
+        let config = GraderConfigFile {
+            schema_version: 1,
+            graders: vec![
+                GraderConfig {
+                    grader_id: "a".into(),
+                    provider: GraderProvider::Anthropic,
+                    model_id: "a".into(),
+                    family: GraderFamily::AnthropicOpenaiGoogle,
+                },
+                GraderConfig {
+                    grader_id: "b".into(),
+                    provider: GraderProvider::Openai,
+                    model_id: "b".into(),
+                    family: GraderFamily::AnthropicOpenaiGoogle,
+                },
+                GraderConfig {
+                    grader_id: "c".into(),
+                    provider: GraderProvider::Google,
+                    model_id: "c".into(),
+                    family: GraderFamily::AnthropicOpenaiGoogle,
+                },
+                GraderConfig {
+                    grader_id: "d".into(),
+                    provider: GraderProvider::Mistral,
+                    model_id: "d".into(),
+                    family: GraderFamily::IndependentExternal,
+                },
+            ],
+        }
+        .into_validated()
+        .unwrap();
         let mut automated = Vec::new();
         for entry in &goldset {
             for grader in config.graders() {
-                let score = if grader.family == GraderFamily::AnthropicOpenaiGoogle { 4 } else { 3 };
-                automated.push(grade(&entry.query_id, &grader.grader_id, GradedSystem::Neoth, score));
-                automated.push(grade(&entry.query_id, &grader.grader_id, GradedSystem::Reference, score));
+                let score = if grader.family == GraderFamily::AnthropicOpenaiGoogle {
+                    4
+                } else {
+                    3
+                };
+                automated.push(grade(
+                    &entry.query_id,
+                    &grader.grader_id,
+                    GradedSystem::Neoth,
+                    score,
+                ));
+                automated.push(grade(
+                    &entry.query_id,
+                    &grader.grader_id,
+                    GradedSystem::Reference,
+                    score,
+                ));
             }
         }
-        let anchor = load_operator_anchor_bytes(&anchor_bytes(), "fixture", &goldset, &config).unwrap();
-        let (_, assessments) = assess_shared_family_bias(&config, &goldset, &automated, &anchor).unwrap();
-        let factual = assessments.iter().find(|assessment| assessment.dimension == "factual").unwrap();
+        let anchor =
+            load_operator_anchor_bytes(&anchor_bytes(), "fixture", &goldset, &config).unwrap();
+        let (_, assessments) =
+            assess_shared_family_bias(&config, &goldset, &automated, &anchor).unwrap();
+        let factual = assessments
+            .iter()
+            .find(|assessment| assessment.dimension == "factual")
+            .unwrap();
         assert!(factual.consensus_detected);
         assert_eq!(factual.recommended_unanchored_correction, Some(1.0));
         let mut changed_goldset = goldset.clone();
@@ -459,8 +623,12 @@ mod tests {
         assert!(assess_shared_family_bias(&config, &changed_goldset, &automated, &anchor).is_err());
         let mut changed_graders = config.graders().to_vec();
         changed_graders[0].model_id = "a-replacement-model".into();
-        let changed_config = GraderConfigFile { schema_version: 1, graders: changed_graders }
-            .into_validated().unwrap();
+        let changed_config = GraderConfigFile {
+            schema_version: 1,
+            graders: changed_graders,
+        }
+        .into_validated()
+        .unwrap();
         assert!(assess_shared_family_bias(&changed_config, &goldset, &automated, &anchor).is_err());
     }
 }

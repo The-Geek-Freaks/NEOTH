@@ -1565,13 +1565,7 @@ async fn run_communication_sub_at(
                 CommunicationControlAction::ForgetSubject
             };
             let receipt = reset_communication_at(home, dimension.map(Into::into))?;
-            audit_and_render_communication_receipt(
-                home,
-                action,
-                &receipt,
-                output,
-            )
-            .await
+            audit_and_render_communication_receipt(home, action, &receipt, output).await
         }
         command @ (CommunicationSub::Enable | CommunicationSub::Disable) => {
             let enabled = matches!(command, CommunicationSub::Enable);

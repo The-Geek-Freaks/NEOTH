@@ -284,7 +284,10 @@ mod tests {
     fn build_prompt_handles_missing_description() {
         let task = sample_task("Rename a fn", None);
         let prompt = build_classify_prompt(&task).unwrap();
-        assert_eq!(envelope_field(&prompt, "task_description"), "(no description)");
+        assert_eq!(
+            envelope_field(&prompt, "task_description"),
+            "(no description)"
+        );
     }
 
     #[test]
@@ -315,9 +318,7 @@ mod tests {
 
         assert!(!prompt.contains("AKIAIOSFODNN7EXAMPLE"));
         assert!(!envelope_field(&prompt, "task_title").contains("AKIAIOSFODNN7EXAMPLE"));
-        assert!(
-            !envelope_field(&prompt, "task_description").contains("AKIAIOSFODNN7EXAMPLE")
-        );
+        assert!(!envelope_field(&prompt, "task_description").contains("AKIAIOSFODNN7EXAMPLE"));
     }
 
     #[tokio::test]
@@ -341,8 +342,8 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_task_description_rejects_before_llm_call() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         struct CountingLlm(Arc<AtomicUsize>);
 
@@ -356,12 +357,13 @@ mod tests {
 
         let calls = Arc::new(AtomicUsize::new(0));
         let llm = CountingLlm(calls.clone());
-        let task = sample_task(
-            "ordinary title",
-            Some(&"x".repeat(
-                crate::security::prompt_envelope::MAX_CODING_TASK_DESCRIPTION_BYTES + 1,
-            )),
-        );
+        let task =
+            sample_task(
+                "ordinary title",
+                Some(&"x".repeat(
+                    crate::security::prompt_envelope::MAX_CODING_TASK_DESCRIPTION_BYTES + 1,
+                )),
+            );
 
         assert_eq!(second_opinion_classify(&llm, &task).await, Complexity::Deep);
         assert_eq!(calls.load(Ordering::SeqCst), 0);

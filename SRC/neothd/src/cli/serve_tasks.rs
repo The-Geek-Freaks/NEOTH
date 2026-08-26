@@ -6429,9 +6429,7 @@ pub(crate) async fn abort_optional<T>(task: Option<JoinHandle<T>>) {
 /// daemon owns its synchronous ContextStore/WAL terminal phase.  Its guard
 /// withdraws discovery and signals the listener first; this waits for the
 /// listener's owned operation set without aborting it. Call before WAL drain.
-pub(crate) async fn join_connector_control_rpc(
-    task: Option<JoinHandle<anyhow::Result<()>>>,
-) {
+pub(crate) async fn join_connector_control_rpc(task: Option<JoinHandle<anyhow::Result<()>>>) {
     if let Some(task) = task {
         match task.await {
             Ok(Ok(())) => {}

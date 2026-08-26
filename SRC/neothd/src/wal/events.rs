@@ -600,14 +600,11 @@ impl ContextEvidenceReceipt {
     pub(crate) fn matches_opaque_handle(&self, expected: &[u8; 32]) -> bool {
         let encoded = self.receipt_handle.as_bytes();
         encoded.len() == CONTEXT_EVIDENCE_RECEIPT_HANDLE_HEX_LEN
-            && encoded
-                .chunks_exact(2)
-                .zip(expected)
-                .all(|(pair, byte)| {
-                    decode_lower_hex_nibble(pair[0])
-                        .zip(decode_lower_hex_nibble(pair[1]))
-                        .is_some_and(|(high, low)| ((high << 4) | low) == *byte)
-                })
+            && encoded.chunks_exact(2).zip(expected).all(|(pair, byte)| {
+                decode_lower_hex_nibble(pair[0])
+                    .zip(decode_lower_hex_nibble(pair[1]))
+                    .is_some_and(|(high, low)| ((high << 4) | low) == *byte)
+            })
     }
 
     /// Return the binary form of this already-validated opaque receipt
@@ -617,7 +614,10 @@ impl ContextEvidenceReceipt {
     pub(crate) fn opaque_handle(&self) -> anyhow::Result<[u8; 32]> {
         self.validate()?;
         let mut decoded = [0u8; 32];
-        for (slot, pair) in decoded.iter_mut().zip(self.receipt_handle.as_bytes().chunks_exact(2)) {
+        for (slot, pair) in decoded
+            .iter_mut()
+            .zip(self.receipt_handle.as_bytes().chunks_exact(2))
+        {
             let high = decode_lower_hex_nibble(pair[0]).ok_or_else(|| {
                 anyhow::anyhow!("validated Context Evidence receipt handle lost high hex nibble")
             })?;

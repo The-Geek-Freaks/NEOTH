@@ -132,10 +132,16 @@ impl fmt::Display for DiffParseError {
                 write!(f, "contradictory file record at line {line}: {reason}")
             }
             Self::MissingFileHeaders { line } => {
-                write!(f, "textual diff file is missing ---/+++ headers after line {line}")
+                write!(
+                    f,
+                    "textual diff file is missing ---/+++ headers after line {line}"
+                )
             }
             Self::MissingRenameDestination { line } => {
-                write!(f, "rename is missing its paired source/destination after line {line}")
+                write!(
+                    f,
+                    "rename is missing its paired source/destination after line {line}"
+                )
             }
             Self::EmptyDiff => f.write_str("diff contains no changed file records"),
         }
@@ -180,9 +186,7 @@ pub fn parse_unified_diff(input: &str) -> Result<Vec<DiffFile>, DiffParseError> 
                 continue;
             }
             pending.may_accept_no_newline_marker = false;
-            if pending.saw_text_hunk
-                && !line.starts_with("@@")
-                && !line.starts_with("diff --git ")
+            if pending.saw_text_hunk && !line.starts_with("@@") && !line.starts_with("diff --git ")
             {
                 return Err(DiffParseError::MalformedHunk { line: line_number });
             }
@@ -344,11 +348,7 @@ pub fn parse_unified_diff(input: &str) -> Result<Vec<DiffFile>, DiffParseError> 
             line: input.lines().count().saturating_add(1),
         });
     }
-    finish_pending(
-        &mut files,
-        current,
-        input.lines().count().saturating_add(1),
-    )?;
+    finish_pending(&mut files, current, input.lines().count().saturating_add(1))?;
     if files.is_empty() {
         return Err(DiffParseError::EmptyDiff);
     }
@@ -546,8 +546,12 @@ fn finish_pending(
                 reason: "binary paths disagree with diff --git header",
             });
         }
-        let old = rename.as_ref().map_or(old_header, |(from, _)| Some(from.clone()));
-        let new = rename.as_ref().map_or(new_header, |(_, to)| Some(to.clone()));
+        let old = rename
+            .as_ref()
+            .map_or(old_header, |(from, _)| Some(from.clone()));
+        let new = rename
+            .as_ref()
+            .map_or(new_header, |(_, to)| Some(to.clone()));
         (DiffChange::Binary, old, new)
     } else if let Some((from, to)) = rename {
         if old_header.as_deref() != Some(from.as_str())
@@ -560,7 +564,12 @@ fn finish_pending(
         }
         (DiffChange::Renamed, Some(from), Some(to))
     } else {
-        match (old_header, new_header, pending.new_file_mode, pending.deleted_file_mode) {
+        match (
+            old_header,
+            new_header,
+            pending.new_file_mode,
+            pending.deleted_file_mode,
+        ) {
             (None, Some(new), _, false) if new == pending.git_new => {
                 (DiffChange::Added, None, Some(new))
             }
@@ -611,8 +620,12 @@ fn parse_git_header(rest: &str, line: usize) -> Result<(String, String), DiffPar
         return Err(DiffParseError::QuotedPathUnsupported { line });
     }
     let mut parts = rest.split_ascii_whitespace();
-    let old = parts.next().ok_or(DiffParseError::MalformedGitHeader { line })?;
-    let new = parts.next().ok_or(DiffParseError::MalformedGitHeader { line })?;
+    let old = parts
+        .next()
+        .ok_or(DiffParseError::MalformedGitHeader { line })?;
+    let new = parts
+        .next()
+        .ok_or(DiffParseError::MalformedGitHeader { line })?;
     if parts.next().is_some() {
         return Err(DiffParseError::MalformedGitHeader { line });
     }
@@ -669,7 +682,10 @@ fn normalize_repo_path(path: &str, line: usize) -> Result<String, DiffParseError
             reason: "drive-qualified or colon path",
         });
     }
-    if path.bytes().any(|byte| byte == 0 || byte.is_ascii_control()) {
+    if path
+        .bytes()
+        .any(|byte| byte == 0 || byte.is_ascii_control())
+    {
         return Err(DiffParseError::InvalidPath {
             line,
             reason: "control character",
@@ -716,8 +732,12 @@ fn parse_hunk(line: &str, line_number: usize) -> Result<DiffHunk, DiffParseError
         })
         .ok_or(DiffParseError::MalformedHunk { line: line_number })?;
     let mut ranges = remainder.split_ascii_whitespace();
-    let old = ranges.next().ok_or(DiffParseError::MalformedHunk { line: line_number })?;
-    let new = ranges.next().ok_or(DiffParseError::MalformedHunk { line: line_number })?;
+    let old = ranges
+        .next()
+        .ok_or(DiffParseError::MalformedHunk { line: line_number })?;
+    let new = ranges
+        .next()
+        .ok_or(DiffParseError::MalformedHunk { line: line_number })?;
     if ranges.next().is_some() || !old.starts_with('-') || !new.starts_with('+') {
         return Err(DiffParseError::MalformedHunk { line: line_number });
     }
@@ -780,7 +800,13 @@ mod tests {
         let files = parse_unified_diff(input).unwrap();
         assert_eq!(files[0].hunks.len(), 2);
         assert_eq!(files[0].hunks[0].old, DiffRange { start: 2, count: 1 });
-        assert_eq!(files[0].hunks[1].new, DiffRange { start: 10, count: 1 });
+        assert_eq!(
+            files[0].hunks[1].new,
+            DiffRange {
+                start: 10,
+                count: 1
+            }
+        );
     }
 
     #[test]
@@ -798,9 +824,11 @@ mod tests {
             files.iter().map(|file| file.change).collect::<Vec<_>>(),
             vec![DiffChange::Binary, DiffChange::Renamed, DiffChange::Deleted]
         );
-        assert!(files
-            .iter()
-            .any(|file| file.old_path.as_deref() == Some("old.rs") && file.new_path.is_none()));
+        assert!(
+            files
+                .iter()
+                .any(|file| file.old_path.as_deref() == Some("old.rs") && file.new_path.is_none())
+        );
     }
 
     #[test]
@@ -867,30 +895,27 @@ mod tests {
 
     #[test]
     fn rejects_malformed_or_unassigned_hunks_without_empty_success() {
-        assert_eq!(parse_unified_diff("").unwrap_err(), DiffParseError::EmptyDiff);
+        assert_eq!(
+            parse_unified_diff("").unwrap_err(),
+            DiffParseError::EmptyDiff
+        );
         assert!(matches!(
             parse_unified_diff("@@ -1 +1 @@\n"),
             Err(DiffParseError::HunkWithoutFile { .. })
         ));
         assert!(matches!(
-            parse_unified_diff(
-                "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -one +1 @@\n"
-            ),
+            parse_unified_diff("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -one +1 @@\n"),
             Err(DiffParseError::MalformedHunk { .. })
         ));
         assert!(matches!(
-            parse_unified_diff(
-                "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n"
-            ),
+            parse_unified_diff("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n"),
             Err(DiffParseError::MalformedHunk { .. })
         ));
         assert!(matches!(
-            parse_unified_diff(
-                concat!(
-                    "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n",
-                    "@@ -1 +1 @@\n-a\n+b\n+unexpected\n",
-                )
-            ),
+            parse_unified_diff(concat!(
+                "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n",
+                "@@ -1 +1 @@\n-a\n+b\n+unexpected\n",
+            )),
             Err(DiffParseError::MalformedHunk { .. })
         ));
     }
@@ -915,13 +940,14 @@ mod tests {
             parse_unified_diff(&"x".repeat(MAX_DIFF_BYTES + 1)),
             Err(DiffParseError::InputTooLarge { .. })
         ));
-        let mut input = String::from(
-            "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n",
-        );
+        let mut input = String::from("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n");
         for _ in 0..=MAX_HUNKS_PER_FILE {
             input.push_str("@@ -1 +1 @@\n-a\n+b\n");
         }
-        assert!(matches!(parse_unified_diff(&input), Err(DiffParseError::TooManyHunks { .. })));
+        assert!(matches!(
+            parse_unified_diff(&input),
+            Err(DiffParseError::TooManyHunks { .. })
+        ));
         assert!(matches!(
             parse_unified_diff(
                 "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,100001 +1,1 @@\n"
@@ -929,9 +955,7 @@ mod tests {
             Err(DiffParseError::HunkRangeTooLarge { .. })
         ));
         assert!(matches!(
-            parse_unified_diff(
-                "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -0,1 +1 @@\n"
-            ),
+            parse_unified_diff("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -0,1 +1 @@\n"),
             Err(DiffParseError::MalformedHunk { .. })
         ));
     }

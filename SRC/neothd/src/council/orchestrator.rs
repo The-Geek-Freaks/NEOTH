@@ -1425,10 +1425,9 @@ mod tests {
             .expect("winning_text must contain the typed assertion envelope");
         let assertion_envelope: serde_json::Value =
             serde_json::from_str(assertion_envelope).unwrap();
-        let assertions: Vec<FactualAssertion> = serde_json::from_str(
-            assertion_envelope["fields"][0]["data"].as_str().unwrap(),
-        )
-        .unwrap();
+        let assertions: Vec<FactualAssertion> =
+            serde_json::from_str(assertion_envelope["fields"][0]["data"].as_str().unwrap())
+                .unwrap();
         assert_eq!(assertions, vec![mk_assertion("Sam's birthday", "March")]);
         // factual_outcomes is populated for every hemisphere that produced
         // text. Identical echo responses trip the early-consensus quorum, so
@@ -1458,8 +1457,7 @@ mod tests {
                 "counting".to_string()
             }
             async fn ask(&self, _prompt: &str) -> Result<CompletionRecord, String> {
-                self.calls
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 Ok(CompletionRecord {
                     text: "must not be returned".to_string(),
                     input_tokens: None,
@@ -1479,8 +1477,7 @@ mod tests {
             calls: calls.clone(),
         };
         let budget = BudgetToken::new(3);
-        let oversized =
-            "x".repeat(crate::security::prompt_envelope::MAX_OPERATOR_TASK_BYTES + 1);
+        let oversized = "x".repeat(crate::security::prompt_envelope::MAX_OPERATOR_TASK_BYTES + 1);
 
         let debate = run_debate_with_depth_budget(
             &oversized,

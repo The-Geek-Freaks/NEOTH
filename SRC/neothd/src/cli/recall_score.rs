@@ -22,19 +22,21 @@ use crate::recall::goldset::{
 use crate::recall::parity_run::{ParityRunResult, compute_parity_run};
 use crate::recall::{
     goldset::{MAX_GOLDSET_BYTES, MAX_GRADER_CONFIG_BYTES},
-    parity_harness::{
-        build_report, ingest_offline_grades, ingest_operator_anchor_evidence, plan_four_grader_batch,
-        plan_run, read_offline_input, validate_attested_four_grader_batch_results,
-        build_attested_parity_gate_report, ingest_attested_four_grader_batch_results,
-        summarize_attested_four_grader_family_bias,
-    },
     parity_anchor::{
         MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES, load_operator_anchor_bytes,
         summarize_operator_anchor,
     },
+    parity_batch_plan::{
+        MAX_FOUR_GRADER_BATCH_BYTES, parse_signed_four_grader_batch_result_receipt,
+    },
     parity_candidate_evidence::{load_imported_candidate_evidence, summarize_candidate_evidence},
+    parity_harness::{
+        build_attested_parity_gate_report, build_report, ingest_attested_four_grader_batch_results,
+        ingest_offline_grades, ingest_operator_anchor_evidence, plan_four_grader_batch, plan_run,
+        read_offline_input, summarize_attested_four_grader_family_bias,
+        validate_attested_four_grader_batch_results,
+    },
     parity_import_receipt::{MAX_PARITY_IMPORT_RECEIPT_BYTES, parse_signed_parity_import_receipt},
-    parity_batch_plan::{MAX_FOUR_GRADER_BATCH_BYTES, parse_signed_four_grader_batch_result_receipt},
 };
 
 #[derive(Args, Debug, Clone)]
@@ -244,197 +246,350 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
     if let RecallParityHarnessOperation::CandidateEvidenceValidate {
         evidence_dir,
         expected_evidence_receipt_pubkey,
-    } = &operation {
-        let evidence = load_imported_candidate_evidence(evidence_dir, expected_evidence_receipt_pubkey)?;
+    } = &operation
+    {
+        let evidence =
+            load_imported_candidate_evidence(evidence_dir, expected_evidence_receipt_pubkey)?;
         render_harness_json(&summarize_candidate_evidence(&evidence), &output)?;
         return Ok(());
     }
     let (grader_config, goldset) = match &operation {
-        RecallParityHarnessOperation::Plan { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::Ingest { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::Report { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::Show { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::AnchorValidate { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::AnchorIngest { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::BatchPlan { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::BatchResultsVerify { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::BatchResultsIngest { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::BatchFamilyBias { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::AttestedGateReport { grader_config, goldset, .. } => {
-            (grader_config, goldset)
+        RecallParityHarnessOperation::Plan {
+            grader_config,
+            goldset,
+            ..
         }
+        | RecallParityHarnessOperation::Ingest {
+            grader_config,
+            goldset,
+            ..
+        }
+        | RecallParityHarnessOperation::Report {
+            grader_config,
+            goldset,
+            ..
+        }
+        | RecallParityHarnessOperation::Show {
+            grader_config,
+            goldset,
+            ..
+        }
+        | RecallParityHarnessOperation::AnchorValidate {
+            grader_config,
+            goldset,
+            ..
+        }
+        | RecallParityHarnessOperation::AnchorIngest {
+            grader_config,
+            goldset,
+            ..
+        }
+        | RecallParityHarnessOperation::BatchPlan {
+            grader_config,
+            goldset,
+            ..
+        }
+        | RecallParityHarnessOperation::BatchResultsVerify {
+            grader_config,
+            goldset,
+            ..
+        }
+        | RecallParityHarnessOperation::BatchResultsIngest {
+            grader_config,
+            goldset,
+            ..
+        }
+        | RecallParityHarnessOperation::BatchFamilyBias {
+            grader_config,
+            goldset,
+            ..
+        }
+        | RecallParityHarnessOperation::AttestedGateReport {
+            grader_config,
+            goldset,
+            ..
+        } => (grader_config, goldset),
         RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
             unreachable!("candidate evidence returns before config/goldset input loading")
         }
     };
-            let config_bytes = read_offline_input(grader_config, MAX_GRADER_CONFIG_BYTES, "grader config")?;
-            let goldset_bytes = read_offline_input(goldset, MAX_GOLDSET_BYTES, "goldset")?;
-            let config = crate::recall::goldset::load_grader_config_bytes(&config_bytes, "harness --grader-config")?;
-            let entries = crate::recall::goldset::load_goldset_bytes(&goldset_bytes, "harness --goldset")?;
-            match operation {
-                RecallParityHarnessOperation::Plan { run_dir, .. } => {
-                    let manifest = plan_run(&run_dir, &config, &config_bytes, &entries, &goldset_bytes)?;
-                    render_harness_json(&manifest, &output)?;
-                }
-                RecallParityHarnessOperation::Ingest { run_dir, grades, .. } => {
-                    let grade_bytes = read_offline_input(&grades, crate::recall::goldset::MAX_GRADES_BYTES, "grade sheet")?;
-                    let state = ingest_offline_grades(&run_dir, &config, &config_bytes, &entries, &goldset_bytes, &grade_bytes)?;
-                    render_harness_json(&state, &output)?;
-                }
-                RecallParityHarnessOperation::Report { run_dir, import_receipt, expected_receipt_pubkey, .. } => {
-                    let receipt_bytes = read_offline_input(&import_receipt, MAX_PARITY_IMPORT_RECEIPT_BYTES as u64, "signed parity import receipt")?;
-                    let signed_receipt = parse_signed_parity_import_receipt(&receipt_bytes)?;
-                    let report = build_report(&run_dir, &config, &config_bytes, &entries, &goldset_bytes, &signed_receipt, &expected_receipt_pubkey)?;
-                    render_harness_json(&report, &output)?;
-                }
-                RecallParityHarnessOperation::Show { run_dir, import_receipt, expected_receipt_pubkey, .. } => {
-                    // Do not treat a mutable run-directory checksum as a trust
-                    // anchor. Rebuilding binds the displayed evidence to the
-                    // explicitly supplied, freshly validated config/goldset.
-                    let receipt_bytes = read_offline_input(&import_receipt, MAX_PARITY_IMPORT_RECEIPT_BYTES as u64, "signed parity import receipt")?;
-                    let signed_receipt = parse_signed_parity_import_receipt(&receipt_bytes)?;
-                    let report = build_report(&run_dir, &config, &config_bytes, &entries, &goldset_bytes, &signed_receipt, &expected_receipt_pubkey)?;
-                    render_harness_json(&report, &output)?;
-                }
-                RecallParityHarnessOperation::AnchorValidate { operator_anchor, .. } => {
-                    let anchor_bytes = read_offline_input(
-                        &operator_anchor,
+    let config_bytes = read_offline_input(grader_config, MAX_GRADER_CONFIG_BYTES, "grader config")?;
+    let goldset_bytes = read_offline_input(goldset, MAX_GOLDSET_BYTES, "goldset")?;
+    let config =
+        crate::recall::goldset::load_grader_config_bytes(&config_bytes, "harness --grader-config")?;
+    let entries = crate::recall::goldset::load_goldset_bytes(&goldset_bytes, "harness --goldset")?;
+    match operation {
+        RecallParityHarnessOperation::Plan { run_dir, .. } => {
+            let manifest = plan_run(&run_dir, &config, &config_bytes, &entries, &goldset_bytes)?;
+            render_harness_json(&manifest, &output)?;
+        }
+        RecallParityHarnessOperation::Ingest {
+            run_dir, grades, ..
+        } => {
+            let grade_bytes = read_offline_input(
+                &grades,
+                crate::recall::goldset::MAX_GRADES_BYTES,
+                "grade sheet",
+            )?;
+            let state = ingest_offline_grades(
+                &run_dir,
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                &grade_bytes,
+            )?;
+            render_harness_json(&state, &output)?;
+        }
+        RecallParityHarnessOperation::Report {
+            run_dir,
+            import_receipt,
+            expected_receipt_pubkey,
+            ..
+        } => {
+            let receipt_bytes = read_offline_input(
+                &import_receipt,
+                MAX_PARITY_IMPORT_RECEIPT_BYTES as u64,
+                "signed parity import receipt",
+            )?;
+            let signed_receipt = parse_signed_parity_import_receipt(&receipt_bytes)?;
+            let report = build_report(
+                &run_dir,
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                &signed_receipt,
+                &expected_receipt_pubkey,
+            )?;
+            render_harness_json(&report, &output)?;
+        }
+        RecallParityHarnessOperation::Show {
+            run_dir,
+            import_receipt,
+            expected_receipt_pubkey,
+            ..
+        } => {
+            // Do not treat a mutable run-directory checksum as a trust
+            // anchor. Rebuilding binds the displayed evidence to the
+            // explicitly supplied, freshly validated config/goldset.
+            let receipt_bytes = read_offline_input(
+                &import_receipt,
+                MAX_PARITY_IMPORT_RECEIPT_BYTES as u64,
+                "signed parity import receipt",
+            )?;
+            let signed_receipt = parse_signed_parity_import_receipt(&receipt_bytes)?;
+            let report = build_report(
+                &run_dir,
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                &signed_receipt,
+                &expected_receipt_pubkey,
+            )?;
+            render_harness_json(&report, &output)?;
+        }
+        RecallParityHarnessOperation::AnchorValidate {
+            operator_anchor, ..
+        } => {
+            let anchor_bytes = read_offline_input(
+                &operator_anchor,
+                crate::recall::goldset::MAX_GRADES_BYTES,
+                "operator anchor labels",
+            )?;
+            let anchor = load_operator_anchor_bytes(
+                &anchor_bytes,
+                "harness --operator-anchor",
+                &entries,
+                &config,
+            )?;
+            render_harness_json(&summarize_operator_anchor(&anchor, &anchor_bytes), &output)?;
+        }
+        RecallParityHarnessOperation::AnchorIngest {
+            run_dir,
+            evidence_dir,
+            expected_evidence_receipt_pubkey,
+            operator_anchor,
+            operator_anchor_link,
+            ..
+        } => {
+            let candidate_evidence =
+                load_imported_candidate_evidence(&evidence_dir, &expected_evidence_receipt_pubkey)?;
+            let anchor_bytes = read_offline_input(
+                &operator_anchor,
+                crate::recall::goldset::MAX_GRADES_BYTES,
+                "operator anchor labels",
+            )?;
+            let link_bytes = read_offline_input(
+                &operator_anchor_link,
+                MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES as u64,
+                "operator anchor evidence link",
+            )?;
+            let binding = ingest_operator_anchor_evidence(
+                &run_dir,
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                &candidate_evidence,
+                &anchor_bytes,
+                &link_bytes,
+            )?;
+            render_harness_json(&binding, &output)?;
+        }
+        RecallParityHarnessOperation::BatchPlan {
+            run_dir,
+            batch_input_digests,
+            ..
+        } => {
+            let input_bytes = read_offline_input(
+                &batch_input_digests,
+                MAX_FOUR_GRADER_BATCH_BYTES as u64,
+                "four-grader batch input digests",
+            )?;
+            let plan = plan_four_grader_batch(
+                &run_dir,
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                &input_bytes,
+            )?;
+            render_harness_json(&plan.export()?, &output)?;
+        }
+        RecallParityHarnessOperation::BatchResultsVerify {
+            run_dir,
+            batch_result_receipt,
+            expected_batch_result_pubkey,
+            results,
+            ..
+        } => {
+            let receipt_bytes = read_offline_input(
+                &batch_result_receipt,
+                MAX_FOUR_GRADER_BATCH_BYTES as u64,
+                "signed four-grader batch result receipt",
+            )?;
+            let receipt = parse_signed_four_grader_batch_result_receipt(&receipt_bytes)?;
+            let result_bytes = results
+                .iter()
+                .map(|path| {
+                    read_offline_input(
+                        path,
                         crate::recall::goldset::MAX_GRADES_BYTES,
-                        "operator anchor labels",
-                    )?;
-                    let anchor = load_operator_anchor_bytes(
-                        &anchor_bytes,
-                        "harness --operator-anchor",
-                        &entries,
-                        &config,
-                    )?;
-                    render_harness_json(&summarize_operator_anchor(&anchor, &anchor_bytes), &output)?;
-                }
-                RecallParityHarnessOperation::AnchorIngest {
-                    run_dir,
-                    evidence_dir,
-                    expected_evidence_receipt_pubkey,
-                    operator_anchor,
-                    operator_anchor_link,
-                    ..
-                } => {
-                    let candidate_evidence = load_imported_candidate_evidence(
-                        &evidence_dir,
-                        &expected_evidence_receipt_pubkey,
-                    )?;
-                    let anchor_bytes = read_offline_input(
-                        &operator_anchor,
+                        "attested four-grader result",
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let summary = validate_attested_four_grader_batch_results(
+                &run_dir,
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                &receipt,
+                &expected_batch_result_pubkey,
+                &result_bytes,
+            )?;
+            render_harness_json(&summary, &output)?;
+        }
+        RecallParityHarnessOperation::BatchResultsIngest {
+            run_dir,
+            batch_result_receipt,
+            expected_batch_result_pubkey,
+            results,
+            ..
+        } => {
+            let receipt_bytes = read_offline_input(
+                &batch_result_receipt,
+                MAX_FOUR_GRADER_BATCH_BYTES as u64,
+                "signed four-grader batch result receipt",
+            )?;
+            let receipt = parse_signed_four_grader_batch_result_receipt(&receipt_bytes)?;
+            let result_bytes = results
+                .iter()
+                .map(|path| {
+                    read_offline_input(
+                        path,
                         crate::recall::goldset::MAX_GRADES_BYTES,
-                        "operator anchor labels",
-                    )?;
-                    let link_bytes = read_offline_input(
-                        &operator_anchor_link,
-                        MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES as u64,
-                        "operator anchor evidence link",
-                    )?;
-                    let binding = ingest_operator_anchor_evidence(
-                        &run_dir,
-                        &config,
-                        &config_bytes,
-                        &entries,
-                        &goldset_bytes,
-                        &candidate_evidence,
-                        &anchor_bytes,
-                        &link_bytes,
-                    )?;
-                    render_harness_json(&binding, &output)?;
-                }
-                RecallParityHarnessOperation::BatchPlan {
-                    run_dir, batch_input_digests, ..
-                } => {
-                    let input_bytes = read_offline_input(
-                        &batch_input_digests,
-                        MAX_FOUR_GRADER_BATCH_BYTES as u64,
-                        "four-grader batch input digests",
-                    )?;
-                    let plan = plan_four_grader_batch(
-                        &run_dir, &config, &config_bytes, &entries, &goldset_bytes, &input_bytes,
-                    )?;
-                    render_harness_json(&plan.export()?, &output)?;
-                }
-                RecallParityHarnessOperation::BatchResultsVerify {
-                    run_dir, batch_result_receipt, expected_batch_result_pubkey, results, ..
-                } => {
-                    let receipt_bytes = read_offline_input(
-                        &batch_result_receipt,
-                        MAX_FOUR_GRADER_BATCH_BYTES as u64,
-                        "signed four-grader batch result receipt",
-                    )?;
-                    let receipt = parse_signed_four_grader_batch_result_receipt(&receipt_bytes)?;
-                    let result_bytes = results.iter().map(|path| read_offline_input(
-                        path, crate::recall::goldset::MAX_GRADES_BYTES, "attested four-grader result",
-                    )).collect::<Result<Vec<_>>>()?;
-                    let summary = validate_attested_four_grader_batch_results(
-                        &run_dir, &config, &config_bytes, &entries, &goldset_bytes,
-                        &receipt, &expected_batch_result_pubkey, &result_bytes,
-                    )?;
-                    render_harness_json(&summary, &output)?;
-                }
-                RecallParityHarnessOperation::BatchResultsIngest {
-                    run_dir, batch_result_receipt, expected_batch_result_pubkey, results, ..
-                } => {
-                    let receipt_bytes = read_offline_input(
-                        &batch_result_receipt,
-                        MAX_FOUR_GRADER_BATCH_BYTES as u64,
-                        "signed four-grader batch result receipt",
-                    )?;
-                    let receipt = parse_signed_four_grader_batch_result_receipt(&receipt_bytes)?;
-                    let result_bytes = results.iter().map(|path| read_offline_input(
-                        path, crate::recall::goldset::MAX_GRADES_BYTES, "attested four-grader result",
-                    )).collect::<Result<Vec<_>>>()?;
-                    let binding = ingest_attested_four_grader_batch_results(
-                        &run_dir, &config, &config_bytes, &entries, &goldset_bytes,
-                        &receipt, &expected_batch_result_pubkey, &result_bytes,
-                    )?;
-                    render_harness_json(&binding, &output)?;
-                }
-                RecallParityHarnessOperation::BatchFamilyBias { run_dir, .. } => {
-                    let summary = summarize_attested_four_grader_family_bias(
-                        &run_dir, &config, &config_bytes, &entries, &goldset_bytes,
-                    )?;
-                    render_harness_json(&summary.export()?, &output)?;
-                }
-                RecallParityHarnessOperation::AttestedGateReport {
-                    run_dir, import_receipt, expected_receipt_pubkey, ..
-                } => {
-                    let receipt_bytes = read_offline_input(
-                        &import_receipt,
-                        MAX_PARITY_IMPORT_RECEIPT_BYTES as u64,
-                        "signed attested gate import receipt",
-                    )?;
-                    let report = build_attested_parity_gate_report(
-                        &run_dir, &config, &config_bytes, &entries, &goldset_bytes,
-                        &receipt_bytes, &expected_receipt_pubkey,
-                    )?;
-                    render_harness_json(&report, &output)?;
-                }
-                RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
-                    unreachable!("candidate evidence returns before config/goldset input loading")
-                }
-            }
+                        "attested four-grader result",
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let binding = ingest_attested_four_grader_batch_results(
+                &run_dir,
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                &receipt,
+                &expected_batch_result_pubkey,
+                &result_bytes,
+            )?;
+            render_harness_json(&binding, &output)?;
+        }
+        RecallParityHarnessOperation::BatchFamilyBias { run_dir, .. } => {
+            let summary = summarize_attested_four_grader_family_bias(
+                &run_dir,
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+            )?;
+            render_harness_json(&summary.export()?, &output)?;
+        }
+        RecallParityHarnessOperation::AttestedGateReport {
+            run_dir,
+            import_receipt,
+            expected_receipt_pubkey,
+            ..
+        } => {
+            let receipt_bytes = read_offline_input(
+                &import_receipt,
+                MAX_PARITY_IMPORT_RECEIPT_BYTES as u64,
+                "signed attested gate import receipt",
+            )?;
+            let report = build_attested_parity_gate_report(
+                &run_dir,
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                &receipt_bytes,
+                &expected_receipt_pubkey,
+            )?;
+            render_harness_json(&report, &output)?;
+        }
+        RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
+            unreachable!("candidate evidence returns before config/goldset input loading")
+        }
+    }
     Ok(())
 }
 
 fn render_harness_json<T: serde::Serialize>(value: &T, output: &OutputFormat) -> Result<()> {
     match output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(value).context("serialize harness JSON output")?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(value).context("serialize harness JSON output")?
+            );
         }
         OutputFormat::Jsonl => {
-            println!("{}", serde_json::to_string(value).context("serialize harness JSONL output")?);
+            println!(
+                "{}",
+                serde_json::to_string(value).context("serialize harness JSONL output")?
+            );
         }
         OutputFormat::Table => {
             let fields = serde_json::to_value(value).context("serialize harness table output")?;
-            let object = fields.as_object().context("harness output must serialize as an object")?;
+            let object = fields
+                .as_object()
+                .context("harness output must serialize as an object")?;
             println!("# Recall-parity harness");
             for (field, field_value) in object {
-                let rendered = serde_json::to_string(field_value)
-                    .context("serialize harness table field")?;
+                let rendered =
+                    serde_json::to_string(field_value).context("serialize harness table field")?;
                 println!("  {field}: {rendered}");
             }
         }

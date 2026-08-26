@@ -12,9 +12,11 @@ use sha2::{Digest as _, Sha256};
 use super::parity_import_receipt::{validate_run_id, validate_sha256};
 
 pub const FOUR_GRADER_BATCH_SCHEMA_VERSION: u32 = 1;
-pub const FOUR_GRADER_BATCH_INPUT_PURPOSE: &str = "neoth-recall-parity-four-grader-input-digests/v1";
+pub const FOUR_GRADER_BATCH_INPUT_PURPOSE: &str =
+    "neoth-recall-parity-four-grader-input-digests/v1";
 pub const FOUR_GRADER_BATCH_PLAN_PURPOSE: &str = "neoth-recall-parity-four-grader-batch-plan/v1";
-pub const FOUR_GRADER_BATCH_RESULT_RECEIPT_PURPOSE: &str = "neoth-recall-parity-four-grader-result-receipt/v1";
+pub const FOUR_GRADER_BATCH_RESULT_RECEIPT_PURPOSE: &str =
+    "neoth-recall-parity-four-grader-result-receipt/v1";
 pub const FOUR_GRADER_COUNT: usize = 4;
 pub const MAX_FOUR_GRADER_BATCH_BYTES: usize = 64 * 1024;
 pub const MAX_FOUR_GRADER_SIGNATURE_BYTES: usize = 256;
@@ -131,7 +133,8 @@ pub struct SignedFourGraderBatchResultReceipt {
 
 impl SignedFourGraderBatchResultReceipt {
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
-        serde_json::to_vec(&self.body).context("serialize canonical four-grader batch result receipt")
+        serde_json::to_vec(&self.body)
+            .context("serialize canonical four-grader batch result receipt")
     }
 
     pub fn validate_shape(&self) -> Result<()> {
@@ -141,14 +144,22 @@ impl SignedFourGraderBatchResultReceipt {
             anyhow::bail!("unsupported four-grader batch result receipt schema or purpose");
         }
         validate_run_id(&self.body.run_id)?;
-        validate_sha256(&self.body.run_manifest_sha256, "batch result receipt manifest")?;
+        validate_sha256(
+            &self.body.run_manifest_sha256,
+            "batch result receipt manifest",
+        )?;
         validate_sha256(&self.body.batch_plan_sha256, "batch result receipt plan")?;
         validate_result_artifacts(&self.body.results)?;
         if self.signature_b64.is_empty()
             || self.signature_b64.len() > MAX_FOUR_GRADER_SIGNATURE_BYTES
-            || self.signature_b64.bytes().any(|byte| byte.is_ascii_whitespace())
+            || self
+                .signature_b64
+                .bytes()
+                .any(|byte| byte.is_ascii_whitespace())
         {
-            anyhow::bail!("four-grader batch result receipt signature must be bounded non-whitespace base64");
+            anyhow::bail!(
+                "four-grader batch result receipt signature must be bounded non-whitespace base64"
+            );
         }
         Ok(())
     }
@@ -157,9 +168,13 @@ impl SignedFourGraderBatchResultReceipt {
         self.validate_shape()?;
         if expected_pubkey_b64.is_empty()
             || expected_pubkey_b64.len() > MAX_FOUR_GRADER_PUBKEY_BYTES
-            || expected_pubkey_b64.bytes().any(|byte| byte.is_ascii_whitespace())
+            || expected_pubkey_b64
+                .bytes()
+                .any(|byte| byte.is_ascii_whitespace())
         {
-            anyhow::bail!("expected batch result receipt public key must be bounded non-whitespace base64");
+            anyhow::bail!(
+                "expected batch result receipt public key must be bounded non-whitespace base64"
+            );
         }
         crate::wal::signing::verify_b64(
             expected_pubkey_b64,
@@ -226,12 +241,24 @@ pub fn validate_plan_shape(plan: &FourGraderBatchPlan) -> Result<()> {
         (&plan.run_manifest_sha256, "batch plan manifest"),
         (&plan.config_sha256, "batch plan config"),
         (&plan.goldset_sha256, "batch plan goldset"),
-        (&plan.operator_anchor_binding_sha256, "batch plan anchor binding"),
+        (
+            &plan.operator_anchor_binding_sha256,
+            "batch plan anchor binding",
+        ),
         (&plan.operator_anchor_sha256, "batch plan anchor"),
         (&plan.operator_anchor_link_sha256, "batch plan anchor link"),
-        (&plan.candidate_manifest_sha256, "batch plan candidate manifest"),
-        (&plan.candidate_receipt_sha256, "batch plan candidate receipt"),
-        (&plan.candidate_receipt_pubkey_sha256, "batch plan candidate receipt public key"),
+        (
+            &plan.candidate_manifest_sha256,
+            "batch plan candidate manifest",
+        ),
+        (
+            &plan.candidate_receipt_sha256,
+            "batch plan candidate receipt",
+        ),
+        (
+            &plan.candidate_receipt_pubkey_sha256,
+            "batch plan candidate receipt public key",
+        ),
         (&plan.candidate_vector_sha256, "batch plan candidate vector"),
     ] {
         validate_sha256(value, label)?;
@@ -246,13 +273,19 @@ pub fn validate_plan_shape(plan: &FourGraderBatchPlan) -> Result<()> {
         validate_sha256(&item.grader_config_sha256, "batch grader config")?;
         validate_sha256(&item.prompt_sha256, "batch prompt")?;
         validate_sha256(&item.input_sha256, "batch input")?;
-        if item.provider.is_empty() || item.provider.len() > 64 || item.family.is_empty() || item.family.len() > 64
-            || item.expected_record_count == 0 || item.expected_record_count > 512
+        if item.provider.is_empty()
+            || item.provider.len() > 64
+            || item.family.is_empty()
+            || item.family.len() > 64
+            || item.expected_record_count == 0
+            || item.expected_record_count > 512
         {
             anyhow::bail!("four-grader batch plan item is outside bounded contract");
         }
         if prior.is_some_and(|previous| previous >= item.grader_id.as_str()) {
-            anyhow::bail!("four-grader batch plan items must be strictly sorted by unique grader_id");
+            anyhow::bail!(
+                "four-grader batch plan items must be strictly sorted by unique grader_id"
+            );
         }
         prior = Some(&item.grader_id);
     }
@@ -280,8 +313,12 @@ fn validate_result_artifacts(results: &[FourGraderBatchResultArtifact]) -> Resul
 
 fn validate_id(value: &str, label: &str) -> Result<()> {
     let bytes = value.as_bytes();
-    if bytes.is_empty() || bytes.len() > 64 || !bytes[0].is_ascii_alphanumeric()
-        || !bytes.iter().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    if bytes.is_empty()
+        || bytes.len() > 64
+        || !bytes[0].is_ascii_alphanumeric()
+        || !bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
     {
         anyhow::bail!("{label} is not canonical");
     }

@@ -12,7 +12,7 @@
 use std::io::{Read as _, Write as _};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -26,8 +26,7 @@ pub(crate) const USAGE_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const USAGE_PROBE_STDOUT_BYTES: usize = 1024 * 1024;
 pub(crate) const USAGE_PROBE_STDERR_BYTES: usize = 16 * 1024;
 pub(crate) const USAGE_PROBE_DRAIN_GRACE: Duration = Duration::from_millis(250);
-const MAX_GUARDIAN_RESPONSE_BYTES: usize =
-    USAGE_PROBE_STDOUT_BYTES + USAGE_PROBE_STDERR_BYTES + 16;
+const MAX_GUARDIAN_RESPONSE_BYTES: usize = USAGE_PROBE_STDOUT_BYTES + USAGE_PROBE_STDERR_BYTES + 16;
 
 /// Fixed resource policy for a single trusted CLI probe.
 #[derive(Clone, Copy, Debug)]
@@ -161,12 +160,7 @@ fn run_internal_guardian() -> Result<(), ProbeError> {
     // the original command. Keep this deny-list at the guardian authority
     // boundary as well as in main's command builder.
     scrub_probe_environment(&mut command);
-    command.args(
-        request
-            .args
-            .into_iter()
-            .map(std::ffi::OsString::from_vec),
-    );
+    command.args(request.args.into_iter().map(std::ffi::OsString::from_vec));
     // The GUI parent retains the write end after sending the request. EOF is
     // therefore both explicit outer cancellation and parent-liveness proof:
     // if the GUI dies, its pipe handle closes and this guardian kills/reaps the
@@ -212,14 +206,24 @@ fn is_fixed_probe_argv(args: &[Vec<u8>]) -> bool {
         ["meter", "--format", "json"] => true,
         ["cost", "top-sessions", "--output", "json"] => true,
         ["usage", "--format", "json", "--days", "1"] => true,
-        ["usage", "--since-unix", since, "--until-unix", until, "--format", "json"] => {
+        [
+            "usage",
+            "--since-unix",
+            since,
+            "--until-unix",
+            until,
+            "--format",
+            "json",
+        ] => {
             !since.is_empty()
                 && !until.is_empty()
                 && since.bytes().all(|byte| byte.is_ascii_digit())
                 && until.bytes().all(|byte| byte.is_ascii_digit())
-                && since.parse::<u64>().ok().zip(until.parse::<u64>().ok()).is_some_and(
-                    |(since, until)| since <= until,
-                )
+                && since
+                    .parse::<u64>()
+                    .ok()
+                    .zip(until.parse::<u64>().ok())
+                    .is_some_and(|(since, until)| since <= until)
         }
         _ => false,
     }
@@ -502,12 +506,8 @@ fn drain_capped(
             was_exceeded = true;
             // Publish as soon as the cap is crossed, rather than waiting for
             // EOF. A noisy child can otherwise keep draining forever.
-            let _ = exceeded.compare_exchange(
-                0,
-                exceeded_stream,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            );
+            let _ =
+                exceeded.compare_exchange(0, exceeded_stream, Ordering::AcqRel, Ordering::Acquire);
         }
     }
 }
@@ -533,7 +533,11 @@ impl OwnedProbe {
         control_frame: Option<&[u8]>,
     ) -> Result<Self, ProbeError> {
         command
-            .stdin(if control_frame.is_some() { Stdio::piped() } else { Stdio::null() })
+            .stdin(if control_frame.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let setup = PlatformContainmentSetup::configure(command)?;
@@ -718,17 +722,13 @@ impl OwnedProbe {
         // stretching the terminal path to 2x drain_grace.
         let Some(readers_deadline) = Instant::now().checked_add(policy.drain_grace) else {
             self.transfer_to_reaper();
-            return Err(terminal_error.unwrap_or(ProbeError::ReaderFailed {
-                stream: "stdout",
-            }));
+            return Err(terminal_error.unwrap_or(ProbeError::ReaderFailed { stream: "stdout" }));
         };
         let stdout = match recv_before(&self.stdout_rx, readers_deadline) {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => {
                 self.transfer_to_reaper();
-                return Err(terminal_error.unwrap_or(ProbeError::ReaderFailed {
-                    stream: "stdout",
-                }));
+                return Err(terminal_error.unwrap_or(ProbeError::ReaderFailed { stream: "stdout" }));
             }
             Err(()) => {
                 self.transfer_to_reaper();
@@ -739,9 +739,7 @@ impl OwnedProbe {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => {
                 self.transfer_to_reaper();
-                return Err(terminal_error.unwrap_or(ProbeError::ReaderFailed {
-                    stream: "stderr",
-                }));
+                return Err(terminal_error.unwrap_or(ProbeError::ReaderFailed { stream: "stderr" }));
             }
             Err(()) => {
                 self.transfer_to_reaper();
@@ -932,10 +930,10 @@ fn encode_guardian_request(command: &Command, policy: ProbePolicy) -> Result<Vec
     }
     let timeout = u64::try_from(policy.timeout.as_millis())
         .map_err(|_| ProbeError::ContainmentUnavailable)?;
-    let stdout = u32::try_from(policy.stdout_cap_bytes)
-        .map_err(|_| ProbeError::ContainmentUnavailable)?;
-    let stderr = u32::try_from(policy.stderr_cap_bytes)
-        .map_err(|_| ProbeError::ContainmentUnavailable)?;
+    let stdout =
+        u32::try_from(policy.stdout_cap_bytes).map_err(|_| ProbeError::ContainmentUnavailable)?;
+    let stderr =
+        u32::try_from(policy.stderr_cap_bytes).map_err(|_| ProbeError::ContainmentUnavailable)?;
     if !policy_is_fixed_usage(policy) {
         return Err(ProbeError::ContainmentUnavailable);
     }
@@ -1230,10 +1228,7 @@ impl WindowsProbeJob {
         use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
 
         if unsafe {
-            AssignProcessToJobObject(
-                Self::raw_handle(&self.handle),
-                child.as_raw_handle().cast(),
-            )
+            AssignProcessToJobObject(Self::raw_handle(&self.handle), child.as_raw_handle().cast())
         } == 0
         {
             return Err(ProbeError::ContainmentUnavailable);
@@ -1339,7 +1334,10 @@ mod tests {
 
     #[test]
     fn error_copy_never_includes_tool_output() {
-        assert_eq!(ProbeError::TimedOut.as_static_message(), "usage probe timed out");
+        assert_eq!(
+            ProbeError::TimedOut.as_static_message(),
+            "usage probe timed out"
+        );
         assert_eq!(
             ProbeError::OutputTooLarge { stream: "stderr" }.as_static_message(),
             "usage probe output exceeded limit"
@@ -1349,40 +1347,73 @@ mod tests {
     #[test]
     fn guardian_accepts_only_the_fixed_d2_dashboard_forms() {
         assert!(is_fixed_probe_argv(&[
-            b"meter".to_vec(), b"--format".to_vec(), b"json".to_vec(),
-        ]));
-        assert!(is_fixed_probe_argv(&[
-            b"cost".to_vec(), b"top-sessions".to_vec(), b"--output".to_vec(),
+            b"meter".to_vec(),
+            b"--format".to_vec(),
             b"json".to_vec(),
         ]));
         assert!(is_fixed_probe_argv(&[
-            b"usage".to_vec(), b"--format".to_vec(), b"json".to_vec(),
-            b"--days".to_vec(), b"1".to_vec(),
+            b"cost".to_vec(),
+            b"top-sessions".to_vec(),
+            b"--output".to_vec(),
+            b"json".to_vec(),
         ]));
         assert!(is_fixed_probe_argv(&[
-            b"usage".to_vec(), b"--since-unix".to_vec(), b"1".to_vec(),
-            b"--until-unix".to_vec(), b"2".to_vec(), b"--format".to_vec(),
+            b"usage".to_vec(),
+            b"--format".to_vec(),
             b"json".to_vec(),
+            b"--days".to_vec(),
+            b"1".to_vec(),
         ]));
-        assert!(!is_fixed_probe_argv(&[b"meter".to_vec(), b"--help".to_vec()]));
-        assert!(!is_fixed_probe_argv(&[
-            b"cost".to_vec(), b"top-sessions".to_vec(), b"--output".to_vec(),
-            b"json".to_vec(), b"--limit".to_vec(), b"999".to_vec(),
-        ]));
-        assert!(!is_fixed_probe_argv(&[b"usage".to_vec(), b"--help".to_vec()]));
-        assert!(!is_fixed_probe_argv(&[
-            b"usage".to_vec(), b"--since-unix".to_vec(), b"not-a-time".to_vec(),
-            b"--until-unix".to_vec(), b"2".to_vec(), b"--format".to_vec(),
-            b"json".to_vec(),
-        ]));
-        assert!(!is_fixed_probe_argv(&[
-            b"usage".to_vec(), b"--since-unix".to_vec(), Vec::new(),
-            b"--until-unix".to_vec(), b"2".to_vec(), b"--format".to_vec(),
+        assert!(is_fixed_probe_argv(&[
+            b"usage".to_vec(),
+            b"--since-unix".to_vec(),
+            b"1".to_vec(),
+            b"--until-unix".to_vec(),
+            b"2".to_vec(),
+            b"--format".to_vec(),
             b"json".to_vec(),
         ]));
         assert!(!is_fixed_probe_argv(&[
-            b"usage".to_vec(), b"--since-unix".to_vec(), b"3".to_vec(),
-            b"--until-unix".to_vec(), b"2".to_vec(), b"--format".to_vec(),
+            b"meter".to_vec(),
+            b"--help".to_vec()
+        ]));
+        assert!(!is_fixed_probe_argv(&[
+            b"cost".to_vec(),
+            b"top-sessions".to_vec(),
+            b"--output".to_vec(),
+            b"json".to_vec(),
+            b"--limit".to_vec(),
+            b"999".to_vec(),
+        ]));
+        assert!(!is_fixed_probe_argv(&[
+            b"usage".to_vec(),
+            b"--help".to_vec()
+        ]));
+        assert!(!is_fixed_probe_argv(&[
+            b"usage".to_vec(),
+            b"--since-unix".to_vec(),
+            b"not-a-time".to_vec(),
+            b"--until-unix".to_vec(),
+            b"2".to_vec(),
+            b"--format".to_vec(),
+            b"json".to_vec(),
+        ]));
+        assert!(!is_fixed_probe_argv(&[
+            b"usage".to_vec(),
+            b"--since-unix".to_vec(),
+            Vec::new(),
+            b"--until-unix".to_vec(),
+            b"2".to_vec(),
+            b"--format".to_vec(),
+            b"json".to_vec(),
+        ]));
+        assert!(!is_fixed_probe_argv(&[
+            b"usage".to_vec(),
+            b"--since-unix".to_vec(),
+            b"3".to_vec(),
+            b"--until-unix".to_vec(),
+            b"2".to_vec(),
+            b"--format".to_vec(),
             b"json".to_vec(),
         ]));
 
@@ -1450,7 +1481,13 @@ mod tests {
         assert!(source.contains("checked_add(policy.drain_grace)"));
         assert!(source.contains("!guardian_program_is_trusted(command.get_program())"));
         assert!(source.contains("if arguments.next().is_some()"));
-        assert!(!source.split("#[cfg(test)]").next().unwrap().contains(".expect("));
+        assert!(
+            !source
+                .split("#[cfg(test)]")
+                .next()
+                .unwrap()
+                .contains(".expect(")
+        );
         for capability in [
             "NEOTH_GUI_READY_FILE",
             "NEOTH_GUI_READY_TOKEN",

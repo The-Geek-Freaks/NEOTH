@@ -284,7 +284,9 @@ impl ApprovedCommunicationSubject for crate::cli::chat::LocalChatCommunicationSu
 }
 
 impl approved_boundary::Sealed for crate::cli::serve_pipeline::PinnedChannelCommunicationSubject {}
-impl ApprovedCommunicationSubject for crate::cli::serve_pipeline::PinnedChannelCommunicationSubject {
+impl ApprovedCommunicationSubject
+    for crate::cli::serve_pipeline::PinnedChannelCommunicationSubject
+{
     fn into_subject(self) -> AuthenticatedSubject {
         AuthenticatedSubject {
             subject_id: COMMUNICATION_OPERATOR_SUBJECT.to_owned(),
@@ -790,7 +792,10 @@ fn validate_scope(scope: &CommunicationScope) -> Result<()> {
     }
 }
 
-fn validate_scope_for_subject(scope: &CommunicationScope, subject: &AuthenticatedSubject) -> Result<()> {
+fn validate_scope_for_subject(
+    scope: &CommunicationScope,
+    subject: &AuthenticatedSubject,
+) -> Result<()> {
     validate_scope(scope)?;
     if matches!(scope, CommunicationScope::Global) && !subject.permits_global_scope() {
         bail!("only an operator-origin proof may write global communication evidence");
@@ -952,7 +957,8 @@ fn load_state_unlocked(home: &Path) -> Result<CommunicationState> {
         for items in subject.evidence.values_mut() {
             for item in items {
                 if item.authenticated_origin.is_none() && item.legacy_authenticated_subject {
-                    item.authenticated_origin = Some(AuthenticatedSubjectOrigin::LegacyAuthenticated);
+                    item.authenticated_origin =
+                        Some(AuthenticatedSubjectOrigin::LegacyAuthenticated);
                 }
                 if legacy_state
                     && subject_id != COMMUNICATION_OPERATOR_SUBJECT
@@ -2409,7 +2415,10 @@ mod tests {
             "operator".to_owned(),
             SubjectCommunicationProfile {
                 revision: 1,
-                evidence: BTreeMap::from([(CommunicationDimension::Pace, vec![legacy("operator", unsafe_pace)])]),
+                evidence: BTreeMap::from([(
+                    CommunicationDimension::Pace,
+                    vec![legacy("operator", unsafe_pace)],
+                )]),
                 estimates: BTreeMap::from([(CommunicationDimension::Pace, estimate(unsafe_pace))]),
                 declared_context: None,
             },
@@ -2418,8 +2427,14 @@ mod tests {
             "alice".to_owned(),
             SubjectCommunicationProfile {
                 revision: 1,
-                evidence: BTreeMap::from([(CommunicationDimension::Directness, vec![legacy("alice", direct_value)])]),
-                estimates: BTreeMap::from([(CommunicationDimension::Directness, estimate(direct_value))]),
+                evidence: BTreeMap::from([(
+                    CommunicationDimension::Directness,
+                    vec![legacy("alice", direct_value)],
+                )]),
+                estimates: BTreeMap::from([(
+                    CommunicationDimension::Directness,
+                    estimate(direct_value),
+                )]),
                 declared_context: None,
             },
         );
@@ -2440,10 +2455,7 @@ mod tests {
                 .unwrap()
                 .values_mut()
             {
-                estimate
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("scope_provenance");
+                estimate.as_object_mut().unwrap().remove("scope_provenance");
             }
         }
         std::fs::write(&path, serde_json::to_vec(&legacy_json).unwrap()).unwrap();
@@ -2451,12 +2463,17 @@ mod tests {
         let migrated = load_state(dir.path()).unwrap();
         assert_eq!(migrated.schema_version, STATE_SCHEMA_VERSION);
         assert_eq!(
-            migrated.subjects["operator"].estimates[&CommunicationDimension::Pace]
-                .scope_provenance,
+            migrated.subjects["operator"].estimates[&CommunicationDimension::Pace].scope_provenance,
             CommunicationScope::Global
         );
-        assert!(!migrated.subjects["operator"].estimates[&CommunicationDimension::Pace].durable_by_full_auto);
-        assert!(!migrated.subjects["alice"].estimates[&CommunicationDimension::Directness].durable_by_full_auto);
+        assert!(
+            !migrated.subjects["operator"].estimates[&CommunicationDimension::Pace]
+                .durable_by_full_auto
+        );
+        assert!(
+            !migrated.subjects["alice"].estimates[&CommunicationDimension::Directness]
+                .durable_by_full_auto
+        );
         assert_eq!(
             migrated.subjects["alice"].estimates[&CommunicationDimension::Directness]
                 .scope_provenance,
@@ -2480,7 +2497,11 @@ mod tests {
         let bytes = std::fs::read(path).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["schema_version"], STATE_SCHEMA_VERSION);
-        assert!(!serde_json::to_string(&value).unwrap().contains("authenticated_subject"));
+        assert!(
+            !serde_json::to_string(&value)
+                .unwrap()
+                .contains("authenticated_subject")
+        );
         assert_eq!(
             value["subjects"]["operator"]["estimates"]["pace"]["scope_provenance"]["kind"],
             "global"
@@ -2559,12 +2580,16 @@ mod tests {
             "test_signal",
         );
         record_evidence(dir.path(), &policy, evidence, true, false).unwrap();
-        assert!(compile_prompt_at(dir.path(), "alice", &policy, None, false, 2)
-            .unwrap()
-            .is_none());
-        assert!(compile_prompt_at(dir.path(), "alice", &policy, Some(&channel), false, 2)
-            .unwrap()
-            .is_some());
+        assert!(
+            compile_prompt_at(dir.path(), "alice", &policy, None, false, 2)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            compile_prompt_at(dir.path(), "alice", &policy, Some(&channel), false, 2)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -2968,16 +2993,8 @@ mod tests {
     fn subjects_are_strictly_isolated() {
         let dir = tempdir().unwrap();
         let policy = CommunicationProfileConfig::default();
-        set_test_scoped_preference(
-            dir.path(),
-            &policy,
-            "alice",
-            "s1",
-            direct(),
-            hash(1),
-            1,
-        )
-        .unwrap();
+        set_test_scoped_preference(dir.path(), &policy, "alice", "s1", direct(), hash(1), 1)
+            .unwrap();
         assert!(
             load_subject(dir.path(), "alice", &policy, false)
                 .unwrap()

@@ -19,9 +19,9 @@ fn council_self_reflect_has_a_dedicated_typed_schema() {
             "missing Council self-reflect envelope invariant: {required}"
         );
     }
-    assert!(ENVELOPE.contains(
-        "Self::OperatorTask | Self::OriginalQuestion => MAX_OPERATOR_TASK_BYTES"
-    ));
+    assert!(
+        ENVELOPE.contains("Self::OperatorTask | Self::OriginalQuestion => MAX_OPERATOR_TASK_BYTES")
+    );
     assert!(ENVELOPE.contains("Self::PriorAnswer => MAX_CANDIDATE_BYTES"));
 }
 
@@ -58,7 +58,9 @@ fn framing_rejection_precedes_provider_and_budget_side_effects() {
         "both public refine paths must fail closed on envelope rejection"
     );
 
-    let budgeted = SELF_REFLECT.find("pub async fn refine_with_budget(").unwrap();
+    let budgeted = SELF_REFLECT
+        .find("pub async fn refine_with_budget(")
+        .unwrap();
     let budgeted = &SELF_REFLECT[budgeted..];
     let build = budgeted.find("build_reflect_prompt(").unwrap();
     let charge = budgeted.find("budget.charge()").unwrap();

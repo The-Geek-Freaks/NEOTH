@@ -196,7 +196,10 @@ pub(crate) fn sender_hash_of(sender_id: &str) -> String {
 pub(crate) struct PinnedChannelCommunicationSubject(());
 
 impl PinnedChannelCommunicationSubject {
-    fn try_mint(resolved_human_uuid: Option<&str>, configured_operator_uuid: Option<&str>) -> Option<Self> {
+    fn try_mint(
+        resolved_human_uuid: Option<&str>,
+        configured_operator_uuid: Option<&str>,
+    ) -> Option<Self> {
         matches!(
             (resolved_human_uuid, configured_operator_uuid),
             (Some(resolved), Some(configured)) if resolved == configured
@@ -1480,7 +1483,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let communication_profile_incognito = channel_communication_subject != "operator";
             let communication_subject_proof = PinnedChannelCommunicationSubject::try_mint(
                 inbound.human_uuid.as_deref(),
-                config_for_handler.channel_weights.operator_human_uuid.as_deref(),
+                config_for_handler
+                    .channel_weights
+                    .operator_human_uuid
+                    .as_deref(),
             );
             let communication_outcome = match communication_subject_proof {
                 Some(proof) => crate::profile::communication::record_authenticated_turn(

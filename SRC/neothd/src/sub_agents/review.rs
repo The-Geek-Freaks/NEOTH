@@ -394,8 +394,8 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_review_reply_rejects_before_first_provider_call() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         struct CountingProvider(Arc<AtomicUsize>);
 

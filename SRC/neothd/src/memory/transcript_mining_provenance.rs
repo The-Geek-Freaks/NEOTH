@@ -93,10 +93,7 @@ impl Sha256Digest {
 }
 
 impl Serialize for Sha256Digest {
-    fn serialize<S: Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.lower_hex())
     }
 }
@@ -246,7 +243,10 @@ impl TranscriptMiningBoundV1 {
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
         let wire: TranscriptMiningBoundWire = decode_wire(bytes)?;
         let value = Self::from_wire(wire)?;
-        ensure!(encode_canonical(&value)? == bytes, "transcript mining payload is not canonical");
+        ensure!(
+            encode_canonical(&value)? == bytes,
+            "transcript mining payload is not canonical"
+        );
         value.validate()?;
         Ok(value)
     }
@@ -285,7 +285,10 @@ impl TranscriptMiningRevokedV1 {
         );
         ensure!(
             self.privacy_disposition == PrivacyDisposition::Revoked
-                && matches!(self.lifecycle, MiningLifecycle::Revoked | MiningLifecycle::Cancelled),
+                && matches!(
+                    self.lifecycle,
+                    MiningLifecycle::Revoked | MiningLifecycle::Cancelled
+                ),
             "invalid transcript mining revocation state"
         );
         Ok(())
@@ -299,7 +302,10 @@ impl TranscriptMiningRevokedV1 {
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
         let wire: TranscriptMiningRevokedWire = decode_wire(bytes)?;
         let value = Self::from_wire(wire)?;
-        ensure!(encode_canonical(&value)? == bytes, "transcript mining payload is not canonical");
+        ensure!(
+            encode_canonical(&value)? == bytes,
+            "transcript mining payload is not canonical"
+        );
         value.validate()?;
         Ok(value)
     }
@@ -365,7 +371,8 @@ struct TranscriptMiningRevokedWire {
 }
 
 fn encode_canonical<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    let bytes = serde_json::to_vec(value).map_err(|_| anyhow::anyhow!("encode transcript mining payload"))?;
+    let bytes = serde_json::to_vec(value)
+        .map_err(|_| anyhow::anyhow!("encode transcript mining payload"))?;
     ensure!(
         bytes.len() <= MAX_TRANSCRIPT_MINING_PAYLOAD_BYTES,
         "transcript mining payload exceeds size limit"
@@ -449,7 +456,10 @@ mod tests {
             std::str::from_utf8(&encoded).unwrap(),
             "{\"schema_version\":1,\"lifecycle_id\":\"lifecycle-01\",\"provenance_id\":\"provenance-01\",\"subject\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"raw_frame\":{\"raw_turn_row_id\":7,\"raw_frame_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},\"bound_payload_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"revocation\":\"raw_turn_deleted\",\"privacy_disposition\":\"revoked\",\"lifecycle\":\"cancelled\",\"revoked_at_unix\":102}"
         );
-        assert_eq!(TranscriptMiningRevokedV1::decode(&encoded).unwrap(), revoked);
+        assert_eq!(
+            TranscriptMiningRevokedV1::decode(&encoded).unwrap(),
+            revoked
+        );
     }
 
     #[test]
