@@ -24,6 +24,8 @@ pub(crate) const MAX_DOCTOR_DIAGNOSTIC_DETAIL_BYTES: usize = 8 * 1024;
 pub(crate) const MAX_DOCTOR_DIAGNOSTIC_FINDINGS_COUNT: usize = 128;
 pub(crate) const MAX_CODING_TASK_TITLE_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_CODING_TASK_DESCRIPTION_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_PLAN_REVIEW_TEXT_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_PLAN_REVIEW_CRITIQUES_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_DATA_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_RENDERED_BYTES: usize = 384 * 1024;
 
@@ -36,6 +38,7 @@ const PROMPT_ENVELOPE_TRUST: &str = "untrusted_data_only";
 pub(crate) enum PromptEnvelopePurpose {
     ArxivAbstractSummary,
     CodingSecondOpinion,
+    CodingPlanReview,
     DoctorDiagnose,
     EmailThreatTiebreak,
     SubAgentReview,
@@ -62,6 +65,10 @@ impl PromptEnvelopePurpose {
             Self::CodingSecondOpinion => &[
                 PromptFieldKind::TaskTitle,
                 PromptFieldKind::TaskDescription,
+            ],
+            Self::CodingPlanReview => &[
+                PromptFieldKind::PlanText,
+                PromptFieldKind::PriorCritiques,
             ],
             Self::DoctorDiagnose => &[PromptFieldKind::DiagnosticFindings],
             Self::EmailThreatTiebreak => &[
@@ -107,6 +114,7 @@ impl PromptEnvelopePurpose {
         match self {
             Self::ArxivAbstractSummary => "arxiv_abstract_summary",
             Self::CodingSecondOpinion => "coding_second_opinion",
+            Self::CodingPlanReview => "coding_plan_review",
             Self::DoctorDiagnose => "doctor_diagnose",
             Self::EmailThreatTiebreak => "email_threat_tiebreak",
             Self::SubAgentReview => "sub_agent_review",
@@ -134,6 +142,8 @@ pub(crate) enum PromptFieldKind {
     DocumentAbstract,
     TaskTitle,
     TaskDescription,
+    PlanText,
+    PriorCritiques,
     DiagnosticFindings,
     EmailSubject,
     EmailBody,
@@ -158,6 +168,8 @@ impl PromptFieldKind {
             Self::DocumentAbstract => MAX_QA_CONTRACT_BYTES,
             Self::TaskTitle => MAX_CODING_TASK_TITLE_BYTES,
             Self::TaskDescription => MAX_CODING_TASK_DESCRIPTION_BYTES,
+            Self::PlanText => MAX_PLAN_REVIEW_TEXT_BYTES,
+            Self::PriorCritiques => MAX_PLAN_REVIEW_CRITIQUES_BYTES,
             Self::DiagnosticFindings => MAX_DOCTOR_DIAGNOSTIC_FINDINGS_BYTES,
             Self::EmailSubject => MAX_EMAIL_SUBJECT_BYTES,
             Self::EmailBody => MAX_EMAIL_BODY_BYTES,
@@ -181,6 +193,8 @@ impl PromptFieldKind {
             Self::DocumentAbstract => "document_abstract",
             Self::TaskTitle => "task_title",
             Self::TaskDescription => "task_description",
+            Self::PlanText => "plan_text",
+            Self::PriorCritiques => "prior_critiques",
             Self::DiagnosticFindings => "diagnostic_findings",
             Self::EmailSubject => "email_subject",
             Self::EmailBody => "email_body",
