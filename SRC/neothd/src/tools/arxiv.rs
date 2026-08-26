@@ -30,6 +30,12 @@ pub struct ArxivPaper {
 /// wiremock tests can override it via `search_against`.
 pub const ARXIV_API_URL: &str = "https://export.arxiv.org/api/query";
 
+/// Hard limit for the raw ArXiv response before UTF-8 or Atom parsing.
+/// Fifty ordinary Atom entries fit comfortably below this while preventing an
+/// upstream response from forcing an unbounded allocation in either caller.
+const MAX_ARXIV_RESPONSE_BYTES: usize = 1024 * 1024;
+const MAX_ARXIV_RESULTS: usize = 50;
+
 /// Query the ArXiv API + return up to `max_results` matches. Most
 /// recent first. ArXiv's search query syntax: `all:keyword`,
 /// `ti:title`, `au:author`, `cat:cs.CL`, `AND` / `OR` / `ANDNOT`.
@@ -62,7 +68,7 @@ pub(crate) async fn search_against_authorized(
     if query.trim().is_empty() {
         anyhow::bail!("arxiv: empty query");
     }
-    let max = max_results.clamp(1, 50);
+    let max = max_results.clamp(1, MAX_ARXIV_RESULTS);
     let url = format!(
         "{endpoint}?search_query={}&start=0&max_results={}&sortBy=submittedDate&sortOrder=descending",
         urlencode(query),
@@ -73,7 +79,7 @@ pub(crate) async fn search_against_authorized(
     http.execute(request, move |permit| async move {
         permit.require(&permitted_request)?;
         let client = http_client::build_client_no_redirect()?;
-        let resp = client
+        let mut resp = client
             .get(url)
             .header("User-Agent", "NEOTH-arxiv/0.1")
             .send()
@@ -82,10 +88,43 @@ pub(crate) async fn search_against_authorized(
         if !resp.status().is_success() {
             anyhow::bail!("arxiv API returned {}", resp.status());
         }
-        let body = resp.text().await.context("arxiv body read")?;
-        parse_atom(&body)
+        preflight_response_content_length(resp.content_length())?;
+        let mut body = Vec::new();
+        while let Some(chunk) = resp.chunk().await.context("arxiv response read")? {
+            append_response_chunk(&mut body, &chunk)?;
+        }
+        let body = std::str::from_utf8(&body)
+            .map_err(|_| anyhow::anyhow!("arxiv response is not valid UTF-8"))?;
+        parse_atom(body, max)
     })
     .await
+}
+
+/// A Content-Length preflight avoids reading a declared oversized response, but
+/// cannot be the enforcement mechanism because chunked responses may omit or
+/// lie about that header. [`append_response_chunk`] is the authoritative cap.
+fn preflight_response_content_length(content_length: Option<u64>) -> Result<()> {
+    if let Some(content_length) = content_length {
+        if content_length > MAX_ARXIV_RESPONSE_BYTES as u64 {
+            anyhow::bail!("arxiv response exceeds configured size limit");
+        }
+    }
+    Ok(())
+}
+
+/// Append one raw HTTP chunk without exceeding the response memory boundary.
+/// The checked addition protects the boundary even if an adversarial stream
+/// presents a pathological sequence of chunks.
+fn append_response_chunk(body: &mut Vec<u8>, chunk: &[u8]) -> Result<()> {
+    let total = body
+        .len()
+        .checked_add(chunk.len())
+        .ok_or_else(|| anyhow::anyhow!("arxiv response exceeds configured size limit"))?;
+    if total > MAX_ARXIV_RESPONSE_BYTES {
+        anyhow::bail!("arxiv response exceeds configured size limit");
+    }
+    body.extend_from_slice(chunk);
+    Ok(())
 }
 
 /// Minimal Atom XML parser scoped to ArXiv's response shape. We pull
@@ -93,14 +132,17 @@ pub(crate) async fn search_against_authorized(
 /// No XML lib dep — the response is well-formed enough that a
 /// targeted scan is reliable for v0.1.x. Operators who hit a parse
 /// edge case can opt into a future `quick-xml`-based path (Phase 2).
-fn parse_atom(xml: &str) -> Result<Vec<ArxivPaper>> {
+fn parse_atom(xml: &str, max_entries: usize) -> Result<Vec<ArxivPaper>> {
     let mut out = Vec::new();
     let mut rest = xml;
     while let Some(start) = rest.find("<entry>") {
+        if out.len() >= max_entries {
+            anyhow::bail!("arxiv response exceeds requested entry limit");
+        }
         rest = &rest[start + "<entry>".len()..];
-        let Some(end) = rest.find("</entry>") else {
-            break;
-        };
+        let end = rest
+            .find("</entry>")
+            .ok_or_else(|| anyhow::anyhow!("arxiv response contains an unterminated entry"))?;
         let block = &rest[..end];
         rest = &rest[end + "</entry>".len()..];
         let id = inner(block, "<id>", "</id>").unwrap_or_default();
@@ -215,7 +257,7 @@ mod tests {
 <category term="cs.AI" />
 </entry>
 </feed>"#;
-        let papers = parse_atom(xml).expect("parse ok");
+        let papers = parse_atom(xml, MAX_ARXIV_RESULTS).expect("parse ok");
         assert_eq!(papers.len(), 1);
         let p = &papers[0];
         assert_eq!(p.title, "A Test Paper Title");
@@ -229,8 +271,54 @@ mod tests {
     #[test]
     fn parse_atom_empty_feed_returns_empty() {
         let xml = r#"<feed></feed>"#;
-        let papers = parse_atom(xml).expect("parse ok");
+        let papers = parse_atom(xml, MAX_ARXIV_RESULTS).expect("parse ok");
         assert!(papers.is_empty());
+    }
+
+    #[test]
+    fn response_body_rejects_oversized_declared_length_before_reading() {
+        let err = preflight_response_content_length(Some(MAX_ARXIV_RESPONSE_BYTES as u64 + 1))
+            .unwrap_err();
+        assert_eq!(err.to_string(), "arxiv response exceeds configured size limit");
+    }
+
+    #[test]
+    fn response_body_rejects_oversized_chunked_stream_without_length() {
+        preflight_response_content_length(None).expect("missing length is allowed");
+        let mut body = Vec::new();
+        append_response_chunk(&mut body, &vec![b'x'; MAX_ARXIV_RESPONSE_BYTES - 1])
+            .expect("under-limit chunk accepted");
+        let err = append_response_chunk(&mut body, b"xx").unwrap_err();
+        assert_eq!(err.to_string(), "arxiv response exceeds configured size limit");
+        assert_eq!(body.len(), MAX_ARXIV_RESPONSE_BYTES - 1);
+    }
+
+    #[test]
+    fn response_body_accepts_exact_byte_cap() {
+        let mut body = Vec::new();
+        append_response_chunk(&mut body, &vec![b'x'; MAX_ARXIV_RESPONSE_BYTES])
+            .expect("exact cap accepted");
+        assert_eq!(body.len(), MAX_ARXIV_RESPONSE_BYTES);
+    }
+
+    #[test]
+    fn parse_atom_rejects_entries_over_requested_limit() {
+        let xml = concat!(
+            "<feed><entry><id>one</id></entry>",
+            "<entry><id>two</id></entry></feed>"
+        );
+        let err = parse_atom(xml, 1).unwrap_err();
+        assert_eq!(err.to_string(), "arxiv response exceeds requested entry limit");
+    }
+
+    #[test]
+    fn parse_atom_rejects_feed_with_unterminated_later_entry() {
+        let xml = concat!(
+            "<feed><entry><id>one</id></entry>",
+            "<entry><id>truncated</id></feed>"
+        );
+        let err = parse_atom(xml, MAX_ARXIV_RESULTS).unwrap_err();
+        assert_eq!(err.to_string(), "arxiv response contains an unterminated entry");
     }
 
     #[tokio::test]
