@@ -36,6 +36,7 @@ pub(crate) const MAX_WORKER_ROLE_BYTES: usize = 4 * 1024;
 pub(crate) const MAX_WORKER_IDENTIFIER_BYTES: usize = 256;
 pub(crate) const MAX_WORKER_ASSIGNED_WORKER_BYTES: usize = 4 * 1024;
 pub(crate) const MAX_WORKER_TOOL_HINT_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_MEMORY_ENTITY_SOURCE_TEXT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_DATA_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_RENDERED_BYTES: usize = 384 * 1024;
 
@@ -52,6 +53,7 @@ pub(crate) enum PromptEnvelopePurpose {
     CodingDecomposition,
     CodingDecompositionRepair,
     CodingProviderWorkerTask,
+    MemoryEntityExtraction,
     DoctorDiagnose,
     EmailThreatTiebreak,
     SubAgentReview,
@@ -103,6 +105,7 @@ impl PromptEnvelopePurpose {
                 PromptFieldKind::WorkerAssignedWorker,
                 PromptFieldKind::WorkerToolHint,
             ],
+            Self::MemoryEntityExtraction => &[PromptFieldKind::MemoryEntitySourceText],
             Self::DoctorDiagnose => &[PromptFieldKind::DiagnosticFindings],
             Self::EmailThreatTiebreak => &[
                 PromptFieldKind::EmailSubject,
@@ -151,6 +154,7 @@ impl PromptEnvelopePurpose {
             Self::CodingDecomposition => "coding_decomposition",
             Self::CodingDecompositionRepair => "coding_decomposition_repair",
             Self::CodingProviderWorkerTask => "coding_provider_worker_task",
+            Self::MemoryEntityExtraction => "memory_entity_extraction",
             Self::DoctorDiagnose => "doctor_diagnose",
             Self::EmailThreatTiebreak => "email_threat_tiebreak",
             Self::SubAgentReview => "sub_agent_review",
@@ -192,6 +196,7 @@ pub(crate) enum PromptFieldKind {
     WorkerTaskIdentifier,
     WorkerAssignedWorker,
     WorkerToolHint,
+    MemoryEntitySourceText,
     DiagnosticFindings,
     EmailSubject,
     EmailBody,
@@ -228,6 +233,7 @@ impl PromptFieldKind {
             Self::WorkerSessionIdentifier | Self::WorkerTaskIdentifier => MAX_WORKER_IDENTIFIER_BYTES,
             Self::WorkerAssignedWorker => MAX_WORKER_ASSIGNED_WORKER_BYTES,
             Self::WorkerToolHint => MAX_WORKER_TOOL_HINT_BYTES,
+            Self::MemoryEntitySourceText => MAX_MEMORY_ENTITY_SOURCE_TEXT_BYTES,
             Self::DiagnosticFindings => MAX_DOCTOR_DIAGNOSTIC_FINDINGS_BYTES,
             Self::EmailSubject => MAX_EMAIL_SUBJECT_BYTES,
             Self::EmailBody => MAX_EMAIL_BODY_BYTES,
@@ -265,6 +271,7 @@ impl PromptFieldKind {
             Self::WorkerTaskIdentifier => "worker_task_identifier",
             Self::WorkerAssignedWorker => "worker_assigned_worker",
             Self::WorkerToolHint => "worker_tool_hint",
+            Self::MemoryEntitySourceText => "memory_entity_source_text",
             Self::DiagnosticFindings => "diagnostic_findings",
             Self::EmailSubject => "email_subject",
             Self::EmailBody => "email_body",
