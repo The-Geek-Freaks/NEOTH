@@ -18,6 +18,7 @@ pub(crate) const MAX_SESSION_NAMING_OPENING_BYTES: usize = 2 * 1024;
 pub(crate) const MAX_DOCUMENT_TITLE_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_EMAIL_SUBJECT_BYTES: usize = 4 * 1024;
 pub(crate) const MAX_EMAIL_BODY_BYTES: usize = 8_000;
+pub(crate) const MAX_SKILL_EXTRACTION_EXCERPT_BYTES: usize = 2 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_DATA_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_RENDERED_BYTES: usize = 384 * 1024;
 
@@ -30,6 +31,7 @@ const PROMPT_ENVELOPE_TRUST: &str = "untrusted_data_only";
 pub(crate) enum PromptEnvelopePurpose {
     ArxivAbstractSummary,
     EmailThreatTiebreak,
+    SkillAutoExtract,
     ChatClarificationReissue,
     ChatHemisphereLiveTest,
     ChatSessionNaming,
@@ -52,6 +54,10 @@ impl PromptEnvelopePurpose {
             Self::EmailThreatTiebreak => &[
                 PromptFieldKind::EmailSubject,
                 PromptFieldKind::EmailBody,
+            ],
+            Self::SkillAutoExtract => &[
+                PromptFieldKind::SkillExtractionQuery,
+                PromptFieldKind::SkillExtractionContext,
             ],
             Self::ChatClarificationReissue => &[
                 PromptFieldKind::OriginalQuestion,
@@ -84,6 +90,7 @@ impl PromptEnvelopePurpose {
         match self {
             Self::ArxivAbstractSummary => "arxiv_abstract_summary",
             Self::EmailThreatTiebreak => "email_threat_tiebreak",
+            Self::SkillAutoExtract => "skill_auto_extract",
             Self::ChatClarificationReissue => "chat_clarification_reissue",
             Self::ChatHemisphereLiveTest => "chat_hemisphere_live_test",
             Self::ChatSessionNaming => "chat_session_naming",
@@ -107,6 +114,8 @@ pub(crate) enum PromptFieldKind {
     DocumentAbstract,
     EmailSubject,
     EmailBody,
+    SkillExtractionQuery,
+    SkillExtractionContext,
     ClarificationAnswer,
     SessionOpening,
     GroundTruthAssertions,
@@ -126,6 +135,9 @@ impl PromptFieldKind {
             Self::DocumentAbstract => MAX_QA_CONTRACT_BYTES,
             Self::EmailSubject => MAX_EMAIL_SUBJECT_BYTES,
             Self::EmailBody => MAX_EMAIL_BODY_BYTES,
+            Self::SkillExtractionQuery | Self::SkillExtractionContext => {
+                MAX_SKILL_EXTRACTION_EXCERPT_BYTES
+            }
             Self::ClarificationAnswer => MAX_OPERATOR_TASK_BYTES,
             Self::SessionOpening => MAX_SESSION_NAMING_OPENING_BYTES,
             Self::GroundTruthAssertions => MAX_QA_CONTRACT_BYTES,
@@ -143,6 +155,8 @@ impl PromptFieldKind {
             Self::DocumentAbstract => "document_abstract",
             Self::EmailSubject => "email_subject",
             Self::EmailBody => "email_body",
+            Self::SkillExtractionQuery => "skill_extraction_query",
+            Self::SkillExtractionContext => "skill_extraction_context",
             Self::ClarificationAnswer => "clarification_answer",
             Self::SessionOpening => "session_opening",
             Self::GroundTruthAssertions => "ground_truth_assertions",
