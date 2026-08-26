@@ -35,6 +35,7 @@ pub(crate) enum PromptEnvelopePurpose {
     ArxivAbstractSummary,
     DoctorDiagnose,
     EmailThreatTiebreak,
+    SubAgentReview,
     SkillAutoExtract,
     ChatClarificationReissue,
     ChatHemisphereLiveTest,
@@ -59,6 +60,10 @@ impl PromptEnvelopePurpose {
             Self::EmailThreatTiebreak => &[
                 PromptFieldKind::EmailSubject,
                 PromptFieldKind::EmailBody,
+            ],
+            Self::SubAgentReview => &[
+                PromptFieldKind::OperatorTask,
+                PromptFieldKind::Candidate,
             ],
             Self::SkillAutoExtract => &[
                 PromptFieldKind::SkillExtractionQuery,
@@ -96,6 +101,7 @@ impl PromptEnvelopePurpose {
             Self::ArxivAbstractSummary => "arxiv_abstract_summary",
             Self::DoctorDiagnose => "doctor_diagnose",
             Self::EmailThreatTiebreak => "email_threat_tiebreak",
+            Self::SubAgentReview => "sub_agent_review",
             Self::SkillAutoExtract => "skill_auto_extract",
             Self::ChatClarificationReissue => "chat_clarification_reissue",
             Self::ChatHemisphereLiveTest => "chat_hemisphere_live_test",
