@@ -37,6 +37,9 @@ pub(crate) const MAX_WORKER_IDENTIFIER_BYTES: usize = 256;
 pub(crate) const MAX_WORKER_ASSIGNED_WORKER_BYTES: usize = 4 * 1024;
 pub(crate) const MAX_WORKER_TOOL_HINT_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_MEMORY_ENTITY_SOURCE_TEXT_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_WARM_SUMMARY_INSTRUCTION_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_WARM_SUMMARY_SYSTEM_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_WARM_SUMMARY_EVENT_DATA_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_DATA_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_RENDERED_BYTES: usize = 384 * 1024;
 
@@ -54,6 +57,7 @@ pub(crate) enum PromptEnvelopePurpose {
     CodingDecompositionRepair,
     CodingProviderWorkerTask,
     MemoryEntityExtraction,
+    MemoryWarmSummary,
     DoctorDiagnose,
     EmailThreatTiebreak,
     SubAgentReview,
@@ -106,6 +110,12 @@ impl PromptEnvelopePurpose {
                 PromptFieldKind::WorkerToolHint,
             ],
             Self::MemoryEntityExtraction => &[PromptFieldKind::MemoryEntitySourceText],
+            Self::MemoryWarmSummary => &[
+                PromptFieldKind::WarmSummarySystem,
+                PromptFieldKind::WarmSummaryInstruction,
+                PromptFieldKind::WarmSummaryEventData,
+                PromptFieldKind::WarmSummaryEventsTruncated,
+            ],
             Self::DoctorDiagnose => &[PromptFieldKind::DiagnosticFindings],
             Self::EmailThreatTiebreak => &[
                 PromptFieldKind::EmailSubject,
@@ -155,6 +165,7 @@ impl PromptEnvelopePurpose {
             Self::CodingDecompositionRepair => "coding_decomposition_repair",
             Self::CodingProviderWorkerTask => "coding_provider_worker_task",
             Self::MemoryEntityExtraction => "memory_entity_extraction",
+            Self::MemoryWarmSummary => "memory_warm_summary",
             Self::DoctorDiagnose => "doctor_diagnose",
             Self::EmailThreatTiebreak => "email_threat_tiebreak",
             Self::SubAgentReview => "sub_agent_review",
@@ -197,6 +208,10 @@ pub(crate) enum PromptFieldKind {
     WorkerAssignedWorker,
     WorkerToolHint,
     MemoryEntitySourceText,
+    WarmSummaryInstruction,
+    WarmSummarySystem,
+    WarmSummaryEventData,
+    WarmSummaryEventsTruncated,
     DiagnosticFindings,
     EmailSubject,
     EmailBody,
@@ -234,6 +249,10 @@ impl PromptFieldKind {
             Self::WorkerAssignedWorker => MAX_WORKER_ASSIGNED_WORKER_BYTES,
             Self::WorkerToolHint => MAX_WORKER_TOOL_HINT_BYTES,
             Self::MemoryEntitySourceText => MAX_MEMORY_ENTITY_SOURCE_TEXT_BYTES,
+            Self::WarmSummaryInstruction => MAX_WARM_SUMMARY_INSTRUCTION_BYTES,
+            Self::WarmSummarySystem => MAX_WARM_SUMMARY_SYSTEM_BYTES,
+            Self::WarmSummaryEventData => MAX_WARM_SUMMARY_EVENT_DATA_BYTES,
+            Self::WarmSummaryEventsTruncated => 5,
             Self::DiagnosticFindings => MAX_DOCTOR_DIAGNOSTIC_FINDINGS_BYTES,
             Self::EmailSubject => MAX_EMAIL_SUBJECT_BYTES,
             Self::EmailBody => MAX_EMAIL_BODY_BYTES,
@@ -272,6 +291,10 @@ impl PromptFieldKind {
             Self::WorkerAssignedWorker => "worker_assigned_worker",
             Self::WorkerToolHint => "worker_tool_hint",
             Self::MemoryEntitySourceText => "memory_entity_source_text",
+            Self::WarmSummaryInstruction => "warm_summary_instruction",
+            Self::WarmSummarySystem => "warm_summary_system",
+            Self::WarmSummaryEventData => "warm_summary_event_data",
+            Self::WarmSummaryEventsTruncated => "warm_summary_events_truncated",
             Self::DiagnosticFindings => "diagnostic_findings",
             Self::EmailSubject => "email_subject",
             Self::EmailBody => "email_body",
