@@ -39,7 +39,7 @@ use super::budget::BudgetToken;
 use super::dissent::{DissentScore, score_dissent, score_dissent_via_embedding};
 use super::factual_check::{
     DEFAULT_NEGATION_MARKERS, DEFAULT_NEGATION_WINDOW_CHARS, FactualAssertion,
-    embed_ground_truth_tag, factual_contradiction_check,
+    factual_contradiction_check, try_embed_ground_truth_tag,
 };
 use super::types::{CouncilDebate, HemisphereRefusal, HemisphereResponse, Verdict, dur_to_ms};
 use crate::security::refusal_cause::classify_cause;
@@ -166,8 +166,8 @@ pub async fn run_debate_with_depth(
     right: &dyn HemisphereProvider,
     cerebellum: &dyn HemisphereProvider,
     // GOLD-G02-COUNCIL-01 — pre-fetched verified groundtruth assertions.
-    // Pass `&[]` when no DB connection is available; the orchestrator
-    // treats an empty slice as a no-op (no tag injection, no check).
+    // Pass `&[]` when no DB connection is available; this omits the optional
+    // ground-truth suffix and comparison while still framing the question.
     assertions: &[FactualAssertion],
 ) -> CouncilDebate {
     // Backwards-compat entry: creates a fresh BudgetToken with the
@@ -220,23 +220,35 @@ pub async fn run_debate_with_depth_budget(
     embed_provider: Option<&dyn crate::providers::embed::EmbedProvider>,
     // GOLD-G02-COUNCIL-01 — pre-fetched verified groundtruth assertions
     // (sourced from `idx_groundtruth` WHERE `fact_state = 'verified'`).
-    // Empty slice → no-op: no `[GROUND_TRUTH]` block is appended and
-    // no contradiction check runs. The caller is responsible for
-    // fetching via `memory::groundtruth::surface_for_recall` with
+    // Empty slice omits the optional `[GROUND_TRUTH]` suffix and no
+    // contradiction check runs; the question remains typed-framed.
+    // The caller is responsible for fetching via
+    // `memory::groundtruth::surface_for_recall` with
     // `include_unverified = false` and converting rows to
     // `FactualAssertion` values (statement → subject, scope → tag).
     assertions: &[FactualAssertion],
 ) -> CouncilDebate {
     let overall_start = Instant::now();
 
-    // GOLD-G02-COUNCIL-01 Wire (a) — prompt enrichment.
-    // `embed_ground_truth_tag` is a pure fn; empty assertions → unchanged.
-    let enriched_prompt: std::borrow::Cow<'_, str> = if assertions.is_empty() {
-        std::borrow::Cow::Borrowed(prompt)
-    } else {
-        std::borrow::Cow::Owned(embed_ground_truth_tag(prompt, assertions))
+    // GOLD-R3-14 — validate every untrusted question/assertion envelope before
+    // run_one can schedule a provider or charge the shared budget.
+    let enriched_prompt = match try_embed_ground_truth_tag(prompt, assertions) {
+        Ok(enriched) => enriched,
+        Err(_) => {
+            return CouncilDebate {
+                prompt_hash_xxh3,
+                responses: Vec::new(),
+                dissent: DissentScore(0.0),
+                verdict: Verdict::QuorumFailed {
+                    responded: 0,
+                    required: QUORUM_THRESHOLD,
+                },
+                total_latency_ms: dur_to_ms(overall_start.elapsed()),
+                factual_outcomes: Vec::new(),
+            };
+        }
     };
-    let effective_prompt: &str = &enriched_prompt;
+    let effective_prompt = enriched_prompt.as_str();
 
     // K-Perf-1 2026-05-17: FuturesUnordered + early-exit on quorum-
     // with-consensus. Three concurrent tasks; first 2-3 to settle
@@ -1407,10 +1419,17 @@ mod tests {
             winning.contains(GROUND_TRUTH_TAG_CLOSE),
             "winning_text must contain [/GROUND_TRUTH] close tag"
         );
-        assert!(
-            winning.contains("Sam's birthday: March"),
-            "winning_text must contain the injected assertion"
-        );
+        let assertion_envelope = winning
+            .lines()
+            .find(|line| line.contains("\"purpose\":\"council_ground_truth_assertions\""))
+            .expect("winning_text must contain the typed assertion envelope");
+        let assertion_envelope: serde_json::Value =
+            serde_json::from_str(assertion_envelope).unwrap();
+        let assertions: Vec<FactualAssertion> = serde_json::from_str(
+            assertion_envelope["fields"][0]["data"].as_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(assertions, vec![mk_assertion("Sam's birthday", "March")]);
         // factual_outcomes is populated for every hemisphere that produced
         // text. Identical echo responses trip the early-consensus quorum, so
         // cerebellum may never be consulted — 2 outcomes is the legitimate
@@ -1426,6 +1445,65 @@ mod tests {
                 .all(|(_, agrees, n)| *agrees && *n == 0),
             "echoing the assertion keyword must count as agreement"
         );
+    }
+
+    #[tokio::test]
+    async fn oversized_factual_question_rejects_before_provider_or_budget() {
+        struct CountingHemisphere {
+            calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl HemisphereProvider for CountingHemisphere {
+            fn provider_id(&self) -> String {
+                "counting".to_string()
+            }
+            async fn ask(&self, _prompt: &str) -> Result<CompletionRecord, String> {
+                self.calls
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(CompletionRecord {
+                    text: "must not be returned".to_string(),
+                    input_tokens: None,
+                    output_tokens: None,
+                })
+            }
+        }
+
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let left = CountingHemisphere {
+            calls: calls.clone(),
+        };
+        let right = CountingHemisphere {
+            calls: calls.clone(),
+        };
+        let cerebellum = CountingHemisphere {
+            calls: calls.clone(),
+        };
+        let budget = BudgetToken::new(3);
+        let oversized =
+            "x".repeat(crate::security::prompt_envelope::MAX_OPERATOR_TASK_BYTES + 1);
+
+        let debate = run_debate_with_depth_budget(
+            &oversized,
+            0,
+            1,
+            budget.clone(),
+            &left,
+            &right,
+            &cerebellum,
+            None,
+            &[],
+        )
+        .await;
+
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(budget.used(), 0);
+        assert!(matches!(
+            debate.verdict,
+            Verdict::QuorumFailed {
+                responded: 0,
+                required: QUORUM_THRESHOLD,
+            }
+        ));
     }
 
     /// Wire (b): a hemisphere that contradicts a verified assertion

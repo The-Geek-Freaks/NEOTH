@@ -921,8 +921,8 @@ pub struct CouncilConfig {
     /// hemisphere is demoted (cannot become `winning_text`) and the
     /// contradiction is logged at WARN with the assertion id.
     ///
-    /// Empty assertion slice → no-op (no block appended, no check run).
-    /// No DB connection available → caller passes `&[]` → no-op.
+    /// Empty assertion slice → no ground-truth suffix/check; the question is
+    /// still typed-framed. No DB connection available → caller passes `&[]`.
     /// Set to `false` to disable entirely (disables both prompt injection
     /// and post-response check). Features-default-on rule: `true`.
     #[serde(default = "default_groundtruth_injection")]
