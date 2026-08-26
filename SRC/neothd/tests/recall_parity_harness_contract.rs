@@ -10,6 +10,7 @@ const CANDIDATE_EVIDENCE: &str = include_str!("../src/recall/parity_candidate_ev
 const BATCH: &str = include_str!("../src/recall/parity_batch_plan.rs");
 const RECEIPT: &str = include_str!("../src/recall/parity_import_receipt.rs");
 const CLI: &str = include_str!("../src/cli/recall_score.rs");
+const STORE: &str = include_str!("../src/skills/store.rs");
 
 #[test]
 fn harness_keeps_network_wal_and_gate_authority_outside_the_slice() {
@@ -231,6 +232,61 @@ fn four_grader_batch_stays_offline_attested_and_non_gate() {
     }
     assert!(CLI.contains("BatchPlan"));
     assert!(CLI.contains("BatchResultsVerify"));
+    assert!(CLI.contains("BatchResultsIngest"));
     assert!(CLI.contains("long = \"expected-batch-result-pubkey\""));
     assert!(CLI.contains("num_args = 4"));
+}
+
+#[test]
+fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
+    let ingest = HARNESS
+        .split("pub fn ingest_attested_four_grader_batch_results")
+        .nth(1)
+        .and_then(|tail| tail.split("fn validate_batch_result_inputs").next())
+        .expect("batch result ingest source");
+    for forbidden in ["File::open(", "reqwest", "Command::", "wal::writer", "build_report("] {
+        assert!(!ingest.contains(forbidden), "batch result ingest acquired {forbidden} authority");
+    }
+    for required in [
+        "validate_batch_result_inputs",
+        "validate_single_grader_matrix",
+        "stage_attested_import",
+        "BoundParityRun::open_existing",
+        "load_existing_run_manifest",
+        "FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE",
+        "FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE",
+        "FOUR_GRADER_BATCH_RESULT_BINDING_FILE",
+        "result_receipt_pubkey_sha256",
+        "state_evidence_sha256",
+        "gate_eligible: false",
+    ] {
+        assert!(ingest.contains(required), "batch result ingest lost {required}");
+    }
+    for required in [
+        "incomplete four-grader batch result ingest",
+        "receipt.verify(pubkey)",
+        "validate_state_imports",
+        "revalidate(run, FOUR_GRADER_BATCH_RESULT_BINDING_FILE)",
+        "read_pinned_attested_imports",
+        "state_bytes.revalidate(run, STATE_FILE)",
+        "pinned_imports.revalidate(run)",
+        "directory_identity.matches_child",
+        "attested imports directory identity changed",
+    ] {
+        assert!(HARNESS.contains(required), "batch result reopen fence lost {required}");
+    }
+    for required in [
+        "pub(crate) fn open_bound_real_child_dir",
+        "let child = open_real_child_dir(parent, name, display_path)?",
+        "child.dir_metadata()",
+        "let binding = bind_child_object(parent, name, display_path)?",
+        "opened_identity == binding.identity_token()",
+        "binding.matches_child(parent, name, display_path)?",
+    ] {
+        assert!(STORE.contains(required), "bound child-directory helper lost {required}");
+    }
+    assert!(
+        HARNESS.contains("open_bound_real_child_dir("),
+        "attested imports must bind their retained directory capability through the shared helper"
+    );
 }

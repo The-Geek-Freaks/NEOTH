@@ -15,6 +15,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -59,6 +60,9 @@ const CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE: &str = "candidate-evidence-receipt
 const CANDIDATE_EVIDENCE_CANDIDATES_FILE: &str = "candidate-evidence-candidates.jsonl";
 const FOUR_GRADER_BATCH_INPUT_FILE: &str = "four-grader-batch-input-digests.json";
 const FOUR_GRADER_BATCH_PLAN_FILE: &str = "four-grader-batch-plan.json";
+const FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE: &str = "four-grader-batch-result-receipt.json";
+const FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE: &str = "four-grader-batch-result-pubkey.txt";
+const FOUR_GRADER_BATCH_RESULT_BINDING_FILE: &str = "four-grader-batch-result-binding.json";
 const LOCK_FILE: &str = ".parity-harness.lock";
 
 /// Capability-bound run namespace. Its root directory and advisory lock are
@@ -252,6 +256,22 @@ pub struct FourGraderBatchResultSummary {
     pub gate_eligible: bool,
 }
 
+/// Immutable commit marker for the four exact batch result payloads. It binds
+/// only digests/counts and state evidence; grade JSONL is never rendered here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FourGraderBatchResultBinding {
+    pub schema_version: u32,
+    pub run_manifest_sha256: String,
+    pub batch_plan_sha256: String,
+    pub result_receipt_sha256: String,
+    pub result_receipt_pubkey_sha256: String,
+    pub result_artifacts: Vec<FourGraderBatchResultArtifact>,
+    pub imported_grades: Vec<ImportedGradeFile>,
+    pub state_evidence_sha256: String,
+    pub gate_eligible: bool,
+}
+
 /// Canonical state provenance. Publication bookkeeping stays in
 /// `ParityRunState::report_sha256` and is deliberately excluded so an auditor
 /// can recompute this digest from every persisted state generation.
@@ -310,6 +330,7 @@ pub fn plan_run(
     let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
     validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?;
+    validate_four_grader_batch_result_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     Ok(manifest)
 }
 
@@ -470,6 +491,7 @@ pub fn ingest_operator_anchor_evidence(
     )?;
     validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?;
+    validate_four_grader_batch_result_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     Ok(binding)
 }
 
@@ -733,6 +755,7 @@ pub fn plan_four_grader_batch(
     )?;
     let verified = validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?
         .context("four-grader batch plan disappeared after immutable publish")?;
+    validate_four_grader_batch_result_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     Ok(verified.plan)
 }
 
@@ -759,6 +782,7 @@ pub fn validate_attested_four_grader_batch_results(
     let verified_plan = validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?
         .context("attested batch results require an immutable four-grader batch plan")?;
     let plan = &verified_plan.plan;
+    validate_four_grader_batch_result_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     if result_bytes.len() != FOUR_GRADER_COUNT {
         anyhow::bail!("attested batch result verification requires exactly four result files");
     }
@@ -802,6 +826,356 @@ pub fn validate_attested_four_grader_batch_results(
     };
     verified_plan.revalidate(&run)?;
     Ok(summary)
+}
+
+/// Persist four externally attested offline result matrices. This consumes no
+/// provider authority: all result bytes are explicit caller input, checked
+/// before mutation, and then staged through the same grade-matrix validator
+/// and immutable imports namespace used by ordinary offline ingestion.
+pub fn ingest_attested_four_grader_batch_results(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    receipt: &SignedFourGraderBatchResultReceipt,
+    expected_receipt_pubkey_b64: &str,
+    result_bytes: &[Vec<u8>],
+) -> Result<FourGraderBatchResultBinding> {
+    let run = BoundParityRun::open_existing(run_dir)?;
+    let manifest = load_existing_run_manifest(
+        &run, grader_config, config_bytes, goldset, goldset_bytes,
+    )?;
+    validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    let verified_plan = validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?
+        .context("attested batch result ingest requires an immutable four-grader batch plan")?;
+    let (results, canonical_pubkey, receipt_pubkey_sha256) = validate_batch_result_inputs(
+        &manifest, grader_config, goldset, &verified_plan, receipt,
+        expected_receipt_pubkey_b64, result_bytes,
+    )?;
+    let state_bytes = run.read_child(STATE_FILE, 1024 * 1024)?;
+    let mut state = load_state_for_manifest(&run, &manifest)?;
+    validate_state_imports(&run, &state, grader_config, goldset)?;
+    let mut expected_imports = results.iter().map(|(artifact, _)| ImportedGradeFile {
+        grader_id: artifact.grader_id.clone(),
+        source_sha256: artifact.result_sha256.clone(),
+        record_count: artifact.record_count,
+    }).collect::<Vec<_>>();
+    expected_imports.sort_by(|left, right| left.grader_id.cmp(&right.grader_id));
+    if !state.imported_grades.is_empty() && state.imported_grades != expected_imports {
+        anyhow::bail!("attested four-grader batch result ingest cannot mix with prior grade imports");
+    }
+    let receipt_bytes = serde_json::to_vec(receipt).context("serialize attested batch result receipt")?;
+    for (index, (_, bytes)) in results.iter().enumerate() {
+        verified_plan.revalidate(&run)?;
+        create_immutable_run_child(
+            &run, &batch_result_file_name(index), bytes, MAX_GRADES_BYTES as usize,
+        )?;
+    }
+    verified_plan.revalidate(&run)?;
+    create_immutable_run_child(
+        &run, FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE, &receipt_bytes, 64 * 1024,
+    )?;
+    verified_plan.revalidate(&run)?;
+    create_immutable_run_child(
+        &run, FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE, canonical_pubkey.as_bytes(), 128,
+    )?;
+    let mut imports = Vec::with_capacity(FOUR_GRADER_COUNT);
+    for (artifact, bytes) in &results {
+        verified_plan.revalidate(&run)?;
+        let record = ImportedGradeFile {
+            grader_id: artifact.grader_id.clone(),
+            source_sha256: artifact.result_sha256.clone(),
+            record_count: artifact.record_count,
+        };
+        stage_attested_import(&run, &record, bytes)?;
+        imports.push(record);
+    }
+    imports.sort_by(|left, right| left.grader_id.cmp(&right.grader_id));
+    if state.imported_grades.is_empty() {
+        state.imported_grades = imports.clone();
+        state.report_sha256 = None;
+        verified_plan.revalidate(&run)?;
+        run.replace_child_if_matches(STATE_FILE, &state_bytes, &serde_json::to_vec(&state)?)?;
+    }
+    let state_evidence_sha256 = sha256_json(&state_evidence(&state))?;
+    let binding = FourGraderBatchResultBinding {
+        schema_version: super::parity_batch_plan::FOUR_GRADER_BATCH_SCHEMA_VERSION,
+        run_manifest_sha256: sha256_json(&manifest)?,
+        batch_plan_sha256: sha256_bytes(&verified_plan.plan_bytes),
+        result_receipt_sha256: sha256_bytes(&receipt_bytes),
+        result_receipt_pubkey_sha256: receipt_pubkey_sha256,
+        result_artifacts: results.iter().map(|(artifact, _)| artifact.clone()).collect(),
+        imported_grades: imports,
+        state_evidence_sha256,
+        gate_eligible: false,
+    };
+    verified_plan.revalidate(&run)?;
+    create_immutable_run_child(
+        &run, FOUR_GRADER_BATCH_RESULT_BINDING_FILE,
+        &serde_json::to_vec(&binding).context("serialize four-grader batch result binding")?, 64 * 1024,
+    )?;
+    validate_four_grader_batch_result_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    Ok(binding)
+}
+
+fn validate_batch_result_inputs(
+    manifest: &ParityRunManifest,
+    grader_config: &ValidatedGraderConfigFile,
+    goldset: &[GoldsetEntry],
+    verified_plan: &ValidatedFourGraderBatchPlan,
+    receipt: &SignedFourGraderBatchResultReceipt,
+    expected_receipt_pubkey_b64: &str,
+    result_bytes: &[Vec<u8>],
+) -> Result<(Vec<(FourGraderBatchResultArtifact, Vec<u8>)>, String, String)> {
+    if result_bytes.len() != FOUR_GRADER_COUNT {
+        anyhow::bail!("attested batch result ingest requires exactly four result files");
+    }
+    let (canonical_pubkey, receipt_pubkey_sha256) = canonical_batch_result_pubkey(expected_receipt_pubkey_b64)?;
+    let mut results = Vec::with_capacity(FOUR_GRADER_COUNT);
+    for bytes in result_bytes {
+        if bytes.len() as u64 > MAX_GRADES_BYTES { anyhow::bail!("attested batch result exceeds bounded grade byte limit"); }
+        let grades = super::goldset::load_grades_bytes(bytes, "attested four-grader batch result")?;
+        let grader_id = validate_single_grader_matrix(grader_config, goldset, &grades)?;
+        results.push((FourGraderBatchResultArtifact {
+            grader_id,
+            result_sha256: sha256_bytes(bytes),
+            record_count: grades.len(),
+        }, bytes.clone()));
+    }
+    results.sort_by(|left, right| left.0.grader_id.cmp(&right.0.grader_id));
+    if results.windows(2).any(|pair| pair[0].0.grader_id == pair[1].0.grader_id) {
+        anyhow::bail!("attested batch results contain duplicate grader output");
+    }
+    let expected_ids = verified_plan.plan.items.iter().map(|item| item.grader_id.as_str()).collect::<Vec<_>>();
+    let actual_ids = results.iter().map(|(item, _)| item.grader_id.as_str()).collect::<Vec<_>>();
+    if actual_ids != expected_ids || results.iter().zip(&verified_plan.plan.items)
+        .any(|((item, _), plan_item)| item.record_count != plan_item.expected_record_count)
+    {
+        anyhow::bail!("attested batch results do not exactly cover planned grader outputs");
+    }
+    let artifacts = results.iter().map(|(artifact, _)| artifact.clone()).collect::<Vec<_>>();
+    receipt.verify(expected_receipt_pubkey_b64)?;
+    if receipt.body.run_id != manifest.run_id
+        || receipt.body.run_manifest_sha256 != sha256_json(manifest)?
+        || receipt.body.batch_plan_sha256 != sha256_bytes(&verified_plan.plan_bytes)
+        || receipt.body.results != artifacts
+    {
+        anyhow::bail!("attested batch result receipt does not exactly bind this run, plan, and result bytes");
+    }
+    Ok((results, canonical_pubkey, receipt_pubkey_sha256))
+}
+
+fn canonical_batch_result_pubkey(value: &str) -> Result<(String, String)> {
+    let bytes = STANDARD.decode(value)
+        .map_err(|_| anyhow::anyhow!("expected batch result receipt public key is not valid base64"))?;
+    if bytes.len() != 32 { anyhow::bail!("expected batch result receipt public key has invalid Ed25519 length"); }
+    Ok((STANDARD.encode(&bytes), sha256_bytes(&bytes)))
+}
+
+fn batch_result_file_name(index: usize) -> String { format!("four-grader-batch-result-{index:02}.jsonl") }
+
+fn stage_attested_import(run: &BoundParityRun, record: &ImportedGradeFile, bytes: &[u8]) -> Result<()> {
+    let imports = run.open_or_create_imports_locked()?;
+    let name = format!("{}.jsonl", record.source_sha256);
+    let display = run.child_display(IMPORTS_DIR).join(&name);
+    match imports.symlink_metadata(std::ffi::OsStr::new(&name)) {
+        Ok(_) => {
+            if crate::skills::store::read_regular_file_bounded(&imports, std::ffi::OsStr::new(&name), &display, MAX_GRADES_BYTES as usize)? != bytes {
+                anyhow::bail!("existing attested imported grade artifact does not match its SHA256 filename");
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            run.revalidate_lock()?;
+            crate::skills::store::atomic_write_private_child_create_new(
+                &imports, std::ffi::OsStr::new(&name), &display, bytes,
+            )?;
+            run.revalidate_lock()?;
+        }
+        Err(error) => return Err(error).with_context(|| format!("inspect attested import {}", display.display())),
+    }
+    Ok(())
+}
+
+fn validate_four_grader_batch_result_artifacts_if_present(
+    run: &BoundParityRun,
+    manifest: &ParityRunManifest,
+    grader_config: &ValidatedGraderConfigFile,
+    goldset: &[GoldsetEntry],
+) -> Result<()> {
+    let mut artifacts = (0..FOUR_GRADER_COUNT)
+        .map(|index| read_bound_immutable_run_child(run, &batch_result_file_name(index), MAX_GRADES_BYTES as usize))
+        .collect::<Result<Vec<_>>>()?;
+    artifacts.push(read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE, 64 * 1024)?);
+    artifacts.push(read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE, 128)?);
+    artifacts.push(read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_RESULT_BINDING_FILE, 64 * 1024)?);
+    if artifacts.iter().all(Option::is_none) { return Ok(()); }
+    if artifacts.iter().any(Option::is_none) {
+        anyhow::bail!("incomplete four-grader batch result ingest; retry with identical artifacts or use a fresh run");
+    }
+    let mut values = artifacts.into_iter().map(Option::unwrap);
+    let result0 = values.next().expect("fixed batch result artifact count");
+    let result1 = values.next().expect("fixed batch result artifact count");
+    let result2 = values.next().expect("fixed batch result artifact count");
+    let result3 = values.next().expect("fixed batch result artifact count");
+    let receipt_bytes = values.next().expect("fixed batch result artifact count");
+    let pubkey_bytes = values.next().expect("fixed batch result artifact count");
+    let binding_bytes = values.next().expect("fixed batch result artifact count");
+    let binding: FourGraderBatchResultBinding = serde_json::from_slice(&binding_bytes.bytes)
+        .map_err(|_| anyhow::anyhow!("parse immutable four-grader batch result binding"))?;
+    let verified_plan = validate_four_grader_batch_plan_if_present(run, manifest, grader_config)?
+        .context("four-grader batch results require an immutable batch plan")?;
+    validate_batch_result_binding(&binding, manifest, &verified_plan)?;
+    let pubkey = std::str::from_utf8(&pubkey_bytes.bytes)
+        .map_err(|_| anyhow::anyhow!("persisted batch result public key is not UTF-8"))?;
+    let (_, pubkey_sha256) = canonical_batch_result_pubkey(pubkey)?;
+    if pubkey_sha256 != binding.result_receipt_pubkey_sha256 {
+        anyhow::bail!("persisted batch result public key does not match binding hash");
+    }
+    let receipt: SignedFourGraderBatchResultReceipt = serde_json::from_slice(&receipt_bytes.bytes)
+        .map_err(|_| anyhow::anyhow!("parse immutable four-grader batch result receipt"))?;
+    receipt.verify(pubkey)?;
+    let mut parsed = Vec::with_capacity(FOUR_GRADER_COUNT);
+    let result_children = [&result0, &result1, &result2, &result3];
+    for child in result_children {
+        let grades = super::goldset::load_grades_bytes(&child.bytes, "persisted attested four-grader batch result")?;
+        let grader_id = validate_single_grader_matrix(grader_config, goldset, &grades)?;
+        parsed.push(FourGraderBatchResultArtifact {
+            grader_id,
+            result_sha256: sha256_bytes(&child.bytes),
+            record_count: grades.len(),
+        });
+    }
+    if parsed.windows(2).any(|pair| pair[0].grader_id >= pair[1].grader_id)
+        || parsed != binding.result_artifacts
+        || receipt.body.run_id != manifest.run_id
+        || receipt.body.run_manifest_sha256 != sha256_json(manifest)?
+        || receipt.body.batch_plan_sha256 != sha256_bytes(&verified_plan.plan_bytes)
+        || receipt.body.results != parsed
+        || sha256_bytes(&receipt_bytes.bytes) != binding.result_receipt_sha256
+    {
+        anyhow::bail!("immutable four-grader batch result artifacts do not exactly match provenance binding");
+    }
+    let plan_ids = verified_plan.plan.items.iter().map(|item| item.grader_id.as_str()).collect::<Vec<_>>();
+    let parsed_ids = parsed.iter().map(|item| item.grader_id.as_str()).collect::<Vec<_>>();
+    if parsed_ids != plan_ids || parsed.iter().zip(&verified_plan.plan.items)
+        .any(|(result, item)| result.record_count != item.expected_record_count)
+    {
+        anyhow::bail!("immutable four-grader batch results do not exactly cover the planned roster");
+    }
+    let state_bytes = read_bound_immutable_run_child(run, STATE_FILE, 1024 * 1024)?
+        .context("four-grader batch result binding has no state artifact")?;
+    let state = parse_state_for_manifest(&state_bytes.bytes, manifest)?;
+    let pinned_imports = read_pinned_attested_imports(run, &state, grader_config, goldset)?;
+    if state.imported_grades != binding.imported_grades
+        || sha256_json(&state_evidence(&state))? != binding.state_evidence_sha256
+        || binding.imported_grades.iter().zip(&parsed).any(|(import, result)| {
+            import.grader_id != result.grader_id
+                || import.source_sha256 != result.result_sha256
+                || import.record_count != result.record_count
+        })
+    {
+        anyhow::bail!("four-grader batch result binding does not match current imported grade state");
+    }
+    for (index, child) in result_children.iter().enumerate() {
+        child.revalidate(run, &batch_result_file_name(index))?;
+    }
+    receipt_bytes.revalidate(run, FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE)?;
+    pubkey_bytes.revalidate(run, FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE)?;
+    binding_bytes.revalidate(run, FOUR_GRADER_BATCH_RESULT_BINDING_FILE)?;
+    state_bytes.revalidate(run, STATE_FILE)?;
+    pinned_imports.revalidate(run)?;
+    verified_plan.revalidate(run)?;
+    run.revalidate_lock()
+}
+
+struct BoundAttestedImport {
+    name: String,
+    identity: crate::skills::store::BoundChildObject,
+}
+
+struct PinnedAttestedImports {
+    dir: cap_std::fs::Dir,
+    directory_identity: crate::skills::store::BoundChildObject,
+    entries: Vec<BoundAttestedImport>,
+}
+
+impl PinnedAttestedImports {
+    fn revalidate(&self, run: &BoundParityRun) -> Result<()> {
+        if !self.directory_identity.matches_child(
+            &run.root.dir,
+            std::ffi::OsStr::new(IMPORTS_DIR),
+            &run.child_display(IMPORTS_DIR),
+        )? {
+            anyhow::bail!("attested imports directory identity changed before aggregate return");
+        }
+        for entry in &self.entries {
+            if !entry.identity.matches_regular_file_child_readonly(
+                &self.dir,
+                std::ffi::OsStr::new(&entry.name),
+                &run.child_display(IMPORTS_DIR).join(&entry.name),
+            )? {
+                anyhow::bail!("attested imported grade artifact identity changed before aggregate return");
+            }
+        }
+        Ok(())
+    }
+}
+
+fn read_pinned_attested_imports(
+    run: &BoundParityRun,
+    state: &ParityRunState,
+    grader_config: &ValidatedGraderConfigFile,
+    goldset: &[GoldsetEntry],
+) -> Result<PinnedAttestedImports> {
+    let (dir, directory_identity) = crate::skills::store::open_bound_real_child_dir(
+        &run.root.dir,
+        std::ffi::OsStr::new(IMPORTS_DIR),
+        &run.child_display(IMPORTS_DIR),
+    )?;
+    let mut entries = Vec::with_capacity(state.imported_grades.len());
+    for import in &state.imported_grades {
+        let name = format!("{}.jsonl", import.source_sha256);
+        let display = run.child_display(IMPORTS_DIR).join(&name);
+        let (mut file, identity) = crate::skills::store::open_bound_regular_file(
+            &dir, std::ffi::OsStr::new(&name), &display,
+        )?;
+        let mut bytes = Vec::new();
+        file.take(MAX_GRADES_BYTES.saturating_add(1)).read_to_end(&mut bytes)
+            .with_context(|| format!("read attested import {}", display.display()))?;
+        if bytes.len() as u64 > MAX_GRADES_BYTES || sha256_bytes(&bytes) != import.source_sha256 {
+            anyhow::bail!("attested imported grade artifact does not match its bounded SHA256 contract");
+        }
+        let grades = super::goldset::load_grades_bytes(&bytes, "pinned attested grade import")?;
+        let grader_id = validate_single_grader_matrix(grader_config, goldset, &grades)?;
+        if grader_id != import.grader_id || grades.len() != import.record_count {
+            anyhow::bail!("attested imported grade metadata does not match validated matrix");
+        }
+        entries.push(BoundAttestedImport { name, identity });
+    }
+    Ok(PinnedAttestedImports { dir, directory_identity, entries })
+}
+
+fn validate_batch_result_binding(
+    binding: &FourGraderBatchResultBinding,
+    manifest: &ParityRunManifest,
+    plan: &ValidatedFourGraderBatchPlan,
+) -> Result<()> {
+    if binding.schema_version != super::parity_batch_plan::FOUR_GRADER_BATCH_SCHEMA_VERSION
+        || binding.run_manifest_sha256 != sha256_json(manifest)?
+        || binding.batch_plan_sha256 != sha256_bytes(&plan.plan_bytes)
+        || binding.result_artifacts.len() != FOUR_GRADER_COUNT
+        || binding.imported_grades.len() != FOUR_GRADER_COUNT
+        || binding.gate_eligible
+    {
+        anyhow::bail!("four-grader batch result binding is not complete non-gate provenance for this run");
+    }
+    for (value, label) in [
+        (&binding.result_receipt_sha256, "batch result receipt"),
+        (&binding.result_receipt_pubkey_sha256, "batch result public key"),
+        (&binding.state_evidence_sha256, "batch result state evidence"),
+    ] { validate_sha256(value, label)?; }
+    Ok(())
 }
 
 fn four_grader_batch_plan_for(
@@ -926,6 +1300,7 @@ pub fn ingest_offline_grades(
     let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
     validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?;
+    validate_four_grader_batch_result_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
     let state_bytes = run.read_child(STATE_FILE, 1024 * 1024)?;
     let mut state = load_state_for_manifest(&run, &manifest)?;
     validate_state_imports(&run, &state, grader_config, goldset)?;
@@ -1006,6 +1381,7 @@ pub fn build_report(
     let manifest = plan_run_locked(&run_dir, grader_config, config_bytes, goldset, goldset_bytes)?;
     validate_operator_anchor_artifacts_if_present(&run_dir, &manifest, grader_config, goldset)?;
     validate_four_grader_batch_plan_if_present(&run_dir, &manifest, grader_config)?;
+    validate_four_grader_batch_result_artifacts_if_present(&run_dir, &manifest, grader_config, goldset)?;
     let state_bytes = run_dir.read_child(STATE_FILE, 1024 * 1024)?;
     let mut state = load_state_for_manifest(&run_dir, &manifest)?;
     validate_state_imports(&run_dir, &state, grader_config, goldset)?;
@@ -1168,8 +1544,11 @@ fn verify_external_import_receipt(
 }
 
 fn load_state_for_manifest(run: &BoundParityRun, manifest: &ParityRunManifest) -> Result<ParityRunState> {
-    let state: ParityRunState = serde_json::from_slice(&run.read_child(STATE_FILE, 1024 * 1024)?)
-        .context("parse bound parity state")?;
+    parse_state_for_manifest(&run.read_child(STATE_FILE, 1024 * 1024)?, manifest)
+}
+
+fn parse_state_for_manifest(bytes: &[u8], manifest: &ParityRunManifest) -> Result<ParityRunState> {
+    let state: ParityRunState = serde_json::from_slice(bytes).context("parse bound parity state")?;
     if state.schema_version != PARITY_HARNESS_SCHEMA_VERSION || state.manifest_sha256 != sha256_json(manifest)? {
         anyhow::bail!("state does not bind the current run manifest");
     }

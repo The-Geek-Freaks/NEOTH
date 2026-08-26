@@ -795,6 +795,38 @@ pub(crate) fn open_real_child_dir(parent: &Dir, name: &OsStr, display_path: &Pat
     Ok(child)
 }
 
+/// Open one real child directory and bind the exact retained directory handle
+/// to its current direct-child namespace entry.
+///
+/// This is the directory counterpart to [`open_bound_regular_file`].  The
+/// handle identity is derived before the name binding, then compared to the
+/// no-follow binding of that name.  Consequently an A-to-B-to-A namespace
+/// swap cannot pair a capability for B with a binding for A.  Callers retain
+/// both returned values and invoke [`BoundChildObject::matches_child`] before
+/// their final aggregate effect or return.
+pub(crate) fn open_bound_real_child_dir(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<(Dir, BoundChildObject)> {
+    let child = open_real_child_dir(parent, name, display_path)?;
+    let opened_identity = child_identity_token(&child.dir_metadata().with_context(|| {
+        format!("inspect opened bound child directory {}", display_path.display())
+    })?)?;
+    let binding = bind_child_object(parent, name, display_path)?;
+    anyhow::ensure!(
+        opened_identity == binding.identity_token(),
+        "child directory changed while its capability was being bound: {}",
+        display_path.display()
+    );
+    anyhow::ensure!(
+        binding.matches_child(parent, name, display_path)?,
+        "child directory changed before its capability binding completed: {}",
+        display_path.display()
+    );
+    Ok((child, binding))
+}
+
 /// Open one direct real-directory child if it exists. Absence is not an error;
 /// a file, symlink, junction, or other reparse point remains a hard refusal.
 ///
