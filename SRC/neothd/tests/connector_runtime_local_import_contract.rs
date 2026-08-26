@@ -71,9 +71,9 @@ fn is_negated_capability_binding_match(expression: &Expr) -> bool {
     let mut arguments = call.args.iter();
     call.method == "binding_matches"
         && is_self_field(&call.receiver, "capability")
-        && arguments.next().is_some_and(|argument| {
-            is_shared_reference_to_self_field(argument, "runtime_binding")
-        })
+        && arguments
+            .next()
+            .is_some_and(|argument| is_shared_reference_to_self_field(argument, "runtime_binding"))
         && arguments
             .next()
             .is_some_and(|argument| is_shared_reference_to_ident(argument, "lease"))

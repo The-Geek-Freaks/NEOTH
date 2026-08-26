@@ -4641,13 +4641,8 @@ fn ast_network_gate_allows_only_the_exact_wired_graphify_libc_denial_contract() 
     );
     let windows_checkout = complete.replace('\n', "\r\n");
     assert!(
-        forbidden_network_constructions_with_boundaries(
-            &windows_checkout,
-            false,
-            false,
-            true,
-        )
-        .is_empty(),
+        forbidden_network_constructions_with_boundaries(&windows_checkout, false, false, true,)
+            .is_empty(),
         "CRLF checkout normalization must preserve the exact Graphify token contract"
     );
     assert_eq!(
