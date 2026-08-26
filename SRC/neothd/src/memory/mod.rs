@@ -109,6 +109,9 @@ pub mod tiers;
 /// GOLD-ADAPT-ODY-26 — raw-turn persistence + FTS5 search with before/after
 /// context rows. `neoth recall --transcript <query>` surface.
 pub mod transcript_store;
+/// GOLD-LF-P1-08 stages 1–2: sealed, metadata-only provenance payloads.
+/// No producer, mining, reader, or activation surface is exposed here.
+pub(crate) mod transcript_mining_provenance;
 pub mod transfer_bundle;
 pub mod views;
 pub mod warm_summarize;

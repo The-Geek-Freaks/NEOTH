@@ -26,6 +26,9 @@ use rusqlite::Connection;
 ///     by Stage 5b `approval_gate` in daemon mode (no tty), resolved via
 ///     `neoth profile approve <id>` (apply + delete row) or
 ///     `decline <id>` (drop + emit 0xB7).
+/// v36 creates the metadata-only transcript-mining provenance/outbox/revocation
+///     foundation. Existing raw turns and WAL frames stay permanently
+///     `legacy_unbound`: they are never inferred or backfilled into authority.
 /// v35 binds the first operator resolution decision (`approve`/`decline`) to
 ///     the pending row before either path performs side effects. Retries may
 ///     resume the same decision; the opposite decision fails closed.
@@ -82,7 +85,7 @@ use rusqlite::Connection;
 ///      the daemon remains the only process that owns either live transport.
 /// v34: fence live mesh state to one exact stable/auth/membership incarnation;
 ///      migrated v33 rows remain terminal `legacy_unbound` quarantine state.
-pub const SCHEMA_VERSION: i64 = 35;
+pub const SCHEMA_VERSION: i64 = 36;
 
 /// `<NEOTH_HOME>/views.db`, falling back to `~/.neoth/views.db`.
 ///
@@ -1022,7 +1025,12 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             session_id TEXT    NOT NULL,
             role       TEXT    NOT NULL CHECK (role IN ('operator', 'agent')),
             ts_unix    INTEGER NOT NULL,
-            text       TEXT    NOT NULL
+            text       TEXT    NOT NULL,
+            -- v36: defaults every pre-v36/ordinary turn to permanently
+            -- legacy-unbound. Only a later authenticated ingress may set 1 at
+            -- INSERT time; UPDATE is fenced below.
+            transcript_mining_authority_epoch INTEGER NOT NULL DEFAULT 0
+                CHECK(transcript_mining_authority_epoch IN (0, 1))
         );
         CREATE INDEX IF NOT EXISTS raw_turns_session ON raw_turns (session_id, id);
 
@@ -1046,6 +1054,258 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             INSERT INTO raw_turns_fts(raw_turns_fts, rowid, text)
                 VALUES('delete', old.id, old.text);
             INSERT INTO raw_turns_fts(rowid, text) VALUES (new.id, new.text);
+        END;
+
+        -- ── Schema v36: transcript mining provenance prerequisite ─────────
+        -- These metadata-only tables do not make SQLite and WAL atomic. A
+        -- later authenticated writer must drain/reconcile the outbox; legacy
+        -- rows/frames are never backfilled into this modern authority.
+        CREATE TABLE IF NOT EXISTS transcript_mining_provenance (
+            provenance_id          TEXT PRIMARY KEY NOT NULL
+                CHECK(length(provenance_id) BETWEEN 1 AND 64 AND provenance_id NOT GLOB '*[^a-z0-9_-]*'),
+            lifecycle_id           TEXT NOT NULL UNIQUE
+                CHECK(length(lifecycle_id) BETWEEN 1 AND 64 AND lifecycle_id NOT GLOB '*[^a-z0-9_-]*'),
+            raw_turn_id            INTEGER NOT NULL CHECK(raw_turn_id > 0),
+            raw_session_sha256     BLOB NOT NULL CHECK(length(raw_session_sha256) = 32),
+            raw_text_sha256        BLOB NOT NULL CHECK(length(raw_text_sha256) = 32),
+            raw_role               TEXT NOT NULL CHECK(raw_role = 'operator'),
+            source_kind            TEXT NOT NULL CHECK(source_kind = 'operator_raw_text_v1'),
+            retention              TEXT NOT NULL CHECK(retention IN ('minutes15', 'hours24', 'days30')),
+            lifecycle              TEXT NOT NULL DEFAULT 'pending'
+                CHECK(lifecycle IN ('pending', 'active', 'revoked', 'cancelled', 'legacy_unbound')),
+            created_at_unix        INTEGER NOT NULL,
+            expires_at_unix        INTEGER NOT NULL CHECK(expires_at_unix > created_at_unix),
+            revoked_at_unix        INTEGER,
+            CHECK(
+                (lifecycle IN ('pending', 'active', 'legacy_unbound') AND revoked_at_unix IS NULL)
+                OR (lifecycle IN ('revoked', 'cancelled') AND revoked_at_unix IS NOT NULL)
+            )
+        ) STRICT;
+        CREATE UNIQUE INDEX IF NOT EXISTS transcript_mining_provenance_raw_turn
+            ON transcript_mining_provenance(raw_turn_id);
+        CREATE INDEX IF NOT EXISTS transcript_mining_provenance_lifecycle_expiry
+            ON transcript_mining_provenance(lifecycle, expires_at_unix);
+
+        -- Empty by design on migration and fresh creation. A later
+        -- authenticated ingress transaction is the only allowed source of a
+        -- witness; existing raw_turns rows are permanently legacy-unbound.
+        CREATE TABLE IF NOT EXISTS transcript_mining_modern_raw_witness (
+            raw_turn_id            INTEGER PRIMARY KEY NOT NULL CHECK(raw_turn_id > 0),
+            subject_sha256         BLOB NOT NULL CHECK(length(subject_sha256) = 32),
+            raw_role               TEXT NOT NULL CHECK(raw_role = 'operator'),
+            source_kind            TEXT NOT NULL CHECK(source_kind = 'operator_raw_text_v1'),
+            witnessed_at_unix      INTEGER NOT NULL
+        ) STRICT;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_witness_raw_turn_exists
+        BEFORE INSERT ON transcript_mining_modern_raw_witness
+        WHEN NOT EXISTS (
+            SELECT 1 FROM raw_turns
+            WHERE id = NEW.raw_turn_id
+              AND role = NEW.raw_role
+              AND transcript_mining_authority_epoch = 1
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'witness raw turn missing or role mismatch');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_witness_immutable_update
+        BEFORE UPDATE ON transcript_mining_modern_raw_witness
+        BEGIN
+            SELECT RAISE(ABORT, 'modern raw witness immutable');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_witness_immutable_delete
+        BEFORE DELETE ON transcript_mining_modern_raw_witness
+        BEGIN
+            SELECT RAISE(ABORT, 'modern raw witness deletion forbidden');
+        END;
+
+        CREATE TABLE IF NOT EXISTS transcript_mining_wal_outbox (
+            outbox_id              TEXT PRIMARY KEY NOT NULL
+                CHECK(length(outbox_id) BETWEEN 1 AND 64 AND outbox_id NOT GLOB '*[^a-z0-9_-]*'),
+            provenance_id          TEXT NOT NULL
+                CHECK(length(provenance_id) BETWEEN 1 AND 64 AND provenance_id NOT GLOB '*[^a-z0-9_-]*'),
+            lifecycle_id           TEXT NOT NULL
+                CHECK(length(lifecycle_id) BETWEEN 1 AND 64 AND lifecycle_id NOT GLOB '*[^a-z0-9_-]*'),
+            event_subtype          INTEGER NOT NULL CHECK(event_subtype IN (40, 41)),
+            payload                BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 1024),
+            payload_sha256         BLOB NOT NULL CHECK(length(payload_sha256) = 32),
+            state                  TEXT NOT NULL DEFAULT 'pending'
+                CHECK(state IN ('pending', 'delivered', 'cancelled')),
+            enqueued_at_unix       INTEGER NOT NULL,
+            delivered_at_unix      INTEGER
+                CHECK((state = 'delivered') = (delivered_at_unix IS NOT NULL)),
+            UNIQUE(provenance_id, event_subtype),
+            FOREIGN KEY(provenance_id) REFERENCES transcript_mining_provenance(provenance_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS transcript_mining_wal_outbox_pending
+            ON transcript_mining_wal_outbox(state, enqueued_at_unix);
+        CREATE INDEX IF NOT EXISTS transcript_mining_wal_outbox_provenance
+            ON transcript_mining_wal_outbox(provenance_id, state);
+
+        CREATE TABLE IF NOT EXISTS transcript_mining_revocation_receipts (
+            receipt_id             TEXT PRIMARY KEY NOT NULL
+                CHECK(length(receipt_id) BETWEEN 1 AND 96 AND receipt_id NOT GLOB '*[^a-z0-9_-]*'),
+            provenance_id          TEXT NOT NULL
+                CHECK(length(provenance_id) BETWEEN 1 AND 64 AND provenance_id NOT GLOB '*[^a-z0-9_-]*'),
+            lifecycle_id           TEXT NOT NULL
+                CHECK(length(lifecycle_id) BETWEEN 1 AND 64 AND lifecycle_id NOT GLOB '*[^a-z0-9_-]*'),
+            raw_turn_id            INTEGER NOT NULL CHECK(raw_turn_id > 0),
+            revocation             TEXT NOT NULL CHECK(revocation = 'raw_turn_deleted'),
+            lifecycle              TEXT NOT NULL CHECK(lifecycle IN ('revoked', 'cancelled')),
+            occurred_at_unix       INTEGER NOT NULL
+        ) STRICT;
+        CREATE UNIQUE INDEX IF NOT EXISTS transcript_mining_revocation_once
+            ON transcript_mining_revocation_receipts(provenance_id, revocation);
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_raw_turn_immutable
+        BEFORE UPDATE OF id, text, session_id, role, transcript_mining_authority_epoch ON raw_turns
+        WHEN EXISTS (
+            SELECT 1 FROM transcript_mining_provenance
+            WHERE raw_turn_id = OLD.id AND lifecycle IN ('pending', 'active')
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'bound raw turn immutable');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_authority_epoch_immutable
+        BEFORE UPDATE OF transcript_mining_authority_epoch ON raw_turns
+        BEGIN
+            SELECT RAISE(ABORT, 'raw turn authority epoch immutable');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_raw_turn_exists
+        BEFORE INSERT ON transcript_mining_provenance
+        WHEN NOT EXISTS (
+            SELECT 1 FROM raw_turns AS raw
+            JOIN transcript_mining_modern_raw_witness AS witness
+              ON witness.raw_turn_id = raw.id
+            WHERE raw.id = NEW.raw_turn_id
+              AND raw.role = NEW.raw_role
+              AND witness.raw_role = NEW.raw_role
+              AND witness.source_kind = NEW.source_kind
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'raw turn missing or role mismatch');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_outbox_binding_matches
+        BEFORE INSERT ON transcript_mining_wal_outbox
+        WHEN NOT EXISTS (
+            SELECT 1 FROM transcript_mining_provenance
+            WHERE provenance_id = NEW.provenance_id
+              AND lifecycle_id = NEW.lifecycle_id
+              AND lifecycle IN ('pending', 'active')
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'outbox provenance lifecycle mismatch');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_outbox_binding_immutable
+        BEFORE UPDATE OF provenance_id, lifecycle_id, event_subtype, payload, payload_sha256
+        ON transcript_mining_wal_outbox
+        BEGIN
+            SELECT RAISE(ABORT, 'outbox binding immutable');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_receipt_binding_matches
+        BEFORE INSERT ON transcript_mining_revocation_receipts
+        WHEN NOT EXISTS (
+            SELECT 1 FROM transcript_mining_provenance
+            WHERE provenance_id = NEW.provenance_id
+              AND lifecycle_id = NEW.lifecycle_id
+              AND raw_turn_id = NEW.raw_turn_id
+              AND lifecycle = NEW.lifecycle
+              AND lifecycle IN ('revoked', 'cancelled')
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'receipt provenance lifecycle mismatch');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_receipt_immutable
+        BEFORE UPDATE ON transcript_mining_revocation_receipts
+        BEGIN
+            SELECT RAISE(ABORT, 'revocation receipt immutable');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_binding_immutable
+        BEFORE UPDATE OF provenance_id, lifecycle_id, raw_turn_id, raw_session_sha256,
+            raw_text_sha256, raw_role, source_kind, retention, created_at_unix, expires_at_unix
+        ON transcript_mining_provenance
+        BEGIN
+            SELECT RAISE(ABORT, 'mining binding immutable');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_lifecycle_fenced
+        BEFORE UPDATE OF lifecycle, revoked_at_unix ON transcript_mining_provenance
+        WHEN (OLD.lifecycle = 'pending' AND NEW.lifecycle NOT IN ('pending', 'active', 'cancelled'))
+          OR (OLD.lifecycle = 'active' AND NEW.lifecycle NOT IN ('active', 'revoked'))
+          OR (OLD.lifecycle IN ('revoked', 'cancelled', 'legacy_unbound')
+              AND (NEW.lifecycle <> OLD.lifecycle OR NEW.revoked_at_unix IS NOT OLD.revoked_at_unix))
+          OR (NEW.lifecycle IN ('pending', 'active') AND NEW.revoked_at_unix IS NOT NULL)
+          OR (NEW.lifecycle IN ('revoked', 'cancelled')
+              AND EXISTS (SELECT 1 FROM raw_turns WHERE id = NEW.raw_turn_id))
+        BEGIN
+            SELECT RAISE(ABORT, 'mining lifecycle transition forbidden');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_outbox_terminal
+        BEFORE UPDATE OF state, delivered_at_unix ON transcript_mining_wal_outbox
+        WHEN (OLD.state = 'pending' AND NOT (
+                (NEW.state = 'pending' AND NEW.delivered_at_unix IS NULL)
+                OR (NEW.state = 'delivered' AND NEW.delivered_at_unix IS NOT NULL)
+                OR (NEW.state = 'cancelled' AND NEW.delivered_at_unix IS NULL)
+            ))
+          OR (OLD.state IN ('delivered', 'cancelled')
+              AND (NEW.state <> OLD.state OR NEW.delivered_at_unix IS NOT OLD.delivered_at_unix))
+        BEGIN
+            SELECT RAISE(ABORT, 'mining outbox terminal state immutable');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_provenance_immutable_delete
+        BEFORE DELETE ON transcript_mining_provenance
+        BEGIN
+            SELECT RAISE(ABORT, 'mining provenance deletion forbidden');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_outbox_immutable_delete
+        BEFORE DELETE ON transcript_mining_wal_outbox
+        BEGIN
+            SELECT RAISE(ABORT, 'mining outbox deletion forbidden');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_receipt_immutable_delete
+        BEFORE DELETE ON transcript_mining_revocation_receipts
+        BEGIN
+            SELECT RAISE(ABORT, 'revocation receipt deletion forbidden');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_raw_turn_deleted
+        AFTER DELETE ON raw_turns
+        BEGIN
+            UPDATE transcript_mining_provenance
+            SET lifecycle = CASE lifecycle
+                    WHEN 'active' THEN 'revoked'
+                    WHEN 'pending' THEN 'cancelled'
+                    ELSE lifecycle
+                END,
+                revoked_at_unix = CAST(strftime('%s','now') AS INTEGER)
+            WHERE raw_turn_id = OLD.id AND lifecycle IN ('pending', 'active');
+
+            INSERT INTO transcript_mining_revocation_receipts
+                (receipt_id, provenance_id, lifecycle_id, raw_turn_id, revocation, lifecycle, occurred_at_unix)
+            SELECT 'raw-delete-' || provenance_id, provenance_id, lifecycle_id, raw_turn_id,
+                   'raw_turn_deleted', lifecycle, revoked_at_unix
+            FROM transcript_mining_provenance
+            WHERE raw_turn_id = OLD.id AND lifecycle IN ('revoked', 'cancelled');
+
+            UPDATE transcript_mining_wal_outbox
+            SET state = 'cancelled'
+            WHERE provenance_id IN (
+                SELECT provenance_id FROM transcript_mining_provenance
+                WHERE raw_turn_id = OLD.id AND lifecycle IN ('revoked', 'cancelled')
+            ) AND state = 'pending';
         END;
         "#,
     )

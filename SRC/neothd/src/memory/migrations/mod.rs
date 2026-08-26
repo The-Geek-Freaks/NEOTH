@@ -271,7 +271,228 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "GOLD profile resolution: persist the first approve/decline decision",
         run: migration_v34_to_v35,
     },
+    Migration {
+        from: 35,
+        to: 36,
+        description: "GOLD-LF-P1-08 stages 1-2: sealed transcript mining provenance, WAL outbox, and deletion revocation receipts",
+        run: migration_v35_to_v36,
+    },
 ];
+
+/// v35 → v36: establish only modern transcript-mining provenance. This must
+/// create no row from historical raw turns or WAL frames: legacy remains
+/// permanently unbound and cannot gain authority through a schema upgrade.
+fn migration_v35_to_v36(conn: &Connection) -> Result<()> {
+    let raw_turn_has_authority_epoch: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('raw_turns') WHERE name='transcript_mining_authority_epoch'")
+        .context("v36 inspect raw turn authority epoch column")?
+        .exists([])
+        .context("v36 read raw turn authority epoch column")?;
+    if !raw_turn_has_authority_epoch {
+        conn.execute(
+            "ALTER TABLE raw_turns ADD COLUMN transcript_mining_authority_epoch \
+             INTEGER NOT NULL DEFAULT 0 CHECK(transcript_mining_authority_epoch IN (0, 1))",
+            [],
+        )
+        .context("v36 fence pre-existing raw turns as legacy-unbound")?;
+    }
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS transcript_mining_provenance (
+            provenance_id TEXT PRIMARY KEY NOT NULL
+                CHECK(length(provenance_id) BETWEEN 1 AND 64 AND provenance_id NOT GLOB '*[^a-z0-9_-]*'),
+            lifecycle_id TEXT NOT NULL UNIQUE
+                CHECK(length(lifecycle_id) BETWEEN 1 AND 64 AND lifecycle_id NOT GLOB '*[^a-z0-9_-]*'),
+            raw_turn_id INTEGER NOT NULL CHECK(raw_turn_id > 0),
+            raw_session_sha256 BLOB NOT NULL CHECK(length(raw_session_sha256) = 32),
+            raw_text_sha256 BLOB NOT NULL CHECK(length(raw_text_sha256) = 32),
+            raw_role TEXT NOT NULL CHECK(raw_role = 'operator'),
+            source_kind TEXT NOT NULL CHECK(source_kind = 'operator_raw_text_v1'),
+            retention TEXT NOT NULL CHECK(retention IN ('minutes15', 'hours24', 'days30')),
+            lifecycle TEXT NOT NULL DEFAULT 'pending'
+                CHECK(lifecycle IN ('pending', 'active', 'revoked', 'cancelled', 'legacy_unbound')),
+            created_at_unix INTEGER NOT NULL,
+            expires_at_unix INTEGER NOT NULL CHECK(expires_at_unix > created_at_unix),
+            revoked_at_unix INTEGER,
+            CHECK((lifecycle IN ('pending', 'active', 'legacy_unbound') AND revoked_at_unix IS NULL)
+                OR (lifecycle IN ('revoked', 'cancelled') AND revoked_at_unix IS NOT NULL))
+        ) STRICT;
+        CREATE UNIQUE INDEX IF NOT EXISTS transcript_mining_provenance_raw_turn
+            ON transcript_mining_provenance(raw_turn_id);
+        CREATE INDEX IF NOT EXISTS transcript_mining_provenance_lifecycle_expiry
+            ON transcript_mining_provenance(lifecycle, expires_at_unix);
+
+        CREATE TABLE IF NOT EXISTS transcript_mining_modern_raw_witness (
+            raw_turn_id INTEGER PRIMARY KEY NOT NULL CHECK(raw_turn_id > 0),
+            subject_sha256 BLOB NOT NULL CHECK(length(subject_sha256) = 32),
+            raw_role TEXT NOT NULL CHECK(raw_role = 'operator'),
+            source_kind TEXT NOT NULL CHECK(source_kind = 'operator_raw_text_v1'),
+            witnessed_at_unix INTEGER NOT NULL
+        ) STRICT;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_witness_raw_turn_exists
+        BEFORE INSERT ON transcript_mining_modern_raw_witness
+        WHEN NOT EXISTS (SELECT 1 FROM raw_turns
+                         WHERE id = NEW.raw_turn_id
+                           AND role = NEW.raw_role
+                           AND transcript_mining_authority_epoch = 1)
+        BEGIN SELECT RAISE(ABORT, 'witness raw turn missing or role mismatch'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_witness_immutable_update
+        BEFORE UPDATE ON transcript_mining_modern_raw_witness
+        BEGIN SELECT RAISE(ABORT, 'modern raw witness immutable'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_witness_immutable_delete
+        BEFORE DELETE ON transcript_mining_modern_raw_witness
+        BEGIN SELECT RAISE(ABORT, 'modern raw witness deletion forbidden'); END;
+
+        CREATE TABLE IF NOT EXISTS transcript_mining_wal_outbox (
+            outbox_id TEXT PRIMARY KEY NOT NULL
+                CHECK(length(outbox_id) BETWEEN 1 AND 64 AND outbox_id NOT GLOB '*[^a-z0-9_-]*'),
+            provenance_id TEXT NOT NULL
+                CHECK(length(provenance_id) BETWEEN 1 AND 64 AND provenance_id NOT GLOB '*[^a-z0-9_-]*'),
+            lifecycle_id TEXT NOT NULL
+                CHECK(length(lifecycle_id) BETWEEN 1 AND 64 AND lifecycle_id NOT GLOB '*[^a-z0-9_-]*'),
+            event_subtype INTEGER NOT NULL CHECK(event_subtype IN (40, 41)),
+            payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND 1024),
+            payload_sha256 BLOB NOT NULL CHECK(length(payload_sha256) = 32),
+            state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending', 'delivered', 'cancelled')),
+            enqueued_at_unix INTEGER NOT NULL,
+            delivered_at_unix INTEGER CHECK((state = 'delivered') = (delivered_at_unix IS NOT NULL)),
+            UNIQUE(provenance_id, event_subtype),
+            FOREIGN KEY(provenance_id) REFERENCES transcript_mining_provenance(provenance_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS transcript_mining_wal_outbox_pending
+            ON transcript_mining_wal_outbox(state, enqueued_at_unix);
+        CREATE INDEX IF NOT EXISTS transcript_mining_wal_outbox_provenance
+            ON transcript_mining_wal_outbox(provenance_id, state);
+
+        CREATE TABLE IF NOT EXISTS transcript_mining_revocation_receipts (
+            receipt_id TEXT PRIMARY KEY NOT NULL
+                CHECK(length(receipt_id) BETWEEN 1 AND 96 AND receipt_id NOT GLOB '*[^a-z0-9_-]*'),
+            provenance_id TEXT NOT NULL
+                CHECK(length(provenance_id) BETWEEN 1 AND 64 AND provenance_id NOT GLOB '*[^a-z0-9_-]*'),
+            lifecycle_id TEXT NOT NULL
+                CHECK(length(lifecycle_id) BETWEEN 1 AND 64 AND lifecycle_id NOT GLOB '*[^a-z0-9_-]*'),
+            raw_turn_id INTEGER NOT NULL CHECK(raw_turn_id > 0),
+            revocation TEXT NOT NULL CHECK(revocation = 'raw_turn_deleted'),
+            lifecycle TEXT NOT NULL CHECK(lifecycle IN ('revoked', 'cancelled')),
+            occurred_at_unix INTEGER NOT NULL
+        ) STRICT;
+        CREATE UNIQUE INDEX IF NOT EXISTS transcript_mining_revocation_once
+            ON transcript_mining_revocation_receipts(provenance_id, revocation);
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_raw_turn_immutable
+        BEFORE UPDATE OF id, text, session_id, role, transcript_mining_authority_epoch ON raw_turns
+        WHEN EXISTS (SELECT 1 FROM transcript_mining_provenance
+                     WHERE raw_turn_id = OLD.id AND lifecycle IN ('pending', 'active'))
+        BEGIN SELECT RAISE(ABORT, 'bound raw turn immutable'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_authority_epoch_immutable
+        BEFORE UPDATE OF transcript_mining_authority_epoch ON raw_turns
+        BEGIN SELECT RAISE(ABORT, 'raw turn authority epoch immutable'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_raw_turn_exists
+        BEFORE INSERT ON transcript_mining_provenance
+        WHEN NOT EXISTS (SELECT 1 FROM raw_turns AS raw
+                         JOIN transcript_mining_modern_raw_witness AS witness
+                           ON witness.raw_turn_id = raw.id
+                         WHERE raw.id = NEW.raw_turn_id
+                           AND raw.role = NEW.raw_role
+                           AND witness.raw_role = NEW.raw_role
+                           AND witness.source_kind = NEW.source_kind)
+        BEGIN SELECT RAISE(ABORT, 'raw turn missing or role mismatch'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_outbox_binding_matches
+        BEFORE INSERT ON transcript_mining_wal_outbox
+        WHEN NOT EXISTS (SELECT 1 FROM transcript_mining_provenance
+                         WHERE provenance_id = NEW.provenance_id
+                           AND lifecycle_id = NEW.lifecycle_id
+                           AND lifecycle IN ('pending', 'active'))
+        BEGIN SELECT RAISE(ABORT, 'outbox provenance lifecycle mismatch'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_outbox_binding_immutable
+        BEFORE UPDATE OF provenance_id, lifecycle_id, event_subtype, payload, payload_sha256
+        ON transcript_mining_wal_outbox
+        BEGIN SELECT RAISE(ABORT, 'outbox binding immutable'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_receipt_binding_matches
+        BEFORE INSERT ON transcript_mining_revocation_receipts
+        WHEN NOT EXISTS (SELECT 1 FROM transcript_mining_provenance
+                         WHERE provenance_id = NEW.provenance_id
+                           AND lifecycle_id = NEW.lifecycle_id
+                           AND raw_turn_id = NEW.raw_turn_id
+                           AND lifecycle = NEW.lifecycle
+                           AND lifecycle IN ('revoked', 'cancelled'))
+        BEGIN SELECT RAISE(ABORT, 'receipt provenance lifecycle mismatch'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_receipt_immutable
+        BEFORE UPDATE ON transcript_mining_revocation_receipts
+        BEGIN SELECT RAISE(ABORT, 'revocation receipt immutable'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_binding_immutable
+        BEFORE UPDATE OF provenance_id, lifecycle_id, raw_turn_id, raw_session_sha256,
+            raw_text_sha256, raw_role, source_kind, retention, created_at_unix, expires_at_unix
+        ON transcript_mining_provenance
+        BEGIN SELECT RAISE(ABORT, 'mining binding immutable'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_lifecycle_fenced
+        BEFORE UPDATE OF lifecycle, revoked_at_unix ON transcript_mining_provenance
+        WHEN (OLD.lifecycle = 'pending' AND NEW.lifecycle NOT IN ('pending', 'active', 'cancelled'))
+          OR (OLD.lifecycle = 'active' AND NEW.lifecycle NOT IN ('active', 'revoked'))
+          OR (OLD.lifecycle IN ('revoked', 'cancelled', 'legacy_unbound')
+              AND (NEW.lifecycle <> OLD.lifecycle OR NEW.revoked_at_unix IS NOT OLD.revoked_at_unix))
+          OR (NEW.lifecycle IN ('pending', 'active') AND NEW.revoked_at_unix IS NOT NULL)
+          OR (NEW.lifecycle IN ('revoked', 'cancelled')
+              AND EXISTS (SELECT 1 FROM raw_turns WHERE id = NEW.raw_turn_id))
+        BEGIN SELECT RAISE(ABORT, 'mining lifecycle transition forbidden'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_outbox_terminal
+        BEFORE UPDATE OF state, delivered_at_unix ON transcript_mining_wal_outbox
+        WHEN (OLD.state = 'pending' AND NOT (
+                (NEW.state = 'pending' AND NEW.delivered_at_unix IS NULL)
+                OR (NEW.state = 'delivered' AND NEW.delivered_at_unix IS NOT NULL)
+                OR (NEW.state = 'cancelled' AND NEW.delivered_at_unix IS NULL)
+            ))
+          OR (OLD.state IN ('delivered', 'cancelled')
+              AND (NEW.state <> OLD.state OR NEW.delivered_at_unix IS NOT OLD.delivered_at_unix))
+        BEGIN SELECT RAISE(ABORT, 'mining outbox terminal state immutable'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_provenance_immutable_delete
+        BEFORE DELETE ON transcript_mining_provenance
+        BEGIN SELECT RAISE(ABORT, 'mining provenance deletion forbidden'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_outbox_immutable_delete
+        BEFORE DELETE ON transcript_mining_wal_outbox
+        BEGIN SELECT RAISE(ABORT, 'mining outbox deletion forbidden'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_receipt_immutable_delete
+        BEFORE DELETE ON transcript_mining_revocation_receipts
+        BEGIN SELECT RAISE(ABORT, 'revocation receipt deletion forbidden'); END;
+
+        CREATE TRIGGER IF NOT EXISTS transcript_mining_raw_turn_deleted
+        AFTER DELETE ON raw_turns
+        BEGIN
+            UPDATE transcript_mining_provenance
+            SET lifecycle = CASE lifecycle WHEN 'active' THEN 'revoked' WHEN 'pending' THEN 'cancelled' ELSE lifecycle END,
+                revoked_at_unix = CAST(strftime('%s','now') AS INTEGER)
+            WHERE raw_turn_id = OLD.id AND lifecycle IN ('pending', 'active');
+            INSERT INTO transcript_mining_revocation_receipts
+                (receipt_id, provenance_id, lifecycle_id, raw_turn_id, revocation, lifecycle, occurred_at_unix)
+            SELECT 'raw-delete-' || provenance_id, provenance_id, lifecycle_id, raw_turn_id,
+                   'raw_turn_deleted', lifecycle, revoked_at_unix
+            FROM transcript_mining_provenance
+            WHERE raw_turn_id = OLD.id AND lifecycle IN ('revoked', 'cancelled');
+            UPDATE transcript_mining_wal_outbox SET state = 'cancelled'
+            WHERE provenance_id IN (SELECT provenance_id FROM transcript_mining_provenance
+                                    WHERE raw_turn_id = OLD.id AND lifecycle IN ('revoked', 'cancelled'))
+              AND state = 'pending';
+        END;
+        "#,
+    )
+    .context("v36 create transcript mining provenance prerequisite")?;
+    Ok(())
+}
 
 fn migration_v34_to_v35(conn: &Connection) -> Result<()> {
     conn.execute(
@@ -2597,6 +2818,266 @@ mod tests {
             .is_err(),
             "v35 must reject unknown decision states"
         );
+    }
+
+    #[test]
+    fn migration_v35_to_v36_is_empty_idempotent_and_fails_closed_on_raw_delete() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO meta (key,value) VALUES ('schema_version','35');
+             CREATE TABLE raw_turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                ts_unix INTEGER NOT NULL,
+                text TEXT NOT NULL
+             );
+             INSERT INTO raw_turns (session_id, role, ts_unix, text)
+             VALUES ('legacy-session', 'operator', 1, 'legacy text');",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn, 35, 36).unwrap(), 36);
+        migration_v35_to_v36(&conn).unwrap();
+        let migrated_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM transcript_mining_provenance", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(migrated_rows, 0, "v36 must never backfill legacy raw turns");
+
+        for invalid in [
+            "INSERT INTO transcript_mining_provenance
+                 (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,raw_text_sha256,raw_role,source_kind,retention,lifecycle,created_at_unix,expires_at_unix)
+             VALUES ('bad-role','lifecycle-bad-role',1,zeroblob(32),zeroblob(32),'invalid','operator_raw_text_v1','hours24','pending',1,2)",
+            "INSERT INTO transcript_mining_provenance
+                 (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,raw_text_sha256,raw_role,source_kind,retention,lifecycle,created_at_unix,expires_at_unix)
+             VALUES ('bad-digest','lifecycle-bad-digest',1,X'01',zeroblob(32),'operator','operator_raw_text_v1','hours24','pending',1,2)",
+            "INSERT INTO transcript_mining_provenance
+                 (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,raw_text_sha256,raw_role,source_kind,retention,lifecycle,created_at_unix,expires_at_unix)
+             VALUES ('bad-expiry','lifecycle-bad-expiry',1,zeroblob(32),zeroblob(32),'operator','operator_raw_text_v1','hours24','pending',2,2)",
+        ] {
+            assert!(conn.execute(invalid, []).is_err(), "v36 must reject invalid provenance");
+        }
+        assert!(conn.execute(
+            "INSERT INTO transcript_mining_provenance
+                (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,raw_text_sha256,raw_role,source_kind,retention,lifecycle,created_at_unix,expires_at_unix)
+             VALUES ('legacy-row','lifecycle-legacy',1,zeroblob(32),zeroblob(32),'operator','operator_raw_text_v1','hours24','pending',1,2)",
+            [],
+        ).is_err(), "a v35 raw row must remain legacy-unbound without a modern witness");
+        assert!(conn.execute(
+            "UPDATE raw_turns SET transcript_mining_authority_epoch=1 WHERE id=1",
+            [],
+        ).is_err(), "a legacy raw row must never be upgraded after migration");
+        conn.execute(
+            "INSERT INTO raw_turns
+                (session_id,role,ts_unix,text,transcript_mining_authority_epoch)
+             VALUES ('modern-session', 'operator', 2, 'modern text', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcript_mining_modern_raw_witness
+                (raw_turn_id,subject_sha256,raw_role,source_kind,witnessed_at_unix)
+             VALUES (2,zeroblob(32),'operator','operator_raw_text_v1',2)",
+            [],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO transcript_mining_provenance
+                (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,raw_text_sha256,raw_role,source_kind,retention,lifecycle,created_at_unix,expires_at_unix)
+             VALUES ('provenance-1','lifecycle-1',2,zeroblob(32),zeroblob(32),'operator','operator_raw_text_v1','hours24','pending',1,2)",
+            [],
+        )
+        .unwrap();
+        assert!(conn.execute("UPDATE raw_turns SET text='changed' WHERE id=2", []).is_err());
+        assert!(conn.execute("UPDATE raw_turns SET id=3 WHERE id=2", []).is_err());
+        assert!(conn.execute(
+            "INSERT INTO transcript_mining_provenance
+                (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,raw_text_sha256,raw_role,source_kind,retention,lifecycle,created_at_unix,expires_at_unix)
+             VALUES ('missing-row','lifecycle-missing',999,zeroblob(32),zeroblob(32),'operator','operator_raw_text_v1','hours24','pending',1,2)",
+            [],
+        ).is_err());
+        assert!(conn.execute(
+            "INSERT INTO transcript_mining_provenance
+                (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,raw_text_sha256,raw_role,source_kind,retention,lifecycle,created_at_unix,expires_at_unix)
+             VALUES ('agent-row','lifecycle-agent',2,zeroblob(32),zeroblob(32),'agent','operator_raw_text_v1','hours24','pending',1,2)",
+            [],
+        ).is_err());
+        conn.execute(
+            "INSERT INTO transcript_mining_wal_outbox
+                (outbox_id,provenance_id,lifecycle_id,event_subtype,payload,payload_sha256,enqueued_at_unix)
+             VALUES ('outbox-1','provenance-1','lifecycle-1',40,X'01',zeroblob(32),1)",
+            [],
+        )
+        .unwrap();
+        assert!(conn.execute(
+            "UPDATE transcript_mining_provenance SET lifecycle='cancelled',revoked_at_unix=2 WHERE provenance_id='provenance-1'",
+            [],
+        ).is_err());
+        conn.execute("DELETE FROM raw_turns WHERE id=2", []).unwrap();
+        let lifecycle: (String, Option<i64>) = conn
+            .query_row(
+                "SELECT lifecycle,revoked_at_unix FROM transcript_mining_provenance WHERE provenance_id='provenance-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(lifecycle.0, "cancelled");
+        assert!(lifecycle.1.is_some());
+        let outbox_state: String = conn
+            .query_row(
+                "SELECT state FROM transcript_mining_wal_outbox WHERE outbox_id='outbox-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(outbox_state, "cancelled");
+        assert!(conn.execute(
+            "UPDATE transcript_mining_provenance SET lifecycle='active',revoked_at_unix=NULL WHERE provenance_id='provenance-1'",
+            [],
+        ).is_err());
+        assert!(conn.execute(
+            "UPDATE transcript_mining_provenance SET lifecycle_id='other-lifecycle' WHERE provenance_id='provenance-1'",
+            [],
+        ).is_err());
+        assert!(conn.execute(
+            "UPDATE transcript_mining_wal_outbox SET state='pending' WHERE outbox_id='outbox-1'",
+            [],
+        ).is_err());
+        assert!(conn.execute(
+            "INSERT INTO transcript_mining_wal_outbox
+                (outbox_id,provenance_id,lifecycle_id,event_subtype,payload,payload_sha256,enqueued_at_unix)
+             VALUES ('outbox-after','provenance-1','lifecycle-1',40,X'01',zeroblob(32),2)",
+            [],
+        ).is_err());
+        assert!(conn.execute(
+            "INSERT INTO transcript_mining_revocation_receipts
+                (receipt_id,provenance_id,lifecycle_id,raw_turn_id,revocation,lifecycle,occurred_at_unix)
+             VALUES ('forged-receipt','provenance-1','lifecycle-1',999,'raw_turn_deleted','cancelled',2)",
+            [],
+        ).is_err());
+        assert!(conn.execute(
+            "DELETE FROM transcript_mining_revocation_receipts WHERE provenance_id='provenance-1'",
+            [],
+        ).is_err());
+        assert!(conn.execute(
+            "DELETE FROM transcript_mining_provenance WHERE provenance_id='provenance-1'",
+            [],
+        ).is_err());
+        assert!(conn.execute(
+            "DELETE FROM transcript_mining_wal_outbox WHERE outbox_id='outbox-1'",
+            [],
+        ).is_err());
+        let receipts: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transcript_mining_revocation_receipts WHERE provenance_id='provenance-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(receipts, 1, "deletion must retain a metadata-only receipt");
+
+        conn.execute(
+            "INSERT INTO raw_turns
+                (session_id,role,ts_unix,text,transcript_mining_authority_epoch)
+             VALUES ('modern-session-two', 'operator', 3, 'modern text two', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcript_mining_modern_raw_witness
+                (raw_turn_id,subject_sha256,raw_role,source_kind,witnessed_at_unix)
+             VALUES (3,zeroblob(32),'operator','operator_raw_text_v1',3)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcript_mining_provenance
+                (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,raw_text_sha256,raw_role,source_kind,retention,lifecycle,created_at_unix,expires_at_unix)
+             VALUES ('provenance-2','lifecycle-2',3,zeroblob(32),zeroblob(32),'operator','operator_raw_text_v1','hours24','active',1,2)",
+            [],
+        )
+        .unwrap();
+        assert!(conn.execute(
+            "UPDATE transcript_mining_provenance SET lifecycle='revoked',revoked_at_unix=2 WHERE provenance_id='provenance-2'",
+            [],
+        ).is_err());
+        conn.execute("DELETE FROM raw_turns WHERE id=3", []).unwrap();
+        let active_delete_lifecycle: String = conn
+            .query_row(
+                "SELECT lifecycle FROM transcript_mining_provenance WHERE provenance_id='provenance-2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(active_delete_lifecycle, "revoked");
+        assert!(conn.execute(
+            "UPDATE transcript_mining_provenance SET lifecycle='active',revoked_at_unix=NULL WHERE provenance_id='provenance-2'",
+            [],
+        ).is_err());
+
+        let fresh_home = tempfile::tempdir().unwrap();
+        let fresh = crate::memory::store::open(&fresh_home.path().join("views.db")).unwrap();
+        for table in [
+            "transcript_mining_provenance",
+            "transcript_mining_wal_outbox",
+            "transcript_mining_revocation_receipts",
+        ] {
+            let columns = |database: &Connection| {
+                database
+                    .prepare("SELECT name,type,\"notnull\",pk FROM pragma_table_info(?1) ORDER BY cid")
+                    .unwrap()
+                    .query_map([table], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, i64>(3)?,
+                        ))
+                    })
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap()
+            };
+            assert_eq!(
+                columns(&conn),
+                columns(&fresh),
+                "fresh and v35-to-v36 schemas differ for {table}",
+            );
+        }
+        let schema_objects = |database: &Connection| {
+            database
+                .prepare(
+                    "SELECT type,name FROM sqlite_master
+                     WHERE name LIKE 'transcript_mining_%' AND type IN ('index','trigger')
+                     ORDER BY type,name",
+                )
+                .unwrap()
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert_eq!(schema_objects(&conn), schema_objects(&fresh));
+        for database in [&conn, &fresh] {
+            for table in [
+                "transcript_mining_provenance",
+                "transcript_mining_wal_outbox",
+                "transcript_mining_revocation_receipts",
+            ] {
+                let sql: String = database
+                    .query_row(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
+                        [table],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert!(sql.trim_end().ends_with("STRICT"), "{table} must remain strict");
+            }
+        }
     }
 
     #[test]

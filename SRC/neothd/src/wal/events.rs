@@ -251,6 +251,14 @@ pub enum ExtendedSubtype {
     /// registered before any daemon path emits it; later wiring must not create
     /// an ad-hoc audit schema or accidentally put imported evidence in the WAL.
     ContextEvidenceReceipt = 0x27,
+    /// GOLD-LF-P1-08 stages 1-2 reservation. The canonical metadata-only
+    /// `TranscriptMiningBoundV1` codec lives in `memory`; no producer or WAL
+    /// append path is wired by this reservation.
+    TranscriptMiningBound = 0x28,
+    /// GOLD-LF-P1-08 stages 1-2 reservation for the terminal metadata-only
+    /// `TranscriptMiningRevokedV1` codec. Unknown/legacy frames must not be
+    /// inferred into this modern authority.
+    TranscriptMiningRevoked = 0x29,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -344,6 +352,8 @@ impl ExtendedSubtype {
             ExtendedSubtype::SkillRouteResolved => "skill_route_resolved",
             ExtendedSubtype::CodeMapRecallResolved => "code_map_recall_resolved",
             ExtendedSubtype::ContextEvidenceReceipt => "context_evidence_receipt",
+            ExtendedSubtype::TranscriptMiningBound => "transcript_mining_bound",
+            ExtendedSubtype::TranscriptMiningRevoked => "transcript_mining_revoked",
         }
     }
 
@@ -389,6 +399,8 @@ impl ExtendedSubtype {
             0x25 => Some(ExtendedSubtype::SkillRouteResolved),
             0x26 => Some(ExtendedSubtype::CodeMapRecallResolved),
             0x27 => Some(ExtendedSubtype::ContextEvidenceReceipt),
+            0x28 => Some(ExtendedSubtype::TranscriptMiningBound),
+            0x29 => Some(ExtendedSubtype::TranscriptMiningRevoked),
             _ => None,
         }
     }
@@ -436,6 +448,8 @@ impl ExtendedSubtype {
             Self::SkillRouteResolved,
             Self::CodeMapRecallResolved,
             Self::ContextEvidenceReceipt,
+            Self::TranscriptMiningBound,
+            Self::TranscriptMiningRevoked,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -4045,6 +4059,8 @@ mod tests {
             ExtendedSubtype::SkillRouteResolved,
             ExtendedSubtype::CodeMapRecallResolved,
             ExtendedSubtype::ContextEvidenceReceipt,
+            ExtendedSubtype::TranscriptMiningBound,
+            ExtendedSubtype::TranscriptMiningRevoked,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");
