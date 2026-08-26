@@ -24,6 +24,7 @@ const PROMPT_ENVELOPE_TRUST: &str = "untrusted_data_only";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PromptEnvelopePurpose {
+    CallosumSynthesis,
     CouncilSelfReflect,
     SubAgentPrimary,
     SubAgentQa,
@@ -33,6 +34,7 @@ pub(crate) enum PromptEnvelopePurpose {
 impl PromptEnvelopePurpose {
     fn expected_fields(self) -> &'static [PromptFieldKind] {
         match self {
+            Self::CallosumSynthesis => &[PromptFieldKind::OriginalQuestion],
             Self::CouncilSelfReflect => &[
                 PromptFieldKind::OriginalQuestion,
                 PromptFieldKind::PriorAnswer,
@@ -53,6 +55,7 @@ impl PromptEnvelopePurpose {
 
     fn as_str(self) -> &'static str {
         match self {
+            Self::CallosumSynthesis => "callosum_synthesis",
             Self::CouncilSelfReflect => "council_self_reflect",
             Self::SubAgentPrimary => "sub_agent_primary",
             Self::SubAgentQa => "sub_agent_qa",
