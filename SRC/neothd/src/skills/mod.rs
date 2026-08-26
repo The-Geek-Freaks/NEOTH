@@ -26,6 +26,7 @@ pub mod authority;
 pub mod auto_extract;
 pub mod bundled;
 pub mod creator;
+pub mod generated_scan;
 pub mod installer;
 pub mod loader;
 pub mod mode_registry;
