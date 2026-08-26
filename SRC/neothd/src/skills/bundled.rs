@@ -257,6 +257,13 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "grill_with_docs",
         include_str!("../../assets/skills/grill_with_docs/skill.yaml"),
     ),
+    // ADOPT31-G6 — source-grounded Slint copy audit. This skill has no tool
+    // authority: it reviews only source explicitly supplied by the operator
+    // and requires source-located, non-invented findings.
+    (
+        "gui_copy_lint",
+        include_str!("../../assets/skills/gui_copy_lint/skill.yaml"),
+    ),
     // GOLD-ADAPT-DOC-03 (2026-06-19) — bundled skill.
     (
         "hallmark_ui",
@@ -1105,8 +1112,8 @@ mod tests {
         }
     }
 
-    const EXPECTED_BUNDLED_SKILL_COUNT: usize = 182;
-    const EXPECTED_DEFAULT_ENABLED_SKILL_COUNT: usize = 99;
+    const EXPECTED_BUNDLED_SKILL_COUNT: usize = 183;
+    const EXPECTED_DEFAULT_ENABLED_SKILL_COUNT: usize = 100;
 
     fn bundled_skill_matrix(force_enabled: bool) -> Vec<crate::skills::schema::Skill> {
         use crate::skills::schema::Skill;
@@ -1169,7 +1176,7 @@ mod tests {
         );
 
         crate::skills::route_ownership::validate_inventory(&bundled_skill_matrix(false))
-            .expect("all 182 bundled parent and mode aliases must have one owner");
+            .expect("all 183 bundled parent and mode aliases must have one owner");
     }
 
     /// Trigger curation must preserve the adoption contracts that made these
@@ -1231,7 +1238,7 @@ mod tests {
         }
     }
 
-    /// Default installs expose exactly the 99 default-enabled bundles. Every
+    /// Default installs expose exactly the 100 default-enabled bundles. Every
     /// declared single- or multi-word trigger must route back to its owner.
     #[test]
     fn default_bundled_catalogue_routes_every_owned_trigger() {
@@ -1239,10 +1246,10 @@ mod tests {
         let enabled = skills.iter().filter(|skill| skill.manifest.enabled).count();
         assert_eq!(skills.len(), EXPECTED_BUNDLED_SKILL_COUNT);
         assert_eq!(enabled, EXPECTED_DEFAULT_ENABLED_SKILL_COUNT);
-        assert_default_trigger_ownership("default-99 catalogue", &skills);
+        assert_default_trigger_ownership("default-100 catalogue", &skills);
     }
 
-    /// Full-auto deliberately enables the complete 182-skill catalogue. Every
+    /// Full-auto deliberately enables the complete 183-skill catalogue. Every
     /// multi-token trigger clears the production confidence floor and must
     /// route to its one declared owner. Token boundaries match production:
     /// punctuation such as `.` and `-` separates lexical tokens too.
@@ -1278,7 +1285,7 @@ mod tests {
 
         assert!(
             failures.is_empty(),
-            "full-auto-182 catalogue has {} multiword ownership failure(s):\n  {}",
+            "full-auto-183 catalogue has {} multiword ownership failure(s):\n  {}",
             failures.len(),
             failures.join("\n  ")
         );
