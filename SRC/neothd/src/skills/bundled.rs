@@ -78,6 +78,25 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "agent_engineering_patterns",
         include_str!("../../assets/skills/agent_engineering_patterns/skill.yaml"),
     ),
+    // ADOPT31-B9 (2026-08-26) — Fabric-inspired, NEOTH-native content-analysis
+    // patterns. Each has no tool authority and is surfaced through the existing
+    // bundled skill router; provenance is in its manifest homepage.
+    (
+        "analyze_claims",
+        include_str!("../../assets/skills/analyze_claims/skill.yaml"),
+    ),
+    (
+        "analyze_malware",
+        include_str!("../../assets/skills/analyze_malware/skill.yaml"),
+    ),
+    (
+        "analyze_paper",
+        include_str!("../../assets/skills/analyze_paper/skill.yaml"),
+    ),
+    (
+        "analyze_threat_report",
+        include_str!("../../assets/skills/analyze_threat_report/skill.yaml"),
+    ),
     (
         "anti_slop",
         include_str!("../../assets/skills/anti_slop/skill.yaml"),
@@ -118,6 +137,22 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "context_engineering",
         include_str!("../../assets/skills/context_engineering/skill.yaml"),
+    ),
+    (
+        "create_conceptmap",
+        include_str!("../../assets/skills/create_conceptmap/skill.yaml"),
+    ),
+    (
+        "create_flash_cards",
+        include_str!("../../assets/skills/create_flash_cards/skill.yaml"),
+    ),
+    (
+        "create_golden_rules",
+        include_str!("../../assets/skills/create_golden_rules/skill.yaml"),
+    ),
+    (
+        "create_summary",
+        include_str!("../../assets/skills/create_summary/skill.yaml"),
     ),
     (
         "cybersec_detection_engineering",
@@ -229,6 +264,26 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         include_str!("../../assets/skills/executing_plans/skill.yaml"),
     ),
     (
+        "explain_code",
+        include_str!("../../assets/skills/explain_code/skill.yaml"),
+    ),
+    (
+        "extract_insights",
+        include_str!("../../assets/skills/extract_insights/skill.yaml"),
+    ),
+    (
+        "extract_patterns",
+        include_str!("../../assets/skills/extract_patterns/skill.yaml"),
+    ),
+    (
+        "extract_wisdom",
+        include_str!("../../assets/skills/extract_wisdom/skill.yaml"),
+    ),
+    (
+        "find_logical_fallacies",
+        include_str!("../../assets/skills/find_logical_fallacies/skill.yaml"),
+    ),
+    (
         "finishing_a_development_branch",
         include_str!("../../assets/skills/finishing_a_development_branch/skill.yaml"),
     ),
@@ -307,6 +362,10 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "improve_codebase_architecture",
         include_str!("../../assets/skills/improve_codebase_architecture/skill.yaml"),
+    ),
+    (
+        "label_and_rate",
+        include_str!("../../assets/skills/label_and_rate/skill.yaml"),
     ),
     // GOLD-ADAPT-PT-06 (2026-06-15) — ponytail YAGNI ladder as a router-activatable skill.
     (
@@ -1112,8 +1171,8 @@ mod tests {
         }
     }
 
-    const EXPECTED_BUNDLED_SKILL_COUNT: usize = 183;
-    const EXPECTED_DEFAULT_ENABLED_SKILL_COUNT: usize = 100;
+    const EXPECTED_BUNDLED_SKILL_COUNT: usize = 197;
+    const EXPECTED_DEFAULT_ENABLED_SKILL_COUNT: usize = 114;
 
     fn bundled_skill_matrix(force_enabled: bool) -> Vec<crate::skills::schema::Skill> {
         use crate::skills::schema::Skill;
@@ -1176,7 +1235,7 @@ mod tests {
         );
 
         crate::skills::route_ownership::validate_inventory(&bundled_skill_matrix(false))
-            .expect("all 183 bundled parent and mode aliases must have one owner");
+            .expect("all 197 bundled parent and mode aliases must have one owner");
     }
 
     /// Trigger curation must preserve the adoption contracts that made these
@@ -1238,7 +1297,7 @@ mod tests {
         }
     }
 
-    /// Default installs expose exactly the 100 default-enabled bundles. Every
+    /// Default installs expose exactly the 114 default-enabled bundles. Every
     /// declared single- or multi-word trigger must route back to its owner.
     #[test]
     fn default_bundled_catalogue_routes_every_owned_trigger() {
@@ -1246,10 +1305,10 @@ mod tests {
         let enabled = skills.iter().filter(|skill| skill.manifest.enabled).count();
         assert_eq!(skills.len(), EXPECTED_BUNDLED_SKILL_COUNT);
         assert_eq!(enabled, EXPECTED_DEFAULT_ENABLED_SKILL_COUNT);
-        assert_default_trigger_ownership("default-100 catalogue", &skills);
+        assert_default_trigger_ownership("default-114 catalogue", &skills);
     }
 
-    /// Full-auto deliberately enables the complete 183-skill catalogue. Every
+    /// Full-auto deliberately enables the complete 197-skill catalogue. Every
     /// multi-token trigger clears the production confidence floor and must
     /// route to its one declared owner. Token boundaries match production:
     /// punctuation such as `.` and `-` separates lexical tokens too.
@@ -1285,7 +1344,7 @@ mod tests {
 
         assert!(
             failures.is_empty(),
-            "full-auto-183 catalogue has {} multiword ownership failure(s):\n  {}",
+            "full-auto-197 catalogue has {} multiword ownership failure(s):\n  {}",
             failures.len(),
             failures.join("\n  ")
         );
