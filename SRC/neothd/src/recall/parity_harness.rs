@@ -21,11 +21,12 @@ use sha2::{Digest as _, Sha256};
 
 use super::{
     goldset::{
-        GoldsetEntry, GradedSystem, GraderGrade, ValidatedGraderConfigFile,
+        GoldsetEntry, GradedSystem, GraderFamily, GraderGrade, ValidatedGraderConfigFile,
         EXPECTED_GOLDSET_QUERIES, MAX_GRADES_BYTES, MAX_GRADERS,
     },
     parity::Dimension,
     parity_anchor::{
+        OPERATOR_ANCHOR_QUERY_COUNT, ValidatedOperatorAnchor,
         ValidatedOperatorAnchorEvidenceLink, load_operator_anchor_bytes,
         load_operator_anchor_evidence_link_bytes,
         load_operator_anchor_evidence_link_with_provenance,
@@ -64,6 +65,8 @@ const FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE: &str = "four-grader-batch-result-re
 const FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE: &str = "four-grader-batch-result-pubkey.txt";
 const FOUR_GRADER_BATCH_RESULT_BINDING_FILE: &str = "four-grader-batch-result-binding.json";
 const LOCK_FILE: &str = ".parity-harness.lock";
+pub const ATTESTED_FAMILY_BIAS_SUMMARY_SCHEMA_VERSION: u32 = 1;
+pub const ATTESTED_FAMILY_BIAS_EXPORT_PURPOSE: &str = "neoth-recall-parity-attested-family-bias-summary/v1";
 
 /// Capability-bound run namespace. Its root directory and advisory lock are
 /// opened exactly once; every persistent child operation must be relative to
@@ -270,6 +273,78 @@ pub struct FourGraderBatchResultBinding {
     pub imported_grades: Vec<ImportedGradeFile>,
     pub state_evidence_sha256: String,
     pub gate_eligible: bool,
+}
+
+/// Redacted, deterministic analysis of the persisted four-grader result group
+/// against its exact twenty-query operator anchor. This is an export payload,
+/// not a verdict: no raw query, candidate, prompt, model, provider, or grade
+/// text is included and it never has gate authority.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AttestedFamilyBiasSummary {
+    pub schema_version: u32,
+    pub purpose: String,
+    pub run_manifest_sha256: String,
+    pub batch_plan_sha256: String,
+    pub result_binding_sha256: String,
+    pub operator_anchor_sha256: String,
+    pub anchor_query_count: usize,
+    pub grader_count: usize,
+    pub observations_per_grader: usize,
+    pub clusters: Vec<AttestedFamilyBiasCluster>,
+    pub gate_eligible: bool,
+}
+
+impl AttestedFamilyBiasSummary {
+    /// The exact stable bytes an external operator may sign or archive.
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
+        serde_json::to_vec(self).context("serialize canonical attested family-bias summary")
+    }
+
+    pub fn export(&self) -> Result<AttestedFamilyBiasExport> {
+        Ok(AttestedFamilyBiasExport {
+            summary_sha256: sha256_bytes(&self.canonical_bytes()?),
+            summary: self.clone(),
+            gate_eligible: false,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AttestedFamilyBiasExport {
+    pub summary_sha256: String,
+    pub summary: AttestedFamilyBiasSummary,
+    pub gate_eligible: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AttestedFamilyBiasCluster {
+    pub family: String,
+    pub evidence_kind: AttestedFamilyEvidenceKind,
+    pub grader_ids: Vec<String>,
+    pub correlation_observable: bool,
+    pub dimensions: Vec<AttestedFamilyBiasDimension>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttestedFamilyEvidenceKind {
+    SameFamilyCorrelation,
+    IndependentExternalFamilyEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AttestedFamilyBiasDimension {
+    pub dimension: String,
+    pub observation_count: usize,
+    pub family_mean_grader_minus_operator: f64,
+    pub per_grader_mean_grader_minus_operator: Vec<AttestedGraderBiasDelta>,
+    pub same_direction: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AttestedGraderBiasDelta {
+    pub grader_id: String,
+    pub mean_grader_minus_operator: f64,
 }
 
 /// Canonical state provenance. Publication bookkeeping stays in
@@ -609,6 +684,20 @@ fn validate_operator_anchor_artifacts_if_present(
     grader_config: &ValidatedGraderConfigFile,
     goldset: &[GoldsetEntry],
 ) -> Result<()> {
+    let _ = load_validated_operator_anchor_artifacts_if_present(
+        run, manifest, grader_config, goldset,
+    )?;
+    Ok(())
+}
+
+/// Load the complete immutable operator-anchor provenance group while retaining
+/// every no-follow leaf identity for a later aggregate revalidation.
+fn load_validated_operator_anchor_artifacts_if_present(
+    run: &BoundParityRun,
+    manifest: &ParityRunManifest,
+    grader_config: &ValidatedGraderConfigFile,
+    goldset: &[GoldsetEntry],
+) -> Result<Option<ValidatedOperatorAnchorEvidenceGroup>> {
     let artifact_contracts = [
         (CANDIDATE_EVIDENCE_MANIFEST_FILE, 1024 * 1024),
         (CANDIDATE_EVIDENCE_RECEIPT_FILE, 64 * 1024),
@@ -623,7 +712,7 @@ fn validate_operator_anchor_artifacts_if_present(
         .map(|(name, max_bytes)| read_bound_immutable_run_child(run, name, *max_bytes))
         .collect::<Result<Vec<_>>>()?;
     if present.iter().all(Option::is_none) {
-        return Ok(());
+        return Ok(None);
     }
     if present.iter().any(Option::is_none) {
         anyhow::bail!("incomplete operator anchor ingest; retry anchor-ingest with identical artifacts or use a fresh run");
@@ -673,19 +762,49 @@ fn validate_operator_anchor_artifacts_if_present(
     {
         anyhow::bail!("operator anchor binding does not match immutable anchor artifacts");
     }
-    for ((name, _), child) in artifact_contracts.iter().zip([
-        &candidate_manifest,
-        &candidate_receipt,
-        &candidate_receipt_pubkey,
-        &candidate_vector,
-        &anchor_bytes,
-        &link_bytes,
-        &binding_bytes,
-    ]) {
-        child.revalidate(run, name)?;
+    let group = ValidatedOperatorAnchorEvidenceGroup {
+        candidate_manifest,
+        candidate_receipt,
+        candidate_receipt_pubkey,
+        candidate_vector,
+        anchor_artifact: anchor_bytes,
+        anchor_link: link_bytes,
+        binding_artifact: binding_bytes,
+        anchor,
+    };
+    group.revalidate(run)?;
+    Ok(Some(group))
+}
+
+/// Complete operator-anchor evidence held through the caller's aggregate
+/// calculation. It includes the candidate evidence and detached receipt/key,
+/// so a final read-only export cannot outrun an anchor provenance replacement.
+struct ValidatedOperatorAnchorEvidenceGroup {
+    candidate_manifest: BoundImmutableRunChild,
+    candidate_receipt: BoundImmutableRunChild,
+    candidate_receipt_pubkey: BoundImmutableRunChild,
+    candidate_vector: BoundImmutableRunChild,
+    anchor_artifact: BoundImmutableRunChild,
+    anchor_link: BoundImmutableRunChild,
+    binding_artifact: BoundImmutableRunChild,
+    anchor: ValidatedOperatorAnchor,
+}
+
+impl ValidatedOperatorAnchorEvidenceGroup {
+    fn revalidate(&self, run: &BoundParityRun) -> Result<()> {
+        for (name, child) in [
+            (CANDIDATE_EVIDENCE_MANIFEST_FILE, &self.candidate_manifest),
+            (CANDIDATE_EVIDENCE_RECEIPT_FILE, &self.candidate_receipt),
+            (CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE, &self.candidate_receipt_pubkey),
+            (CANDIDATE_EVIDENCE_CANDIDATES_FILE, &self.candidate_vector),
+            (OPERATOR_ANCHOR_FILE, &self.anchor_artifact),
+            (OPERATOR_ANCHOR_LINK_FILE, &self.anchor_link),
+            (OPERATOR_ANCHOR_BINDING_FILE, &self.binding_artifact),
+        ] {
+            child.revalidate(run, name)?;
+        }
+        run.revalidate_lock()
     }
-    run.revalidate_lock()?;
-    Ok(())
 }
 
 fn validate_operator_anchor_binding(
@@ -1003,13 +1122,25 @@ fn validate_four_grader_batch_result_artifacts_if_present(
     grader_config: &ValidatedGraderConfigFile,
     goldset: &[GoldsetEntry],
 ) -> Result<()> {
+    let _ = load_validated_four_grader_batch_result_artifacts_if_present(
+        run, manifest, grader_config, goldset,
+    )?;
+    Ok(())
+}
+
+fn load_validated_four_grader_batch_result_artifacts_if_present(
+    run: &BoundParityRun,
+    manifest: &ParityRunManifest,
+    grader_config: &ValidatedGraderConfigFile,
+    goldset: &[GoldsetEntry],
+) -> Result<Option<ValidatedAttestedFourGraderBatchResults>> {
     let mut artifacts = (0..FOUR_GRADER_COUNT)
         .map(|index| read_bound_immutable_run_child(run, &batch_result_file_name(index), MAX_GRADES_BYTES as usize))
         .collect::<Result<Vec<_>>>()?;
     artifacts.push(read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE, 64 * 1024)?);
     artifacts.push(read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE, 128)?);
     artifacts.push(read_bound_immutable_run_child(run, FOUR_GRADER_BATCH_RESULT_BINDING_FILE, 64 * 1024)?);
-    if artifacts.iter().all(Option::is_none) { return Ok(()); }
+    if artifacts.iter().all(Option::is_none) { return Ok(None); }
     if artifacts.iter().any(Option::is_none) {
         anyhow::bail!("incomplete four-grader batch result ingest; retry with identical artifacts or use a fresh run");
     }
@@ -1035,9 +1166,10 @@ fn validate_four_grader_batch_result_artifacts_if_present(
     let receipt: SignedFourGraderBatchResultReceipt = serde_json::from_slice(&receipt_bytes.bytes)
         .map_err(|_| anyhow::anyhow!("parse immutable four-grader batch result receipt"))?;
     receipt.verify(pubkey)?;
+    let result_artifacts = vec![result0, result1, result2, result3];
     let mut parsed = Vec::with_capacity(FOUR_GRADER_COUNT);
-    let result_children = [&result0, &result1, &result2, &result3];
-    for child in result_children {
+    let mut grades_by_result = Vec::with_capacity(FOUR_GRADER_COUNT);
+    for child in &result_artifacts {
         let grades = super::goldset::load_grades_bytes(&child.bytes, "persisted attested four-grader batch result")?;
         let grader_id = validate_single_grader_matrix(grader_config, goldset, &grades)?;
         parsed.push(FourGraderBatchResultArtifact {
@@ -1045,6 +1177,7 @@ fn validate_four_grader_batch_result_artifacts_if_present(
             result_sha256: sha256_bytes(&child.bytes),
             record_count: grades.len(),
         });
+        grades_by_result.push(grades);
     }
     if parsed.windows(2).any(|pair| pair[0].grader_id >= pair[1].grader_id)
         || parsed != binding.result_artifacts
@@ -1077,16 +1210,246 @@ fn validate_four_grader_batch_result_artifacts_if_present(
     {
         anyhow::bail!("four-grader batch result binding does not match current imported grade state");
     }
-    for (index, child) in result_children.iter().enumerate() {
-        child.revalidate(run, &batch_result_file_name(index))?;
+    let verified = ValidatedAttestedFourGraderBatchResults {
+        plan: verified_plan,
+        result_artifacts,
+        receipt_artifact: receipt_bytes,
+        pubkey_artifact: pubkey_bytes,
+        binding_artifact: binding_bytes,
+        state_artifact: state_bytes,
+        imports: pinned_imports,
+        grades_by_result,
+    };
+    verified.revalidate(run)?;
+    Ok(Some(verified))
+}
+
+/// Fully revalidated read-only view of the immutable result evidence group.
+/// The retained leaf identities ensure a caller can derive an aggregate and
+/// then prove the exact evidence namespace remained stable before return.
+struct ValidatedAttestedFourGraderBatchResults {
+    plan: ValidatedFourGraderBatchPlan,
+    result_artifacts: Vec<BoundImmutableRunChild>,
+    receipt_artifact: BoundImmutableRunChild,
+    pubkey_artifact: BoundImmutableRunChild,
+    binding_artifact: BoundImmutableRunChild,
+    state_artifact: BoundImmutableRunChild,
+    imports: PinnedAttestedImports,
+    grades_by_result: Vec<Vec<GraderGrade>>,
+}
+
+impl ValidatedAttestedFourGraderBatchResults {
+    fn revalidate(&self, run: &BoundParityRun) -> Result<()> {
+        if self.result_artifacts.len() != FOUR_GRADER_COUNT
+            || self.grades_by_result.len() != FOUR_GRADER_COUNT
+        {
+            anyhow::bail!("attested four-grader result group is not complete");
+        }
+        for (index, artifact) in self.result_artifacts.iter().enumerate() {
+            artifact.revalidate(run, &batch_result_file_name(index))?;
+        }
+        self.receipt_artifact.revalidate(run, FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE)?;
+        self.pubkey_artifact.revalidate(run, FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE)?;
+        self.binding_artifact.revalidate(run, FOUR_GRADER_BATCH_RESULT_BINDING_FILE)?;
+        self.state_artifact.revalidate(run, STATE_FILE)?;
+        self.imports.revalidate(run)?;
+        self.plan.revalidate(run)?;
+        run.revalidate_lock()
     }
-    receipt_bytes.revalidate(run, FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE)?;
-    pubkey_bytes.revalidate(run, FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE)?;
-    binding_bytes.revalidate(run, FOUR_GRADER_BATCH_RESULT_BINDING_FILE)?;
-    state_bytes.revalidate(run, STATE_FILE)?;
-    pinned_imports.revalidate(run)?;
-    verified_plan.revalidate(run)?;
-    run.revalidate_lock()
+}
+
+/// Derive a redacted, deterministic family-bias summary from an already
+/// persisted, attested four-grader result group. This is read-only and cannot
+/// create a run, mutate its state, or authorize a release/gate decision.
+pub fn summarize_attested_four_grader_family_bias(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+) -> Result<AttestedFamilyBiasSummary> {
+    let run = BoundParityRun::open_existing(run_dir)?;
+    let manifest = load_existing_run_manifest(
+        &run, grader_config, config_bytes, goldset, goldset_bytes,
+    )?;
+    let anchor_group = load_validated_operator_anchor_artifacts_if_present(
+        &run, &manifest, grader_config, goldset,
+    )?.context("attested family-bias summary requires a complete operator anchor provenance group")?;
+    let results = load_validated_four_grader_batch_result_artifacts_if_present(
+        &run, &manifest, grader_config, goldset,
+    )?.context("attested family-bias summary requires a complete batch result group")?;
+    if sha256_bytes(&anchor_group.anchor_artifact.bytes) != results.plan.plan.operator_anchor_sha256 {
+        anyhow::bail!("attested family-bias summary anchor does not match the verified batch plan");
+    }
+    let clusters = cluster_attested_four_grader_family_bias(
+        grader_config,
+        &anchor_group.anchor,
+        &results,
+    )?;
+    let observations_per_grader = OPERATOR_ANCHOR_QUERY_COUNT
+        .checked_mul(2)
+        .context("attested family-bias observation count overflow")?;
+    let summary = AttestedFamilyBiasSummary {
+        schema_version: ATTESTED_FAMILY_BIAS_SUMMARY_SCHEMA_VERSION,
+        purpose: ATTESTED_FAMILY_BIAS_EXPORT_PURPOSE.into(),
+        run_manifest_sha256: sha256_json(&manifest)?,
+        batch_plan_sha256: sha256_bytes(&results.plan.plan_bytes),
+        result_binding_sha256: sha256_bytes(&results.binding_artifact.bytes),
+        operator_anchor_sha256: sha256_bytes(&anchor_group.anchor_artifact.bytes),
+        anchor_query_count: OPERATOR_ANCHOR_QUERY_COUNT,
+        grader_count: FOUR_GRADER_COUNT,
+        observations_per_grader,
+        clusters,
+        gate_eligible: false,
+    };
+    anchor_group.revalidate(&run)?;
+    results.revalidate(&run)?;
+    run.revalidate_lock()?;
+    Ok(summary)
+}
+
+fn cluster_attested_four_grader_family_bias(
+    grader_config: &ValidatedGraderConfigFile,
+    operator_anchor: &ValidatedOperatorAnchor,
+    results: &ValidatedAttestedFourGraderBatchResults,
+) -> Result<Vec<AttestedFamilyBiasCluster>> {
+    let expected_anchor_observations = OPERATOR_ANCHOR_QUERY_COUNT
+        .checked_mul(2)
+        .context("attested family-bias anchor observation count overflow")?;
+    if grader_config.graders().len() != FOUR_GRADER_COUNT
+        || results.plan.plan.items.len() != FOUR_GRADER_COUNT
+        || results.grades_by_result.len() != FOUR_GRADER_COUNT
+        || operator_anchor.grades().len() != expected_anchor_observations
+    {
+        anyhow::bail!("attested family-bias analysis requires exact 20-query by four-grader coverage");
+    }
+    let mut roster = BTreeMap::new();
+    let mut has_shared = false;
+    let mut has_external = false;
+    for grader in grader_config.graders() {
+        if roster.insert(grader.grader_id.as_str(), grader.family).is_some() {
+            anyhow::bail!("attested family-bias analysis found duplicate validated roster identity");
+        }
+        match grader.family {
+            GraderFamily::AnthropicOpenaiGoogle => has_shared = true,
+            GraderFamily::IndependentExternal => has_external = true,
+        }
+    }
+    if !has_shared || !has_external {
+        anyhow::bail!("attested family-bias analysis requires both verified grader families");
+    }
+    for plan_item in &results.plan.plan.items {
+        let family = roster.get(plan_item.grader_id.as_str())
+            .context("attested family-bias batch plan has an unverified grader identity")?;
+        if plan_item.family != attested_family_name(*family) {
+            anyhow::bail!("attested family-bias batch plan family does not match the validated roster");
+        }
+    }
+    let mut automated = BTreeMap::new();
+    for grade in results.grades_by_result.iter().flatten() {
+        let key = (
+            grade.query_id.as_str(),
+            grade.grader_id.as_str(),
+            matches!(grade.system, GradedSystem::Neoth),
+        );
+        if automated.insert(key, grade).is_some() {
+            anyhow::bail!("attested family-bias analysis found duplicate persisted grade observation");
+        }
+    }
+    let mut deltas: BTreeMap<(String, String, String), (i64, usize)> = BTreeMap::new();
+    let mut coverage = 0usize;
+    for anchor_grade in operator_anchor.grades() {
+        for (grader_id, family) in &roster {
+            let automated_grade = automated.get(&(
+                anchor_grade.query_id.as_str(),
+                *grader_id,
+                matches!(anchor_grade.system, GradedSystem::Neoth),
+            )).context("attested family-bias analysis has incomplete anchor coverage")?;
+            coverage = coverage.checked_add(1).context("attested family-bias coverage overflow")?;
+            for dimension in Dimension::ALL {
+                let entry = deltas.entry((
+                    attested_family_name(*family).to_owned(),
+                    (*grader_id).to_owned(),
+                    dimension.as_str().to_owned(),
+                )).or_default();
+                entry.0 = entry.0.checked_add(
+                    i64::from(automated_grade.score(dimension))
+                        .checked_sub(i64::from(anchor_grade.score(dimension)))
+                        .context("attested family-bias delta overflow")?,
+                ).context("attested family-bias delta sum overflow")?;
+                entry.1 = entry.1.checked_add(1).context("attested family-bias observation overflow")?;
+            }
+        }
+    }
+    let expected_coverage = expected_anchor_observations
+        .checked_mul(FOUR_GRADER_COUNT)
+        .context("attested family-bias expected coverage overflow")?;
+    if coverage != expected_coverage {
+        anyhow::bail!("attested family-bias analysis did not observe exact 20-query by four-grader coverage");
+    }
+    let mut families: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (grader_id, family) in roster {
+        families.entry(attested_family_name(family).to_owned()).or_default().push(grader_id.to_owned());
+    }
+    let mut clusters = Vec::with_capacity(families.len());
+    for (family, grader_ids) in families {
+        let mut dimensions = Vec::with_capacity(Dimension::ALL.len());
+        for dimension in Dimension::ALL {
+            let mut per_grader = Vec::with_capacity(grader_ids.len());
+            let mut total = 0i64;
+            let mut total_count = 0usize;
+            for grader_id in &grader_ids {
+                let (sum, count) = deltas.get(&(family.clone(), grader_id.clone(), dimension.as_str().to_owned()))
+                    .context("attested family-bias analysis lost a validated delta bucket")?;
+                if *count != expected_anchor_observations {
+                    anyhow::bail!("attested family-bias analysis has incomplete per-grader anchor coverage");
+                }
+                total = total.checked_add(*sum).context("attested family-bias aggregate overflow")?;
+                total_count = total_count.checked_add(*count).context("attested family-bias aggregate count overflow")?;
+                per_grader.push(AttestedGraderBiasDelta {
+                    grader_id: grader_id.clone(),
+                    mean_grader_minus_operator: bounded_mean(*sum, *count)?,
+                });
+            }
+            let family_mean = bounded_mean(total, total_count)?;
+            let same_direction = per_grader.iter().all(|entry| entry.mean_grader_minus_operator > 0.0)
+                || per_grader.iter().all(|entry| entry.mean_grader_minus_operator < 0.0);
+            dimensions.push(AttestedFamilyBiasDimension {
+                dimension: dimension.as_str().to_owned(),
+                observation_count: total_count,
+                family_mean_grader_minus_operator: family_mean,
+                per_grader_mean_grader_minus_operator: per_grader,
+                same_direction,
+            });
+        }
+        let evidence_kind = if family == attested_family_name(GraderFamily::IndependentExternal) {
+            AttestedFamilyEvidenceKind::IndependentExternalFamilyEvidence
+        } else {
+            AttestedFamilyEvidenceKind::SameFamilyCorrelation
+        };
+        clusters.push(AttestedFamilyBiasCluster {
+            family,
+            evidence_kind,
+            correlation_observable: grader_ids.len() >= 2,
+            grader_ids,
+            dimensions,
+        });
+    }
+    Ok(clusters)
+}
+
+fn attested_family_name(family: GraderFamily) -> &'static str {
+    match family {
+        GraderFamily::AnthropicOpenaiGoogle => "anthropic_openai_google",
+        GraderFamily::IndependentExternal => "independent_external",
+    }
+}
+
+fn bounded_mean(sum: i64, count: usize) -> Result<f64> {
+    if count == 0 { anyhow::bail!("attested family-bias mean has no observations"); }
+    let mean = sum as f64 / count as f64;
+    if !mean.is_finite() { anyhow::bail!("attested family-bias mean is not finite"); }
+    Ok(mean)
 }
 
 struct BoundAttestedImport {
@@ -1864,6 +2227,13 @@ mod tests {
             }).collect(),
         };
         (anchor_bytes, serde_json::to_vec(&link).unwrap())
+    }
+
+    #[test]
+    fn attested_family_bias_fixed_vector_rejects_empty_observations() {
+        assert_eq!(bounded_mean(12, 4).unwrap(), 3.0);
+        assert_eq!(bounded_mean(-6, 4).unwrap(), -1.5);
+        assert!(bounded_mean(0, 0).is_err());
     }
 
     #[test]

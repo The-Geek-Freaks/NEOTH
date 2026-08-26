@@ -290,3 +290,67 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
         "attested imports must bind their retained directory capability through the shared helper"
     );
 }
+
+#[test]
+fn attested_family_bias_export_is_read_only_pinned_and_non_gate() {
+    let summary = HARNESS
+        .split("pub fn summarize_attested_four_grader_family_bias")
+        .nth(1)
+        .and_then(|tail| tail.split("fn cluster_attested_four_grader_family_bias").next())
+        .expect("attested family-bias summary source");
+    for forbidden in ["open_or_create", "create_child(", "replace_child", "File::open(", "reqwest", "Command::", "wal::writer", "build_report("] {
+        assert!(
+            !summary.contains(forbidden),
+            "attested family-bias summary acquired mutable/ambient authority {forbidden}"
+        );
+    }
+    for required in [
+        "BoundParityRun::open_existing",
+        "load_existing_run_manifest",
+        "validate_operator_anchor_artifacts_if_present",
+        "load_validated_operator_anchor_artifacts_if_present",
+        "validate_four_grader_batch_result_artifacts_if_present",
+        "OPERATOR_ANCHOR_QUERY_COUNT",
+        "anchor_group.revalidate",
+        "results.revalidate",
+        "run.revalidate_lock",
+        "gate_eligible: false",
+        "ATTESTED_FAMILY_BIAS_EXPORT_PURPOSE",
+        "result_binding_sha256",
+        "canonical_bytes",
+    ] {
+        assert!(summary.contains(required) || HARNESS.contains(required), "family-bias summary lost {required}");
+    }
+    for required in [
+        "struct ValidatedOperatorAnchorEvidenceGroup",
+        "candidate_manifest",
+        "candidate_receipt",
+        "candidate_receipt_pubkey",
+        "candidate_vector",
+        "anchor_link",
+        "binding_artifact",
+        "group.revalidate(run)?",
+    ] {
+        assert!(HARNESS.contains(required), "anchor provenance retain/revalidate fence lost {required}");
+    }
+    let clustering = HARNESS
+        .split("fn cluster_attested_four_grader_family_bias")
+        .nth(1)
+        .and_then(|tail| tail.split("fn attested_family_name").next())
+        .expect("family-bias clustering source");
+    for required in [
+        "exact 20-query by four-grader coverage",
+        "duplicate validated roster identity",
+        "batch plan family does not match the validated roster",
+        "duplicate persisted grade observation",
+        "incomplete anchor coverage",
+        "bounded_mean",
+        "same_direction",
+        "IndependentExternalFamilyEvidence",
+        "SameFamilyCorrelation",
+    ] {
+        assert!(clustering.contains(required), "family-bias adversarial/determinism fence lost {required}");
+    }
+    assert!(CLI.contains("BatchFamilyBias"));
+    assert!(CLI.contains("summary.export()?"));
+}

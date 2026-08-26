@@ -25,7 +25,7 @@ use crate::recall::{
     parity_harness::{
         build_report, ingest_offline_grades, ingest_operator_anchor_evidence, plan_four_grader_batch,
         plan_run, read_offline_input, validate_attested_four_grader_batch_results,
-        ingest_attested_four_grader_batch_results,
+        ingest_attested_four_grader_batch_results, summarize_attested_four_grader_family_bias,
     },
     parity_anchor::{
         MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES, load_operator_anchor_bytes,
@@ -208,6 +208,17 @@ pub enum RecallParityHarnessOperation {
         #[arg(long = "result", required = true, num_args = 4, value_name = "PATH")]
         results: Vec<PathBuf>,
     },
+    /// Render a redacted, deterministic family-bias export from an existing
+    /// cryptographically attested four-grader result group. This is read-only
+    /// and cannot modify the parity gate or release state.
+    BatchFamilyBias {
+        #[arg(long, value_name = "DIR")]
+        run_dir: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        grader_config: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        goldset: PathBuf,
+    },
 }
 
 pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<()> {
@@ -230,7 +241,8 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
         | RecallParityHarnessOperation::AnchorIngest { grader_config, goldset, .. }
         | RecallParityHarnessOperation::BatchPlan { grader_config, goldset, .. }
         | RecallParityHarnessOperation::BatchResultsVerify { grader_config, goldset, .. }
-        | RecallParityHarnessOperation::BatchResultsIngest { grader_config, goldset, .. } => {
+        | RecallParityHarnessOperation::BatchResultsIngest { grader_config, goldset, .. }
+        | RecallParityHarnessOperation::BatchFamilyBias { grader_config, goldset, .. } => {
             (grader_config, goldset)
         }
         RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
@@ -362,6 +374,12 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                         &receipt, &expected_batch_result_pubkey, &result_bytes,
                     )?;
                     render_harness_json(&binding, &output)?;
+                }
+                RecallParityHarnessOperation::BatchFamilyBias { run_dir, .. } => {
+                    let summary = summarize_attested_four_grader_family_bias(
+                        &run_dir, &config, &config_bytes, &entries, &goldset_bytes,
+                    )?;
+                    render_harness_json(&summary.export()?, &output)?;
                 }
                 RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
                     unreachable!("candidate evidence returns before config/goldset input loading")
