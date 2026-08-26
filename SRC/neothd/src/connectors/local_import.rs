@@ -507,7 +507,18 @@ fn open_approved_root(path: &Path) -> Result<ApprovedImportRoot, LocalImportErro
             Component::Normal(name) => {
                 let name =
                     CString::new(name.as_bytes()).map_err(|_| LocalImportError::AmbiguousRoot)?;
-                current = openat2_root_component(&current, &name, directory_open_flags())?;
+                let next =
+                    openat2_root_component(&current, &name, root_component_open_flags())?;
+                let metadata = next
+                    .metadata()
+                    .map_err(|_| LocalImportError::Unavailable)?;
+                if metadata.file_type().is_symlink() {
+                    return Err(LocalImportError::SymlinkOrReparsePoint);
+                }
+                if !metadata.is_dir() {
+                    return Err(LocalImportError::NotRegularFile);
+                }
+                current = next;
             }
             Component::Prefix(_) | Component::CurDir | Component::ParentDir => {
                 return Err(LocalImportError::AmbiguousRoot);
@@ -590,6 +601,14 @@ fn directory_open_flags() -> libc::c_int {
     // `O_NOFOLLOW` are meaningful; the object itself is never opened, so
     // omitting `O_NONBLOCK` cannot make a FIFO or device lookup block.
     libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC
+}
+
+#[cfg(target_os = "linux")]
+fn root_component_open_flags() -> libc::c_int {
+    // Without `O_DIRECTORY`, `RESOLVE_NO_SYMLINKS` can report a final symlink
+    // as ELOOP instead of collapsing its type to ENOTDIR. Any component the
+    // resolver admits is inspected through its pinned descriptor below.
+    libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC
 }
 
 #[cfg(target_os = "linux")]
@@ -1515,8 +1534,13 @@ mod tests {
         let allowed_path_flags =
             libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
         assert_eq!(directory_open_flags(), allowed_path_flags);
+        assert_eq!(
+            root_component_open_flags(),
+            allowed_path_flags & !libc::O_DIRECTORY
+        );
         assert_eq!(leaf_open_flags(), allowed_path_flags & !libc::O_DIRECTORY);
         assert_eq!(directory_open_flags() & libc::O_NONBLOCK, 0);
+        assert_eq!(root_component_open_flags() & libc::O_NONBLOCK, 0);
         assert_eq!(leaf_open_flags() & libc::O_NONBLOCK, 0);
         assert_eq!(
             SECURE_ROOT_COMPONENT_RESOLVE,
