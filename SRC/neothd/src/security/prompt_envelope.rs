@@ -16,6 +16,8 @@ pub(crate) const MAX_CANDIDATE_BYTES: usize = 128 * 1024;
 pub(crate) const MAX_QA_FAILURE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_SESSION_NAMING_OPENING_BYTES: usize = 2 * 1024;
 pub(crate) const MAX_DOCUMENT_TITLE_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_EMAIL_SUBJECT_BYTES: usize = 4 * 1024;
+pub(crate) const MAX_EMAIL_BODY_BYTES: usize = 8_000;
 pub(crate) const MAX_PROMPT_ENVELOPE_DATA_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_RENDERED_BYTES: usize = 384 * 1024;
 
@@ -27,6 +29,7 @@ const PROMPT_ENVELOPE_TRUST: &str = "untrusted_data_only";
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PromptEnvelopePurpose {
     ArxivAbstractSummary,
+    EmailThreatTiebreak,
     ChatClarificationReissue,
     ChatHemisphereLiveTest,
     ChatSessionNaming,
@@ -45,6 +48,10 @@ impl PromptEnvelopePurpose {
             Self::ArxivAbstractSummary => &[
                 PromptFieldKind::DocumentTitle,
                 PromptFieldKind::DocumentAbstract,
+            ],
+            Self::EmailThreatTiebreak => &[
+                PromptFieldKind::EmailSubject,
+                PromptFieldKind::EmailBody,
             ],
             Self::ChatClarificationReissue => &[
                 PromptFieldKind::OriginalQuestion,
@@ -76,6 +83,7 @@ impl PromptEnvelopePurpose {
     fn as_str(self) -> &'static str {
         match self {
             Self::ArxivAbstractSummary => "arxiv_abstract_summary",
+            Self::EmailThreatTiebreak => "email_threat_tiebreak",
             Self::ChatClarificationReissue => "chat_clarification_reissue",
             Self::ChatHemisphereLiveTest => "chat_hemisphere_live_test",
             Self::ChatSessionNaming => "chat_session_naming",
@@ -97,6 +105,8 @@ impl PromptEnvelopePurpose {
 pub(crate) enum PromptFieldKind {
     DocumentTitle,
     DocumentAbstract,
+    EmailSubject,
+    EmailBody,
     ClarificationAnswer,
     SessionOpening,
     GroundTruthAssertions,
@@ -114,6 +124,8 @@ impl PromptFieldKind {
         match self {
             Self::DocumentTitle => MAX_DOCUMENT_TITLE_BYTES,
             Self::DocumentAbstract => MAX_QA_CONTRACT_BYTES,
+            Self::EmailSubject => MAX_EMAIL_SUBJECT_BYTES,
+            Self::EmailBody => MAX_EMAIL_BODY_BYTES,
             Self::ClarificationAnswer => MAX_OPERATOR_TASK_BYTES,
             Self::SessionOpening => MAX_SESSION_NAMING_OPENING_BYTES,
             Self::GroundTruthAssertions => MAX_QA_CONTRACT_BYTES,
@@ -129,6 +141,8 @@ impl PromptFieldKind {
         match self {
             Self::DocumentTitle => "document_title",
             Self::DocumentAbstract => "document_abstract",
+            Self::EmailSubject => "email_subject",
+            Self::EmailBody => "email_body",
             Self::ClarificationAnswer => "clarification_answer",
             Self::SessionOpening => "session_opening",
             Self::GroundTruthAssertions => "ground_truth_assertions",
