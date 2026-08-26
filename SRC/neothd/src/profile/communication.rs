@@ -17,7 +17,11 @@ use sha2::{Digest, Sha256};
 use crate::config::{CommunicationProfileConfig, CommunicationPromptExport};
 
 pub const STATE_RELATIVE_PATH: &str = "profile/communication.json";
-const STATE_SCHEMA_VERSION: u32 = 1;
+/// The one explicitly supported operator-global profile subject. All other
+/// identities remain scope-local even when they have a stable channel UUID.
+pub const COMMUNICATION_OPERATOR_SUBJECT: &str = "operator";
+const STATE_SCHEMA_VERSION: u32 = 2;
+const LEGACY_STATE_SCHEMA_VERSION: u32 = 1;
 const MAX_EVIDENCE_PER_SUBJECT_PER_DAY_AND_DIMENSION: usize = 4;
 const MAX_STATE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_STATE_SUBJECTS: usize = 4_096;
@@ -218,6 +222,145 @@ impl CommunicationScope {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AuthenticatedSubject {
+    subject_id: String,
+    origin: AuthenticatedSubjectOrigin,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthenticatedSubjectOrigin {
+    LocalInteractiveOperator,
+    PinnedChannelOperator,
+    AuthenticatedChannelParticipant,
+    /// Compatibility marker assigned only while migrating a schema-v1 state.
+    LegacyAuthenticated,
+}
+
+impl AuthenticatedSubject {
+    fn subject_id(&self) -> &str {
+        &self.subject_id
+    }
+
+    fn origin(&self) -> AuthenticatedSubjectOrigin {
+        self.origin
+    }
+
+    fn permits_global_scope(&self) -> bool {
+        matches!(
+            self.origin,
+            AuthenticatedSubjectOrigin::LocalInteractiveOperator
+                | AuthenticatedSubjectOrigin::PinnedChannelOperator
+        ) && self.subject_id == COMMUNICATION_OPERATOR_SUBJECT
+    }
+}
+
+mod approved_boundary {
+    pub(in crate::profile) trait Sealed {}
+}
+
+/// Implemented only in this module for exact opaque marker types owned by the
+/// authenticated CLI/channel boundaries. Other crate modules cannot name the
+/// sealing trait and cannot mint an accepted communication subject.
+///
+/// The intentionally narrower sealing supertrait and private return type make
+/// this a call-site capability rather than a crate-wide issuer. Keep those
+/// two visibility lints local to this boundary; widening either type would
+/// reintroduce a forgeable authority path.
+#[allow(private_bounds, private_interfaces)]
+pub(crate) trait ApprovedCommunicationSubject: approved_boundary::Sealed {
+    fn into_subject(self) -> AuthenticatedSubject;
+}
+
+impl approved_boundary::Sealed for crate::cli::chat::LocalChatCommunicationSubject {}
+impl ApprovedCommunicationSubject for crate::cli::chat::LocalChatCommunicationSubject {
+    fn into_subject(self) -> AuthenticatedSubject {
+        AuthenticatedSubject {
+            subject_id: COMMUNICATION_OPERATOR_SUBJECT.to_owned(),
+            origin: AuthenticatedSubjectOrigin::LocalInteractiveOperator,
+        }
+    }
+}
+
+impl approved_boundary::Sealed for crate::cli::serve_pipeline::PinnedChannelCommunicationSubject {}
+impl ApprovedCommunicationSubject for crate::cli::serve_pipeline::PinnedChannelCommunicationSubject {
+    fn into_subject(self) -> AuthenticatedSubject {
+        AuthenticatedSubject {
+            subject_id: COMMUNICATION_OPERATOR_SUBJECT.to_owned(),
+            origin: AuthenticatedSubjectOrigin::PinnedChannelOperator,
+        }
+    }
+}
+
+impl approved_boundary::Sealed for crate::cli::profile::LocalProfileCommunicationOperator {}
+impl ApprovedCommunicationSubject for crate::cli::profile::LocalProfileCommunicationOperator {
+    fn into_subject(self) -> AuthenticatedSubject {
+        AuthenticatedSubject {
+            subject_id: COMMUNICATION_OPERATOR_SUBJECT.to_owned(),
+            origin: AuthenticatedSubjectOrigin::LocalInteractiveOperator,
+        }
+    }
+}
+
+#[cfg(test)]
+impl approved_boundary::Sealed for &str {}
+#[cfg(test)]
+impl ApprovedCommunicationSubject for &str {
+    fn into_subject(self) -> AuthenticatedSubject {
+        AuthenticatedSubject {
+            subject_id: self.to_owned(),
+            origin: if self == COMMUNICATION_OPERATOR_SUBJECT {
+                AuthenticatedSubjectOrigin::LocalInteractiveOperator
+            } else {
+                AuthenticatedSubjectOrigin::AuthenticatedChannelParticipant
+            },
+        }
+    }
+}
+
+/// Test-only scoped fixture seam. Production identity boundaries cannot mint
+/// evidence from strings; integration tests use this to model a participant
+/// without accidentally granting it operator-global authority.
+#[cfg(test)]
+pub(crate) fn set_test_scoped_preference(
+    home: &Path,
+    policy: &CommunicationProfileConfig,
+    subject_id: &str,
+    session_id: &str,
+    value: PreferenceValue,
+    event_hash: [u8; 32],
+    observed_at_unix: i64,
+) -> Result<ObservationOutcome> {
+    let operator = subject_id == COMMUNICATION_OPERATOR_SUBJECT;
+    let subject = if operator {
+        "operator".into_subject()
+    } else {
+        subject_id.into_subject()
+    };
+    let scope = if operator {
+        CommunicationScope::Global
+    } else {
+        CommunicationScope::Channel("test".to_owned())
+    };
+    record_evidence(
+        home,
+        policy,
+        EvidenceInput::from_authenticated(
+            event_hash,
+            subject,
+            session_id.to_owned(),
+            EvidenceSource::ExplicitSetting,
+            value,
+            observed_at_unix,
+            scope,
+            "test_explicit_setting",
+        ),
+        false,
+        false,
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceRef {
@@ -228,7 +371,12 @@ pub struct EvidenceRef {
     pub value: PreferenceValue,
     pub observed_at_unix: i64,
     pub scope: CommunicationScope,
-    pub authenticated_subject: bool,
+    /// Compatibility-only v1 field. Schema-v2 persistence uses the typed
+    /// `authenticated_origin` and never serializes this boolean declaration.
+    #[serde(rename = "authenticated_subject", default, skip_serializing)]
+    legacy_authenticated_subject: bool,
+    #[serde(default)]
+    pub authenticated_origin: Option<AuthenticatedSubjectOrigin>,
     pub reason_code: String,
 }
 
@@ -251,6 +399,11 @@ pub struct DimensionEstimate {
     pub active: bool,
     pub pinned: bool,
     pub durable_by_full_auto: bool,
+    /// The exact scope that produced the durable decision. This makes a
+    /// persisted estimate auditable and prevents a channel/task estimate from
+    /// being reinterpreted as global after restart.
+    #[serde(default)]
+    pub scope_provenance: CommunicationScope,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,16 +486,68 @@ struct ObservationAuditIntent {
 }
 
 #[derive(Clone, Debug)]
-pub struct EvidenceInput {
+pub(crate) struct EvidenceInput {
     pub event_hash: [u8; 32],
-    pub subject_id: String,
+    subject: AuthenticatedSubject,
     pub session_id: String,
     pub source: EvidenceSource,
     pub value: PreferenceValue,
     pub observed_at_unix: i64,
     pub scope: CommunicationScope,
-    pub authenticated_subject: bool,
     pub reason_code: &'static str,
+}
+
+impl EvidenceInput {
+    pub fn new(
+        event_hash: [u8; 32],
+        subject: impl ApprovedCommunicationSubject,
+        session_id: String,
+        source: EvidenceSource,
+        value: PreferenceValue,
+        observed_at_unix: i64,
+        scope: CommunicationScope,
+        reason_code: &'static str,
+    ) -> Self {
+        Self {
+            event_hash,
+            subject: subject.into_subject(),
+            session_id,
+            source,
+            value,
+            observed_at_unix,
+            scope,
+            reason_code,
+        }
+    }
+
+    /// Internal constructor for core paths that have already consumed an
+    /// approved boundary capability. Keeping this separate prevents the
+    /// private authenticated subject from ever becoming a crate-level mint.
+    fn from_authenticated(
+        event_hash: [u8; 32],
+        subject: AuthenticatedSubject,
+        session_id: String,
+        source: EvidenceSource,
+        value: PreferenceValue,
+        observed_at_unix: i64,
+        scope: CommunicationScope,
+        reason_code: &'static str,
+    ) -> Self {
+        Self {
+            event_hash,
+            subject,
+            session_id,
+            source,
+            value,
+            observed_at_unix,
+            scope,
+            reason_code,
+        }
+    }
+
+    fn subject_id(&self) -> &str {
+        self.subject.subject_id()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -477,6 +682,10 @@ pub async fn append_observation_audit(
     outcome: &ObservationOutcome,
     observed_at_unix: i64,
 ) -> Result<()> {
+    // Disabled/incognito/no-signal turns must not even inspect the state file.
+    if outcome.recorded == 0 {
+        return Ok(());
+    }
     let current = ObservationAuditIntent {
         subject_id: subject_id.to_owned(),
         event_hash: hex::encode(event_hash),
@@ -564,6 +773,25 @@ fn validate_scope(scope: &CommunicationScope) -> Result<()> {
     }
 }
 
+fn validate_scope_for_subject(scope: &CommunicationScope, subject: &AuthenticatedSubject) -> Result<()> {
+    validate_scope(scope)?;
+    if matches!(scope, CommunicationScope::Global) && !subject.permits_global_scope() {
+        bail!("only an operator-origin proof may write global communication evidence");
+    }
+    Ok(())
+}
+
+fn is_full_auto_eligible(value: PreferenceValue) -> bool {
+    matches!(
+        value,
+        PreferenceValue::Directness(_)
+            | PreferenceValue::Structure(_)
+            | PreferenceValue::Ambiguity(_)
+            | PreferenceValue::ProcessingLoad(_)
+            | PreferenceValue::ContextAmount(_)
+    )
+}
+
 fn validate_reason_code(reason_code: &str) -> Result<()> {
     if reason_code.is_empty() || reason_code.len() > 96 || reason_code.chars().any(char::is_control)
     {
@@ -604,8 +832,19 @@ fn validate_loaded_state(state: &CommunicationState) -> Result<()> {
                 if item.dimension() != *dimension {
                     bail!("communication evidence dimension key does not match its value");
                 }
-                if !item.authenticated_subject {
+                if !item.legacy_authenticated_subject && item.authenticated_origin.is_none() {
                     bail!("communication state contains unauthenticated evidence");
+                }
+                if matches!(&item.scope, CommunicationScope::Global)
+                    && (subject_id != COMMUNICATION_OPERATOR_SUBJECT
+                        || !matches!(
+                            item.authenticated_origin,
+                            Some(AuthenticatedSubjectOrigin::LocalInteractiveOperator)
+                                | Some(AuthenticatedSubjectOrigin::PinnedChannelOperator)
+                                | Some(AuthenticatedSubjectOrigin::LegacyAuthenticated)
+                        ))
+                {
+                    bail!("communication state global evidence lacks an operator origin");
                 }
                 if !is_lower_sha256(&item.event_hash) {
                     bail!("communication evidence event hash is invalid");
@@ -627,6 +866,14 @@ fn validate_loaded_state(state: &CommunicationState) -> Result<()> {
                 || estimate.first_seen_unix > estimate.last_seen_unix
             {
                 bail!("communication estimate metadata is invalid");
+            }
+            validate_scope(&estimate.scope_provenance)?;
+            if estimate.durable_by_full_auto
+                && (subject_id != COMMUNICATION_OPERATOR_SUBJECT
+                    || !is_full_auto_eligible(estimate.selected)
+                    || !matches!(&estimate.scope_provenance, CommunicationScope::Global))
+            {
+                bail!("communication durable estimate has unsafe or non-global provenance");
             }
         }
         if let Some(context) = &subject.declared_context
@@ -667,15 +914,56 @@ fn load_state_unlocked(home: &Path) -> Result<CommunicationState> {
     if bytes.is_empty() {
         bail!("communication profile state is empty at {}", path.display());
     }
-    let state: CommunicationState = serde_json::from_slice(&bytes)
+    let mut state: CommunicationState = serde_json::from_slice(&bytes)
         .with_context(|| format!("parse communication profile state at {}", path.display()))?;
-    if state.schema_version != STATE_SCHEMA_VERSION {
+    if state.schema_version != STATE_SCHEMA_VERSION
+        && state.schema_version != LEGACY_STATE_SCHEMA_VERSION
+    {
         bail!(
             "unsupported communication profile schema {} at {}; expected {}",
             state.schema_version,
             path.display(),
             STATE_SCHEMA_VERSION
         );
+    }
+    // Schema-v1 persisted a caller-asserted Boolean. Preserve prior local
+    // state without accepting that Boolean at any new API boundary: old true
+    // entries receive an explicit compatibility origin before validation and
+    // are rewritten with the typed field on the next mutation.
+    let legacy_state = state.schema_version == LEGACY_STATE_SCHEMA_VERSION;
+    for (subject_id, subject) in &mut state.subjects {
+        for items in subject.evidence.values_mut() {
+            for item in items {
+                if item.authenticated_origin.is_none() && item.legacy_authenticated_subject {
+                    item.authenticated_origin = Some(AuthenticatedSubjectOrigin::LegacyAuthenticated);
+                }
+                if legacy_state
+                    && subject_id != COMMUNICATION_OPERATOR_SUBJECT
+                    && matches!(&item.scope, CommunicationScope::Global)
+                {
+                    item.scope = CommunicationScope::Task("legacy_unscoped".to_owned());
+                }
+            }
+        }
+        if legacy_state {
+            for estimate in subject.estimates.values_mut() {
+                if !is_full_auto_eligible(estimate.selected)
+                    || subject_id != COMMUNICATION_OPERATOR_SUBJECT
+                {
+                    estimate.durable_by_full_auto = false;
+                }
+                if subject_id != COMMUNICATION_OPERATOR_SUBJECT {
+                    // The related legacy evidence was quarantined above.
+                    // Preserve that fact in the durable-state provenance so a
+                    // missing v1 field cannot be rewritten as operator-global.
+                    estimate.scope_provenance =
+                        CommunicationScope::Task("legacy_unscoped".to_owned());
+                }
+            }
+        }
+    }
+    if legacy_state {
+        state.schema_version = STATE_SCHEMA_VERSION;
     }
     validate_loaded_state(&state)
         .with_context(|| format!("validate communication profile state at {}", path.display()))?;
@@ -755,7 +1043,7 @@ fn estimate_dimension(
 ) -> Option<DimensionEstimate> {
     let eligible: Vec<&EvidenceRef> = evidence
         .iter()
-        .filter(|item| item.authenticated_subject && item.scope.applies_to(target_scope))
+        .filter(|item| item.authenticated_origin.is_some() && item.scope.applies_to(target_scope))
         .collect();
     if eligible.is_empty() {
         return None;
@@ -782,6 +1070,7 @@ fn estimate_dimension(
             active: true,
             pinned: true,
             durable_by_full_auto: false,
+            scope_provenance: CommunicationScope::Global,
         });
     }
 
@@ -816,7 +1105,13 @@ fn estimate_dimension(
         .collect::<BTreeSet<_>>()
         .len() as u32;
     let observation_count = eligible.len() as u32;
+    // FULL-AUTO is intentionally narrower than ordinary passive application:
+    // only presentation-only values may become durable, and only from the
+    // explicit operator-global scope. Pace, clarification, correction and
+    // other autonomy-adjacent behavior must remain non-durable until pinned.
     let promote_durable = full_auto
+        && is_full_auto_eligible(selected)
+        && target_scope.is_none()
         && observation_count >= policy.full_auto_min_observations
         && sessions >= policy.full_auto_min_distinct_sessions
         && confidence >= policy.full_auto_min_confidence;
@@ -837,6 +1132,7 @@ fn estimate_dimension(
         active: threshold_active || durable_by_full_auto,
         pinned: false,
         durable_by_full_auto,
+        scope_provenance: target_scope.cloned().unwrap_or(CommunicationScope::Global),
     })
 }
 
@@ -884,11 +1180,8 @@ fn prune_evidence(items: &mut Vec<EvidenceRef>, max: usize) {
 }
 
 fn validate_evidence_input(input: &EvidenceInput) -> Result<()> {
-    validate_subject_id(&input.subject_id)?;
+    validate_subject_id(input.subject_id())?;
     validate_session_id(&input.session_id)?;
-    if !input.authenticated_subject {
-        bail!("communication evidence requires an authenticated human subject");
-    }
     if input.event_hash.iter().all(|byte| *byte == 0) {
         bail!("communication evidence event_hash must not be zero");
     }
@@ -896,11 +1189,11 @@ fn validate_evidence_input(input: &EvidenceInput) -> Result<()> {
         bail!("communication evidence dimension is invalid");
     }
     validate_reason_code(input.reason_code)?;
-    validate_scope(&input.scope)?;
+    validate_scope_for_subject(&input.scope, &input.subject)?;
     Ok(())
 }
 
-pub fn record_evidence_batch(
+pub(crate) fn record_evidence_batch(
     home: &Path,
     policy: &CommunicationProfileConfig,
     inputs: &[EvidenceInput],
@@ -922,17 +1215,17 @@ pub fn record_evidence_batch(
     for input in inputs {
         validate_evidence_input(input)?;
     }
-    let first_subject = &inputs[0].subject_id;
+    let first_subject = inputs[0].subject_id();
     if inputs
         .iter()
-        .any(|input| &input.subject_id != first_subject)
+        .any(|input| input.subject_id() != first_subject)
     {
         bail!("one communication evidence transaction may target only one subject");
     }
 
     with_state_lock(home, || {
         let mut state = load_state_unlocked(home)?;
-        let subject = state.subjects.entry(first_subject.clone()).or_default();
+        let subject = state.subjects.entry(first_subject.to_owned()).or_default();
         let mut outcome = ObservationOutcome::default();
         let mut newest_observation = i64::MIN;
         for input in inputs {
@@ -959,13 +1252,14 @@ pub fn record_evidence_batch(
             }
             evidence.push(EvidenceRef {
                 event_hash,
-                subject_id: input.subject_id.clone(),
+                subject_id: input.subject_id().to_owned(),
                 session_id: input.session_id.clone(),
                 source: input.source,
                 value: input.value,
                 observed_at_unix: input.observed_at_unix,
                 scope: input.scope.clone(),
-                authenticated_subject: true,
+                legacy_authenticated_subject: false,
+                authenticated_origin: Some(input.subject.origin()),
                 reason_code: input.reason_code.to_owned(),
             });
             prune_evidence(evidence, policy.max_evidence_per_dimension);
@@ -980,7 +1274,7 @@ pub fn record_evidence_batch(
             state.revision = state.revision.saturating_add(1);
             outcome.state_revision = Some(state.revision);
             state.audit_pending.push(ObservationAuditIntent {
-                subject_id: first_subject.clone(),
+                subject_id: first_subject.to_owned(),
                 event_hash: hex::encode(inputs[0].event_hash),
                 scope: inputs[0].scope.clone(),
                 outcome: outcome.clone(),
@@ -992,7 +1286,7 @@ pub fn record_evidence_batch(
     })
 }
 
-pub fn record_evidence(
+pub(crate) fn record_evidence(
     home: &Path,
     policy: &CommunicationProfileConfig,
     input: EvidenceInput,
@@ -1558,17 +1852,16 @@ fn is_response_feedback_text(text: &str) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn record_text_observation(
+pub(crate) fn record_text_observation(
     home: &Path,
     policy: &CommunicationProfileConfig,
     text: &str,
     kind: ObservationKind,
     event_hash: [u8; 32],
-    subject_id: &str,
+    subject: impl ApprovedCommunicationSubject,
     session_id: &str,
     observed_at_unix: i64,
     scope: CommunicationScope,
-    authenticated_subject: bool,
     full_auto: bool,
     incognito: bool,
 ) -> Result<ObservationOutcome> {
@@ -1578,19 +1871,21 @@ pub fn record_text_observation(
             ..ObservationOutcome::default()
         });
     }
+    let subject = subject.into_subject();
     let candidates = classify_text(text, kind);
     let inputs = candidates
         .into_iter()
-        .map(|candidate| EvidenceInput {
-            event_hash,
-            subject_id: subject_id.to_owned(),
-            session_id: session_id.to_owned(),
-            source: kind.source(),
-            value: candidate.value,
-            observed_at_unix,
-            scope: scope.clone(),
-            authenticated_subject,
-            reason_code: candidate.reason_code,
+        .map(|candidate| {
+            EvidenceInput::from_authenticated(
+                event_hash,
+                subject.clone(),
+                session_id.to_owned(),
+                kind.source(),
+                candidate.value,
+                observed_at_unix,
+                scope.clone(),
+                candidate.reason_code,
+            )
         })
         .collect::<Vec<_>>();
     record_evidence_batch(home, policy, &inputs, full_auto, incognito)
@@ -1601,16 +1896,15 @@ pub fn record_text_observation(
 /// passive layout/length signals fill only dimensions not already explained
 /// by an explicit signal in the same turn.
 #[allow(clippy::too_many_arguments)]
-pub fn record_authenticated_turn(
+pub(crate) fn record_authenticated_turn(
     home: &Path,
     policy: &CommunicationProfileConfig,
     text: &str,
     event_hash: [u8; 32],
-    subject_id: &str,
+    subject: impl ApprovedCommunicationSubject,
     session_id: &str,
     observed_at_unix: i64,
     scope: CommunicationScope,
-    authenticated_subject: bool,
     full_auto: bool,
     incognito: bool,
 ) -> Result<ObservationOutcome> {
@@ -1620,6 +1914,7 @@ pub fn record_authenticated_turn(
             ..ObservationOutcome::default()
         });
     }
+    let subject = subject.into_subject();
     let primary_kind = if is_response_feedback_text(text) {
         ObservationKind::ResponseFeedback
     } else {
@@ -1635,58 +1930,62 @@ pub fn record_authenticated_turn(
         .filter(|candidate| occupied.insert(candidate.value.dimension()));
     let mut inputs = primary
         .into_iter()
-        .map(|candidate| EvidenceInput {
-            event_hash,
-            subject_id: subject_id.to_owned(),
-            session_id: session_id.to_owned(),
-            source: primary_kind.source(),
-            value: candidate.value,
-            observed_at_unix,
-            scope: scope.clone(),
-            authenticated_subject,
-            reason_code: candidate.reason_code,
+        .map(|candidate| {
+            EvidenceInput::from_authenticated(
+                event_hash,
+                subject.clone(),
+                session_id.to_owned(),
+                primary_kind.source(),
+                candidate.value,
+                observed_at_unix,
+                scope.clone(),
+                candidate.reason_code,
+            )
         })
         .collect::<Vec<_>>();
-    inputs.extend(passive.map(|candidate| EvidenceInput {
-        event_hash,
-        subject_id: subject_id.to_owned(),
-        session_id: session_id.to_owned(),
-        source: EvidenceSource::PassiveOutcome,
-        value: candidate.value,
-        observed_at_unix,
-        scope: scope.clone(),
-        authenticated_subject,
-        reason_code: candidate.reason_code,
+    inputs.extend(passive.map(|candidate| {
+        EvidenceInput::from_authenticated(
+            event_hash,
+            subject.clone(),
+            session_id.to_owned(),
+            EvidenceSource::PassiveOutcome,
+            candidate.value,
+            observed_at_unix,
+            scope.clone(),
+            candidate.reason_code,
+        )
     }));
     record_evidence_batch(home, policy, &inputs, full_auto, incognito)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn set_explicit_preference(
+pub(crate) fn set_explicit_preference(
     home: &Path,
     policy: &CommunicationProfileConfig,
-    subject_id: &str,
+    proof: impl ApprovedCommunicationSubject,
     session_id: &str,
     value: PreferenceValue,
     event_hash: [u8; 32],
     observed_at_unix: i64,
-    scope: CommunicationScope,
     incognito: bool,
 ) -> Result<ObservationOutcome> {
+    let subject = proof.into_subject();
+    if !subject.permits_global_scope() {
+        bail!("explicit communication preferences require an operator-global origin proof");
+    }
     record_evidence(
         home,
         policy,
-        EvidenceInput {
+        EvidenceInput::from_authenticated(
             event_hash,
-            subject_id: subject_id.to_owned(),
-            session_id: session_id.to_owned(),
-            source: EvidenceSource::ExplicitSetting,
+            subject,
+            session_id.to_owned(),
+            EvidenceSource::ExplicitSetting,
             value,
             observed_at_unix,
-            scope,
-            authenticated_subject: true,
-            reason_code: "explicit_setting",
-        },
+            CommunicationScope::Global,
+            "explicit_setting",
+        ),
         false,
         incognito,
     )
@@ -1719,10 +2018,10 @@ pub fn reset_dimension(
     })
 }
 
-pub fn declare_context(
+pub(crate) fn declare_context(
     home: &Path,
     policy: &CommunicationProfileConfig,
-    subject_id: &str,
+    proof: impl ApprovedCommunicationSubject,
     kind: DeclaredContextKind,
     source_event_hash: [u8; 32],
     prompt_use: DeclaredContextPromptUse,
@@ -1732,13 +2031,19 @@ pub fn declare_context(
     if !policy.enabled || incognito {
         return Ok(false);
     }
-    validate_subject_id(subject_id)?;
+    let subject_proof = proof.into_subject();
+    if !subject_proof.permits_global_scope() {
+        bail!("declared communication context requires an explicit operator-origin proof");
+    }
     if source_event_hash.iter().all(|byte| *byte == 0) {
         bail!("declared context source_event_hash must not be zero");
     }
     with_state_lock(home, || {
         let mut state = load_state_unlocked(home)?;
-        let subject = state.subjects.entry(subject_id.to_owned()).or_default();
+        let subject = state
+            .subjects
+            .entry(subject_proof.subject_id().to_owned())
+            .or_default();
         subject.declared_context = Some(DeclaredContext {
             kind,
             explicitly_asserted_by_operator: true,
@@ -1758,7 +2063,7 @@ pub fn clear_declared_context(
     home: &Path,
     policy: &CommunicationProfileConfig,
     subject_id: &str,
-    cleared_at_unix: i64,
+    _cleared_at_unix: i64,
     incognito: bool,
 ) -> Result<bool> {
     if !policy.enabled || incognito {
@@ -1770,10 +2075,12 @@ pub fn clear_declared_context(
         let Some(subject) = state.subjects.get_mut(subject_id) else {
             return Ok(false);
         };
-        let Some(context) = subject.declared_context.as_mut() else {
+        let Some(_) = subject.declared_context.as_ref() else {
             return Ok(false);
         };
-        context.revoked_at_unix = Some(cleared_at_unix);
+        // A clear action is an erasure of the sensitive label, not merely a
+        // prompt-export revocation. WAL control receipts remain metadata-only.
+        subject.declared_context = None;
         subject.revision = subject.revision.saturating_add(1);
         state.revision = state.revision.saturating_add(1);
         persist_state_unlocked(home, &state)?;
@@ -1978,17 +2285,22 @@ mod tests {
         at: i64,
         value: PreferenceValue,
     ) -> EvidenceInput {
-        EvidenceInput {
-            event_hash: hash(byte),
-            subject_id: subject.to_owned(),
-            session_id: session.to_owned(),
-            source: EvidenceSource::ExplicitCorrection,
+        let is_operator = subject == COMMUNICATION_OPERATOR_SUBJECT;
+        let proof = subject;
+        EvidenceInput::new(
+            hash(byte),
+            proof,
+            session.to_owned(),
+            EvidenceSource::ExplicitCorrection,
             value,
-            observed_at_unix: at,
-            scope: CommunicationScope::Global,
-            authenticated_subject: true,
-            reason_code: "test_signal",
-        }
+            at,
+            if is_operator {
+                CommunicationScope::Global
+            } else {
+                CommunicationScope::Channel("test".to_owned())
+            },
+            "test_signal",
+        )
     }
 
     fn direct() -> PreferenceValue {
@@ -2006,6 +2318,218 @@ mod tests {
         );
         assert!(!policy.cluster_sync);
         policy.validate().unwrap();
+    }
+
+    #[test]
+    fn schema_v1_migration_quarantines_and_rewrites_v2() {
+        let dir = tempdir().unwrap();
+        let mut state = CommunicationState::default();
+        state.schema_version = LEGACY_STATE_SCHEMA_VERSION;
+        state.revision = 2;
+        let legacy = |subject_id: &str, value: PreferenceValue| EvidenceRef {
+            event_hash: hex::encode(hash(if subject_id == "operator" { 1 } else { 2 })),
+            subject_id: subject_id.to_owned(),
+            session_id: "legacy-session".to_owned(),
+            source: EvidenceSource::ExplicitCorrection,
+            value,
+            observed_at_unix: 1,
+            scope: CommunicationScope::Global,
+            legacy_authenticated_subject: true,
+            authenticated_origin: None,
+            reason_code: "legacy_signal".to_owned(),
+        };
+        let unsafe_pace = PreferenceValue::Pace(PacePreference::AskBeforeNext);
+        let direct_value = direct();
+        let estimate = |value: PreferenceValue| DimensionEstimate {
+            selected: value,
+            confidence: 1.0,
+            effective_weight: 1.0,
+            observation_count: 1,
+            distinct_sessions: 1,
+            first_seen_unix: 1,
+            last_seen_unix: 1,
+            active: true,
+            pinned: false,
+            durable_by_full_auto: true,
+            scope_provenance: CommunicationScope::Global,
+        };
+        state.subjects.insert(
+            "operator".to_owned(),
+            SubjectCommunicationProfile {
+                revision: 1,
+                evidence: BTreeMap::from([(CommunicationDimension::Pace, vec![legacy("operator", unsafe_pace)])]),
+                estimates: BTreeMap::from([(CommunicationDimension::Pace, estimate(unsafe_pace))]),
+                declared_context: None,
+            },
+        );
+        state.subjects.insert(
+            "alice".to_owned(),
+            SubjectCommunicationProfile {
+                revision: 1,
+                evidence: BTreeMap::from([(CommunicationDimension::Directness, vec![legacy("alice", direct_value)])]),
+                estimates: BTreeMap::from([(CommunicationDimension::Directness, estimate(direct_value))]),
+                declared_context: None,
+            },
+        );
+        let path = state_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut legacy_json = serde_json::to_value(&state).unwrap();
+        for subject in ["operator", "alice"] {
+            for evidence in legacy_json["subjects"][subject]["evidence"]
+                .as_object_mut()
+                .unwrap()
+                .values_mut()
+            {
+                evidence.as_array_mut().unwrap()[0]["authenticated_subject"] =
+                    serde_json::Value::Bool(true);
+            }
+            for estimate in legacy_json["subjects"][subject]["estimates"]
+                .as_object_mut()
+                .unwrap()
+                .values_mut()
+            {
+                estimate
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("scope_provenance");
+            }
+        }
+        std::fs::write(&path, serde_json::to_vec(&legacy_json).unwrap()).unwrap();
+
+        let migrated = load_state(dir.path()).unwrap();
+        assert_eq!(migrated.schema_version, STATE_SCHEMA_VERSION);
+        assert_eq!(
+            migrated.subjects["operator"].estimates[&CommunicationDimension::Pace]
+                .scope_provenance,
+            CommunicationScope::Global
+        );
+        assert!(!migrated.subjects["operator"].estimates[&CommunicationDimension::Pace].durable_by_full_auto);
+        assert!(!migrated.subjects["alice"].estimates[&CommunicationDimension::Directness].durable_by_full_auto);
+        assert_eq!(
+            migrated.subjects["alice"].estimates[&CommunicationDimension::Directness]
+                .scope_provenance,
+            CommunicationScope::Task("legacy_unscoped".to_owned())
+        );
+        assert!(matches!(
+            migrated.subjects["alice"].evidence[&CommunicationDimension::Directness][0].scope,
+            CommunicationScope::Task(ref value) if value == "legacy_unscoped"
+        ));
+        set_explicit_preference(
+            dir.path(),
+            &CommunicationProfileConfig::default(),
+            "operator",
+            "rewrite-session",
+            direct(),
+            hash(9),
+            2,
+            false,
+        )
+        .unwrap();
+        let bytes = std::fs::read(path).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["schema_version"], STATE_SCHEMA_VERSION);
+        assert!(!serde_json::to_string(&value).unwrap().contains("authenticated_subject"));
+        assert_eq!(
+            value["subjects"]["operator"]["estimates"]["pace"]["scope_provenance"]["kind"],
+            "global"
+        );
+        assert_eq!(
+            value["subjects"]["alice"]["estimates"]["directness"]["scope_provenance"]["kind"],
+            "task"
+        );
+        assert_eq!(
+            value["subjects"]["alice"]["estimates"]["directness"]["scope_provenance"]["id"],
+            "legacy_unscoped"
+        );
+    }
+
+    #[test]
+    fn production_proof_api_has_no_crate_wide_minter_or_boolean_authority() {
+        let source = include_str!("communication.rs");
+        assert!(!source.contains(&["local_", "interactive_operator"].concat()));
+        assert!(!source.contains(&["channel_", "identity("].concat()));
+        assert!(!source.contains(&["Operator", "OriginProof"].concat()));
+        assert!(!source.contains(&["authenticated_subject", ": bool"].concat()));
+        assert!(source.contains("pub(in crate::profile) trait Sealed"));
+        assert!(source.contains("#[cfg(test)]\nimpl ApprovedCommunicationSubject for &str"));
+    }
+
+    #[test]
+    fn full_auto_refuses_unsafe_pace_after_all_thresholds_are_met() {
+        let dir = tempdir().unwrap();
+        let mut policy = CommunicationProfileConfig::default();
+        policy.min_observations = 1;
+        policy.min_distinct_sessions = 1;
+        policy.min_confidence = 0.5;
+        policy.full_auto_min_observations = 1;
+        policy.full_auto_min_distinct_sessions = 1;
+        policy.full_auto_min_confidence = 0.5;
+        record_evidence(
+            dir.path(),
+            &policy,
+            input(
+                "operator",
+                "s1",
+                1,
+                1,
+                PreferenceValue::Pace(PacePreference::AskBeforeNext),
+            ),
+            true,
+            false,
+        )
+        .unwrap();
+        let estimate = load_subject(dir.path(), "operator", &policy, false)
+            .unwrap()
+            .unwrap()
+            .estimates
+            .get(&CommunicationDimension::Pace)
+            .cloned()
+            .unwrap();
+        assert!(!estimate.durable_by_full_auto);
+    }
+
+    #[test]
+    fn channel_scope_never_becomes_a_global_estimate() {
+        let dir = tempdir().unwrap();
+        let mut policy = CommunicationProfileConfig::default();
+        policy.min_observations = 1;
+        policy.min_distinct_sessions = 1;
+        policy.min_confidence = 0.5;
+        let channel = CommunicationScope::Channel("telegram".to_owned());
+        let evidence = EvidenceInput::new(
+            hash(1),
+            "alice",
+            "channel:s1".to_owned(),
+            EvidenceSource::ExplicitCorrection,
+            direct(),
+            1,
+            channel.clone(),
+            "test_signal",
+        );
+        record_evidence(dir.path(), &policy, evidence, true, false).unwrap();
+        assert!(compile_prompt_at(dir.path(), "alice", &policy, None, false, 2)
+            .unwrap()
+            .is_none());
+        assert!(compile_prompt_at(dir.path(), "alice", &policy, Some(&channel), false, 2)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn non_operator_proof_cannot_declare_context() {
+        let dir = tempdir().unwrap();
+        let error = declare_context(
+            dir.path(),
+            &CommunicationProfileConfig::default(),
+            "alice",
+            DeclaredContextKind::Adhd,
+            hash(1),
+            DeclaredContextPromptUse::AccommodationsOnly,
+            1,
+            false,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("operator-origin proof"));
     }
 
     #[test]
@@ -2140,7 +2664,6 @@ mod tests {
             CommunicationScope::Global,
             true,
             false,
-            false,
         )
         .unwrap();
         assert!(outcome.recorded >= 2);
@@ -2171,7 +2694,6 @@ mod tests {
             CommunicationScope::Global,
             true,
             false,
-            false,
         )
         .unwrap();
         assert_eq!(outcome.recorded, 1);
@@ -2187,13 +2709,21 @@ mod tests {
     }
 
     #[test]
-    fn unauthenticated_evidence_is_rejected() {
+    fn non_operator_subject_cannot_write_global_evidence() {
         let dir = tempdir().unwrap();
         let policy = CommunicationProfileConfig::default();
-        let mut evidence = input("operator", "s1", 1, 10, direct());
-        evidence.authenticated_subject = false;
+        let evidence = EvidenceInput::new(
+            hash(1),
+            "alice",
+            "s1".to_owned(),
+            EvidenceSource::ExplicitCorrection,
+            direct(),
+            10,
+            CommunicationScope::Global,
+            "test_signal",
+        );
         let error = record_evidence(dir.path(), &policy, evidence, false, false).unwrap_err();
-        assert!(error.to_string().contains("authenticated human"));
+        assert!(error.to_string().contains("operator origin"));
         assert!(!state_path(dir.path()).exists());
     }
 
@@ -2250,7 +2780,6 @@ mod tests {
             PreferenceValue::Structure(StructurePreference::NumberedSteps),
             hash(1),
             100,
-            CommunicationScope::Global,
             false,
         )
         .unwrap();
@@ -2313,7 +2842,6 @@ mod tests {
             PreferenceValue::Directness(DirectnessPreference::Gentle),
             hash(31),
             31 * 86_400,
-            CommunicationScope::Global,
             false,
         )
         .unwrap();
@@ -2388,7 +2916,7 @@ mod tests {
     fn subjects_are_strictly_isolated() {
         let dir = tempdir().unwrap();
         let policy = CommunicationProfileConfig::default();
-        set_explicit_preference(
+        set_test_scoped_preference(
             dir.path(),
             &policy,
             "alice",
@@ -2396,8 +2924,6 @@ mod tests {
             direct(),
             hash(1),
             1,
-            CommunicationScope::Global,
-            false,
         )
         .unwrap();
         assert!(
@@ -2445,7 +2971,6 @@ mod tests {
             1,
             CommunicationScope::Global,
             true,
-            false,
             true,
         )
         .unwrap();
@@ -2470,7 +2995,6 @@ mod tests {
             CommunicationScope::Global,
             true,
             false,
-            false,
         )
         .unwrap();
         let bytes = std::fs::read(state_path(dir.path())).unwrap();
@@ -2492,7 +3016,6 @@ mod tests {
             direct(),
             hash(1),
             1,
-            CommunicationScope::Global,
             false,
         )
         .unwrap();
@@ -2524,7 +3047,6 @@ mod tests {
             direct(),
             hash(1),
             1,
-            CommunicationScope::Global,
             false,
         )
         .unwrap();
@@ -2560,7 +3082,6 @@ mod tests {
             direct(),
             hash(1),
             1,
-            CommunicationScope::Global,
             false,
         )
         .unwrap();
@@ -2642,7 +3163,6 @@ mod tests {
             direct(),
             hash(1),
             1,
-            CommunicationScope::Global,
             false,
         )
         .unwrap();

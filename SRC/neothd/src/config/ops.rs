@@ -884,7 +884,10 @@ pub struct CommunicationProfileConfig {
     /// Half-life for explicit corrections in natural language.
     pub correction_half_life_days: u32,
     /// Full/Sovereign can promote a stable low-risk accommodation only after
-    /// this many observations.
+    /// this many observations. The communication core additionally enforces a
+    /// fixed presentation-only allowlist; no config threshold can make pace,
+    /// clarification, correction style, autonomy or task/channel evidence
+    /// durable without an explicit operator pin.
     pub full_auto_min_observations: u32,
     /// Distinct-session floor for durable Full/Sovereign promotion.
     pub full_auto_min_distinct_sessions: u32,

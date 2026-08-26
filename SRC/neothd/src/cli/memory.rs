@@ -1906,7 +1906,7 @@ mod tests {
             CommunicationScope, DirectnessPreference, PreferenceValue,
         };
 
-        crate::profile::communication::set_explicit_preference(
+        crate::profile::communication::set_test_scoped_preference(
             home,
             &crate::config::CommunicationProfileConfig::default(),
             subject_id,
@@ -1914,8 +1914,6 @@ mod tests {
             PreferenceValue::Directness(DirectnessPreference::Direct),
             event_hash,
             1_700_000_000,
-            CommunicationScope::Global,
-            false,
         )
         .unwrap();
     }

@@ -22,6 +22,15 @@ use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::memory::store;
 
+/// Opaque capability minted only by the local profile-control CLI boundary.
+pub(crate) struct LocalProfileCommunicationOperator(());
+
+impl LocalProfileCommunicationOperator {
+    fn mint() -> Self {
+        Self(())
+    }
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct ProfileArgs {
     #[command(subcommand)]
@@ -991,12 +1000,11 @@ fn set_communication_preference_at(
     let outcome = crate::profile::communication::set_explicit_preference(
         home,
         &policy,
-        COMMUNICATION_OPERATOR_SUBJECT,
+        LocalProfileCommunicationOperator::mint(),
         &identity.session_id,
         preference,
         identity.event_hash,
         observed_at_unix,
-        crate::profile::communication::CommunicationScope::Global,
         false,
     )?;
     if outcome.recorded != 1 {
@@ -1117,7 +1125,7 @@ fn declare_communication_context_at(
     let changed = crate::profile::communication::declare_context(
         home,
         &policy,
-        COMMUNICATION_OPERATOR_SUBJECT,
+        LocalProfileCommunicationOperator::mint(),
         kind,
         identity.event_hash,
         prompt_use,
@@ -1137,24 +1145,18 @@ fn declare_communication_context_at(
 }
 
 fn clear_communication_context_at(home: &std::path::Path) -> Result<CommunicationMutationReceipt> {
-    let current = crate::profile::communication::load_state(home)?
-        .subjects
-        .get(COMMUNICATION_OPERATOR_SUBJECT)
-        .and_then(|subject| subject.declared_context.as_ref())
-        .is_some_and(|context| context.revoked_at_unix.is_none());
-    let changed = if current {
-        let mut mutation_policy = load_communication_policy_at(home, false)?;
-        mutation_policy.enabled = true;
-        crate::profile::communication::clear_declared_context(
-            home,
-            &mutation_policy,
-            COMMUNICATION_OPERATOR_SUBJECT,
-            crate::time::now_unix_i64(),
-            false,
-        )?
-    } else {
-        false
-    };
+    // Clear is an erasure request, including legacy revoked records that may
+    // still retain a sensitive label on disk. Let the core report no-change
+    // only when no declaration exists at all.
+    let mut mutation_policy = load_communication_policy_at(home, false)?;
+    mutation_policy.enabled = true;
+    let changed = crate::profile::communication::clear_declared_context(
+        home,
+        &mutation_policy,
+        COMMUNICATION_OPERATOR_SUBJECT,
+        crate::time::now_unix_i64(),
+        false,
+    )?;
     Ok(CommunicationMutationReceipt {
         action: "clear_context",
         changed,
@@ -1449,7 +1451,7 @@ fn run_communication_why_at(
                 "value": preference_value_name(item.value),
                 "observed_at_unix": item.observed_at_unix,
                 "scope": communication_scope_name(&item.scope),
-                "authenticated_subject": item.authenticated_subject,
+                "authenticated_origin": item.authenticated_origin,
                 "reason_code": item.reason_code,
             })
         })
@@ -1563,7 +1565,13 @@ async fn run_communication_sub_at(
                 CommunicationControlAction::ForgetSubject
             };
             let receipt = reset_communication_at(home, dimension.map(Into::into))?;
-            audit_and_render_communication_receipt(home, action, &receipt, output).await
+            audit_and_render_communication_receipt(
+                home,
+                action,
+                &receipt,
+                output,
+            )
+            .await
         }
         command @ (CommunicationSub::Enable | CommunicationSub::Disable) => {
             let enabled = matches!(command, CommunicationSub::Enable);
@@ -4054,14 +4062,7 @@ mod tests {
                 .evidence
                 .contains_key(&CommunicationDimension::Directness)
         );
-        assert!(
-            subject
-                .declared_context
-                .as_ref()
-                .unwrap()
-                .revoked_at_unix
-                .is_some()
-        );
+        assert!(subject.declared_context.is_none());
     }
 
     #[test]

@@ -687,7 +687,7 @@ mod tests {
         event_byte: u8,
         value: crate::profile::communication::PreferenceValue,
     ) {
-        crate::profile::communication::set_explicit_preference(
+        crate::profile::communication::set_test_scoped_preference(
             home,
             &crate::config::CommunicationProfileConfig::default(),
             subject_id,
@@ -695,8 +695,6 @@ mod tests {
             value,
             [event_byte; 32],
             1_700_000_000 + i64::from(event_byte),
-            crate::profile::communication::CommunicationScope::Global,
-            false,
         )
         .expect("pin communication preference");
     }

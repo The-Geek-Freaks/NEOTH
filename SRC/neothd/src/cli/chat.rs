@@ -13,6 +13,15 @@ use tracing::{info, warn};
 use zeroize::Zeroizing;
 
 use crate::config::{FreedomConfig, InstancePaths};
+
+/// Opaque capability minted only by this local-interactive CLI boundary.
+pub(crate) struct LocalChatCommunicationSubject(());
+
+impl LocalChatCommunicationSubject {
+    fn mint() -> Self {
+        Self(())
+    }
+}
 use crate::providers::{self, CompletionChunk, Provider, Request};
 use crate::wal::events::{
     EVENT_TYPE_AUTO_SKILL_EXTRACTED, EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_INCOGNITO_TURN,
@@ -4909,16 +4918,16 @@ async fn run_post_reply_pipelines(
         &raw_event_id.to_le_bytes(),
     );
     let communication_scope = crate::profile::communication::CommunicationScope::Global;
+    let communication_subject = LocalChatCommunicationSubject::mint();
     let communication_outcome = crate::profile::communication::record_authenticated_turn(
         &first_tour_home,
         &config.profile.communication,
         &prompt,
         communication_event_hash,
-        "operator",
+        communication_subject,
         &current_session_id,
         chat_ts_unix,
         communication_scope.clone(),
-        true,
         matches!(config.autonomy, crate::permissions::AutonomyLevel::Full),
         args.incognito,
     )

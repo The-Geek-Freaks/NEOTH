@@ -790,7 +790,7 @@ mod tests {
         let home = tempdir().unwrap();
         let out = tempdir().unwrap();
         let policy = crate::config::CommunicationProfileConfig::default();
-        crate::profile::communication::set_explicit_preference(
+        crate::profile::communication::set_test_scoped_preference(
             home.path(),
             &policy,
             "operator",
@@ -798,11 +798,9 @@ mod tests {
             PreferenceValue::Directness(DirectnessPreference::Direct),
             [1; 32],
             1_700_000_000,
-            CommunicationScope::Global,
-            false,
         )
         .unwrap();
-        crate::profile::communication::set_explicit_preference(
+        crate::profile::communication::set_test_scoped_preference(
             home.path(),
             &policy,
             "other-human",
@@ -810,14 +808,12 @@ mod tests {
             PreferenceValue::Directness(DirectnessPreference::Gentle),
             [2; 32],
             1_700_000_001,
-            CommunicationScope::Global,
-            false,
         )
         .unwrap();
 
         let summary = run_export(home.path(), out.path(), ExportFormat::Md, 0).unwrap();
         assert!(summary.communication_profile_state_present);
-        assert_eq!(summary.communication_profile_state_schema_version, Some(1));
+        assert_eq!(summary.communication_profile_state_schema_version, Some(2));
         assert_eq!(summary.communication_profile_subjects, 1);
         assert_eq!(summary.communication_profile_dimensions, 1);
         assert_eq!(summary.communication_profile_evidence_records, 1);
@@ -826,7 +822,7 @@ mod tests {
         let body = std::fs::read_to_string(out.path().join("communication_profile.json")).unwrap();
         let value: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(value["state_present"], true);
-        assert_eq!(value["state_schema_version"], 1);
+        assert_eq!(value["state_schema_version"], 2);
         assert_eq!(value["operator_subject"], true);
         assert_eq!(
             value["subject_sha256"],
@@ -886,7 +882,7 @@ mod tests {
         };
 
         let home = tempdir().unwrap();
-        crate::profile::communication::set_explicit_preference(
+        crate::profile::communication::set_test_scoped_preference(
             home.path(),
             &crate::config::CommunicationProfileConfig::default(),
             "native:matrix:AbC",
@@ -894,8 +890,6 @@ mod tests {
             PreferenceValue::Directness(DirectnessPreference::Direct),
             [4; 32],
             1_700_000_000,
-            CommunicationScope::Global,
-            false,
         )
         .unwrap();
 

@@ -192,11 +192,23 @@ pub(crate) fn sender_hash_of(sender_id: &str) -> String {
     format!("{:016x}", xxhash_rust::xxh3::xxh3_64(sender_id.as_bytes()))
 }
 
-/// Resolve the communication-profile subject for one inbound turn. The pinned
+/// Opaque capability for the configured operator after resolved-UUID equality.
+pub(crate) struct PinnedChannelCommunicationSubject(());
+
+impl PinnedChannelCommunicationSubject {
+    fn try_mint(resolved_human_uuid: Option<&str>, configured_operator_uuid: Option<&str>) -> Option<Self> {
+        matches!(
+            (resolved_human_uuid, configured_operator_uuid),
+            (Some(resolved), Some(configured)) if resolved == configured
+        )
+        .then_some(Self(()))
+    }
+}
+
+/// Resolve the communication audit label for one inbound turn. The pinned
 /// operator intentionally shares the `operator` subject with CLI/GUI. Other
-/// people use the cross-channel identity UUID; first-sight resolution failures
-/// fall back to a channel-scoped hash so a phone number/user id is never copied
-/// into the profile state path.
+/// people retain an identity-derived label only for the metadata audit path;
+/// they receive no implicit communication-profile state access or persistence.
 fn communication_subject_id(
     inbound: &InboundMessage,
     operator_human_uuid: Option<&str>,
@@ -1462,20 +1474,33 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             );
             let durable_full_auto = channel_communication_subject == "operator"
                 && config_for_handler.autonomy == crate::permissions::AutonomyLevel::Full;
-            let communication_outcome = crate::profile::communication::record_authenticated_turn(
-                &neoth_home,
-                &config_for_handler.profile.communication,
-                &sanitized_text,
-                communication_event_hash,
-                &channel_communication_subject,
-                &communication_session,
-                ingress_ts_unix as i64,
-                channel_communication_scope.clone(),
-                true,
-                durable_full_auto,
-                false,
-            )
-            .context("record communication evidence for channel turn")?;
+            // Default-on local adaptation is deliberately operator-only at
+            // channel ingress. Other people have no implicit consent to a
+            // longitudinal behavioural profile or provider disclosure.
+            let communication_profile_incognito = channel_communication_subject != "operator";
+            let communication_subject_proof = PinnedChannelCommunicationSubject::try_mint(
+                inbound.human_uuid.as_deref(),
+                config_for_handler.channel_weights.operator_human_uuid.as_deref(),
+            );
+            let communication_outcome = match communication_subject_proof {
+                Some(proof) => crate::profile::communication::record_authenticated_turn(
+                    &neoth_home,
+                    &config_for_handler.profile.communication,
+                    &sanitized_text,
+                    communication_event_hash,
+                    proof,
+                    &communication_session,
+                    ingress_ts_unix as i64,
+                    channel_communication_scope.clone(),
+                    durable_full_auto,
+                    false,
+                )
+                .context("record communication evidence for channel turn")?,
+                None => crate::profile::communication::ObservationOutcome {
+                    inactive: true,
+                    ..crate::profile::communication::ObservationOutcome::default()
+                },
+            };
             crate::profile::communication::append_observation_audit(
                 &neoth_home,
                 &writer,
@@ -2230,7 +2255,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &channel_communication_subject,
                 &config_for_handler.profile.communication,
                 Some(&channel_communication_scope),
-                false,
+                communication_profile_incognito,
             )
             .context("compile communication profile for channel turn")?;
 
