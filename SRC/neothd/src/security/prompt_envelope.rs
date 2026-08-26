@@ -26,6 +26,9 @@ pub(crate) const MAX_CODING_TASK_TITLE_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_CODING_TASK_DESCRIPTION_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_PLAN_REVIEW_TEXT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_PLAN_REVIEW_CRITIQUES_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_DECOMPOSER_OPERATOR_REQUEST_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_DECOMPOSER_PROJECT_CONTEXT_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_DECOMPOSER_PRIOR_PROVIDER_OUTPUT_BYTES: usize = 128 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_DATA_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_RENDERED_BYTES: usize = 384 * 1024;
 
@@ -39,6 +42,8 @@ pub(crate) enum PromptEnvelopePurpose {
     ArxivAbstractSummary,
     CodingSecondOpinion,
     CodingPlanReview,
+    CodingDecomposition,
+    CodingDecompositionRepair,
     DoctorDiagnose,
     EmailThreatTiebreak,
     SubAgentReview,
@@ -69,6 +74,15 @@ impl PromptEnvelopePurpose {
             Self::CodingPlanReview => &[
                 PromptFieldKind::PlanText,
                 PromptFieldKind::PriorCritiques,
+            ],
+            Self::CodingDecomposition => &[
+                PromptFieldKind::DecomposerOperatorRequest,
+                PromptFieldKind::DecomposerProjectContext,
+            ],
+            Self::CodingDecompositionRepair => &[
+                PromptFieldKind::DecomposerOperatorRequest,
+                PromptFieldKind::DecomposerProjectContext,
+                PromptFieldKind::PriorProviderOutput,
             ],
             Self::DoctorDiagnose => &[PromptFieldKind::DiagnosticFindings],
             Self::EmailThreatTiebreak => &[
@@ -115,6 +129,8 @@ impl PromptEnvelopePurpose {
             Self::ArxivAbstractSummary => "arxiv_abstract_summary",
             Self::CodingSecondOpinion => "coding_second_opinion",
             Self::CodingPlanReview => "coding_plan_review",
+            Self::CodingDecomposition => "coding_decomposition",
+            Self::CodingDecompositionRepair => "coding_decomposition_repair",
             Self::DoctorDiagnose => "doctor_diagnose",
             Self::EmailThreatTiebreak => "email_threat_tiebreak",
             Self::SubAgentReview => "sub_agent_review",
@@ -144,6 +160,9 @@ pub(crate) enum PromptFieldKind {
     TaskDescription,
     PlanText,
     PriorCritiques,
+    DecomposerOperatorRequest,
+    DecomposerProjectContext,
+    PriorProviderOutput,
     DiagnosticFindings,
     EmailSubject,
     EmailBody,
@@ -170,6 +189,9 @@ impl PromptFieldKind {
             Self::TaskDescription => MAX_CODING_TASK_DESCRIPTION_BYTES,
             Self::PlanText => MAX_PLAN_REVIEW_TEXT_BYTES,
             Self::PriorCritiques => MAX_PLAN_REVIEW_CRITIQUES_BYTES,
+            Self::DecomposerOperatorRequest => MAX_DECOMPOSER_OPERATOR_REQUEST_BYTES,
+            Self::DecomposerProjectContext => MAX_DECOMPOSER_PROJECT_CONTEXT_BYTES,
+            Self::PriorProviderOutput => MAX_DECOMPOSER_PRIOR_PROVIDER_OUTPUT_BYTES,
             Self::DiagnosticFindings => MAX_DOCTOR_DIAGNOSTIC_FINDINGS_BYTES,
             Self::EmailSubject => MAX_EMAIL_SUBJECT_BYTES,
             Self::EmailBody => MAX_EMAIL_BODY_BYTES,
@@ -195,6 +217,9 @@ impl PromptFieldKind {
             Self::TaskDescription => "task_description",
             Self::PlanText => "plan_text",
             Self::PriorCritiques => "prior_critiques",
+            Self::DecomposerOperatorRequest => "decomposer_operator_request",
+            Self::DecomposerProjectContext => "decomposer_project_context",
+            Self::PriorProviderOutput => "prior_provider_output",
             Self::DiagnosticFindings => "diagnostic_findings",
             Self::EmailSubject => "email_subject",
             Self::EmailBody => "email_body",
