@@ -29,7 +29,7 @@ pub const MAX_REPLY_LEN: usize = 256;
 /// data before the Cerebellum can see them.
 pub fn build_classify_prompt(
     task: &KanbanTask,
-) -> Result<String> {
+) -> std::result::Result<String, crate::security::PromptBuildError> {
     use crate::security::prompt_envelope::{
         PromptEnvelopeError, PromptEnvelopePurpose, PromptFieldKind, UntrustedPromptField,
     };

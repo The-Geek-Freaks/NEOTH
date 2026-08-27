@@ -90,7 +90,7 @@ fn truncate_utf8_to_bytes(value: &str, max_bytes: usize) -> &str {
 /// UTF-8-safe, and exposed in [`SummaryBody::truncated`].
 pub fn build_summary_body(
     events: &[(i64, String)],
-) -> Result<SummaryBody> {
+) -> std::result::Result<SummaryBody, crate::security::PromptBuildError> {
     use crate::security::prompt_envelope::{MAX_WARM_SUMMARY_EVENT_DATA_BYTES, PromptFieldKind};
 
     let mut body = String::new();

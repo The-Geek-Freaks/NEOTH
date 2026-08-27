@@ -398,6 +398,39 @@ impl fmt::Display for PromptEnvelopeError {
 
 impl std::error::Error for PromptEnvelopeError {}
 
+/// Opaque public failure returned when a public prompt builder rejects input.
+///
+/// The inner envelope taxonomy remains crate-private so callers cannot depend
+/// on internal purposes or field kinds. It remains available through the error
+/// source chain for in-crate diagnostics, and never contains rejected input.
+pub struct PromptBuildError {
+    inner: PromptEnvelopeError,
+}
+
+impl fmt::Debug for PromptBuildError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("PromptBuildError").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Display for PromptBuildError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("prompt construction rejected")
+    }
+}
+
+impl std::error::Error for PromptBuildError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.inner)
+    }
+}
+
+impl From<PromptEnvelopeError> for PromptBuildError {
+    fn from(inner: PromptEnvelopeError) -> Self {
+        Self { inner }
+    }
+}
+
 #[derive(Serialize)]
 struct PromptEnvelopeWire<'a> {
     schema: &'static str,

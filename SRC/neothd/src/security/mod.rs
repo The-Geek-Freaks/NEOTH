@@ -37,6 +37,7 @@ pub mod operator_sovereignty;
 pub mod osv_check;
 pub mod paperless_ingest;
 pub(crate) mod prompt_envelope;
+pub use prompt_envelope::PromptBuildError;
 pub(crate) mod provider_subject;
 pub mod redact;
 pub mod refusal_abliterated;

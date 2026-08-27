@@ -17,7 +17,7 @@
 //! via `FreedomConfig.review_gate_enabled` (default `false`) — sensible for
 //! `/agent code-reviewer` type calls, overkill for casual chat.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::providers::{Provider, Request};
 
@@ -81,7 +81,7 @@ pub fn code_quality_system_prompt() -> &'static str {
 pub fn build_reviewer_user_message(
     operator_prompt: &str,
     primary_reply: &str,
-) -> Result<String> {
+) -> std::result::Result<String, crate::security::PromptBuildError> {
     use crate::security::prompt_envelope::{
         PromptEnvelopeError, PromptEnvelopePurpose, PromptFieldKind, UntrustedPromptField,
     };
@@ -187,7 +187,8 @@ pub async fn two_stage_review(
     primary_reply: &str,
 ) -> Result<Vec<ReviewVerdict>> {
     let user_msg = build_reviewer_user_message(operator_prompt, primary_reply)
-        .map_err(|error| anyhow::anyhow!("sub-agent review prompt rejected: {error}"))?;
+        .map_err(anyhow::Error::new)
+        .context("sub-agent review prompt rejected")?;
 
     let v1 = run_one_stage(
         provider,

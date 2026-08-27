@@ -40,7 +40,7 @@
 //! sqlite inserts + WAL emission. Pick #5 (CLI entry) calls
 //! `decompose` from a real bound provider.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
 
@@ -272,7 +272,7 @@ fn sanitize_decomposer_field(
 pub fn build_prompt(
     operator_prompt: &str,
     project_context: Option<&str>,
-) -> Result<String> {
+) -> std::result::Result<String, crate::security::PromptBuildError> {
     use crate::security::prompt_envelope::{
         MAX_DECOMPOSER_OPERATOR_REQUEST_BYTES, MAX_DECOMPOSER_PROJECT_CONTEXT_BYTES,
         PromptEnvelopePurpose, PromptFieldKind, UntrustedPromptField, serialize_untrusted_prompt,
@@ -339,7 +339,7 @@ pub fn build_repair_prompt(
     operator_prompt: &str,
     project_context: Option<&str>,
     prior_provider_output: &str,
-) -> Result<String> {
+) -> std::result::Result<String, crate::security::PromptBuildError> {
     use crate::security::prompt_envelope::{
         MAX_DECOMPOSER_OPERATOR_REQUEST_BYTES, MAX_DECOMPOSER_PRIOR_PROVIDER_OUTPUT_BYTES,
         MAX_DECOMPOSER_PROJECT_CONTEXT_BYTES, PromptEnvelopePurpose, PromptFieldKind,
@@ -654,7 +654,8 @@ pub async fn decompose(
     let (ctx_clamped, was_truncated) =
         truncate_to_budget(operator_prompt, project_context).map_err(anyhow::Error::from)?;
     let prompt = build_prompt(operator_prompt, ctx_clamped.as_deref())
-        .map_err(|error| anyhow::anyhow!("decomposer prompt rejected: {error}"))?;
+        .map_err(anyhow::Error::new)
+        .context("decomposer prompt rejected")?;
 
     let raw_response = llm
         .complete(&prompt)
@@ -667,9 +668,8 @@ pub async fn decompose(
             tracing::warn!(target: "coding::decomposer", "malformed LLM JSON — retrying with repair prompt");
             let repair_prompt =
                 build_repair_prompt(operator_prompt, ctx_clamped.as_deref(), &raw_response)
-                    .map_err(|error| {
-                        anyhow::anyhow!("decomposer repair prompt rejected: {error}")
-                    })?;
+                    .map_err(anyhow::Error::new)
+                    .context("decomposer repair prompt rejected")?;
             let retry = llm
                 .complete(&repair_prompt)
                 .await
