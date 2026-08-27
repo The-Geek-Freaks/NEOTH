@@ -733,8 +733,7 @@ fn tighten_legacy_private_directory(
     let _ = display_path;
     #[cfg(unix)]
     {
-        use cap_std::fs::MetadataExt as _;
-        use std::os::unix::fs::PermissionsExt as _;
+        use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
 
         let metadata = directory
             .dir_metadata()
@@ -742,9 +741,11 @@ fn tighten_legacy_private_directory(
         if metadata.uid() != unsafe { libc::geteuid() } {
             return Err(HygieneStoreError::SafeStoreUnavailable);
         }
-        if metadata.permissions().mode() & 0o077 != 0 {
+        let mut permissions = metadata.permissions();
+        if permissions.mode() & 0o077 != 0 {
+            permissions.set_mode(0o700);
             directory
-                .set_permissions(".", std::fs::Permissions::from_mode(0o700))
+                .set_permissions(".", permissions)
                 .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
         }
     }

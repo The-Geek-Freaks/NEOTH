@@ -2632,6 +2632,10 @@ impl std::error::Error for PrivateChildPreCommitError {
 }
 
 impl PrivateChildPreCommitError {
+    pub(crate) fn root_cause(&self) -> &(dyn std::error::Error + 'static) {
+        self.source.root_cause()
+    }
+
     fn into_anyhow(self) -> anyhow::Error {
         self.source
     }
@@ -2653,6 +2657,18 @@ pub(crate) enum PrivateChildDurabilityUnknown {
     ParentSyncFailed,
     PostCommitValidationFailed,
 }
+
+impl std::fmt::Display for PrivateChildDurabilityUnknown {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ParentSyncUnsupported => "parent directory sync is unsupported",
+            Self::ParentSyncFailed => "parent directory sync failed",
+            Self::PostCommitValidationFailed => "post-commit validation failed",
+        })
+    }
+}
+
+impl std::error::Error for PrivateChildDurabilityUnknown {}
 
 /// Atomic replacement with an exact pre-/post-publication outcome boundary.
 pub(crate) fn atomic_write_private_child_reported(
