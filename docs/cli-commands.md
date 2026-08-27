@@ -2767,7 +2767,7 @@ _Aliases:_ `neoth providers`
 
 ### `neoth provider known`
 
-List well-known OpenAI-compatible endpoints (DeepSeek, xAI Grok, Mistral, Moonshot Kimi, Z.ai GLM, Groq, OpenRouter, Together, Fireworks, Perplexity, plus local Ollama / LM Studio / vLLM) with their endpoint URL, default model, and doc link
+List well-known OpenAI-compatible endpoints (DeepSeek, xAI Grok, Mistral, Moonshot Kimi, Z.ai GLM, Groq, OpenRouter, Together, Fireworks, Cerebras, Nebius AI Studio, Perplexity, plus local Ollama / LM Studio / vLLM) with their endpoint URL, default model, and doc link
 
 ### `neoth provider list`
 
