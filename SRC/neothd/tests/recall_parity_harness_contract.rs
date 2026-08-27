@@ -202,7 +202,6 @@ fn bound_operator_anchor_ingest_stays_immutable_redacted_and_non_gate() {
         "candidate_receipt_sha256",
         "candidate_receipt_pubkey_sha256",
         "candidate_vector_sha256",
-        "canonical_sha256",
         "CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE",
         "receipt.verify(expected_receipt_pubkey_b64)",
     ] {
@@ -256,6 +255,7 @@ fn four_grader_batch_stays_offline_attested_and_non_gate() {
         "input_sha256",
         "strictly sorted by unique grader_id",
         "verify_b64",
+        "canonical_sha256",
         "gate_eligible: bool",
         "deny_unknown_fields",
     ] {
@@ -293,6 +293,11 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
         .nth(1)
         .and_then(|tail| tail.split("fn validate_batch_result_inputs").next())
         .expect("batch result ingest source");
+    let input_validation = HARNESS
+        .split("fn validate_batch_result_inputs")
+        .nth(1)
+        .and_then(|tail| tail.split("fn canonical_batch_result_pubkey").next())
+        .expect("batch result input-validation source");
     for forbidden in [
         "File::open(",
         "reqwest",
@@ -307,7 +312,6 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
     }
     for required in [
         "validate_batch_result_inputs",
-        "validate_single_grader_matrix",
         "stage_attested_import",
         "BoundParityRun::open_existing",
         "load_existing_run_manifest",
@@ -323,6 +327,10 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
             "batch result ingest lost {required}"
         );
     }
+    assert!(
+        input_validation.contains("validate_single_grader_matrix"),
+        "batch result input validation lost the exact grader-matrix validation"
+    );
     for required in [
         "incomplete four-grader batch result ingest",
         "receipt.verify(pubkey)",
@@ -363,10 +371,7 @@ fn attested_family_bias_export_is_read_only_pinned_and_non_gate() {
     let summary = HARNESS
         .split("pub fn summarize_attested_four_grader_family_bias")
         .nth(1)
-        .and_then(|tail| {
-            tail.split("fn cluster_attested_four_grader_family_bias")
-                .next()
-        })
+        .and_then(|tail| tail.split("fn attested_family_bias_summary_from_validated").next())
         .expect("attested family-bias summary source");
     for forbidden in [
         "open_or_create",

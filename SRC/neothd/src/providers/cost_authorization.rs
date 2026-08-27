@@ -5816,7 +5816,7 @@ mod tests {
             (
                 "cli/arxiv_ingest_task.rs",
                 1,
-                "e97285d8304ac8cbaf03268075ab281c3bf4634c0d72e9047ab52a2b898371cb",
+                "0dd7bfe3e8ac74202ee4026f495c5767df94182b246a793561500a54e55f6d10",
             ),
             (
                 "cli/bg_session.rs",
@@ -5831,7 +5831,7 @@ mod tests {
             (
                 "cli/clarify_chat.rs",
                 1,
-                "31dd1ec85b17c74ab6bd15e925fcbc3ef4877b907e2a1efa3d5c379b0df0b668",
+                "ac63095416544d545f508e4acac6166eff02eb78e3d94b0d21b90d2b6ce56091",
             ),
             (
                 "cli/doctor.rs",
@@ -5871,22 +5871,22 @@ mod tests {
             (
                 "coding/decomposer.rs",
                 2,
-                "62f0bcda7525fd4d4f50d2f2e1f647a85ecab14149660c8928b80951d930963c",
+                "b91ef440307aadbd08bbb12b8ed98ed510aeafca1d994609a6fd06c508657599",
             ),
             (
                 "coding/plan_review.rs",
                 1,
-                "037bda696a769ca38c24cc1cc18b73eee31614702991caf8302d3754ed2a454f",
+                "816aee5742aa2b5b7d3b7fe284c34098037618d9a026bbc1719801957fc1bc29",
             ),
             (
                 "coding/provider_worker.rs",
                 2,
-                "8be82f253fa1e35f8f32af1a73d52c7702bf9a7904cce962df01e8613b8e37e6",
+                "5cbbdc346b26f19466a71236fbb5461ca8c71de89f69096526c39295938aefe5",
             ),
             (
                 "coding/second_opinion.rs",
                 1,
-                "53f319339e894898d205f44a3f7b68b9e0e30d5a980701d4bff4b49711e88ae9",
+                "322d30b365547e5014504426529ac59a59343c3da51444020c84fa8952c675e0",
             ),
             (
                 "cron/runner.rs",
@@ -5896,7 +5896,7 @@ mod tests {
             (
                 "daemon/arxiv_skill_scan_cron.rs",
                 1,
-                "e97285d8304ac8cbaf03268075ab281c3bf4634c0d72e9047ab52a2b898371cb",
+                "5d48508c1e5d048bf7af6bcf231beb6ea1a9c112a8ce73c10f722ede20a6d168",
             ),
             (
                 "daemon/checkin_cron.rs",
@@ -5950,12 +5950,12 @@ mod tests {
             (
                 "memory/entities.rs",
                 1,
-                "8be04efd23974c8a780d16ff3c5596242dd1d962a1bf469b86d741b180e005fe",
+                "5ab7e44d148dc4e3f8121e7efc4dbe0e86cf5ae0fe086f30c52fbc1403f3d175",
             ),
             (
                 "memory/warm_summarize.rs",
                 1,
-                "79f6ebf38717c8e8b27ffe2c78f753f744fec605bf6041b5d23b8061bf779a7b",
+                "fa06fc8d39e270abddd15fd58f23b7fe7dab93fe4c50d02186f4448e7f716dfb",
             ),
             (
                 "n8n_api/handlers.rs",

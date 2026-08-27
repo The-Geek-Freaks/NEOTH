@@ -2849,6 +2849,123 @@ ARCH-05/SPEC-08 — score the legacy-AI→NEOTH recall-parity gate over grader s
 - `--goldset <PATH>` — Goldset JSONL. Required: exactly 100 unique canonical query IDs must match submitted grade query IDs; partial or extra grading fails
 - `--no-audit` — Don't emit `0x3E` WAL frames (dry scoring; the report still prints)
 
+## `neoth recall-parity-harness`
+
+GOLD-LF-P1-08 — plan, ingest, and report a strictly offline, SHA256-bound recall-parity evaluation run. This report is derived evidence only and does not replace the fail-closed recall-score gate
+
+### `neoth recall-parity-harness anchor-ingest`
+
+Bind one complete 20-query × two-system operator-anchor label set to a previously signature-verified candidate-evidence bundle. The resulting run artifact remains non-gate-eligible and contains no raw source text
+
+- `--run-dir <DIR>`
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+- `--evidence-dir <DIR>`
+- `--expected-evidence-receipt-pubkey <BASE64>`
+- `--operator-anchor <PATH>`
+- `--operator-anchor-link <PATH>`
+
+### `neoth recall-parity-harness anchor-validate`
+
+Validate the operator's 20-query × two-system calibration labels before they can be used for a later anchored family-bias correction
+
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+- `--operator-anchor <PATH>`
+
+### `neoth recall-parity-harness attested-gate-report`
+
+Publish the only fully provenance-validated P1-08 gate-eligible report transition for an existing attested four-grader run. This remains offline: the detached signed import receipt and public key are explicit operator inputs; no provider or dispatcher is contacted
+
+- `--run-dir <DIR>`
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+- `--import-receipt <PATH>`
+- `--expected-receipt-pubkey <BASE64>`
+
+### `neoth recall-parity-harness batch-family-bias`
+
+Render a redacted, deterministic family-bias export from an existing cryptographically attested four-grader result group. This is read-only and cannot modify the parity gate or release state
+
+- `--run-dir <DIR>`
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+
+### `neoth recall-parity-harness batch-plan`
+
+Persist an offline-only execution plan for exactly four validated graders. It exports hashes, never prompts, credentials, or provider work
+
+- `--run-dir <DIR>`
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+- `--batch-input-digests <PATH>`
+
+### `neoth recall-parity-harness batch-results-ingest`
+
+Persist four externally attested offline grade matrices into an existing batch-planned run. No provider is invoked by this transition
+
+- `--run-dir <DIR>`
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+- `--batch-result-receipt <PATH>`
+- `--expected-batch-result-pubkey <BASE64>`
+- `--result <PATH>`
+
+### `neoth recall-parity-harness batch-results-verify`
+
+Verify four externally produced grade files against an immutable batch plan and a detached out-of-band Ed25519 result receipt. This command does not dispatch providers, ingest grades, or change a gate
+
+- `--run-dir <DIR>`
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+- `--batch-result-receipt <PATH>`
+- `--expected-batch-result-pubkey <BASE64>`
+- `--result <PATH>`
+
+### `neoth recall-parity-harness candidate-evidence-validate`
+
+Verify a bounded imported transcript/WAL candidate-evidence bundle and render only its redacted provenance receipt. Candidates remain in the operator-labeling queue and cannot enter a parity gate from this command
+
+- `--evidence-dir <DIR>`
+- `--expected-evidence-receipt-pubkey <BASE64>` — Out-of-band Ed25519 public key for the immutable candidate-evidence receipt. The key is never accepted from the mutable evidence bundle
+
+### `neoth recall-parity-harness ingest`
+
+Ingest one complete, explicit, offline grade sheet for exactly one grader
+
+- `--run-dir <DIR>`
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+- `--grades <PATH>`
+
+### `neoth recall-parity-harness plan`
+
+Bind a fresh run directory to exact validated config/goldset bytes
+
+- `--run-dir <DIR>`
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+
+### `neoth recall-parity-harness report`
+
+Compute the deterministic family-bias report once all graders are imported
+
+- `--run-dir <DIR>`
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+- `--import-receipt <PATH>` — Externally held signed receipt binding the complete import vector
+- `--expected-receipt-pubkey <BASE64>` — Out-of-band Ed25519 receipt public key (base64); never read from run state
+
+### `neoth recall-parity-harness show`
+
+Recompute and render a run from trusted config/goldset inputs. The operation remains offline and never changes the established gate
+
+- `--run-dir <DIR>`
+- `--grader-config <PATH>`
+- `--goldset <PATH>`
+- `--import-receipt <PATH>` — Externally held signed receipt binding the complete import vector
+- `--expected-receipt-pubkey <BASE64>` — Out-of-band Ed25519 receipt public key (base64); never read from run state
+
 ## `neoth recipe`
 
 GOLD-ADOPT-16 — declarative parametrized recipe templates. `recipe run <file|deeplink> --param k=v` renders a typed-parameter prompt template + runs it through the chat pipeline; `list` / `validate` / `share` (base64 `neoth://recipe/…` deeplink) round out the surface

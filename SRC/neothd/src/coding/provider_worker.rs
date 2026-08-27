@@ -121,6 +121,24 @@ impl ProviderWorker {
     }
 }
 
+/// Preserve only the typed fact that NEOTH's mandatory authorization boundary
+/// blocked dispatch. Its detailed cause may contain operator paths or other
+/// sensitive local state, while ordinary provider errors may contain upstream
+/// URLs, response bodies or credentials. Neither error class is safe to attach
+/// as an `anyhow` source at this worker/reporting boundary.
+fn opaque_provider_call_error(error: anyhow::Error) -> anyhow::Error {
+    if error
+        .downcast_ref::<crate::providers::cost_authorization::ProviderAuthorizationError>()
+        .is_some()
+    {
+        anyhow::anyhow!(
+            "coding worker provider call blocked by fail-closed authorization (task round)"
+        )
+    } else {
+        anyhow::anyhow!("coding worker provider call failed (task round)")
+    }
+}
+
 /// Lenient parse of the Stage-1 selector reply. The prompt asks for the
 /// bare category name; tolerate surrounding whitespace + case + a short
 /// trailing clause by also trying the first whitespace token. `None`
@@ -163,7 +181,7 @@ impl Worker for ProviderWorker {
             .provider
             .complete(req)
             .await
-            .map_err(|_| anyhow::anyhow!("coding worker provider call failed (task round)"))?;
+            .map_err(opaque_provider_call_error)?;
         if completion.text.len() > MAX_PROVIDER_COMPLETION_BYTES {
             return Err(anyhow::anyhow!(
                 "coding worker provider response rejected: byte limit exceeded"
@@ -1330,16 +1348,17 @@ mod tests {
         let error = worker
             .execute(&sample_task())
             .await
-            .unwrap_err()
-            .to_string();
-        assert!(!error.contains(secret));
-        assert!(!error.contains('\x1b'));
+            .unwrap_err();
+        let diagnostic = format!("{error:#}");
+        assert!(!diagnostic.contains(secret));
+        assert!(!diagnostic.contains("upstream rejected"));
+        assert!(!diagnostic.contains('\x1b'));
         assert!(
-            error.contains("coding worker provider call failed (task round)"),
-            "diagnostic: {error}"
+            diagnostic.contains("coding worker provider call failed (task round)"),
+            "diagnostic: {diagnostic}"
         );
         assert!(
-            !error.contains("REDACTED"),
+            !diagnostic.contains("REDACTED"),
             "diagnostic must not echo provider data"
         );
     }
@@ -1375,9 +1394,9 @@ mod tests {
         let err = worker.execute(&sample_task()).await.unwrap_err();
         let diagnostic = format!("{err:#}");
         assert!(
-            diagnostic.contains("daemon-mode fail-closed")
-                && diagnostic.contains("strict: paid provider invocation")
-                && diagnostic.contains("no proven finite whole-invocation cost bound"),
+            diagnostic.contains(
+                "coding worker provider call blocked by fail-closed authorization (task round)"
+            ),
             "expected a fail-closed Strict unbounded-paid-call block, got: {diagnostic}"
         );
         assert_eq!(
@@ -1397,7 +1416,9 @@ mod tests {
         );
         let err = worker2.execute(&sample_task()).await.unwrap_err();
         assert!(
-            format!("{err:#}").contains("standard: paid provider invocation"),
+            format!("{err:#}").contains(
+                "coding worker provider call blocked by fail-closed authorization (task round)"
+            ),
             "expected a Standard unbounded-paid-call block, got: {err:#}"
         );
         assert_eq!(

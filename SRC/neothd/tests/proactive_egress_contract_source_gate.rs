@@ -1256,7 +1256,12 @@ fn canonical_wal_chain_path_and_authenticated_commit_are_threaded_from_serve() {
     );
     let ordered = [
         "let immediate = crate::wal::events::needs_immediate_sync(req.header.event_type);",
-        "write_and_sync(state.active_file_mut()?, &frame).await",
+        // The writer resolves the active file once, after frame-fit and HMAC
+        // authority validation, then uses that same live capability for the
+        // immediate-sync branch. Keep the authenticated commit proof pinned
+        // to the real call site rather than an older inline receiver spelling.
+        "let active_file = state.active_file_mut()?;",
+        "write_and_sync(active_file, &frame).await",
         "state_c.should_emit() || req.force_authentication_marker",
         "emit_compaction_marker(&mut state, state_c, key).await",
         "req.ack.send(Ok(written_at))",

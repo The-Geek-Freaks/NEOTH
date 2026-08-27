@@ -317,9 +317,9 @@ fn read_guardian_request(mut input: impl std::io::Read) -> Result<GuardianReques
     let args_len = usize::from(args_len[0]);
     if program_len == 0
         || !matches!(args_len, 3 | 4 | 5 | 7)
-        || !consumed
+        || consumed
             .checked_add(program_len)
-            .is_some_and(|used| used <= MAX_GUARDIAN_REQUEST_BYTES)
+            .is_none_or(|used| used > MAX_GUARDIAN_REQUEST_BYTES)
     {
         return Err(ProbeError::ContainmentUnavailable);
     }
@@ -328,9 +328,9 @@ fn read_guardian_request(mut input: impl std::io::Read) -> Result<GuardianReques
     let mut args = Vec::with_capacity(args_len);
     for _ in 0..args_len {
         let len = usize::from(read_frame_u16(&mut input, &mut consumed)?);
-        if !consumed
+        if consumed
             .checked_add(len)
-            .is_some_and(|used| used <= MAX_GUARDIAN_REQUEST_BYTES)
+            .is_none_or(|used| used > MAX_GUARDIAN_REQUEST_BYTES)
         {
             return Err(ProbeError::ContainmentUnavailable);
         }
@@ -803,10 +803,10 @@ impl OwnedProbe {
             // exceptional path cannot accumulate zombies; reader handles are
             // intentionally detached because they may still await inherited
             // descriptors from a descendant.
-            if let Ok(mut slot) = pending.lock() {
-                if let Some(mut owned) = slot.take() {
-                    let _ = owned.child.wait();
-                }
+            if let Ok(mut slot) = pending.lock()
+                && let Some(mut owned) = slot.take()
+            {
+                let _ = owned.child.wait();
             }
         }
     }
@@ -880,7 +880,7 @@ pub(crate) fn run(
     }
     #[cfg(unix)]
     {
-        return run_via_guardian(command, policy, cancellation);
+        run_via_guardian(command, policy, cancellation)
     }
     #[cfg(not(unix))]
     {

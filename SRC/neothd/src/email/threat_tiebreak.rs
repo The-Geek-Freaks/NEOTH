@@ -620,9 +620,9 @@ mod tests {
         let rendered_body = envelope_field(&prompt, "email_body");
 
         assert_eq!(rendered_body, body);
-        assert_eq!(rendered_body.as_bytes().len(), 8_000);
+        assert_eq!(rendered_body.len(), 8_000);
         assert_eq!(
-            rendered_body.as_bytes().len(),
+            rendered_body.len(),
             crate::security::prompt_envelope::MAX_EMAIL_BODY_BYTES
         );
     }

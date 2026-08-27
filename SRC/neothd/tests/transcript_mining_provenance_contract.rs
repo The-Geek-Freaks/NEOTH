@@ -36,6 +36,26 @@ fn migration_contract_keeps_legacy_unbound_and_raw_text_out_of_provenance() {
     let migration = include_str!("../src/memory/migrations/mod.rs");
     let store = include_str!("../src/memory/store.rs");
 
+    fn provenance_table(source: &str) -> &str {
+        source
+            .split("CREATE TABLE IF NOT EXISTS transcript_mining_provenance (")
+            .nth(1)
+            .and_then(|after_table| after_table.split(") STRICT;").next())
+            .expect("transcript provenance table must remain present and STRICT")
+    }
+
+    fn normalized_column(table: &str, column: &str) -> Option<String> {
+        table
+            .lines()
+            .map(str::trim)
+            .find(|line| {
+                line.strip_prefix(column)
+                    .and_then(|suffix| suffix.chars().next())
+                    .is_some_and(char::is_whitespace)
+            })
+            .map(|line| line.trim_end_matches(',').split_whitespace().collect::<Vec<_>>().join(" "))
+    }
+
     assert!(migration.contains("from: 35,"));
     assert!(migration.contains("to: 36,"));
     assert!(migration.contains("fn migration_v35_to_v36"));
@@ -46,6 +66,26 @@ fn migration_contract_keeps_legacy_unbound_and_raw_text_out_of_provenance() {
     );
     assert!(store.contains("pub const SCHEMA_VERSION: i64 = 36;"));
     assert!(store.contains("CREATE TABLE IF NOT EXISTS transcript_mining_wal_outbox"));
-    assert!(store.contains("raw_text_sha256 BLOB NOT NULL"));
-    assert!(!store.contains("transcript_mining_provenance (\n            provenance_id          TEXT PRIMARY KEY NOT NULL\n                CHECK(length(provenance_id) BETWEEN 1 AND 64),\n            raw_turn_id            INTEGER NOT NULL CHECK(raw_turn_id > 0),\n            text"));
+
+    let migration_provenance = provenance_table(migration);
+    let store_provenance = provenance_table(store);
+    let digest_column = "raw_text_sha256";
+    let expected_digest_definition =
+        "raw_text_sha256 BLOB NOT NULL CHECK(length(raw_text_sha256) = 32)";
+    assert_eq!(
+        normalized_column(migration_provenance, digest_column).as_deref(),
+        Some(expected_digest_definition),
+        "migration must retain only a fixed-size text digest"
+    );
+    assert_eq!(
+        normalized_column(store_provenance, digest_column).as_deref(),
+        Some(expected_digest_definition),
+        "fresh-store schema must agree with the migration digest contract"
+    );
+    for provenance in [migration_provenance, store_provenance] {
+        assert!(
+            normalized_column(provenance, "text").is_none(),
+            "provenance records must never retain raw transcript text"
+        );
+    }
 }

@@ -322,6 +322,12 @@ const INVENTORY: &[(&str, Surface)] = &[
     ("edit", CliOnly("headless self-edit apply")),
     ("recall", Gui("memory")),
     ("recall-score", Gui("memory")),
+    (
+        "recall-parity-harness",
+        CliOnly(
+            "offline provenance-evaluation harness; it consumes operator-supplied evidence files and has no GUI workflow or dispatch authority",
+        ),
+    ),
     ("update", CliOnly("model/catalog refresh pipe")),
     ("release", CliOnly("authenticated-release helper")),
     ("supervisor", CliOnly("process supervisor")),

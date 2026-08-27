@@ -62,9 +62,11 @@ fn connector_control_rpc_uses_its_own_domains_and_no_tcp_or_audit_routes() {
     }
     assert!(CONTROL.contains("fn daemon_authenticated_session"));
     assert!(!CONTROL.contains("pub(crate) fn daemon_authenticated_session"));
-    assert!(CONTROL.contains("test_context_import_runtime_fixture_with_retirement"));
-    assert!(CONTROL.contains("TestContextImportRetirement"));
-    assert!(CONTROL.contains("#[cfg(test)]\npub(crate) struct TestContextImportRetirement"));
+    assert!(CONTROL.contains("test_context_import_runtime_fixture"));
+    assert!(CONTROL.contains(
+        "#[cfg(test)]\npub(crate) fn test_context_import_runtime_fixture"
+    ));
+    assert!(CONTROL.contains("AuthenticatedControlSession::test_authenticated"));
 }
 
 #[test]
@@ -139,7 +141,7 @@ fn durable_discovery_precedes_listener_admission() {
         .find("write_sidecar(home, &endpoint, &endpoint_nonce)")
         .expect("sidecar publication must exist");
     let spawn = bind
-        .find("tokio::spawn(async move")
+        .find("tokio::spawn(")
         .expect("listener spawn must exist");
     assert!(
         publish < spawn,
@@ -264,13 +266,18 @@ fn restart_replay_is_plan_independent_and_uses_the_authenticated_once_sink() {
         "ContextEvidenceReplayRuntime::new",
         "append_context_evidence_receipt_once_blocking",
         "load_existing_master_key_at",
-        "owns no root, plan, path, or imported content",
+        "LocalImport account binding",
     ] {
         assert!(
             RPC.contains(required),
             "missing restart-safe replay rule: {required}"
         );
     }
+    let replay_ownership = compact_ascii_whitespace(RPC).replace("///", "");
+    assert!(
+        replay_ownership.contains("ownsnoroot,plan,path,orimportedcontent"),
+        "restart replay must remain independent of imported content and its root, plan, and path"
+    );
 }
 
 #[test]

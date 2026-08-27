@@ -85,12 +85,28 @@ fn context_store_contract_enforces_typed_content_free_receipts_and_preflight_lim
     assert!(source.contains("context batch contains a duplicate source mutation key"));
     assert!(source.contains("context batch contains multiple updates for one cursor"));
 
-    let preflight = source.find("let preflight = self.preflight").unwrap();
-    let write_lock = source
+    // Inspect the specific admission path instead of comparing the first
+    // matching tokens in the entire module: other maintenance paths may quite
+    // legitimately acquire a write transaction earlier in the source file.
+    let commit_start = source
+        .find("fn commit_batch_with_limits_and_context_evidence_receipt(")
+        .expect("context batch admission path must remain explicit");
+    let commit_end = commit_start
+        + source[commit_start..]
+            .find("\n    fn ")
+            .expect("context batch admission path must end before the next method");
+    let commit = &source[commit_start..commit_end];
+    let validation = commit
+        .find("validate_batch(batch, permits_context_evidence_receipt)?")
+        .expect("context batch validation must precede lock acquisition");
+    let preflight = commit
+        .find("let preflight = self.preflight(account, batch, limits)?")
+        .expect("context batch capacity preflight must remain explicit");
+    let write_lock = commit
         .find("transaction_with_behavior(TransactionBehavior::Immediate)")
-        .unwrap();
+        .expect("context batch commit must acquire an immediate transaction");
     assert!(
-        preflight < write_lock,
+        validation < preflight && preflight < write_lock,
         "validation and capacity preflight must precede BEGIN IMMEDIATE"
     );
 }

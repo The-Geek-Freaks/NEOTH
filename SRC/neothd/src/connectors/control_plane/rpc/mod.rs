@@ -1875,26 +1875,41 @@ mod tests {
     use crate::connectors::{
         control_plane::ConnectorAccountStatus, control_state::ConnectorLifecycle,
     };
+    /// Test-only endpoint nonces still exercise the production parser and
+    /// endpoint derivation, but must not resemble reusable cryptographic
+    /// material in the compiled test binary.
     #[cfg(unix)]
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    fn fresh_test_nonce() -> String {
+        let mut bytes = [0_u8; 16];
+        getrandom::getrandom(&mut bytes).expect("OS randomness for connector-control test nonce");
+        hex::encode(bytes)
+    }
 
     #[cfg(unix)]
-    const AUDIT_NONCE: &str = "00112233445566778899aabbccddeeff";
+    fn different_test_nonce(nonce: &str) -> String {
+        let mut bytes = nonce.as_bytes().to_vec();
+        bytes[0] = if bytes[0] == b'0' { b'1' } else { b'0' };
+        String::from_utf8(bytes).expect("hex test nonce remains UTF-8")
+    }
 
     #[cfg(unix)]
     #[test]
     fn connector_nonce_is_strict_and_domain_separated_from_pid_nonce() {
-        let connector = connector_nonce(AUDIT_NONCE);
+        let audit_nonce = fresh_test_nonce();
+        let connector = connector_nonce(&audit_nonce);
         assert_eq!(connector.len(), 32);
         assert!(
             connector
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         );
-        assert_ne!(connector, AUDIT_NONCE);
+        assert_ne!(connector, audit_nonce);
         assert!(validate_nonce(&connector).is_ok());
-        assert!(validate_nonce("00112233445566778899AABBCCDDEEFF").is_err());
-        assert!(validate_nonce("too-short").is_err());
+        let mut uppercase = audit_nonce.clone().into_bytes();
+        uppercase[0] = b'A';
+        let uppercase = String::from_utf8(uppercase).expect("hex test nonce remains UTF-8");
+        assert!(validate_nonce(&uppercase).is_err());
+        assert!(validate_nonce(&audit_nonce[..audit_nonce.len() - 1]).is_err());
     }
 
     #[test]
@@ -2143,10 +2158,11 @@ mod tests {
         let home = crate::test_env::canonical_tempdir().unwrap();
         let token = home.path().join(TOKEN_FILE);
         let sidecar = home.path().join(SIDECAR_FILE);
-        let endpoint = canonical_fixture(home.path(), AUDIT_NONCE);
+        let audit_nonce = fresh_test_nonce();
+        let endpoint = canonical_fixture(home.path(), &audit_nonce);
         let Endpoint::UnixSocket { path: socket, .. } = &endpoint;
         std::fs::write(&token, b"token").unwrap();
-        write_sidecar(home.path(), &endpoint, AUDIT_NONCE).unwrap();
+        write_sidecar(home.path(), &endpoint, &audit_nonce).unwrap();
         bind_fixture_socket(&endpoint);
 
         let shutdown = Arc::new(RpcShutdown::new());
@@ -2248,15 +2264,11 @@ mod tests {
     #[test]
     fn canonical_clean_shutdown_and_two_crash_restarts_remove_exact_prior_endpoint() {
         let home = crate::test_env::canonical_tempdir().unwrap();
-        for nonce in [
-            "00112233445566778899aabbccddeeff",
-            "11112222333344445555666677778888",
-            "9999aaaabbbbccccddddeeeeffff0000",
-        ] {
-            let endpoint = canonical_fixture(home.path(), nonce);
+        for nonce in [fresh_test_nonce(), fresh_test_nonce(), fresh_test_nonce()] {
+            let endpoint = canonical_fixture(home.path(), &nonce);
             let Endpoint::UnixSocket { path, .. } = &endpoint;
             bind_fixture_socket(&endpoint);
-            write_fixture_sidecar(home.path(), &endpoint, nonce);
+            write_fixture_sidecar(home.path(), &endpoint, &nonce);
 
             cleanup_prior_boot_artifacts(home.path()).unwrap();
             assert!(!home.path().join(TOKEN_FILE).exists());
@@ -2278,7 +2290,8 @@ mod tests {
         ];
         for (case, replacement) in cases {
             let home = crate::test_env::canonical_tempdir().unwrap();
-            let endpoint = canonical_fixture(home.path(), AUDIT_NONCE);
+            let audit_nonce = fresh_test_nonce();
+            let endpoint = canonical_fixture(home.path(), &audit_nonce);
             bind_fixture_socket(&endpoint);
             let Endpoint::UnixSocket {
                 path,
@@ -2288,19 +2301,17 @@ mod tests {
             } = &endpoint;
             let forged_path = if replacement.starts_with('/') {
                 PathBuf::from(replacement)
-            } else if replacement.starts_with("..") {
-                path.parent().unwrap().join(replacement)
             } else {
                 path.parent().unwrap().join(replacement)
             };
             let raw = serde_json::json!({
                 "schema_version": SIDECAR_SCHEMA_VERSION,
                 "daemon_pid": std::process::id(),
-                "endpoint_nonce": AUDIT_NONCE,
+                "endpoint_nonce": audit_nonce,
                 "endpoint": {
                     "transport": "unix_socket",
                     "path": forged_path,
-                    "endpoint_nonce": AUDIT_NONCE,
+                    "endpoint_nonce": audit_nonce,
                     "home_sha256": home_sha256,
                     "runtime_nonce": runtime_nonce,
                 }
@@ -2319,7 +2330,8 @@ mod tests {
         }
 
         let home = crate::test_env::canonical_tempdir().unwrap();
-        let endpoint = canonical_fixture(home.path(), AUDIT_NONCE);
+        let audit_nonce = fresh_test_nonce();
+        let endpoint = canonical_fixture(home.path(), &audit_nonce);
         bind_fixture_socket(&endpoint);
         let Endpoint::UnixSocket { path, .. } = &endpoint;
         let foreign = path.parent().unwrap().join("foreign.sock");
@@ -2328,18 +2340,19 @@ mod tests {
         let mut foreign_endpoint = endpoint.clone();
         let Endpoint::UnixSocket { path, .. } = &mut foreign_endpoint;
         *path = foreign.clone();
-        write_fixture_sidecar(home.path(), &foreign_endpoint, AUDIT_NONCE);
+        write_fixture_sidecar(home.path(), &foreign_endpoint, &audit_nonce);
         assert!(cleanup_prior_boot_artifacts(home.path()).is_err());
         assert!(foreign.exists());
         assert!(home.path().join(SIDECAR_FILE).exists());
 
         let home = crate::test_env::canonical_tempdir().unwrap();
-        let endpoint = canonical_fixture(home.path(), AUDIT_NONCE);
+        let audit_nonce = fresh_test_nonce();
+        let endpoint = canonical_fixture(home.path(), &audit_nonce);
         let Endpoint::UnixSocket { path, .. } = &endpoint;
         let target = home.path().join("symlink-target");
         std::fs::write(&target, b"preserve").unwrap();
         symlink(&target, path).unwrap();
-        write_fixture_sidecar(home.path(), &endpoint, AUDIT_NONCE);
+        write_fixture_sidecar(home.path(), &endpoint, &audit_nonce);
         assert!(cleanup_prior_boot_artifacts(home.path()).is_err());
         assert!(
             std::fs::symlink_metadata(path)
@@ -2350,16 +2363,18 @@ mod tests {
         assert!(home.path().join(SIDECAR_FILE).exists());
 
         let home = crate::test_env::canonical_tempdir().unwrap();
-        let endpoint = canonical_fixture(home.path(), AUDIT_NONCE);
+        let audit_nonce = fresh_test_nonce();
+        let endpoint = canonical_fixture(home.path(), &audit_nonce);
         let Endpoint::UnixSocket { path, .. } = &endpoint;
         std::fs::write(path, b"not-a-socket").unwrap();
-        write_fixture_sidecar(home.path(), &endpoint, AUDIT_NONCE);
+        write_fixture_sidecar(home.path(), &endpoint, &audit_nonce);
         assert!(cleanup_prior_boot_artifacts(home.path()).is_err());
         assert!(path.exists());
         assert!(home.path().join(SIDECAR_FILE).exists());
 
         let home = crate::test_env::canonical_tempdir().unwrap();
-        let endpoint = canonical_fixture(home.path(), AUDIT_NONCE);
+        let audit_nonce = fresh_test_nonce();
+        let endpoint = canonical_fixture(home.path(), &audit_nonce);
         let Endpoint::UnixSocket { path, .. } = &endpoint;
         std::fs::write(path, b"not-a-socket").unwrap();
         write_prebind(home.path(), &endpoint).unwrap();
@@ -2369,13 +2384,14 @@ mod tests {
 
         for mutation in ["wrong_home", "wrong_nonce", "schema", "unknown_field"] {
             let home = crate::test_env::canonical_tempdir().unwrap();
-            let endpoint = canonical_fixture(home.path(), AUDIT_NONCE);
+            let audit_nonce = fresh_test_nonce();
+            let endpoint = canonical_fixture(home.path(), &audit_nonce);
             bind_fixture_socket(&endpoint);
             let Endpoint::UnixSocket { path, .. } = &endpoint;
             let mut raw = serde_json::to_value(Sidecar {
                 schema_version: SIDECAR_SCHEMA_VERSION,
                 daemon_pid: std::process::id(),
-                endpoint_nonce: AUDIT_NONCE,
+                endpoint_nonce: &audit_nonce,
                 endpoint: &endpoint,
             })
             .unwrap();
@@ -2384,7 +2400,7 @@ mod tests {
                     raw["endpoint"]["home_sha256"] = serde_json::json!("0".repeat(64));
                 }
                 "wrong_nonce" => {
-                    raw["endpoint_nonce"] = serde_json::json!("ffffffffffffffffffffffffffffffff");
+                    raw["endpoint_nonce"] = serde_json::json!(different_test_nonce(&audit_nonce));
                 }
                 "schema" => raw["schema_version"] = serde_json::json!(SIDECAR_SCHEMA_VERSION + 1),
                 "unknown_field" => raw["unexpected"] = serde_json::json!(true),
@@ -2411,11 +2427,8 @@ mod tests {
     #[test]
     fn bind_before_sidecar_crash_cleanup_is_bounded_and_exact() {
         let home = crate::test_env::canonical_tempdir().unwrap();
-        for nonce in [
-            "01010101010101010101010101010101",
-            "02020202020202020202020202020202",
-        ] {
-            let endpoint = canonical_fixture(home.path(), nonce);
+        for nonce in [fresh_test_nonce(), fresh_test_nonce()] {
+            let endpoint = canonical_fixture(home.path(), &nonce);
             let Endpoint::UnixSocket { path, .. } = &endpoint;
             bind_fixture_socket(&endpoint);
             // Deliberately no sidecar: the durable pre-bind journal is the
@@ -2431,7 +2444,8 @@ mod tests {
     #[test]
     fn prebind_crash_before_directory_creation_is_recoverable() {
         let home = crate::test_env::canonical_tempdir().unwrap();
-        let endpoint = endpoint_for_home(home.path(), AUDIT_NONCE).unwrap();
+        let audit_nonce = fresh_test_nonce();
+        let endpoint = endpoint_for_home(home.path(), &audit_nonce).unwrap();
         let Endpoint::UnixSocket { path, .. } = &endpoint;
         let runtime_root = path.parent().unwrap().parent().unwrap().parent().unwrap();
         assert!(!runtime_root.exists());
@@ -2446,7 +2460,8 @@ mod tests {
     fn prebind_cleanup_recovers_each_partial_directory_creation_stage() {
         for depth in 1..=3 {
             let home = crate::test_env::canonical_tempdir().unwrap();
-            let endpoint = endpoint_for_home(home.path(), AUDIT_NONCE).unwrap();
+            let audit_nonce = fresh_test_nonce();
+            let endpoint = endpoint_for_home(home.path(), &audit_nonce).unwrap();
             let Endpoint::UnixSocket { path, .. } = &endpoint;
             let channel = path.parent().unwrap();
             let home_namespace = channel.parent().unwrap();
@@ -2475,7 +2490,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
 
         let home = crate::test_env::canonical_tempdir().unwrap();
-        let endpoint = canonical_fixture(home.path(), AUDIT_NONCE);
+        let audit_nonce = fresh_test_nonce();
+        let endpoint = canonical_fixture(home.path(), &audit_nonce);
         let Endpoint::UnixSocket { path, .. } = &endpoint;
         let listener = std::os::unix::net::UnixListener::bind(path).unwrap();
         // Model the dangerous bind-to-chmod crash window explicitly. Cleanup
@@ -2507,9 +2523,10 @@ mod tests {
     #[test]
     fn runtime_root_is_unpredictable_and_precreated_victim_name_fails_closed() {
         let home = crate::test_env::canonical_tempdir().unwrap();
+        let audit_nonce = fresh_test_nonce();
         let nonce = random_runtime_nonce().unwrap();
         let endpoint =
-            endpoint_for_home_with_runtime_nonce(home.path(), AUDIT_NONCE, &nonce).unwrap();
+            endpoint_for_home_with_runtime_nonce(home.path(), &audit_nonce, &nonce).unwrap();
         let Endpoint::UnixSocket { path, .. } = &endpoint;
         let root = path.parent().unwrap().parent().unwrap().parent().unwrap();
         std::fs::write(root, b"attacker precreation").unwrap();
@@ -2517,7 +2534,7 @@ mod tests {
         assert!(root.is_file());
         std::fs::remove_file(root).unwrap();
 
-        let second = endpoint_for_home(home.path(), AUDIT_NONCE).unwrap();
+        let second = endpoint_for_home(home.path(), &audit_nonce).unwrap();
         let Endpoint::UnixSocket {
             runtime_nonce: second_nonce,
             ..
@@ -2529,7 +2546,8 @@ mod tests {
     #[test]
     fn endpoint_path_is_short_enough_to_bind_and_cleanup() {
         let home = crate::test_env::canonical_tempdir().unwrap();
-        let endpoint = bind_endpoint(home.path(), AUDIT_NONCE).unwrap();
+        let audit_nonce = fresh_test_nonce();
+        let endpoint = bind_endpoint(home.path(), &audit_nonce).unwrap();
         let Endpoint::UnixSocket { path, .. } = &endpoint;
         let runtime_parent = path
             .parent()

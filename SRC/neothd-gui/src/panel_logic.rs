@@ -3161,7 +3161,7 @@ const MAX_WORKFLOW_COST_RELATIVE_DRIFT: f64 = 1.0e-10;
 /// The latter never degrades into a plausible all-zero breakdown.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WorkflowUsageParse {
-    Valid(WorkflowUsageRollup),
+    Valid(Box<WorkflowUsageRollup>),
     LegacyDaemon,
     Invalid,
 }
@@ -3633,7 +3633,7 @@ pub fn parse_workflow_usage_rollup(json: &str) -> WorkflowUsageParse {
     if total_unknown_cost(&rollup).is_none() {
         return WorkflowUsageParse::Invalid;
     }
-    WorkflowUsageParse::Valid(rollup)
+    WorkflowUsageParse::Valid(Box::new(rollup))
 }
 
 fn format_workflow_cost(totals: &WorkflowUsageTotals) -> String {
@@ -3736,7 +3736,7 @@ pub fn format_workflow_week_truth(days: &[WorkflowUsageParse]) -> String {
     let valid: Vec<&WorkflowUsageRollup> = days
         .iter()
         .filter_map(|day| match day {
-            WorkflowUsageParse::Valid(rollup) => Some(rollup),
+            WorkflowUsageParse::Valid(rollup) => Some(rollup.as_ref()),
             WorkflowUsageParse::LegacyDaemon | WorkflowUsageParse::Invalid => None,
         })
         .collect();
@@ -10828,7 +10828,7 @@ mod tests {
             "per_workflow":[],"workflow_other":null}"#;
         assert!(matches!(
             parse_workflow_usage_rollup(empty),
-            WorkflowUsageParse::Valid(WorkflowUsageRollup { other: None, .. })
+            WorkflowUsageParse::Valid(rollup) if rollup.other.is_none()
         ));
         let populated = r#"{"since_unix":0,"until_unix":1,"total_call_count":1,
             "total_ok_count":1,"total_err_count":0,"total_input_tokens":1,
@@ -10844,7 +10844,7 @@ mod tests {
             "workflow_other":null}"#;
         assert!(matches!(
             parse_workflow_usage_rollup(populated),
-            WorkflowUsageParse::Valid(WorkflowUsageRollup { other: None, .. })
+            WorkflowUsageParse::Valid(rollup) if rollup.other.is_none()
         ));
         let invalid_scalar = r#"{"workflow_rollup_schema":1,"per_workflow":[],"workflow_other":0}"#;
         assert!(matches!(

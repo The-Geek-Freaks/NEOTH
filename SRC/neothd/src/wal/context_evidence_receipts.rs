@@ -71,6 +71,12 @@ pub(crate) const MAX_OPERATION_DIRECTORY_ENTRIES: usize = MAX_DIRECTORY_ENTRIES 
 pub(crate) const MAX_OPERATION_FILE_READS: usize = 14;
 pub(crate) const MAX_OPERATION_READ_BYTES: usize =
     MANIFEST_BYTES * 4 + SHARD_BYTES * 4 + PENDING_BYTES;
+
+const _: () = assert!(SHARD_COUNT + 4 < MAX_DIRECTORY_ENTRIES);
+const _: () = assert!(MAX_OPERATION_FILE_READS >= 14);
+const _: () = assert!(
+    MAX_OPERATION_READ_BYTES >= MANIFEST_BYTES * 4 + SHARD_BYTES * 4 + PENDING_BYTES
+);
 // Recovery may have to publish the manifest + anchor of one authenticated
 // pending predecessor before the requested handle can start its own complete
 // transaction.  Admission covers both bounded phases, including first-key
@@ -95,6 +101,8 @@ const DOMAIN_ANCHOR: &[u8] = b"neoth.context-evidence-receipts.anchor.v1\0";
 /// is migration evidence: runtime admission must fail closed and must never
 /// treat the new ledger's authenticated absence as proof of absence there.
 pub(crate) const LEDGER_V1_IS_FIRST_CONTEXT_EVIDENCE_RECEIPT_PRODUCER: bool = true;
+
+const _: () = assert!(LEDGER_V1_IS_FIRST_CONTEXT_EVIDENCE_RECEIPT_PRODUCER);
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -122,12 +130,12 @@ pub(crate) enum TestCanonicalWriteFailure {
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TestTransactionFailure {
-    AfterKey,
-    AfterPending,
-    AfterShard,
-    AfterManifest,
-    AfterAnchor,
-    AfterPendingRemoval,
+    KeyWritten,
+    PendingWritten,
+    ShardWritten,
+    ManifestWritten,
+    AnchorPublished,
+    PendingRemoved,
 }
 
 #[cfg(test)]
@@ -1224,7 +1232,7 @@ fn publish_anchor(
                 accounting,
             )?;
             #[cfg(test)]
-            inject_transaction_failure(ledger, TestTransactionFailure::AfterAnchor)?;
+            inject_transaction_failure(ledger, TestTransactionFailure::AnchorPublished)?;
             Ok(())
         }
         Err(error) => Err(error).with_context(|| "inspect receipt ledger external anchor"),
@@ -1391,7 +1399,7 @@ fn load_or_initialize_key(
         accounting,
     )?;
     #[cfg(test)]
-    inject_transaction_failure(ledger, TestTransactionFailure::AfterKey)?;
+    inject_transaction_failure(ledger, TestTransactionFailure::KeyWritten)?;
     Ok(raw)
 }
 
@@ -1610,7 +1618,7 @@ fn recover_pending(
                 accounting,
             )?;
             #[cfg(test)]
-            inject_transaction_failure(ledger, TestTransactionFailure::AfterManifest)?;
+            inject_transaction_failure(ledger, TestTransactionFailure::ManifestWritten)?;
             publish_anchor(ledger, key, &pending.manifest, budget, accounting)?;
             remove_pending_accounted(ledger, accounting)?;
         }
@@ -1888,7 +1896,7 @@ fn write_transaction(
         accounting,
     )?;
     #[cfg(test)]
-    inject_transaction_failure(ledger, TestTransactionFailure::AfterPending)?;
+    inject_transaction_failure(ledger, TestTransactionFailure::PendingWritten)?;
     let shard_name = shard_file_name(pending.shard, pending.slot, pending.new_generation);
     write_new_child_accounted(
         ledger,
@@ -1899,7 +1907,7 @@ fn write_transaction(
         accounting,
     )?;
     #[cfg(test)]
-    inject_transaction_failure(ledger, TestTransactionFailure::AfterShard)?;
+    inject_transaction_failure(ledger, TestTransactionFailure::ShardWritten)?;
     let manifest_name = manifest_file_name(pending.new_generation);
     write_new_child_accounted(
         ledger,
@@ -1910,7 +1918,7 @@ fn write_transaction(
         accounting,
     )?;
     #[cfg(test)]
-    inject_transaction_failure(ledger, TestTransactionFailure::AfterManifest)?;
+    inject_transaction_failure(ledger, TestTransactionFailure::ManifestWritten)?;
     Ok(())
 }
 
@@ -2101,7 +2109,7 @@ fn remove_pending_accounted(
 ) -> Result<()> {
     remove_exact_accounted(ledger, ObjectNamespace::Ledger, PENDING, accounting)?;
     #[cfg(test)]
-    inject_transaction_failure(ledger, TestTransactionFailure::AfterPendingRemoval)?;
+    inject_transaction_failure(ledger, TestTransactionFailure::PendingRemoved)?;
     Ok(())
 }
 
@@ -2665,10 +2673,7 @@ mod tests {
                 + ANCHOR_BYTES * 2) as u64
         );
         assert_eq!(LIFETIME_CAPACITY, 1_048_576);
-        assert!(SHARD_COUNT + 4 < MAX_DIRECTORY_ENTRIES);
         assert_eq!(MAX_OPERATION_DIRECTORY_ENTRIES, MAX_DIRECTORY_ENTRIES * 6);
-        assert!(MAX_OPERATION_FILE_READS >= 14);
-        assert!(MAX_OPERATION_READ_BYTES >= MANIFEST_BYTES * 4 + SHARD_BYTES * 4 + PENDING_BYTES);
     }
 
     #[test]
@@ -2797,7 +2802,7 @@ mod tests {
             .unwrap();
         assert!(view.receipt.is_none());
 
-        fail_transaction_after_for_test(home.path(), TestTransactionFailure::AfterPending);
+        fail_transaction_after_for_test(home.path(), TestTransactionFailure::PendingWritten);
         let next_handle = [0x34; 32];
         let (next, next_frame) = closed_frame(next_handle);
         append_once(home.path(), &next_handle, &next, &next_frame).unwrap_err();
@@ -2807,25 +2812,25 @@ mod tests {
     #[test]
     fn every_durable_transaction_boundary_recovers_without_a_second_receipt() {
         let cases = [
-            (TestTransactionFailure::AfterKey, AppendDecision::Appended),
+            (TestTransactionFailure::KeyWritten, AppendDecision::Appended),
             (
-                TestTransactionFailure::AfterPending,
+                TestTransactionFailure::PendingWritten,
                 AppendDecision::Appended,
             ),
             (
-                TestTransactionFailure::AfterShard,
+                TestTransactionFailure::ShardWritten,
                 AppendDecision::AlreadyPresent,
             ),
             (
-                TestTransactionFailure::AfterManifest,
+                TestTransactionFailure::ManifestWritten,
                 AppendDecision::AlreadyPresent,
             ),
             (
-                TestTransactionFailure::AfterAnchor,
+                TestTransactionFailure::AnchorPublished,
                 AppendDecision::AlreadyPresent,
             ),
             (
-                TestTransactionFailure::AfterPendingRemoval,
+                TestTransactionFailure::PendingRemoved,
                 AppendDecision::AlreadyPresent,
             ),
         ];
@@ -2853,13 +2858,13 @@ mod tests {
         let (receipt, frame) = closed_frame(handle);
         let mut debt = ReceiptQuotaDebt::default();
 
-        fail_transaction_after_for_test(home.path(), TestTransactionFailure::AfterPending);
+        fail_transaction_after_for_test(home.path(), TestTransactionFailure::PendingWritten);
         let first = append_once_with_quota_debt(home.path(), &handle, &receipt, &frame, &mut debt)
             .unwrap_err();
         assert!(first.retained_bytes() >= PENDING_BYTES as u64);
         assert_eq!(first.reclaimed_debt_bytes(), 0);
 
-        fail_transaction_after_for_test(home.path(), TestTransactionFailure::AfterPending);
+        fail_transaction_after_for_test(home.path(), TestTransactionFailure::PendingWritten);
         let second = append_once_with_quota_debt(home.path(), &handle, &receipt, &frame, &mut debt)
             .unwrap_err();
         assert_eq!(second.reclaimed_debt_bytes(), PENDING_BYTES as u64);
@@ -2951,7 +2956,7 @@ mod tests {
 
         let second_handle = [0x82; 32];
         let (second, second_frame) = closed_frame(second_handle);
-        fail_transaction_after_for_test(home.path(), TestTransactionFailure::AfterManifest);
+        fail_transaction_after_for_test(home.path(), TestTransactionFailure::ManifestWritten);
         append_once(home.path(), &second_handle, &second, &second_frame).unwrap_err();
         let before = namespace_names(&ledger_path(home.path()));
         assert_eq!(
@@ -3092,13 +3097,17 @@ mod tests {
 
     #[test]
     fn legacy_primary_wal_receipts_are_never_an_admission_fallback() {
-        assert!(LEDGER_V1_IS_FIRST_CONTEXT_EVIDENCE_RECEIPT_PRODUCER);
         // The production append path accepts only the exact ledger frame and
         // contains no call to the O(history) offline scanner.  A historical
         // primary-WAL 0x27 discovered by explicit forensic tooling therefore
         // requires a stopped-daemon authenticated migration; it cannot turn a
         // ledger absence into a runtime ACK.
         let source = include_str!("context_evidence_receipts.rs");
-        assert!(!source.contains("authenticated_context_evidence_receipt_exists("));
+        let (production_source, _) = source
+            .split_once("#[cfg(test)]\nmod tests {")
+            .expect("receipt source must retain its test-module boundary");
+        assert!(
+            !production_source.contains("authenticated_context_evidence_receipt_exists(")
+        );
     }
 }

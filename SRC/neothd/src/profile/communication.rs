@@ -238,6 +238,19 @@ pub enum AuthenticatedSubjectOrigin {
     LegacyAuthenticated,
 }
 
+/// Deserialization-only representation of the schema-v1 assertion. New
+/// evidence never accepts this value at an API boundary: migration converts a
+/// persisted assertion into an explicit compatibility origin before state
+/// validation, and schema-v2 persistence omits it entirely.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct LegacyAuthenticationAssertion(bool);
+
+impl LegacyAuthenticationAssertion {
+    fn is_asserted(self) -> bool {
+        self.0
+    }
+}
+
 impl AuthenticatedSubject {
     fn subject_id(&self) -> &str {
         &self.subject_id
@@ -373,10 +386,10 @@ pub struct EvidenceRef {
     pub value: PreferenceValue,
     pub observed_at_unix: i64,
     pub scope: CommunicationScope,
-    /// Compatibility-only v1 field. Schema-v2 persistence uses the typed
-    /// `authenticated_origin` and never serializes this boolean declaration.
+    /// Compatibility-only schema-v1 assertion. Schema-v2 persistence uses the
+    /// typed `authenticated_origin` and never serializes this field.
     #[serde(rename = "authenticated_subject", default, skip_serializing)]
-    legacy_authenticated_subject: bool,
+    legacy_authenticated_subject: LegacyAuthenticationAssertion,
     #[serde(default)]
     pub authenticated_origin: Option<AuthenticatedSubjectOrigin>,
     pub reason_code: String,
@@ -855,7 +868,10 @@ fn validate_loaded_state(state: &CommunicationState) -> Result<()> {
                 if item.dimension() != *dimension {
                     bail!("communication evidence dimension key does not match its value");
                 }
-                if !item.legacy_authenticated_subject && item.authenticated_origin.is_none() {
+                if item.legacy_authenticated_subject.is_asserted() {
+                    bail!("communication state contains a legacy authentication assertion");
+                }
+                if item.authenticated_origin.is_none() {
                     bail!("communication state contains unauthenticated evidence");
                 }
                 if matches!(&item.scope, CommunicationScope::Global)
@@ -957,9 +973,21 @@ fn load_state_unlocked(home: &Path) -> Result<CommunicationState> {
     for (subject_id, subject) in &mut state.subjects {
         for items in subject.evidence.values_mut() {
             for item in items {
-                if item.authenticated_origin.is_none() && item.legacy_authenticated_subject {
+                if legacy_state && item.authenticated_origin.is_some() {
+                    bail!(
+                        "schema-v1 communication evidence contains a typed authentication origin"
+                    );
+                }
+                if legacy_state
+                    && item.authenticated_origin.is_none()
+                    && item.legacy_authenticated_subject.is_asserted()
+                {
                     item.authenticated_origin =
                         Some(AuthenticatedSubjectOrigin::LegacyAuthenticated);
+                }
+                if legacy_state {
+                    item.legacy_authenticated_subject =
+                        LegacyAuthenticationAssertion::default();
                 }
                 if legacy_state
                     && subject_id != COMMUNICATION_OPERATOR_SUBJECT
@@ -1317,7 +1345,7 @@ pub(crate) fn record_evidence_batch(
                 value: input.value,
                 observed_at_unix: input.observed_at_unix,
                 scope: input.scope.clone(),
-                legacy_authenticated_subject: false,
+                legacy_authenticated_subject: LegacyAuthenticationAssertion::default(),
                 authenticated_origin: Some(input.subject.origin()),
                 reason_code: input.reason_code.to_owned(),
             });
@@ -2394,7 +2422,7 @@ mod tests {
             value,
             observed_at_unix: 1,
             scope: CommunicationScope::Global,
-            legacy_authenticated_subject: true,
+            legacy_authenticated_subject: LegacyAuthenticationAssertion(true),
             authenticated_origin: None,
             reason_code: "legacy_signal".to_owned(),
         };
@@ -2460,6 +2488,55 @@ mod tests {
                 estimate.as_object_mut().unwrap().remove("scope_provenance");
             }
         }
+        std::fs::write(&path, serde_json::to_vec(&legacy_json).unwrap()).unwrap();
+
+        let mut schema_v1_with_typed_origin = legacy_json.clone();
+        let alice_evidence = schema_v1_with_typed_origin["subjects"]["alice"]["evidence"]
+            ["directness"]
+            .as_array_mut()
+            .unwrap()
+            .first_mut()
+            .unwrap();
+        alice_evidence["authenticated_origin"] = serde_json::to_value(
+            AuthenticatedSubjectOrigin::AuthenticatedChannelParticipant,
+        )
+        .unwrap();
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&schema_v1_with_typed_origin).unwrap(),
+        )
+        .unwrap();
+        let error = load_state(dir.path()).unwrap_err();
+        assert!(format!("{error:#}").contains(
+            "schema-v1 communication evidence contains a typed authentication origin"
+        ));
+
+        let mut schema_v2_with_legacy_assertion = legacy_json.clone();
+        schema_v2_with_legacy_assertion["schema_version"] =
+            serde_json::Value::from(STATE_SCHEMA_VERSION);
+        for subject in ["operator", "alice"] {
+            for evidence in schema_v2_with_legacy_assertion["subjects"][subject]["evidence"]
+                .as_object_mut()
+                .unwrap()
+                .values_mut()
+            {
+                evidence.as_array_mut().unwrap()[0]["scope"] = serde_json::to_value(
+                    CommunicationScope::Task("legacy-assertion-fixture".to_owned()),
+                )
+                .unwrap();
+            }
+        }
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&schema_v2_with_legacy_assertion).unwrap(),
+        )
+        .unwrap();
+        let error = load_state(dir.path()).unwrap_err();
+        assert!(
+            format!("{error:#}")
+                .contains("communication state contains a legacy authentication assertion")
+        );
+
         std::fs::write(&path, serde_json::to_vec(&legacy_json).unwrap()).unwrap();
 
         let migrated = load_state(dir.path()).unwrap();
@@ -2802,7 +2879,10 @@ mod tests {
             "test_signal",
         );
         let error = record_evidence(dir.path(), &policy, evidence, false, false).unwrap_err();
-        assert!(error.to_string().contains("operator origin"));
+        assert_eq!(
+            error.to_string(),
+            "only an operator-origin proof may write global communication evidence"
+        );
         assert!(!state_path(dir.path()).exists());
     }
 

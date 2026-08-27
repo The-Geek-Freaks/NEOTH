@@ -4,6 +4,21 @@ const ENVELOPE: &str = include_str!("../src/security/prompt_envelope.rs");
 const FACTUAL_CHECK: &str = include_str!("../src/council/factual_check.rs");
 const ORCHESTRATOR: &str = include_str!("../src/council/orchestrator.rs");
 
+const TRY_EMBED_GROUND_TRUTH_TAG_SIGNATURE: &str = concat!(
+    "pub fn try_embed_ground_truth_tag(\n",
+    "    prompt: &str,\n",
+    "    assertions: &[FactualAssertion],\n",
+    ") -> Result<String, crate::security::PromptBuildError>",
+);
+const FACTUAL_CONTRADICTION_CHECK_SIGNATURE: &str = concat!(
+    "pub fn factual_contradiction_check(\n",
+    "    response: &str,\n",
+    "    assertions: &[FactualAssertion],\n",
+    "    negation_markers: &[&str],\n",
+    "    window_chars: usize,\n",
+    ") -> FactualCheckOutcome",
+);
+
 fn function_body(source: &str, signature: &str) -> String {
     let code = code_only(source);
     let start = code_signature_offset(&code, signature)
@@ -188,7 +203,7 @@ fn factual_check_has_separate_typed_question_and_assertion_purposes() {
 
 #[test]
 fn factual_check_serializes_each_provider_bound_value_once_without_raw_fallback() {
-    let builder = function_body(FACTUAL_CHECK, "pub fn try_embed_ground_truth_tag(");
+    let builder = function_body(FACTUAL_CHECK, TRY_EMBED_GROUND_TRUTH_TAG_SIGNATURE);
     assert_eq!(
         builder.matches("serialize_untrusted_prompt(").count(),
         2,
@@ -232,7 +247,7 @@ fn orchestrator_rejects_framing_before_provider_scheduling_or_budget_charge() {
 
 #[test]
 fn adversarial_limits_and_local_only_candidate_comparison_are_pinned() {
-    let local_comparison = function_body(FACTUAL_CHECK, "pub fn factual_contradiction_check(");
+    let local_comparison = function_body(FACTUAL_CHECK, FACTUAL_CONTRADICTION_CHECK_SIGNATURE);
     let adversarial_prompt = function_body(
         FACTUAL_CHECK,
         "fn typed_factual_prompt_escapes_adversarial_fields_and_keeps_suffix_degradable()",

@@ -4,8 +4,8 @@
 //! It binds one explicitly supplied, already-validated grader roster and one
 //! canonical goldset to SHA256 digests, accepts only bounded offline grade files,
 //! clusters grader-family bias deterministically, and writes a derived report.
-//! The report is *not* a cutover verdict and cannot replace the existing
-//! fail-closed [`super::parity_run`] verdict path.
+//! The report is *not* a cutover verdict and cannot replace the existing fail-closed gate.
+//! It remains subordinate to the [`super::parity_run`] verdict path.
 
 use std::{
     collections::{BTreeMap, BTreeSet},

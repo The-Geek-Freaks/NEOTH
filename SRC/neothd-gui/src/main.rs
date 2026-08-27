@@ -15137,7 +15137,7 @@ fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBu
             // Legacy inline slot keys are migrated by write_credentials_yaml
             // before this public transaction. Never retain a secret in
             // freedom.yaml, even while preserving endpoint/region metadata.
-            slot.remove(&serde_yaml::Value::from("key"));
+            slot.remove(serde_yaml::Value::from("key"));
             let fields = value
                 .as_mapping()
                 .context("wizard topology slot did not serialize as a mapping")?;
@@ -15159,7 +15159,7 @@ fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBu
             let slot = slot.as_mapping_mut().with_context(|| {
                 format!("freedom.yaml inference.{slot_name} is not a YAML mapping")
             })?;
-            slot.remove(&serde_yaml::Value::from("key"));
+            slot.remove(serde_yaml::Value::from("key"));
         }
     }
     root_map.insert(inference_key, serde_yaml::Value::Mapping(inference));
@@ -15311,10 +15311,10 @@ fn merge_wizard_slot_credential(
         // A role may never inherit a previous vendor's secret after its
         // provider changes. The operator can explicitly enter a replacement.
         map.remove(&key);
-    } else if !map.contains_key(&key) {
-        if let Some(value) = legacy_inline_key.or(legacy_provider_key) {
-            map.insert(key, serde_yaml::Value::from(value));
-        }
+    } else if !map.contains_key(&key)
+        && let Some(value) = legacy_inline_key.or(legacy_provider_key)
+    {
+        map.insert(key, serde_yaml::Value::from(value));
     }
 }
 
@@ -25220,8 +25220,17 @@ mod chat_subprocess_tests {
             .nth(1)
             .and_then(|tail| tail.split("fn refresh_overview_cost(").next())
             .unwrap();
+        let overview_worker_bound = source
+            .split("const MAX_USAGE_OVERVIEW_WORKERS: usize = ")
+            .nth(1)
+            .and_then(|tail| tail.split(';').next())
+            .unwrap();
+        assert_eq!(
+            overview_worker_bound.trim(),
+            "2",
+            "usage overview workers must retain their production bound"
+        );
         for contract in [
-            "MAX_USAGE_OVERVIEW_WORKERS",
             "worker.is_finished()",
             "neoth-usage-overview",
             "workers.push(worker)",

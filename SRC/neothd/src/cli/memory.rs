@@ -1902,9 +1902,7 @@ mod tests {
         session_id: &str,
         event_hash: [u8; 32],
     ) {
-        use crate::profile::communication::{
-            CommunicationScope, DirectnessPreference, PreferenceValue,
-        };
+        use crate::profile::communication::{DirectnessPreference, PreferenceValue};
 
         crate::profile::communication::set_test_scoped_preference(
             home,
