@@ -17,6 +17,7 @@ use serde::Serialize;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
+use crate::media::MediaExtractor;
 use crate::skills::loader::{
     SkillInventoryOrigin, SkillInventoryRow, SkillInventoryRuntimeState, diagnostic_inventory,
 };
@@ -108,6 +109,18 @@ fn skill_uninstall_receipt(report: &installer::UninstallReport) -> SkillUninstal
     }
 }
 
+/// Stable read-only receipt for ADOPT31-B1.  The source path deliberately
+/// never crosses this boundary, and the embedded text was defanged by the
+/// document distillation module before it became review output.
+#[derive(Serialize)]
+struct DocumentReviewReceipt<'a> {
+    review_only: bool,
+    skill_written: bool,
+    skill_activated: bool,
+    provider_dispatched: bool,
+    document: &'a crate::skills::doc_distill::DistilledDoc,
+}
+
 /// Human-readable mutation status deliberately omits skill identifiers and
 /// filesystem locations. Structured output retains the explicit receipt for
 /// callers that require those fields.
@@ -186,6 +199,19 @@ fn skill_create_receipt(report: &crate::skills::creator::CreateReport) -> SkillC
         .multiple(false)
 ))]
 pub struct SkillsArgs {
+    /// Extract one PDF, office document, or EPUB into a sanitized operator
+    /// review draft. This is read-only: it never writes, installs, activates,
+    /// routes, or provider-dispatches a skill.
+    #[arg(
+        long = "from-doc",
+        value_name = "PATH",
+        conflicts_with_all = [
+            "list", "check_routing", "test", "run_tests", "install", "inspect_install",
+            "inspect_target", "uninstall", "create", "enable", "disable", "revoke", "force"
+        ]
+    )]
+    pub from_doc: Option<PathBuf>,
+
     /// Print the table of installed skills.
     #[arg(long, conflicts_with_all = ["test", "run_tests", "install", "inspect_install", "inspect_target", "uninstall", "create", "enable", "disable", "revoke"])]
     pub list: bool,
@@ -718,6 +744,13 @@ pub(crate) async fn set_skill_authority_at_config_with_expectation(
 }
 
 pub async fn run_skills(args: SkillsArgs) -> Result<()> {
+    // ADOPT31-B1 is deliberately before skill-mutation reconciliation: a
+    // document-review request must not write, install, activate, or recover a
+    // skill as an incidental side effect.
+    if let Some(source) = &args.from_doc {
+        return run_document_review(source, args.output).await;
+    }
+
     let home = FreedomConfig::default_neoth_home();
     let skills_dir = home.join("skills");
     if args.force && args.install.is_none() && !args.create {
@@ -1335,6 +1368,51 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
     unreachable!("every skills command mode returns before the strict runtime load falls through")
 }
 
+/// The shared CLI/chat handler for `/skill-from-doc <path>` and the secondary
+/// `neoth skills --from-doc <path>` surface. It reads one bounded file and
+/// prints a review draft; it has no skill filesystem, config, WAL, router, or
+/// provider dependency.
+pub async fn run_document_review(path: &Path, output: OutputFormat) -> Result<()> {
+    let source = path.to_path_buf();
+    let admitted = tokio::task::spawn_blocking(move || {
+        crate::skills::doc_distill::admit_operator_document(&source)
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("document source admission worker failed"))??;
+    let extraction = match admitted.source_kind() {
+        crate::skills::doc_distill::DocumentSourceKind::Pdf => {
+            crate::media::pdf::PdfExtractor.extract(admitted.asset()).await
+        }
+        crate::skills::doc_distill::DocumentSourceKind::OfficeOrBook => {
+            crate::media::document::DocumentExtractor
+                .extract(admitted.asset())
+                .await
+        }
+    }
+    .map_err(|_| anyhow::anyhow!("document extraction failed; no review draft was produced"))?;
+    let document = crate::skills::doc_distill::distill_doc(
+        extraction,
+        admitted.source_kind(),
+        admitted.source_bytes(),
+        admitted.source_bytes_sha256().to_owned(),
+    )?;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::to_string(&DocumentReviewReceipt {
+                review_only: true,
+                skill_written: false,
+                skill_activated: false,
+                provider_dispatched: false,
+                document: &document,
+            })?
+        ),
+        OutputFormat::Table => println!("{}", document.render_operator_review()),
+    }
+    Ok(())
+}
+
 fn print_skill_inventory(
     inventory: &[SkillInventoryRow],
     output: OutputFormat,
@@ -1549,6 +1627,34 @@ mod tests {
                 "--check-routing",
                 "--test",
                 "deploy now",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn from_doc_is_a_typed_read_only_cli_mode_and_rejects_mutator_combinations() {
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "skills",
+            "--from-doc",
+            "operator-guide.pdf",
+        ])
+        .expect("parse read-only document review mode");
+        let crate::cli::Commands::Skills(args) = cli.command else {
+            panic!("expected skills command");
+        };
+        assert_eq!(args.from_doc, Some(PathBuf::from("operator-guide.pdf")));
+        assert!(args.install.is_none());
+        assert!(!args.create);
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "neoth",
+                "skills",
+                "--from-doc",
+                "operator-guide.pdf",
+                "--install",
+                "untrusted-skill",
             ])
             .is_err()
         );

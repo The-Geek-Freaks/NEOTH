@@ -26,6 +26,10 @@ pub mod authority;
 pub mod auto_extract;
 pub mod bundled;
 pub mod creator;
+/// ADOPT31-B1 — bounded document/book extraction to an operator-only,
+/// sanitized review draft. It cannot install, activate, route, or dispatch a
+/// generated skill.
+pub mod doc_distill;
 pub mod generated_scan;
 pub mod installer;
 pub mod loader;

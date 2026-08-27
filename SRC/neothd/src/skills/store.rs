@@ -172,6 +172,22 @@ impl BoundChildObject {
         Ok(readonly_regular_file_identity(parent, name, display_path)? == self.identity_token)
     }
 
+    /// Re-check a review byte capture's direct-child binding using the same
+    /// no-follow open contract as its original handle.
+    ///
+    /// This must not reuse the ordinary read-only identity helper: on Windows
+    /// that helper deliberately permits write/delete sharing for copy and
+    /// mutation workflows, whereas the operator-review reader restricts
+    /// future sharing where the platform exposes that facility.
+    pub(crate) fn matches_regular_file_snapshot(
+        &self,
+        parent: &Dir,
+        name: &OsStr,
+        display_path: &Path,
+    ) -> Result<bool> {
+        Ok(snapshot_regular_file_identity(parent, name, display_path)? == self.identity_token)
+    }
+
     /// Remove the exact regular file retained by this binding.
     ///
     /// Windows commits through the retained `DELETE`-capable handle, so a
@@ -564,6 +580,91 @@ pub(crate) fn open_bound_directory(
         create,
         label,
     )
+}
+
+/// Open an operator-selected absolute path from a fixed filesystem root,
+/// walking *every* descendant through no-follow directory capabilities.
+///
+/// Unlike [`open_bound_directory`], this function never derives or
+/// canonicalizes a trust anchor from the supplied path. UNC and other
+/// non-disk Windows namespaces are deliberately unsupported because their
+/// root identity cannot be established by this local operator boundary.
+pub(crate) fn open_absolute_bound_directory(
+    path: &Path,
+    create: bool,
+    label: &str,
+) -> Result<Option<BoundDirectory>> {
+    if has_navigation_component(path) {
+        anyhow::bail!(
+            "{label} path must not contain `.` or `..` components: {}",
+            path.display()
+        );
+    }
+    let absolute = std::path::absolute(path)
+        .with_context(|| format!("resolve absolute {label} path {}", path.display()))?;
+    if has_navigation_component(&absolute) {
+        anyhow::bail!(
+            "{label} path must not contain `.` or `..` components: {}",
+            path.display()
+        );
+    }
+
+    #[cfg(unix)]
+    let root = PathBuf::from("/");
+    #[cfg(windows)]
+    let root = {
+        use std::path::Prefix;
+
+        let mut components = absolute.components();
+        let Some(Component::Prefix(prefix)) = components.next() else {
+            anyhow::bail!("{label} path has no supported disk root: {}", path.display());
+        };
+        let Prefix::Disk(letter) = prefix.kind() else {
+            anyhow::bail!("{label} path has no supported disk root: {}", path.display());
+        };
+        anyhow::ensure!(
+            matches!(components.next(), Some(Component::RootDir)),
+            "{label} path must be absolute beneath a disk root: {}",
+            path.display()
+        );
+        PathBuf::from(format!("{}:\\", char::from(letter)))
+    };
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (create, label, absolute);
+        anyhow::bail!("{label} document review source is unsupported on this platform");
+    }
+
+    #[cfg(any(unix, windows))]
+    {
+        let relative = absolute.strip_prefix(&root).with_context(|| {
+            format!(
+                "derive {label} path below fixed filesystem root {}",
+                root.display()
+            )
+        })?;
+        if relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            anyhow::bail!(
+                "{label} path has a non-child component below its filesystem root: {}",
+                path.display()
+            );
+        }
+        let current = open_ambient_directory_nofollow(&root, label)?;
+        return walk_bound_directory_descendants(
+            current,
+            root,
+            relative,
+            &absolute,
+            create,
+            label,
+        );
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    unreachable!("unsupported platform returned above");
 }
 
 /// Open or create `path` below an explicit, already-existing trust anchor.
@@ -1024,6 +1125,97 @@ pub(crate) fn open_bound_regular_file(
     Ok((file, binding))
 }
 
+/// Open one real regular file through a retained directory capability for a
+/// bounded, read-only operator review capture.
+///
+/// Every path component is expected to have been opened by
+/// [`open_bound_directory`]; this leaf open never follows links. On Windows
+/// its handle allows only other readers, preventing later writer/delete opens.
+/// Existing writer handles can still influence bytes; Unix locks are likewise
+/// advisory. Therefore the resulting bytes are always untrusted review data,
+/// never authority for an install, activation, provider request, or write.
+/// The caller's same-handle double-read and identity checks are detection
+/// defenses, not an immutable-snapshot claim. Platforms without no-follow
+/// opening fail closed rather than falling back to an ambient-path open.
+pub(crate) fn open_bound_regular_file_snapshot(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<(File, BoundChildObject)> {
+    let file = open_regular_file_snapshot_handle(parent, name, display_path)?;
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("inspect document review snapshot {}", display_path.display()))?;
+    if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
+        anyhow::bail!(
+            "document review snapshot is not a real regular file: {}",
+            display_path.display()
+        );
+    }
+    let binding = BoundChildObject {
+        identity_token: child_identity_token(&metadata)?,
+        _handle: Some(
+            file.try_clone()
+                .with_context(|| format!("retain document review snapshot {}", display_path.display()))?,
+        ),
+    };
+    if !binding.matches_regular_file_snapshot(parent, name, display_path)? {
+        anyhow::bail!(
+            "document review snapshot changed while its identity was being bound: {}",
+            display_path.display()
+        );
+    }
+    Ok((file, binding))
+}
+
+fn open_regular_file_snapshot_handle(parent: &Dir, name: &OsStr, display_path: &Path) -> Result<File> {
+    validate_child_name(name)?;
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_SHARE_READ,
+        };
+        options
+            .access_mode(FILE_GENERIC_READ)
+            // Deny later write/delete opens while this review capture is held.
+            // This does not retroactively constrain an already-open writer.
+            .share_mode(FILE_SHARE_READ)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (parent, name, display_path);
+        anyhow::bail!("no no-follow document review capture primitive on this platform");
+    }
+    let file = parent
+        .open_with(name, &options)
+        .with_context(|| format!("open document review snapshot {}", display_path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd as _;
+
+        // SAFETY: `file` owns a valid descriptor. This is deliberately
+        // non-blocking so a concurrent cooperative writer is detected. This
+        // lock is advisory and never upgrades untrusted review bytes into an
+        // authority-bearing immutable snapshot.
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error()).with_context(|| {
+                format!("acquire shared document review snapshot lock {}", display_path.display())
+            });
+        }
+    }
+    Ok(file)
+}
+
 /// Open one regular file for reading and retain separate exact-object mutation
 /// authority for its later removal.
 ///
@@ -1422,6 +1614,27 @@ fn readonly_regular_file_identity(
     if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
         anyhow::bail!(
             "expected a real regular file for read-only identity check: {}",
+            display_path.display()
+        );
+    }
+    child_identity_token(&metadata)
+}
+
+fn snapshot_regular_file_identity(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<String> {
+    let file = open_regular_file_snapshot_handle(parent, name, display_path)?;
+    let metadata = file.metadata().with_context(|| {
+        format!(
+            "inspect document review snapshot identity {}",
+            display_path.display()
+        )
+    })?;
+    if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
+        anyhow::bail!(
+            "expected a real regular file for document review snapshot: {}",
             display_path.display()
         );
     }

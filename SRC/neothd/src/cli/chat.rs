@@ -221,7 +221,7 @@ fn ensure_background_session_mode(name: &str, incognito: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_chat(args: ChatArgs) -> Result<()> {
+pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
     // The private GUI launch commit is the first operation in this entry point.
     // Until the bounded envelope arrives, no config, provider, hook, tool, or
     // other request-adjacent state is touched.
@@ -235,6 +235,10 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
             args.message.is_some(),
             "`--gui-launch-envelope-stdin` requires the chat message in argv; stdin is reserved for the private launch envelope"
         );
+    }
+
+    if dispatch_pre_runtime_local_action(&mut args).await? {
+        return Ok(());
     }
 
     let neoth_home = chat_neoth_home(args.config.as_deref());
@@ -611,6 +615,77 @@ fn slash_invocation_name(prompt: &str) -> Option<String> {
         crate::slash::Invocation::Command { name, .. } => Some(name.to_lowercase()),
         _ => None,
     }
+}
+
+/// The same pure parser is used for argv, stdin, and editor prompt text before
+/// chat runtime initialization.  It deliberately returns a borrowed path only;
+/// the caller owns path admission and the review-only action boundary.
+fn skill_from_doc_path(prompt: &str) -> Option<&str> {
+    match crate::slash::parse_invocation(prompt) {
+        crate::slash::Invocation::Command { name, args } if name == "skill-from-doc" => {
+            Some(args.trim())
+        }
+        _ => None,
+    }
+}
+
+/// A locally terminal action that must be chosen before any config, consent,
+/// provider, WAL, attachment-extraction, or skill-reconciliation setup.
+///
+/// Keeping this decision pure makes the review-only route testable without
+/// constructing any of those side-effecting components.
+#[derive(Debug, PartialEq, Eq)]
+enum PreConfigChatAction<'a> {
+    SkillFromDoc(&'a str),
+}
+
+fn pre_config_chat_action(
+    prompt: &str,
+    has_attachments: bool,
+) -> Result<Option<PreConfigChatAction<'_>>> {
+    let Some(source) = skill_from_doc_path(prompt) else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        !has_attachments,
+        "/skill-from-doc does not consume attachments; pass its single path after the command"
+    );
+    Ok(Some(PreConfigChatAction::SkillFromDoc(source)))
+}
+
+/// Execute the only review-only slash action before chat setup.  Both public
+/// chat entry points call this exact dispatcher; it is the sole place that
+/// owns usage output and invokes the document-review handler.
+async fn dispatch_pre_runtime_local_action(args: &mut ChatArgs) -> Result<bool> {
+    // Resolve non-argv sources before home/config/consent/provider/WAL work so
+    // argv, stdin, and editor prompts have one identical local-action seam.
+    let pre_resolved_prompt = if args.message.is_none() || args.edit {
+        Some(resolve_prompt_base(args).await?)
+    } else {
+        None
+    };
+    let prompt = pre_resolved_prompt.as_deref().or(args.message.as_deref());
+    let action = prompt
+        .map(|value| pre_config_chat_action(value, !args.attach.is_empty()))
+        .transpose()?
+        .flatten();
+    let Some(PreConfigChatAction::SkillFromDoc(source)) = action else {
+        if let Some(prompt) = pre_resolved_prompt {
+            args.message = Some(prompt);
+            args.edit = false;
+        }
+        return Ok(false);
+    };
+    if source.is_empty() {
+        println!("Usage: /skill-from-doc <path>");
+        return Ok(true);
+    }
+    crate::cli::skills::run_document_review(
+        std::path::Path::new(source),
+        crate::cli::OutputFormat::Table,
+    )
+    .await?;
+    Ok(true)
 }
 
 #[derive(Debug)]
@@ -2296,6 +2371,18 @@ async fn enforce_preflight(
                     name,
                     args: cmd_args,
                 } => {
+                    // This private runtime layer is deliberately too late for
+                    // review-only work: a public ingress must already have
+                    // terminated through `dispatch_pre_runtime_local_action`.
+                    // Refuse any bypass rather than producing a review after a
+                    // chat WAL/config/provider-adjacent path has begun.
+                    if skill_from_doc_path(&prompt).is_some() {
+                        drain_preflight_action_writer(writer, writer_join).await?;
+                        anyhow::bail!(
+                            "/skill-from-doc must be dispatched before chat runtime initialization"
+                        );
+                    }
+
                     // ── GOLD-ADAPT-ODY-17: `/research <topic>` deep-research engine ──
                     // Short-circuits before the TOML command registry and the LLM
                     // round-trip: runs the multi-step search→read→synthesize loop,
@@ -5963,10 +6050,15 @@ async fn run_post_reply_pipelines(
 }
 
 pub async fn run_chat_with(
-    args: ChatArgs,
+    mut args: ChatArgs,
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
 ) -> Result<()> {
+    // Public alternate ingress: use the same terminal local-action dispatcher
+    // before this helper can create a WAL writer or call the supplied provider.
+    if dispatch_pre_runtime_local_action(&mut args).await? {
+        return Ok(());
+    }
     run_chat_with_consent(
         args,
         config,
@@ -7401,9 +7493,9 @@ async fn reject_attachment_ignoring_slash_before_extraction(
     else {
         return Ok(());
     };
-    if name == "research" {
+    if name == "research" || name == "skill-from-doc" {
         anyhow::bail!(
-            "/research does not consume attachments; remove --attach or use a provider-backed \
+            "/{name} does not consume attachments; remove --attach or use a provider-backed \
              command that accepts attachment context"
         );
     }
@@ -11270,6 +11362,93 @@ mod tests {
         assert_eq!(
             slash_invocation_name(prompt).as_deref(),
             Some("academic_research")
+        );
+    }
+
+    #[test]
+    fn skill_from_doc_parser_is_identical_for_argv_and_stdin_prompt_text() {
+        // `run_chat` routes both sources through this pure parser before home,
+        // config, consent, provider, attachment extraction, or WAL setup.
+        let argv_prompt = "/skill-from-doc C:\\operator docs\\guide.pdf";
+        let stdin_prompt = "/skill-from-doc C:\\operator docs\\guide.pdf\n";
+        assert_eq!(
+            skill_from_doc_path(argv_prompt),
+            Some("C:\\operator docs\\guide.pdf")
+        );
+        assert_eq!(
+            skill_from_doc_path(stdin_prompt),
+            Some("C:\\operator docs\\guide.pdf")
+        );
+        assert_eq!(skill_from_doc_path("//skill-from-doc guide.pdf"), None);
+        assert_eq!(
+            pre_config_chat_action(argv_prompt, false).expect("pure argv route"),
+            Some(PreConfigChatAction::SkillFromDoc(
+                "C:\\operator docs\\guide.pdf"
+            ))
+        );
+        assert_eq!(
+            pre_config_chat_action(stdin_prompt, false).expect("pure stdin route"),
+            Some(PreConfigChatAction::SkillFromDoc(
+                "C:\\operator docs\\guide.pdf"
+            ))
+        );
+        assert!(pre_config_chat_action(argv_prompt, true).is_err());
+    }
+
+    #[tokio::test]
+    async fn skill_from_doc_attachment_guard_fails_before_attachment_extraction() {
+        let root = tempfile::tempdir().expect("temp home");
+        let error = reject_attachment_ignoring_slash_before_extraction(
+            "/skill-from-doc guide.pdf",
+            &[PathBuf::from("untrusted.pdf")],
+            root.path(),
+        )
+        .await
+        .expect_err("review-only command must reject attachments locally");
+
+        assert!(error.to_string().contains("does not consume attachments"));
+    }
+
+    #[tokio::test]
+    async fn public_run_chat_with_terminal_doc_action_creates_no_wal_or_provider_call() {
+        let home = tempfile::tempdir().expect("temp home");
+        let wal = home.path().join("would-be-created.wal");
+        let mut args = <ChatArgsParser as clap::Parser>::try_parse_from([
+            "neoth-chat-test",
+            "--wal-segment",
+            wal.to_str().expect("utf8 temp path"),
+            "/skill-from-doc",
+        ])
+        .expect("parse terminal slash action")
+        .chat;
+        let provider = NeverCalledProvider::default();
+
+        assert!(dispatch_pre_runtime_local_action(&mut args)
+            .await
+            .expect("terminal action dispatcher"));
+        assert!(!wal.exists());
+        assert_eq!(
+            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+
+        // Exercise the public seam separately; the empty path prints usage
+        // and returns before its supplied provider/WAL runtime can be used.
+        let args = <ChatArgsParser as clap::Parser>::try_parse_from([
+            "neoth-chat-test",
+            "--wal-segment",
+            wal.to_str().expect("utf8 temp path"),
+            "/skill-from-doc",
+        ])
+        .expect("parse public terminal slash action")
+        .chat;
+        run_chat_with(args, FreedomConfig::default(), &provider)
+            .await
+            .expect("public terminal action");
+        assert!(!wal.exists());
+        assert_eq!(
+            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+            0
         );
     }
 
