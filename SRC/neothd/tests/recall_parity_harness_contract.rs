@@ -338,7 +338,7 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
         "revalidate(run, FOUR_GRADER_BATCH_RESULT_BINDING_FILE)",
         "read_pinned_attested_imports",
         "state_artifact.revalidate(run, STATE_FILE)",
-        "pinned_imports.revalidate(run)",
+        "self.imports.revalidate(run)",
         "directory_identity.matches_child",
         "attested imports directory identity changed",
     ] {

@@ -153,6 +153,9 @@ fn quoted_literal_end(bytes: &[u8], start: usize, quote: u8) -> usize {
 }
 
 fn is_char_literal_start(bytes: &[u8], start: usize) -> bool {
+    if bytes.get(start) != Some(&b'\'') {
+        return false;
+    }
     let Some(next) = bytes.get(start + 1) else {
         return false;
     };
@@ -194,6 +197,26 @@ fn function_body_ignores_comment_and_string_signature_decoys() {
     assert!(body.contains("let structured"));
     assert!(body.contains("if true"));
     assert!(!body.contains("pub fn selected"));
+}
+
+#[test]
+fn code_only_starts_char_literals_at_the_opening_quote() {
+    let source = r#"
+        let quote = '"';
+        let suffix = prompt.rfind("\n\n[GROUND_TRUTH]\n")?;
+        pub fn selected() {}
+    "#;
+    let opening_quote = source.find('\'').expect("fixture has a char literal");
+
+    assert!(
+        !is_char_literal_start(source.as_bytes(), opening_quote - 2),
+        "only an apostrophe may begin a character literal"
+    );
+    assert!(is_char_literal_start(source.as_bytes(), opening_quote));
+    assert!(
+        code_only(source).contains("pub fn selected()"),
+        "a character literal must not hide following function items"
+    );
 }
 
 #[test]
