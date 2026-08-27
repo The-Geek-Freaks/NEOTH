@@ -43,6 +43,11 @@ pub mod periodic;
 /// persistence, and cron/CLI wiring remain separate follow-up work.
 pub mod hygiene;
 
+/// Durable, private snapshots for the reflection-hygiene planner. This module
+/// owns only state replacement and one-time legacy import; scheduling and
+/// operator-facing integration remain outside this foundation.
+pub mod hygiene_store;
+
 use crate::proactive::ProactiveItem;
 
 const NS_PER_DAY: i64 = 86_400 * 1_000_000_000;
