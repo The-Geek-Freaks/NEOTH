@@ -1051,8 +1051,8 @@ export component ChatView inherits Rectangle {
     /// id such as `live` cannot acquire mutation privileges.
     in property <string> active-session-id: "";
     in property <bool> history-active: false;
-    /// GOLD-ADAPT-ODY-04 — stream stall watchdog banner (60s without a
-    /// chunk while a reply is in flight).
+    /// GOLD-LF-P1-21 — request-bound diagnostic after 120 seconds without
+    /// meaningful stream/provider progress. Rust owns the request binding.
     in property <bool> stall-active: false;
     /// GOLD-ADAPT-ODY-03 — pending attachment display names.
     in property <[string]> pending-attachments: [];
@@ -1080,9 +1080,9 @@ export component ChatView inherits Rectangle {
     callback open-settings();
     callback attach-clicked();
     callback remove-attachment(int);
-    /// Stall banner actions: keep waiting (reset the watchdog clock) or
-    /// stop (kill the chat subprocess).
-    callback stall-continue-clicked();
+    /// Watchdog diagnostic actions. Retry first cancels the bound request;
+    /// Rust creates a fresh request only after that cancellation settles.
+    callback stall-retry-clicked();
     callback stall-stop-clicked();
     /// ODY-12/14 — a deep-link chip was clicked: (kind, id).
     callback link-chip-clicked(string, string);
@@ -1715,9 +1715,11 @@ export component ChatView inherits Rectangle {
                 }
             }
 
-            // ODY-04 — stall watchdog banner above the composer.
+            // P1-21 — a typed request-bound watchdog diagnostic. It names
+            // silence honestly; it does not claim that a short read timeout
+            // means the provider is healthy or unhealthy.
             if root.stall-active: Rectangle {
-                height: 44px;
+                height: 52px;
                 background: Theme.warning-tint;
                 border-width: 1px;
                 border-color: Theme.warning;
@@ -1726,8 +1728,8 @@ export component ChatView inherits Rectangle {
                     padding-right: Theme.space-base;
                     spacing: Theme.space-base;
                     Text {
-                        text: "⚠ Stream stalled — no output for 60s.";
-                        font-family: Theme.font-mono;
+                        text: "No meaningful provider or stream progress for 120s.";
+                        font-family: Theme.font-sans;
                         font-size: Theme.font-size-caption;
                         color: Theme.warning;
                         vertical-alignment: center;
@@ -1735,15 +1737,17 @@ export component ChatView inherits Rectangle {
                         overflow: elide;
                     }
                     NeothButton {
-                        label: "Keep waiting";
+                        label: "Retry";
                         primary: false;
                         size: "sm";
-                        clicked => { root.stall-continue-clicked(); }
+                        accessible-label: "Cancel this silent request and retry it as a new request";
+                        clicked => { root.stall-retry-clicked(); }
                     }
                     NeothButton {
-                        label: "Stop";
+                        label: "Cancel";
                         danger: true;
                         size: "sm";
+                        accessible-label: "Cancel this silent request";
                         clicked => { root.stall-stop-clicked(); }
                     }
                 }

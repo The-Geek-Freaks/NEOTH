@@ -1069,9 +1069,9 @@ export component MainWindow inherits Window {
     in property <bool> chat-history-active: false;
     callback chat-live-session-selected();
     callback chat-session-selected(string);
-    /// GOLD-ADAPT-ODY-04 — stall watchdog banner state + actions.
+    /// GOLD-LF-P1-21 — request-bound 120-second silence diagnostic.
     in property <bool> chat-stall-active: false;
-    callback chat-stall-continue();
+    callback chat-stall-retry();
     callback chat-stall-stop();
     /// GOLD-ADAPT-ODY-03 — pending attachments (names for the strip;
     /// the paths live Rust-side).
@@ -3942,7 +3942,7 @@ export component MainWindow inherits Window {
                     attach-clicked => { root.chat-attach-clicked(); }
                     remove-attachment(i) => { root.chat-remove-attachment(i); }
                     recall-requested => { root.chat-composer-recall-requested(); }
-                    stall-continue-clicked => { root.chat-stall-continue(); }
+                    stall-retry-clicked => { root.chat-stall-retry(); }
                     stall-stop-clicked => { root.chat-stall-stop(); }
                     open-settings => { root.nav-active = "config"; }
                     // Chat-surface consent strip wiring
