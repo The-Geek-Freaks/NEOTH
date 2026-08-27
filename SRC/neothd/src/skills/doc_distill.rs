@@ -75,7 +75,7 @@ impl DocumentSourceKind {
         }
     }
 
-    const fn mime(self, extension: &str) -> &'static str {
+    fn mime(self, extension: &str) -> &'static str {
         match (self, extension) {
             (Self::Pdf, "pdf") => "application/pdf",
             (Self::OfficeOrBook, "docx") => {

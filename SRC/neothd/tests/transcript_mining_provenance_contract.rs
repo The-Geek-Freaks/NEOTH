@@ -11,8 +11,8 @@ use rusqlite::Connection;
 
 fn fresh_v37_connection() -> (tempfile::TempDir, Connection) {
     let home = tempfile::tempdir().expect("temporary v37 views directory");
-    let connection = store::open(&home.path().join("views.db"))
-        .expect("open fresh v37 views database");
+    let connection =
+        store::open(&home.path().join("views.db")).expect("open fresh v37 views database");
     (home, connection)
 }
 

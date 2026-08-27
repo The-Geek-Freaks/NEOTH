@@ -618,12 +618,12 @@ fn slash_invocation_name(prompt: &str) -> Option<String> {
 }
 
 /// The same pure parser is used for argv, stdin, and editor prompt text before
-/// chat runtime initialization.  It deliberately returns a borrowed path only;
-/// the caller owns path admission and the review-only action boundary.
-fn skill_from_doc_path(prompt: &str) -> Option<&str> {
+/// chat runtime initialization. The slash parser owns its parsed argument, so
+/// this projection owns the trimmed path across the review-only action boundary.
+fn skill_from_doc_path(prompt: &str) -> Option<String> {
     match crate::slash::parse_invocation(prompt) {
         crate::slash::Invocation::Command { name, args } if name == "skill-from-doc" => {
-            Some(args.trim())
+            Some(args.trim().to_owned())
         }
         _ => None,
     }
@@ -635,14 +635,14 @@ fn skill_from_doc_path(prompt: &str) -> Option<&str> {
 /// Keeping this decision pure makes the review-only route testable without
 /// constructing any of those side-effecting components.
 #[derive(Debug, PartialEq, Eq)]
-enum PreConfigChatAction<'a> {
-    SkillFromDoc(&'a str),
+enum PreConfigChatAction {
+    SkillFromDoc(String),
 }
 
 fn pre_config_chat_action(
     prompt: &str,
     has_attachments: bool,
-) -> Result<Option<PreConfigChatAction<'_>>> {
+) -> Result<Option<PreConfigChatAction>> {
     let Some(source) = skill_from_doc_path(prompt) else {
         return Ok(None);
     };
@@ -681,7 +681,7 @@ async fn dispatch_pre_runtime_local_action(args: &mut ChatArgs) -> Result<bool> 
         return Ok(true);
     }
     crate::cli::skills::run_document_review(
-        std::path::Path::new(source),
+        std::path::Path::new(&source),
         crate::cli::OutputFormat::Table,
     )
     .await?;
@@ -11372,24 +11372,24 @@ mod tests {
         let argv_prompt = "/skill-from-doc C:\\operator docs\\guide.pdf";
         let stdin_prompt = "/skill-from-doc C:\\operator docs\\guide.pdf\n";
         assert_eq!(
-            skill_from_doc_path(argv_prompt),
+            skill_from_doc_path(argv_prompt).as_deref(),
             Some("C:\\operator docs\\guide.pdf")
         );
         assert_eq!(
-            skill_from_doc_path(stdin_prompt),
+            skill_from_doc_path(stdin_prompt).as_deref(),
             Some("C:\\operator docs\\guide.pdf")
         );
         assert_eq!(skill_from_doc_path("//skill-from-doc guide.pdf"), None);
         assert_eq!(
             pre_config_chat_action(argv_prompt, false).expect("pure argv route"),
             Some(PreConfigChatAction::SkillFromDoc(
-                "C:\\operator docs\\guide.pdf"
+                "C:\\operator docs\\guide.pdf".to_string()
             ))
         );
         assert_eq!(
             pre_config_chat_action(stdin_prompt, false).expect("pure stdin route"),
             Some(PreConfigChatAction::SkillFromDoc(
-                "C:\\operator docs\\guide.pdf"
+                "C:\\operator docs\\guide.pdf".to_string()
             ))
         );
         assert!(pre_config_chat_action(argv_prompt, true).is_err());

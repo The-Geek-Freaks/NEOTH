@@ -86,7 +86,8 @@ impl CancelScope {
         );
 
         match result {
-            Ok(u32::MAX - 1) | Err(u32::MAX) => Err(GenerationExhausted),
+            Ok(generation) if generation == u32::MAX - 1 => Err(GenerationExhausted),
+            Err(u32::MAX) => Err(GenerationExhausted),
             Ok(_) => Ok(()),
             Err(_) => unreachable!("the cancellation generation only rejects its terminal sentinel"),
         }
