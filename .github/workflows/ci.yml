@@ -211,6 +211,26 @@ jobs:
         working-directory: SRC
         run: cargo fmt --all -- --check
 
+      # Keep formatting repair off developer workstations that cannot safely
+      # run the full Rust toolchain. The patch is reviewable and never writes
+      # back to the repository; maintainers still choose whether to apply it.
+      - name: Generate rustfmt repair patch
+        if: failure()
+        timeout-minutes: 5
+        working-directory: SRC
+        run: |
+          cargo fmt --all
+          git diff --binary -- . > ../rustfmt.patch
+
+      - name: Upload rustfmt repair patch
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rustfmt-repair-${{ github.sha }}
+          path: rustfmt.patch
+          if-no-files-found: error
+          retention-days: 3
+
       # GOLD-SEC-16: keep the supported no-default-feature launcher contract
       # separate because workspace feature unification enables wizard.
       - name: cargo clippy slim core
