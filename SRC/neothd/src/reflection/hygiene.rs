@@ -67,7 +67,8 @@ pub struct VersionedHygieneInput {
 /// The pre-versioned representation. It embeds the existing
 /// [`PeriodReflection`] type directly, preserving every current field in
 /// memory while callers explicitly migrate to [`VersionedHygieneInput`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct LegacyHygieneInput {
     pub now_unix: i64,
     pub raw_reflections: Vec<RawReflection>,
@@ -124,14 +125,34 @@ pub struct HygienePlan {
 /// silently converted into a retention or deletion decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HygieneError {
-    UnknownSchemaVersion { found: u16 },
-    UnknownSynonymMapVersion { found: u16 },
-    EmptyRawId { index: usize },
-    DuplicateRawId { id: String },
-    FutureTimestamp { source: String, timestamp: i64, now_unix: i64 },
-    InvalidPeriodReflection { source: String, reason: &'static str },
-    InvalidSynonym { alias: String, canonical: String },
-    SynonymCycle { alias: String },
+    UnknownSchemaVersion {
+        found: u16,
+    },
+    UnknownSynonymMapVersion {
+        found: u16,
+    },
+    EmptyRawId {
+        index: usize,
+    },
+    DuplicateRawId {
+        id: String,
+    },
+    FutureTimestamp {
+        source: String,
+        timestamp: i64,
+        now_unix: i64,
+    },
+    InvalidPeriodReflection {
+        source: String,
+        reason: &'static str,
+    },
+    InvalidSynonym {
+        alias: String,
+        canonical: String,
+    },
+    SynonymCycle {
+        alias: String,
+    },
 }
 
 impl fmt::Display for HygieneError {
@@ -141,7 +162,10 @@ impl fmt::Display for HygieneError {
                 write!(f, "unsupported reflection-hygiene schema version {found}")
             }
             Self::UnknownSynonymMapVersion { found } => {
-                write!(f, "unsupported reflection topic-synonym map version {found}")
+                write!(
+                    f,
+                    "unsupported reflection topic-synonym map version {found}"
+                )
             }
             Self::EmptyRawId { index } => write!(f, "raw reflection at index {index} has no id"),
             Self::DuplicateRawId { id } => write!(f, "raw reflection id {id:?} is duplicated"),
@@ -293,11 +317,7 @@ fn plan_with_migration(
         retained_raw.push(raw);
     }
 
-    let yearly_inputs = derive_yearly_inputs(
-        &input.period_reflections,
-        input.now_unix,
-        &synonyms,
-    );
+    let yearly_inputs = derive_yearly_inputs(&input.period_reflections, input.now_unix, &synonyms);
 
     Ok(HygienePlan {
         schema_version: HYGIENE_PLAN_SCHEMA_VERSION,
@@ -329,11 +349,7 @@ fn validate_input(input: &VersionedHygieneInput) -> Result<(), HygieneError> {
                 now_unix: input.now_unix,
             });
         }
-        validate_period_reflection(
-            &raw.reflection,
-            &format!("raw:{}", raw.id),
-            input.now_unix,
-        )?;
+        validate_period_reflection(&raw.reflection, &format!("raw:{}", raw.id), input.now_unix)?;
     }
 
     for reflection in &input.period_reflections {
@@ -445,10 +461,9 @@ fn normalized_synonym_map(
         if normalized_alias == normalized_canonical {
             continue;
         }
-        if let Some(previous) = direct.insert(
-            normalized_alias.clone(),
-            normalized_canonical.clone(),
-        ) {
+        if let Some(previous) =
+            direct.insert(normalized_alias.clone(), normalized_canonical.clone())
+        {
             if previous != normalized_canonical {
                 return Err(HygieneError::InvalidSynonym {
                     alias: normalized_alias,
@@ -475,10 +490,7 @@ fn normalized_synonym_map(
     Ok(resolved)
 }
 
-fn canonical_topic_set(
-    topics: &[String],
-    synonyms: &BTreeMap<String, String>,
-) -> BTreeSet<String> {
+fn canonical_topic_set(topics: &[String], synonyms: &BTreeMap<String, String>) -> BTreeSet<String> {
     topics
         .iter()
         .map(|topic| normalize_topic(topic))
@@ -515,11 +527,13 @@ fn derive_yearly_inputs(
 
     groups
         .into_iter()
-        .map(|(year, (source_tags, canonical_topics))| YearlySynthesisInput {
-            year,
-            source_tags: source_tags.into_iter().collect(),
-            canonical_topics: canonical_topics.into_iter().collect(),
-        })
+        .map(
+            |(year, (source_tags, canonical_topics))| YearlySynthesisInput {
+                year,
+                source_tags: source_tags.into_iter().collect(),
+                canonical_topics: canonical_topics.into_iter().collect(),
+            },
+        )
         .collect()
 }
 
@@ -581,7 +595,10 @@ mod tests {
     fn input_permutations_produce_the_same_plan() {
         let now = day(500);
         let mut first = input(now);
-        first.topic_synonyms.entries.insert("ml".into(), "machine learning".into());
+        first
+            .topic_synonyms
+            .entries
+            .insert("ml".into(), "machine learning".into());
         first.raw_reflections = vec![
             raw("later", now - day(1), &["ML"]),
             raw("first", now - day(2), &["machine-learning"]),
@@ -641,7 +658,12 @@ mod tests {
                 .iter()
                 .map(|raw| raw.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["representative", "partial-overlap", "empty-two", "empty-one"]
+            vec![
+                "representative",
+                "partial-overlap",
+                "empty-two",
+                "empty-one"
+            ]
         );
         assert_eq!(plan.duplicate_raw.len(), 1);
         assert_eq!(plan.duplicate_raw[0].raw.id, "exact-match");
@@ -770,8 +792,14 @@ mod tests {
     #[test]
     fn synonym_cycles_fail_before_any_plan_is_emitted() {
         let mut request = input(day(200));
-        request.topic_synonyms.entries.insert("a".into(), "b".into());
-        request.topic_synonyms.entries.insert("b".into(), "a".into());
+        request
+            .topic_synonyms
+            .entries
+            .insert("a".into(), "b".into());
+        request
+            .topic_synonyms
+            .entries
+            .insert("b".into(), "a".into());
         assert!(matches!(
             plan_versioned(request),
             Err(HygieneError::SynonymCycle { .. })
