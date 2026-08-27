@@ -244,11 +244,7 @@ fn ensure_incognito_argument_admission(args: &ChatArgs) -> Result<()> {
 /// Slash/agent operations may load skills, tools, documents or background
 /// state. They are never admitted to a private provider turn.
 fn ensure_incognito_prompt_admission(prompt: &str) -> Result<()> {
-    let command = prompt
-        .trim_start()
-        .split_whitespace()
-        .next()
-        .unwrap_or_default();
+    let command = prompt.split_whitespace().next().unwrap_or_default();
     anyhow::ensure!(
         !command.starts_with('/'),
         "{command} is unavailable in Incognito because slash commands can access durable \
@@ -7139,14 +7135,14 @@ async fn run_chat_with_consent(
     } else {
         crate::memory::hindsight::session_id_for(chat_ts_unix, &prompt)
     };
-    let seed_banner = (!args.incognito)
-        .then(|| {
-            crate::memory::hindsight::next_session_seed_banner(
-                &first_tour_home,
-                &current_session_id,
-            )
-        })
-        .unwrap_or_default();
+    let seed_banner = if args.incognito {
+        String::new()
+    } else {
+        crate::memory::hindsight::next_session_seed_banner(
+            &first_tour_home,
+            &current_session_id,
+        )
+    };
     if !seed_banner.is_empty() {
         write_chat_notice(args.stream, &seed_banner).context("write session seed notice")?;
     }

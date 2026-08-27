@@ -3905,7 +3905,12 @@ fn main() -> Result<()> {
     let main_chat_consent_token_for_send = main_chat_consent_token.clone();
     let chat_consent_flow_for_send = chat_consent_flow_active.clone();
     let chat_worker_barrier_for_send = chat_worker_barrier.clone();
-    let chat_send_approved = move |request_id_wire, text, explicit_skill_id_wire, incognito| {
+    let chat_send_approved = move |
+        request_id_wire: slint::SharedString,
+        text: slint::SharedString,
+        explicit_skill_id_wire: slint::SharedString,
+        incognito: bool,
+    | {
         let Some(request_id) = ChatStreamRequestId::parse_wire(request_id_wire.as_str()) else {
             chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
             return;
