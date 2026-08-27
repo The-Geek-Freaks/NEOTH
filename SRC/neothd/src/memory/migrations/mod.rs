@@ -22,9 +22,13 @@
 //! After every successful step the `meta.schema_version` row is bumped to
 //! match.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, ensure};
 use rusqlite::Connection;
 use tracing::info;
+
+use crate::memory::store::{
+    TRANSCRIPT_MINING_V37_TABLES_SQL, TRANSCRIPT_MINING_V37_TRIGGERS_SQL,
+};
 
 /// A single schema upgrade step.
 pub struct Migration {
@@ -277,6 +281,12 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "GOLD-LF-P1-08 stages 1-2: sealed transcript mining provenance, WAL outbox, and deletion revocation receipts",
         run: migration_v35_to_v36,
     },
+    Migration {
+        from: 36,
+        to: 37,
+        description: "GOLD-LF-P1-08 stage 3a: exact raw-frame plans, transaction-local deletion causes, and subtype-safe outbox admission",
+        run: migration_v36_to_v37,
+    },
 ];
 
 /// v35 → v36: establish only modern transcript-mining provenance. This must
@@ -491,6 +501,169 @@ fn migration_v35_to_v36(conn: &Connection) -> Result<()> {
         "#,
     )
     .context("v36 create transcript mining provenance prerequisite")?;
+    Ok(())
+}
+
+/// v36 → v37: retain old metadata but add no authority to it.  The new
+/// `raw_frame_plan_epoch` defaults to zero on every pre-v37 raw turn, and the
+/// newly created plan table is intentionally empty.  Rebuilding the changed
+/// strict tables (rather than ALTERing them) keeps fresh and migrated DDL
+/// byte-for-byte equivalent at the schema-object level.
+fn migration_v36_to_v37(conn: &Connection) -> Result<()> {
+    let has_column = |table: &str, column: &str| -> Result<bool> {
+        conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")
+            .context("v37 prepare table-column inspection")?
+            .exists([table, column])
+            .context("v37 inspect table-column presence")
+    };
+
+    if !has_column("raw_turns", "transcript_mining_raw_frame_plan_epoch")? {
+        conn.execute(
+            "ALTER TABLE raw_turns ADD COLUMN transcript_mining_raw_frame_plan_epoch \
+             INTEGER NOT NULL DEFAULT 0 \
+             CHECK(transcript_mining_raw_frame_plan_epoch IN (0, 1)) \
+             CHECK(transcript_mining_raw_frame_plan_epoch = 0 \
+                   OR transcript_mining_authority_epoch = 1)",
+            [],
+        )
+        .context("v37 stamp pre-existing raw turns as pre-plan epoch")?;
+    }
+
+    // A repeated direct call in a regression fixture sees final table shapes;
+    // replaying the immutable DDL is safe and avoids attempting a second
+    // table rebuild. The migration dispatcher itself never reaches this path
+    // after it has committed schema version 37.
+    if has_column("transcript_mining_provenance", "terminal_cause")? {
+        conn.execute_batch(TRANSCRIPT_MINING_V37_TABLES_SQL)
+            .context("v37 reapply transcript mining tables")?;
+        conn.execute_batch(TRANSCRIPT_MINING_V37_TRIGGERS_SQL)
+            .context("v37 reapply transcript mining triggers")?;
+        return Ok(());
+    }
+
+    // Existing trigger bodies retain v36 admission semantics under
+    // `CREATE TRIGGER IF NOT EXISTS`; remove every P1-08 trigger before the
+    // table names are recycled. The v37 set is installed only after the
+    // historical rows have been copied, so a legacy outbox row cannot be
+    // mistaken for a newly admitted frame during migration.
+    conn.execute_batch(
+        r#"
+        DROP TRIGGER IF EXISTS transcript_mining_witness_raw_turn_exists;
+        DROP TRIGGER IF EXISTS transcript_mining_witness_no_replace;
+        DROP TRIGGER IF EXISTS transcript_mining_witness_immutable_update;
+        DROP TRIGGER IF EXISTS transcript_mining_witness_immutable_delete;
+        DROP TRIGGER IF EXISTS transcript_mining_plan_stage3a_reserved;
+        DROP TRIGGER IF EXISTS transcript_mining_plan_no_replace;
+        DROP TRIGGER IF EXISTS transcript_mining_plan_raw_turn_exists;
+        DROP TRIGGER IF EXISTS transcript_mining_plan_immutable;
+        DROP TRIGGER IF EXISTS transcript_mining_plan_immutable_delete;
+        DROP TRIGGER IF EXISTS transcript_mining_raw_turn_no_replace;
+        DROP TRIGGER IF EXISTS transcript_mining_raw_turn_immutable;
+        DROP TRIGGER IF EXISTS transcript_mining_authority_epoch_immutable;
+        DROP TRIGGER IF EXISTS transcript_mining_provenance_no_replace;
+        DROP TRIGGER IF EXISTS transcript_mining_raw_turn_exists;
+        DROP TRIGGER IF EXISTS transcript_mining_binding_immutable;
+        DROP TRIGGER IF EXISTS transcript_mining_lifecycle_fenced;
+        DROP TRIGGER IF EXISTS transcript_mining_delete_context_raw_turn_exists;
+        DROP TRIGGER IF EXISTS transcript_mining_delete_context_immutable;
+        DROP TRIGGER IF EXISTS transcript_mining_receipt_binding_matches;
+        DROP TRIGGER IF EXISTS transcript_mining_receipt_no_replace;
+        DROP TRIGGER IF EXISTS transcript_mining_receipt_immutable;
+        DROP TRIGGER IF EXISTS transcript_mining_receipt_immutable_delete;
+        DROP TRIGGER IF EXISTS transcript_mining_outbox_binding_matches;
+        DROP TRIGGER IF EXISTS transcript_mining_outbox_no_replace;
+        DROP TRIGGER IF EXISTS transcript_mining_outbox_bound_admission;
+        DROP TRIGGER IF EXISTS transcript_mining_outbox_revoked_admission;
+        DROP TRIGGER IF EXISTS transcript_mining_outbox_binding_immutable;
+        DROP TRIGGER IF EXISTS transcript_mining_outbox_terminal;
+        DROP TRIGGER IF EXISTS transcript_mining_outbox_immutable_delete;
+        DROP TRIGGER IF EXISTS transcript_mining_provenance_immutable_delete;
+        DROP TRIGGER IF EXISTS transcript_mining_raw_turn_delete_context;
+        DROP TRIGGER IF EXISTS transcript_mining_raw_turn_deleted;
+
+        DROP INDEX IF EXISTS transcript_mining_provenance_raw_turn;
+        DROP INDEX IF EXISTS transcript_mining_provenance_lifecycle_expiry;
+        DROP INDEX IF EXISTS transcript_mining_revocation_once;
+        DROP INDEX IF EXISTS transcript_mining_wal_outbox_pending;
+        DROP INDEX IF EXISTS transcript_mining_wal_outbox_provenance;
+        DROP INDEX IF EXISTS transcript_mining_wal_outbox_logical_subtype;
+
+        ALTER TABLE transcript_mining_wal_outbox
+            RENAME TO transcript_mining_wal_outbox_v36;
+        ALTER TABLE transcript_mining_revocation_receipts
+            RENAME TO transcript_mining_revocation_receipts_v36;
+        ALTER TABLE transcript_mining_modern_raw_witness
+            RENAME TO transcript_mining_modern_raw_witness_v36;
+        ALTER TABLE transcript_mining_provenance
+            RENAME TO transcript_mining_provenance_v36;
+        "#,
+    )
+    .context("v37 retire v36 transcript mining table shapes")?;
+
+    // A v36 revocation outbox cannot be cross-verified: that shape had no
+    // receipt identity, bound-payload digest, or delivery-frame digest. Do not
+    // invent those missing facts while migrating it.
+    let legacy_revocation_outbox: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM transcript_mining_wal_outbox_v36 WHERE event_subtype = 41",
+            [],
+            |row| row.get(0),
+        )
+        .context("v37 inspect v36 revocation outbox rows")?;
+    ensure!(
+        legacy_revocation_outbox == 0,
+        "v37 refuses unverifiable legacy transcript mining revocation outbox rows"
+    );
+
+    conn.execute_batch(TRANSCRIPT_MINING_V37_TABLES_SQL)
+        .context("v37 create transcript mining table shapes")?;
+
+    // Copy, but never promote: terminal causes, frame plans, delivered-frame
+    // digests, receipt IDs for 0x29, and every v37-only authority remain NULL
+    // or absent. The raw-frame plan table is deliberately not mentioned here.
+    conn.execute_batch(
+        r#"
+        INSERT INTO transcript_mining_provenance
+            (provenance_id, lifecycle_id, raw_turn_id, raw_session_sha256,
+             raw_text_sha256, raw_role, source_kind, retention, lifecycle,
+             created_at_unix, expires_at_unix, revoked_at_unix, terminal_cause)
+        SELECT provenance_id, lifecycle_id, raw_turn_id, raw_session_sha256,
+               raw_text_sha256, raw_role, source_kind, retention, lifecycle,
+               created_at_unix, expires_at_unix, revoked_at_unix, NULL
+        FROM transcript_mining_provenance_v36;
+
+        INSERT INTO transcript_mining_modern_raw_witness
+            (raw_turn_id, subject_sha256, raw_role, source_kind, witnessed_at_unix)
+        SELECT raw_turn_id, subject_sha256, raw_role, source_kind, witnessed_at_unix
+        FROM transcript_mining_modern_raw_witness_v36;
+
+        INSERT INTO transcript_mining_revocation_receipts
+            (receipt_id, provenance_id, lifecycle_id, raw_turn_id, revocation,
+             lifecycle, occurred_at_unix)
+        SELECT receipt_id, provenance_id, lifecycle_id, raw_turn_id, revocation,
+               lifecycle, occurred_at_unix
+        FROM transcript_mining_revocation_receipts_v36;
+
+        INSERT INTO transcript_mining_wal_outbox
+            (outbox_id, provenance_id, lifecycle_id, logical_subtype,
+             event_subtype, payload, payload_sha256, bound_payload_sha256,
+             revocation_receipt_id, state, enqueued_at_unix, delivered_at_unix,
+             delivered_frame_sha256)
+        SELECT outbox_id, provenance_id, lifecycle_id, 'bound',
+               event_subtype, payload, payload_sha256, NULL,
+               NULL, state, enqueued_at_unix, delivered_at_unix, NULL
+        FROM transcript_mining_wal_outbox_v36;
+
+        DROP TABLE transcript_mining_wal_outbox_v36;
+        DROP TABLE transcript_mining_revocation_receipts_v36;
+        DROP TABLE transcript_mining_modern_raw_witness_v36;
+        DROP TABLE transcript_mining_provenance_v36;
+        "#,
+    )
+    .context("v37 preserve v36 transcript mining metadata without promotion")?;
+
+    conn.execute_batch(TRANSCRIPT_MINING_V37_TRIGGERS_SQL)
+        .context("v37 install transcript mining integrity triggers")?;
     Ok(())
 }
 
@@ -1868,6 +2041,25 @@ mod tests {
         conn
     }
 
+    fn open_v36_transcript_mining_db() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO meta (key,value) VALUES ('schema_version','35');
+             CREATE TABLE raw_turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                ts_unix INTEGER NOT NULL,
+                text TEXT NOT NULL
+             );",
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut conn, 35, 36).unwrap(), 36);
+        conn
+    }
+
     #[test]
     fn migrate_is_noop_when_already_at_target() {
         let mut conn = open_with_meta(3);
@@ -2821,10 +3013,11 @@ mod tests {
     }
 
     #[test]
-    fn migration_v35_to_v36_is_empty_idempotent_and_fails_closed_on_raw_delete() {
+    fn migration_v35_to_v37_keeps_v36_rows_unplanned_and_fails_closed_on_raw_delete() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
              INSERT INTO meta (key,value) VALUES ('schema_version','35');
              CREATE TABLE raw_turns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3039,10 +3232,92 @@ mod tests {
             [],
         ).is_err());
 
+        assert_eq!(migrate(&mut conn, 36, 37).unwrap(), 37);
+        migration_v36_to_v37(&conn).unwrap();
+        let migrated_plan_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM transcript_mining_raw_frame_plan", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(migrated_plan_count, 0, "v37 must never infer raw-frame plans");
+        let pre_v37_plan_epoch: i64 = conn
+            .query_row(
+                "SELECT transcript_mining_raw_frame_plan_epoch FROM raw_turns WHERE id=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pre_v37_plan_epoch, 0, "all v36 raw rows stay pre-plan epoch");
+
         let fresh_home = tempfile::tempdir().unwrap();
         let fresh = crate::memory::store::open(&fresh_home.path().join("views.db")).unwrap();
+        let raw_turn_columns = |database: &Connection| {
+            database
+                .prepare("SELECT name,type,\"notnull\",pk FROM pragma_table_info('raw_turns') ORDER BY cid")
+                .unwrap()
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert_eq!(
+            raw_turn_columns(&conn),
+            raw_turn_columns(&fresh),
+            "fresh and migrated raw-turn columns must expose the same plan-epoch fence",
+        );
+        for database in [&conn, &fresh] {
+            assert!(
+                database
+                    .execute(
+                        "INSERT INTO raw_turns
+                            (session_id,role,ts_unix,text,transcript_mining_authority_epoch,
+                             transcript_mining_raw_frame_plan_epoch)
+                         VALUES ('cross-epoch-invalid','operator',99,'no authority',0,1)",
+                        [],
+                    )
+                    .is_err(),
+                "plan epoch one must require authority epoch one in every v37 shape",
+            );
+        }
+        assert!(
+            conn.execute(
+                "UPDATE raw_turns SET transcript_mining_raw_frame_plan_epoch=1 WHERE id=1",
+                [],
+            )
+            .is_err(),
+            "a migrated epoch-zero raw turn must never be upgraded",
+        );
+        fresh
+            .execute(
+                "INSERT INTO raw_turns
+                    (session_id,role,ts_unix,text,transcript_mining_authority_epoch,
+                     transcript_mining_raw_frame_plan_epoch)
+                 VALUES ('fresh-epoch-zero','operator',100,'no authority',0,0)",
+                [],
+            )
+            .unwrap();
+        assert!(
+            fresh
+                .execute(
+                    "UPDATE raw_turns SET transcript_mining_raw_frame_plan_epoch=1
+                     WHERE session_id='fresh-epoch-zero'",
+                    [],
+                )
+                .is_err(),
+            "a fresh epoch-zero raw turn must never be upgraded",
+        );
         for table in [
             "transcript_mining_provenance",
+            "transcript_mining_modern_raw_witness",
+            "transcript_mining_raw_frame_plan",
+            "transcript_mining_delete_context",
             "transcript_mining_wal_outbox",
             "transcript_mining_revocation_receipts",
         ] {
@@ -3067,7 +3342,7 @@ mod tests {
             assert_eq!(
                 columns(&conn),
                 columns(&fresh),
-                "fresh and v35-to-v36 schemas differ for {table}",
+                "fresh and v35-to-v37 schemas differ for {table}",
             );
         }
         let schema_objects = |database: &Connection| {
@@ -3086,9 +3361,37 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(schema_objects(&conn), schema_objects(&fresh));
+        let p1_ddl = |database: &Connection| {
+            database
+                .prepare(
+                    "SELECT type,name,sql FROM sqlite_master
+                     WHERE name LIKE 'transcript_mining_%'
+                       AND type IN ('table','index','trigger')
+                     ORDER BY type,name",
+                )
+                .unwrap()
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert_eq!(
+            p1_ddl(&conn),
+            p1_ddl(&fresh),
+            "fresh and migrated P1-08 DDL must be identical",
+        );
         for database in [&conn, &fresh] {
             for table in [
                 "transcript_mining_provenance",
+                "transcript_mining_modern_raw_witness",
+                "transcript_mining_raw_frame_plan",
+                "transcript_mining_delete_context",
                 "transcript_mining_wal_outbox",
                 "transcript_mining_revocation_receipts",
             ] {
@@ -3105,6 +3408,796 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn public_migration_v36_to_v37_preserves_metadata_without_promoting_it() {
+        let mut conn = open_v36_transcript_mining_db();
+        conn.execute_batch(
+            r#"
+            INSERT INTO raw_turns
+                (session_id,role,ts_unix,text,transcript_mining_authority_epoch)
+            VALUES ('v36-preserved','operator',1,'v36 preserved text',1);
+            INSERT INTO transcript_mining_modern_raw_witness
+                (raw_turn_id,subject_sha256,raw_role,source_kind,witnessed_at_unix)
+            VALUES (1,zeroblob(32),'operator','operator_raw_text_v1',1);
+            INSERT INTO transcript_mining_provenance
+                (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,
+                 raw_text_sha256,raw_role,source_kind,retention,lifecycle,
+                 created_at_unix,expires_at_unix)
+            VALUES ('provenance-v36-bound','lifecycle-v36-bound',1,
+                    zeroblob(32),zeroblob(32),'operator','operator_raw_text_v1',
+                    'hours24','pending',1,4000000000);
+            INSERT INTO transcript_mining_wal_outbox
+                (outbox_id,provenance_id,lifecycle_id,event_subtype,payload,
+                 payload_sha256,enqueued_at_unix)
+            VALUES ('outbox-v36-bound','provenance-v36-bound','lifecycle-v36-bound',
+                    40,X'01',zeroblob(32),1);
+
+            INSERT INTO raw_turns
+                (session_id,role,ts_unix,text,transcript_mining_authority_epoch)
+            VALUES ('v36-terminal','operator',2,'v36 terminal text',1);
+            INSERT INTO transcript_mining_modern_raw_witness
+                (raw_turn_id,subject_sha256,raw_role,source_kind,witnessed_at_unix)
+            VALUES (2,zeroblob(32),'operator','operator_raw_text_v1',2);
+            INSERT INTO transcript_mining_provenance
+                (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,
+                 raw_text_sha256,raw_role,source_kind,retention,lifecycle,
+                 created_at_unix,expires_at_unix)
+            VALUES ('provenance-v36-terminal','lifecycle-v36-terminal',2,
+                    zeroblob(32),zeroblob(32),'operator','operator_raw_text_v1',
+                    'hours24','pending',2,4000000000);
+            "#,
+        )
+        .unwrap();
+        conn.execute("DELETE FROM raw_turns WHERE id=2", []).unwrap();
+        let receipt_before: (String, String, String, i64) = conn
+            .query_row(
+                "SELECT receipt_id,revocation,lifecycle,occurred_at_unix
+                 FROM transcript_mining_revocation_receipts
+                 WHERE provenance_id='provenance-v36-terminal'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+
+        assert_eq!(migrate(&mut conn, 36, 37).unwrap(), 37);
+        assert_eq!(current_version(&conn).unwrap(), 37);
+        let witness: (Vec<u8>, String, String, i64) = conn
+            .query_row(
+                "SELECT subject_sha256,raw_role,source_kind,witnessed_at_unix
+                 FROM transcript_mining_modern_raw_witness WHERE raw_turn_id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(witness, (vec![0; 32], "operator".into(), "operator_raw_text_v1".into(), 1));
+        let binding: (String, String, i64, Option<String>) = conn
+            .query_row(
+                "SELECT provenance_id,lifecycle,raw_turn_id,terminal_cause
+                 FROM transcript_mining_provenance
+                 WHERE provenance_id='provenance-v36-bound'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            binding,
+            ("provenance-v36-bound".into(), "pending".into(), 1, None),
+            "v37 must retain, not promote, a v36 binding",
+        );
+        let bound_outbox: (String, i64, Vec<u8>, Vec<u8>, String, Option<i64>, Option<Vec<u8>>) = conn
+            .query_row(
+                "SELECT logical_subtype,event_subtype,payload,payload_sha256,state,
+                        delivered_at_unix,delivered_frame_sha256
+                 FROM transcript_mining_wal_outbox WHERE outbox_id='outbox-v36-bound'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(bound_outbox.0, "bound");
+        assert_eq!(bound_outbox.1, 40);
+        assert_eq!(bound_outbox.2, vec![1]);
+        assert_eq!(bound_outbox.3, vec![0; 32]);
+        assert_eq!(bound_outbox.4, "pending");
+        assert_eq!(bound_outbox.5, None);
+        assert_eq!(bound_outbox.6, None);
+        let receipt_after: (String, String, String, i64) = conn
+            .query_row(
+                "SELECT receipt_id,revocation,lifecycle,occurred_at_unix
+                 FROM transcript_mining_revocation_receipts
+                 WHERE provenance_id='provenance-v36-terminal'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(receipt_after, receipt_before, "v37 must retain the v36 terminal receipt exactly");
+        let terminal_cause: (String, Option<String>) = conn
+            .query_row(
+                "SELECT lifecycle,terminal_cause FROM transcript_mining_provenance
+                 WHERE provenance_id='provenance-v36-terminal'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(terminal_cause, ("cancelled".into(), None));
+        assert_eq!(
+            conn.query_row(
+                "SELECT transcript_mining_raw_frame_plan_epoch FROM raw_turns WHERE id=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0,
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM transcript_mining_raw_frame_plan", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0,
+            "migration must not infer a plan from preserved v36 metadata",
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO transcript_mining_raw_frame_plan
+                    (frame_plan_id,provenance_id,lifecycle_id,raw_turn_id,
+                     raw_event_type,raw_event_subtype,planned_wal_format_version,
+                     planned_event_schema_version,planned_event_id,
+                     planned_hlc_physical_ns,planned_hlc_logical,planned_header,
+                     planned_header_sha256,planned_at_unix)
+                 VALUES ('v36-plan-attempt','v36-plan-prov','v36-plan-life',1,
+                         1,0,2,4,zeroblob(8),zeroblob(8),0,zeroblob(96),
+                         X'1111111111111111111111111111111111111111111111111111111111111111',3)",
+                [],
+            )
+            .is_err(),
+            "a preserved v36 raw turn must never acquire a v37 frame plan",
+        );
+        assert!(
+            conn.execute(
+                "UPDATE transcript_mining_wal_outbox
+                 SET state='delivered',delivered_at_unix=3,delivered_frame_sha256=zeroblob(32)
+                 WHERE outbox_id='outbox-v36-bound'",
+                [],
+            )
+            .is_err(),
+            "a preserved pending 0x28 cannot be turned into direct SQLite proof",
+        );
+        assert!(
+            conn.execute(
+                "INSERT OR REPLACE INTO transcript_mining_wal_outbox
+                    (outbox_id,provenance_id,lifecycle_id,logical_subtype,event_subtype,
+                     payload,payload_sha256,state,enqueued_at_unix)
+                 VALUES ('outbox-v36-bound','provenance-v36-bound','lifecycle-v36-bound',
+                         'bound',40,X'02',zeroblob(32),'pending',3)",
+                [],
+            )
+            .is_err(),
+            "the preserved v36 outbox row must retain its no-replace guard",
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO transcript_mining_wal_outbox
+                    (outbox_id,provenance_id,lifecycle_id,logical_subtype,event_subtype,
+                     payload,payload_sha256,bound_payload_sha256,
+                     revocation_receipt_id,enqueued_at_unix)
+                 VALUES ('v36-revocation-attempt','provenance-v36-terminal',
+                         'lifecycle-v36-terminal','revoked',41,X'02',zeroblob(32),
+                         zeroblob(32),'raw-delete-provenance-v36-terminal',3)",
+                [],
+            )
+            .is_err(),
+            "a terminal v36 receipt alone cannot fabricate a 0x29 without delivered 0x28 evidence",
+        );
+    }
+
+    #[test]
+    fn public_migration_v36_to_v37_rejects_legacy_revocation_outbox_atomically() {
+        let mut conn = open_v36_transcript_mining_db();
+        conn.execute_batch(
+            r#"
+            INSERT INTO raw_turns
+                (session_id,role,ts_unix,text,transcript_mining_authority_epoch)
+            VALUES ('v36-revocation','operator',1,'v36 revocation text',1);
+            INSERT INTO transcript_mining_modern_raw_witness
+                (raw_turn_id,subject_sha256,raw_role,source_kind,witnessed_at_unix)
+            VALUES (1,zeroblob(32),'operator','operator_raw_text_v1',1);
+            INSERT INTO transcript_mining_provenance
+                (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,
+                 raw_text_sha256,raw_role,source_kind,retention,lifecycle,
+                 created_at_unix,expires_at_unix)
+            VALUES ('provenance-v36-revocation','lifecycle-v36-revocation',1,
+                    zeroblob(32),zeroblob(32),'operator','operator_raw_text_v1',
+                    'hours24','pending',1,4000000000);
+            INSERT INTO transcript_mining_wal_outbox
+                (outbox_id,provenance_id,lifecycle_id,event_subtype,payload,
+                 payload_sha256,enqueued_at_unix)
+            VALUES ('outbox-v36-revocation','provenance-v36-revocation',
+                    'lifecycle-v36-revocation',41,X'29',zeroblob(32),1);
+            "#,
+        )
+        .unwrap();
+
+        let error = migrate(&mut conn, 36, 37).unwrap_err().to_string();
+        assert!(error.contains("v37 refuses unverifiable legacy transcript mining revocation outbox rows"));
+        assert_eq!(current_version(&conn).unwrap(), 36);
+        for table in [
+            "raw_turns",
+            "transcript_mining_provenance",
+            "transcript_mining_modern_raw_witness",
+            "transcript_mining_wal_outbox",
+            "transcript_mining_revocation_receipts",
+        ] {
+            assert_eq!(
+                conn.query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+                1,
+                "failed v37 migration must restore original v36 table {table}",
+            );
+        }
+        for absent_table in [
+            "transcript_mining_raw_frame_plan",
+            "transcript_mining_wal_outbox_v36",
+            "transcript_mining_revocation_receipts_v36",
+            "transcript_mining_modern_raw_witness_v36",
+            "transcript_mining_provenance_v36",
+        ] {
+            assert_eq!(
+                conn.query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [absent_table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+                0,
+                "failed v37 migration must not leak temporary table {absent_table}",
+            );
+        }
+        assert!(!conn
+            .prepare("SELECT 1 FROM pragma_table_info('raw_turns') WHERE name='transcript_mining_raw_frame_plan_epoch'")
+            .unwrap()
+            .exists([])
+            .unwrap());
+        assert!(!conn
+            .prepare("SELECT 1 FROM pragma_table_info('transcript_mining_provenance') WHERE name='terminal_cause'")
+            .unwrap()
+            .exists([])
+            .unwrap());
+        let original_outbox: (i64, Vec<u8>, Vec<u8>, String, i64, Option<i64>) = conn
+            .query_row(
+                "SELECT event_subtype,payload,payload_sha256,state,enqueued_at_unix,delivered_at_unix
+                 FROM transcript_mining_wal_outbox WHERE outbox_id='outbox-v36-revocation'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            )
+            .unwrap();
+        assert_eq!(original_outbox.0, 41);
+        assert_eq!(original_outbox.1, vec![0x29]);
+        assert_eq!(original_outbox.2, vec![0; 32]);
+        assert_eq!(original_outbox.3, "pending");
+        assert_eq!(original_outbox.4, 1);
+        assert_eq!(original_outbox.5, None);
+    }
+
+    #[test]
+    fn migration_v36_to_v37_reserves_physical_proof_and_keeps_raw_delete_monotonic() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys = ON;
+            CREATE TABLE raw_turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                ts_unix INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                transcript_mining_authority_epoch INTEGER NOT NULL DEFAULT 0
+                    CHECK(transcript_mining_authority_epoch IN (0, 1))
+            );
+            "#,
+        )
+        .unwrap();
+        migration_v35_to_v36(&conn).unwrap();
+
+        // This deliberately anomalous v36 epoch-1 witness remains historical:
+        // v37 stamps its independent frame-plan birth epoch to zero and never
+        // infers a plan from the existing witness, row, or digest fields.
+        conn.execute(
+            "INSERT INTO raw_turns
+                (session_id,role,ts_unix,text,transcript_mining_authority_epoch)
+             VALUES ('v36-session','operator',1,'v36 text',1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcript_mining_modern_raw_witness
+                (raw_turn_id,subject_sha256,raw_role,source_kind,witnessed_at_unix)
+             VALUES (1,zeroblob(32),'operator','operator_raw_text_v1',1)",
+            [],
+        )
+        .unwrap();
+        migration_v36_to_v37(&conn).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT transcript_mining_raw_frame_plan_epoch FROM raw_turns WHERE id=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        assert!(conn
+            .execute(
+                "INSERT INTO transcript_mining_raw_frame_plan
+                    (frame_plan_id,provenance_id,lifecycle_id,raw_turn_id,
+                     raw_event_type,raw_event_subtype,planned_wal_format_version,
+                     planned_event_schema_version,planned_event_id,
+                     planned_hlc_physical_ns,planned_hlc_logical,planned_header,
+                     planned_header_sha256,planned_at_unix)
+                 VALUES ('legacy-plan','legacy-prov','legacy-life',1,1,0,2,4,
+                         zeroblob(8),zeroblob(8),0,zeroblob(96),zeroblob(32),1)",
+                [],
+            )
+            .is_err(), "a v36 row must never acquire a v37 raw-frame plan");
+
+        conn.execute(
+            "INSERT INTO raw_turns
+                (session_id,role,ts_unix,text,transcript_mining_authority_epoch,
+                 transcript_mining_raw_frame_plan_epoch)
+             VALUES ('v37-session','operator',2,'v37 text',1,1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcript_mining_modern_raw_witness
+                (raw_turn_id,subject_sha256,raw_role,source_kind,witnessed_at_unix)
+             VALUES (2,zeroblob(32),'operator','operator_raw_text_v1',2)",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO transcript_mining_raw_frame_plan
+                    (frame_plan_id,provenance_id,lifecycle_id,raw_turn_id,
+                     raw_event_type,raw_event_subtype,planned_wal_format_version,
+                     planned_event_schema_version,planned_event_id,
+                     planned_hlc_physical_ns,planned_hlc_logical,planned_header,
+                     planned_header_sha256,state,raw_frame_sha256,
+                     planned_at_unix,raw_frame_delivered_at_unix)
+                 VALUES ('direct-verified-plan','direct-verified-prov','direct-verified-life',2,
+                         1,0,2,4,zeroblob(8),zeroblob(8),7,zeroblob(96),
+                         X'7777777777777777777777777777777777777777777777777777777777777777',
+                         'verified',zeroblob(32),2,3)",
+                [],
+            )
+            .is_err(),
+            "stage 3a must reject a direct initial verified plan even with a 32-byte digest",
+        );
+
+        // Only the later authenticated attestation seam may create this
+        // pre-WAL fixture. Drop the Stage-3a reservation gate solely to model
+        // an already-persisted row whose creation belongs to that later seam,
+        // then restore the exact production trigger set before asserting
+        // current direct-SQL behavior and deletion.
+        conn.execute(
+            "DROP TRIGGER transcript_mining_plan_stage3a_reserved",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            INSERT INTO transcript_mining_raw_frame_plan
+                (frame_plan_id,provenance_id,lifecycle_id,raw_turn_id,
+                 raw_event_type,raw_event_subtype,planned_wal_format_version,
+                 planned_event_schema_version,planned_event_id,
+                 planned_hlc_physical_ns,planned_hlc_logical,planned_header,
+                 planned_header_sha256,planned_at_unix)
+            VALUES ('plan-37','provenance-37','lifecycle-37',2,1,0,2,4,
+                    zeroblob(8),zeroblob(8),0,zeroblob(96),zeroblob(32),2);
+            INSERT INTO transcript_mining_provenance
+                (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,
+                 raw_text_sha256,raw_role,source_kind,retention,lifecycle,
+                 created_at_unix,expires_at_unix)
+            VALUES ('provenance-37','lifecycle-37',2,zeroblob(32),zeroblob(32),
+                    'operator','operator_raw_text_v1','hours24','pending',2,4000000000);
+            COMMIT;
+            "#,
+        )
+        .unwrap();
+        conn.execute_batch(TRANSCRIPT_MINING_V37_TRIGGERS_SQL)
+            .unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT state FROM transcript_mining_raw_frame_plan WHERE frame_plan_id='plan-37'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+            "planned"
+        );
+        let prepared_frame_evidence: (Option<Vec<u8>>, Option<i64>, i64) = conn
+            .query_row(
+                "SELECT raw_frame_sha256,raw_frame_delivered_at_unix,
+                        (SELECT COUNT(*) FROM transcript_mining_wal_outbox
+                         WHERE provenance_id='provenance-37')
+                 FROM transcript_mining_raw_frame_plan WHERE frame_plan_id='plan-37'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+        assert_eq!(prepared_frame_evidence, (None, None, 0));
+        // Exercise the dedicated plan OR REPLACE guard, not merely the broader
+        // Stage-3a admission gate. The gate is restored before any normal
+        // Stage-3a behavior is asserted below.
+        conn.execute(
+            "DROP TRIGGER transcript_mining_plan_stage3a_reserved",
+            [],
+        )
+        .unwrap();
+        let plan_replace_error = conn
+            .execute(
+                "INSERT OR REPLACE INTO transcript_mining_raw_frame_plan
+                    (frame_plan_id,provenance_id,lifecycle_id,raw_turn_id,
+                     raw_event_type,raw_event_subtype,planned_wal_format_version,
+                     planned_event_schema_version,planned_event_id,
+                     planned_hlc_physical_ns,planned_hlc_logical,planned_header,
+                     planned_header_sha256,planned_at_unix)
+                 VALUES ('plan-37','provenance-37','lifecycle-37',2,1,0,2,4,
+                         zeroblob(8),zeroblob(8),0,zeroblob(96),zeroblob(32),2)",
+                [],
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(
+            plan_replace_error.contains("raw frame plan replacement forbidden"),
+            "expected the plan-specific OR REPLACE guard, got: {plan_replace_error}",
+        );
+        conn.execute_batch(TRANSCRIPT_MINING_V37_TRIGGERS_SQL)
+            .unwrap();
+        for (replacement_statement, expected_reason) in [
+            (
+                "INSERT OR REPLACE INTO transcript_mining_modern_raw_witness
+                 (raw_turn_id,subject_sha256,raw_role,source_kind,witnessed_at_unix)
+             VALUES (2,zeroblob(32),'operator','operator_raw_text_v1',2)",
+                "modern raw witness replacement forbidden",
+            ),
+            (
+                "INSERT OR REPLACE INTO transcript_mining_provenance
+                 (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,
+                  raw_text_sha256,raw_role,source_kind,retention,lifecycle,
+                  created_at_unix,expires_at_unix)
+             VALUES ('provenance-37','lifecycle-37',2,zeroblob(32),zeroblob(32),
+                     'operator','operator_raw_text_v1','hours24','pending',2,4000000000)",
+                "mining provenance replacement forbidden",
+            ),
+            (
+                "INSERT OR REPLACE INTO raw_turns
+                 (id,session_id,role,ts_unix,text,transcript_mining_authority_epoch,
+                  transcript_mining_raw_frame_plan_epoch)
+             VALUES (2,'replacement','operator',0,'replacement',1,1)",
+                "mining-bound raw turn replacement forbidden",
+            ),
+        ] {
+            let replacement_error = conn
+                .execute(replacement_statement, [])
+                .unwrap_err()
+                .to_string();
+            assert!(
+                replacement_error.contains(expected_reason),
+                "expected OR REPLACE guard {expected_reason:?}, got: {replacement_error}",
+            );
+        }
+        assert!(conn
+            .execute(
+                "UPDATE transcript_mining_provenance
+                 SET lifecycle='cancelled',revoked_at_unix=3,
+                     terminal_cause='raw_turn_deleted'
+                 WHERE provenance_id='provenance-37'",
+                [],
+            )
+            .is_err(), "a direct terminal transition cannot replace raw deletion");
+        assert!(conn
+            .execute(
+                "INSERT INTO transcript_mining_wal_outbox
+                    (outbox_id,provenance_id,lifecycle_id,logical_subtype,event_subtype,
+                     payload,payload_sha256,enqueued_at_unix)
+                 VALUES ('bound-too-early','provenance-37','lifecycle-37','bound',40,
+                         X'01',zeroblob(32),2)",
+                [],
+            )
+            .is_err(), "0x28 must wait for an authenticated raw-frame verification");
+        assert!(conn
+            .execute(
+                "UPDATE transcript_mining_provenance
+                 SET lifecycle='active' WHERE provenance_id='provenance-37'",
+                [],
+            )
+            .is_err(), "activation requires delivered read-back evidence");
+        assert!(conn
+            .execute(
+                "UPDATE transcript_mining_raw_frame_plan
+                 SET state='verified',raw_frame_delivered_at_unix=3
+                 WHERE frame_plan_id='plan-37'",
+                [],
+            )
+            .is_err(), "a verified plan needs a fixed physical-frame digest");
+
+        // A matching length is not proof. Stage 3a must reject both an
+        // incomplete claim and an all-zero, syntactically complete claim:
+        // direct SQLite has no authenticated WAL read-back attestation.
+        assert!(conn
+            .execute(
+                "UPDATE transcript_mining_raw_frame_plan
+                 SET state='verified',raw_frame_sha256=zeroblob(32),raw_frame_delivered_at_unix=3
+                 WHERE frame_plan_id='plan-37'",
+                [],
+            )
+            .is_err(), "stage 3a must not let SQLite fabricate verified WAL evidence");
+        assert!(conn
+            .execute(
+                "INSERT INTO transcript_mining_wal_outbox
+                    (outbox_id,provenance_id,lifecycle_id,logical_subtype,event_subtype,
+                     payload,payload_sha256,state,enqueued_at_unix,delivered_at_unix,
+                     delivered_frame_sha256)
+                 VALUES ('bound-delivered-direct','provenance-37','lifecycle-37','bound',40,
+                         X'01',zeroblob(32),'delivered',3,4,zeroblob(32))",
+                [],
+            )
+            .is_err(), "stage 3a must not let SQLite fabricate delivered 0x28 evidence");
+        assert!(conn
+            .execute(
+                "INSERT INTO transcript_mining_wal_outbox
+                    (outbox_id,provenance_id,lifecycle_id,logical_subtype,event_subtype,
+                     payload,payload_sha256,bound_payload_sha256,
+                     revocation_receipt_id,enqueued_at_unix)
+                 VALUES ('revoked-too-early','provenance-37','lifecycle-37','revoked',41,
+                         X'02',zeroblob(32),zeroblob(32),'missing-receipt',3)",
+                [],
+            )
+            .is_err(), "0x29 requires terminal receipt plus an exact delivered 0x28");
+
+        conn.execute("DELETE FROM raw_turns WHERE id=2", [])
+            .unwrap();
+        let terminal: (String, String, i64) = conn
+            .query_row(
+                "SELECT lifecycle,terminal_cause,revoked_at_unix
+                 FROM transcript_mining_provenance WHERE provenance_id='provenance-37'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(terminal.0, "cancelled");
+        assert_eq!(terminal.1, "raw_turn_deleted");
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM transcript_mining_delete_context",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0,
+            "the deletion cause is consumed in the same SQLite statement"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT state FROM transcript_mining_raw_frame_plan WHERE frame_plan_id='plan-37'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+            "cancelled",
+            "raw deletion cancels an unverified plan without creating external evidence"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM transcript_mining_wal_outbox WHERE provenance_id='provenance-37'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0,
+            "stage 3a never admits a 0x28 or 0x29 outbox row"
+        );
+        for statement in [
+            "DELETE FROM transcript_mining_revocation_receipts WHERE provenance_id='provenance-37'",
+            "DELETE FROM transcript_mining_raw_frame_plan WHERE frame_plan_id='plan-37'",
+            "INSERT OR REPLACE INTO transcript_mining_revocation_receipts
+                 (receipt_id,provenance_id,lifecycle_id,raw_turn_id,revocation,lifecycle,occurred_at_unix)
+             VALUES ('raw-delete-provenance-37','provenance-37','lifecycle-37',2,
+                     'raw_turn_deleted','cancelled',0)",
+            "INSERT OR REPLACE INTO raw_turns
+                 (id,session_id,role,ts_unix,text,transcript_mining_authority_epoch,
+                  transcript_mining_raw_frame_plan_epoch)
+             VALUES (2,'replacement','operator',0,'replacement',1,1)",
+        ] {
+            assert!(conn.execute(statement, []).is_err(), "immutable terminal evidence: {statement}");
+        }
+
+        // A rollback around raw deletion leaves the complete prepared state
+        // untouched: no terminal receipt, cancellation, or frame claim leaks
+        // out of the outer SQLite transaction.
+        conn.execute(
+            "INSERT INTO raw_turns
+                (session_id,role,ts_unix,text,transcript_mining_authority_epoch,
+                 transcript_mining_raw_frame_plan_epoch)
+             VALUES ('v37-pending-session','operator',6,'v37 pending text',1,1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcript_mining_modern_raw_witness
+                (raw_turn_id,subject_sha256,raw_role,source_kind,witnessed_at_unix)
+             VALUES (3,zeroblob(32),'operator','operator_raw_text_v1',6)",
+            [],
+        )
+        .unwrap();
+        // Model an existing later-seam-owned planned row, then immediately
+        // restore the production Stage-3a reservation before testing rollback.
+        conn.execute(
+            "DROP TRIGGER transcript_mining_plan_stage3a_reserved",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            INSERT INTO transcript_mining_raw_frame_plan
+                (frame_plan_id,provenance_id,lifecycle_id,raw_turn_id,
+                 raw_event_type,raw_event_subtype,planned_wal_format_version,
+                 planned_event_schema_version,planned_event_id,
+                 planned_hlc_physical_ns,planned_hlc_logical,planned_header,
+                 planned_header_sha256,planned_at_unix)
+            VALUES ('plan-pending-37','provenance-pending-37','lifecycle-pending-37',3,
+                    1,0,2,4,X'0100000000000000',X'0100000000000000',1,
+                    zeroblob(96),X'1111111111111111111111111111111111111111111111111111111111111111',6);
+            INSERT INTO transcript_mining_provenance
+                (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,
+                 raw_text_sha256,raw_role,source_kind,retention,lifecycle,
+                 created_at_unix,expires_at_unix)
+            VALUES ('provenance-pending-37','lifecycle-pending-37',3,
+                    zeroblob(32),zeroblob(32),'operator','operator_raw_text_v1',
+                    'hours24','pending',6,4000000000);
+            COMMIT;
+            "#,
+        )
+        .unwrap();
+        conn.execute_batch(TRANSCRIPT_MINING_V37_TRIGGERS_SQL)
+            .unwrap();
+        conn.execute_batch("BEGIN; DELETE FROM raw_turns WHERE id=3; ROLLBACK;")
+            .unwrap();
+        let rolled_back_delete: (i64, String, Option<String>, String, i64, i64) = conn
+            .query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM raw_turns WHERE id=3),
+                    provenance.lifecycle,
+                    provenance.terminal_cause,
+                    plan.state,
+                    (SELECT COUNT(*) FROM transcript_mining_revocation_receipts
+                     WHERE provenance_id='provenance-pending-37'),
+                    (SELECT COUNT(*) FROM transcript_mining_delete_context)
+                 FROM transcript_mining_provenance AS provenance
+                 JOIN transcript_mining_raw_frame_plan AS plan
+                   ON plan.provenance_id = provenance.provenance_id
+                 WHERE provenance.provenance_id='provenance-pending-37'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            rolled_back_delete,
+            (1, "pending".into(), None, "planned".into(), 0, 0),
+            "outer rollback must leave all raw-delete transition evidence unchanged",
+        );
+        conn.execute("DELETE FROM raw_turns WHERE id=3", [])
+            .unwrap();
+        let pending_delete: (String, String, i64, i64) = conn
+            .query_row(
+                "SELECT provenance.lifecycle,plan.state,
+                        (SELECT COUNT(*) FROM transcript_mining_wal_outbox
+                         WHERE provenance_id='provenance-pending-37'),
+                        (SELECT COUNT(*) FROM transcript_mining_revocation_receipts
+                         WHERE provenance_id='provenance-pending-37')
+                 FROM transcript_mining_provenance AS provenance
+                 JOIN transcript_mining_raw_frame_plan AS plan
+                   ON plan.provenance_id = provenance.provenance_id
+                 WHERE provenance.provenance_id='provenance-pending-37'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(pending_delete, ("cancelled".into(), "cancelled".into(), 0, 1));
+
+        // For a fixture created by the later authorized seam, raw deletion
+        // cancels the raw-frame plan itself; no 0x28 exists or can be admitted
+        // in Stage 3a.
+        conn.execute(
+            "INSERT INTO raw_turns
+                (session_id,role,ts_unix,text,transcript_mining_authority_epoch,
+                 transcript_mining_raw_frame_plan_epoch)
+             VALUES ('v37-planned-session','operator',8,'v37 planned text',1,1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcript_mining_modern_raw_witness
+                (raw_turn_id,subject_sha256,raw_role,source_kind,witnessed_at_unix)
+             VALUES (4,zeroblob(32),'operator','operator_raw_text_v1',8)",
+            [],
+        )
+        .unwrap();
+        // The terminal-delete fixture is likewise pre-existing authority data;
+        // ordinary Stage-3a SQLite cannot construct it.
+        conn.execute(
+            "DROP TRIGGER transcript_mining_plan_stage3a_reserved",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            INSERT INTO transcript_mining_raw_frame_plan
+                (frame_plan_id,provenance_id,lifecycle_id,raw_turn_id,
+                 raw_event_type,raw_event_subtype,planned_wal_format_version,
+                 planned_event_schema_version,planned_event_id,
+                 planned_hlc_physical_ns,planned_hlc_logical,planned_header,
+                 planned_header_sha256,planned_at_unix)
+            VALUES ('plan-cancel-37','provenance-cancel-37','lifecycle-cancel-37',4,
+                    1,0,2,4,X'0200000000000000',X'0200000000000000',2,
+                    zeroblob(96),X'2222222222222222222222222222222222222222222222222222222222222222',8);
+            INSERT INTO transcript_mining_provenance
+                (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,
+                 raw_text_sha256,raw_role,source_kind,retention,lifecycle,
+                 created_at_unix,expires_at_unix)
+            VALUES ('provenance-cancel-37','lifecycle-cancel-37',4,
+                    zeroblob(32),zeroblob(32),'operator','operator_raw_text_v1',
+                    'hours24','pending',8,4000000000);
+            COMMIT;
+            "#,
+        )
+        .unwrap();
+        conn.execute_batch(TRANSCRIPT_MINING_V37_TRIGGERS_SQL)
+            .unwrap();
+        conn.execute("DELETE FROM raw_turns WHERE id=4", [])
+            .unwrap();
+        let planned_delete: (String, String, i64) = conn
+            .query_row(
+                "SELECT provenance.lifecycle,plan.state,
+                        (SELECT COUNT(*) FROM transcript_mining_wal_outbox
+                         WHERE provenance_id='provenance-cancel-37')
+                 FROM transcript_mining_provenance AS provenance
+                 JOIN transcript_mining_raw_frame_plan AS plan
+                   ON plan.provenance_id = provenance.provenance_id
+                 WHERE provenance.provenance_id='provenance-cancel-37'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(planned_delete, ("cancelled".into(), "cancelled".into(), 0));
     }
 
     #[test]
