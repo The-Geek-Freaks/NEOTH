@@ -76,6 +76,9 @@ export component MiniOverlay inherits Window {
     /// True while the overlay's chat request is in preflight or streaming.
     /// Replaces Send with an operator-controlled Stop action on both surfaces.
     in property <bool> send-in-flight: false;
+    /// Request-bound 120-second silence diagnostic for a Buddy turn. This is
+    /// presentation only; Rust retains the canonical stream lifecycle.
+    in property <bool> stall-active: false;
     /// ADOPT31-B10 — operator-visible Skill labels. Rust owns canonical IDs.
     in property <[string]> skill-options: [];
     in-out property <int> selected-skill-index: 0;
@@ -104,6 +107,9 @@ export component MiniOverlay inherits Window {
     callback skill-selected(int);
     /// Operator stopped the active overlay chat request.
     callback stop-stream-clicked();
+    /// Operator retries/stops the request currently bound to the stall diagnostic.
+    callback stall-retry-clicked();
+    callback stall-stop-clicked();
     /// Pointer-down on the title strip — Rust starts an OS-native
     /// compositor drag via winit drag_window().
     callback drag-started();
@@ -323,6 +329,19 @@ export component MiniOverlay inherits Window {
                                 }
 
                                 // Raw TextInput so we can call focus() from changed compact
+                                if root.stall-active: Text {
+                                    x: 0px;
+                                    width: parent.width;
+                                    text: "120s silent — retry or stop";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.consent;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: left;
+                                    accessible-role: AccessibleRole.text;
+                                    accessible-label: "No meaningful provider or stream progress for 120 seconds. Retry or stop this Buddy request.";
+                                }
+
                                 compact-input := TextInput {
                                     x: 0px;
                                     width: parent.width;
@@ -335,6 +354,7 @@ export component MiniOverlay inherits Window {
                                     single-line: true;
                                     vertical-alignment: center;
                                     horizontal-alignment: left;
+                                    visible: !root.stall-active;
                                     enabled: root.compact && !root.send-in-flight;
                                     accessible-role: AccessibleRole.text;
                                     accessible-label: "message NEOTH";
@@ -392,11 +412,23 @@ export component MiniOverlay inherits Window {
                             accessible-action-default => { root.mic-clicked(); }
                         }
                     }
+                    if root.compact && root.send-in-flight && root.stall-active: NeothButton {
+                        label: "Retry";
+                        primary: true;
+                        size: "sm";
+                        clicked => { root.stall-retry-clicked(); }
+                    }
                     if root.compact && root.send-in-flight: NeothButton {
                         label: "Stop";
                         danger: true;
                         size: "sm";
-                        clicked => { root.stop-stream-clicked(); }
+                        clicked => {
+                            if root.stall-active {
+                                root.stall-stop-clicked();
+                            } else {
+                                root.stop-stream-clicked();
+                            }
+                        }
                     }
 
                     // Chevron toggle — compact → full (▾ = expand downward)
@@ -670,7 +702,9 @@ export component MiniOverlay inherits Window {
                     padding-left: 10px; padding-right: 10px;
                     alignment: space-between;
                     Text {
-                        text: root.status-text;
+                        text: root.stall-active
+                            ? "No meaningful provider or stream progress for 120s — retry or stop this Buddy request."
+                            : root.status-text;
                         color: Theme.text-tertiary;
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-2xs;
@@ -765,11 +799,23 @@ export component MiniOverlay inherits Window {
                                 }
                             }
                         }
+                        if !root.compact && root.send-in-flight && root.stall-active: NeothButton {
+                            label: "Retry";
+                            primary: true;
+                            size: "sm";
+                            clicked => { root.stall-retry-clicked(); }
+                        }
                         if !root.compact && root.send-in-flight: NeothButton {
                             label: "Stop";
                             danger: true;
                             size: "sm";
-                            clicked => { root.stop-stream-clicked(); }
+                            clicked => {
+                                if root.stall-active {
+                                    root.stall-stop-clicked();
+                                } else {
+                                    root.stop-stream-clicked();
+                                }
+                            }
                         }
                     }
                 }
