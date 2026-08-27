@@ -5881,7 +5881,7 @@ mod tests {
             (
                 "coding/provider_worker.rs",
                 2,
-                "5cbbdc346b26f19466a71236fbb5461ca8c71de89f69096526c39295938aefe5",
+                "fc5a33e05e164dc68b129609a02be53cf9bad8a5c947394dc90c1f2d0cb87dea",
             ),
             (
                 "coding/second_opinion.rs",

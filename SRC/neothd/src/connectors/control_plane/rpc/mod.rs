@@ -1928,9 +1928,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn apply_identity_decoder_accepts_only_exact_lowercase_hex() {
-        let valid = "01".repeat(32);
-        assert_eq!(decode_lower_hex_32("plan id", &valid).unwrap(), [1_u8; 32]);
-        assert!(decode_lower_hex_32("plan id", &valid.to_uppercase()).is_err());
+        let valid = hex::encode([b'\n'; 32]);
+        let uppercase = valid.to_uppercase();
+        assert_ne!(valid, uppercase, "fixture must contain lowercase hex letters");
+        assert_eq!(decode_lower_hex_32("plan id", &valid).unwrap(), [b'\n'; 32]);
+        assert!(decode_lower_hex_32("plan id", &uppercase).is_err());
         assert!(decode_lower_hex_32("plan id", &valid[..63]).is_err());
         assert!(decode_lower_hex_32("plan id", &format!("{valid}00")).is_err());
         assert!(decode_lower_hex_32("plan id", &"gg".repeat(32)).is_err());
@@ -2543,8 +2545,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn endpoint_path_is_short_enough_to_bind_and_cleanup() {
+    #[tokio::test]
+    async fn endpoint_path_is_short_enough_to_bind_and_cleanup() {
         let home = crate::test_env::canonical_tempdir().unwrap();
         let audit_nonce = fresh_test_nonce();
         let endpoint = bind_endpoint(home.path(), &audit_nonce).unwrap();

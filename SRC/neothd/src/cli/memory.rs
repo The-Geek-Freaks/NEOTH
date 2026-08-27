@@ -45,8 +45,9 @@ pub enum MemoryAction {
     /// This is intentionally separate from topic forget because typed
     /// presentation evidence is not topic-addressable.
     EraseCommunicationProfile {
-        /// Exact, case-sensitive pseudonymous handle from
-        /// `neoth export --list-subjects`. Defaults to `operator`.
+        /// Exact, case-sensitive private subject handle. Defaults to `operator`;
+        /// generic `neoth export --list-subjects` fail-closes and cannot
+        /// enumerate handles.
         #[arg(long, value_name = "SUBJECT")]
         subject: Option<String>,
         /// Required to erase. Without this flag the command is a dry-run.

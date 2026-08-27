@@ -1146,14 +1146,14 @@ Browse the WAL event-type registry. Self-documenting audit trail — `neoth even
 
 ## `neoth export`
 
-GDPR-style operator data export — JSONL or markdown dump of operator data, archive copy, and a V2 redacted communication record. That record contains only active concrete accommodations plus schema/presence/redaction metadata; it never serializes communication subjects, evidence, hashes, scopes, provenance, confidence, timestamps, or declared context. Phase 33c BS-8
+GDPR-style operator data export — JSONL or markdown dump of exportable operator event/view rows, an archive-session copy, and a V2 redacted communication profile. The communication projection contains only active concrete accommodations plus schema/presence/redaction metadata; it excludes subjects, evidence, hashes, scopes, provenance, confidence, timestamps, and declared context. Phase 33c BS-8
 
 - `--out <DIR>` — Output directory. Default: `~/.neoth/exports/neoth-export-<UTC>/`
 - `--since <DATE>` — Filter to events at-or-after this date. Format `YYYY-MM-DD`. Defaults to "everything ever recorded"
 - `--format <FORMAT>` — Output format. `jsonl` = one event per line (default, lossless). `md` = human-readable digest grouped by day
 - `--home <DIR>` — Override the `~/.neoth/` home dir (mostly for tests)
-- `--subject <SUBJECT>` — Reserved private-DSAR selector. Generic export has no authenticated private-DSAR authority, so this fails before reading state, creating output, or printing a handle
-- `--list-subjects` — Reserved private-DSAR inventory. Generic export has no authenticated private-DSAR authority, so this fails before reading state, creating output, or printing a handle
+- `--subject <SUBJECT>` — Reserved private-DSAR selector. Generic export has no authenticated private DSAR authority, so this currently fails without reading or writing local state
+- `--list-subjects` — Reserved private-DSAR inventory. Generic export has no authenticated private DSAR authority, so this currently fails without reading or printing local state
 
 ## `neoth fact-check`
 
@@ -1925,7 +1925,7 @@ Inspect the assembled NEOTH.md operator context
 
 Preview or confirm erasure of one complete typed communication profile. This is intentionally separate from topic forget because typed presentation evidence is not topic-addressable
 
-- `--subject <SUBJECT>` — Exact, case-sensitive private subject handle. Generic `neoth export --list-subjects` does not expose handles, and this option does not establish DSAR authority. Defaults to `operator`
+- `--subject <SUBJECT>` — Exact, case-sensitive private subject handle. Defaults to `operator`; generic `neoth export --list-subjects` fail-closes and cannot enumerate handles
 - `--confirm` — Required to erase. Without this flag the command is a dry-run
 - `--home <DIR>` — Override `~/.neoth/` (primarily for isolated verification)
 
@@ -2840,15 +2840,6 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 - `--transcript <TEXT>` — GOLD-ADAPT-ODY-26 — FTS search over transcript turns (operator turns are source-exact; agent turns are secret/control-sanitized) with N before/after context rows. Persisted by `neoth chat` and `neoth serve`. Returns matching turns ranked by BM25, each with up to `--context-rows` turns of conversation context from the same session. Bypasses episode recall entirely
 - `--context-rows <CONTEXT_ROWS>` — GOLD-ADAPT-ODY-26 — number of turns to show before and after each transcript match (default 2). Only honoured when `--transcript` is set
 
-## `neoth recall-score`
-
-ARCH-05/SPEC-08 — score the legacy-AI→NEOTH recall-parity gate over grader sheets: inter-rater kappa + kappa-adjusted weighted-harmonic parity + per-query CRITICAL divergences (emits `0x3E`). Exits non-zero on FAIL. Requires a validated cross-family grader roster: `recall-score --grader-config graders.json --goldset g.jsonl --grades a.jsonl --grades b.jsonl`. The goldset has exactly 100 unique canonical query IDs, which bind grade query IDs exactly
-
-- `--grades <GRADES>` — Grader-sheet JSONL file(s) (each line a GraderGrade: query_id, grader_id, system, 5×Likert). Supply no more files than configured graders; all records are merged. Every configured grader must cover every query/system
-- `--grader-config <PATH>` — Versioned grader roster JSON. Required: binds submitted grader IDs to validated provider/family/model metadata and requires an independent external family. This is metadata only, not provenance evidence
-- `--goldset <PATH>` — Goldset JSONL. Required: exactly 100 unique canonical query IDs must match submitted grade query IDs; partial or extra grading fails
-- `--no-audit` — Don't emit `0x3E` WAL frames (dry scoring; the report still prints)
-
 ## `neoth recall-parity-harness`
 
 GOLD-LF-P1-08 — plan, ingest, and report a strictly offline, SHA256-bound recall-parity evaluation run. This report is derived evidence only and does not replace the fail-closed recall-score gate
@@ -2965,6 +2956,15 @@ Recompute and render a run from trusted config/goldset inputs. The operation rem
 - `--goldset <PATH>`
 - `--import-receipt <PATH>` — Externally held signed receipt binding the complete import vector
 - `--expected-receipt-pubkey <BASE64>` — Out-of-band Ed25519 receipt public key (base64); never read from run state
+
+## `neoth recall-score`
+
+ARCH-05/SPEC-08 — score the legacy-AI→NEOTH recall-parity gate over grader sheets: inter-rater kappa + kappa-adjusted weighted-harmonic parity + per-query CRITICAL divergences (emits `0x3E`). Exits non-zero on FAIL. Requires a validated cross-family grader roster: `recall-score --grader-config graders.json --goldset g.jsonl --grades a.jsonl --grades b.jsonl`. The goldset has exactly 100 unique canonical query IDs, which bind grade query IDs exactly
+
+- `--grades <GRADES>` — Grader-sheet JSONL file(s) (each line a GraderGrade: query_id, grader_id, system, 5×Likert). Supply no more files than configured graders; all records are merged. Every configured grader must cover every query/system
+- `--grader-config <PATH>` — Versioned grader roster JSON. Required: binds submitted grader IDs to validated provider/family/model metadata and requires an independent external family. This is metadata only, not provenance evidence
+- `--goldset <PATH>` — Goldset JSONL. Required: exactly 100 unique canonical query IDs must match submitted grade query IDs; partial or extra grading fails
+- `--no-audit` — Don't emit `0x3E` WAL frames (dry scoring; the report still prints)
 
 ## `neoth recipe`
 
@@ -3756,30 +3756,13 @@ Verify and print the latest correlated updater state per concrete lane and task 
 
 ## `neoth usage`
 
-QM-9 Phase 1 + ADOPT31-D2: render the persisted usage log as a human-readable or JSON rollup. Aggregates the last 24h by default; `--days N` widens the window; `--since-unix … --until-unix …` pins an explicit range. Source files: `~/.neoth/usage/YYYY-MM-DD.jsonl`
+QM-9 Phase 1: render the persisted usage log as a human-readable or JSON rollup. Aggregates the last 24h by default; `--days N` widens the window; `--since-unix … --until-unix …` pins an explicit range. Source files: `~/.neoth/usage/YYYY-MM-DD.jsonl`
 
 - `--days <DAYS>` — How many days back to aggregate (default 1)
 - `--format <FORMAT>` — Output format: `table` (default) or `json`
 - `--since-unix <SINCE_UNIX>` — Optional explicit start unix timestamp (overrides --days)
 - `--until-unix <UNTIL_UNIX>` — Optional explicit end unix timestamp (overrides --days)
 - `--currency <CURRENCY>` — Display currency: USD (default) / EUR / GBP / CHF / JPY / CNY. Storage canonical stays USD; this only affects the rendering. Operator can also pin in `freedom.yaml::usage_currency`
-
-The JSON rollup includes `workflow_rollup_schema: 1`, `per_workflow`, and an optional
-`workflow_other` bucket when the running daemon supports ADOPT31-D2. A workflow is a
-closed execution class derived only from the complete audited provider-call triple
-`(call_scope, source, call_type)`; it is not a task title, prompt, request id, user id,
-provider/model string, or configurable label. Legacy rows and any future/mismatched triple
-remain explicitly visible as `unclassified` rather than being guessed or dropped.
-
-Workflow rows are fully aggregated before presentation, then deterministically capped at
-eight named classes. If named classes exceed that bound, `workflow_other` is an output-only
-sum of the omitted classes; no event can classify itself as `other`. `unclassified` remains
-visible when present.
-
-All dollar totals in workflow rows are **known-cost totals only**. A reported `0.0` is a
-known/free call, while an absent, invalid, or unsafe cost is counted as `unpriced`; the CLI
-and JSON never represent unpriced calls as `$0.00`. Currency conversion applies to known USD
-totals only, never to the `unpriced` count.
 
 ## `neoth verify`
 
@@ -3843,6 +3826,13 @@ PROOF-KEY-01 — verify a base64 signature over MESSAGE. Defaults to THIS operat
 - `<MESSAGE>` — The signed message
 - `<BASE64_SIG>` — The base64 detached signature (from `proof-key sign`)
 - `--pubkey <BASE64>` — The signer's base64 public key. Defaults to this operator's proof key
+
+### `neoth wal receipt-evidence`
+
+Inspect the bounded authenticated Context Evidence receipt ledger. With no handle, prints the signed current head. With `--handle`, reads only the one fixed shard selected by that lower-case SHA-256 handle and includes the exact closed receipt frame when present
+
+- `--handle <LOWER_HEX_SHA256>` — Exact 64-character lower-case SHA-256 receipt handle
+- `--home <DIR>` — NEOTH home override (tests / inspecting a stopped backup)
 
 ### `neoth wal show`
 

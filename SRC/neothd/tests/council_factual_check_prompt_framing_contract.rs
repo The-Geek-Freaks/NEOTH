@@ -4,20 +4,10 @@ const ENVELOPE: &str = include_str!("../src/security/prompt_envelope.rs");
 const FACTUAL_CHECK: &str = include_str!("../src/council/factual_check.rs");
 const ORCHESTRATOR: &str = include_str!("../src/council/orchestrator.rs");
 
-const TRY_EMBED_GROUND_TRUTH_TAG_SIGNATURE: &str = concat!(
-    "pub fn try_embed_ground_truth_tag(\n",
-    "    prompt: &str,\n",
-    "    assertions: &[FactualAssertion],\n",
-    ") -> Result<String, crate::security::PromptBuildError>",
-);
-const FACTUAL_CONTRADICTION_CHECK_SIGNATURE: &str = concat!(
-    "pub fn factual_contradiction_check(\n",
-    "    response: &str,\n",
-    "    assertions: &[FactualAssertion],\n",
-    "    negation_markers: &[&str],\n",
-    "    window_chars: usize,\n",
-    ") -> FactualCheckOutcome",
-);
+const TRY_EMBED_GROUND_TRUTH_TAG_DECLARATION: &str =
+    "pubfntry_embed_ground_truth_tag(prompt:&str,assertions:&[FactualAssertion],)->Result<String,crate::security::PromptBuildError>";
+const FACTUAL_CONTRADICTION_CHECK_DECLARATION: &str =
+    "pubfnfactual_contradiction_check(response:&str,assertions:&[FactualAssertion],negation_markers:&[&str],window_chars:usize,)->FactualCheckOutcome";
 
 fn function_body(source: &str, signature: &str) -> String {
     let code = code_only(source);
@@ -25,6 +15,31 @@ fn function_body(source: &str, signature: &str) -> String {
         .unwrap_or_else(|| panic!("missing function signature: {signature}"));
     let open = code_open_brace_offset(&code, start + signature.len())
         .unwrap_or_else(|| panic!("missing function body: {signature}"));
+    function_body_from_open(&code, open, signature)
+}
+
+fn public_function_body(source: &str, name: &str, expected_declaration: &str) -> String {
+    let code = code_only(source);
+    let function_marker = format!("fn {name}");
+    let function_start = code_signature_offset(&code, &function_marker)
+        .unwrap_or_else(|| panic!("missing function item: {name}"));
+    let declaration_start = code[..function_start]
+        .rfind("pub")
+        .unwrap_or_else(|| panic!("missing public visibility for function item: {name}"));
+    let open = code_open_brace_offset(&code, function_start + function_marker.len())
+        .unwrap_or_else(|| panic!("missing function body: {name}"));
+    let actual_declaration: String = code[declaration_start..open]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    assert_eq!(
+        actual_declaration, expected_declaration,
+        "public function declaration drifted: {name}"
+    );
+    function_body_from_open(&code, open, name)
+}
+
+fn function_body_from_open(code: &str, open: usize, description: &str) -> String {
     let bytes = code.as_bytes();
     let mut depth = 0usize;
     let mut index = open;
@@ -40,7 +55,7 @@ fn function_body(source: &str, signature: &str) -> String {
         }
         index += 1;
     }
-    panic!("unterminated function body: {signature}");
+    panic!("unterminated function body: {description}");
 }
 
 /// Blank Rust comments and quoted literals without moving code offsets. This
@@ -203,7 +218,11 @@ fn factual_check_has_separate_typed_question_and_assertion_purposes() {
 
 #[test]
 fn factual_check_serializes_each_provider_bound_value_once_without_raw_fallback() {
-    let builder = function_body(FACTUAL_CHECK, TRY_EMBED_GROUND_TRUTH_TAG_SIGNATURE);
+    let builder = public_function_body(
+        FACTUAL_CHECK,
+        "try_embed_ground_truth_tag",
+        TRY_EMBED_GROUND_TRUTH_TAG_DECLARATION,
+    );
     assert_eq!(
         builder.matches("serialize_untrusted_prompt(").count(),
         2,
@@ -247,7 +266,11 @@ fn orchestrator_rejects_framing_before_provider_scheduling_or_budget_charge() {
 
 #[test]
 fn adversarial_limits_and_local_only_candidate_comparison_are_pinned() {
-    let local_comparison = function_body(FACTUAL_CHECK, FACTUAL_CONTRADICTION_CHECK_SIGNATURE);
+    let local_comparison = public_function_body(
+        FACTUAL_CHECK,
+        "factual_contradiction_check",
+        FACTUAL_CONTRADICTION_CHECK_DECLARATION,
+    );
     let adversarial_prompt = function_body(
         FACTUAL_CHECK,
         "fn typed_factual_prompt_escapes_adversarial_fields_and_keeps_suffix_degradable()",

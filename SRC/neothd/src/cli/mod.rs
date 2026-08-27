@@ -898,9 +898,12 @@ pub enum Commands {
     /// `neoth completions bash > /etc/bash_completion.d/neoth`, etc.
     Completions(completions::CompletionsArgs),
 
-    /// GDPR-style operator data export — JSONL or markdown dump of every
-    /// row NEOTH stores about the operator, plus a copy of the archive.
-    /// Phase 33c BS-8.
+    /// GDPR-style operator data export — JSONL or markdown dump of exportable
+    /// operator event/view rows, an archive-session copy, and a V2 redacted
+    /// communication profile. The communication projection contains only active
+    /// concrete accommodations plus schema/presence/redaction metadata; it
+    /// excludes subjects, evidence, hashes, scopes, provenance, confidence,
+    /// timestamps, and declared context. Phase 33c BS-8.
     Export(export::ExportArgs),
 
     /// One-way sync of the session archive into an Obsidian vault.

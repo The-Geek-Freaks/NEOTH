@@ -1263,7 +1263,10 @@ fn canonical_wal_chain_path_and_authenticated_commit_are_threaded_from_serve() {
         "let active_file = state.active_file_mut()?;",
         "write_and_sync(active_file, &frame).await",
         "state_c.should_emit() || req.force_authentication_marker",
-        "emit_compaction_marker(&mut state, state_c, key).await",
+        concat!(
+            "emit_compaction_marker(&mut state, state_c, key, receipt_reservation)\n",
+            "                                .await"
+        ),
         "req.ack.send(Ok(written_at))",
     ];
     let positions: Vec<_> = ordered
@@ -1281,7 +1284,20 @@ fn canonical_wal_chain_path_and_authenticated_commit_are_threaded_from_serve() {
         "async fn emit_compaction_marker(",
         "async fn closed_segment_binding(",
     );
-    assert!(
-        marker_commit.contains("write_and_sync(state.active_file_mut()?, &marker_frame).await?")
-    );
+    let marker_ordered = [
+        "state.ensure_frame_fits(marker_frame.len())?;",
+        "let active_file = state.active_file_mut()?;",
+        "reservation.consume(marker_frame.len());",
+        "write_and_sync(active_file, &marker_frame).await?;",
+        "*compaction_state = crate::wal::compaction::CompactionState::new(key, state.offset);",
+    ];
+    let marker_positions: Vec<_> = marker_ordered
+        .iter()
+        .map(|needle| {
+            marker_commit
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing durable marker commit stage: {needle}"))
+        })
+        .collect();
+    assert!(marker_positions.windows(2).all(|pair| pair[0] < pair[1]));
 }

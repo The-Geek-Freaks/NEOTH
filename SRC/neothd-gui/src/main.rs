@@ -25215,14 +25215,23 @@ mod chat_subprocess_tests {
             .unwrap();
         assert!(join < overview_take && overview_take < overview_join);
 
+        // Compose production markers so this source-scanning test cannot
+        // satisfy itself with its own string literals. The implementation is
+        // later in this file, so the final matching function is authoritative.
         let overview_registry = source
-            .split("fn spawn_usage_overview_worker(")
-            .nth(1)
-            .and_then(|tail| tail.split("fn refresh_overview_cost(").next())
+            .rsplit_once(concat!("fn spawn_usage_", "overview_worker("))
+            .map(|(_, tail)| tail)
+            .and_then(|tail| {
+                tail.split(concat!("fn refresh_overview_", "cost("))
+                    .next()
+            })
             .unwrap();
         let overview_worker_bound = source
-            .split("const MAX_USAGE_OVERVIEW_WORKERS: usize = ")
-            .nth(1)
+            .rsplit_once(concat!(
+                "const MAX_USAGE_",
+                "OVERVIEW_WORKERS: usize = "
+            ))
+            .map(|(_, tail)| tail)
             .and_then(|tail| tail.split(';').next())
             .unwrap();
         assert_eq!(
@@ -30622,6 +30631,8 @@ mod tests {
                 "autonomy: full\n",
                 "channels: [cli]\n",
                 "inference:\n  mode: triplet\n",
+                "  default_slot:\n    endpoint: http://127.0.0.1:11434/v1\n",
+                "    region: local-lab\n",
                 "cluster:\n  name: constellation\n  listen_port: 4242\n",
                 "  mdns:\n    enabled: false\n",
                 "omi:\n  enabled: true\n  mode: both\n",
@@ -30640,7 +30651,15 @@ mod tests {
         let body = std::fs::read_to_string(&path).unwrap();
         let root: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
         assert_eq!(root["operator_id"].as_str(), Some("sam"));
-        assert_eq!(root["inference"]["mode"].as_str(), Some("triplet"));
+        assert_eq!(root["inference"]["mode"].as_str(), Some("single"));
+        assert_eq!(
+            root["inference"]["default_slot"]["endpoint"].as_str(),
+            Some("http://127.0.0.1:11434/v1")
+        );
+        assert_eq!(
+            root["inference"]["default_slot"]["region"].as_str(),
+            Some("local-lab")
+        );
         assert_eq!(root["cluster"]["name"].as_str(), Some("constellation"));
         assert_eq!(root["cluster"]["listen_port"].as_u64(), Some(4242));
         assert_eq!(root["cluster"]["mdns"]["enabled"].as_bool(), Some(true));
