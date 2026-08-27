@@ -436,7 +436,7 @@ fn days_in_month(year: u16, month: u16) -> u16 {
 }
 
 fn is_leap_year(year: u16) -> bool {
-    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
 }
 
 fn normalized_synonym_map(
@@ -463,13 +463,12 @@ fn normalized_synonym_map(
         }
         if let Some(previous) =
             direct.insert(normalized_alias.clone(), normalized_canonical.clone())
+            && previous != normalized_canonical
         {
-            if previous != normalized_canonical {
-                return Err(HygieneError::InvalidSynonym {
-                    alias: normalized_alias,
-                    canonical: normalized_canonical,
-                });
-            }
+            return Err(HygieneError::InvalidSynonym {
+                alias: normalized_alias,
+                canonical: normalized_canonical,
+            });
         }
     }
 

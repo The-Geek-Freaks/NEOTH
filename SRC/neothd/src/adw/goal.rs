@@ -5,7 +5,11 @@
 //! evidence required to prove each acceptance criterion. Later ADOPT31 slices
 //! own map ingestion, coverage checking, execution, and evidence persistence.
 
-use std::{collections::HashSet, fmt, path::PathBuf};
+use std::{
+    collections::HashSet,
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Deserializer, Serialize, de};
 use uuid::Uuid;
@@ -284,7 +288,7 @@ fn validate_evidence_text(value: &str, field: &'static str) -> Result<(), GoalEr
     }
 }
 
-fn validate_evidence_path(value: &PathBuf, field: &'static str) -> Result<(), GoalError> {
+fn validate_evidence_path(value: &Path, field: &'static str) -> Result<(), GoalError> {
     if value.as_os_str().is_empty() {
         Err(GoalError::EmptyEvidencePath { field })
     } else {

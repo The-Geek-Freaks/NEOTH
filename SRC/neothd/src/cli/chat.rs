@@ -749,7 +749,7 @@ fn sanitize_chat_post_mint_provider_error(
         );
         return anyhow::Error::new(crate::providers::quota::QuotaError {
             provider: quota.provider,
-            retry_after: quota.retry_after.clone(),
+            retry_after: quota.retry_after,
             body: String::new(),
         });
     }

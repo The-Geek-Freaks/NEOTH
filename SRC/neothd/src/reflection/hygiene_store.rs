@@ -77,7 +77,7 @@ pub enum HygieneDurability {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HygieneMigrationOutcome {
     NoLegacyArtifact,
-    Migrated(HygieneApplyOutcome),
+    Migrated(Box<HygieneApplyOutcome>),
 }
 
 /// Fail-closed storage errors. Every error exits before any snapshot write.
@@ -349,12 +349,12 @@ pub fn migrate_legacy_hygiene_state(
         }
         Err(_) => return Err(HygieneStoreError::SafeStoreUnavailable),
     };
-    Ok(HygieneMigrationOutcome::Migrated(HygieneApplyOutcome {
+    Ok(HygieneMigrationOutcome::Migrated(Box::new(HygieneApplyOutcome {
         state,
         plan,
         written: true,
         durability,
-    }))
+    })))
 }
 
 fn lock_state(

@@ -659,7 +659,7 @@ pub(crate) fn open_absolute_bound_directory(
             );
         }
         let current = open_ambient_directory_nofollow(&root, label)?;
-        return walk_bound_directory_descendants(current, root, relative, &absolute, create, label);
+        walk_bound_directory_descendants(current, root, relative, &absolute, create, label)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -1736,36 +1736,6 @@ pub(crate) fn rename_child(
         )?;
     }
     Ok(())
-}
-
-/// Publish an already-open regular-file stage under a new direct-child name
-/// without replacing an existing target.
-///
-/// Unix validates the source immediately before the exclusive rename and the
-/// published target immediately afterwards. This is fail-detect hardening
-/// inside an owner-private directory, not isolation from a hostile process
-/// running as the same OS identity: Unix has no portable atomic rename-from-fd
-/// primitive. Windows commits through `source` itself. All target lookups remain
-/// relative to the already-bound directory capability.
-pub(crate) fn publish_open_regular_file_child(
-    source_parent: &Dir,
-    source: &File,
-    source_name: &OsStr,
-    target_parent: &Dir,
-    target_name: &OsStr,
-    source_display: &Path,
-    target_display: &Path,
-) -> Result<()> {
-    publish_open_regular_file_child_observed(
-        source_parent,
-        source,
-        source_name,
-        target_parent,
-        target_name,
-        source_display,
-        target_display,
-        || {},
-    )
 }
 
 /// Publish an already-open regular-file stage and report the exact atomic
