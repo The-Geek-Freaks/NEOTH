@@ -167,7 +167,7 @@ impl ChatTurnWatchdog {
         true
     }
 
-    const fn is_diagnostic_for(self, request_id: ChatStreamRequestId) -> bool {
+    fn is_diagnostic_for(self, request_id: ChatStreamRequestId) -> bool {
         self.request_id == request_id && self.state == ChatWatchdogState::Diagnostic
     }
 }
