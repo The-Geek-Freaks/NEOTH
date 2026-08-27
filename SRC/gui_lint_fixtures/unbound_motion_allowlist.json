@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "rule": "motion-layout-animation",
+      "path": "missing.slint",
+      "property": "height",
+      "expression_fingerprint": "sha256:609aa181935cb00dc9da7b5fa4c67350758e922e21e9f17c0de6c9580b2d1f72",
+      "reason": "Fixture proves unbound entries remain fail-closed.",
+      "reduced_motion_contract": "Theme.animation-mode == 0 resolves the fixture duration to 0ms."
+    }
+  ]
+}

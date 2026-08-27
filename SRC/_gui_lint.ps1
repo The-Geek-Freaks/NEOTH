@@ -567,31 +567,33 @@ function Get-GuiLintFindings {
 function Invoke-GuiLintSelfTest {
     $fixtureRoot = Join-Path $PSScriptRoot 'gui_lint_fixtures'
     $motionAllowlist = Join-Path $fixtureRoot 'motion_allowlist.json'
+    $emptyMotionAllowlist = Join-Path $fixtureRoot 'empty_motion_allowlist.json'
+    $unboundMotionAllowlist = Join-Path $fixtureRoot 'unbound_motion_allowlist.json'
     $cases = @(
-        @{ Name = 'allowed'; Expected = @() },
-        @{ Name = 'bad_color'; Expected = @('design-system-color') },
-        @{ Name = 'bad_font'; Expected = @('design-system-font') },
-        @{ Name = 'bad_font_size'; Expected = @('design-system-font-size') },
-        @{ Name = 'bad_radius'; Expected = @('design-system-radius') },
-        @{ Name = 'bad_multiline'; Expected = @('design-system-color', 'design-system-font', 'design-system-font-size', 'design-system-radius') },
-        @{ Name = 'bad_nested'; Expected = @('design-system-color', 'design-system-font', 'design-system-font-size', 'design-system-radius') },
-        @{ Name = 'bad_inline_comment_delimiter'; Expected = @('design-system-color', 'design-system-font', 'design-system-font-size', 'design-system-radius') },
-        @{ Name = 'bad_block_comment_delimiter'; Expected = @('design-system-color', 'design-system-font', 'design-system-font-size', 'design-system-radius') },
-        @{ Name = 'bad_nested_block_comment_delimiter'; Expected = @('design-system-color', 'design-system-font', 'design-system-font-size', 'design-system-radius') },
-        @{ Name = 'bad_allowlist_tail'; Expected = @('design-system-color', 'design-system-font') },
-        @{ Name = 'motion_allowed'; Expected = @() },
-        @{ Name = 'motion_bad_bounce_spring'; Expected = @('motion-bounce-spring') },
-        @{ Name = 'motion_bad_layout'; Expected = @('motion-layout-animation') },
-        @{ Name = 'motion_bad_marquee'; Expected = @('motion-marquee') },
-        @{ Name = 'motion_bad_pulse_guard'; Expected = @('motion-pulse-guard') },
-        @{ Name = 'motion_valid_pulse_guard'; Expected = @() },
-        @{ Name = 'motion_bad_outer_pulse_branch'; Expected = @('motion-pulse-guard') },
-        @{ Name = 'motion_comment_string_decoys'; Expected = @() },
-        @{ Name = 'motion_changed_allowlisted_expression'; Expected = @('motion-layout-animation') }
+        @{ Name = 'allowed'; Expected = @(); MotionAllowlist = $emptyMotionAllowlist },
+        @{ Name = 'bad_color'; Expected = @('design-system-color'); MotionAllowlist = $emptyMotionAllowlist },
+        @{ Name = 'bad_font'; Expected = @('design-system-font'); MotionAllowlist = $emptyMotionAllowlist },
+        @{ Name = 'bad_font_size'; Expected = @('design-system-font-size'); MotionAllowlist = $emptyMotionAllowlist },
+        @{ Name = 'bad_radius'; Expected = @('design-system-radius'); MotionAllowlist = $emptyMotionAllowlist },
+        @{ Name = 'bad_multiline'; Expected = @('design-system-color', 'design-system-font', 'design-system-font-size', 'design-system-radius'); MotionAllowlist = $emptyMotionAllowlist },
+        @{ Name = 'bad_nested'; Expected = @('design-system-color', 'design-system-font', 'design-system-font-size', 'design-system-radius'); MotionAllowlist = $emptyMotionAllowlist },
+        @{ Name = 'bad_inline_comment_delimiter'; Expected = @('design-system-color', 'design-system-font', 'design-system-font-size', 'design-system-radius'); MotionAllowlist = $emptyMotionAllowlist },
+        @{ Name = 'bad_block_comment_delimiter'; Expected = @('design-system-color', 'design-system-font', 'design-system-font-size', 'design-system-radius'); MotionAllowlist = $emptyMotionAllowlist },
+        @{ Name = 'bad_nested_block_comment_delimiter'; Expected = @('design-system-color', 'design-system-font', 'design-system-font-size', 'design-system-radius'); MotionAllowlist = $emptyMotionAllowlist },
+        @{ Name = 'bad_allowlist_tail'; Expected = @('design-system-color', 'design-system-font'); MotionAllowlist = $emptyMotionAllowlist },
+        @{ Name = 'motion_allowed'; Expected = @(); MotionAllowlist = $motionAllowlist },
+        @{ Name = 'motion_bad_bounce_spring'; Expected = @('motion-bounce-spring'); MotionAllowlist = $motionAllowlist },
+        @{ Name = 'motion_bad_layout'; Expected = @('motion-layout-animation'); MotionAllowlist = $motionAllowlist },
+        @{ Name = 'motion_bad_marquee'; Expected = @('motion-marquee'); MotionAllowlist = $motionAllowlist },
+        @{ Name = 'motion_bad_pulse_guard'; Expected = @('motion-pulse-guard'); MotionAllowlist = $motionAllowlist },
+        @{ Name = 'motion_valid_pulse_guard'; Expected = @(); MotionAllowlist = $motionAllowlist },
+        @{ Name = 'motion_bad_outer_pulse_branch'; Expected = @('motion-pulse-guard'); MotionAllowlist = $motionAllowlist },
+        @{ Name = 'motion_comment_string_decoys'; Expected = @(); MotionAllowlist = $motionAllowlist },
+        @{ Name = 'motion_changed_allowlisted_expression'; Expected = @('motion-layout-animation'); MotionAllowlist = $motionAllowlist }
     )
     $failed = $false
     foreach ($case in $cases) {
-        $findings = @(Get-GuiLintFindings (Join-Path $fixtureRoot $case.Name) -MotionAllowlistPath $motionAllowlist -SkipUnusedMotionAllowlistCheck)
+        $findings = @(Get-GuiLintFindings (Join-Path $fixtureRoot $case.Name) -MotionAllowlistPath $case.MotionAllowlist -SkipUnusedMotionAllowlistCheck)
         $actual = @($findings | ForEach-Object Rule | Sort-Object -Unique)
         $expected = @($case.Expected | Sort-Object -Unique)
         if (@(Compare-Object $expected $actual).Count -ne 0) {
@@ -599,6 +601,17 @@ function Invoke-GuiLintSelfTest {
             $failed = $true
         } else {
             Write-Output "GUI_LINT_FIXTURE_PASS=$($case.Name)"
+        }
+    }
+    try {
+        Get-GuiLintFindings (Join-Path $fixtureRoot 'motion_allowed') -MotionAllowlistPath $unboundMotionAllowlist -SkipUnusedMotionAllowlistCheck | Out-Null
+        Write-Output 'GUI_LINT_FIXTURE_FAIL=motion_unbound_allowlist: expected source-binding rejection'
+        $failed = $true
+    } catch {
+        if ($_.Exception.Message -eq 'GUI motion allowlist entry does not bind a source file: missing.slint') {
+            Write-Output 'GUI_LINT_FIXTURE_PASS=motion_unbound_allowlist'
+        } else {
+            throw
         }
     }
     if ($failed) {
