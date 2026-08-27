@@ -403,9 +403,13 @@ mod tests {
         // presets visible here without turning them into provider enum variants.
         let h1_targets = ["fireworks.ai", "cerebras.ai", "nebius.ai (AI Studio)"];
         for target in h1_targets {
-            assert!(
-                OPENAI_COMPAT_TARGETS.contains(&target),
-                "ADOPT31-H1 target {target} must remain discoverable"
+            let occurrences = OPENAI_COMPAT_TARGETS
+                .iter()
+                .filter(|listed| **listed == target)
+                .count();
+            assert_eq!(
+                occurrences, 1,
+                "ADOPT31-H1 target {target} must appear exactly once"
             );
         }
 
@@ -415,7 +419,7 @@ mod tests {
                 OPENAI_COMPAT_TARGETS
                     .iter()
                     .position(|listed| listed == target)
-                    .expect("target presence asserted above")
+                    .expect("target uniqueness asserted above")
             })
             .collect();
         assert!(
