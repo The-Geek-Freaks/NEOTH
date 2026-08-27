@@ -26150,7 +26150,7 @@ mod chat_subprocess_tests {
                 ..Default::default()
             };
         let standard = row("standard reply", "10:00", false, ChatStreamPhase::Complete);
-        let baseline = live_chat_sidebar_preview(&[standard.clone()]);
+        let baseline = live_chat_sidebar_preview(std::slice::from_ref(&standard));
         assert_eq!(
             baseline,
             ("standard reply".to_string(), "10:00".to_string())
