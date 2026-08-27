@@ -119,6 +119,7 @@ pub use dispatcher::{DispatchBudget, DispatchOutcome, HemisphereWorkerSet, dispa
 // Hooks Provider trait into Worker trait so the dispatcher can
 // actually drive real LLM calls. Q1 patch-safety verdict still
 // pending; this commit only stores patches, doesn't apply them.
+#[allow(deprecated)]
 pub use provider_worker::{
     ParsedCompletion, ProviderWorker, parse_completion_text, patch_path_for,
 };

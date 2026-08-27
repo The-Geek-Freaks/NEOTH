@@ -23,7 +23,9 @@ use crate::coding::store;
 use crate::coding::types::{
     Hemisphere, KanbanComment, KanbanSessionId, KanbanTask, KanbanTaskId, TaskStatus, TestSummary,
 };
-use crate::coding::worker::{Worker, WorkerOutcome};
+use crate::coding::worker::{
+    AcceptedWorkerOutcome, Worker, WorkerContract, WorkerOutcome, WorkerPatchState,
+};
 use crate::security::redact::sanitize_tool_output;
 
 /// Map of hemisphere → bound worker. The dispatcher consults this for
@@ -140,7 +142,9 @@ impl ApplyOrigin {
 /// `dispatch_session`, every worker-produced patch is applied
 /// inside a task-scoped git worktree per the Chorus verdict
 /// (Strategy B). When `None`, dispatcher behaves as Phase 3:
-/// store the patch under `<patch_root>/...` but never apply.
+/// store the dispatcher-owned task artifact under the live views.db parent
+/// (`<audit-root>/coding-sessions/<session>/task-<id>-<nonce>.patch`) but
+/// never apply.
 ///
 /// The `repo_root` MUST be a valid git working tree (the
 /// dispatcher does NOT auto-detect via walk-up; the operator's
@@ -339,6 +343,12 @@ pub async fn dispatch_session_with_apply(
         return Ok(outcome);
     }
 
+    // C10a provenance: derive the durable patch namespace from the live
+    // database selected by this dispatcher, not from a worker response. The
+    // default views.db lives under ~/.neoth, while tests/custom instances get
+    // an equally task-local audit root next to their explicit database.
+    let audit_root = dispatch_audit_root(conn)?;
+
     // SD-02 (Round-3 v0.4) — best-effort WAL progress writer; no-op when
     // wal_writer is None (CLI one-shot without --apply). Computed once.
     let writer_for_progress = apply_config.and_then(|cfg| cfg.wal_writer.as_deref());
@@ -424,10 +434,20 @@ pub async fn dispatch_session_with_apply(
                 let worker = workers
                     .get(task.hemisphere)
                     .expect("pick_batch only returns tasks whose hemisphere has a bound worker");
+                // ADOPT31-C10a: bind this exact selected task and worker
+                // BEFORE execute. The context is dispatcher-owned (not a
+                // provider-returned string) and accompanies the result until
+                // the post-execute contract gate below.
+                let contract = WorkerContract::for_dispatch(task, worker, &audit_root);
                 // TASK-02: hard per-worker timeout. Dropping the timeout
                 // future on Elapsed cancels the in-flight provider call, so
                 // a hung hemisphere can't stall the whole join_all batch.
-                tokio::time::timeout(WORKER_EXECUTE_TIMEOUT, worker.execute(task))
+                async move {
+                    (
+                        contract,
+                        tokio::time::timeout(WORKER_EXECUTE_TIMEOUT, worker.execute(task)).await,
+                    )
+                }
             })
             .collect();
         let exec_results = futures_util::future::join_all(exec_futures).await;
@@ -436,7 +456,7 @@ pub async fn dispatch_session_with_apply(
         // early-stop state (retry_policy / patch_spiral / recent_outputs)
         // and all `conn` writes happen here, one task at a time, so the
         // match arms below are byte-identical to the pre-COR-19 serial loop.
-        for (task, timed_result) in batch.into_iter().zip(exec_results) {
+        for (task, (contract, timed_result)) in batch.into_iter().zip(exec_results) {
             // TASK-02: unwrap the per-worker timeout layer first. A hung
             // worker (Elapsed) is a HARD block — a wall-clock hang is not a
             // transient retryable error, so it goes straight to Blocked +
@@ -467,6 +487,51 @@ pub async fn dispatch_session_with_apply(
                     continue;
                 }
             };
+            // ADOPT31-C10a: this is the sole untrusted WorkerOutcome gate,
+            // immediately after Worker::execute returns and before refusal/
+            // review classification, retry artifact attachment, SQLite
+            // artifact storage, or a worktree apply can observe its content.
+            // A violation intentionally supplies NO partial outcome and only
+            // a fixed diagnostic to the existing retry/blocked machinery;
+            // otherwise that machinery would persist the rejected patch/path
+            // during its retry rotation.
+            let exec_result = match exec_result {
+                Ok(o) => {
+                    let worker = workers
+                        .get(task.hemisphere)
+                        .expect("selected task's bound worker remains available during dispatch");
+                    let accepted = match contract.validate_and_materialize(&task, worker, o) {
+                        Ok(accepted) => accepted,
+                        Err(violation) => {
+                            patch_spiral.record(task.task_id, false);
+                            record_recent_output(
+                                &mut recent_outputs,
+                                task.task_id,
+                                "worker contract violation",
+                            );
+                            let recent = recent_output_refs(&recent_outputs, task.task_id);
+                            warn!(
+                                task_id = task.task_id.raw(),
+                                violation = violation.as_str(),
+                                "worker result rejected by central contract; retrying or blocking without result content"
+                            );
+                            handle_retryable_failure(
+                                conn,
+                                &task,
+                                &mut retry_policy,
+                                &mut patch_spiral,
+                                &recent,
+                                &mut outcome,
+                                "worker result rejected by central contract",
+                                None,
+                            )?;
+                            continue;
+                        }
+                    };
+                    Ok(accepted)
+                }
+                Err(e) => Err(e),
+            };
             match exec_result {
                 // QU-01 harte-Kritik fix (Session 28): a refusal can
                 // arrive STRUCTURALLY review-ready — the worker emits
@@ -496,7 +561,7 @@ pub async fn dispatch_session_with_apply(
                         &worker_output_text(&o),
                     );
                     let recent = recent_output_refs(&recent_outputs, task.task_id);
-                    let _ = handle_retryable_failure(
+                    handle_retryable_failure(
                         conn,
                         &task,
                         &mut retry_policy,
@@ -505,7 +570,7 @@ pub async fn dispatch_session_with_apply(
                         &mut outcome,
                         "worker reply was a refusal disguised as patch output",
                         Some(&o),
-                    );
+                    )?;
                 }
                 Ok(o) if o.review_ready() => {
                     // Q2 streaming: batched — one TASK_COMPLETED frame at
@@ -515,11 +580,11 @@ pub async fn dispatch_session_with_apply(
                     // between status changes. 30s background heartbeat
                     // (mid-execute) lands in a future sprint.
                     emit_kanban_task_progress_wal(writer_for_progress, &task, 100, "review_ready");
-                    // GR-021: a DB error here must NOT propagate with `?` — that
-                    // aborts the whole batch loop and strands THIS task plus every
-                    // already-InProgress task permanently (no sweep ever resets
-                    // InProgress→Backlog). Route the failure through the normal
-                    // retry path so the task lands Backlog/Blocked, then move on.
+                    // GR-021: route the original apply-outcome persistence error
+                    // through the normal retry path, so a recoverable failure
+                    // can land Backlog/Blocked. If that recovery's own durable
+                    // mutation fails, its Result is intentionally propagated
+                    // rather than silently stranding this InProgress task.
                     if let Err(e) = apply_outcome(conn, &task, &o) {
                         patch_spiral.record(task.task_id, false);
                         record_recent_output(
@@ -530,7 +595,7 @@ pub async fn dispatch_session_with_apply(
                         let recent = recent_output_refs(&recent_outputs, task.task_id);
                         let diagnosis =
                             format!("apply_outcome DB write failed (task-stranding guard): {e}");
-                        let _ = handle_retryable_failure(
+                        handle_retryable_failure(
                             conn,
                             &task,
                             &mut retry_policy,
@@ -539,7 +604,7 @@ pub async fn dispatch_session_with_apply(
                             &mut outcome,
                             &diagnosis,
                             Some(&o),
-                        );
+                        )?;
                         continue;
                     }
 
@@ -576,35 +641,31 @@ pub async fn dispatch_session_with_apply(
                                 patch_spiral.record(task.task_id, true);
                                 // GOLD-COR-03 / A-10: the patch really landed in a
                                 // worktree and — when a test command was configured —
-                                // its suite ran green there. Re-attach the summary with
-                                // `applied = true` so `check_auto_promotable` will let
-                                // the operator promote REVIEW → DONE. Without a
-                                // `test_cmd` no suite ran, so the verified-claim stays
-                                // false (apply alone is not test evidence).
+                                // its suite ran green there. Do NOT copy the provider's
+                                // claimed per-test counts and merely stamp them trusted:
+                                // the only directly observed fact is one successful
+                                // command receipt. Without a `test_cmd` no suite ran,
+                                // so the self-reported summary remains unverified.
                                 // GR-002: an EMPTY patch is a no-op — apply_patch_via_worktree
                                 // returned Ok WITHOUT applying anything or running the
                                 // worktree suite, so the worker's self-reported green
                                 // summary has NO verification behind it. `applied` stays
                                 // false for an empty patch so it can't auto-promote.
-                                let verified = TestSummary {
-                                    applied: apply_is_test_verified(
-                                        cfg.test_cmd.is_some(),
-                                        &o.patch_text,
-                                    ),
-                                    ..o.tests
+                                let verified = if apply_is_test_verified(
+                                    cfg.test_cmd.is_some(),
+                                    &o.patch_text,
+                                ) {
+                                    TestSummary::verified_command_passed()
+                                } else {
+                                    o.tests
                                 };
-                                if let Err(e) = store::attach_task_artifact(
+                                store::attach_task_artifact(
                                     conn,
                                     task.task_id,
-                                    Some(&o.patch_path),
+                                    o.patch_path(),
                                     Some(verified),
-                                ) {
-                                    warn!(
-                                        task_id = task.task_id.raw(),
-                                        error = %e,
-                                        "could not mark task test summary as applied"
-                                    );
-                                }
+                                )
+                                .context("attach dispatcher-verified test receipt")?;
                             }
                             Err(diagnosis) => {
                                 patch_spiral.record(task.task_id, false);
@@ -614,7 +675,7 @@ pub async fn dispatch_session_with_apply(
                                     &worker_output_text(&o),
                                 );
                                 let recent = recent_output_refs(&recent_outputs, task.task_id);
-                                let _ = handle_retryable_failure(
+                                handle_retryable_failure(
                                     conn,
                                     &task,
                                     &mut retry_policy,
@@ -623,7 +684,7 @@ pub async fn dispatch_session_with_apply(
                                     &mut outcome,
                                     &diagnosis,
                                     Some(&o),
-                                );
+                                )?;
                             }
                         }
                     } else {
@@ -647,7 +708,7 @@ pub async fn dispatch_session_with_apply(
                         &worker_output_text(&o),
                     );
                     let recent = recent_output_refs(&recent_outputs, task.task_id);
-                    let _ = handle_retryable_failure(
+                    handle_retryable_failure(
                         conn,
                         &task,
                         &mut retry_policy,
@@ -656,7 +717,7 @@ pub async fn dispatch_session_with_apply(
                         &mut outcome,
                         "worker returned empty outcome",
                         Some(&o),
-                    );
+                    )?;
                 }
                 Err(e) => {
                     // Worker-execute error counts as a patch failure
@@ -669,7 +730,7 @@ pub async fn dispatch_session_with_apply(
                     let err_text = format!("worker execute failed: {e}");
                     record_recent_output(&mut recent_outputs, task.task_id, &err_text);
                     let recent = recent_output_refs(&recent_outputs, task.task_id);
-                    let _ = handle_retryable_failure(
+                    handle_retryable_failure(
                         conn,
                         &task,
                         &mut retry_policy,
@@ -678,7 +739,7 @@ pub async fn dispatch_session_with_apply(
                         &mut outcome,
                         &err_text,
                         None,
-                    );
+                    )?;
                 }
             }
         }
@@ -694,6 +755,67 @@ pub async fn dispatch_session_with_apply(
         "dispatch session complete"
     );
     Ok(outcome)
+}
+
+/// Resolve the dispatcher-owned audit root from the *live* main SQLite
+/// database. This is deliberately independent of worker/provider settings:
+/// the same database that owns the task/session rows owns their patch
+/// artifacts. Production in-memory databases have no durable parent and fail
+/// closed rather than accepting a worker-selected fallback path; `cfg(test)`
+/// uses an isolated temporary namespace solely for focused unit coverage.
+fn dispatch_audit_root(conn: &Connection) -> Result<std::path::PathBuf> {
+    let mut statement = conn
+        .prepare("PRAGMA database_list")
+        .context("inspect main database for coding artifact root")?;
+    let mut rows = statement
+        .query([])
+        .context("query main database for coding artifact root")?;
+    while let Some(row) = rows
+        .next()
+        .context("read main database for coding artifact root")?
+    {
+        let name: String = row
+            .get(1)
+            .context("read database name for coding artifact root")?;
+        if name != "main" {
+            continue;
+        }
+        let db_path: String = row
+            .get(2)
+            .context("read main database path for coding artifact root")?;
+        if db_path.is_empty() {
+            #[cfg(test)]
+            {
+                // Focused in-memory unit tests have no on-disk database
+                // parent. Keep their artifacts in a named test-only temporary
+                // namespace; production has no such fallback and fails closed
+                // below.
+                let root = std::env::temp_dir().join("neoth-dispatch-in-memory-tests");
+                std::fs::create_dir_all(&root)
+                    .context("create test-only coding artifact root")?;
+                return Ok(root);
+            }
+            #[cfg(not(test))]
+            anyhow::bail!("main database has no durable parent for coding artifacts");
+        }
+        let path = std::path::PathBuf::from(db_path);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir()
+                .context("resolve relative main database for coding artifacts")?
+                .join(path)
+        };
+        if let Some(root) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(std::path::Path::to_path_buf)
+        {
+            return Ok(root);
+        }
+        anyhow::bail!("main database has no durable parent for coding artifacts");
+    }
+    anyhow::bail!("main database is unavailable for coding artifact root")
 }
 
 /// COR-19: pick one Backlog task per BOUND hemisphere in a single pass.
@@ -754,10 +876,10 @@ fn pick_batch(
 /// cleanup on successful Review → Done transitions.
 fn apply_patch_via_worktree(
     task: &KanbanTask,
-    outcome: &WorkerOutcome,
+    outcome: &AcceptedWorkerOutcome,
     cfg: &DispatchApplyConfig,
 ) -> std::result::Result<(), String> {
-    if outcome.patch_text.is_empty() {
+    if outcome.patch_state() == WorkerPatchState::NoPatch {
         // Worker produced no patch — nothing to apply. Caller
         // already promoted to Review based on the test summary.
         return Ok(());
@@ -819,6 +941,9 @@ fn apply_patch_via_worktree(
     // body so a single cleanup covers all six failure returns; success keeps
     // the worktree (documented — the operator inspects the applied diff there).
     let apply_result: std::result::Result<(), String> = (|| {
+        let patch_text = outcome
+            .patch_text()
+            .ok_or_else(|| "accepted patch outcome has no immutable patch bytes".to_string())?;
         // Per Chorus verdict Q1b: refuse on dirty. The worktree was
         // just created from HEAD so it should be clean — this is a
         // defensive check against an operator that pre-populated
@@ -848,7 +973,7 @@ fn apply_patch_via_worktree(
             use crate::code_map::risk::{RiskGateAction, risk_gate_action};
             use crate::permissions::AutonomyLevel;
 
-            let changed = crate::code_map::risk::patch_changed_files(&outcome.patch_path);
+            let changed = crate::code_map::risk::patch_changed_files_from_text(patch_text);
             let warnings = crate::code_map::risk::assess_edit_risk(&cfg.repo_root, &changed);
 
             // Determine override-lease status once (shared across all files in this patch).
@@ -921,10 +1046,12 @@ fn apply_patch_via_worktree(
             }
         }
 
-        let patch_hash = crate::coding::worktree::patch_hash(&outcome.patch_path)
-            .unwrap_or_else(|_| "(unhashable)".to_string());
+        let patch_hash = crate::coding::worktree::patch_hash_bytes(patch_text.as_bytes());
 
-        match crate::coding::worktree::apply_patch_in_worktree(&wt_path, &outcome.patch_path) {
+        match crate::coding::worktree::apply_patch_bytes_in_worktree(
+            &wt_path,
+            patch_text.as_bytes(),
+        ) {
             Ok(crate::coding::worktree::PatchApplyOutcome::Applied { worktree_path }) => {
                 info!(
                     task_id = task.task_id.raw(),
@@ -1207,7 +1334,11 @@ fn now_unix_secs() -> u64 {
     crate::time::now_unix_secs()
 }
 
-fn apply_outcome(conn: &Connection, task: &KanbanTask, outcome: &WorkerOutcome) -> Result<()> {
+fn apply_outcome(
+    conn: &Connection,
+    task: &KanbanTask,
+    outcome: &AcceptedWorkerOutcome,
+) -> Result<()> {
     let target = if outcome.review_ready() {
         TaskStatus::Review
     } else {
@@ -1216,7 +1347,7 @@ fn apply_outcome(conn: &Connection, task: &KanbanTask, outcome: &WorkerOutcome) 
     store::attach_task_artifact(
         conn,
         task.task_id,
-        Some(&outcome.patch_path),
+        outcome.patch_path(),
         Some(outcome.tests),
     )
     .context("attach_task_artifact on worker outcome")?;
@@ -1242,8 +1373,8 @@ fn handle_retryable_failure(
     recent_outputs: &[&str],
     outcome: &mut DispatchOutcome,
     diagnosis: &str,
-    partial_outcome: Option<&WorkerOutcome>,
-) -> anyhow::Result<()> {
+    partial_outcome: Option<&AcceptedWorkerOutcome>,
+) -> Result<()> {
     let attempt = retry_policy.record_attempt(task.task_id);
     let now_ns = now_unix_ns();
 
@@ -1298,17 +1429,9 @@ fn handle_retryable_failure(
             diagnosis = %diagnosis,
             "worker greeting-regression detected; bypassing retry rotation + marking Blocked"
         );
-        // Count only what the DB confirms — incrementing before the write
-        // inflates tasks_blocked when the patch fails (counter skew).
-        if let Err(e) = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns) {
-            warn!(
-                task_id = task.task_id.raw(),
-                error = %e,
-                "patch_task_status(Blocked) failed — tasks_blocked not counted"
-            );
-        } else {
-            outcome.tasks_blocked += 1;
-        }
+        store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
+            .context("block greeting-regression worker result")?;
+        outcome.tasks_blocked += 1;
         return Ok(());
     }
     if patch_spiral.is_spiraling(task.task_id) {
@@ -1321,17 +1444,9 @@ fn handle_retryable_failure(
             diagnosis = %diagnosis,
             "patch-spiral ceiling hit ({failure_count} consecutive failures); marking Blocked"
         );
-        // Count only what the DB confirms — incrementing before the write
-        // inflates tasks_blocked when the patch fails (counter skew).
-        if let Err(e) = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns) {
-            warn!(
-                task_id = task.task_id.raw(),
-                error = %e,
-                "patch_task_status(Blocked) failed — tasks_blocked not counted"
-            );
-        } else {
-            outcome.tasks_blocked += 1;
-        }
+        store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
+            .context("block patch-spiral worker result")?;
+        outcome.tasks_blocked += 1;
         return Ok(());
     }
     // 3. Repetition-loop (QU-01 Phase 3) — the worker re-emitted the
@@ -1349,17 +1464,9 @@ fn handle_retryable_failure(
             diagnosis = %diagnosis,
             "repetition-loop detected (identical worker output tail); marking Blocked"
         );
-        // Count only what the DB confirms — incrementing before the write
-        // inflates tasks_blocked when the patch fails (counter skew).
-        if let Err(e) = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns) {
-            warn!(
-                task_id = task.task_id.raw(),
-                error = %e,
-                "patch_task_status(Blocked) failed — tasks_blocked not counted"
-            );
-        } else {
-            outcome.tasks_blocked += 1;
-        }
+        store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
+            .context("block repeated worker result")?;
+        outcome.tasks_blocked += 1;
         return Ok(());
     }
 
@@ -1383,35 +1490,23 @@ fn handle_retryable_failure(
             diagnosis = %diagnosis,
             "worker attempt failed; retrying with strategy hint + diagnosis"
         );
-        // Best-effort hint persistence — failure to append doesn't
-        // block the retry, just means the next attempt runs without
-        // the hint.
-        if let Err(e) = store::append_task_description_hint(conn, task.task_id, &hint) {
-            tracing::warn!(
-                task_id = task.task_id.raw(),
-                error = %e,
-                "could not append retry hint to task description"
-            );
-        }
+        store::append_task_description_hint(conn, task.task_id, &hint)
+            .context("persist retry hint before re-queue")?;
         // Re-record any partial artefacts (patch path, tests) so
         // the operator sees what the failed attempt produced even
         // before the next try.
         if let Some(o) = partial_outcome {
-            let _ =
-                store::attach_task_artifact(conn, task.task_id, Some(&o.patch_path), Some(o.tests));
+            store::attach_task_artifact(
+                conn,
+                task.task_id,
+                o.patch_path(),
+                Some(o.tests),
+            )
+            .context("attach accepted partial worker artifact before retry")?;
         }
         // Back to Backlog for the next dispatch loop iteration.
-        // Never propagate: every caller does `let _ = handle_retryable_failure(..)`,
-        // so a `?` here would silently strand the task InProgress (it was set
-        // InProgress before execution). Log loudly instead — consistent with the
-        // fn's other DB writes; the daemon reaper recovers InProgress tasks.
-        if let Err(e) = store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns) {
-            warn!(
-                error = %e,
-                task_id = ?task.task_id,
-                "re-queue to Backlog for retry failed — task may be stranded InProgress until the daemon reaper runs"
-            );
-        }
+        store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns)
+            .context("re-queue retryable worker failure")?;
         // Don't count as blocked or completed yet — the dispatcher's
         // budget cap will end the loop if we churn too long.
     } else if task.hemisphere == Hemisphere::Left {
@@ -1441,19 +1536,22 @@ fn handle_retryable_failure(
                     "[escalated to the deep worker — the fast worker could not converge]",
                     &diagnosis,
                 );
-                let _ = store::append_task_description_hint(conn, task.task_id, &hint);
+                store::append_task_description_hint(conn, task.task_id, &hint)
+                    .context("persist escalation retry hint")?;
                 if let Some(o) = partial_outcome {
-                    let _ = store::attach_task_artifact(
+                    store::attach_task_artifact(
                         conn,
                         task.task_id,
-                        Some(&o.patch_path),
+                        o.patch_path(),
                         Some(o.tests),
-                    );
+                    )
+                    .context("attach accepted partial worker artifact before escalation")?;
                 }
                 // Re-queue; the next loop pass re-reads the task with
                 // hemisphere=Right and binds the Right worker. Not
                 // counted blocked/completed — it gets another shot.
-                let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns);
+                store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns)
+                    .context("re-queue escalated worker failure")?;
             }
             Err(e) => {
                 // Reassign failed — fall back to Blocked rather than
@@ -1463,17 +1561,9 @@ fn handle_retryable_failure(
                     error = %e,
                     "escalate hemisphere reassign failed; blocking task"
                 );
-                if let Err(e) =
-                    store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
-                {
-                    warn!(
-                        task_id = task.task_id.raw(),
-                        error = %e,
-                        "patch_task_status(Blocked) failed — tasks_blocked not counted"
-                    );
-                } else {
-                    outcome.tasks_blocked += 1;
-                }
+                store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
+                    .context("block task after escalation reassignment failure")?;
+                outcome.tasks_blocked += 1;
             }
         }
     } else {
@@ -1487,17 +1577,9 @@ fn handle_retryable_failure(
             diagnosis = %diagnosis,
             "worker retry ceiling hit (no deeper hemisphere); task transitioned to Blocked"
         );
-        // Count only what the DB confirms — incrementing before the write
-        // inflates tasks_blocked when the patch fails (counter skew).
-        if let Err(e) = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns) {
-            warn!(
-                task_id = task.task_id.raw(),
-                error = %e,
-                "patch_task_status(Blocked) failed — tasks_blocked not counted"
-            );
-        } else {
-            outcome.tasks_blocked += 1;
-        }
+        store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
+            .context("block exhausted worker retry")?;
+        outcome.tasks_blocked += 1;
     }
     Ok(())
 }
@@ -1659,13 +1741,13 @@ fn recent_output_refs(
         .unwrap_or_default()
 }
 
-/// GR-002 — whether a worktree apply may stamp the worker's test summary as
-/// `applied` (i.e. test-VERIFIED, which is what `check_auto_promotable` lets
-/// auto-promote REVIEW → DONE). Requires BOTH a configured test command (a suite
-/// actually ran in the worktree) AND a NON-EMPTY patch. An empty patch is a
-/// no-op: `apply_patch_via_worktree` returns Ok without applying or running any
-/// suite, so its self-reported "tests green" claim has no verification behind it
-/// and must never auto-promote. Pure → unit-testable.
+/// GR-002 — whether a worktree apply has observed enough to replace an
+/// unverified worker test claim with the dispatcher's one-command verified
+/// receipt (which `check_auto_promotable` may use). Requires BOTH a configured
+/// test command (a suite actually ran in the worktree) AND a non-empty patch.
+/// An empty patch is a no-op: `apply_patch_via_worktree` returns Ok without
+/// applying or running any suite, so its self-reported "tests green" claim has
+/// no verification behind it and must never auto-promote. Pure → unit-testable.
 fn apply_is_test_verified(test_cmd_present: bool, patch_text: &str) -> bool {
     test_cmd_present && !patch_text.is_empty()
 }
@@ -1783,7 +1865,7 @@ mod tests {
     fn green_outcome() -> WorkerOutcome {
         WorkerOutcome {
             patch_text: "diff --git a/x b/x\n+ok\n".into(),
-            patch_path: PathBuf::from("/tmp/x.patch"),
+            patch_path: std::path::PathBuf::new(),
             tests: TestSummary {
                 added: 1,
                 total: 1,
@@ -1983,6 +2065,40 @@ mod tests {
             .unwrap();
         assert_eq!(task.task_id, task_id);
         assert_eq!(task.status, TaskStatus::Review);
+    }
+
+    #[tokio::test]
+    async fn dispatch_preserves_a_coherent_test_only_outcome() {
+        // ADOPT31-C10a must not turn the explicit NoPatch state into a
+        // failure when the worker has supplied a coherent, unverified test
+        // result. The review gate still decides later whether an operator may
+        // promote it; this only pins the dispatcher result contract.
+        let (_dir, conn) = fresh_db();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let mut test_only = green_outcome();
+        test_only.patch_text.clear();
+
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: test_only,
+                name: "test-only-worker",
+            }),
+        );
+        let outcome = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.tasks_completed, 1);
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(task.status, TaskStatus::Review);
+        assert_eq!(task.test_summary, Some(green_outcome().tests));
     }
 
     #[tokio::test(start_paused = true)]
@@ -2383,7 +2499,7 @@ mod tests {
         Ok(())
     }
 
-    fn green_outcome_with_real_patch(patch_path: PathBuf) -> WorkerOutcome {
+    fn green_outcome_with_real_patch() -> WorkerOutcome {
         // Real patch body (line-by-line so leading-space context
         // lines survive). Mirrors the smoke test in worktree::tests.
         let patch_lines = [
@@ -2395,10 +2511,9 @@ mod tests {
             "+second line",
             "",
         ];
-        std::fs::write(&patch_path, patch_lines.join("\n")).unwrap();
         WorkerOutcome {
-            patch_text: "<set>".into(),
-            patch_path,
+            patch_text: patch_lines.join("\n"),
+            patch_path: std::path::PathBuf::new(),
             tests: TestSummary {
                 added: 1,
                 total: 1,
@@ -2428,8 +2543,7 @@ mod tests {
         let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
         store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
 
-        let patch_path = dir.path().join("change.patch");
-        let outcome_template = green_outcome_with_real_patch(patch_path.clone());
+        let outcome_template = green_outcome_with_real_patch();
 
         let mut workers = HemisphereWorkerSet::new();
         workers.bind(
@@ -2483,7 +2597,6 @@ mod tests {
         // Patch references a file that doesn't exist — git apply
         // --check rejects. Phase 4 must re-queue, then Block at
         // ceiling.
-        let patch_path = dir.path().join("bad.patch");
         let patch_lines = [
             "diff --git a/nonexistent.txt b/nonexistent.txt",
             "--- a/nonexistent.txt",
@@ -2493,9 +2606,8 @@ mod tests {
             "+new line",
             "",
         ];
-        std::fs::write(&patch_path, patch_lines.join("\n")).unwrap();
         let mut bad_outcome = green_outcome();
-        bad_outcome.patch_path = patch_path;
+        bad_outcome.patch_text = patch_lines.join("\n");
 
         let mut workers = HemisphereWorkerSet::new();
         workers.bind(
@@ -2555,7 +2667,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatch_session_with_apply_runs_test_cmd_and_marks_completed_on_zero_exit() {
+    async fn dispatch_session_with_apply_records_command_receipt_on_zero_exit() {
         if !git_available() {
             eprintln!("skipping: git not on PATH");
             return;
@@ -2569,8 +2681,18 @@ mod tests {
         let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
         store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
 
-        let patch_path = dir.path().join("change.patch");
-        let outcome_template = green_outcome_with_real_patch(patch_path.clone());
+        let mut outcome_template = green_outcome_with_real_patch();
+        // Deliberately distinct from the trusted command receipt below. A
+        // successful configured command proves that one command passed; it
+        // does not prove these provider-claimed per-test counts.
+        outcome_template.tests = TestSummary {
+            added: 7,
+            total: 7,
+            passing: 7,
+            failing: 0,
+            skipped: 0,
+            applied: false,
+        };
 
         let mut workers = HemisphereWorkerSet::new();
         workers.bind(
@@ -2595,6 +2717,15 @@ mod tests {
         .expect("dispatch with test_cmd");
 
         assert_eq!(outcome.tasks_completed, 1, "passing tests must complete");
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(
+            task.test_summary,
+            Some(TestSummary::verified_command_passed()),
+            "a passing configured command records only its truthful receipt, not provider counts"
+        );
 
         let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
         let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
@@ -2615,8 +2746,7 @@ mod tests {
         let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
         store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
 
-        let patch_path = dir.path().join("change.patch");
-        let outcome_template = green_outcome_with_real_patch(patch_path.clone());
+        let outcome_template = green_outcome_with_real_patch();
 
         let mut workers = HemisphereWorkerSet::new();
         workers.bind(
@@ -2690,8 +2820,7 @@ mod tests {
         let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
         store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
 
-        let patch_path = dir.path().join("change.patch");
-        let outcome_template = green_outcome_with_real_patch(patch_path.clone());
+        let outcome_template = green_outcome_with_real_patch();
 
         let mut workers = HemisphereWorkerSet::new();
         workers.bind(
@@ -2838,8 +2967,7 @@ mod tests {
         let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
         store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
 
-        let patch_path = dir.path().join("change.patch");
-        let outcome_template = green_outcome_with_real_patch(patch_path.clone());
+        let outcome_template = green_outcome_with_real_patch();
 
         let mut workers = HemisphereWorkerSet::new();
         workers.bind(
@@ -2886,12 +3014,11 @@ mod tests {
         let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
         store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
 
-        let patch_path = dir.path().join("change.patch");
         let mut workers = HemisphereWorkerSet::new();
         workers.bind(
             Hemisphere::Left,
             Box::new(CannedWorker {
-                outcome: green_outcome_with_real_patch(patch_path),
+                outcome: green_outcome_with_real_patch(),
                 name: "phase4-daemon-origin",
             }),
         );
@@ -2948,9 +3075,8 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_session_with_apply_none_behaves_like_phase_3() {
-        // Backward compat: passing None for apply_config preserves
-        // the Phase-3 behaviour where the dispatcher records the
-        // patch_path but never actually applies anything.
+        // Passing None preserves the review-only behaviour: the dispatcher
+        // records its derived task artifact but never applies it.
         let (_dir, conn) = fresh_db();
         let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
@@ -2977,6 +3103,76 @@ mod tests {
         assert_eq!(outcome.tasks_completed, 1);
     }
 
+    #[tokio::test]
+    async fn invalid_worker_contract_never_stores_or_applies_in_direct_or_apply_modes() {
+        // ADOPT31-C10a: exercise both caller modes with a worker outcome that
+        // nominates a real foreign file whose bytes differ from patch_text.
+        // The contract must reject it before `apply_outcome` can attach any
+        // artifact and before --apply can create a worktree. The worker keeps
+        // returning the same invalid result, so the retry ceiling eventually
+        // routes the task to Blocked without ever counting a completion.
+        for with_apply in [false, true] {
+            let (dir, conn) = fresh_db();
+            let session_id =
+                store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+            let task_id =
+                store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+            store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+
+            let mut invalid = green_outcome();
+            let worker_selected_foreign = dir.path().join("foreign-mismatched.patch");
+            std::fs::write(&worker_selected_foreign, b"different file selected by worker")
+                .unwrap();
+            invalid.patch_path = worker_selected_foreign;
+            let mut workers = HemisphereWorkerSet::new();
+            workers.bind(
+                Hemisphere::Left,
+                Box::new(CannedWorker {
+                    outcome: invalid,
+                    name: "forged-applied-receipt",
+                }),
+            );
+
+            let repo = dir.path().join("never-created-repo");
+            let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed);
+            let result = (if with_apply {
+                dispatch_session_with_apply(
+                    &conn,
+                    session_id,
+                    &workers,
+                    DispatchBudget::default(),
+                    Some(&apply_cfg),
+                )
+                .await
+            } else {
+                dispatch_session(&conn, session_id, &workers, DispatchBudget::default()).await
+            })
+            .expect("contract rejection is handled as retry/blocked, not a dispatch error");
+
+            assert_eq!(
+                result.tasks_completed, 0,
+                "invalid worker output must never count completed (with_apply={with_apply})"
+            );
+            let task = store::list_tasks_for_session(&conn, session_id)
+                .unwrap()
+                .pop()
+                .unwrap();
+            assert_eq!(
+                task.status,
+                TaskStatus::Blocked,
+                "retry ceiling/unassigned fallback must leave invalid output Blocked"
+            );
+            assert!(
+                task.patch_path.is_none() && task.test_summary.is_none(),
+                "contract-rejected output must not attach an artifact (with_apply={with_apply})"
+            );
+            assert!(
+                !dir.path().join(format!(".neoth-task-{}", task_id.raw())).exists(),
+                "contract rejection must occur before worktree creation (with_apply={with_apply})"
+            );
+        }
+    }
+
     // Helper: silence dead-code on the Arc import in case the test
     // tree shrinks.
     #[allow(dead_code)]
@@ -3000,7 +3196,7 @@ mod tests {
                 // which is what greeting-regression detects on the
                 // patch_text surface.
                 patch_text: "Sorry, I can't help with that request.".into(),
-                patch_path: PathBuf::from("/tmp/refusal.patch"),
+                patch_path: std::path::PathBuf::new(),
                 tests: TestSummary::ZERO,
                 summary: "refused".into(),
             })
@@ -3059,7 +3255,7 @@ mod tests {
         async fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
             Ok(WorkerOutcome {
                 patch_text: String::new(),
-                patch_path: PathBuf::from("/tmp/empty.patch"),
+                patch_path: std::path::PathBuf::new(),
                 tests: TestSummary::ZERO,
                 summary: "Sorry, I can't help with that request.".into(),
             })
@@ -3105,7 +3301,7 @@ mod tests {
         async fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
             Ok(WorkerOutcome {
                 patch_text: String::new(),
-                patch_path: PathBuf::from("/tmp/empty.patch"),
+                patch_path: std::path::PathBuf::new(),
                 tests: TestSummary::ZERO,
                 summary: "no diff produced".into(),
             })
@@ -3157,7 +3353,7 @@ mod tests {
     async fn worker_output_text_joins_summary_and_patch() {
         let o = WorkerOutcome {
             patch_text: "diff body".into(),
-            patch_path: PathBuf::from("/tmp/x.patch"),
+            patch_path: std::path::PathBuf::new(),
             tests: TestSummary::ZERO,
             summary: "one-liner".into(),
         };

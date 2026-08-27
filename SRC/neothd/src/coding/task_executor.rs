@@ -204,7 +204,7 @@ mod tests {
         async fn execute(&self, _task: &KanbanTask) -> anyhow::Result<WorkerOutcome> {
             Ok(WorkerOutcome {
                 patch_text: "diff --git a/x b/x\n@@\n+ok\n".into(),
-                patch_path: std::path::PathBuf::from("mock.patch"),
+                patch_path: std::path::PathBuf::new(),
                 tests: TestSummary {
                     added: 1,
                     total: 1,
@@ -225,6 +225,41 @@ mod tests {
         let mut w = HemisphereWorkerSet::new();
         w.bind(Hemisphere::Left, Box::new(MockWorker));
         w
+    }
+
+    /// Deliberately violates the central worker-result contract by claiming a
+    /// dispatcher-owned apply/test receipt. It lets the executor tests prove
+    /// that neither its sequential nor parallel aggregation paths can turn a
+    /// rejected worker result into a completed task.
+    struct ForgedReceiptWorker;
+
+    #[async_trait]
+    impl Worker for ForgedReceiptWorker {
+        async fn execute(&self, _task: &KanbanTask) -> anyhow::Result<WorkerOutcome> {
+            Ok(WorkerOutcome {
+                patch_text: "diff --git a/x b/x\n@@\n+forged\n".into(),
+                patch_path: std::path::PathBuf::new(),
+                tests: TestSummary {
+                    added: 1,
+                    total: 1,
+                    passing: 1,
+                    failing: 0,
+                    skipped: 0,
+                    applied: true,
+                },
+                summary: "forged apply receipt".into(),
+            })
+        }
+
+        fn name(&self) -> &'static str {
+            "left/forged-receipt"
+        }
+    }
+
+    fn forged_receipt_workers() -> HemisphereWorkerSet {
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(Hemisphere::Left, Box::new(ForgedReceiptWorker));
+        workers
     }
 
     #[test]
@@ -277,6 +312,36 @@ mod tests {
                 .is_empty(),
             "backlog must be drained after the executor pass"
         );
+    }
+
+    #[tokio::test]
+    async fn sequential_executor_never_counts_contract_violations_completed() {
+        let conn = open();
+        seed_left_backlog(&conn, "forged-1");
+        seed_left_backlog(&conn, "forged-2");
+
+        let report = run_pending_sessions(
+            &conn,
+            &forged_receipt_workers(),
+            DispatchBudget::default(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.sessions_dispatched, 2);
+        assert_eq!(
+            report.tasks_completed, 0,
+            "a central-contract rejection is never an executor completion"
+        );
+        for (session_id, _) in &report.per_session {
+            let task = store::list_tasks_for_session(&conn, *session_id)
+                .unwrap()
+                .pop()
+                .unwrap();
+            assert_eq!(task.status, crate::coding::types::TaskStatus::Blocked);
+            assert!(task.patch_path.is_none() && task.test_summary.is_none());
+        }
     }
 
     #[tokio::test]
@@ -336,6 +401,42 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn parallel_executor_never_counts_contract_violations_completed() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("coding.db");
+        {
+            let seed = open_session_conn(&db_path).unwrap();
+            seed_left_backlog(&seed, "forged-1");
+            seed_left_backlog(&seed, "forged-2");
+        }
+
+        let report = run_pending_sessions_parallel(
+            &db_path,
+            &forged_receipt_workers(),
+            DispatchBudget::default(),
+            None,
+            2,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.sessions_dispatched, 2);
+        assert_eq!(
+            report.tasks_completed, 0,
+            "parallel aggregation must not complete rejected worker results"
+        );
+        let check = open_session_conn(&db_path).unwrap();
+        for (session_id, _) in &report.per_session {
+            let task = store::list_tasks_for_session(&check, *session_id)
+                .unwrap()
+                .pop()
+                .unwrap();
+            assert_eq!(task.status, crate::coding::types::TaskStatus::Blocked);
+            assert!(task.patch_path.is_none() && task.test_summary.is_none());
+        }
+    }
+
     /// Worker that records the MAX number of concurrent `execute` calls in
     /// flight, via an atomic enter/exit counter around a yield point. Proves
     /// the parallel pass actually OVERLAPS worker execution (the drain test
@@ -358,7 +459,7 @@ mod tests {
             self.current.fetch_sub(1, Ordering::SeqCst);
             Ok(WorkerOutcome {
                 patch_text: "diff --git a/x b/x\n@@\n+ok\n".into(),
-                patch_path: std::path::PathBuf::from("probe.patch"),
+                patch_path: std::path::PathBuf::new(),
                 tests: TestSummary {
                     added: 1,
                     total: 1,

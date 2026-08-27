@@ -170,10 +170,63 @@ impl TestSummary {
         applied: false,
     };
 
+    /// Return the count of non-skipped tests only when the reported counters
+    /// are internally coherent. This is deliberately checked arithmetic:
+    /// worker-reported counters are untrusted until the dispatcher validates
+    /// them, and malformed `skipped > total` data must never underflow or
+    /// panic a caller that merely asks whether a summary is green.
+    pub const fn checked_available(self) -> Option<u32> {
+        if self.added > self.total {
+            return None;
+        }
+        let available = match self.total.checked_sub(self.skipped) {
+            Some(available) => available,
+            None => return None,
+        };
+        if self.passing > available {
+            return None;
+        }
+        let accounted = match self.passing.checked_add(self.failing) {
+            Some(accounted) => accounted,
+            None => return None,
+        };
+        if accounted != available {
+            return None;
+        }
+        Some(available)
+    }
+
+    /// True only for a complete, internally coherent counter set.
+    pub const fn is_coherent(self) -> bool {
+        self.checked_available().is_some()
+    }
+
+    /// The one truthful receipt the dispatcher can produce after a real
+    /// configured test command succeeds. It intentionally does not reuse a
+    /// provider's self-reported test counts: this records one verified command
+    /// receipt, not an unverifiable claim about individual tests.
+    pub const fn verified_command_passed() -> Self {
+        Self {
+            added: 0,
+            total: 1,
+            passing: 1,
+            failing: 0,
+            skipped: 0,
+            applied: true,
+        }
+    }
+
     /// All declared tests pass + at least one ran. Used by the
     /// dispatcher to decide whether REVIEW can auto-promote to DONE.
+    /// Malformed counter sets fail closed rather than underflowing.
     pub const fn all_green(self) -> bool {
-        self.total > 0 && self.failing == 0 && self.passing == self.total - self.skipped
+        if self.total == 0 || self.failing != 0 {
+            return false;
+        }
+        match self.checked_available() {
+            Some(available) => self.passing == available,
+            None => false,
+        }
     }
 }
 
@@ -415,6 +468,54 @@ mod tests {
             }
             .all_green()
         );
+    }
+
+    #[test]
+    fn test_summary_checked_counts_fail_closed_without_panicking() {
+        // These are the malformed summaries a worker contract must reject.
+        // `all_green` is intentionally safe to call before that boundary too:
+        // it returns false instead of wrapping `total - skipped` in debug
+        // builds or accepting an overflowed accounting equation.
+        for malformed in [
+            TestSummary {
+                added: 0,
+                total: 1,
+                passing: 0,
+                failing: 0,
+                skipped: 2,
+                applied: false,
+            },
+            TestSummary {
+                added: 0,
+                total: 2,
+                passing: 2,
+                failing: 1,
+                skipped: 1,
+                applied: false,
+            },
+            TestSummary {
+                added: 0,
+                total: u32::MAX,
+                passing: u32::MAX,
+                failing: 1,
+                skipped: 0,
+                applied: false,
+            },
+        ] {
+            assert!(
+                !malformed.is_coherent(),
+                "malformed counts must fail closed: {malformed:?}"
+            );
+            assert!(
+                !malformed.all_green(),
+                "malformed counts must never report green: {malformed:?}"
+            );
+        }
+
+        let receipt = TestSummary::verified_command_passed();
+        assert!(receipt.is_coherent());
+        assert!(receipt.all_green());
+        assert!(receipt.applied);
     }
 
     #[test]

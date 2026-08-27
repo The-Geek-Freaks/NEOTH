@@ -21,14 +21,14 @@
 //!   - Call provider.complete()
 //!   - Parse the completion: extract a unified-diff patch block if
 //!     present, otherwise treat as a no-op outcome with summary only
-//!   - Write the patch to `<wal_dir>/coding-sessions/<session-id>/
-//!     task-<task-id>.patch` so audit consumers can re-apply
+//!   - Return bounded patch text only. The dispatcher owns the task/session
+//!     audit path and atomically persists the validated bytes before any
+//!     review or `--apply` code may observe a patch path.
 //!
-//! Q1 patch-safety placeholder: this commit stores the patch without
-//! applying. `git apply --check` + real apply land once Chorus settles
-//! Q1 (direct vs worktree vs stash-revert).
+//! Patch provenance is centralized: this worker never writes or returns an
+//! artifact path. The dispatcher materializes validated bytes in its trusted
+//! session namespace before audit or worktree handling.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -56,10 +56,6 @@ pub struct ProviderWorker {
     /// slot left the model unset — that resolves to the unknown-default
     /// profile (32 k context → Direct, no extra call).
     model_name: String,
-    /// Where task patches land. `<wal_dir>/coding-sessions/<session-id>/
-    /// task-<task-id>.patch`. The dispatcher provides the parent dir;
-    /// this struct only knows the operator's home root.
-    patch_root: PathBuf,
 }
 
 impl ProviderWorker {
@@ -75,14 +71,17 @@ impl ProviderWorker {
         name: &'static str,
         provider: Arc<crate::providers::cost_authorization::AuthorizedProvider>,
         model_name: impl Into<String>,
-        patch_root: impl Into<PathBuf>,
+        patch_root: impl Into<std::path::PathBuf>,
     ) -> Self {
-        Self {
+        let worker = Self {
             name,
             provider,
             model_name: model_name.into(),
-            patch_root: patch_root.into(),
-        }
+        };
+        // Source-compatible only: C10a makes the dispatcher the sole
+        // authority for patch artifact location and persistence.
+        let _patch_root: std::path::PathBuf = patch_root.into();
+        worker
     }
 
     /// Stage 1 of the two-stage tool router (GOLD-WIRE-01): ask the model
@@ -188,31 +187,9 @@ impl Worker for ProviderWorker {
             ));
         }
         let parsed = parse_completion_text(&completion.text)?;
-        let patch_path = patch_path_for(&self.patch_root, task);
-        if !parsed.patch.is_empty() {
-            // The durable patch and the apply candidate are one contract: do
-            // not return an applicable outcome when its owner-only audit copy
-            // could not be committed atomically.
-            if let Some(parent) = patch_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|error| {
-                    let error = crate::security::redact::sanitize_tool_output(&error.to_string());
-                    anyhow::anyhow!(
-                        "ProviderWorker: cannot prepare private patch directory; refusing apply candidate: {error}"
-                    )
-                })?;
-            }
-            crate::config::credentials::write_mode_0600(&patch_path, parsed.patch.as_bytes())
-                .map_err(|error| {
-                    let error =
-                        crate::security::redact::sanitize_tool_output(&error.to_string());
-                    anyhow::anyhow!(
-                        "ProviderWorker: cannot commit private patch audit copy; refusing apply candidate: {error}"
-                    )
-                })?;
-        }
         Ok(WorkerOutcome {
             patch_text: parsed.patch,
-            patch_path,
+            patch_path: std::path::PathBuf::new(),
             tests: parsed.tests,
             summary: parsed.summary,
         })
@@ -223,12 +200,18 @@ impl Worker for ProviderWorker {
     }
 }
 
-/// Where on disk a task's patch is persisted. Layout:
-///   `<patch_root>/coding-sessions/<session-id>/task-<task-id>.patch`
-pub fn patch_path_for(patch_root: &std::path::Path, task: &KanbanTask) -> PathBuf {
+/// Historical path-layout helper retained only for source compatibility.
+///
+/// A `WorkerOutcome` made with this path is rejected by the C10a dispatcher
+/// contract: worker paths are no longer audit, risk, hash, or apply authority.
+/// The dispatcher derives its own private per-invocation artifact instead.
+#[deprecated(
+    note = "worker patch paths are no longer accepted; return PathBuf::new() and let the dispatcher own artifacts"
+)]
+pub fn patch_path_for(patch_root: &std::path::Path, task: &KanbanTask) -> std::path::PathBuf {
     patch_root
         .join("coding-sessions")
-        .join(format!("{}", task.session_id.raw()))
+        .join(task.session_id.raw().to_string())
         .join(format!("task-{}.patch", task.task_id.raw()))
 }
 
@@ -503,24 +486,33 @@ pub fn parse_completion_text(text: &str) -> Result<ParsedCompletion> {
     let canonical_text = text.replace("\r\n", "\n");
     let no_ansi = crate::security::redact::strip_ansi(&canonical_text);
     let raw_patch = extract_diff_block(&canonical_text);
-    let control_stripped_patch = extract_diff_block(&no_ansi);
-    let sanitized_patch = sanitize_diff_text(&control_stripped_patch);
-
-    if raw_patch != control_stripped_patch
-        || sanitized_patch != control_stripped_patch
-        || reconstructed_diff_side_requires_redaction(&control_stripped_patch, true)
-        || reconstructed_diff_side_requires_redaction(&control_stripped_patch, false)
-    {
-        anyhow::bail!(
-            "ProviderWorker: provider patch contained terminal controls or credential-like output; patch withheld before persistence and apply"
-        );
-    }
+    validate_worker_patch_text(&raw_patch)?;
 
     Ok(ParsedCompletion {
-        patch: control_stripped_patch,
+        patch: raw_patch,
         summary: crate::security::redact::sanitize_tool_output(&extract_summary_line(&no_ansi)),
         tests: extract_tests_line(&no_ansi),
     })
+}
+
+/// Reject an executable diff unless every byte is safe to persist and apply.
+/// This is shared with the central `Worker` contract: provider parsing is only
+/// one `WorkerOutcome` source, so custom workers must not bypass the exact
+/// control- and credential-preservation rule that protects provider output.
+/// The validator never redacts or normalizes a patch; a mutation is rejection.
+pub(crate) fn validate_worker_patch_text(patch: &str) -> Result<()> {
+    let control_stripped = crate::security::redact::strip_ansi(patch);
+    let sanitized = sanitize_diff_text(&control_stripped);
+    if patch != control_stripped
+        || sanitized != control_stripped
+        || reconstructed_diff_side_requires_redaction(&control_stripped, true)
+        || reconstructed_diff_side_requires_redaction(&control_stripped, false)
+    {
+        anyhow::bail!(
+            "ProviderWorker: worker patch contained terminal controls or credential-like output; patch withheld before persistence and apply"
+        );
+    }
+    Ok(())
 }
 
 /// Canonically sanitize a diff without losing its control prefix. The whole
@@ -918,13 +910,28 @@ mod tests {
     }
 
     #[test]
-    fn patch_path_for_uses_session_and_task_ids() {
-        let t = sample_task();
-        let p = patch_path_for(std::path::Path::new("/tmp/neoth"), &t);
-        let s = p.to_string_lossy();
-        assert!(s.contains("coding-sessions"));
-        assert!(s.contains("/7/") || s.contains("\\7\\"));
-        assert!(s.ends_with("task-42.patch"));
+    fn provider_outcome_never_nominates_a_patch_path() {
+        let parsed = parse_completion_text("```diff\n+x\n```\nSUMMARY: done").unwrap();
+        let outcome = WorkerOutcome {
+            patch_text: parsed.patch,
+            patch_path: std::path::PathBuf::new(),
+            tests: parsed.tests,
+            summary: parsed.summary,
+        };
+        assert!(outcome.patch_path.as_os_str().is_empty());
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn patch_path_for_remains_source_compatible_but_is_not_worker_authority() {
+        let task = sample_task();
+        let path = patch_path_for(std::path::Path::new("/tmp/neoth"), &task);
+        assert!(path.ends_with("task-42.patch"));
+        assert!(path.components().any(|component| component.as_os_str() == "7"));
+        assert!(
+            !path.as_os_str().is_empty(),
+            "legacy helper remains callable, but a WorkerOutcome using this path is rejected by WorkerContract"
+        );
     }
 
     #[test]
@@ -1180,32 +1187,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oversized_completion_blocks_parser_and_patch_persistence() {
+    async fn oversized_completion_blocks_parser_before_any_outcome() {
         let patch_root = tempfile::tempdir().unwrap();
         let reply = "x".repeat(MAX_PROVIDER_COMPLETION_BYTES + 1);
         let (worker, provider) = direct_worker_at(&reply, patch_root.path());
-        let expected_path = patch_path_for(patch_root.path(), &sample_task());
 
-        let error = worker
-            .execute(&sample_task())
-            .await
-            .unwrap_err()
-            .to_string();
-        assert_eq!(
-            provider.count(),
-            1,
-            "direct task makes exactly one provider call"
-        );
-        assert!(
-            !expected_path.exists(),
-            "oversized output must not persist a patch"
-        );
+        let error = worker.execute(&sample_task()).await.unwrap_err().to_string();
+        assert_eq!(provider.count(), 1, "direct task makes exactly one provider call");
         assert!(error.contains("coding worker provider response rejected"));
         assert!(!error.contains(&reply));
     }
 
     #[tokio::test]
-    async fn lf_p1_03_worker_redacts_summary_but_persists_clean_patch_exactly() {
+    async fn lf_p1_03_worker_redacts_summary_and_leaves_artifact_to_dispatcher() {
         let secret = concat!("sk-", "FAKE_TEST_CODING_AAAAAAAAAAAAAAAAAAA");
         let reply = format!(
             "```diff\n--- a/example.txt\n+++ b/example.txt\n@@ -0,0 +1 @@\n+safe=true\n```\nSUMMARY: removed \x1b[33m{secret}\x1b[0m"
@@ -1214,11 +1208,7 @@ mod tests {
         let (worker, _) = direct_worker_at(&reply, patch_root.path());
 
         let out = worker.execute(&sample_task()).await.unwrap();
-        let persisted = std::fs::read_to_string(&out.patch_path).unwrap();
-        assert_eq!(
-            persisted, out.patch_text,
-            "audit copy must match apply bytes"
-        );
+        assert!(out.patch_path.as_os_str().is_empty());
         assert!(out.patch_text.contains("+safe=true"));
         assert!(!out.patch_text.contains("REDACTED"));
         assert!(!out.summary.contains(secret));
@@ -1227,19 +1217,6 @@ mod tests {
         assert!(out.patch_text.contains("example.txt"));
         assert!(out.summary.contains("removed"));
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                std::fs::metadata(&out.patch_path)
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600,
-                "persisted provider patch must be owner-only"
-            );
-        }
     }
 
     #[tokio::test]
@@ -1249,7 +1226,6 @@ mod tests {
             "```diff\n--- a/example.txt\n+++ b/example.txt\n@@ -0,0 +1 @@\n+token={secret}\n```\nSUMMARY: unsafe"
         );
         let patch_root = tempfile::tempdir().unwrap();
-        let expected_path = patch_path_for(patch_root.path(), &sample_task());
         let (worker, provider) = direct_worker_at(&reply, patch_root.path());
 
         let error = worker
@@ -1258,7 +1234,6 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert_eq!(provider.count(), 1);
-        assert!(!expected_path.exists(), "unsafe patch must not reach disk");
         assert!(
             !error.contains(secret),
             "error must not echo the credential"
@@ -1270,7 +1245,6 @@ mod tests {
     async fn lf_p1_03_worker_rejects_terminal_controls_inside_patch() {
         let reply = "```diff\n--- a/example.txt\n+++ b/example.txt\n@@ -0,0 +1 @@\n+\x1b[31msafe=true\x1b[0m\n```\nSUMMARY: colored";
         let patch_root = tempfile::tempdir().unwrap();
-        let expected_path = patch_path_for(patch_root.path(), &sample_task());
         let (worker, _) = direct_worker_at(reply, patch_root.path());
 
         let error = worker
@@ -1278,10 +1252,6 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(
-            !expected_path.exists(),
-            "control-bearing patch must not reach disk"
-        );
         assert!(!error.contains('\x1b'));
         assert!(error.contains("patch withheld"));
     }
@@ -1290,7 +1260,6 @@ mod tests {
     async fn lf_p1_03_worker_rejects_multiline_json_short_credential() {
         let reply = "```diff\n--- /dev/null\n+++ b/config.json\n@@ -0,0 +1,3 @@\n+{\n+  \"token\": \"tiny\"\n+}\n```\nSUMMARY: config";
         let patch_root = tempfile::tempdir().unwrap();
-        let expected_path = patch_path_for(patch_root.path(), &sample_task());
         let (worker, _) = direct_worker_at(reply, patch_root.path());
 
         let error = worker
@@ -1298,31 +1267,22 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(
-            !expected_path.exists(),
-            "structured credential patch reached disk"
-        );
         assert!(error.contains("credential-like output"));
         assert!(!error.contains("tiny"));
     }
 
     #[tokio::test]
-    async fn lf_p1_03_worker_refuses_outcome_when_private_patch_commit_fails() {
-        let dir = tempfile::tempdir().unwrap();
-        let blocked_root = dir.path().join("not-a-directory");
-        std::fs::write(&blocked_root, b"file").unwrap();
+    async fn lf_p1_03_worker_returns_clean_patch_without_writing_a_worker_path() {
+        let root = tempfile::tempdir().unwrap();
         let reply = "```diff\n--- a/example.txt\n+++ b/example.txt\n@@ -0,0 +1 @@\n+safe=true\n```\nSUMMARY: clean";
-        let (worker, _) = direct_worker_at(reply, &blocked_root);
+        let (worker, _) = direct_worker_at(reply, root.path());
 
-        let error = worker
+        let outcome = worker
             .execute(&sample_task())
             .await
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("refusing apply candidate"),
-            "diagnostic: {error}"
-        );
+            .unwrap();
+        assert!(!outcome.patch_text.is_empty());
+        assert!(outcome.patch_path.as_os_str().is_empty());
     }
 
     #[tokio::test]

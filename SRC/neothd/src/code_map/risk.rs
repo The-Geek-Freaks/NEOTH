@@ -247,6 +247,15 @@ pub fn patch_changed_files(patch_path: &Path) -> Vec<String> {
         Ok(t) => t,
         Err(_) => return Vec::new(),
     };
+    patch_changed_files_from_text(&text)
+}
+
+/// Extract the set of files touched by already-accepted unified-diff bytes.
+///
+/// This is the execution-boundary counterpart to [`patch_changed_files`]: a
+/// caller that already owns the validated patch text must not reopen a mutable
+/// audit path merely to feed the risk gate.
+pub(crate) fn patch_changed_files_from_text(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|line| {
             // Unified diff header: "+++ b/src/foo/bar.rs"
@@ -475,9 +484,7 @@ mod tests {
     fn patch_changed_files_extracts_plus_b_paths() {
         let dir = tempdir().unwrap();
         let patch = dir.path().join("test.patch");
-        std::fs::write(
-            &patch,
-            "diff --git a/src/foo.rs b/src/foo.rs\n\
+        let accepted = "diff --git a/src/foo.rs b/src/foo.rs\n\
              --- a/src/foo.rs\n\
              +++ b/src/foo.rs\n\
              @@ -1 +1 @@\n\
@@ -488,13 +495,17 @@ mod tests {
              +++ b/src/bar.rs\n\
              @@ -1 +1 @@\n\
              -old\n\
-             +new\n",
-        )
-        .unwrap();
+             +new\n";
+        std::fs::write(&patch, "+++ b/attacker-substitution.rs\n").unwrap();
 
-        let mut files = patch_changed_files(&patch);
+        let mut files = patch_changed_files_from_text(accepted);
         files.sort();
         assert_eq!(files, vec!["src/bar.rs", "src/foo.rs"]);
+        assert_eq!(
+            patch_changed_files(&patch),
+            vec!["attacker-substitution.rs"],
+            "the compatibility path wrapper remains distinct from the trusted-byte helper"
+        );
     }
 
     #[test]

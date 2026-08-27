@@ -28,8 +28,8 @@
 //!     the worktree path.
 //!   - [`create_task_worktree`] — `git worktree add` from
 //!     `HEAD` of the operator's repo into the task path.
-//!   - [`apply_patch_in_worktree`] — `git apply --check` then
-//!     `git apply` against the patch file, inside the
+//!   - [`apply_patch_bytes_in_worktree`] — `git apply --check -` then
+//!     `git apply -` against the accepted bytes on stdin, inside the
 //!     worktree. Returns the typed outcome.
 //!   - [`cleanup_worktree`] — `git worktree remove` on success
 //!     or operator-requested rollback.
@@ -45,7 +45,7 @@
 //!   chain; the test command (`cargo check` / `pytest` / …) lives
 //!   in `freedom.yaml::coding.test_cmd` and runs from the
 //!   dispatcher, not here.
-//!   `apply_patch_in_worktree` returns the path to the worktree
+//!   `apply_patch_bytes_in_worktree` returns the path to the worktree
 //!   so the dispatcher can spawn its test process there.
 //! - WAL emission. The dispatcher records `0xD3 PATCH_APPLIED`
 //!   (success) or `0xD4 PATCH_APPLY_FAILED` (apply or test fail)
@@ -56,8 +56,9 @@
 //!   the dispatcher's CLI surface (`neoth code` invocation),
 //!   not the worktree helper.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 
@@ -168,27 +169,28 @@ pub fn create_task_worktree(repo_root: &Path, task_id: KanbanTaskId) -> Result<P
 /// `worktree` MUST be clean before this call. Caller verifies
 /// via [`is_worktree_dirty`] + refuses up-front.
 pub fn apply_patch_in_worktree(worktree: &Path, patch: &Path) -> Result<PatchApplyOutcome> {
-    let check = Command::new("git")
-        .arg("-C")
-        .arg(worktree)
-        .arg("apply")
-        .arg("--check")
-        .arg(patch)
-        .output()
-        .context("spawn git apply --check")?;
+    let bytes = std::fs::read(patch)
+        .with_context(|| format!("read patch {} for apply", patch.display()))?;
+    apply_patch_bytes_in_worktree(worktree, &bytes)
+}
+
+/// Apply already-accepted unified-diff bytes inside a task worktree.
+///
+/// Both Git passes receive the exact same in-memory bytes through stdin. This
+/// keeps an on-disk patch artifact audit-only: it cannot be reopened or
+/// substituted between risk evaluation, WAL hashing, `--check`, and apply.
+pub(crate) fn apply_patch_bytes_in_worktree(
+    worktree: &Path,
+    patch: &[u8],
+) -> Result<PatchApplyOutcome> {
+    let check = git_apply_bytes(worktree, true, patch)?;
     if !check.status.success() {
         return Ok(PatchApplyOutcome::Rejected {
             stderr: sanitize_process_stderr(&check.stderr),
         });
     }
 
-    let apply = Command::new("git")
-        .arg("-C")
-        .arg(worktree)
-        .arg("apply")
-        .arg(patch)
-        .output()
-        .context("spawn git apply (real)")?;
+    let apply = git_apply_bytes(worktree, false, patch)?;
     if !apply.status.success() {
         return Ok(PatchApplyOutcome::Rejected {
             stderr: sanitize_process_stderr(&apply.stderr),
@@ -197,6 +199,47 @@ pub fn apply_patch_in_worktree(worktree: &Path, patch: &Path) -> Result<PatchApp
 
     Ok(PatchApplyOutcome::Applied {
         worktree_path: worktree.to_path_buf(),
+    })
+}
+
+/// Run one `git apply` pass with the trusted patch bytes on stdin. `-` is
+/// deliberate: Git never receives an ambient patch pathname to reopen.
+fn git_apply_bytes(
+    worktree: &Path,
+    check_only: bool,
+    patch: &[u8],
+) -> Result<std::process::Output> {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(worktree).arg("apply");
+    if check_only {
+        command.arg("--check");
+    }
+    let mut child = command
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| {
+            if check_only {
+                "spawn git apply --check from trusted stdin"
+            } else {
+                "spawn git apply from trusted stdin"
+            }
+        })?;
+    child
+        .stdin
+        .as_mut()
+        .context("open git apply stdin")?
+        .write_all(patch)
+        .context("write trusted patch bytes to git apply stdin")?;
+    drop(child.stdin.take());
+    child.wait_with_output().with_context(|| {
+        if check_only {
+            "wait for git apply --check from trusted stdin"
+        } else {
+            "wait for git apply from trusted stdin"
+        }
     })
 }
 
@@ -535,11 +578,18 @@ fn write_test_log(
 /// helpful when the operator reviews the chain later or runs
 /// `neoth rollback`. Returns lowercase hex.
 pub fn patch_hash(patch: &Path) -> Result<String> {
-    use sha2::{Digest, Sha256};
     let bytes =
         std::fs::read(patch).with_context(|| format!("read patch {} for hash", patch.display()))?;
+    Ok(patch_hash_bytes(&bytes))
+}
+
+/// SHA-256 for accepted patch bytes. The dispatcher uses this rather than the
+/// artifact-path wrapper so the WAL receipt names the exact checked/applied
+/// input even if an audit file is later replaced.
+pub(crate) fn patch_hash_bytes(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
-    hasher.update(&bytes);
+    hasher.update(bytes);
     let digest = hasher.finalize();
     let mut hex = String::with_capacity(64);
     const TABLE: &[u8; 16] = b"0123456789abcdef";
@@ -547,7 +597,7 @@ pub fn patch_hash(patch: &Path) -> Result<String> {
         hex.push(TABLE[(b >> 4) as usize] as char);
         hex.push(TABLE[(b & 0x0f) as usize] as char);
     }
-    Ok(hex)
+    hex
 }
 
 #[cfg(test)]
@@ -632,8 +682,10 @@ mod tests {
     #[test]
     fn patch_hash_round_trips_known_text() {
         let dir = tempdir().unwrap();
-        let p = write_patch(dir.path(), "diff --git a/x b/x\n");
+        let body = "diff --git a/x b/x\n";
+        let p = write_patch(dir.path(), body);
         let h = patch_hash(&p).unwrap();
+        assert_eq!(h, patch_hash_bytes(body.as_bytes()));
         assert_eq!(h.len(), 64);
         assert!(
             h.chars()
@@ -683,7 +735,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_patch_in_worktree_returns_applied_on_clean_patch() {
+    fn apply_patch_bytes_in_worktree_uses_accepted_bytes_not_a_mutable_artifact() {
         if !git_available() {
             eprintln!("skipping: git not on PATH");
             return;
@@ -711,9 +763,9 @@ mod tests {
         ];
         let patch_body = patch_lines.join("\n");
         let patch = dir.path().join("change.patch");
-        std::fs::write(&patch, patch_body).unwrap();
+        std::fs::write(&patch, "this artifact was substituted after acceptance").unwrap();
 
-        let outcome = apply_patch_in_worktree(&wt, &patch).expect("apply");
+        let outcome = apply_patch_bytes_in_worktree(&wt, patch_body.as_bytes()).expect("apply");
         match outcome {
             PatchApplyOutcome::Applied { worktree_path } => {
                 assert_eq!(worktree_path, wt);
@@ -724,6 +776,12 @@ mod tests {
                 panic!("expected Applied, got Rejected: {stderr}");
             }
         }
+
+        assert_eq!(
+            std::fs::read_to_string(&patch).unwrap(),
+            "this artifact was substituted after acceptance",
+            "the proof artifact is deliberately never read by the byte helper"
+        );
 
         let _ = cleanup_worktree(&repo, &wt, true);
     }
