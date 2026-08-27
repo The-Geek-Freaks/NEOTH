@@ -98,6 +98,111 @@ struct PendingGuiChatConsent {
     preflight: gui_action::VerifiedConsentChatPreflight,
 }
 
+/// Result of recovering the pending-consent mutex after an unwind. Only an
+/// exact request match is allowed to proceed to controller/UI settlement; a
+/// stale decision must repair the mutex without disturbing a newer pending
+/// request and its private body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PoisonedPendingConsentRecovery {
+    Exact { surface: chat_stream_phase::ChatStreamSurface },
+    StaleOrAbsent,
+    NotPoisoned,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StalePendingConsentOrigin {
+    SlotMismatch,
+    PoisonedSlotMismatch,
+    EmptyTakenSlot,
+}
+
+/// The complete permitted side-effect set for a stale decision is empty. This
+/// stays explicit so a future recovery refactor cannot accidentally repaint a
+/// newer request while reporting an old decision.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingConsentDecisionEffects {
+    status_line: bool,
+    consent_prompt: bool,
+    main_presentation: bool,
+    buddy_presentation: bool,
+    overlay_projection: bool,
+    flow_active: bool,
+    controller_settlement: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StalePendingConsentDecisionOutcome {
+    IgnoreNoUiMutation,
+}
+
+impl StalePendingConsentDecisionOutcome {
+    #[cfg(test)]
+    const fn effects(self) -> PendingConsentDecisionEffects {
+        match self {
+            Self::IgnoreNoUiMutation => PendingConsentDecisionEffects {
+                status_line: false,
+                consent_prompt: false,
+                main_presentation: false,
+                buddy_presentation: false,
+                overlay_projection: false,
+                flow_active: false,
+                controller_settlement: false,
+            },
+        }
+    }
+}
+
+fn stale_pending_consent_decision_outcome(
+    origin: StalePendingConsentOrigin,
+) -> StalePendingConsentDecisionOutcome {
+    match origin {
+        StalePendingConsentOrigin::SlotMismatch
+        | StalePendingConsentOrigin::PoisonedSlotMismatch
+        | StalePendingConsentOrigin::EmptyTakenSlot => {
+            StalePendingConsentDecisionOutcome::IgnoreNoUiMutation
+        }
+    }
+}
+
+fn zeroize_pending_gui_chat_consent(pending: &mut PendingGuiChatConsent) {
+    use zeroize::Zeroize as _;
+
+    pending.body.zeroize();
+    if let Some(skill) = pending.explicit_skill_id.as_mut() {
+        skill.zeroize();
+    }
+}
+
+/// Recover a poisoned pending-consent slot without making a stale decision
+/// authoritative. The mutex poison is cleared in all poison cases so later
+/// consent requests remain usable. Only the exact decision id is removed and
+/// zeroized; a newer request stays untouched.
+fn take_poisoned_pending_gui_chat_consent(
+    pending: &std::sync::Mutex<Option<PendingGuiChatConsent>>,
+    decision_request_id: ChatStreamRequestId,
+) -> PoisonedPendingConsentRecovery {
+    match pending.lock() {
+        Ok(_) => PoisonedPendingConsentRecovery::NotPoisoned,
+        Err(poisoned) => {
+            let mut slot = poisoned.into_inner();
+            let recovery = if slot
+                .as_ref()
+                .is_some_and(|pending| pending.request_id == decision_request_id)
+            {
+                let mut exact = slot.take().expect("checked exact pending consent");
+                let surface = exact.surface;
+                zeroize_pending_gui_chat_consent(&mut exact);
+                PoisonedPendingConsentRecovery::Exact { surface }
+            } else {
+                PoisonedPendingConsentRecovery::StaleOrAbsent
+            };
+            pending.clear_poison();
+            recovery
+        }
+    }
+}
+
 type RequestBoundChatConsentToken = (
     chat_stream_phase::ChatStreamRequestId,
     zeroize::Zeroizing<Vec<u8>>,
@@ -2868,6 +2973,12 @@ fn main() -> Result<()> {
     let chat_auto_nudge_budget = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
     let chat_auto_in_progress = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let chat_consent_flow_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // A worker settles the stream controller before it posts its terminal UI
+    // callback. A new request may therefore own the presentation before that
+    // old callback executes; only this owner/generation gate may clear the
+    // request-owned send and Incognito indicators.
+    let chat_presentation_owner =
+        std::sync::Arc::new(std::sync::Mutex::new(ChatPresentationOwner::default()));
     let pending_gui_chat_consent: std::sync::Arc<std::sync::Mutex<Option<PendingGuiChatConsent>>> =
         std::sync::Arc::new(std::sync::Mutex::new(None));
     let main_chat_consent_token: std::sync::Arc<
@@ -3358,6 +3469,7 @@ fn main() -> Result<()> {
         let launch_gate_slot = chat_launch_gate.clone();
         let model_overrides = chat_model_overrides.clone();
         let overlay_weak = overlay.as_weak();
+        let presentation_owner = chat_presentation_owner.clone();
         window.on_chat_send_clicked(move |text, incognito| {
             let body = text.trim().to_string();
             if body.is_empty() {
@@ -3421,6 +3533,7 @@ fn main() -> Result<()> {
                     return;
                 }
             };
+            claim_chat_presentation_owner(presentation_owner.as_ref(), request.request_id);
             w.set_chat_incognito_active(incognito);
             if let Err(error) =
                 install_chat_launch_gate(launch_gate_slot.as_ref(), request.request_id)
@@ -3624,6 +3737,7 @@ fn main() -> Result<()> {
         let launch_gate_slot = chat_launch_gate.clone();
         let model_overrides = chat_model_overrides.clone();
         let overlay_weak = overlay.as_weak();
+        let presentation_owner = chat_presentation_owner.clone();
         window.on_chat_consent_prompt_decision(move |request_id_wire, decision| {
             let Some(decision_request_id) =
                 ChatStreamRequestId::parse_wire(request_id_wire.as_str())
@@ -3655,10 +3769,46 @@ fn main() -> Result<()> {
                     slot.take()
                 }
                 Ok(_) => {
-                    w.set_status_line("Stale consent decision ignored.".into());
-                    return;
+                    match stale_pending_consent_decision_outcome(
+                        StalePendingConsentOrigin::SlotMismatch,
+                    ) {
+                        StalePendingConsentDecisionOutcome::IgnoreNoUiMutation => {
+                            tracing::debug!(
+                                request_id = decision_request_id.get(),
+                                "suppressed stale pending consent decision without UI projection"
+                            );
+                            return;
+                        }
+                    }
                 }
                 Err(_) => {
+                    let PoisonedPendingConsentRecovery::Exact {
+                        surface: pending_surface,
+                    } = take_poisoned_pending_gui_chat_consent(
+                        pending.as_ref(),
+                        decision_request_id,
+                    )
+                    else {
+                        // The helper has cleared any poison already. A stale
+                        // request must not settle a newer controller/UI owner.
+                        match stale_pending_consent_decision_outcome(
+                            StalePendingConsentOrigin::PoisonedSlotMismatch,
+                        ) {
+                            StalePendingConsentDecisionOutcome::IgnoreNoUiMutation => {
+                                tracing::debug!(
+                                    request_id = decision_request_id.get(),
+                                    "suppressed stale pending consent decision without UI projection"
+                                );
+                                return;
+                            }
+                        }
+                    };
+                    let recovered_surface = stream.lock().ok().and_then(|controller| {
+                        controller
+                            .active_request()
+                            .filter(|request| request.request_id == decision_request_id)
+                            .map(|request| request.surface)
+                    }).or(Some(pending_surface));
                     if let Ok(mut controller) = stream.lock() {
                         controller.settle(decision_request_id, false);
                     }
@@ -3667,12 +3817,25 @@ fn main() -> Result<()> {
                         model_overrides.as_ref(),
                         decision_request_id,
                     );
+                    let overlay = overlay_weak.upgrade();
+                    if !settle_pending_consent_recovery_presentation_if_current(
+                        &w,
+                        overlay.as_ref(),
+                        presentation_owner.as_ref(),
+                        decision_request_id,
+                        recovered_surface,
+                    ) {
+                        tracing::debug!(
+                            request_id = decision_request_id.get(),
+                            "suppressed stale poisoned consent presentation recovery"
+                        );
+                        return;
+                    }
                     flow_active.store(false, std::sync::atomic::Ordering::Release);
                     w.set_chat_consent_prompt_open(false);
                     w.set_chat_consent_prompt_request_id("".into());
-                    settle_main_chat_request_ui(&w);
                     buddy(&w, GuiActivity::ChatFailed);
-                    if let Some(overlay) = overlay_weak.upgrade() {
+                    if let Some(overlay) = overlay {
                         project_companion_chat_stream(
                             &overlay,
                             ChatStreamPhase::Failed,
@@ -3684,8 +3847,17 @@ fn main() -> Result<()> {
                 }
             };
             let Some(pending_send) = pending_send else {
-                w.set_status_line("Stale consent decision ignored.".into());
-                return;
+                match stale_pending_consent_decision_outcome(
+                    StalePendingConsentOrigin::EmptyTakenSlot,
+                ) {
+                    StalePendingConsentDecisionOutcome::IgnoreNoUiMutation => {
+                        tracing::debug!(
+                            request_id = decision_request_id.get(),
+                            "suppressed stale pending consent decision without UI projection"
+                        );
+                        return;
+                    }
+                }
             };
 
             w.set_chat_consent_prompt_busy(true);
@@ -3905,6 +4077,7 @@ fn main() -> Result<()> {
     let main_chat_consent_token_for_send = main_chat_consent_token.clone();
     let chat_consent_flow_for_send = chat_consent_flow_active.clone();
     let chat_worker_barrier_for_send = chat_worker_barrier.clone();
+    let chat_presentation_owner_for_send = chat_presentation_owner.clone();
     let chat_send_approved = move |request_id_wire: slint::SharedString,
                                    text: slint::SharedString,
                                    explicit_skill_id_wire: slint::SharedString,
@@ -4079,10 +4252,8 @@ fn main() -> Result<()> {
             };
         // ODY-10: only accepted live sends enter the recall buffer. Historical
         // callbacks must not mutate draft/recall state before this guard.
-        if !incognito {
-            if let Ok(mut last) = last_operator_input_for_send.lock() {
-                *last = body.clone();
-            }
+        if !incognito && let Ok(mut last) = last_operator_input_for_send.lock() {
+            *last = body.clone();
         }
         info!(message_len = body.len(), "chat: send-clicked");
 
@@ -4170,9 +4341,14 @@ fn main() -> Result<()> {
         let nudge_budget = chat_budget_for_send.clone();
         let auto_flag = chat_auto_flag_for_send.clone();
         let flow_active = chat_consent_flow_for_send.clone();
+        let presentation_generation = chat_presentation_generation_for_request(
+            chat_presentation_owner_for_send.as_ref(),
+            request_id,
+        );
         let weak_worker = w.as_weak();
         let overlay_weak_worker = overlay_weak_for_request.clone();
         let launch_gate = launch_gate.clone();
+        let presentation_owner = chat_presentation_owner_for_send.clone();
         std::thread::spawn(move || {
             let _worker_lease = worker_lease;
             let body = zeroize::Zeroizing::new(body);
@@ -4648,8 +4824,22 @@ fn main() -> Result<()> {
                 if let Some(w) = weak_for_loop.upgrade()
                     && let Some(terminal) = terminal
                 {
+                    let Some(presentation_generation) = presentation_generation else {
+                        return;
+                    };
+                    if !settle_main_chat_request_ui_if_current(
+                        &w,
+                        presentation_owner.as_ref(),
+                        request_id,
+                        presentation_generation,
+                    ) {
+                        tracing::debug!(
+                            request_id = request_id.get(),
+                            "suppressed stale Main terminal presentation settlement"
+                        );
+                        return;
+                    }
                     // GUI-07: the stream settled (reply or error) — unspin Send.
-                    settle_main_chat_request_ui(&w);
                     w.set_chat_stall_active(false);
                     // Wave-2 feed A: settle plan row + push metric.
                     {
@@ -14117,6 +14307,7 @@ fn main() -> Result<()> {
             let flow_active = chat_consent_flow_active.clone();
             let stream = chat_stream.clone();
             let launch_gate_slot = chat_launch_gate.clone();
+            let presentation_owner = chat_presentation_owner.clone();
             overlay.on_send_clicked(move |text, incognito| {
                 let body = text.trim().to_string();
                 if body.is_empty() {
@@ -14167,6 +14358,7 @@ fn main() -> Result<()> {
                         return;
                     }
                 };
+                claim_chat_presentation_owner(presentation_owner.as_ref(), request.request_id);
                 activate_buddy_chat_request_ui(&win, &ov, incognito);
                 if let Err(error) =
                     install_chat_launch_gate(launch_gate_slot.as_ref(), request.request_id)
@@ -14306,6 +14498,7 @@ fn main() -> Result<()> {
             let watchdog_input = chat_watchdog_input.clone();
             let watchdog_retry_stop = chat_watchdog_retry_stop.clone();
             let worker_barrier = chat_worker_barrier.clone();
+            let presentation_owner = chat_presentation_owner.clone();
             let buddy_chat_send_approved =
                 move |request_id_wire: slint::SharedString,
                       text: slint::SharedString,
@@ -14493,6 +14686,10 @@ fn main() -> Result<()> {
                     let ov_weak = ov.as_weak();
                     let win_weak = win.as_weak();
                     let flow_active = flow_active.clone();
+                    let presentation_generation = chat_presentation_generation_for_request(
+                        presentation_owner.as_ref(),
+                        request_id,
+                    );
                     let stream = stream.clone();
                     let launch_gate_slot = launch_gate_slot.clone();
                     let child_slot = child_slot.clone();
@@ -14501,6 +14698,7 @@ fn main() -> Result<()> {
                     let watchdog_input = watchdog_input.clone();
                     let watchdog_retry_stop = watchdog_retry_stop.clone();
                     let launch_gate = launch_gate.clone();
+                    let presentation_owner = presentation_owner.clone();
                     std::thread::spawn(move || {
                         let _worker_lease = worker_lease;
                         let body = zeroize::Zeroizing::new(body);
@@ -14988,6 +15186,20 @@ fn main() -> Result<()> {
                             let Some(terminal) = terminal else {
                                 return;
                             };
+                            let Some(presentation_generation) = presentation_generation else {
+                                return;
+                            };
+                            if !chat_presentation_is_current(
+                                presentation_owner.as_ref(),
+                                request_id,
+                                presentation_generation,
+                            ) {
+                                tracing::debug!(
+                                    request_id = request_id.get(),
+                                    "suppressed stale Buddy terminal presentation settlement"
+                                );
+                                return;
+                            }
                             let win = win_weak.upgrade();
                             if let Some(win) = win.as_ref() {
                                 settle_main_chat_request_ui(win);
@@ -20617,19 +20829,242 @@ fn begin_live_chat_request(
 /// terminal error paths must never leave an Incognito badge active after the
 /// request itself has stopped owning the UI.
 fn settle_main_chat_request_ui(window: &MainWindow) {
-    window.set_chat_send_in_flight(false);
-    window.set_chat_incognito_active(false);
+    project_main_chat_request_ui_state(
+        window,
+        main_chat_request_ui_state(window).settle_main(),
+    );
+}
+
+/// Request-scoped state projected onto the Main and Buddy chat surfaces.
+/// Keeping this reducer independent from Slint lets the UI lifecycle and
+/// privacy contract be verified without constructing a native window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ChatRequestUiState {
+    main_send_in_flight: bool,
+    main_incognito_active: bool,
+    buddy_send_in_flight: bool,
+    buddy_incognito_active: bool,
+}
+
+impl ChatRequestUiState {
+    const fn settle_main(mut self) -> Self {
+        self.main_send_in_flight = false;
+        self.main_incognito_active = false;
+        self
+    }
+
+    const fn settle_buddy(mut self) -> Self {
+        self = self.settle_main();
+        self.buddy_send_in_flight = false;
+        self.buddy_incognito_active = false;
+        self
+    }
+
+    const fn activate_buddy(mut self, incognito: bool) -> Self {
+        self.main_incognito_active = incognito;
+        self.buddy_incognito_active = incognito;
+        self
+    }
+}
+
+/// A terminal worker captures this lease before queuing its UI callback. A
+/// later accepted request replaces the owner with a new generation, so an old
+/// callback cannot settle the newer request's presentation state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ChatPresentationLease {
+    request_id: ChatStreamRequestId,
+    generation: u64,
+}
+
+#[derive(Debug, Default)]
+struct ChatPresentationOwner {
+    generation: u64,
+    current: Option<ChatPresentationLease>,
+}
+
+impl ChatPresentationOwner {
+    fn claim(&mut self, request_id: ChatStreamRequestId) -> ChatPresentationLease {
+        self.generation = self.generation.wrapping_add(1).max(1);
+        let lease = ChatPresentationLease {
+            request_id,
+            generation: self.generation,
+        };
+        self.current = Some(lease);
+        lease
+    }
+
+    fn generation_for(&self, request_id: ChatStreamRequestId) -> Option<u64> {
+        self.current
+            .filter(|lease| lease.request_id == request_id)
+            .map(|lease| lease.generation)
+    }
+
+    fn is_current(&self, request_id: ChatStreamRequestId, generation: u64) -> bool {
+        self.current.is_some_and(|lease| {
+            lease.request_id == request_id && lease.generation == generation
+        })
+    }
+
+    fn terminal_settlement(
+        &self,
+        request_id: ChatStreamRequestId,
+        generation: u64,
+        surface: ChatStreamSurface,
+        state: ChatRequestUiState,
+    ) -> Option<ChatRequestUiState> {
+        self.is_current(request_id, generation).then(|| match surface {
+            ChatStreamSurface::Main => state.settle_main(),
+            ChatStreamSurface::Buddy => state.settle_buddy(),
+        })
+    }
+
+    /// A poisoned pending-consent slot may no longer reveal which surface
+    /// started the request. In that case clear both presentation surfaces,
+    /// but only while this request/generation still owns them.
+    fn pending_consent_recovery_settlement(
+        &self,
+        request_id: ChatStreamRequestId,
+        generation: u64,
+        recovered_surface: Option<ChatStreamSurface>,
+        state: ChatRequestUiState,
+    ) -> Option<ChatRequestUiState> {
+        self.is_current(request_id, generation)
+            .then(|| match recovered_surface {
+                Some(ChatStreamSurface::Main) => state.settle_main(),
+                Some(ChatStreamSurface::Buddy) | None => state.settle_buddy(),
+            })
+    }
+}
+
+fn lock_chat_presentation_owner(
+    owner: &std::sync::Mutex<ChatPresentationOwner>,
+) -> std::sync::MutexGuard<'_, ChatPresentationOwner> {
+    owner.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!("recovering poisoned chat presentation ownership state");
+        poisoned.into_inner()
+    })
+}
+
+fn claim_chat_presentation_owner(
+    owner: &std::sync::Mutex<ChatPresentationOwner>,
+    request_id: ChatStreamRequestId,
+) -> ChatPresentationLease {
+    lock_chat_presentation_owner(owner).claim(request_id)
+}
+
+fn chat_presentation_generation_for_request(
+    owner: &std::sync::Mutex<ChatPresentationOwner>,
+    request_id: ChatStreamRequestId,
+) -> Option<u64> {
+    lock_chat_presentation_owner(owner).generation_for(request_id)
+}
+
+fn chat_presentation_is_current(
+    owner: &std::sync::Mutex<ChatPresentationOwner>,
+    request_id: ChatStreamRequestId,
+    generation: u64,
+) -> bool {
+    lock_chat_presentation_owner(owner).is_current(request_id, generation)
+}
+
+fn settle_main_chat_request_ui_if_current(
+    window: &MainWindow,
+    owner: &std::sync::Mutex<ChatPresentationOwner>,
+    request_id: ChatStreamRequestId,
+    generation: u64,
+) -> bool {
+    let state = main_chat_request_ui_state(window);
+    let settled = lock_chat_presentation_owner(owner).terminal_settlement(
+        request_id,
+        generation,
+        ChatStreamSurface::Main,
+        state,
+    );
+    let Some(settled) = settled else {
+        return false;
+    };
+    project_main_chat_request_ui_state(window, settled);
+    true
+}
+
+fn settle_pending_consent_recovery_presentation_if_current(
+    window: &MainWindow,
+    overlay: Option<&MiniOverlay>,
+    owner: &std::sync::Mutex<ChatPresentationOwner>,
+    request_id: ChatStreamRequestId,
+    recovered_surface: Option<ChatStreamSurface>,
+) -> bool {
+    let Some(generation) = chat_presentation_generation_for_request(owner, request_id) else {
+        return false;
+    };
+    let state = overlay.map_or_else(
+        || main_chat_request_ui_state(window),
+        |overlay| buddy_chat_request_ui_state(window, overlay),
+    );
+    let settled = lock_chat_presentation_owner(owner).pending_consent_recovery_settlement(
+        request_id,
+        generation,
+        recovered_surface,
+        state,
+    );
+    let Some(settled) = settled else {
+        return false;
+    };
+    if matches!(recovered_surface, Some(ChatStreamSurface::Main)) || overlay.is_none() {
+        project_main_chat_request_ui_state(window, settled);
+    } else if let Some(overlay) = overlay {
+        project_buddy_chat_request_ui_state(window, overlay, settled);
+    }
+    true
+}
+
+fn main_chat_request_ui_state(window: &MainWindow) -> ChatRequestUiState {
+    ChatRequestUiState {
+        main_send_in_flight: window.get_chat_send_in_flight(),
+        main_incognito_active: window.get_chat_incognito_active(),
+        buddy_send_in_flight: false,
+        buddy_incognito_active: false,
+    }
+}
+
+fn buddy_chat_request_ui_state(window: &MainWindow, overlay: &MiniOverlay) -> ChatRequestUiState {
+    ChatRequestUiState {
+        main_send_in_flight: window.get_chat_send_in_flight(),
+        main_incognito_active: window.get_chat_incognito_active(),
+        buddy_send_in_flight: overlay.get_send_in_flight(),
+        buddy_incognito_active: overlay.get_incognito_active(),
+    }
+}
+
+fn project_main_chat_request_ui_state(window: &MainWindow, state: ChatRequestUiState) {
+    window.set_chat_send_in_flight(state.main_send_in_flight);
+    window.set_chat_incognito_active(state.main_incognito_active);
+}
+
+fn project_buddy_chat_request_ui_state(
+    window: &MainWindow,
+    overlay: &MiniOverlay,
+    state: ChatRequestUiState,
+) {
+    project_main_chat_request_ui_state(window, state);
+    overlay.set_send_in_flight(state.buddy_send_in_flight);
+    overlay.set_incognito_active(state.buddy_incognito_active);
 }
 
 fn activate_buddy_chat_request_ui(window: &MainWindow, overlay: &MiniOverlay, incognito: bool) {
-    window.set_chat_incognito_active(incognito);
-    overlay.set_incognito_active(incognito);
+    project_buddy_chat_request_ui_state(
+        window,
+        overlay,
+        buddy_chat_request_ui_state(window, overlay).activate_buddy(incognito),
+    );
 }
 
 fn settle_buddy_chat_request_ui(window: &MainWindow, overlay: &MiniOverlay) {
-    settle_main_chat_request_ui(window);
-    overlay.set_send_in_flight(false);
-    overlay.set_incognito_active(false);
+    project_buddy_chat_request_ui_state(
+        window,
+        overlay,
+        buddy_chat_request_ui_state(window, overlay).settle_buddy(),
+    );
 }
 
 fn detach_operator_recall_for_incognito(
@@ -20869,6 +21304,13 @@ fn current_live_chat_preview(window: &MainWindow) -> (String, String) {
     use slint::Model;
     let messages = window.get_chat_live_messages();
     let rows = messages.iter().collect::<Vec<_>>();
+    live_chat_sidebar_preview(&rows)
+}
+
+/// Derive the Local CLI preview from the canonical transcript without ever
+/// exposing private rows. This is pure transcript-to-sidebar model logic; the
+/// window adapter above only supplies the Slint model rows.
+fn live_chat_sidebar_preview(rows: &[ChatMessage]) -> (String, String) {
     panel_logic::latest_chat_sidebar_preview(
         rows.iter()
             .rev()
@@ -25348,7 +25790,7 @@ mod chat_subprocess_tests {
     #[test]
     fn gui_chat_skill_args_precede_flag_terminator_with_automatic_omitting_flag() {
         let mut explicit = std::process::Command::new("neoth");
-        explicit.arg("chat").arg("--stream");
+        configure_gui_chat_launch_args(&mut explicit, false);
         append_chat_prompt_args(
             &mut explicit,
             Some("systematic_debugging"),
@@ -25363,6 +25805,7 @@ mod chat_subprocess_tests {
             vec![
                 "chat",
                 "--stream",
+                "--gui-launch-envelope-stdin",
                 "--skill",
                 "systematic_debugging",
                 "--",
@@ -25371,13 +25814,16 @@ mod chat_subprocess_tests {
         );
 
         let mut automatic = std::process::Command::new("neoth");
-        automatic.arg("chat").arg("--stream");
+        configure_gui_chat_launch_args(&mut automatic, false);
         append_chat_prompt_args(&mut automatic, None, "prompt");
         let automatic_args = automatic
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        assert_eq!(automatic_args, vec!["chat", "--stream", "--", "prompt"]);
+        assert_eq!(
+            automatic_args,
+            vec!["chat", "--stream", "--gui-launch-envelope-stdin", "--", "prompt"]
+        );
 
         let source = include_str!("main.rs");
         let compact = source.split_whitespace().collect::<String>();
@@ -25388,11 +25834,11 @@ mod chat_subprocess_tests {
             "one shared helper plus Main and Buddy call sites must stay in parity"
         );
         assert_eq!(
-            source
-                .matches("cmd.arg(\"--gui-launch-envelope-stdin\")")
+            production
+                .matches("configure_gui_chat_launch_args(&mut cmd, incognito);")
                 .count(),
             2,
-            "main chat and Buddy must both use the private launch envelope"
+            "Main Chat and Buddy must share the private launch envelope helper"
         );
         assert!(!source.contains(concat!("NEOTH_STREAM_", "CONTROL_TOKEN")));
         assert!(compact.contains(".arg(\"loop\").arg(\"run\").arg(\"--\").arg(&prompt)"));
@@ -25533,129 +25979,201 @@ mod chat_subprocess_tests {
 
     #[test]
     fn prelaunch_failure_settlement_clears_active_privacy_on_main_and_buddy() {
-        let window = MainWindow::new().unwrap();
-        let overlay = MiniOverlay::new().unwrap();
+        let active = ChatRequestUiState {
+            main_send_in_flight: true,
+            main_incognito_active: true,
+            buddy_send_in_flight: true,
+            buddy_incognito_active: true,
+        };
+        assert_eq!(
+            active.settle_main(),
+            ChatRequestUiState {
+                main_send_in_flight: false,
+                main_incognito_active: false,
+                buddy_send_in_flight: true,
+                buddy_incognito_active: true,
+            }
+        );
+        assert_eq!(
+            active.settle_buddy(),
+            ChatRequestUiState {
+                main_send_in_flight: false,
+                main_incognito_active: false,
+                buddy_send_in_flight: false,
+                buddy_incognito_active: false,
+            }
+        );
+    }
 
-        window.set_chat_send_in_flight(true);
-        window.set_chat_incognito_active(true);
-        settle_main_chat_request_ui(&window);
-        assert!(!window.get_chat_send_in_flight());
-        assert!(!window.get_chat_incognito_active());
+    #[test]
+    fn stale_terminal_presentation_settlement_cannot_clear_a_new_main_or_buddy_request() {
+        let active = ChatRequestUiState {
+            main_send_in_flight: true,
+            main_incognito_active: true,
+            buddy_send_in_flight: true,
+            buddy_incognito_active: true,
+        };
 
-        window.set_chat_send_in_flight(true);
-        window.set_chat_incognito_active(true);
-        overlay.set_send_in_flight(true);
-        overlay.set_incognito_active(true);
-        settle_buddy_chat_request_ui(&window, &overlay);
-        assert!(!window.get_chat_send_in_flight());
-        assert!(!window.get_chat_incognito_active());
-        assert!(!overlay.get_send_in_flight());
-        assert!(!overlay.get_incognito_active());
+        // A Main terminal callback is queued, then a Buddy request owns the
+        // presentation before that callback reaches the UI event loop.
+        let mut main_then_buddy = ChatPresentationOwner::default();
+        let main_a = main_then_buddy.claim(ChatStreamRequestId::parse_wire("71").unwrap());
+        let buddy_b = main_then_buddy.claim(ChatStreamRequestId::parse_wire("72").unwrap());
+        assert!(main_then_buddy.is_current(buddy_b.request_id, buddy_b.generation));
+        assert_eq!(
+            main_then_buddy.terminal_settlement(
+                main_a.request_id,
+                main_a.generation,
+                ChatStreamSurface::Main,
+                active,
+            ),
+            None,
+            "a stale Main callback must leave Buddy's request presentation intact"
+        );
+
+        // The inverse ordering has the same boundary: an old Buddy callback
+        // cannot clear the Main request that replaced it.
+        let mut buddy_then_main = ChatPresentationOwner::default();
+        let buddy_a = buddy_then_main.claim(ChatStreamRequestId::parse_wire("73").unwrap());
+        let main_b = buddy_then_main.claim(ChatStreamRequestId::parse_wire("74").unwrap());
+        assert!(buddy_then_main.is_current(main_b.request_id, main_b.generation));
+        assert_eq!(
+            buddy_then_main.terminal_settlement(
+                buddy_a.request_id,
+                buddy_a.generation,
+                ChatStreamSurface::Buddy,
+                active,
+            ),
+            None,
+            "a stale Buddy callback must leave Main's request presentation intact"
+        );
+    }
+
+    #[test]
+    fn poisoned_pending_consent_recovery_is_surface_exact_or_generation_guarded() {
+        let active = ChatRequestUiState {
+            main_send_in_flight: true,
+            main_incognito_active: true,
+            buddy_send_in_flight: true,
+            buddy_incognito_active: true,
+        };
+
+        let mut owner = ChatPresentationOwner::default();
+        let main = owner.claim(ChatStreamRequestId::parse_wire("81").unwrap());
+        assert_eq!(
+            owner.pending_consent_recovery_settlement(
+                main.request_id,
+                main.generation,
+                Some(ChatStreamSurface::Main),
+                active,
+            ),
+            Some(ChatRequestUiState {
+                main_send_in_flight: false,
+                main_incognito_active: false,
+                buddy_send_in_flight: true,
+                buddy_incognito_active: true,
+            }),
+            "a recovered Main pending-consent request must not clear Buddy presentation"
+        );
+
+        let buddy = owner.claim(ChatStreamRequestId::parse_wire("82").unwrap());
+        assert_eq!(
+            owner.pending_consent_recovery_settlement(
+                buddy.request_id,
+                buddy.generation,
+                Some(ChatStreamSurface::Buddy),
+                active,
+            ),
+            Some(active.settle_buddy()),
+            "a recovered Buddy pending-consent request must clear both shared surfaces"
+        );
+
+        let unknown = owner.claim(ChatStreamRequestId::parse_wire("83").unwrap());
+        assert_eq!(
+            owner.pending_consent_recovery_settlement(
+                unknown.request_id,
+                unknown.generation,
+                None,
+                active,
+            ),
+            Some(active.settle_buddy()),
+            "an unknown poisoned slot fails closed only for its current owner"
+        );
+
+        let stale = owner.claim(ChatStreamRequestId::parse_wire("84").unwrap());
+        let replacement = owner.claim(ChatStreamRequestId::parse_wire("85").unwrap());
+        assert!(owner.is_current(replacement.request_id, replacement.generation));
+        assert_eq!(
+            owner.pending_consent_recovery_settlement(
+                stale.request_id,
+                stale.generation,
+                None,
+                active,
+            ),
+            None,
+            "unknown recovery must not clear a newer request's presentation"
+        );
     }
 
     #[test]
     fn buddy_incognito_activation_is_visible_to_main_and_blocks_recall() {
-        let window = MainWindow::new().unwrap();
-        let overlay = MiniOverlay::new().unwrap();
         let recalled = std::sync::Mutex::new("previous standard prompt".to_string());
 
         detach_operator_recall_for_incognito(&recalled, true);
-        activate_buddy_chat_request_ui(&window, &overlay, true);
-        window.set_chat_send_in_flight(true);
+        let active = ChatRequestUiState {
+            main_send_in_flight: false,
+            main_incognito_active: false,
+            buddy_send_in_flight: false,
+            buddy_incognito_active: false,
+        }
+        .activate_buddy(true);
 
-        assert!(window.get_chat_incognito_active());
-        assert!(window.get_chat_send_in_flight());
-        assert!(overlay.get_incognito_active());
-        assert!(eligible_operator_recall(&recalled, false, true).is_none());
-        settle_buddy_chat_request_ui(&window, &overlay);
+        assert!(active.main_incognito_active);
+        assert!(active.buddy_incognito_active);
+        assert!(eligible_operator_recall(&recalled, false, active.main_incognito_active).is_none());
     }
 
     #[test]
     fn incognito_rows_never_replace_or_create_local_sidebar_preview() {
-        use slint::{Model, ModelRc, VecModel};
+        let row = |text: &str, timestamp: &str, incognito: bool, phase: ChatStreamPhase| {
+            ChatMessage {
+                role: "assistant".into(),
+                text: text.into(),
+                timestamp: timestamp.into(),
+                stream_phase: phase.as_wire().into(),
+                incognito,
+                ..Default::default()
+            }
+        };
+        let standard = row("standard reply", "10:00", false, ChatStreamPhase::Complete);
+        let baseline = live_chat_sidebar_preview(&[standard.clone()]);
+        assert_eq!(baseline, ("standard reply".to_string(), "10:00".to_string()));
 
-        let window = MainWindow::new().unwrap();
-        window.set_chat_channels(ModelRc::new(VecModel::from(build_chat_sidebar_channels(
-            &[],
-        ))));
-        let standard_id = ChatStreamRequestId::parse_wire("41").unwrap();
-        assert!(begin_live_chat_request(
-            &window,
-            standard_id,
-            "standard prompt",
-            false,
-        ));
-        assert!(settle_live_chat_request(
-            &window,
-            standard_id,
-            ChatStreamPhase::Complete,
-            Some("standard reply"),
-        ));
-        let baseline = current_live_chat_preview(&window);
-        assert!(!baseline.0.is_empty());
-
-        let private_id = ChatStreamRequestId::parse_wire("42").unwrap();
-        assert!(begin_live_chat_request(
-            &window,
-            private_id,
-            "PRIVATE_PROMPT_SENTINEL",
-            true,
-        ));
-        assert_eq!(current_live_chat_preview(&window), baseline);
-        assert!(project_chat_stream_update(
-            &window,
-            private_id,
-            ChatStreamPhase::Receiving,
-            Some("PRIVATE_STREAM_REPLY_SENTINEL"),
-        ));
-        assert_eq!(current_live_chat_preview(&window), baseline);
-        assert!(settle_live_chat_request(
-            &window,
-            private_id,
-            ChatStreamPhase::Complete,
-            Some("PRIVATE_REPLY_SENTINEL"),
-        ));
-        assert_eq!(current_live_chat_preview(&window), baseline);
-        let local = window
-            .get_chat_channels()
-            .iter()
-            .find(|row| row.id == "cli")
-            .unwrap();
-        assert_eq!(local.last_message.as_str(), baseline.0.as_str());
-        assert_eq!(local.last_timestamp.as_str(), baseline.1.as_str());
-        assert!(!local.last_message.contains("PRIVATE"));
-
-        let private_only = MainWindow::new().unwrap();
-        private_only.set_chat_channels(ModelRc::new(VecModel::from(build_chat_sidebar_channels(
-            &[],
-        ))));
-        assert!(begin_live_chat_request(
-            &private_only,
-            private_id,
-            "PRIVATE_ONLY_PROMPT",
-            true,
-        ));
+        let private_rows = vec![
+            standard,
+            row(
+                "PRIVATE_STREAM_REPLY_SENTINEL",
+                "10:01",
+                true,
+                ChatStreamPhase::Receiving,
+            ),
+            row(
+                "PRIVATE_REPLY_SENTINEL",
+                "10:02",
+                true,
+                ChatStreamPhase::Complete,
+            ),
+        ];
+        assert_eq!(live_chat_sidebar_preview(&private_rows), baseline);
         assert_eq!(
-            current_live_chat_preview(&private_only),
+            live_chat_sidebar_preview(&[row(
+                "PRIVATE_ONLY_REPLY",
+                "10:03",
+                true,
+                ChatStreamPhase::Complete,
+            )]),
             (String::new(), String::new())
         );
-        assert!(settle_live_chat_request(
-            &private_only,
-            private_id,
-            ChatStreamPhase::Complete,
-            Some("PRIVATE_ONLY_REPLY"),
-        ));
-        assert_eq!(
-            current_live_chat_preview(&private_only),
-            (String::new(), String::new())
-        );
-        let local = private_only
-            .get_chat_channels()
-            .iter()
-            .find(|row| row.id == "cli")
-            .unwrap();
-        assert!(local.last_message.is_empty());
-        assert!(local.last_timestamp.is_empty());
     }
 
     #[test]
@@ -25950,8 +26468,14 @@ mod chat_subprocess_tests {
         );
         assert!(chat_source.contains("Read-only history · select a session to inspect"));
         assert!(chat_source.contains("chat routing not available"));
-        assert!(
-            rust_source.contains("cmd.arg(\"chat\").arg(\"--stream\")"),
+        let mut command = std::process::Command::new("neoth");
+        configure_gui_chat_launch_args(&mut command, false);
+        assert_eq!(
+            command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            vec!["chat", "--stream", "--gui-launch-envelope-stdin"],
             "truthful sidebar must not remove the working local CLI chat"
         );
     }
@@ -26236,6 +26760,7 @@ mod chat_subprocess_tests {
         for contract in [
             "D2_USAGE_WINDOW_LIVE.load",
             "budget_probe_cancellation.cancel();",
+            "probe_budget_via_subprocess(&budget_probe_cancellation)",
             "if dispatch.is_err()",
             "wait_for_usage_refresh(",
         ] {
@@ -26244,6 +26769,10 @@ mod chat_subprocess_tests {
                 "missing budget lifecycle contract: {contract}"
             );
         }
+        assert!(
+            !budget.contains("run_bounded_dashboard_json_probe"),
+            "the lifecycle worker delegates probe details to the budget helper"
+        );
 
         let run = source.find("let run_result = window.run();").unwrap();
         let close = source[run..]
@@ -30106,6 +30635,133 @@ mod tests {
             let _guard = mutex.lock().expect("fresh test mutex");
             panic!("poison mutex for recovery coverage");
         }));
+    }
+
+    fn pending_consent_for_poison_test(
+        request_id: ChatStreamRequestId,
+        surface: ChatStreamSurface,
+        body: &str,
+    ) -> PendingGuiChatConsent {
+        PendingGuiChatConsent {
+            request_id,
+            surface,
+            body: body.to_string(),
+            explicit_skill_id: Some("test-skill".to_string()),
+            incognito: true,
+            preflight: gui_action::VerifiedConsentChatPreflight {
+                config_sha256: String::new(),
+                route_set_sha256: String::new(),
+                required_routes: Vec::new(),
+                missing_routes: Vec::new(),
+                challenge_id: None,
+                challenge_token: None,
+            },
+        }
+    }
+
+    #[test]
+    fn pending_consent_zeroize_clears_private_body_and_skill() {
+        let mut pending = pending_consent_for_poison_test(
+            ChatStreamRequestId::parse_wire("90").unwrap(),
+            ChatStreamSurface::Main,
+            "opaque",
+        );
+
+        zeroize_pending_gui_chat_consent(&mut pending);
+
+        assert!(pending.body.is_empty());
+        assert_eq!(pending.explicit_skill_id.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn poisoned_pending_consent_exact_entries_are_zeroized_removed_and_reusable() {
+        for (wire, surface) in [("91", ChatStreamSurface::Main), ("92", ChatStreamSurface::Buddy)] {
+            let request_id = ChatStreamRequestId::parse_wire(wire).unwrap();
+            let pending = std::sync::Arc::new(std::sync::Mutex::new(Some(
+                pending_consent_for_poison_test(request_id, surface, "opaque"),
+            )));
+            poison_test_mutex(pending.clone());
+            assert!(pending.is_poisoned());
+
+            assert_eq!(
+                take_poisoned_pending_gui_chat_consent(pending.as_ref(), request_id),
+                PoisonedPendingConsentRecovery::Exact { surface }
+            );
+            assert!(!pending.is_poisoned());
+            assert!(
+                pending
+                    .lock()
+                    .expect("recovered pending-consent mutex")
+                    .is_none()
+            );
+        }
+
+        let unknown = std::sync::Arc::new(std::sync::Mutex::new(None));
+        poison_test_mutex(unknown.clone());
+        assert_eq!(
+            take_poisoned_pending_gui_chat_consent(
+                unknown.as_ref(),
+                ChatStreamRequestId::parse_wire("93").unwrap(),
+            ),
+            PoisonedPendingConsentRecovery::StaleOrAbsent
+        );
+        assert!(!unknown.is_poisoned());
+        assert!(unknown.lock().expect("recovered unknown slot").is_none());
+    }
+
+    #[test]
+    fn stale_poisoned_pending_consent_recovery_preserves_newer_request() {
+        let stale_id = ChatStreamRequestId::parse_wire("94").unwrap();
+        let newer_id = ChatStreamRequestId::parse_wire("95").unwrap();
+        let pending = std::sync::Arc::new(std::sync::Mutex::new(Some(
+            pending_consent_for_poison_test(newer_id, ChatStreamSurface::Buddy, "opaque"),
+        )));
+        let newer_body_len = pending
+            .lock()
+            .expect("fresh pending-consent mutex")
+            .as_ref()
+            .expect("newer pending consent")
+            .body
+            .len();
+        poison_test_mutex(pending.clone());
+
+        assert_eq!(
+            take_poisoned_pending_gui_chat_consent(pending.as_ref(), stale_id),
+            PoisonedPendingConsentRecovery::StaleOrAbsent
+        );
+        assert!(!pending.is_poisoned());
+        let preserved = pending
+            .lock()
+            .expect("recovered pending-consent mutex")
+            .as_ref()
+            .expect("newer pending consent remains");
+        assert_eq!(preserved.request_id, newer_id);
+        assert_eq!(preserved.surface, ChatStreamSurface::Buddy);
+        assert_eq!(preserved.body.len(), newer_body_len);
+    }
+
+    #[test]
+    fn stale_consent_decision_outcomes_have_no_side_effects() {
+        for origin in [
+            StalePendingConsentOrigin::SlotMismatch,
+            StalePendingConsentOrigin::PoisonedSlotMismatch,
+            StalePendingConsentOrigin::EmptyTakenSlot,
+        ] {
+            let outcome = stale_pending_consent_decision_outcome(origin);
+            assert_eq!(outcome, StalePendingConsentDecisionOutcome::IgnoreNoUiMutation);
+            assert_eq!(
+                outcome.effects(),
+                PendingConsentDecisionEffects {
+                    status_line: false,
+                    consent_prompt: false,
+                    main_presentation: false,
+                    buddy_presentation: false,
+                    overlay_projection: false,
+                    flow_active: false,
+                    controller_settlement: false,
+                }
+            );
+        }
     }
 
     #[test]

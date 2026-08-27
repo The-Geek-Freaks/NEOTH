@@ -8,6 +8,8 @@
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::path::{Component, PathBuf};
 
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
@@ -180,10 +182,15 @@ pub enum DocDistillError {
 pub fn admit_operator_document(path: &Path) -> Result<AdmittedDocument, DocDistillError> {
     let (source_kind, extension) = classify_path(path)?;
     let (source_parent, source_name) = operator_source_parent_and_name(path)?;
+    #[cfg(target_os = "macos")]
+    let source_parent = macos_var_capability_parent(source_parent);
     // The capability walk binds every parent component without following a
     // link.  The leaf is then opened through that retained directory handle,
     // never through the ambient path supplied by the operator.
     let bound_parent = crate::skills::store::open_absolute_bound_directory(
+        #[cfg(target_os = "macos")]
+        &source_parent,
+        #[cfg(not(target_os = "macos"))]
         source_parent,
         false,
         "document review source parent",
@@ -331,6 +338,26 @@ fn operator_source_parent_and_name(
         return Err(DocDistillError::UnsafeSource);
     }
     Ok((source_parent, source_name))
+}
+
+/// macOS exposes `/var` through a root-level compatibility alias to
+/// `/private/var`. Map only that lexical root component before the no-follow
+/// capability walk; all other path spellings retain the normal rejection
+/// behavior for links and navigation.
+#[cfg(target_os = "macos")]
+fn macos_var_capability_parent(path: &Path) -> PathBuf {
+    let mut components = path.components();
+    if !matches!(components.next(), Some(Component::RootDir))
+        || !matches!(components.next(), Some(Component::Normal(component)) if component == "var")
+    {
+        return path.to_path_buf();
+    }
+
+    let mut mapped = PathBuf::from("/private");
+    for component in path.components().skip(1) {
+        mapped.push(component.as_os_str());
+    }
+    mapped
 }
 
 fn read_bounded(
@@ -579,6 +606,30 @@ mod tests {
             operator_source_parent_and_name(Path::new("drafts/../book.pdf")),
             Err(DocDistillError::UnsafeSource)
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_var_capability_parent_maps_only_the_root_var_alias() {
+        assert_eq!(
+            macos_var_capability_parent(Path::new("/var/folders/review.pdf")),
+            PathBuf::from("/private/var/folders/review.pdf")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_var_capability_parent_leaves_non_var_paths_unchanged() {
+        for path in ["/private/var/folders/review.pdf", "/tmp/review.pdf", "var/review.pdf"] {
+            assert_eq!(macos_var_capability_parent(Path::new(path)), PathBuf::from(path));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_var_capability_parent_does_not_accept_lookalike_aliases() {
+        let lookalike = Path::new("/varnish/folders/review.pdf");
+        assert_eq!(macos_var_capability_parent(lookalike), lookalike);
     }
 
     #[test]

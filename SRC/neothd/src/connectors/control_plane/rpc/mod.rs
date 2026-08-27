@@ -2067,9 +2067,24 @@ mod tests {
         request.extend_from_slice(&padding);
         request.extend_from_slice(suffix);
         request.push(b'x');
-        client.write_all(&request).await.unwrap();
-        client.shutdown().await.unwrap();
-        assert!(read_request(&mut server).await.is_none());
+        let writer = tokio::spawn(async move {
+            client.write_all(&request).await?;
+            client.shutdown().await
+        });
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                read_request(&mut server)
+            )
+            .await
+            .expect("over-cap request parser must finish within one second")
+            .is_none()
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(1), writer)
+            .await
+            .expect("over-cap request writer must finish within one second")
+            .expect("over-cap request writer task must not panic")
+            .expect("over-cap request writer must write and shut down");
     }
 
     #[tokio::test]

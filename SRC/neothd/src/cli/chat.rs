@@ -3784,6 +3784,7 @@ fn write_provider_stream_delta(
 
 fn stream_provider_done_line(
     control_token: Option<&str>,
+    incognito: bool,
     chunk_count: u32,
     response_text: &str,
     termination: &crate::providers::ProviderTermination,
@@ -3804,6 +3805,14 @@ fn stream_provider_done_line(
 
     let control_token = control_token?;
     let termination = stream_termination_projection(termination);
+    let (finish_reason, refusal_reason) = if incognito {
+        (None, None)
+    } else {
+        (
+            termination.finish_reason.as_deref(),
+            termination.refusal_reason.as_deref(),
+        )
+    };
     serde_json::to_string(&ProviderDoneFrame {
         neoth_stream: "provider_done",
         protocol_version: CHAT_STREAM_PROTOCOL_VERSION,
@@ -3811,10 +3820,10 @@ fn stream_provider_done_line(
         control_token,
         count: chunk_count,
         content_hash: stream_content_hash(response_text),
-        finish_reason: termination.finish_reason.as_deref(),
+        finish_reason,
         refused: termination.refused,
         refusal_origin: termination.refusal_origin,
-        refusal_reason: termination.refusal_reason.as_deref(),
+        refusal_reason,
     })
     .ok()
 }
@@ -3906,6 +3915,7 @@ fn write_authenticated_stream_notice(
 
 struct StreamDoneMetadata<'a> {
     control_token: Option<&'a str>,
+    incognito: bool,
     chunk_count: u32,
     input_tokens: Option<u32>,
     output_tokens: Option<u32>,
@@ -3950,8 +3960,26 @@ pub struct DeferredPostProviderStream {
 /// ever claiming a successful completion.
 #[doc(hidden)]
 pub fn emit_deferred_post_provider_stream_to(
+    output: impl std::io::Write,
+    control_token: Option<&str>,
+    limit_tokens: u32,
+    completion: &crate::providers::Completion,
+    accepted_body: &str,
+) -> std::io::Result<DeferredPostProviderStream> {
+    emit_deferred_post_provider_stream_with_incognito_to(
+        output,
+        control_token,
+        false,
+        limit_tokens,
+        completion,
+        accepted_body,
+    )
+}
+
+fn emit_deferred_post_provider_stream_with_incognito_to(
     mut output: impl std::io::Write,
     control_token: Option<&str>,
+    incognito: bool,
     limit_tokens: u32,
     completion: &crate::providers::Completion,
     accepted_body: &str,
@@ -3962,6 +3990,7 @@ pub fn emit_deferred_post_provider_stream_to(
         &mut output,
         StreamDoneMetadata {
             control_token,
+            incognito,
             chunk_count,
             input_tokens: completion.input_tokens,
             output_tokens: completion.output_tokens,
@@ -4034,6 +4063,14 @@ fn build_stream_done_line(metadata: StreamDoneMetadata<'_>) -> String {
     }
 
     let termination = stream_termination_projection(metadata.termination);
+    let (finish_reason, refusal_reason) = if metadata.incognito {
+        (None, None)
+    } else {
+        (
+            termination.finish_reason.as_deref(),
+            termination.refusal_reason.as_deref(),
+        )
+    };
     let content_hash = stream_content_hash(metadata.response_text);
     let request_id = metadata.control_token.map(stream_request_id);
     let finalization_receipt = request_id.as_deref().map(|request_id| {
@@ -4056,11 +4093,15 @@ fn build_stream_done_line(metadata: StreamDoneMetadata<'_>) -> String {
         output_tokens: metadata.output_tokens.unwrap_or(0),
         elapsed_ms: metadata.elapsed_ms,
         model: metadata.model,
-        finish_reason: termination.finish_reason.as_deref(),
+        finish_reason,
         refused: termination.refused,
         refusal_origin: termination.refusal_origin,
-        refusal_reason: termination.refusal_reason.as_deref(),
-        links: crate::cli::deep_links::extract_deep_links(metadata.response_text),
+        refusal_reason,
+        links: if metadata.incognito {
+            Vec::new()
+        } else {
+            crate::cli::deep_links::extract_deep_links(metadata.response_text)
+        },
     })
     .expect("stream completion frame contains only serializable fields")
 }
@@ -4071,6 +4112,7 @@ fn write_provider_done_and_build_stream_done_line(
 ) -> std::io::Result<String> {
     if let Some(provider_done_line) = stream_provider_done_line(
         metadata.control_token,
+        metadata.incognito,
         metadata.chunk_count,
         metadata.response_text,
         metadata.termination,
@@ -4087,6 +4129,7 @@ fn finalize_dispatch_stream_to(
     mut output: impl std::io::Write,
     stream: bool,
     control_token: Option<&str>,
+    incognito: bool,
     limit_tokens: u32,
     stream_output_deferred: bool,
     dispatch: ProviderDispatchResult,
@@ -4101,6 +4144,7 @@ fn finalize_dispatch_stream_to(
             &mut output,
             StreamDoneMetadata {
                 control_token,
+                incognito,
                 chunk_count: dispatch.stream_chunk_count,
                 input_tokens: dispatch.completion.input_tokens,
                 output_tokens: dispatch.completion.output_tokens,
@@ -5433,6 +5477,7 @@ async fn dispatch_provider(
         stdout_lock,
         args.stream,
         stream_control_token,
+        args.incognito,
         sentinel_cap,
         defer_provider_output,
         dispatch_result,
@@ -6269,9 +6314,10 @@ async fn run_post_reply_pipelines(
         // those bytes. A later durability/review failure leaves provider_done
         // without done and is surfaced as a typed finalization_error event.
         let stdout = std::io::stdout();
-        let emitted = emit_deferred_post_provider_stream_to(
+        let emitted = emit_deferred_post_provider_stream_with_incognito_to(
             stdout.lock(),
             stream_plan.control_token,
+            args.incognito,
             stream_plan.limit_tokens,
             &refusal_completion,
             &response_text,
@@ -12850,10 +12896,11 @@ mod tests {
         let control_token = "0123456789abcdef0123456789abcdef";
         let termination = crate::providers::ProviderTermination::default();
         let provider_done_line =
-            stream_provider_done_line(Some(control_token), 2, "primary reply", &termination)
+            stream_provider_done_line(Some(control_token), false, 2, "primary reply", &termination)
                 .unwrap();
         let stream_done_line = build_stream_done_line(StreamDoneMetadata {
             control_token: Some(control_token),
+            incognito: false,
             chunk_count: 2,
             input_tokens: Some(3),
             output_tokens: Some(5),
@@ -12931,6 +12978,7 @@ mod tests {
     fn provider_done_frame_is_token_bound_and_carries_no_reply_text() {
         let line = stream_provider_done_line(
             Some("0123456789abcdef0123456789abcdef"),
+            false,
             7,
             "reply",
             &crate::providers::ProviderTermination::default(),
@@ -12958,6 +13006,7 @@ mod tests {
         .with_native_detail("raw_safety", serde_json::json!({"secret": "omitted"}));
         let provider_done = stream_provider_done_line(
             Some("0123456789abcdef0123456789abcdef"),
+            false,
             0,
             "",
             &termination,
@@ -12965,6 +13014,7 @@ mod tests {
         .expect("authenticated provider boundary");
         let done = build_stream_done_line(StreamDoneMetadata {
             control_token: Some("0123456789abcdef0123456789abcdef"),
+            incognito: false,
             chunk_count: 0,
             input_tokens: Some(3),
             output_tokens: Some(0),
@@ -13186,6 +13236,7 @@ mod tests {
         assert!(
             stream_provider_done_line(
                 None,
+                false,
                 7,
                 "reply",
                 &crate::providers::ProviderTermination::default(),
@@ -13275,39 +13326,127 @@ mod tests {
     #[test]
     fn incognito_stream_keeps_private_text_out_of_authenticated_terminal_metadata() {
         let control_token = "0123456789abcdef0123456789abcdef";
-        let private_prompt = "INC0GNITO_PROMPT_MUST_NEVER_APPEAR_IN_METADATA";
-        let private_reply = "INC0GNITO_REPLY_VISIBLE_ONLY_AS_THE_STREAM_BODY";
+        let private_link_label = "INC0GNITO_PRIVATE_DIAGNOSIS";
+        let private_link_id = "private-note-1";
+        let private_finish_reason = "INC0GNITO_PRIVATE_FINISH_REASON";
+        let private_refusal_reason = "INC0GNITO_PRIVATE_REFUSAL_REASON";
+        let private_reply = format!(
+            "INC0GNITO_REPLY_VISIBLE_ONLY_AS_THE_STREAM_BODY [{private_link_label}](#note-{private_link_id})"
+        );
         let completion = crate::providers::Completion {
-            text: private_reply.to_string(),
+            text: private_reply.clone(),
+            termination: crate::providers::ProviderTermination::refused(
+                Some(private_finish_reason.to_string()),
+                crate::providers::RefusalOrigin::FinishReason,
+                private_refusal_reason,
+                Some("provider-authored body is not terminal metadata".to_string()),
+            ),
             ..Default::default()
         };
         let mut stdout = Vec::new();
 
-        emit_deferred_post_provider_stream_to(
+        let deferred = emit_deferred_post_provider_stream_with_incognito_to(
             &mut stdout,
             Some(control_token),
+            true,
             256,
             &completion,
-            private_reply,
+            &private_reply,
         )
         .expect("private turn terminal framing must settle");
+        emit_deferred_stream_done_to(&mut stdout, Some(control_token), &deferred.done_line)
+            .expect("private turn terminal completion must settle");
 
         let stdout = String::from_utf8(stdout).unwrap();
-        assert!(stdout.starts_with(private_reply));
         let frames = stdout
             .lines()
-            .filter_map(|line| line.strip_prefix(CHAT_STREAM_CONTROL_PREFIX))
-            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let frame = line
+                    .strip_prefix(CHAT_STREAM_CONTROL_PREFIX)
+                    .expect("private stream protocol frames must be authenticated");
+                serde_json::from_str::<serde_json::Value>(frame).unwrap()
+            })
             .collect::<Vec<_>>();
-        assert_eq!(frames.len(), 2);
-        assert_eq!(frames[0]["neoth_stream"], "provider_done");
-        assert_eq!(frames[1]["neoth_stream"], "done");
-        for frame in frames {
-            assert_eq!(frame["control_token"], control_token);
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[0]["neoth_stream"], "provider_delta");
+        assert_eq!(frames[1]["neoth_stream"], "provider_done");
+        assert_eq!(frames[2]["neoth_stream"], "done");
+        assert_eq!(frames[0]["text"], private_reply);
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| frame.to_string().contains(private_reply.as_str()))
+                .count(),
+            1,
+            "private reply must appear only in its authenticated provider delta"
+        );
+        assert!(
+            frames
+                .iter()
+                .all(|frame| frame["control_token"] == control_token)
+        );
+        for frame in &frames[1..] {
             let metadata = frame.to_string();
-            assert!(!metadata.contains(private_prompt));
-            assert!(!metadata.contains(private_reply));
+            assert!(!metadata.contains(private_reply.as_str()));
+            assert!(!metadata.contains(private_link_label));
+            assert!(!metadata.contains(private_link_id));
+            assert!(!metadata.contains(private_finish_reason));
+            assert!(!metadata.contains(private_refusal_reason));
+            assert!(frame["finish_reason"].is_null());
+            assert!(frame["refusal_reason"].is_null());
+            assert_eq!(frame["refused"], true);
+            assert_eq!(frame["refusal_origin"], "finish_reason");
         }
+        assert_eq!(frames[2]["links"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn non_incognito_stream_preserves_deep_links_in_done_metadata() {
+        let control_token = "0123456789abcdef0123456789abcdef";
+        let reply = "Open [Privacy settings](#nav-privacy)";
+        let completion = crate::providers::Completion {
+            text: reply.to_string(),
+            ..Default::default()
+        };
+        let mut stdout = Vec::new();
+
+        let deferred = emit_deferred_post_provider_stream_with_incognito_to(
+            &mut stdout,
+            Some(control_token),
+            false,
+            256,
+            &completion,
+            reply,
+        )
+        .expect("standard turn terminal framing must settle");
+        emit_deferred_stream_done_to(&mut stdout, Some(control_token), &deferred.done_line)
+            .expect("standard turn terminal completion must settle");
+
+        let frames = String::from_utf8(stdout)
+            .expect("stream frames are UTF-8")
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let frame = line
+                    .strip_prefix(CHAT_STREAM_CONTROL_PREFIX)
+                    .expect("standard stream protocol frames must be authenticated");
+                serde_json::from_str::<serde_json::Value>(frame).unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[0]["neoth_stream"], "provider_delta");
+        assert_eq!(frames[0]["text"], reply);
+        assert_eq!(frames[1]["neoth_stream"], "provider_done");
+        assert_eq!(frames[2]["neoth_stream"], "done");
+        assert_eq!(
+            frames[2]["links"],
+            serde_json::json!([{
+                "label": "Privacy settings",
+                "kind": "nav",
+                "id": "privacy",
+            }])
+        );
     }
 
     #[test]
@@ -13331,6 +13470,7 @@ mod tests {
                 &mut stdout,
                 true,
                 Some(control_token),
+                false,
                 64,
                 false,
                 output,
@@ -13339,6 +13479,7 @@ mod tests {
 
             let provider_done_line = stream_provider_done_line(
                 Some(control_token),
+                false,
                 chunks,
                 "reply",
                 &crate::providers::ProviderTermination::default(),
@@ -13388,7 +13529,7 @@ mod tests {
         };
 
         let nonstream =
-            finalize_dispatch_stream_to(RejectWrites, false, None, 64, false, make_output())
+            finalize_dispatch_stream_to(RejectWrites, false, None, false, 64, false, make_output())
                 .unwrap();
         assert!(nonstream.stream_done_line.is_none());
 
@@ -13396,6 +13537,7 @@ mod tests {
             RejectWrites,
             true,
             Some("0123456789abcdef0123456789abcdef"),
+            false,
             64,
             false,
             make_output(),

@@ -110,6 +110,65 @@ pub(crate) mod test_env {
         }
     }
 
+    #[cfg(windows)]
+    fn canonical_local_disk_parts(
+        path: &Path,
+    ) -> std::io::Result<(u8, Vec<std::ffi::OsString>)> {
+        use std::path::{Component, Prefix};
+
+        let mut components = path.components();
+        let letter = match components.next() {
+            Some(Component::Prefix(prefix)) => match prefix.kind() {
+                Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => letter,
+                _ => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "canonical Windows temp root is not a local disk path",
+                    ));
+                }
+            },
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "canonical Windows temp root has no disk prefix",
+                ));
+            }
+        };
+        if !matches!(components.next(), Some(Component::RootDir)) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "canonical Windows temp root has no root directory",
+            ));
+        }
+        let mut descendants = Vec::new();
+        for component in components {
+            let Component::Normal(component) = component else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "canonical Windows temp root has a non-child component",
+                ));
+            };
+            descendants.push(component.to_os_string());
+        }
+        Ok((letter.to_ascii_uppercase(), descendants))
+    }
+
+    #[cfg(windows)]
+    fn ordinary_local_disk_spelling(canonical: &Path) -> std::io::Result<PathBuf> {
+        let expected = canonical_local_disk_parts(canonical)?;
+        let mut ordinary = PathBuf::from(format!("{}:\\", char::from(expected.0)));
+        ordinary.extend(&expected.1);
+
+        let rebound = std::fs::canonicalize(&ordinary)?;
+        if canonical_local_disk_parts(&rebound)? != expected {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "ordinary Windows temp root did not rebind to its canonical target",
+            ));
+        }
+        Ok(ordinary)
+    }
+
     pub(crate) fn lock() -> MutexGuard<'static, ()> {
         ENV_LOCK
             .get_or_init(|| Mutex::new(()))
@@ -141,7 +200,8 @@ pub(crate) mod test_env {
     #[cfg(windows)]
     pub(crate) fn canonical_tempdir() -> std::io::Result<CanonicalTempDir> {
         const ATTEMPTS: usize = 32;
-        let root = std::fs::canonicalize(std::env::temp_dir())?;
+        let canonical_root = std::fs::canonicalize(std::env::temp_dir())?;
+        let root = ordinary_local_disk_spelling(&canonical_root)?;
         for _ in 0..ATTEMPTS {
             let mut nonce = [0u8; 16];
             getrandom::getrandom(&mut nonce).map_err(|error| {
@@ -163,10 +223,28 @@ pub(crate) mod test_env {
 
     #[cfg(windows)]
     #[test]
-    fn canonical_tempdir_is_private_from_creation() {
+    fn canonical_tempdir_is_private_and_accepted_by_the_local_disk_boundary() {
+        use std::path::{Component, Prefix};
+
         let directory = canonical_tempdir().expect("create private test directory");
+        let mut components = directory.path().components();
+        assert!(matches!(
+            components.next(),
+            Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_))
+        ));
+        assert!(matches!(components.next(), Some(Component::RootDir)));
+        assert!(components.all(|component| matches!(component, Component::Normal(_))));
         crate::wal::win_native::verify_private_directory_dacl(directory.path())
             .expect("test directory has the private TokenUser DACL");
+        assert!(
+            crate::skills::store::open_absolute_bound_directory(
+                directory.path(),
+                false,
+                "private test directory",
+            )
+            .expect("open private test directory through the local disk boundary")
+            .is_some()
+        );
     }
 }
 
