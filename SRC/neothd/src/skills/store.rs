@@ -3485,29 +3485,18 @@ mod tests {
         let root = open_bound_directory(temp.path(), false, "test store")
             .unwrap()
             .unwrap();
-        let child = open_or_create_private_child_dir(
-            &root.dir,
-            OsStr::new("private-state"),
-            &child_path,
-        )
-        .expect("open private child with a DACL-migration-compatible capability");
+        let child =
+            open_or_create_private_child_dir(&root.dir, OsStr::new("private-state"), &child_path)
+                .expect("open private child with a DACL-migration-compatible capability");
 
-        crate::wal::win_native::set_private_current_user_directory_dacl_bound(
-            &child_path,
-            &child,
-        )
-        .expect("bound DACL hardening must precede directory DELETE authority");
+        crate::wal::win_native::set_private_current_user_directory_dacl_bound(&child_path, &child)
+            .expect("bound DACL hardening must precede directory DELETE authority");
         crate::wal::win_native::verify_private_directory_handle_dacl(&child)
             .expect("private child capability must retain the hardened DACL");
 
         let target = child_path.join("state.json");
-        atomic_write_private_child(
-            &child,
-            OsStr::new("state.json"),
-            &target,
-            b"private state",
-        )
-        .expect("hardened private child must support capability-relative atomic publication");
+        atomic_write_private_child(&child, OsStr::new("state.json"), &target, b"private state")
+            .expect("hardened private child must support capability-relative atomic publication");
         assert_eq!(std::fs::read(&target).unwrap(), b"private state");
     }
 

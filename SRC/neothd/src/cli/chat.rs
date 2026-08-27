@@ -15512,8 +15512,7 @@ modes:
                 Some("fail-1")
             }
             async fn complete(&self, _req: Request) -> Result<Completion> {
-                self.calls
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 anyhow::bail!("simulated upstream failure")
             }
         }
