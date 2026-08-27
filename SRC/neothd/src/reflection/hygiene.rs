@@ -20,6 +20,12 @@ pub const RAW_RETENTION_DAYS: i64 = 90;
 pub const YEARLY_HORIZON_DAYS: i64 = 365;
 /// Basis-point threshold for conservative duplicate classification.
 pub const EXACT_TOPIC_MATCH_BPS: u16 = 10_000;
+/// Version of the opt-in daily archive admission policy.
+pub const DAILY_ADMISSION_CONFIG_VERSION: u16 = 1;
+const MAX_DAILY_ADMISSION_SYNONYMS: usize = 1_024;
+const MAX_DAILY_ADMISSION_TOPIC_BYTES: usize = 512;
+const MAX_DAILY_ADMISSION_CONFIG_BYTES: usize = 256 * 1024;
+const MAX_DAILY_ADMISSION_TOPICS_PER_SIDE: usize = 64;
 
 const SECONDS_PER_DAY: i64 = 86_400;
 
@@ -41,6 +47,42 @@ pub struct RawReflection {
 pub struct TopicSynonymMap {
     pub version: u16,
     pub entries: BTreeMap<String, String>,
+}
+
+/// Opt-in, deterministic admission policy for the daily cadence.  It is
+/// deliberately independent from the historical hygiene/retention plan: an
+/// absent block leaves the existing daily path unchanged.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DailyAdmissionConfig {
+    pub version: u16,
+    pub enabled: bool,
+    pub min_jaccard_basis_points: u16,
+    #[serde(default)]
+    pub candidate_must_be_superset: bool,
+    #[serde(default)]
+    pub topic_synonyms: TopicSynonymMap,
+}
+
+impl Default for DailyAdmissionConfig {
+    fn default() -> Self {
+        Self {
+            version: DAILY_ADMISSION_CONFIG_VERSION,
+            enabled: false,
+            // This value is intentionally inert until `enabled` is set.  It
+            // is not a near-match default for old installations.
+            min_jaccard_basis_points: EXACT_TOPIC_MATCH_BPS,
+            candidate_must_be_superset: false,
+            topic_synonyms: TopicSynonymMap::default(),
+        }
+    }
+}
+
+/// Result of one pure daily-candidate comparison.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DailyAdmissionDecision {
+    Admit { jaccard_basis_points: u16 },
+    Suppress { jaccard_basis_points: u16 },
 }
 
 impl Default for TopicSynonymMap {
@@ -123,7 +165,7 @@ pub struct HygienePlan {
 
 /// A visible refusal to plan malformed or unsupported data. No error is
 /// silently converted into a retention or deletion decision.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum HygieneError {
     UnknownSchemaVersion {
         found: u16,
@@ -153,6 +195,38 @@ pub enum HygieneError {
     SynonymCycle {
         alias: String,
     },
+    UnknownDailyAdmissionConfigVersion {
+        found: u16,
+    },
+    InvalidDailyAdmissionThreshold {
+        found: u16,
+    },
+    DailyAdmissionCapacityExceeded,
+    EmptyAdmissionCandidate,
+}
+
+/// Error reporting from unattended admission must not disclose operator topic
+/// strings (or raw reflection data) through either Display or Debug logs.
+impl fmt::Debug for HygieneError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = match self {
+            Self::UnknownSchemaVersion { .. } => "UnknownSchemaVersion",
+            Self::UnknownSynonymMapVersion { .. } => "UnknownSynonymMapVersion",
+            Self::EmptyRawId { .. } => "EmptyRawId",
+            Self::DuplicateRawId { .. } => "DuplicateRawId",
+            Self::FutureTimestamp { .. } => "FutureTimestamp",
+            Self::InvalidPeriodReflection { .. } => "InvalidPeriodReflection",
+            Self::InvalidSynonym { .. } => "InvalidSynonym",
+            Self::SynonymCycle { .. } => "SynonymCycle",
+            Self::UnknownDailyAdmissionConfigVersion { .. } => {
+                "UnknownDailyAdmissionConfigVersion"
+            }
+            Self::InvalidDailyAdmissionThreshold { .. } => "InvalidDailyAdmissionThreshold",
+            Self::DailyAdmissionCapacityExceeded => "DailyAdmissionCapacityExceeded",
+            Self::EmptyAdmissionCandidate => "EmptyAdmissionCandidate",
+        };
+        f.debug_struct("HygieneError").field("kind", &kind).finish()
+    }
 }
 
 impl fmt::Display for HygieneError {
@@ -168,25 +242,19 @@ impl fmt::Display for HygieneError {
                 )
             }
             Self::EmptyRawId { index } => write!(f, "raw reflection at index {index} has no id"),
-            Self::DuplicateRawId { id } => write!(f, "raw reflection id {id:?} is duplicated"),
-            Self::FutureTimestamp {
-                source,
-                timestamp,
-                now_unix,
-            } => write!(
-                f,
-                "reflection {source:?} timestamp {timestamp} is after planner time {now_unix}"
-            ),
-            Self::InvalidPeriodReflection { source, reason } => {
-                write!(f, "period reflection {source:?} is invalid: {reason}")
+            Self::DuplicateRawId { .. } => write!(f, "raw reflection id is duplicated"),
+            Self::FutureTimestamp { .. } => write!(f, "reflection timestamp is after planner time"),
+            Self::InvalidPeriodReflection { .. } => write!(f, "period reflection is invalid"),
+            Self::InvalidSynonym { .. } => write!(f, "topic synonym is invalid"),
+            Self::SynonymCycle { .. } => write!(f, "topic synonym graph contains a cycle"),
+            Self::UnknownDailyAdmissionConfigVersion { found } => {
+                write!(f, "unsupported daily-admission config version {found}")
             }
-            Self::InvalidSynonym { alias, canonical } => write!(
-                f,
-                "topic synonym {alias:?} -> {canonical:?} becomes empty after normalization"
-            ),
-            Self::SynonymCycle { alias } => {
-                write!(f, "topic synonym graph contains a cycle at {alias:?}")
+            Self::InvalidDailyAdmissionThreshold { found } => {
+                write!(f, "invalid daily-admission Jaccard threshold {found}")
             }
+            Self::DailyAdmissionCapacityExceeded => write!(f, "daily-admission configuration exceeds safety limits"),
+            Self::EmptyAdmissionCandidate => write!(f, "daily-admission candidate has no topics"),
         }
     }
 }
@@ -258,6 +326,80 @@ pub fn jaccard_basis_points(left: &BTreeSet<String>, right: &BTreeSet<String>) -
     let intersection = left.intersection(right).count() as u64;
     let union = left.union(right).count() as u64;
     ((intersection * u64::from(EXACT_TOPIC_MATCH_BPS)) / union) as u16
+}
+
+/// Make an admission decision without touching archive, state, or clocks.
+/// A candidate must canonicalise to a non-empty set.  Previous empty data is
+/// never a duplicate.  Similarity is integer basis points, so a threshold is
+/// deterministic across platforms and equality is intentionally inclusive.
+pub fn decide_daily_admission(
+    candidate_topics: &[String],
+    previous_topics: &[String],
+    config: &DailyAdmissionConfig,
+) -> Result<DailyAdmissionDecision, HygieneError> {
+    if config.version != DAILY_ADMISSION_CONFIG_VERSION {
+        return Err(HygieneError::UnknownDailyAdmissionConfigVersion {
+            found: config.version,
+        });
+    }
+    if !(1..=EXACT_TOPIC_MATCH_BPS).contains(&config.min_jaccard_basis_points) {
+        return Err(HygieneError::InvalidDailyAdmissionThreshold {
+            found: config.min_jaccard_basis_points,
+        });
+    }
+    validate_daily_admission_bounds(candidate_topics, previous_topics, config)?;
+    let synonyms = normalized_synonym_map(&config.topic_synonyms)?;
+    let candidate = canonical_topic_set(candidate_topics, &synonyms);
+    if candidate.is_empty() {
+        return Err(HygieneError::EmptyAdmissionCandidate);
+    }
+    let previous = canonical_topic_set(previous_topics, &synonyms);
+    let jaccard_basis_points = jaccard_basis_points(&candidate, &previous);
+    let superset_ok = !config.candidate_must_be_superset || candidate.is_superset(&previous);
+    if !previous.is_empty()
+        && superset_ok
+        && jaccard_basis_points >= config.min_jaccard_basis_points
+    {
+        Ok(DailyAdmissionDecision::Suppress { jaccard_basis_points })
+    } else {
+        Ok(DailyAdmissionDecision::Admit { jaccard_basis_points })
+    }
+}
+
+/// Check every input limit before normalization or any owned-string clone.
+/// The single aggregate covers aliases, canonical values, and both topic
+/// lists, so a configuration cannot shift allocation pressure to candidates.
+fn validate_daily_admission_bounds(
+    candidate_topics: &[String],
+    previous_topics: &[String],
+    config: &DailyAdmissionConfig,
+) -> Result<(), HygieneError> {
+    if config.topic_synonyms.entries.len() > MAX_DAILY_ADMISSION_SYNONYMS
+        || candidate_topics.len() > MAX_DAILY_ADMISSION_TOPICS_PER_SIDE
+        || previous_topics.len() > MAX_DAILY_ADMISSION_TOPICS_PER_SIDE
+    {
+        return Err(HygieneError::DailyAdmissionCapacityExceeded);
+    }
+    let mut total = 0usize;
+    for value in config
+        .topic_synonyms
+        .entries
+        .iter()
+        .flat_map(|(alias, canonical)| [alias.as_str(), canonical.as_str()])
+        .chain(candidate_topics.iter().map(String::as_str))
+        .chain(previous_topics.iter().map(String::as_str))
+    {
+        if value.len() > MAX_DAILY_ADMISSION_TOPIC_BYTES {
+            return Err(HygieneError::DailyAdmissionCapacityExceeded);
+        }
+        total = total
+            .checked_add(value.len())
+            .ok_or(HygieneError::DailyAdmissionCapacityExceeded)?;
+        if total > MAX_DAILY_ADMISSION_CONFIG_BYTES {
+            return Err(HygieneError::DailyAdmissionCapacityExceeded);
+        }
+    }
+    Ok(())
 }
 
 fn plan_with_migration(
@@ -472,21 +614,47 @@ fn normalized_synonym_map(
         }
     }
 
+    let mut colors = BTreeMap::<String, VisitColor>::new();
     let mut resolved = BTreeMap::new();
     for alias in direct.keys() {
-        let mut current = alias.clone();
-        let mut seen = BTreeSet::new();
-        while let Some(next) = direct.get(&current) {
-            if !seen.insert(current.clone()) {
-                return Err(HygieneError::SynonymCycle {
-                    alias: alias.clone(),
-                });
-            }
-            current = next.clone();
-        }
-        resolved.insert(alias.clone(), current);
+        resolve_synonym(alias, &direct, &mut colors, &mut resolved)?;
     }
     Ok(resolved)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VisitColor {
+    Visiting,
+    Resolved,
+}
+
+/// Deterministic colour-state DFS: each direct alias edge is visited once and
+/// each final canonical string is memoized, rather than walking long chains
+/// separately for every alias.
+fn resolve_synonym(
+    alias: &str,
+    direct: &BTreeMap<String, String>,
+    colors: &mut BTreeMap<String, VisitColor>,
+    resolved: &mut BTreeMap<String, String>,
+) -> Result<String, HygieneError> {
+    if let Some(value) = resolved.get(alias) {
+        return Ok(value.clone());
+    }
+    if colors.get(alias) == Some(&VisitColor::Visiting) {
+        return Err(HygieneError::SynonymCycle {
+            alias: String::new(),
+        });
+    }
+    colors.insert(alias.to_owned(), VisitColor::Visiting);
+    let next = direct.get(alias).expect("DFS only starts from direct aliases");
+    let canonical = if direct.contains_key(next) {
+        resolve_synonym(next, direct, colors, resolved)?
+    } else {
+        next.clone()
+    };
+    colors.insert(alias.to_owned(), VisitColor::Resolved);
+    resolved.insert(alias.to_owned(), canonical.clone());
+    Ok(canonical)
 }
 
 fn canonical_topic_set(topics: &[String], synonyms: &BTreeMap<String, String>) -> BTreeSet<String> {
@@ -539,6 +707,138 @@ fn derive_yearly_inputs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn daily_admission_is_synonym_aware_and_uses_an_inclusive_threshold() {
+        let config = DailyAdmissionConfig {
+            version: DAILY_ADMISSION_CONFIG_VERSION,
+            enabled: true,
+            min_jaccard_basis_points: 10_000,
+            candidate_must_be_superset: false,
+            topic_synonyms: TopicSynonymMap {
+                version: TOPIC_SYNONYM_MAP_VERSION,
+                entries: BTreeMap::from([("k8s".into(), "kubernetes".into())]),
+            },
+        };
+        assert_eq!(
+            decide_daily_admission(&["K8S".into()], &["kubernetes".into()], &config).unwrap(),
+            DailyAdmissionDecision::Suppress { jaccard_basis_points: 10_000 }
+        );
+    }
+
+    #[test]
+    fn daily_admission_rejects_empty_candidate_and_respects_superset_precedence() {
+        let mut config = DailyAdmissionConfig {
+            version: DAILY_ADMISSION_CONFIG_VERSION,
+            enabled: true,
+            min_jaccard_basis_points: 5_000,
+            candidate_must_be_superset: true,
+            topic_synonyms: TopicSynonymMap::default(),
+        };
+        assert!(matches!(
+            decide_daily_admission(&[], &["rust".into()], &config),
+            Err(HygieneError::EmptyAdmissionCandidate)
+        ));
+        assert_eq!(
+            decide_daily_admission(&["rust".into()], &["rust".into(), "wal".into()], &config)
+                .unwrap(),
+            DailyAdmissionDecision::Admit { jaccard_basis_points: 5_000 }
+        );
+        config.candidate_must_be_superset = false;
+        assert_eq!(
+            decide_daily_admission(&["rust".into()], &["rust".into(), "wal".into()], &config)
+                .unwrap(),
+            DailyAdmissionDecision::Suppress { jaccard_basis_points: 5_000 }
+        );
+    }
+
+    #[test]
+    fn daily_admission_fails_closed_for_invalid_version_cycles_and_conflicting_aliases() {
+        let mut config = DailyAdmissionConfig::default();
+        config.enabled = true;
+        config.version += 1;
+        assert!(matches!(
+            decide_daily_admission(&["rust".into()], &["rust".into()], &config),
+            Err(HygieneError::UnknownDailyAdmissionConfigVersion { .. })
+        ));
+        config.version = DAILY_ADMISSION_CONFIG_VERSION;
+        config.topic_synonyms.entries = BTreeMap::from([
+            ("a".into(), "b".into()),
+            ("b".into(), "a".into()),
+        ]);
+        assert!(matches!(
+            decide_daily_admission(&["a".into()], &["b".into()], &config),
+            Err(HygieneError::SynonymCycle { .. })
+        ));
+        config.topic_synonyms = TopicSynonymMap {
+            version: TOPIC_SYNONYM_MAP_VERSION + 1,
+            entries: BTreeMap::new(),
+        };
+        assert!(matches!(
+            decide_daily_admission(&["a".into()], &["b".into()], &config),
+            Err(HygieneError::UnknownSynonymMapVersion { .. })
+        ));
+        config.topic_synonyms = TopicSynonymMap {
+            version: TOPIC_SYNONYM_MAP_VERSION,
+            entries: BTreeMap::from([("A".into(), "x".into()), ("a!".into(), "y".into())]),
+        };
+        assert!(matches!(
+            decide_daily_admission(&["a".into()], &["b".into()], &config),
+            Err(HygieneError::InvalidSynonym { .. })
+        ));
+    }
+
+    #[test]
+    fn daily_admission_memoizes_long_alias_chains_and_rejects_all_bounds_before_work() {
+        let mut config = DailyAdmissionConfig::default();
+        config.enabled = true;
+        for index in 0..MAX_DAILY_ADMISSION_SYNONYMS {
+            let next = if index + 1 == MAX_DAILY_ADMISSION_SYNONYMS {
+                "canonical".to_string()
+            } else {
+                format!("alias-{}", index + 1)
+            };
+            config.topic_synonyms.entries.insert(format!("alias-{index}"), next);
+        }
+        assert_eq!(
+            decide_daily_admission(&["alias-0".into()], &["canonical".into()], &config),
+            Ok(DailyAdmissionDecision::Suppress { jaccard_basis_points: 10_000 })
+        );
+
+        let oversized = "x".repeat(MAX_DAILY_ADMISSION_TOPIC_BYTES + 1);
+        assert_eq!(
+            decide_daily_admission(&[oversized], &[], &config),
+            Err(HygieneError::DailyAdmissionCapacityExceeded)
+        );
+        assert_eq!(
+            decide_daily_admission(
+                &vec!["x".into(); MAX_DAILY_ADMISSION_TOPICS_PER_SIDE + 1],
+                &[],
+                &config,
+            ),
+            Err(HygieneError::DailyAdmissionCapacityExceeded)
+        );
+    }
+
+    #[test]
+    fn hygiene_errors_redact_operator_content_from_display_and_debug() {
+        let secret = "ALIAS_TOPIC_BODY_PATH_SHOULD_NOT_LEAK";
+        let errors = [
+            HygieneError::InvalidSynonym {
+                alias: secret.into(),
+                canonical: secret.into(),
+            },
+            HygieneError::SynonymCycle { alias: secret.into() },
+            HygieneError::InvalidPeriodReflection {
+                source: secret.into(),
+                reason: "operator body",
+            },
+        ];
+        for error in errors {
+            assert!(!error.to_string().contains(secret));
+            assert!(!format!("{error:?}").contains(secret));
+        }
+    }
 
     fn day(day: i64) -> i64 {
         day * SECONDS_PER_DAY

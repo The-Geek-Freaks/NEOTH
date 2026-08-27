@@ -38,6 +38,56 @@ pub const MAX_HYGIENE_IN_MEMORY_INPUT_BYTES: usize = MAX_HYGIENE_SNAPSHOT_BYTES;
 // same-process serialization; the capability-bound file lock remains the
 // authority across processes.
 static HYGIENE_STATE_LOCK: Mutex<()> = Mutex::new(());
+static DAILY_ADMISSION_STATE_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+static TEST_DAILY_ADMISSION_STALE_CAS: Mutex<bool> = Mutex::new(false);
+
+/// Test-only fault injection: model a competing writer winning between the
+/// caller's admission read and CAS without exposing any production seam.
+#[cfg(test)]
+pub(crate) fn fail_next_daily_admission_cas_as_stale_for_test() {
+    *TEST_DAILY_ADMISSION_STALE_CAS
+        .lock()
+        .expect("daily admission stale-CAS test hook poisoned") = true;
+}
+
+pub const DAILY_ADMISSION_STATE_FILE: &str = "state-v1.json";
+/// Version 2 deliberately requires the cryptographic archive digest. Version
+/// 1 carried a non-cryptographic fingerprint and is fail-closed rather than
+/// silently accepted as recovery authority.
+pub const DAILY_ADMISSION_STATE_SCHEMA_VERSION: u16 = 2;
+/// SHA-256 is stored as exactly sixty-four lower-case hexadecimal bytes.
+pub const DAILY_ADMISSION_ARCHIVE_SHA256_BYTES: usize = 64;
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DailyAdmissionOutcome {
+    Admitted,
+    Suppressed,
+}
+
+/// This state belongs only to the opt-in daily admission gate.  It does not
+/// share a revision, a namespace, or retention semantics with hygiene state.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DailyAdmissionState {
+    pub schema_version: u16,
+    pub revision: u64,
+    pub tag: String,
+    pub outcome: DailyAdmissionOutcome,
+    /// Stable SHA-256 of the exact admitted JSONL record. Suppression has
+    /// no archive and therefore no digest. This prevents a later same-tag
+    /// candidate from changing what recovery publishes to Obsidian.
+    pub archive_sha256: Option<String>,
+}
+
+pub struct DailyAdmissionGuard {
+    _process_lock: std::sync::MutexGuard<'static, ()>,
+    store: crate::skills::store::BoundDirectory,
+    _os_lock: std::fs::File,
+    lock_binding: crate::skills::store::BoundChildObject,
+}
 
 /// The durable snapshot. Its raw set is always the retained set of a freshly
 /// computed plan; historical period records and the operator's exact synonym
@@ -223,6 +273,181 @@ pub fn hygiene_state_lock_path(neoth_home: &Path) -> PathBuf {
         .join("reflections")
         .join("hygiene")
         .join("state-v1.lock")
+}
+
+pub fn daily_admission_state_path(neoth_home: &Path) -> PathBuf {
+    neoth_home
+        .join("reflections")
+        .join("daily-admission")
+        .join(DAILY_ADMISSION_STATE_FILE)
+}
+
+/// Acquire the one daily-admission gate in process-before-OS-lock order.  The
+/// returned guard intentionally spans archive inspection, append/recovery,
+/// state CAS, and marker publication so two daemons cannot interleave them.
+pub fn lock_daily_admission(
+    neoth_home: &Path,
+) -> Result<DailyAdmissionGuard, HygieneStoreError> {
+    let process_lock = DAILY_ADMISSION_STATE_LOCK
+        .lock()
+        .map_err(|_| HygieneStoreError::LockPoisoned)?;
+    prepare_daily_admission_namespace(neoth_home)?;
+    let store = open_daily_admission_directory(neoth_home)?;
+    let (os_lock, lock_binding) = crate::skills::store::open_or_create_bound_lockfile(
+        &store.dir,
+        OsStr::new("state-v1.lock"),
+        &store.display_path.join("state-v1.lock"),
+    )
+    .map_err(|_| HygieneStoreError::LockUnavailable)?;
+    acquire_bound_lock(&os_lock)?;
+    Ok(DailyAdmissionGuard {
+        _process_lock: process_lock,
+        store,
+        _os_lock: os_lock,
+        lock_binding,
+    })
+}
+
+/// Safely migrate the historical public-ish daily namespace before any daily
+/// gate is acquired. Every component is opened through a retained capability;
+/// wrong ownership, symlinks, junctions/reparse points, or a failed post-write
+/// verification remain hard failures. Only the current owner may have an old
+/// `0755`/permissive DACL tightened to the private form.
+pub fn prepare_daily_admission_namespace(neoth_home: &Path) -> Result<(), HygieneStoreError> {
+    let home = crate::skills::store::open_absolute_bound_directory(
+        neoth_home,
+        false,
+        "daily admission home",
+    )
+    .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?
+    .ok_or(HygieneStoreError::SafeStoreUnavailable)?;
+    verify_private_hygiene_directory(&home.dir)?;
+    let reflections_path = neoth_home.join("reflections");
+    let reflections = crate::skills::store::open_or_create_private_child_dir(
+        &home.dir,
+        OsStr::new("reflections"),
+        &reflections_path,
+    )
+    .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
+    tighten_legacy_private_directory(&reflections_path, &reflections)?;
+    let daily_path = reflections_path.join("daily");
+    let daily = crate::skills::store::open_or_create_private_child_dir(
+        &reflections,
+        OsStr::new("daily"),
+        &daily_path,
+    )
+    .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
+    tighten_legacy_private_directory(&daily_path, &daily)
+}
+
+impl DailyAdmissionGuard {
+    pub fn load(&self) -> Result<Option<DailyAdmissionState>, HygieneStoreError> {
+        self.ensure_lock()?;
+        let Some(bytes) = read_child_optional(&self.store, DAILY_ADMISSION_STATE_FILE)? else {
+            return Ok(None);
+        };
+        let state: DailyAdmissionState =
+            serde_json::from_slice(&bytes).map_err(HygieneStoreError::InvalidSnapshot)?;
+        if state.schema_version != DAILY_ADMISSION_STATE_SCHEMA_VERSION {
+            return Err(HygieneStoreError::UnsupportedSnapshotVersion {
+                found: state.schema_version,
+            });
+        }
+        if state.revision == 0 || state.tag.is_empty() || state.tag.len() > MAX_HYGIENE_TAG_BYTES
+            || (state.outcome == DailyAdmissionOutcome::Admitted && !state.archive_sha256.as_deref().is_some_and(valid_daily_archive_sha256))
+            || (state.outcome == DailyAdmissionOutcome::Suppressed && state.archive_sha256.is_some())
+        {
+            return Err(HygieneStoreError::InvalidSnapshotRevision { found: state.revision });
+        }
+        Ok(Some(state))
+    }
+
+    /// Revision CAS.  `RecoveryReadRequired` means bytes may be published but
+    /// their fsync result is unknown; callers must stop before their marker and
+    /// recover by a fresh read on the next tick.
+    pub fn compare_and_set(
+        &self,
+        expected_revision: u64,
+        tag: &str,
+        outcome: DailyAdmissionOutcome,
+        archive_sha256: Option<&str>,
+    ) -> Result<HygieneDurability, HygieneStoreError> {
+        if tag.is_empty() || tag.len() > MAX_HYGIENE_TAG_BYTES {
+            return Err(HygieneStoreError::CapacityExceeded);
+        }
+        if matches!(outcome, DailyAdmissionOutcome::Admitted)
+            != archive_sha256.is_some_and(valid_daily_archive_sha256)
+        {
+            return Err(HygieneStoreError::CapacityExceeded);
+        }
+        self.ensure_lock()?;
+        #[cfg(test)]
+        {
+            let mut injected = TEST_DAILY_ADMISSION_STALE_CAS
+                .lock()
+                .expect("daily admission stale-CAS test hook poisoned");
+            if std::mem::take(&mut *injected) {
+                return Err(HygieneStoreError::StaleRevision {
+                    expected: expected_revision,
+                    actual: expected_revision.saturating_add(1),
+                });
+            }
+        }
+        let current = self.load()?;
+        let actual = current.as_ref().map_or(0, |state| state.revision);
+        if actual != expected_revision {
+            return Err(HygieneStoreError::StaleRevision {
+                expected: expected_revision,
+                actual,
+            });
+        }
+        let state = DailyAdmissionState {
+            schema_version: DAILY_ADMISSION_STATE_SCHEMA_VERSION,
+            revision: actual.checked_add(1).ok_or(HygieneStoreError::StaleRevision {
+                expected: expected_revision,
+                actual,
+            })?,
+            tag: tag.to_string(),
+            outcome,
+            archive_sha256: archive_sha256.map(str::to_owned),
+        };
+        let bytes = serde_json::to_vec(&state).map_err(HygieneStoreError::InvalidSnapshot)?;
+        match crate::skills::store::atomic_write_private_child_reported(
+            &self.store.dir,
+            OsStr::new(DAILY_ADMISSION_STATE_FILE),
+            &self.store.display_path.join(DAILY_ADMISSION_STATE_FILE),
+            &bytes,
+        ) {
+            Ok(crate::skills::store::PrivateChildCommit::PublishedAndSynced) => {
+                Ok(HygieneDurability::Confirmed)
+            }
+            Ok(crate::skills::store::PrivateChildCommit::PublishedDurabilityUnknown(_)) => {
+                Ok(HygieneDurability::RecoveryReadRequired)
+            }
+            Err(_) => Err(HygieneStoreError::SafeStoreUnavailable),
+        }
+    }
+
+    fn ensure_lock(&self) -> Result<(), HygieneStoreError> {
+        if self
+            .lock_binding
+            .matches_child(
+                &self.store.dir,
+                OsStr::new("state-v1.lock"),
+                &self.store.display_path.join("state-v1.lock"),
+            )
+            .map_err(|_| HygieneStoreError::LockUnavailable)?
+        {
+            Ok(())
+        } else {
+            Err(HygieneStoreError::LockUnavailable)
+        }
+    }
+}
+
+fn valid_daily_archive_sha256(value: &str) -> bool {
+    value.len() == DAILY_ADMISSION_ARCHIVE_SHA256_BYTES
+        && value.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 /// Loads and structurally validates the authoritative snapshot. Missing state
@@ -430,6 +655,36 @@ fn open_hygiene_directory(
     Ok(crate::skills::store::BoundDirectory { dir, display_path })
 }
 
+fn open_daily_admission_directory(
+    neoth_home: &Path,
+) -> Result<crate::skills::store::BoundDirectory, HygieneStoreError> {
+    let home = crate::skills::store::open_absolute_bound_directory(
+        neoth_home,
+        false,
+        "daily admission home",
+    )
+    .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?
+    .ok_or(HygieneStoreError::SafeStoreUnavailable)?;
+    verify_private_hygiene_directory(&home.dir)?;
+    let reflections_path = neoth_home.join("reflections");
+    let reflections = crate::skills::store::open_or_create_private_child_dir(
+        &home.dir,
+        OsStr::new("reflections"),
+        &reflections_path,
+    )
+    .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
+    verify_private_hygiene_directory(&reflections)?;
+    let display_path = reflections_path.join("daily-admission");
+    let dir = crate::skills::store::open_or_create_private_child_dir(
+        &reflections,
+        OsStr::new("daily-admission"),
+        &display_path,
+    )
+    .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
+    verify_private_hygiene_directory(&dir)?;
+    Ok(crate::skills::store::BoundDirectory { dir, display_path })
+}
+
 fn verify_private_hygiene_directory(directory: &cap_std::fs::Dir) -> Result<(), HygieneStoreError> {
     #[cfg(unix)]
     {
@@ -454,6 +709,40 @@ fn verify_private_hygiene_directory(directory: &cap_std::fs::Dir) -> Result<(), 
     #[cfg(not(any(unix, windows)))]
     let _ = directory;
     Ok(())
+}
+
+/// Tighten only a real current-user-owned legacy directory, then independently
+/// verify the result through its existing directory handle. The capability
+/// never follows a path after it has been opened.
+fn tighten_legacy_private_directory(
+    display_path: &Path,
+    directory: &cap_std::fs::Dir,
+) -> Result<(), HygieneStoreError> {
+    #[cfg(not(windows))]
+    let _ = display_path;
+    #[cfg(unix)]
+    {
+        use cap_std::fs::MetadataExt as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let metadata = directory
+            .dir_metadata()
+            .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
+        if metadata.uid() != unsafe { libc::geteuid() } {
+            return Err(HygieneStoreError::SafeStoreUnavailable);
+        }
+        if metadata.permissions().mode() & 0o077 != 0 {
+            directory
+                .set_permissions(".", std::fs::Permissions::from_mode(0o700))
+                .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
+        }
+    }
+    #[cfg(windows)]
+    {
+        crate::wal::win_native::set_private_current_user_directory_dacl_bound(display_path, directory)
+            .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
+    }
+    verify_private_hygiene_directory(directory)
 }
 
 fn ensure_lock_binding(
@@ -849,6 +1138,45 @@ mod tests {
 
     fn prepare_private_hygiene_namespace(home: &TestHome) {
         open_hygiene_directory(home.path()).expect("create private hygiene namespace");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_daily_namespace_is_owner_checked_and_tightened_before_the_gate() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let home = test_home();
+        let reflections = home.path().join("reflections");
+        let daily = reflections.join("daily");
+        std::fs::create_dir(&reflections).unwrap();
+        std::fs::create_dir(&daily).unwrap();
+        std::fs::set_permissions(&reflections, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&daily, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        prepare_daily_admission_namespace(home.path()).unwrap();
+        assert_eq!(std::fs::metadata(&reflections).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(std::fs::metadata(&daily).unwrap().permissions().mode() & 0o777, 0o700);
+        lock_daily_admission(home.path()).expect("private daily gate opens after migration");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_legacy_daily_namespace_is_bound_hardened_before_settlement() {
+        let home = test_home();
+        let reflections = home.path().join("reflections");
+        let daily = reflections.join("daily");
+        std::fs::create_dir(&reflections).unwrap();
+        std::fs::create_dir(&daily).unwrap();
+        prepare_daily_admission_namespace(home.path()).unwrap();
+        let reflection = crate::reflection::periodic::build_reflection(
+            crate::reflection::periodic::PeriodKind::Daily,
+            "2026-08-27", &["windows-migration".into()], 1_787_788_800,
+        )
+        .unwrap();
+        assert!(crate::reflection::periodic::settle_daily_admission(
+            home.path(), &reflection, None, None,
+        )
+        .is_ok());
     }
 
     fn period(kind: &str, tag: &str, at: i64, body: &str) -> PeriodReflection {

@@ -195,6 +195,9 @@ pub struct ReflectionSitrep {
     pub recent: Vec<SitrepEntry>,
 }
 
+const MAX_SITREP_LOOKBACK_DAYS: u32 = 366;
+const MAX_SITREP_ENTRIES: usize = 128;
+
 /// Build a `ReflectionSitrep` by reading:
 /// 1. The persisted `SubconsciousTickState` (for `last_emitted_unix`).
 /// 2. Daily period-reflection JSONL files for the last `lookback_days`.
@@ -208,16 +211,23 @@ pub fn recent_reflections_sitrep(
     lookback_days: u32,
     max_entries: usize,
 ) -> Result<ReflectionSitrep, String> {
-    use crate::reflection::periodic::{PeriodKind, date_tag_from_unix, load_for_tag};
+    use crate::reflection::periodic::{date_tag_from_unix, load_daily_archive_for_reporting};
 
-    let state = load_tick_state(home)?;
+    let state = load_tick_state(home).map_err(|_| "reflection sitrep state unavailable".to_string())?;
     let now = crate::time::now_unix_i64();
     let mut entries: Vec<SitrepEntry> = Vec::new();
 
+    let lookback_days = lookback_days.min(MAX_SITREP_LOOKBACK_DAYS);
+    let max_entries = max_entries.min(MAX_SITREP_ENTRIES);
     for back in 0..lookback_days as i64 {
+        if entries.len() >= max_entries {
+            break;
+        }
         let ts = now - back * 86_400;
         let tag = date_tag_from_unix(ts);
-        for r in load_for_tag(home, PeriodKind::Daily, &tag) {
+        if let Some(r) = load_daily_archive_for_reporting(home, &tag)
+            .map_err(|_| "daily reflection reporting read failed".to_string())?
+        {
             entries.push(SitrepEntry {
                 kind: "daily".to_string(),
                 tag: r.tag.clone(),
@@ -356,7 +366,8 @@ fn tech_currency_preflight(
     home: &Path,
     now_unix: i64,
 ) -> Result<Option<TechCurrencyPreflight>, String> {
-    let cfg = crate::cli::reflect::ReflectTopics::load(home);
+    let cfg = crate::cli::reflect::ReflectTopics::load_for_automation(home)
+        .map_err(|error| format!("reflection automation config: {error}"))?;
     if !cfg.weekly_refresh {
         return Ok(None);
     }
@@ -471,6 +482,26 @@ fn obsidian_target(cfg: &crate::config::FreedomConfig) -> Option<(PathBuf, Strin
     Some((PathBuf::from(vault), subdir))
 }
 
+/// The daily-only opt-in transaction.  The private gate covers the archive
+/// inspection/append, CAS and marker so a second process observes either the
+/// durable suppression or the durable archive, never a window to duplicate it.
+fn run_daily_admission_tick(
+    home: &Path,
+    reflection: &crate::reflection::periodic::PeriodReflection,
+    config: Option<&crate::reflection::hygiene::DailyAdmissionConfig>,
+    obsidian: Option<(&Path, &str)>,
+) -> Result<bool, String> {
+    match crate::reflection::periodic::settle_daily_admission(
+        home, reflection, config, obsidian,
+    )
+    .map_err(|error| error.to_string())?
+    {
+        crate::reflection::periodic::DailySettlementOutcome::Admitted => Ok(true),
+        crate::reflection::periodic::DailySettlementOutcome::Suppressed => Ok(false),
+        crate::reflection::periodic::DailySettlementOutcome::AlreadyCompleted => Ok(false),
+    }
+}
+
 /// Generic offline daily/yearly reflection tick (OPT-IN). Composes a
 /// [`PeriodReflection`] from the period's top operator topics, archives it as
 /// JSONL, and — when an Obsidian vault is configured — writes the daily-note /
@@ -485,20 +516,17 @@ fn run_period_reflection_tick_once(
     kind: crate::reflection::periodic::PeriodKind,
     enabled: bool,
     tag: &str,
-    marker_name: &str,
+    yearly_marker_name: Option<&str>,
     window_days: i64,
     topic_n: usize,
     obsidian: Option<(&std::path::Path, &str)>,
+    daily_admission: Option<&crate::reflection::hygiene::DailyAdmissionConfig>,
 ) -> Result<bool, String> {
     use crate::reflection::periodic;
     use crate::reflection::top_topics_in_days;
 
     if !enabled {
         return Ok(false); // opt-in; off by default
-    }
-    let marker = home.join("reflections").join(marker_name);
-    if marker_matches(&marker, tag)? {
-        return Ok(false); // already done this period
     }
     let views_path = home.join("views.db");
     if !views_path.exists() {
@@ -512,6 +540,16 @@ fn run_period_reflection_tick_once(
 
     match periodic::build_reflection(kind, tag, &topics, now_unix) {
         Some(refl) => {
+            if kind == crate::reflection::periodic::PeriodKind::Daily {
+                // Every daily writer reconciles durable admission state before
+                // considering whether the current policy is present/removed.
+                return run_daily_admission_tick(home, &refl, daily_admission, obsidian);
+            }
+            let marker_name = yearly_marker_name.ok_or("yearly marker is required")?;
+            let marker = home.join("reflections").join(marker_name);
+            if marker_matches(&marker, tag)? {
+                return Ok(false); // already done this period
+            }
             // Archive FIRST — only mark the period done once it's persisted, so
             // a transient IO error retries next tick instead of silently
             // dropping the day's reflection.
@@ -533,8 +571,15 @@ fn run_period_reflection_tick_once(
             Ok(true)
         }
         None => {
-            // Empty period → no vacuous note, but still mark done so we don't
-            // recompute the topic query every tick for the rest of the period.
+            // Daily has no candidate to settle. It must never fall back to an
+            // ambient marker path; only the transaction publishes that marker.
+            if kind == crate::reflection::periodic::PeriodKind::Daily {
+                return Ok(false);
+            }
+            // Empty yearly period → no vacuous note, but still mark done so we
+            // don't recompute the topic query for the rest of the period.
+            let marker_name = yearly_marker_name.ok_or("yearly marker is required")?;
+            let marker = home.join("reflections").join(marker_name);
             persist_marker(&marker, tag)?;
             Ok(false)
         }
@@ -556,7 +601,8 @@ fn run_period_reflection_ticks_once(
 ) -> Result<PeriodTickResults, String> {
     use crate::reflection::periodic::{PeriodKind, date_tag_from_unix, year_tag_from_unix};
 
-    let cfg = crate::cli::reflect::ReflectTopics::load(home);
+    let cfg = crate::cli::reflect::ReflectTopics::load_for_automation(home)
+        .map_err(|error| format!("reflection automation config: {error}"))?;
     let obsidian = obsidian_target(config);
     let obs_ref = obsidian.as_ref().map(|(p, s)| (p.as_path(), s.as_str()));
     let daily_tag = date_tag_from_unix(now_unix);
@@ -566,10 +612,11 @@ fn run_period_reflection_ticks_once(
         PeriodKind::Daily,
         cfg.daily_notes,
         &daily_tag,
-        "daily-last.txt",
+        None,
         1,
         5,
         obs_ref,
+        cfg.daily_admission.as_ref(),
     );
     let yearly_tag = year_tag_from_unix(now_unix);
     let yearly = run_period_reflection_tick_once(
@@ -578,10 +625,11 @@ fn run_period_reflection_ticks_once(
         PeriodKind::Yearly,
         cfg.yearly_summary,
         &yearly_tag,
-        "yearly-last.txt",
+        Some("yearly-last.txt"),
         365,
         10,
         obs_ref,
+        None,
     );
     Ok(PeriodTickResults { daily, yearly })
 }
@@ -692,6 +740,257 @@ pub fn iso_week_tag_from_unix(ts_unix: i64) -> String {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn daily_admission_is_archive_first_idempotent_and_suppression_has_no_archive_side_effect() {
+        use crate::reflection::hygiene::DailyAdmissionConfig;
+        use crate::reflection::periodic::{self, PeriodKind};
+
+        let home = TempDir::new().unwrap();
+        let mut config = DailyAdmissionConfig::default();
+        config.enabled = true;
+        let first = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-26", &["rust".into()], 1_787_702_400,
+        ).unwrap();
+        let first_marker = home.path().join("reflections/daily-last.txt");
+        assert!(run_daily_admission_tick(home.path(), &first, Some(&config), None).unwrap());
+        let first_path = periodic::jsonl_file(home.path(), PeriodKind::Daily, &first.tag);
+        let bytes = std::fs::read(&first_path).unwrap();
+        std::fs::remove_file(&first_marker).unwrap();
+        assert!(run_daily_admission_tick(home.path(), &first, Some(&config), None).unwrap());
+        assert_eq!(std::fs::read(&first_path).unwrap(), bytes, "recovery must not append twice");
+
+        let second = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-27", &["rust".into()], 1_787_788_800,
+        ).unwrap();
+        assert!(!run_daily_admission_tick(home.path(), &second, Some(&config), None).unwrap());
+        assert!(home.path().join("reflections/daily-last.txt").exists(), "suppression is durable before its marker");
+        assert!(!periodic::jsonl_file(home.path(), PeriodKind::Daily, &second.tag).exists());
+    }
+
+    #[test]
+    fn stale_daily_admission_cas_leaves_archive_state_and_marker_untouched() {
+        use crate::reflection::hygiene::DailyAdmissionConfig;
+        use crate::reflection::hygiene_store::{daily_admission_state_path, fail_next_daily_admission_cas_as_stale_for_test};
+        use crate::reflection::periodic::{self, PeriodKind};
+
+        let home = TempDir::new().unwrap();
+        let mut config = DailyAdmissionConfig::default();
+        config.enabled = true;
+        let prior = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-26", &["same".into()], 1_787_702_400,
+        ).unwrap();
+        run_daily_admission_tick(home.path(), &prior, Some(&config), None).unwrap();
+        let current = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-27", &["same".into()], 1_787_788_800,
+        ).unwrap();
+        let state_before = std::fs::read(daily_admission_state_path(home.path())).unwrap();
+        fail_next_daily_admission_cas_as_stale_for_test();
+        assert!(run_daily_admission_tick(home.path(), &current, Some(&config), None).is_err());
+        assert!(!periodic::jsonl_file(home.path(), PeriodKind::Daily, &current.tag).exists());
+        assert_eq!(std::fs::read(daily_admission_state_path(home.path())).unwrap(), state_before);
+        assert_eq!(
+            std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(),
+            prior.tag,
+            "a stale CAS must not overwrite the prior marker",
+        );
+    }
+
+    #[test]
+    fn unknown_state_durability_stops_before_marker_then_recovers_from_fresh_read() {
+        use crate::reflection::hygiene::DailyAdmissionConfig;
+        use crate::reflection::hygiene_store::daily_admission_state_path;
+        use crate::reflection::periodic::{self, PeriodKind};
+
+        let home = TempDir::new().unwrap();
+        let mut config = DailyAdmissionConfig::default();
+        config.enabled = true;
+        let reflection = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-27", &["recover".into()], 1_787_788_800,
+        ).unwrap();
+        crate::skills::store::fail_private_child_post_commit_validation_for_test(
+            &daily_admission_state_path(home.path()),
+        );
+        assert!(run_daily_admission_tick(home.path(), &reflection, Some(&config), None).is_err());
+        let archive_before = std::fs::read(periodic::jsonl_file(home.path(), PeriodKind::Daily, &reflection.tag)).unwrap();
+        assert!(!home.path().join("reflections/daily-last.txt").exists());
+        assert!(run_daily_admission_tick(home.path(), &reflection, Some(&config), None).unwrap());
+        assert_eq!(std::fs::read(periodic::jsonl_file(home.path(), PeriodKind::Daily, &reflection.tag)).unwrap(), archive_before);
+        assert!(home.path().join("reflections/daily-last.txt").exists());
+    }
+
+    #[test]
+    fn concurrent_daily_contenders_converge_to_one_record_and_coherent_state() {
+        use crate::reflection::hygiene::DailyAdmissionConfig;
+        use crate::reflection::hygiene_store::{daily_admission_state_path, lock_daily_admission, DailyAdmissionOutcome};
+        use crate::reflection::periodic::{self, PeriodKind};
+
+        let home = TempDir::new().unwrap();
+        let home_path = home.path().to_path_buf();
+        let config = DailyAdmissionConfig { enabled: true, ..Default::default() };
+        let reflection = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-27", &["contend".into()], 1_787_788_800,
+        ).unwrap();
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let home = home_path.clone();
+            let config = config.clone();
+            let reflection = reflection.clone();
+            workers.push(std::thread::spawn(move || {
+                run_daily_admission_tick(
+                    &home,
+                    &reflection,
+                    Some(&config),
+                    None,
+                )
+            }));
+        }
+        for worker in workers {
+            assert!(worker.join().unwrap().is_ok());
+        }
+        let archive = std::fs::read_to_string(periodic::jsonl_file(&home_path, PeriodKind::Daily, &reflection.tag)).unwrap();
+        assert_eq!(archive.lines().count(), 1);
+        let state = lock_daily_admission(&home_path).unwrap().load().unwrap().unwrap();
+        assert_eq!(state.outcome, DailyAdmissionOutcome::Admitted);
+        assert_eq!(state.tag, reflection.tag);
+        assert!(daily_admission_state_path(&home_path).exists());
+        assert_eq!(std::fs::read_to_string(home_path.join("reflections/daily-last.txt")).unwrap(), reflection.tag);
+    }
+
+    #[test]
+    fn obsidian_failure_retries_visible_sync_without_reappending_archive() {
+        use crate::reflection::hygiene::DailyAdmissionConfig;
+        use crate::reflection::periodic::{self, PeriodKind};
+
+        let home = TempDir::new().unwrap();
+        let vault = home.path().join("vault-is-a-file");
+        std::fs::write(&vault, b"not a directory").unwrap();
+        let mut config = DailyAdmissionConfig::default();
+        config.enabled = true;
+        let reflection = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-27", &["obsidian".into()], 1_787_788_800,
+        ).unwrap();
+        let marker = home.path().join("reflections/daily-last.txt");
+        assert!(run_daily_admission_tick(home.path(), &reflection, Some(&config), Some((&vault, "NEOTH"))).is_err());
+        let archive_path = periodic::jsonl_file(home.path(), PeriodKind::Daily, &reflection.tag);
+        let archive_before = std::fs::read(&archive_path).unwrap();
+        assert!(!marker.exists());
+        std::fs::remove_file(&vault).unwrap();
+        std::fs::create_dir(&vault).unwrap();
+        assert!(run_daily_admission_tick(home.path(), &reflection, Some(&config), Some((&vault, "NEOTH"))).unwrap());
+        assert_eq!(std::fs::read(&archive_path).unwrap(), archive_before);
+        assert!(vault.join("NEOTH/Daily/2026-08-27.md").exists());
+        assert!(marker.exists());
+    }
+
+    #[test]
+    fn cron_same_tag_retry_syncs_the_original_archive_not_the_new_candidate() {
+        use crate::reflection::hygiene::DailyAdmissionConfig;
+        use crate::reflection::periodic::{self, PeriodKind};
+
+        let home = TempDir::new().unwrap();
+        let vault = home.path().join("vault-is-a-file");
+        std::fs::write(&vault, b"not a directory").unwrap();
+        let mut config = DailyAdmissionConfig::default();
+        config.enabled = true;
+        let original = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-27", &["cron-original".into()], 1_787_788_800,
+        )
+        .unwrap();
+        assert!(run_daily_admission_tick(
+            home.path(), &original, Some(&config), Some((&vault, "NEOTH")),
+        )
+        .is_err());
+        let archive_path = periodic::jsonl_file(home.path(), PeriodKind::Daily, &original.tag);
+        let archived = std::fs::read(&archive_path).unwrap();
+        assert!(!home.path().join("reflections/daily-last.txt").exists());
+
+        let rebuilt = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-27", &["cron-rebuilt".into()], 1_787_792_000,
+        )
+        .unwrap();
+        std::fs::remove_file(&vault).unwrap();
+        std::fs::create_dir(&vault).unwrap();
+        assert!(run_daily_admission_tick(
+            home.path(), &rebuilt, Some(&config), Some((&vault, "NEOTH")),
+        )
+        .unwrap());
+        assert_eq!(std::fs::read(&archive_path).unwrap(), archived);
+        assert_eq!(
+            std::fs::read_to_string(vault.join("NEOTH/Daily/2026-08-27.md")).unwrap(),
+            original.to_obsidian_md(),
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(),
+            original.tag,
+        );
+    }
+
+    #[test]
+    fn cron_recovers_archive_without_state_before_evaluating_changed_candidate() {
+        use crate::reflection::hygiene::DailyAdmissionConfig;
+        use crate::reflection::hygiene_store::lock_daily_admission;
+        use crate::reflection::periodic::{self, PeriodKind};
+
+        let home = TempDir::new().unwrap();
+        let original = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-27", &["cron-archive-first".into()], 1_787_788_800,
+        )
+        .unwrap();
+        periodic::open_daily_archive_transaction(home.path()).unwrap().append_once(&original).unwrap();
+        let rebuilt = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-27", &["cron-new-candidate".into()], 1_787_792_000,
+        )
+        .unwrap();
+        let mut config = DailyAdmissionConfig::default();
+        config.enabled = true;
+        assert!(run_daily_admission_tick(home.path(), &rebuilt, Some(&config), None).unwrap());
+        let archive = std::fs::read(periodic::jsonl_file(home.path(), PeriodKind::Daily, &original.tag)).unwrap();
+        assert_eq!(serde_json::from_slice::<periodic::PeriodReflection>(&archive).unwrap(), original);
+        let state = lock_daily_admission(home.path()).unwrap().load().unwrap().unwrap();
+        assert!(state.archive_sha256.is_some());
+    }
+
+    #[test]
+    fn removed_policy_still_recovers_durable_admission_before_marker() {
+        use crate::reflection::hygiene::DailyAdmissionConfig;
+        use crate::reflection::hygiene_store::daily_admission_state_path;
+        use crate::reflection::periodic::{self, PeriodKind};
+
+        let home = TempDir::new().unwrap();
+        let mut config = DailyAdmissionConfig::default();
+        config.enabled = true;
+        let reflection = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-27", &["removed-policy".into()], 1_787_788_800,
+        ).unwrap();
+        let marker = home.path().join("reflections/daily-last.txt");
+        crate::skills::store::fail_private_child_post_commit_validation_for_test(
+            &daily_admission_state_path(home.path()),
+        );
+        assert!(run_daily_admission_tick(home.path(), &reflection, Some(&config), None).is_err());
+        assert!(!marker.exists());
+        assert!(run_daily_admission_tick(home.path(), &reflection, None, None).unwrap());
+        assert!(marker.exists());
+    }
+
+    #[test]
+    fn daily_cron_errors_redact_alias_topic_body_and_path_content() {
+        use crate::reflection::hygiene::DailyAdmissionConfig;
+        use crate::reflection::periodic::{self, PeriodKind};
+
+        let secret = "ALIAS_TOPIC_BODY_PATH_SHOULD_NOT_LEAK";
+        let home = TempDir::new().unwrap();
+        let mut config = DailyAdmissionConfig::default();
+        config.enabled = true;
+        config.topic_synonyms.entries.insert(secret.into(), "other".into());
+        config.topic_synonyms.entries.insert("other".into(), secret.into());
+        let reflection = periodic::build_reflection(
+            PeriodKind::Daily, "2026-08-27", &[secret.into()], 1_787_788_800,
+        ).unwrap();
+        let error = run_daily_admission_tick(home.path(), &reflection, Some(&config), None).unwrap_err();
+        assert!(!error.contains(secret));
+        assert!(!format!("{error:?}").contains(secret));
+    }
 
     #[test]
     fn iso_week_tag_format_is_yyyy_wxx() {
@@ -830,9 +1129,10 @@ mod tests {
             PeriodKind::Daily,
             false, // opt-in OFF
             "2026-06-16",
-            "daily-last.txt",
+            None,
             1,
             5,
+            None,
             None,
         );
         assert_eq!(r, Ok(false), "disabled cadence is a clean no-op");
@@ -954,10 +1254,11 @@ mod tests {
             PeriodKind::Daily,
             true,
             tag,
-            "daily-last.txt",
+            None,
             1,
             5,
             None, // no Obsidian (hermetic — never reads the operator's real config)
+            None,
         )
         .unwrap();
         assert!(r, "enabled + topics present → archived");
@@ -967,20 +1268,23 @@ mod tests {
         );
         assert!(tmp.path().join("reflections/daily-last.txt").exists());
 
-        // Second call, same tag → idempotent no-op (marker hit).
+        // A fully completed interval does not rewrite the note or marker.
         let r2 = run_period_reflection_tick_once(
             tmp.path(),
             now_unix,
             PeriodKind::Daily,
             true,
             tag,
-            "daily-last.txt",
+            None,
             1,
             5,
             None,
+            None,
         )
         .unwrap();
-        assert!(!r2, "marker makes the tick idempotent per tag");
+        assert!(!r2, "completed same-tag settlement is an idempotent no-op");
+        let archive = std::fs::read_to_string(periodic::jsonl_file(tmp.path(), PeriodKind::Daily, tag)).unwrap();
+        assert_eq!(archive.lines().count(), 1, "same-tag recovery never duplicates the archive");
     }
 
     // ── GOLD-ADAPT-OH-07: SubconsciousTickState persistence ─────────────────
@@ -1228,7 +1532,7 @@ mod tests {
     #[test]
     fn sitrep_includes_recent_daily_reflections_newest_first() {
         use crate::reflection::periodic::{
-            PeriodKind, append, build_reflection, date_tag_from_unix,
+            PeriodKind, build_reflection, date_tag_from_unix, settle_daily_admission,
         };
         let tmp = TempDir::new().unwrap();
 
@@ -1247,8 +1551,8 @@ mod tests {
         let r2 =
             build_reflection(PeriodKind::Daily, &today_tag, &["terraform".into()], now).unwrap();
 
-        append(tmp.path(), &r1).unwrap();
-        append(tmp.path(), &r2).unwrap();
+        settle_daily_admission(tmp.path(), &r1, None, None).unwrap();
+        settle_daily_admission(tmp.path(), &r2, None, None).unwrap();
 
         let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10).unwrap();
         assert_eq!(sitrep.recent.len(), 2, "both daily reflections must appear");
@@ -1268,7 +1572,7 @@ mod tests {
     #[test]
     fn sitrep_respects_max_entries_cap() {
         use crate::reflection::periodic::{
-            PeriodKind, append, build_reflection, date_tag_from_unix,
+            PeriodKind, build_reflection, date_tag_from_unix, settle_daily_admission,
         };
         let tmp = TempDir::new().unwrap();
 
@@ -1278,7 +1582,7 @@ mod tests {
             let ts = now - back * 86_400;
             let tag = date_tag_from_unix(ts);
             let r = build_reflection(PeriodKind::Daily, &tag, &["rust".into()], ts).unwrap();
-            append(tmp.path(), &r).unwrap();
+            settle_daily_admission(tmp.path(), &r, None, None).unwrap();
         }
 
         // Request at most 3.
@@ -1340,7 +1644,7 @@ mod tests {
     #[test]
     fn sitrep_lookback_days_bounds_how_far_back_we_read() {
         use crate::reflection::periodic::{
-            PeriodKind, append, build_reflection, date_tag_from_unix,
+            PeriodKind, build_reflection, date_tag_from_unix, settle_daily_admission,
         };
         let tmp = TempDir::new().unwrap();
 
@@ -1349,7 +1653,7 @@ mod tests {
         let old_ts = now - 10 * 86_400;
         let old_tag = date_tag_from_unix(old_ts);
         let r = build_reflection(PeriodKind::Daily, &old_tag, &["ancient".into()], old_ts).unwrap();
-        append(tmp.path(), &r).unwrap();
+        settle_daily_admission(tmp.path(), &r, None, None).unwrap();
 
         // With lookback_days=7, the 10-day-old entry must not appear.
         let sitrep = recent_reflections_sitrep(tmp.path(), 7, 10).unwrap();
@@ -1357,5 +1661,38 @@ mod tests {
             sitrep.recent.is_empty(),
             "reflection outside lookback window must not appear in sitrep"
         );
+    }
+
+    #[test]
+    fn sitrep_refuses_malformed_or_oversized_daily_archive_and_clamps_work() {
+        use crate::reflection::periodic::{date_tag_from_unix, periodic_dir, PeriodKind, MAX_DAILY_ADMISSION_ARCHIVE_BYTES};
+
+        let tmp = TempDir::new().unwrap();
+        let tag = date_tag_from_unix(crate::time::now_unix_i64());
+        let daily = periodic_dir(tmp.path(), PeriodKind::Daily);
+        std::fs::create_dir_all(&daily).unwrap();
+        let path = daily.join(format!("{tag}.jsonl"));
+        std::fs::write(&path, b"malformed\n").unwrap();
+        assert!(recent_reflections_sitrep(tmp.path(), u32::MAX, usize::MAX).is_err());
+        std::fs::write(&path, vec![b'x'; MAX_DAILY_ADMISSION_ARCHIVE_BYTES + 1]).unwrap();
+        assert!(recent_reflections_sitrep(tmp.path(), 1, 1).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sitrep_refuses_symlinked_daily_archive_without_reading_outside() {
+        use crate::reflection::periodic::{date_tag_from_unix, periodic_dir, PeriodKind};
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let tag = date_tag_from_unix(crate::time::now_unix_i64());
+        let daily = periodic_dir(tmp.path(), PeriodKind::Daily);
+        std::fs::create_dir_all(&daily).unwrap();
+        let outside_record = outside.path().join("record.jsonl");
+        std::fs::write(&outside_record, b"malformed\n").unwrap();
+        symlink(&outside_record, daily.join(format!("{tag}.jsonl"))).unwrap();
+        assert!(recent_reflections_sitrep(tmp.path(), 1, 1).is_err());
+        assert_eq!(std::fs::read(&outside_record).unwrap(), b"malformed\n");
     }
 }

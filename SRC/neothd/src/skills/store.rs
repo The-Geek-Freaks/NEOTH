@@ -930,6 +930,57 @@ pub(crate) fn open_bound_real_child_dir(
     Ok((child, binding))
 }
 
+/// Bind a caller-retained, mutation-capable direct-child directory to the
+/// exact current namespace object. This deliberately does not reopen the
+/// child through the read-only directory helper: Daily settlement uses the
+/// returned capability as the parent of later atomic publications on Windows.
+pub(crate) fn bind_retained_real_child_dir(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+    child: Dir,
+) -> Result<(Dir, BoundChildObject)> {
+    validate_child_name(name)?;
+    ensure_cap_directory_is_real(&child, "bound mutable child", display_path)?;
+    let opened_identity = child_identity_token(&child.dir_metadata().with_context(|| {
+        format!(
+            "inspect retained bound child directory {}",
+            display_path.display()
+        )
+    })?)?;
+    let binding = bind_child_object(parent, name, display_path)?;
+    anyhow::ensure!(
+        opened_identity == binding.identity_token(),
+        "child directory changed while its retained capability was being bound: {}",
+        display_path.display()
+    );
+    anyhow::ensure!(
+        binding.matches_child(parent, name, display_path)?,
+        "child directory changed before its retained capability binding completed: {}",
+        display_path.display()
+    );
+    Ok((child, binding))
+}
+
+/// Open an existing direct real-directory child with Windows mutation rights,
+/// then retain a no-follow identity binding for it. This is intentionally
+/// narrow: callers must not create a configured external root merely to gain
+/// a write-capable directory capability.
+pub(crate) fn open_mutation_bound_real_child_dir(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<(Dir, BoundChildObject)> {
+    validate_child_name(name)?;
+    let child = open_mutation_capable_child_dir(parent, name).with_context(|| {
+        format!(
+            "open mutable bound child directory without following links {}",
+            display_path.display()
+        )
+    })?;
+    bind_retained_real_child_dir(parent, name, display_path, child)
+}
+
 /// Open one direct real-directory child if it exists. Absence is not an error;
 /// a file, symlink, junction, or other reparse point remains a hard refusal.
 ///
@@ -965,7 +1016,7 @@ pub(crate) fn open_or_create_private_child_dir(
     display_path: &Path,
 ) -> Result<Dir> {
     validate_child_name(name)?;
-    match parent.open_dir_nofollow(name) {
+    match open_mutation_capable_child_dir(parent, name) {
         Ok(child) => {
             ensure_cap_directory_is_real(&child, "private child", display_path)?;
             // Existing may mean "mkdir succeeded, parent fsync failed" from a
@@ -999,7 +1050,7 @@ pub(crate) fn open_or_create_private_child_dir(
                         display_path.display()
                     )
                 })?;
-            let child = parent.open_dir_nofollow(name).with_context(|| {
+            let child = open_mutation_capable_child_dir(parent, name).with_context(|| {
                 format!(
                     "open private child directory without following links {}",
                     display_path.display()
@@ -1014,6 +1065,37 @@ pub(crate) fn open_or_create_private_child_dir(
                 display_path.display()
             )
         }),
+    }
+}
+
+/// Direct no-follow directory open that retains exactly the access needed for
+/// later capability-relative creation/replacement. On Windows the returned
+/// handle carries generic write and delete rights; a `FILE_GENERIC_READ` handle
+/// is not sufficient as the parent of an atomic rename publication.
+fn open_mutation_capable_child_dir(parent: &Dir, name: &OsStr) -> std::io::Result<Dir> {
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            DELETE, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+            FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE,
+        };
+
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .follow(FollowSymlinks::No)
+            .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        let file = parent.open_with(name, &options)?;
+        Ok(Dir::from_std_file(file.into_std()))
+    }
+    #[cfg(not(windows))]
+    {
+        parent.open_dir_nofollow(name)
     }
 }
 

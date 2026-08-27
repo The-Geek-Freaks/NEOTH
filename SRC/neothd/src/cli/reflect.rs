@@ -4,6 +4,8 @@
 //! the noisy HN signal with per-operator ignore/pin lists (`reflect ignore` /
 //! `reflect pin`). The feed adapter lives in `crate::sources::hackernews`.
 
+use std::ffi::OsStr;
+
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -12,6 +14,28 @@ use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::memory::store;
 use crate::sources::hackernews::{self, GapFilter};
+use crate::reflection::hygiene::DailyAdmissionConfig;
+
+/// A deliberately small ceiling for the unattended reflection config.  The
+/// interactive topic lists have no reason to grow into an allocation surface.
+pub const MAX_REFLECT_TOPICS_CONFIG_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReflectTopicsLoadError {
+    SafeConfigUnavailable,
+    InvalidConfig,
+}
+
+impl std::fmt::Display for ReflectTopicsLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SafeConfigUnavailable => write!(f, "reflection automation config is unavailable"),
+            Self::InvalidConfig => write!(f, "reflection automation config is invalid"),
+        }
+    }
+}
+
+impl std::error::Error for ReflectTopicsLoadError {}
 
 #[derive(Args, Debug, Clone)]
 pub struct ReflectArgs {
@@ -73,7 +97,8 @@ pub enum DigestPeriod {
 
 /// Per-operator tuning for the tech-currency gap pass. Stored in its own
 /// `<home>/reflect_topics.yaml` (never touches freedom.yaml).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ReflectTopics {
     #[serde(default)]
     pub ignore: Vec<String>,
@@ -92,6 +117,10 @@ pub struct ReflectTopics {
     /// Obsidian yearly summary when a vault is configured.
     #[serde(default)]
     pub yearly_summary: bool,
+    /// Absent on historical configurations.  This is intentionally opt-in;
+    /// old valid files preserve their existing archive behaviour exactly.
+    #[serde(default)]
+    pub daily_admission: Option<DailyAdmissionConfig>,
 }
 
 impl ReflectTopics {
@@ -103,6 +132,36 @@ impl ReflectTopics {
             .ok()
             .and_then(|s| serde_yaml::from_str(&s).ok())
             .unwrap_or_default()
+    }
+
+    /// Load config for an unattended automation.  Only a genuinely missing
+    /// file maps to the disabled default; malformed YAML, unknown keys,
+    /// symlinks/reparse points, directories and oversized files are typed,
+    /// fail-closed errors rather than a surprise default.
+    pub fn load_for_automation(
+        home: &std::path::Path,
+    ) -> std::result::Result<Self, ReflectTopicsLoadError> {
+        let path = Self::path(home);
+        let Some(directory) = crate::skills::store::open_absolute_bound_directory(
+            home,
+            false,
+            "reflection automation home",
+        )
+        .map_err(|_| ReflectTopicsLoadError::SafeConfigUnavailable)? else {
+            return Ok(Self::default());
+        };
+        let bytes = match directory.dir.symlink_metadata(OsStr::new("reflect_topics.yaml")) {
+            Ok(_) => crate::skills::store::read_regular_file_bounded(
+                &directory.dir,
+                OsStr::new("reflect_topics.yaml"),
+                &path,
+                MAX_REFLECT_TOPICS_CONFIG_BYTES,
+            )
+            .map_err(|_| ReflectTopicsLoadError::SafeConfigUnavailable)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(_) => return Err(ReflectTopicsLoadError::SafeConfigUnavailable),
+        };
+        serde_yaml::from_slice(&bytes).map_err(|_| ReflectTopicsLoadError::InvalidConfig)
     }
     pub fn save(&self, home: &std::path::Path) -> Result<()> {
         let yaml = serde_yaml::to_string(self)?;
@@ -167,10 +226,20 @@ fn set_cadence(
 }
 
 fn digest(home: &std::path::Path, period: DigestPeriod, output: OutputFormat) -> Result<()> {
+    digest_at(home, period, output, crate::time::now_unix_i64())
+}
+
+/// Explicit clock seam keeps daily settlement tests deterministic while the
+/// public CLI continues to use the real clock exactly once per invocation.
+fn digest_at(
+    home: &std::path::Path,
+    period: DigestPeriod,
+    output: OutputFormat,
+    now_unix: i64,
+) -> Result<()> {
     use crate::reflection::periodic::{self, PeriodKind, date_tag_from_unix, year_tag_from_unix};
 
-    let now_unix = crate::time::now_unix_i64();
-    let now_ns = crate::time::now_unix_ns_i64();
+    let now_ns = now_unix.saturating_mul(1_000_000_000);
     let conn = store::open(&home.join("views.db")).context("open views.db")?;
     let (kind, tag, window, n) = match period {
         DigestPeriod::Daily => (PeriodKind::Daily, date_tag_from_unix(now_unix), 1, 5),
@@ -181,22 +250,15 @@ fn digest(home: &std::path::Path, period: DigestPeriod, output: OutputFormat) ->
     // two `neoth reflect digest --daily` runs on the same day duplicated the
     // reflection. Share the daemon's marker files so daemon + CLI see each other's
     // completion for this tag.
-    let marker_name = match period {
-        DigestPeriod::Daily => "daily-last.txt",
-        DigestPeriod::Yearly => "yearly-last.txt",
-    };
-    let marker_path = home.join("reflections").join(marker_name);
-    let already_done = if marker_path
+    let yearly_marker = home.join("reflections").join("yearly-last.txt");
+    let already_done = if matches!(period, DigestPeriod::Yearly) && yearly_marker
         .try_exists()
-        .with_context(|| format!("inspect reflection marker {}", marker_path.display()))?
+        .with_context(|| format!("inspect reflection marker {}", yearly_marker.display()))?
     {
-        std::fs::read_to_string(&marker_path)
-            .with_context(|| format!("read reflection marker {}", marker_path.display()))?
-            .trim()
-            == tag.as_str()
-    } else {
-        false
-    };
+        std::fs::read_to_string(&yearly_marker)
+            .with_context(|| format!("read reflection marker {}", yearly_marker.display()))?
+            .trim() == tag.as_str()
+    } else { false };
     if already_done {
         if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
             println!(
@@ -215,6 +277,15 @@ fn digest(home: &std::path::Path, period: DigestPeriod, output: OutputFormat) ->
     // reflection archive record or an Obsidian side effect. Only a genuinely
     // missing config may use compiled defaults.
     let cfg = FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?;
+    let daily_admission = if matches!(period, DigestPeriod::Daily) {
+        Some(
+            ReflectTopics::load_for_automation(home)
+                .map_err(anyhow::Error::from)
+                .context("load daily admission policy")?,
+        )
+    } else {
+        None
+    };
     let topics =
         crate::reflection::top_topics_in_days(&conn, now_ns, window, n).context("topic query")?;
     let Some(refl) = periodic::build_reflection(kind, &tag, &topics, now_unix) else {
@@ -231,20 +302,61 @@ fn digest(home: &std::path::Path, period: DigestPeriod, output: OutputFormat) ->
         }
         return Ok(());
     };
-    periodic::append(home, &refl).context("archive reflection")?;
-    // GR-fix: record completion for this tag (same marker the daemon writes) so a
-    // re-run on the same day is a no-op.
-    crate::util::atomic_write::atomic_write_private(&marker_path, tag.as_bytes())
-        .with_context(|| format!("persist reflection marker {}", marker_path.display()))?;
-
-    // Obsidian sync if a vault is configured.
     let mut obsidian_path = None;
-    if let Some(vault) = cfg.obsidian_vault.as_deref() {
-        let subdir = cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH");
-        let o = periodic::sync_to_obsidian(home, std::path::Path::new(vault), subdir, kind, &tag)
-            .context("Obsidian sync")?;
-        if o.written {
-            obsidian_path = Some(o.target_path.display().to_string());
+    if matches!(period, DigestPeriod::Daily) {
+        let obsidian = cfg.obsidian_vault.as_deref().map(|vault| {
+            (std::path::Path::new(vault), cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH"))
+        });
+        match periodic::settle_daily_admission(
+            home,
+            &refl,
+            daily_admission.as_ref().and_then(|topics| topics.daily_admission.as_ref()),
+            obsidian,
+        )
+        .map_err(anyhow::Error::from)
+        .context("settle daily reflection")?
+        {
+            periodic::DailySettlementOutcome::Admitted => {
+                if cfg.obsidian_vault.is_some() {
+                    // Settlement owns the capability-bound note destination;
+                    // the CLI deliberately does not reconstruct its path.
+                    obsidian_path = Some("bound daily note".to_string());
+                }
+            }
+            periodic::DailySettlementOutcome::Suppressed => {
+                if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+                    println!(
+                        "{}",
+                        serde_json::json!({ "kind": kind.as_str(), "tag": tag, "written": false, "reason": "suppressed" })
+                    );
+                } else {
+                    println!("Daily reflection {tag}: suppressed by the configured admission policy.");
+                }
+                return Ok(());
+            }
+            periodic::DailySettlementOutcome::AlreadyCompleted => {
+                if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+                    println!(
+                        "{}",
+                        serde_json::json!({ "kind": kind.as_str(), "tag": tag, "written": false, "reason": "already_done" })
+                    );
+                } else {
+                    println!("Daily reflection {tag}: already settled this period — skipping.");
+                }
+                return Ok(());
+            }
+        }
+    } else {
+        periodic::append(home, &refl).context("archive reflection")?;
+        crate::util::atomic_write::atomic_write_private(&yearly_marker, tag.as_bytes())
+            .with_context(|| format!("persist reflection marker {}", yearly_marker.display()))?;
+        if let Some(vault) = cfg.obsidian_vault.as_deref() {
+            let subdir = cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH");
+            let o = periodic::sync_to_obsidian(home, std::path::Path::new(vault), subdir, kind, &tag)
+                .context("Obsidian sync")?;
+            if o.written {
+                obsidian_path = Some(o.target_path.display().to_string());
+            }
         }
     }
 
@@ -478,6 +590,156 @@ pub fn collect_covered(home: &std::path::Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automation_config_missing_is_disabled_but_unknown_malformed_and_oversized_fail_closed() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(ReflectTopics::load_for_automation(home.path()).unwrap(), ReflectTopics::default());
+        std::fs::write(home.path().join("reflect_topics.yaml"), "unknown_key: true\n").unwrap();
+        assert_eq!(
+            ReflectTopics::load_for_automation(home.path()).unwrap_err(),
+            ReflectTopicsLoadError::InvalidConfig
+        );
+        std::fs::write(home.path().join("reflect_topics.yaml"), "daily_notes: [not: yaml\n").unwrap();
+        assert_eq!(
+            ReflectTopics::load_for_automation(home.path()).unwrap_err(),
+            ReflectTopicsLoadError::InvalidConfig
+        );
+        std::fs::write(
+            home.path().join("reflect_topics.yaml"),
+            vec![b'x'; MAX_REFLECT_TOPICS_CONFIG_BYTES + 1],
+        )
+        .unwrap();
+        assert_eq!(
+            ReflectTopics::load_for_automation(home.path()).unwrap_err(),
+            ReflectTopicsLoadError::SafeConfigUnavailable
+        );
+    }
+
+    #[test]
+    fn old_valid_config_preserves_disabled_daily_admission() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("reflect_topics.yaml"), "daily_notes: true\n").unwrap();
+        let config = ReflectTopics::load_for_automation(home.path()).unwrap();
+        assert!(config.daily_notes);
+        assert_eq!(config.daily_admission, None);
+    }
+
+    #[test]
+    fn cli_daily_digest_first_settlement_honours_enabled_suppression_policy() {
+        use crate::reflection::hygiene::DailyAdmissionConfig;
+        use crate::reflection::hygiene_store::{lock_daily_admission, DailyAdmissionOutcome};
+        use crate::reflection::periodic::{self, PeriodKind};
+
+        let home = tempfile::tempdir().unwrap();
+        let now = 1_787_788_800i64;
+        let now_ns = now.saturating_mul(1_000_000_000);
+        let conn = store::open(&home.path().join("views.db")).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![1i64, crate::wal::events::EVENT_TYPE_RAW_TEXT as i64, now_ns, "rust admission policy", "digest-suppression"],
+        ).unwrap();
+        let topics = crate::reflection::top_topics_in_days(&conn, now_ns, 1, 5).unwrap();
+        assert!(!topics.is_empty());
+        let mut admission = DailyAdmissionConfig::default();
+        admission.enabled = true;
+        let prior = periodic::build_reflection(
+            PeriodKind::Daily,
+            &periodic::date_tag_from_unix(now.saturating_sub(86_400)),
+            &topics,
+            now.saturating_sub(86_400),
+        ).unwrap();
+        periodic::settle_daily_admission(
+            home.path(), &prior, Some(&admission), None,
+        ).unwrap();
+        std::fs::write(
+            home.path().join("reflect_topics.yaml"),
+            "daily_admission:\n  version: 1\n  enabled: true\n  min_jaccard_basis_points: 10000\n",
+        ).unwrap();
+
+        digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, now).unwrap();
+        let tag = periodic::date_tag_from_unix(now);
+        assert!(!periodic::jsonl_file(home.path(), PeriodKind::Daily, &tag).exists());
+        let state = lock_daily_admission(home.path()).unwrap().load().unwrap().unwrap();
+        assert_eq!(state.tag, tag);
+        assert_eq!(state.outcome, DailyAdmissionOutcome::Suppressed);
+        assert_eq!(std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(), tag);
+    }
+
+    #[test]
+    fn cli_daily_retry_uses_original_same_tag_record_after_candidate_changes() {
+        use crate::reflection::periodic::{self, PeriodKind};
+
+        let home = tempfile::tempdir().unwrap();
+        let now = 1_787_788_800i64;
+        let now_ns = now.saturating_mul(1_000_000_000);
+        let conn = store::open(&home.path().join("views.db")).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![1i64, crate::wal::events::EVENT_TYPE_RAW_TEXT as i64, now_ns, "rust obsidian retry", "digest-obsidian"],
+        ).unwrap();
+        let vault = home.path().join("vault-is-a-file");
+        std::fs::write(&vault, b"not a directory").unwrap();
+        let config = FreedomConfig {
+            obsidian_vault: Some(vault.display().to_string()),
+            obsidian_subdir: Some("NEOTH".to_string()),
+            ..Default::default()
+        };
+        std::fs::write(home.path().join("freedom.yaml"), serde_yaml::to_string(&config).unwrap()).unwrap();
+
+        assert!(digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, now).is_err());
+        let tag = periodic::date_tag_from_unix(now);
+        let archive_path = periodic::jsonl_file(home.path(), PeriodKind::Daily, &tag);
+        let archive = std::fs::read(&archive_path).unwrap();
+        let original: periodic::PeriodReflection = serde_json::from_slice(&archive).unwrap();
+        assert!(!home.path().join("reflections/daily-last.txt").exists());
+        let retry_now = now.saturating_add(3_600);
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![2i64, crate::wal::events::EVENT_TYPE_RAW_TEXT as i64, retry_now.saturating_mul(1_000_000_000), "replacement replacement replacement replacement replacement", "digest-obsidian-retry"],
+        ).unwrap();
+        let retry_topics = crate::reflection::top_topics_in_days(
+            &conn, retry_now.saturating_mul(1_000_000_000), 1, 5,
+        )
+        .unwrap();
+        let rebuilt = periodic::build_reflection(PeriodKind::Daily, &tag, &retry_topics, retry_now).unwrap();
+        assert_ne!(rebuilt.topics, original.topics, "the retry must exercise distinct same-day topics");
+        assert_ne!(rebuilt, original, "the retry must exercise a distinct same-day candidate");
+        std::fs::remove_file(&vault).unwrap();
+        std::fs::create_dir(&vault).unwrap();
+        digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, retry_now).unwrap();
+        assert_eq!(std::fs::read(&archive_path).unwrap(), archive);
+        assert_eq!(
+            std::fs::read_to_string(vault.join(format!("NEOTH/Daily/{tag}.md"))).unwrap(),
+            original.to_obsidian_md(),
+        );
+        assert_eq!(std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(), tag);
+    }
+
+    #[test]
+    fn cli_recovers_archive_without_state_before_using_its_new_candidate() {
+        use crate::reflection::hygiene_store::lock_daily_admission;
+        use crate::reflection::periodic::{self, PeriodKind};
+
+        let home = tempfile::tempdir().unwrap();
+        let now = 1_787_788_800i64;
+        let conn = store::open(&home.path().join("views.db")).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![1i64, crate::wal::events::EVENT_TYPE_RAW_TEXT as i64, now.saturating_mul(1_000_000_000), "cli changed candidate topics", "cli-archive-first"],
+        ).unwrap();
+        let tag = periodic::date_tag_from_unix(now);
+        let original = periodic::build_reflection(
+            PeriodKind::Daily, &tag, &["cli-persisted-original".into()], now.saturating_sub(60),
+        )
+        .unwrap();
+        periodic::open_daily_archive_transaction(home.path()).unwrap().append_once(&original).unwrap();
+        digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, now).unwrap();
+        let archive = std::fs::read(periodic::jsonl_file(home.path(), PeriodKind::Daily, &tag)).unwrap();
+        assert_eq!(serde_json::from_slice::<periodic::PeriodReflection>(&archive).unwrap(), original);
+        let state = lock_daily_admission(home.path()).unwrap().load().unwrap().unwrap();
+        assert!(state.archive_sha256.is_some());
+    }
 
     #[test]
     fn collect_covered_reads_skills_from_the_supplied_home() {
