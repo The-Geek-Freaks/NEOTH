@@ -1172,7 +1172,8 @@ pub enum ProviderAction {
     Show { provider: String },
     /// List well-known OpenAI-compatible endpoints (DeepSeek, xAI Grok,
     /// Mistral, Moonshot Kimi, Z.ai GLM, Groq, OpenRouter, Together,
-    /// Fireworks, Perplexity, plus local Ollama / LM Studio / vLLM)
+    /// Fireworks, Cerebras, Nebius AI Studio, Perplexity, plus local Ollama /
+    /// LM Studio / vLLM)
     /// with their endpoint URL, default model, and doc link.
     Known,
     /// Show where a provider is wired into the hemispheres (live round-trip:

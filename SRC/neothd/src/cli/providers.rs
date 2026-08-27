@@ -2,8 +2,8 @@
 //!
 //! Surface the full `InferenceProvider` matrix to operators so they can
 //! discover that NEOTH's `OpenaiCompat` adapter covers Together / Groq /
-//! Mistral / DeepSeek / Cohere / Perplexity / Ollama / LM Studio / vLLM
-//! without needing a separate first-class variant.
+//! Mistral / DeepSeek / Fireworks / Cerebras / Nebius / Cohere / Perplexity /
+//! Ollama / LM Studio / vLLM without needing a separate first-class variant.
 //!
 //! `neoth provider list [--output json]` — print every supported provider
 //! with implementation status + compat-endpoint examples.
@@ -39,6 +39,8 @@ pub const OPENAI_COMPAT_TARGETS: &[&str] = &[
     "moonshot.cn (Kimi)",
     "open.bigmodel.cn (GLM)",
     "fireworks.ai",
+    "cerebras.ai",
+    "nebius.ai (AI Studio)",
     "ollama (localhost)",
     "lm_studio (localhost)",
     "vllm (localhost)",
@@ -392,6 +394,34 @@ mod tests {
     fn openai_compat_targets_cover_local_and_hosted_providers() {
         assert!(OPENAI_COMPAT_TARGETS.iter().any(|t| t.contains("groq")));
         assert!(OPENAI_COMPAT_TARGETS.iter().any(|t| t.contains("ollama")));
+    }
+
+    #[test]
+    fn adopt31_h1_targets_are_discoverable_in_the_legacy_public_roster() {
+        // `OPENAI_COMPAT_TARGETS` is part of the public `provider list` output
+        // contract. Keep the three prepared, Generic OpenAI-compatible cloud
+        // presets visible here without turning them into provider enum variants.
+        let h1_targets = ["fireworks.ai", "cerebras.ai", "nebius.ai (AI Studio)"];
+        for target in h1_targets {
+            assert!(
+                OPENAI_COMPAT_TARGETS.contains(&target),
+                "ADOPT31-H1 target {target} must remain discoverable"
+            );
+        }
+
+        let positions: Vec<_> = h1_targets
+            .iter()
+            .map(|target| {
+                OPENAI_COMPAT_TARGETS
+                    .iter()
+                    .position(|listed| listed == target)
+                    .expect("target presence asserted above")
+            })
+            .collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "existing Fireworks placement must remain ahead of the H1 additions"
+        );
     }
 
     #[test]
