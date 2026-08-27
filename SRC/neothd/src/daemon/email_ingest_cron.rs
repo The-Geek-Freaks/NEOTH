@@ -292,6 +292,7 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
 
     for email in &emails {
         let uid = email.dedup_key();
+        let email_key_len = uid.len().min(80);
         let subject = &email.subject;
         let from = &email.from;
         let body = &email.body;
@@ -306,20 +307,18 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
                 let item =
                     build_quarantine_item_triage(uid, from, subject, now_unix, body, &triage);
                 match quarantine_item(neoth_home, &item) {
-                    Ok(path) => {
+                    Ok(_) => {
                         warn!(
-                            uid,
-                            subject,
+                            email_key_len,
                             action = triage.action.as_str(),
                             score = ?triage.threat.as_ref().map(|t| t.score),
-                            path = %path.display(),
                             "email_ingest_cron: quarantined by email triage"
                         );
                         quarantined += 1;
                         mark_processed_email(&seen_conn, email, now_unix)?;
                     }
-                    Err(e) => {
-                        warn!(uid, error = %e, "email_ingest_cron: triage-quarantine write failed — item dropped, not forwarded");
+                    Err(_) => {
+                        warn!(email_key_len, "email_ingest_cron: triage-quarantine write failed — item dropped, not forwarded");
                     }
                 }
                 continue; // Never reaches Paperless or Obsidian.
@@ -329,8 +328,7 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
                 // `neoth email fetch`; the unattended cron must not
                 // auto-forward it to the vault. Skip, no quarantine file.
                 warn!(
-                    uid,
-                    subject,
+                    email_key_len,
                     score = ?triage.threat.as_ref().map(|t| t.score),
                     "email_ingest_cron: review_queue — skipping Paperless/vault (operator review required)"
                 );
@@ -348,20 +346,18 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
         if scan.quarantine {
             let item = build_quarantine_item(uid, from, subject, now_unix, body, &scan);
             match quarantine_item(neoth_home, &item) {
-                Ok(path) => {
+                Ok(_) => {
                     warn!(
-                        uid,
-                        subject,
+                        email_key_len,
                         high_count = scan.findings.iter().filter(|f| f.severity == crate::security::content_scanner::Severity::High).count(),
-                        path = %path.display(),
                         "email_ingest_cron: quarantined (HIGH findings)"
                     );
                     quarantined += 1;
                     mark_processed_email(&seen_conn, email, now_unix)?;
                 }
-                Err(e) => {
+                Err(_) => {
                     // Quarantine write failed — log but do NOT forward.
-                    warn!(uid, error = %e, "email_ingest_cron: quarantine write failed — item dropped, not forwarded");
+                    warn!(email_key_len, "email_ingest_cron: quarantine write failed — item dropped, not forwarded");
                 }
             }
             continue; // Never reaches Paperless or Obsidian.
@@ -380,16 +376,14 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
                     match crate::paperless::sync_ocr_to_obsidian(&payload, vault_path, &subdir) {
                         Ok(outcome) => {
                             info!(
-                                uid,
-                                doc_id,
-                                path = %outcome.target_path.display(),
+                                email_key_len,
                                 bytes = outcome.bytes_written,
                                 "email_ingest_cron: vault note written"
                             );
                             vault_written += 1;
                         }
-                        Err(e) => {
-                            warn!(uid, error = %e, "email_ingest_cron: vault write failed");
+                        Err(_) => {
+                            warn!(email_key_len, "email_ingest_cron: vault write failed");
                             all_configured_sinks_succeeded = false;
                         }
                     }
@@ -398,7 +392,7 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
                     // SC-16 sanitizer quarantined it after the content_scanner passed —
                     // this means SC-16 caught something the content_scanner missed.
                     // Fail-closed: quarantine.
-                    warn!(uid, error = %e, "email_ingest_cron: SC-16 sanitizer quarantined doc after scan — storing in quarantine");
+                    warn!(email_key_len, "email_ingest_cron: SC-16 sanitizer quarantined doc after scan — storing in quarantine");
                     let err_item = build_quarantine_item_error(
                         uid,
                         from,
@@ -408,19 +402,17 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
                         &format!("{e:#}"),
                     );
                     match quarantine_item(neoth_home, &err_item) {
-                        Ok(path) => {
+                        Ok(_) => {
                             warn!(
-                                uid,
-                                path = %path.display(),
+                                email_key_len,
                                 "email_ingest_cron: SC-16 rejection persisted in quarantine"
                             );
                             quarantined += 1;
                             mark_processed_email(&seen_conn, email, now_unix)?;
                         }
-                        Err(quarantine_error) => {
+                        Err(_) => {
                             warn!(
-                                uid,
-                                error = %quarantine_error,
+                                email_key_len,
                                 "email_ingest_cron: SC-16 quarantine write failed — item remains pending"
                             );
                         }
@@ -438,11 +430,11 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
             if let Some((ref url, ref token)) = paperless_creds {
                 match upload_to_paperless(url, token, subject, clean_body).await {
                     Ok(_) => {
-                        info!(uid, subject, "email_ingest_cron: uploaded to Paperless NGX");
+                        info!(email_key_len, "email_ingest_cron: uploaded to Paperless NGX");
                         uploaded += 1;
                     }
-                    Err(e) => {
-                        warn!(uid, error = %e, "email_ingest_cron: Paperless NGX upload failed — item remains pending");
+                    Err(_) => {
+                        warn!(email_key_len, "email_ingest_cron: Paperless NGX upload failed — item remains pending");
                         all_configured_sinks_succeeded = false;
                     }
                 }
@@ -451,7 +443,7 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
 
         if !has_configured_sink {
             warn!(
-                uid,
+                email_key_len,
                 "email_ingest_cron: no Paperless or Obsidian sink configured — item remains pending"
             );
         } else if all_configured_sinks_succeeded {

@@ -580,15 +580,12 @@ fn write_plan_review_log_to(
 ) {
     match log.to_json() {
         Ok(json) => {
-            if let Err(e) = std::fs::write(log_path, json.as_bytes()) {
-                eprintln!(
-                    "⚠  plan review log write failed ({}): {e}",
-                    log_path.display()
-                );
+            if std::fs::write(log_path, json.as_bytes()).is_err() {
+                eprintln!("⚠  plan review log write failed — review history was not persisted");
             }
         }
-        Err(e) => {
-            eprintln!("⚠  plan review log serialise failed: {e}");
+        Err(_) => {
+            eprintln!("⚠  plan review log serialise failed — review history was not persisted");
         }
     }
 }
