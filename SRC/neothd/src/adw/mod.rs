@@ -7,6 +7,6 @@
 pub mod goal;
 
 pub use goal::{
-    AcceptanceCriterion, CommandSpec, Constraint, CriterionId, EvidenceKind, Goal, GoalError,
-    GoalId, GoalIntentClassification, GoalStatus,
+    AcceptanceCriterion, CommandSpec, Constraint, CouncilThreshold, CriterionId, EvidenceKind,
+    Goal, GoalError, GoalId, GoalIntentClassification, GoalStatus,
 };
