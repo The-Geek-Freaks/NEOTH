@@ -341,10 +341,7 @@ mod tests {
             !s.contains('/'),
             "sanitized session ID must contain no path separator"
         );
-        assert!(
-            !s.contains('.'),
-            "sanitized session ID must contain no dot"
-        );
+        assert!(!s.contains('.'), "sanitized session ID must contain no dot");
         assert!(
             s.ends_with("etc_cron"),
             "sanitized session ID must retain the final path component"

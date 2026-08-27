@@ -1381,7 +1381,9 @@ pub async fn run_document_review(path: &Path, output: OutputFormat) -> Result<()
     .map_err(|_| anyhow::anyhow!("document source admission worker failed"))??;
     let extraction = match admitted.source_kind() {
         crate::skills::doc_distill::DocumentSourceKind::Pdf => {
-            crate::media::pdf::PdfExtractor.extract(admitted.asset()).await
+            crate::media::pdf::PdfExtractor
+                .extract(admitted.asset())
+                .await
         }
         crate::skills::doc_distill::DocumentSourceKind::OfficeOrBook => {
             crate::media::document::DocumentExtractor

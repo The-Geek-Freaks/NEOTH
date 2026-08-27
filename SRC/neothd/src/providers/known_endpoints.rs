@@ -576,7 +576,11 @@ mod tests {
             assert_eq!(entry.endpoint, endpoint, "{provider_id}");
             assert_eq!(entry.default_model, default_model, "{provider_id}");
             assert_eq!(entry.doc_url, doc_url, "{provider_id}");
-            assert_eq!(entry.profile, OpenAiCompatibleProfile::Generic, "{provider_id}");
+            assert_eq!(
+                entry.profile,
+                OpenAiCompatibleProfile::Generic,
+                "{provider_id}"
+            );
             assert!(entry.has_list_models, "{provider_id}");
             assert!(!is_non_public_endpoint(entry.endpoint), "{provider_id}");
             assert!(cloud_only().any(|known| known.provider_id == provider_id));

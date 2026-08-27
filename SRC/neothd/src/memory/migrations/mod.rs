@@ -26,9 +26,7 @@ use anyhow::{Context, Result, anyhow, ensure};
 use rusqlite::Connection;
 use tracing::info;
 
-use crate::memory::store::{
-    TRANSCRIPT_MINING_V37_TABLES_SQL, TRANSCRIPT_MINING_V37_TRIGGERS_SQL,
-};
+use crate::memory::store::{TRANSCRIPT_MINING_V37_TABLES_SQL, TRANSCRIPT_MINING_V37_TRIGGERS_SQL};
 
 /// A single schema upgrade step.
 pub struct Migration {
@@ -3235,11 +3233,16 @@ mod tests {
         assert_eq!(migrate(&mut conn, 36, 37).unwrap(), 37);
         migration_v36_to_v37(&conn).unwrap();
         let migrated_plan_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM transcript_mining_raw_frame_plan", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM transcript_mining_raw_frame_plan",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
-        assert_eq!(migrated_plan_count, 0, "v37 must never infer raw-frame plans");
+        assert_eq!(
+            migrated_plan_count, 0,
+            "v37 must never infer raw-frame plans"
+        );
         let pre_v37_plan_epoch: i64 = conn
             .query_row(
                 "SELECT transcript_mining_raw_frame_plan_epoch FROM raw_turns WHERE id=1",
@@ -3247,7 +3250,10 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(pre_v37_plan_epoch, 0, "all v36 raw rows stay pre-plan epoch");
+        assert_eq!(
+            pre_v37_plan_epoch, 0,
+            "all v36 raw rows stay pre-plan epoch"
+        );
 
         let fresh_home = tempfile::tempdir().unwrap();
         let fresh = crate::memory::store::open(&fresh_home.path().join("views.db")).unwrap();
@@ -3450,7 +3456,8 @@ mod tests {
             "#,
         )
         .unwrap();
-        conn.execute("DELETE FROM raw_turns WHERE id=2", []).unwrap();
+        conn.execute("DELETE FROM raw_turns WHERE id=2", [])
+            .unwrap();
         let receipt_before: (String, String, String, i64) = conn
             .query_row(
                 "SELECT receipt_id,revocation,lifecycle,occurred_at_unix
@@ -3471,7 +3478,15 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .unwrap();
-        assert_eq!(witness, (vec![0; 32], "operator".into(), "operator_raw_text_v1".into(), 1));
+        assert_eq!(
+            witness,
+            (
+                vec![0; 32],
+                "operator".into(),
+                "operator_raw_text_v1".into(),
+                1
+            )
+        );
         let binding: (String, String, i64, Option<String>) = conn
             .query_row(
                 "SELECT provenance_id,lifecycle,raw_turn_id,terminal_cause
@@ -3486,7 +3501,15 @@ mod tests {
             ("provenance-v36-bound".into(), "pending".into(), 1, None),
             "v37 must retain, not promote, a v36 binding",
         );
-        let bound_outbox: (String, i64, Vec<u8>, Vec<u8>, String, Option<i64>, Option<Vec<u8>>) = conn
+        let bound_outbox: (
+            String,
+            i64,
+            Vec<u8>,
+            Vec<u8>,
+            String,
+            Option<i64>,
+            Option<Vec<u8>>,
+        ) = conn
             .query_row(
                 "SELECT logical_subtype,event_subtype,payload,payload_sha256,state,
                         delivered_at_unix,delivered_frame_sha256
@@ -3521,7 +3544,10 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .unwrap();
-        assert_eq!(receipt_after, receipt_before, "v37 must retain the v36 terminal receipt exactly");
+        assert_eq!(
+            receipt_after, receipt_before,
+            "v37 must retain the v36 terminal receipt exactly"
+        );
         let terminal_cause: (String, Option<String>) = conn
             .query_row(
                 "SELECT lifecycle,terminal_cause FROM transcript_mining_provenance
@@ -3541,9 +3567,11 @@ mod tests {
             0,
         );
         assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM transcript_mining_raw_frame_plan", [], |row| {
-                row.get::<_, i64>(0)
-            })
+            conn.query_row(
+                "SELECT COUNT(*) FROM transcript_mining_raw_frame_plan",
+                [],
+                |row| { row.get::<_, i64>(0) }
+            )
             .unwrap(),
             0,
             "migration must not infer a plan from preserved v36 metadata",
@@ -3630,7 +3658,11 @@ mod tests {
         .unwrap();
 
         let error = migrate(&mut conn, 36, 37).unwrap_err().to_string();
-        assert!(error.contains("v37 refuses unverifiable legacy transcript mining revocation outbox rows"));
+        assert!(
+            error.contains(
+                "v37 refuses unverifiable legacy transcript mining revocation outbox rows"
+            )
+        );
         assert_eq!(current_version(&conn).unwrap(), 36);
         for table in [
             "raw_turns",
@@ -3741,8 +3773,8 @@ mod tests {
             .unwrap(),
             0
         );
-        assert!(conn
-            .execute(
+        assert!(
+            conn.execute(
                 "INSERT INTO transcript_mining_raw_frame_plan
                     (frame_plan_id,provenance_id,lifecycle_id,raw_turn_id,
                      raw_event_type,raw_event_subtype,planned_wal_format_version,
@@ -3753,7 +3785,9 @@ mod tests {
                          zeroblob(8),zeroblob(8),0,zeroblob(96),zeroblob(32),1)",
                 [],
             )
-            .is_err(), "a v36 row must never acquire a v37 raw-frame plan");
+            .is_err(),
+            "a v36 row must never acquire a v37 raw-frame plan"
+        );
 
         conn.execute(
             "INSERT INTO raw_turns
@@ -3794,11 +3828,8 @@ mod tests {
         // an already-persisted row whose creation belongs to that later seam,
         // then restore the exact production trigger set before asserting
         // current direct-SQL behavior and deletion.
-        conn.execute(
-            "DROP TRIGGER transcript_mining_plan_stage3a_reserved",
-            [],
-        )
-        .unwrap();
+        conn.execute("DROP TRIGGER transcript_mining_plan_stage3a_reserved", [])
+            .unwrap();
         conn.execute_batch(
             r#"
             BEGIN;
@@ -3839,17 +3870,14 @@ mod tests {
                  FROM transcript_mining_raw_frame_plan WHERE frame_plan_id='plan-37'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .unwrap();
+            )
+            .unwrap();
         assert_eq!(prepared_frame_evidence, (None, None, 0));
         // Exercise the dedicated plan OR REPLACE guard, not merely the broader
         // Stage-3a admission gate. The gate is restored before any normal
         // Stage-3a behavior is asserted below.
-        conn.execute(
-            "DROP TRIGGER transcript_mining_plan_stage3a_reserved",
-            [],
-        )
-        .unwrap();
+        conn.execute("DROP TRIGGER transcript_mining_plan_stage3a_reserved", [])
+            .unwrap();
         let plan_replace_error = conn
             .execute(
                 "INSERT OR REPLACE INTO transcript_mining_raw_frame_plan
@@ -3903,17 +3931,19 @@ mod tests {
                 "expected OR REPLACE guard {expected_reason:?}, got: {replacement_error}",
             );
         }
-        assert!(conn
-            .execute(
+        assert!(
+            conn.execute(
                 "UPDATE transcript_mining_provenance
                  SET lifecycle='cancelled',revoked_at_unix=3,
                      terminal_cause='raw_turn_deleted'
                  WHERE provenance_id='provenance-37'",
                 [],
             )
-            .is_err(), "a direct terminal transition cannot replace raw deletion");
-        assert!(conn
-            .execute(
+            .is_err(),
+            "a direct terminal transition cannot replace raw deletion"
+        );
+        assert!(
+            conn.execute(
                 "INSERT INTO transcript_mining_wal_outbox
                     (outbox_id,provenance_id,lifecycle_id,logical_subtype,event_subtype,
                      payload,payload_sha256,enqueued_at_unix)
@@ -3921,36 +3951,44 @@ mod tests {
                          X'01',zeroblob(32),2)",
                 [],
             )
-            .is_err(), "0x28 must wait for an authenticated raw-frame verification");
-        assert!(conn
-            .execute(
+            .is_err(),
+            "0x28 must wait for an authenticated raw-frame verification"
+        );
+        assert!(
+            conn.execute(
                 "UPDATE transcript_mining_provenance
                  SET lifecycle='active' WHERE provenance_id='provenance-37'",
                 [],
             )
-            .is_err(), "activation requires delivered read-back evidence");
-        assert!(conn
-            .execute(
+            .is_err(),
+            "activation requires delivered read-back evidence"
+        );
+        assert!(
+            conn.execute(
                 "UPDATE transcript_mining_raw_frame_plan
                  SET state='verified',raw_frame_delivered_at_unix=3
                  WHERE frame_plan_id='plan-37'",
                 [],
             )
-            .is_err(), "a verified plan needs a fixed physical-frame digest");
+            .is_err(),
+            "a verified plan needs a fixed physical-frame digest"
+        );
 
         // A matching length is not proof. Stage 3a must reject both an
         // incomplete claim and an all-zero, syntactically complete claim:
         // direct SQLite has no authenticated WAL read-back attestation.
-        assert!(conn
-            .execute(
+        assert!(
+            conn.execute(
                 "UPDATE transcript_mining_raw_frame_plan
                  SET state='verified',raw_frame_sha256=zeroblob(32),raw_frame_delivered_at_unix=3
                  WHERE frame_plan_id='plan-37'",
                 [],
             )
-            .is_err(), "stage 3a must not let SQLite fabricate verified WAL evidence");
-        assert!(conn
-            .execute(
+            .is_err(),
+            "stage 3a must not let SQLite fabricate verified WAL evidence"
+        );
+        assert!(
+            conn.execute(
                 "INSERT INTO transcript_mining_wal_outbox
                     (outbox_id,provenance_id,lifecycle_id,logical_subtype,event_subtype,
                      payload,payload_sha256,state,enqueued_at_unix,delivered_at_unix,
@@ -3959,9 +3997,11 @@ mod tests {
                          X'01',zeroblob(32),'delivered',3,4,zeroblob(32))",
                 [],
             )
-            .is_err(), "stage 3a must not let SQLite fabricate delivered 0x28 evidence");
-        assert!(conn
-            .execute(
+            .is_err(),
+            "stage 3a must not let SQLite fabricate delivered 0x28 evidence"
+        );
+        assert!(
+            conn.execute(
                 "INSERT INTO transcript_mining_wal_outbox
                     (outbox_id,provenance_id,lifecycle_id,logical_subtype,event_subtype,
                      payload,payload_sha256,bound_payload_sha256,
@@ -3970,7 +4010,9 @@ mod tests {
                          X'02',zeroblob(32),zeroblob(32),'missing-receipt',3)",
                 [],
             )
-            .is_err(), "0x29 requires terminal receipt plus an exact delivered 0x28");
+            .is_err(),
+            "0x29 requires terminal receipt plus an exact delivered 0x28"
+        );
 
         conn.execute("DELETE FROM raw_turns WHERE id=2", [])
             .unwrap();
@@ -4049,11 +4091,8 @@ mod tests {
         .unwrap();
         // Model an existing later-seam-owned planned row, then immediately
         // restore the production Stage-3a reservation before testing rollback.
-        conn.execute(
-            "DROP TRIGGER transcript_mining_plan_stage3a_reserved",
-            [],
-        )
-        .unwrap();
+        conn.execute("DROP TRIGGER transcript_mining_plan_stage3a_reserved", [])
+            .unwrap();
         conn.execute_batch(
             r#"
             BEGIN;
@@ -4130,7 +4169,10 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .unwrap();
-        assert_eq!(pending_delete, ("cancelled".into(), "cancelled".into(), 0, 1));
+        assert_eq!(
+            pending_delete,
+            ("cancelled".into(), "cancelled".into(), 0, 1)
+        );
 
         // For a fixture created by the later authorized seam, raw deletion
         // cancels the raw-frame plan itself; no 0x28 exists or can be admitted
@@ -4152,11 +4194,8 @@ mod tests {
         .unwrap();
         // The terminal-delete fixture is likewise pre-existing authority data;
         // ordinary Stage-3a SQLite cannot construct it.
-        conn.execute(
-            "DROP TRIGGER transcript_mining_plan_stage3a_reserved",
-            [],
-        )
-        .unwrap();
+        conn.execute("DROP TRIGGER transcript_mining_plan_stage3a_reserved", [])
+            .unwrap();
         conn.execute_batch(
             r#"
             BEGIN;

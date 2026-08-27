@@ -320,9 +320,14 @@ fn operator_source_parent_and_name(
 ) -> Result<(&Path, &std::ffi::OsStr), DocDistillError> {
     let source_parent = path.parent().ok_or(DocDistillError::UnsafeSource)?;
     let source_name = path.file_name().ok_or(DocDistillError::UnsafeSource)?;
-    if source_name.is_empty() || path.components().any(|component| {
-        matches!(component, std::path::Component::CurDir | std::path::Component::ParentDir)
-    }) {
+    if source_name.is_empty()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        })
+    {
         return Err(DocDistillError::UnsafeSource);
     }
     Ok((source_parent, source_name))
@@ -440,10 +445,7 @@ fn defang_for_operator_review(text: &str) -> Result<String, DocDistillError> {
     Ok(review)
 }
 
-fn push_review_caret_escape(
-    review: &mut String,
-    character: char,
-) -> Result<(), DocDistillError> {
+fn push_review_caret_escape(review: &mut String, character: char) -> Result<(), DocDistillError> {
     push_review_fragment(review, "⟦U+")?;
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let code = character as u32;
@@ -489,7 +491,10 @@ mod tests {
         .expect("clean extraction is reviewable");
 
         assert_eq!(doc.review_text(), "| Useful ˋexampleˋ ‹tag›");
-        assert!(doc.render_operator_review().contains("No skill was written"));
+        assert!(
+            doc.render_operator_review()
+                .contains("No skill was written")
+        );
     }
 
     #[test]
@@ -504,7 +509,10 @@ mod tests {
             "a".repeat(64),
         );
 
-        assert!(matches!(result, Err(DocDistillError::RejectedUntrustedContent)));
+        assert!(matches!(
+            result,
+            Err(DocDistillError::RejectedUntrustedContent)
+        ));
     }
 
     #[test]
@@ -526,7 +534,11 @@ mod tests {
         assert!(review.contains('␇'));
         assert!(review.contains('␡'));
         assert!(review.ends_with('\n'));
-        assert!(defang_for_operator_review("column\tvalue").unwrap().contains('\t'));
+        assert!(
+            defang_for_operator_review("column\tvalue")
+                .unwrap()
+                .contains('\t')
+        );
     }
 
     #[test]
@@ -621,13 +633,18 @@ mod tests {
         let outside = tempfile::tempdir().expect("temp outside");
         let outside_parent = outside.path().join("reports").join("nested");
         std::fs::create_dir_all(&outside_parent).expect("create outside parent");
-        std::fs::write(outside_parent.join("outside.pdf"), b"not parsed in admission")
-            .expect("write target");
+        std::fs::write(
+            outside_parent.join("outside.pdf"),
+            b"not parsed in admission",
+        )
+        .expect("write target");
         let linked_anchor = root.path().join("anchor");
         std::os::unix::fs::symlink(outside.path(), &linked_anchor)
             .expect("create former dynamic anchor link");
 
-        assert!(admit_operator_document(&linked_anchor.join("reports/nested/outside.pdf")).is_err());
+        assert!(
+            admit_operator_document(&linked_anchor.join("reports/nested/outside.pdf")).is_err()
+        );
     }
 
     #[cfg(windows)]
@@ -650,7 +667,12 @@ mod tests {
         )
         .expect("hold review snapshot");
 
-        assert!(std::fs::OpenOptions::new().write(true).open(&source).is_err());
+        assert!(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&source)
+                .is_err()
+        );
         assert!(std::fs::remove_file(&source).is_err());
     }
 

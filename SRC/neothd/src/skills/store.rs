@@ -617,10 +617,16 @@ pub(crate) fn open_absolute_bound_directory(
 
         let mut components = absolute.components();
         let Some(Component::Prefix(prefix)) = components.next() else {
-            anyhow::bail!("{label} path has no supported disk root: {}", path.display());
+            anyhow::bail!(
+                "{label} path has no supported disk root: {}",
+                path.display()
+            );
         };
         let Prefix::Disk(letter) = prefix.kind() else {
-            anyhow::bail!("{label} path has no supported disk root: {}", path.display());
+            anyhow::bail!(
+                "{label} path has no supported disk root: {}",
+                path.display()
+            );
         };
         anyhow::ensure!(
             matches!(components.next(), Some(Component::RootDir)),
@@ -653,14 +659,7 @@ pub(crate) fn open_absolute_bound_directory(
             );
         }
         let current = open_ambient_directory_nofollow(&root, label)?;
-        return walk_bound_directory_descendants(
-            current,
-            root,
-            relative,
-            &absolute,
-            create,
-            label,
-        );
+        return walk_bound_directory_descendants(current, root, relative, &absolute, create, label);
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -1143,9 +1142,12 @@ pub(crate) fn open_bound_regular_file_snapshot(
     display_path: &Path,
 ) -> Result<(File, BoundChildObject)> {
     let file = open_regular_file_snapshot_handle(parent, name, display_path)?;
-    let metadata = file
-        .metadata()
-        .with_context(|| format!("inspect document review snapshot {}", display_path.display()))?;
+    let metadata = file.metadata().with_context(|| {
+        format!(
+            "inspect document review snapshot {}",
+            display_path.display()
+        )
+    })?;
     if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
         anyhow::bail!(
             "document review snapshot is not a real regular file: {}",
@@ -1154,10 +1156,9 @@ pub(crate) fn open_bound_regular_file_snapshot(
     }
     let binding = BoundChildObject {
         identity_token: child_identity_token(&metadata)?,
-        _handle: Some(
-            file.try_clone()
-                .with_context(|| format!("retain document review snapshot {}", display_path.display()))?,
-        ),
+        _handle: Some(file.try_clone().with_context(|| {
+            format!("retain document review snapshot {}", display_path.display())
+        })?),
     };
     if !binding.matches_regular_file_snapshot(parent, name, display_path)? {
         anyhow::bail!(
@@ -1168,7 +1169,11 @@ pub(crate) fn open_bound_regular_file_snapshot(
     Ok((file, binding))
 }
 
-fn open_regular_file_snapshot_handle(parent: &Dir, name: &OsStr, display_path: &Path) -> Result<File> {
+fn open_regular_file_snapshot_handle(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<File> {
     validate_child_name(name)?;
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
@@ -1209,7 +1214,10 @@ fn open_regular_file_snapshot_handle(parent: &Dir, name: &OsStr, display_path: &
         let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
         if result != 0 {
             return Err(std::io::Error::last_os_error()).with_context(|| {
-                format!("acquire shared document review snapshot lock {}", display_path.display())
+                format!(
+                    "acquire shared document review snapshot lock {}",
+                    display_path.display()
+                )
             });
         }
     }

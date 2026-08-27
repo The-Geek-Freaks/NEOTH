@@ -29,7 +29,7 @@ pub mod tier_classifier;
 
 pub use gate::{ConfirmStrategy, Gate, PermissionAuditSink};
 pub use ifc::{
-    may_flow_to_action, InformationFlowDenied, InformationLabel, SourceLabels, SourceLabelsError,
+    InformationFlowDenied, InformationLabel, SourceLabels, SourceLabelsError, may_flow_to_action,
 };
 pub use policy::{
     ActionKind, AutonomyPolicySnapshot, CustomAutonomyConfig, CustomDecision, PolicyArgument,

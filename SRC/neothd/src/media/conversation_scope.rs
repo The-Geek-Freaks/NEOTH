@@ -76,20 +76,24 @@ impl CancelScope {
     /// returns [`GenerationExhausted`]. That call has still invalidated the old
     /// token; callers must treat the error as a terminal fail-closed state.
     pub fn invalidate(&self) -> Result<(), GenerationExhausted> {
-        let result = self.generation.fetch_update(
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-            |generation| match generation {
-                u32::MAX => None,
-                generation => Some(generation + 1),
-            },
-        );
+        let result =
+            self.generation
+                .fetch_update(
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                    |generation| match generation {
+                        u32::MAX => None,
+                        generation => Some(generation + 1),
+                    },
+                );
 
         match result {
             Ok(generation) if generation == u32::MAX - 1 => Err(GenerationExhausted),
             Err(u32::MAX) => Err(GenerationExhausted),
             Ok(_) => Ok(()),
-            Err(_) => unreachable!("the cancellation generation only rejects its terminal sentinel"),
+            Err(_) => {
+                unreachable!("the cancellation generation only rejects its terminal sentinel")
+            }
         }
     }
 
@@ -199,10 +203,7 @@ mod tests {
 
         assert_eq!(scope.invalidate(), Err(super::GenerationExhausted));
         assert!(scope.is_stale(&final_usable));
-        assert!(matches!(
-            scope.snapshot(),
-            Err(super::GenerationExhausted)
-        ));
+        assert!(matches!(scope.snapshot(), Err(super::GenerationExhausted)));
         assert_eq!(scope.invalidate(), Err(super::GenerationExhausted));
         assert!(scope.is_stale(&final_usable));
     }

@@ -13,11 +13,7 @@
 //! assumes a missing label is public. `ExternalHttpRequest` and
 //! `McpToolInvocation` are deliberately public-clearance egress boundaries.
 
-use std::{
-    cmp::Ordering,
-    collections::BTreeSet,
-    fmt,
-};
+use std::{cmp::Ordering, collections::BTreeSet, fmt};
 
 use super::ActionKind;
 
@@ -293,14 +289,9 @@ mod tests {
 
     #[test]
     fn source_labels_normalize_sort_and_deduplicate() {
-        let sources = SourceLabels::from_names([
-            " Secret ",
-            "PUBLIC",
-            "internal",
-            "public",
-            "INTERNAL",
-        ])
-        .unwrap();
+        let sources =
+            SourceLabels::from_names([" Secret ", "PUBLIC", "internal", "public", "INTERNAL"])
+                .unwrap();
 
         assert_eq!(
             sources.as_slice(),
@@ -314,7 +305,10 @@ mod tests {
 
     #[test]
     fn empty_and_unknown_labels_fail_closed() {
-        assert_eq!(SourceLabels::from_names(Vec::<&str>::new()), Err(SourceLabelsError::Empty));
+        assert_eq!(
+            SourceLabels::from_names(Vec::<&str>::new()),
+            Err(SourceLabelsError::Empty)
+        );
         assert_eq!(
             SourceLabels::from_names(["public", "unknown"]),
             Err(SourceLabelsError::UnknownLabel)

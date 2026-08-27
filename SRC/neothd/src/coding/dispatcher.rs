@@ -791,8 +791,7 @@ fn dispatch_audit_root(conn: &Connection) -> Result<std::path::PathBuf> {
                 // namespace; production has no such fallback and fails closed
                 // below.
                 let root = std::env::temp_dir().join("neoth-dispatch-in-memory-tests");
-                std::fs::create_dir_all(&root)
-                    .context("create test-only coding artifact root")?;
+                std::fs::create_dir_all(&root).context("create test-only coding artifact root")?;
                 return Ok(root);
             }
             #[cfg(not(test))]
@@ -1496,13 +1495,8 @@ fn handle_retryable_failure(
         // the operator sees what the failed attempt produced even
         // before the next try.
         if let Some(o) = partial_outcome {
-            store::attach_task_artifact(
-                conn,
-                task.task_id,
-                o.patch_path(),
-                Some(o.tests),
-            )
-            .context("attach accepted partial worker artifact before retry")?;
+            store::attach_task_artifact(conn, task.task_id, o.patch_path(), Some(o.tests))
+                .context("attach accepted partial worker artifact before retry")?;
         }
         // Back to Backlog for the next dispatch loop iteration.
         store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns)
@@ -1539,13 +1533,8 @@ fn handle_retryable_failure(
                 store::append_task_description_hint(conn, task.task_id, &hint)
                     .context("persist escalation retry hint")?;
                 if let Some(o) = partial_outcome {
-                    store::attach_task_artifact(
-                        conn,
-                        task.task_id,
-                        o.patch_path(),
-                        Some(o.tests),
-                    )
-                    .context("attach accepted partial worker artifact before escalation")?;
+                    store::attach_task_artifact(conn, task.task_id, o.patch_path(), Some(o.tests))
+                        .context("attach accepted partial worker artifact before escalation")?;
                 }
                 // Re-queue; the next loop pass re-reads the task with
                 // hemisphere=Right and binds the Right worker. Not
@@ -3113,16 +3102,17 @@ mod tests {
         // routes the task to Blocked without ever counting a completion.
         for with_apply in [false, true] {
             let (dir, conn) = fresh_db();
-            let session_id =
-                store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
-            let task_id =
-                store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+            let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+            let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
             store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
 
             let mut invalid = green_outcome();
             let worker_selected_foreign = dir.path().join("foreign-mismatched.patch");
-            std::fs::write(&worker_selected_foreign, b"different file selected by worker")
-                .unwrap();
+            std::fs::write(
+                &worker_selected_foreign,
+                b"different file selected by worker",
+            )
+            .unwrap();
             invalid.patch_path = worker_selected_foreign;
             let mut workers = HemisphereWorkerSet::new();
             workers.bind(
@@ -3167,7 +3157,9 @@ mod tests {
                 "contract-rejected output must not attach an artifact (with_apply={with_apply})"
             );
             assert!(
-                !dir.path().join(format!(".neoth-task-{}", task_id.raw())).exists(),
+                !dir.path()
+                    .join(format!(".neoth-task-{}", task_id.raw()))
+                    .exists(),
                 "contract rejection must occur before worktree creation (with_apply={with_apply})"
             );
         }

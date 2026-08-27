@@ -927,7 +927,10 @@ mod tests {
         let task = sample_task();
         let path = patch_path_for(std::path::Path::new("/tmp/neoth"), &task);
         assert!(path.ends_with("task-42.patch"));
-        assert!(path.components().any(|component| component.as_os_str() == "7"));
+        assert!(
+            path.components()
+                .any(|component| component.as_os_str() == "7")
+        );
         assert!(
             !path.as_os_str().is_empty(),
             "legacy helper remains callable, but a WorkerOutcome using this path is rejected by WorkerContract"
@@ -1192,8 +1195,16 @@ mod tests {
         let reply = "x".repeat(MAX_PROVIDER_COMPLETION_BYTES + 1);
         let (worker, provider) = direct_worker_at(&reply, patch_root.path());
 
-        let error = worker.execute(&sample_task()).await.unwrap_err().to_string();
-        assert_eq!(provider.count(), 1, "direct task makes exactly one provider call");
+        let error = worker
+            .execute(&sample_task())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            provider.count(),
+            1,
+            "direct task makes exactly one provider call"
+        );
         assert!(error.contains("coding worker provider response rejected"));
         assert!(!error.contains(&reply));
     }
@@ -1216,7 +1227,6 @@ mod tests {
         assert!(out.summary.contains("REDACTED"));
         assert!(out.patch_text.contains("example.txt"));
         assert!(out.summary.contains("removed"));
-
     }
 
     #[tokio::test]
@@ -1277,10 +1287,7 @@ mod tests {
         let reply = "```diff\n--- a/example.txt\n+++ b/example.txt\n@@ -0,0 +1 @@\n+safe=true\n```\nSUMMARY: clean";
         let (worker, _) = direct_worker_at(reply, root.path());
 
-        let outcome = worker
-            .execute(&sample_task())
-            .await
-            .unwrap();
+        let outcome = worker.execute(&sample_task()).await.unwrap();
         assert!(!outcome.patch_text.is_empty());
         assert!(outcome.patch_path.as_os_str().is_empty());
     }

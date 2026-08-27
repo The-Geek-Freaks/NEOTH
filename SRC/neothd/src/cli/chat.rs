@@ -11423,14 +11423,13 @@ mod tests {
         .chat;
         let provider = NeverCalledProvider::default();
 
-        assert!(dispatch_pre_runtime_local_action(&mut args)
-            .await
-            .expect("terminal action dispatcher"));
-        assert!(!wal.exists());
-        assert_eq!(
-            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
-            0
+        assert!(
+            dispatch_pre_runtime_local_action(&mut args)
+                .await
+                .expect("terminal action dispatcher")
         );
+        assert!(!wal.exists());
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
 
         // Exercise the public seam separately; the empty path prints usage
         // and returns before its supplied provider/WAL runtime can be used.
@@ -11446,10 +11445,7 @@ mod tests {
             .await
             .expect("public terminal action");
         assert!(!wal.exists());
-        assert_eq!(
-            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
-            0
-        );
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

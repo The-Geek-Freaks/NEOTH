@@ -135,14 +135,22 @@ impl ChatTurnWatchdog {
     /// A successful byte read is not progress. Call this only after the
     /// stream parser observed visible text growth or a new authenticated
     /// provider/control event for the same request.
-    fn rearm_for_meaningful_progress(&mut self, request_id: ChatStreamRequestId, now: std::time::Instant) {
+    fn rearm_for_meaningful_progress(
+        &mut self,
+        request_id: ChatStreamRequestId,
+        now: std::time::Instant,
+    ) {
         if self.request_id == request_id && self.state == ChatWatchdogState::Monitoring {
             self.last_meaningful_progress_at = now;
         }
     }
 
     /// Returns true exactly once, at the request-bound diagnostic transition.
-    fn enter_diagnostic_if_silent(&mut self, request_id: ChatStreamRequestId, now: std::time::Instant) -> bool {
+    fn enter_diagnostic_if_silent(
+        &mut self,
+        request_id: ChatStreamRequestId,
+        now: std::time::Instant,
+    ) -> bool {
         if self.request_id != request_id || self.state != ChatWatchdogState::Monitoring {
             return false;
         }
@@ -335,11 +343,7 @@ fn settle_chat_watchdog_retry_state(
         surface,
         terminal_phase,
     );
-    clear_watchdog_input_for_request(
-        &mut lock_chat_watchdog_input(input),
-        request_id,
-        surface,
-    );
+    clear_watchdog_input_for_request(&mut lock_chat_watchdog_input(input), request_id, surface);
     clear_watchdog_retry_stop_for_request(
         &mut lock_chat_watchdog_retry_stop(retry_stop),
         request_id,
@@ -391,9 +395,9 @@ fn settle_chat_stream_worker_terminal(
             controller
         }
     };
-    let exact_request = controller.active_request().is_some_and(|request| {
-        request.request_id == request_id && request.surface == surface
-    });
+    let exact_request = controller
+        .active_request()
+        .is_some_and(|request| request.request_id == request_id && request.surface == surface);
     exact_request
         .then(|| controller.settle(request_id, succeeded))
         .flatten()
@@ -422,16 +426,11 @@ fn prepare_chat_watchdog_retry_for_surface(
     retry_stop: &std::sync::Mutex<Option<RequestBoundChatWatchdogRetryStop>>,
     expected_surface: ChatStreamSurface,
 ) -> Option<chat_stream_phase::ChatStreamUpdate> {
-    let request = diagnosed_chat_watchdog_request_for_surface(
-        stream,
-        signal_clock,
-        expected_surface,
-    )?;
+    let request =
+        diagnosed_chat_watchdog_request_for_surface(stream, signal_clock, expected_surface)?;
     let body = lock_chat_watchdog_input(input)
         .as_ref()
-        .filter(|input| {
-            input.request_id == request.request_id && input.surface == expected_surface
-        })
+        .filter(|input| input.request_id == request.request_id && input.surface == expected_surface)
         .map(|input| zeroize::Zeroizing::new(input.body.trim().to_owned()))
         .filter(|body| !body.is_empty())?;
     *lock_chat_watchdog_retry(retry) = Some(PendingChatWatchdogRetry {
@@ -2838,12 +2837,10 @@ fn main() -> Result<()> {
     let chat_worker_barrier = std::sync::Arc::new(ChatWorkerBarrier::default());
     let chat_signal_clock: std::sync::Arc<std::sync::Mutex<Option<ChatTurnWatchdog>>> =
         std::sync::Arc::new(std::sync::Mutex::new(None));
-    let chat_watchdog_retry: std::sync::Arc<
-        std::sync::Mutex<Option<PendingChatWatchdogRetry>>,
-    > = std::sync::Arc::new(std::sync::Mutex::new(None));
-    let chat_watchdog_input: std::sync::Arc<
-        std::sync::Mutex<Option<RequestBoundChatRetryInput>>,
-    > = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let chat_watchdog_retry: std::sync::Arc<std::sync::Mutex<Option<PendingChatWatchdogRetry>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let chat_watchdog_input: std::sync::Arc<std::sync::Mutex<Option<RequestBoundChatRetryInput>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
     // Only the watchdog Retry action may preserve a queued retry through the
     // generic Stop callback. A later operator Cancel consumes no marker and
     // therefore clears the queued retry before a late worker can settle.
@@ -4912,8 +4909,7 @@ fn main() -> Result<()> {
                         if let Some(w) = weak_retry.upgrade() {
                             w.set_chat_stall_active(false);
                             w.set_status_line(
-                                "Retry was ignored because Main is not the diagnosed turn."
-                                    .into(),
+                                "Retry was ignored because Main is not the diagnosed turn.".into(),
                             );
                         }
                     }
@@ -4921,8 +4917,7 @@ fn main() -> Result<()> {
                         if let Some(overlay) = overlay_weak_retry.upgrade() {
                             overlay.set_stall_active(false);
                             overlay.set_status_text(
-                                "Retry was ignored because Buddy is not the diagnosed turn."
-                                    .into(),
+                                "Retry was ignored because Buddy is not the diagnosed turn.".into(),
                             );
                         }
                     }
@@ -4975,8 +4970,7 @@ fn main() -> Result<()> {
                         if let Some(w) = weak_stop.upgrade() {
                             w.set_chat_stall_active(false);
                             w.set_status_line(
-                                "Stop was ignored because Main is not the diagnosed turn."
-                                    .into(),
+                                "Stop was ignored because Main is not the diagnosed turn.".into(),
                             );
                         }
                     }
@@ -4984,8 +4978,7 @@ fn main() -> Result<()> {
                         if let Some(overlay) = overlay_weak_stop.upgrade() {
                             overlay.set_stall_active(false);
                             overlay.set_status_text(
-                                "Stop was ignored because Buddy is not the diagnosed turn."
-                                    .into(),
+                                "Stop was ignored because Buddy is not the diagnosed turn.".into(),
                             );
                         }
                     }
@@ -29745,10 +29738,12 @@ mod tests {
             request.request_id,
             progress_at + std::time::Duration::from_millis(119_999),
         ));
-        assert!(watchdog.enter_diagnostic_if_silent(
-            request.request_id,
-            progress_at + CHAT_SILENCE_WATCHDOG,
-        ));
+        assert!(
+            watchdog.enter_diagnostic_if_silent(
+                request.request_id,
+                progress_at + CHAT_SILENCE_WATCHDOG,
+            )
+        );
         assert!(watchdog.is_diagnostic_for(request.request_id));
     }
 
@@ -29766,10 +29761,9 @@ mod tests {
             second.request_id,
             origin + std::time::Duration::from_millis(119_999),
         );
-        assert!(watchdog.enter_diagnostic_if_silent(
-            first.request_id,
-            origin + CHAT_SILENCE_WATCHDOG,
-        ));
+        assert!(
+            watchdog.enter_diagnostic_if_silent(first.request_id, origin + CHAT_SILENCE_WATCHDOG,)
+        );
         watchdog.rearm_for_meaningful_progress(
             first.request_id,
             origin + std::time::Duration::from_secs(999_999),
@@ -29796,13 +29790,15 @@ mod tests {
             request.request_id,
             ChatStreamSurface::Main,
         );
-        assert!(take_watchdog_retry_after_cancelled_settlement(
-            &mut retry,
-            request.request_id,
-            ChatStreamSurface::Main,
-            ChatStreamPhase::Cancelled,
-        )
-        .is_none());
+        assert!(
+            take_watchdog_retry_after_cancelled_settlement(
+                &mut retry,
+                request.request_id,
+                ChatStreamSurface::Main,
+                ChatStreamPhase::Cancelled,
+            )
+            .is_none()
+        );
 
         let mut buddy_controller = ChatStreamController::default();
         let buddy_request = buddy_controller.begin(ChatStreamSurface::Buddy).unwrap();
@@ -29836,10 +29832,12 @@ mod tests {
         assert!(!terminal_signals.observe(true, false));
         // A trailing read that only reparses the retained provider boundary
         // must not extend the deadline from 100ms to 120_099ms.
-        assert!(watchdog.enter_diagnostic_if_silent(
-            request.request_id,
-            progress_at + CHAT_SILENCE_WATCHDOG,
-        ));
+        assert!(
+            watchdog.enter_diagnostic_if_silent(
+                request.request_id,
+                progress_at + CHAT_SILENCE_WATCHDOG,
+            )
+        );
 
         let mut terminal_signals = ChatTerminalSignalTracker::default();
         assert!(terminal_signals.observe(false, true));
@@ -29855,10 +29853,10 @@ mod tests {
         let mut watchdog = ChatTurnWatchdog::arm(request.request_id, armed_at);
 
         assert!(!watchdog.enter_diagnostic_if_silent(request.request_id, origin));
-        assert!(watchdog.enter_diagnostic_if_silent(
-            request.request_id,
-            armed_at + CHAT_SILENCE_WATCHDOG,
-        ));
+        assert!(
+            watchdog
+                .enter_diagnostic_if_silent(request.request_id, armed_at + CHAT_SILENCE_WATCHDOG,)
+        );
 
         let source = include_str!("main.rs");
         let watchdog_source = source
@@ -29900,20 +29898,16 @@ mod tests {
     fn exact_terminal_settlement_clears_poisoned_retry_input_and_stop_state() {
         let mut controller = ChatStreamController::default();
         let request = controller.begin(ChatStreamSurface::Buddy).unwrap();
-        let retry = std::sync::Arc::new(std::sync::Mutex::new(Some(
-            PendingChatWatchdogRetry {
-                request_id: request.request_id,
-                surface: ChatStreamSurface::Buddy,
-                body: zeroize::Zeroizing::new("secret retry body".to_string()),
-            },
-        )));
-        let input = std::sync::Arc::new(std::sync::Mutex::new(Some(
-            RequestBoundChatRetryInput {
-                request_id: request.request_id,
-                surface: ChatStreamSurface::Buddy,
-                body: zeroize::Zeroizing::new("secret input body".to_string()),
-            },
-        )));
+        let retry = std::sync::Arc::new(std::sync::Mutex::new(Some(PendingChatWatchdogRetry {
+            request_id: request.request_id,
+            surface: ChatStreamSurface::Buddy,
+            body: zeroize::Zeroizing::new("secret retry body".to_string()),
+        })));
+        let input = std::sync::Arc::new(std::sync::Mutex::new(Some(RequestBoundChatRetryInput {
+            request_id: request.request_id,
+            surface: ChatStreamSurface::Buddy,
+            body: zeroize::Zeroizing::new("secret input body".to_string()),
+        })));
         let retry_stop = std::sync::Arc::new(std::sync::Mutex::new(Some(
             RequestBoundChatWatchdogRetryStop {
                 request_id: request.request_id,
@@ -29925,15 +29919,17 @@ mod tests {
         poison_test_mutex(retry_stop.clone());
         assert!(retry.is_poisoned() && input.is_poisoned() && retry_stop.is_poisoned());
 
-        assert!(settle_chat_watchdog_retry_state(
-            retry.as_ref(),
-            input.as_ref(),
-            retry_stop.as_ref(),
-            request.request_id,
-            ChatStreamSurface::Buddy,
-            ChatStreamPhase::Complete,
-        )
-        .is_none());
+        assert!(
+            settle_chat_watchdog_retry_state(
+                retry.as_ref(),
+                input.as_ref(),
+                retry_stop.as_ref(),
+                request.request_id,
+                ChatStreamSurface::Buddy,
+                ChatStreamPhase::Complete,
+            )
+            .is_none()
+        );
         assert!(!retry.is_poisoned() && !input.is_poisoned() && !retry_stop.is_poisoned());
         assert!(lock_chat_watchdog_retry(retry.as_ref()).is_none());
         assert!(lock_chat_watchdog_input(input.as_ref()).is_none());
@@ -29942,18 +29938,16 @@ mod tests {
 
     #[test]
     fn poisoned_controller_recovery_still_enforces_exact_watchdog_surface() {
-        let stream = std::sync::Arc::new(std::sync::Mutex::new(
-            ChatStreamController::default(),
-        ));
+        let stream = std::sync::Arc::new(std::sync::Mutex::new(ChatStreamController::default()));
         let request = lock_chat_stream_for_watchdog_operator_control(stream.as_ref())
             .begin(ChatStreamSurface::Main)
             .unwrap();
         let origin = std::time::Instant::now();
         let mut diagnosed = ChatTurnWatchdog::arm(request.request_id, origin);
-        assert!(diagnosed.enter_diagnostic_if_silent(
-            request.request_id,
-            origin + CHAT_SILENCE_WATCHDOG,
-        ));
+        assert!(
+            diagnosed
+                .enter_diagnostic_if_silent(request.request_id, origin + CHAT_SILENCE_WATCHDOG,)
+        );
         let signal_clock = std::sync::Mutex::new(Some(diagnosed));
         let input = std::sync::Mutex::new(Some(RequestBoundChatRetryInput {
             request_id: request.request_id,
@@ -29965,28 +29959,34 @@ mod tests {
         poison_test_mutex(stream.clone());
         assert!(stream.is_poisoned());
 
-        assert!(prepare_chat_watchdog_retry_for_surface(
-            stream.as_ref(),
-            &signal_clock,
-            &input,
-            &retry,
-            &retry_stop,
-            ChatStreamSurface::Buddy,
-        )
-        .is_none());
-        assert!(authorize_chat_watchdog_stop_for_surface(
-            stream.as_ref(),
-            &signal_clock,
-            ChatStreamSurface::Buddy,
-        )
-        .is_none());
+        assert!(
+            prepare_chat_watchdog_retry_for_surface(
+                stream.as_ref(),
+                &signal_clock,
+                &input,
+                &retry,
+                &retry_stop,
+                ChatStreamSurface::Buddy,
+            )
+            .is_none()
+        );
+        assert!(
+            authorize_chat_watchdog_stop_for_surface(
+                stream.as_ref(),
+                &signal_clock,
+                ChatStreamSurface::Buddy,
+            )
+            .is_none()
+        );
         assert!(!stream.is_poisoned());
         assert!(lock_chat_watchdog_retry(&retry).is_none());
         assert!(lock_chat_watchdog_retry_stop(&retry_stop).is_none());
-        assert!(!lock_chat_stream_for_watchdog_operator_control(stream.as_ref())
-            .active_request()
-            .unwrap()
-            .cancel_requested);
+        assert!(
+            !lock_chat_stream_for_watchdog_operator_control(stream.as_ref())
+                .active_request()
+                .unwrap()
+                .cancel_requested
+        );
 
         let authorized = authorize_chat_watchdog_stop_for_surface(
             stream.as_ref(),
@@ -30000,16 +30000,16 @@ mod tests {
                 && current.surface == ChatStreamSurface::Main
         }));
         assert!(controller.request_cancel(authorized.request_id).is_some());
-        assert!(controller
-            .active_request()
-            .is_some_and(|current| current.cancel_requested));
+        assert!(
+            controller
+                .active_request()
+                .is_some_and(|current| current.cancel_requested)
+        );
     }
 
     #[test]
     fn poisoned_worker_terminal_settlement_is_exact_and_clears_controller_poison() {
-        let stream = std::sync::Arc::new(std::sync::Mutex::new(
-            ChatStreamController::default(),
-        ));
+        let stream = std::sync::Arc::new(std::sync::Mutex::new(ChatStreamController::default()));
         let buddy = stream
             .lock()
             .expect("fresh controller")
@@ -30018,43 +30018,57 @@ mod tests {
         poison_test_mutex(stream.clone());
         assert!(stream.is_poisoned());
 
-        assert!(settle_chat_stream_worker_terminal(
-            stream.as_ref(),
-            buddy.request_id,
-            ChatStreamSurface::Buddy,
-            true,
-        )
-        .is_some_and(|terminal| terminal.phase == ChatStreamPhase::Complete));
+        assert!(
+            settle_chat_stream_worker_terminal(
+                stream.as_ref(),
+                buddy.request_id,
+                ChatStreamSurface::Buddy,
+                true,
+            )
+            .is_some_and(|terminal| terminal.phase == ChatStreamPhase::Complete)
+        );
         assert!(!stream.is_poisoned());
-        assert!(stream.lock().expect("recovered controller").active_request().is_none());
+        assert!(
+            stream
+                .lock()
+                .expect("recovered controller")
+                .active_request()
+                .is_none()
+        );
 
         let main = stream
             .lock()
             .expect("recovered controller")
             .begin(ChatStreamSurface::Main)
             .unwrap();
-        assert!(settle_chat_stream_worker_terminal(
-            stream.as_ref(),
-            buddy.request_id,
-            ChatStreamSurface::Buddy,
-            false,
-        )
-        .is_none());
-        assert!(settle_chat_stream_worker_terminal(
-            stream.as_ref(),
-            main.request_id,
-            ChatStreamSurface::Buddy,
-            false,
-        )
-        .is_none());
-        assert!(stream
-            .lock()
-            .expect("controller remains usable")
-            .active_request()
-            .is_some_and(|request| {
-                request.request_id == main.request_id
-                    && request.surface == ChatStreamSurface::Main
-            }));
+        assert!(
+            settle_chat_stream_worker_terminal(
+                stream.as_ref(),
+                buddy.request_id,
+                ChatStreamSurface::Buddy,
+                false,
+            )
+            .is_none()
+        );
+        assert!(
+            settle_chat_stream_worker_terminal(
+                stream.as_ref(),
+                main.request_id,
+                ChatStreamSurface::Buddy,
+                false,
+            )
+            .is_none()
+        );
+        assert!(
+            stream
+                .lock()
+                .expect("controller remains usable")
+                .active_request()
+                .is_some_and(|request| {
+                    request.request_id == main.request_id
+                        && request.surface == ChatStreamSurface::Main
+                })
+        );
     }
 
     #[test]
@@ -30073,10 +30087,10 @@ mod tests {
             .unwrap();
         let origin = std::time::Instant::now();
         let mut stale_diagnostic = ChatTurnWatchdog::arm(first.request_id, origin);
-        assert!(stale_diagnostic.enter_diagnostic_if_silent(
-            first.request_id,
-            origin + CHAT_SILENCE_WATCHDOG,
-        ));
+        assert!(
+            stale_diagnostic
+                .enter_diagnostic_if_silent(first.request_id, origin + CHAT_SILENCE_WATCHDOG,)
+        );
         let signal_clock = std::sync::Mutex::new(Some(stale_diagnostic));
         let input = std::sync::Mutex::new(Some(RequestBoundChatRetryInput {
             request_id: first.request_id,
@@ -30086,28 +30100,34 @@ mod tests {
         let retry = std::sync::Mutex::new(None);
         let retry_stop = std::sync::Mutex::new(None);
 
-        assert!(prepare_chat_watchdog_retry_for_surface(
-            &stream,
-            &signal_clock,
-            &input,
-            &retry,
-            &retry_stop,
-            ChatStreamSurface::Main,
-        )
-        .is_none());
-        assert!(authorize_chat_watchdog_stop_for_surface(
-            &stream,
-            &signal_clock,
-            ChatStreamSurface::Main,
-        )
-        .is_none());
+        assert!(
+            prepare_chat_watchdog_retry_for_surface(
+                &stream,
+                &signal_clock,
+                &input,
+                &retry,
+                &retry_stop,
+                ChatStreamSurface::Main,
+            )
+            .is_none()
+        );
+        assert!(
+            authorize_chat_watchdog_stop_for_surface(
+                &stream,
+                &signal_clock,
+                ChatStreamSurface::Main,
+            )
+            .is_none()
+        );
         assert!(lock_chat_watchdog_retry(&retry).is_none());
         assert!(lock_chat_watchdog_retry_stop(&retry_stop).is_none());
-        assert!(lock_chat_stream_for_watchdog_operator_control(&stream)
-            .active_request()
-            .is_some_and(|current| {
-                current.request_id == second.request_id && !current.cancel_requested
-            }));
+        assert!(
+            lock_chat_stream_for_watchdog_operator_control(&stream)
+                .active_request()
+                .is_some_and(|current| {
+                    current.request_id == second.request_id && !current.cancel_requested
+                })
+        );
     }
 
     #[test]

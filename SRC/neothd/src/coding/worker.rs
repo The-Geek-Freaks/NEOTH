@@ -318,7 +318,7 @@ fn dispatch_patch_path(
         &patch_path,
         bytes,
     )
-        .map_err(|_| WorkerContractViolation::ArtifactWriteFailed)?;
+    .map_err(|_| WorkerContractViolation::ArtifactWriteFailed)?;
     Ok(patch_path)
 }
 
@@ -668,13 +668,7 @@ mod tests {
             let mut claimed_path_outcome = valid_outcome();
             claimed_path_outcome.patch_path = claimed_path;
             assert_eq!(
-                contract_result(
-                    &task,
-                    &task,
-                    &worker,
-                    &worker,
-                    &claimed_path_outcome,
-                ),
+                contract_result(&task, &task, &worker, &worker, &claimed_path_outcome,),
                 Err(WorkerContractViolation::ClaimedPatchPath),
                 "a worker path can never select a dispatcher artifact"
             );
@@ -705,8 +699,14 @@ mod tests {
                 .is_some_and(|name| name.to_string_lossy().starts_with("task-42-")),
             "only the dispatcher chooses the task-bound artifact leaf"
         );
-        assert_eq!(expected.extension().and_then(|ext| ext.to_str()), Some("patch"));
-        assert_eq!(std::fs::read(expected).unwrap(), outcome.patch_text.as_bytes());
+        assert_eq!(
+            expected.extension().and_then(|ext| ext.to_str()),
+            Some("patch")
+        );
+        assert_eq!(
+            std::fs::read(expected).unwrap(),
+            outcome.patch_text.as_bytes()
+        );
         std::fs::write(expected, b"artifact substitution after acceptance").unwrap();
         assert_eq!(
             accepted.patch_text(),

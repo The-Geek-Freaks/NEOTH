@@ -148,7 +148,9 @@ fn keygen(key_path: &std::path::Path, force: bool, output: OutputFormat) -> Resu
     let receipt = keygen_receipt(&kp, key_path);
 
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string(&receipt)?)
+        }
         OutputFormat::Table => print!("{}", render_keygen_table(&receipt)),
     }
     Ok(())

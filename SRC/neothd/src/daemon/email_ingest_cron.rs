@@ -318,7 +318,10 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
                         mark_processed_email(&seen_conn, email, now_unix)?;
                     }
                     Err(_) => {
-                        warn!(email_key_len, "email_ingest_cron: triage-quarantine write failed — item dropped, not forwarded");
+                        warn!(
+                            email_key_len,
+                            "email_ingest_cron: triage-quarantine write failed — item dropped, not forwarded"
+                        );
                     }
                 }
                 continue; // Never reaches Paperless or Obsidian.
@@ -349,7 +352,12 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
                 Ok(_) => {
                     warn!(
                         email_key_len,
-                        high_count = scan.findings.iter().filter(|f| f.severity == crate::security::content_scanner::Severity::High).count(),
+                        high_count =
+                            scan.findings
+                                .iter()
+                                .filter(|f| f.severity
+                                    == crate::security::content_scanner::Severity::High)
+                                .count(),
                         "email_ingest_cron: quarantined (HIGH findings)"
                     );
                     quarantined += 1;
@@ -357,7 +365,10 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
                 }
                 Err(_) => {
                     // Quarantine write failed — log but do NOT forward.
-                    warn!(email_key_len, "email_ingest_cron: quarantine write failed — item dropped, not forwarded");
+                    warn!(
+                        email_key_len,
+                        "email_ingest_cron: quarantine write failed — item dropped, not forwarded"
+                    );
                 }
             }
             continue; // Never reaches Paperless or Obsidian.
@@ -392,7 +403,10 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
                     // SC-16 sanitizer quarantined it after the content_scanner passed —
                     // this means SC-16 caught something the content_scanner missed.
                     // Fail-closed: quarantine.
-                    warn!(email_key_len, "email_ingest_cron: SC-16 sanitizer quarantined doc after scan — storing in quarantine");
+                    warn!(
+                        email_key_len,
+                        "email_ingest_cron: SC-16 sanitizer quarantined doc after scan — storing in quarantine"
+                    );
                     let err_item = build_quarantine_item_error(
                         uid,
                         from,
@@ -430,11 +444,17 @@ pub async fn run_email_ingest_tick(neoth_home: &Path) -> Result<()> {
             if let Some((ref url, ref token)) = paperless_creds {
                 match upload_to_paperless(url, token, subject, clean_body).await {
                     Ok(_) => {
-                        info!(email_key_len, "email_ingest_cron: uploaded to Paperless NGX");
+                        info!(
+                            email_key_len,
+                            "email_ingest_cron: uploaded to Paperless NGX"
+                        );
                         uploaded += 1;
                     }
                     Err(_) => {
-                        warn!(email_key_len, "email_ingest_cron: Paperless NGX upload failed — item remains pending");
+                        warn!(
+                            email_key_len,
+                            "email_ingest_cron: Paperless NGX upload failed — item remains pending"
+                        );
                         all_configured_sinks_succeeded = false;
                     }
                 }
