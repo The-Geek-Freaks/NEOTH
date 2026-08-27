@@ -169,9 +169,9 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         provider_id: "fireworks",
         endpoint: "https://api.fireworks.ai/inference/v1",
         profile: OpenAiCompatibleProfile::Generic,
-        default_model: "accounts/fireworks/models/llama-v3p3-70b-instruct",
+        default_model: "accounts/fireworks/models/deepseek-v3p1",
         summary: "OSS model inference + fine-tuning, function calling",
-        doc_url: "https://docs.fireworks.ai",
+        doc_url: "https://docs.fireworks.ai/tools-sdks/openai-compatibility",
         has_list_models: true,
     },
     KnownEndpoint {
@@ -551,18 +551,38 @@ mod tests {
     }
 
     #[test]
-    fn cerebras_and_nebius_catalog_entries_are_pinned() {
-        let cerebras = find_by_id("cerebras").expect("Cerebras must be present");
-        assert_eq!(cerebras.endpoint, "https://api.cerebras.ai/v1");
-        assert_eq!(cerebras.default_model, "gpt-oss-120b");
-        assert_eq!(cerebras.profile, OpenAiCompatibleProfile::Generic);
-        assert!(cerebras.has_list_models);
-
-        let nebius = find_by_id("nebius").expect("Nebius must be present");
-        assert_eq!(nebius.endpoint, "https://api.studio.nebius.com/v1");
-        assert_eq!(nebius.default_model, "Qwen/Qwen3-235B-A22B");
-        assert_eq!(nebius.profile, OpenAiCompatibleProfile::Generic);
-        assert!(nebius.has_list_models);
+    fn adopt31_h1_openai_compatible_catalog_entries_are_pinned_and_cloud_only() {
+        for (provider_id, endpoint, default_model, doc_url) in [
+            (
+                "cerebras",
+                "https://api.cerebras.ai/v1",
+                "gpt-oss-120b",
+                "https://inference-docs.cerebras.ai/resources/openai",
+            ),
+            (
+                "fireworks",
+                "https://api.fireworks.ai/inference/v1",
+                "accounts/fireworks/models/deepseek-v3p1",
+                "https://docs.fireworks.ai/tools-sdks/openai-compatibility",
+            ),
+            (
+                "nebius",
+                "https://api.studio.nebius.com/v1",
+                "Qwen/Qwen3-235B-A22B",
+                "https://api.studio.nebius.com/docs",
+            ),
+        ] {
+            let entry = find_by_id(provider_id).expect("ADOPT31-H1 provider must be present");
+            assert_eq!(entry.endpoint, endpoint, "{provider_id}");
+            assert_eq!(entry.default_model, default_model, "{provider_id}");
+            assert_eq!(entry.doc_url, doc_url, "{provider_id}");
+            assert_eq!(entry.profile, OpenAiCompatibleProfile::Generic, "{provider_id}");
+            assert!(entry.has_list_models, "{provider_id}");
+            assert!(!is_non_public_endpoint(entry.endpoint), "{provider_id}");
+            assert!(cloud_only().any(|known| known.provider_id == provider_id));
+            validate_profile_endpoint(entry.profile, entry.endpoint)
+                .expect("reviewed OpenAI-compatible endpoint must validate");
+        }
     }
 
     #[test]
