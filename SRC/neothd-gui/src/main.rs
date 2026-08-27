@@ -14114,6 +14114,17 @@ fn main() -> Result<()> {
         // composer. The overlay draft is kept until the approved continuation
         // below; the modal itself lives in the main window.
         {
+            let last_operator_input_for_buddy_privacy =
+                std::sync::Arc::clone(&last_operator_input);
+            overlay.on_incognito_selection_changed(move |selected| {
+                detach_operator_recall_for_incognito(
+                    last_operator_input_for_buddy_privacy.as_ref(),
+                    selected,
+                );
+            });
+        }
+
+        {
             let overlay_weak = overlay.as_weak();
             let window_weak = window.as_weak();
             window.on_buddy_chat_consent_prompt_required(move || {
@@ -14218,7 +14229,7 @@ fn main() -> Result<()> {
                         return;
                     }
                 };
-                ov.set_incognito_active(incognito);
+                activate_buddy_chat_request_ui(&win, &ov, incognito);
                 if let Err(error) =
                     install_chat_launch_gate(launch_gate_slot.as_ref(), request.request_id)
                 {
@@ -20508,6 +20519,11 @@ fn insert_stream_notices(
     notices: &[StreamNotice],
 ) -> usize {
     let request_id_wire = request_id.as_wire();
+    let request_incognito = rows
+        .iter()
+        .find(|row| row.request_id.as_str() == request_id_wire.as_str())
+        .map(|row| row.incognito)
+        .unwrap_or(false);
     let mut background_insertion_index = rows
         .iter()
         .position(|row| row.request_id.as_str() == request_id_wire.as_str())
@@ -20568,6 +20584,7 @@ fn insert_stream_notices(
                     .into(),
                 request_id: notice_request_id.into(),
                 stream_phase: ChatStreamPhase::Complete.as_wire().into(),
+                incognito: request_incognito,
                 ..Default::default()
             },
         );
@@ -20671,6 +20688,15 @@ fn begin_live_chat_request(
 fn settle_main_chat_request_ui(window: &MainWindow) {
     window.set_chat_send_in_flight(false);
     window.set_chat_incognito_active(false);
+}
+
+fn activate_buddy_chat_request_ui(
+    window: &MainWindow,
+    overlay: &MiniOverlay,
+    incognito: bool,
+) {
+    window.set_chat_incognito_active(incognito);
+    overlay.set_incognito_active(incognito);
 }
 
 fn settle_buddy_chat_request_ui(window: &MainWindow, overlay: &MiniOverlay) {
@@ -20914,13 +20940,21 @@ fn current_live_chat_preview(window: &MainWindow) -> (String, String) {
     use slint::Model;
     let messages = window.get_chat_live_messages();
     let rows = messages.iter().collect::<Vec<_>>();
-    panel_logic::latest_chat_sidebar_preview(rows.iter().rev().map(|message| {
-        (
-            message.text.as_str(),
-            message.timestamp.as_str(),
-            ChatStreamPhase::is_active_wire(message.stream_phase.as_str()),
-        )
-    }))
+    panel_logic::latest_chat_sidebar_preview(
+        rows.iter()
+            .rev()
+            // Sidebar state is durable enough to survive channel refreshes.
+            // Never derive either field from a private row, including an
+            // otherwise harmless-looking timestamp or active placeholder.
+            .filter(|message| !message.incognito)
+            .map(|message| {
+                (
+                    message.text.as_str(),
+                    message.timestamp.as_str(),
+                    ChatStreamPhase::is_active_wire(message.stream_phase.as_str()),
+                )
+            }),
+    )
 }
 
 fn recompute_live_chat_preview(window: &MainWindow) {
@@ -25481,7 +25515,10 @@ mod chat_subprocess_tests {
         assert!(production.contains("w.set_chat_incognito(false);"));
         assert!(production.contains("w.set_chat_incognito_active(incognito);"));
         assert!(production.contains("ov.set_incognito(false);"));
-        assert!(production.contains("ov.set_incognito_active(incognito);"));
+        assert!(production.contains(
+            "activate_buddy_chat_request_ui(&win, &ov, incognito);"
+        ));
+        assert!(production.contains("overlay.on_incognito_selection_changed"));
         assert!(production.contains("settle_main_chat_request_ui(&w);"));
         assert!(production.contains("settle_buddy_chat_request_ui(&win, &ov);"));
         let launch_gate_failures = production
@@ -25545,6 +25582,7 @@ mod chat_subprocess_tests {
         ));
         assert!(overlay_ui.contains("checked: root.incognito-active;"));
         assert!(overlay_ui.contains("enabled: false;"));
+        assert!(overlay_ui.contains("callback incognito-selection-changed(bool);"));
         assert!(chat_ui.contains(
             "!(root.incognito || (root.send-in-flight && root.incognito-active))"
         ));
@@ -25588,6 +25626,111 @@ mod chat_subprocess_tests {
         assert!(!window.get_chat_incognito_active());
         assert!(!overlay.get_send_in_flight());
         assert!(!overlay.get_incognito_active());
+    }
+
+    #[test]
+    fn buddy_incognito_activation_is_visible_to_main_and_blocks_recall() {
+        let window = MainWindow::new().unwrap();
+        let overlay = MiniOverlay::new().unwrap();
+        let recalled = std::sync::Mutex::new("previous standard prompt".to_string());
+
+        detach_operator_recall_for_incognito(&recalled, true);
+        activate_buddy_chat_request_ui(&window, &overlay, true);
+        window.set_chat_send_in_flight(true);
+
+        assert!(window.get_chat_incognito_active());
+        assert!(window.get_chat_send_in_flight());
+        assert!(overlay.get_incognito_active());
+        assert!(eligible_operator_recall(&recalled, false, true).is_none());
+        settle_buddy_chat_request_ui(&window, &overlay);
+    }
+
+    #[test]
+    fn incognito_rows_never_replace_or_create_local_sidebar_preview() {
+        use slint::{Model, ModelRc, VecModel};
+
+        let window = MainWindow::new().unwrap();
+        window.set_chat_channels(ModelRc::new(VecModel::from(
+            build_chat_sidebar_channels(&[]),
+        )));
+        let standard_id = ChatStreamRequestId::parse_wire("41").unwrap();
+        assert!(begin_live_chat_request(
+            &window,
+            standard_id,
+            "standard prompt",
+            false,
+        ));
+        assert!(settle_live_chat_request(
+            &window,
+            standard_id,
+            ChatStreamPhase::Complete,
+            Some("standard reply"),
+        ));
+        let baseline = current_live_chat_preview(&window);
+        assert!(!baseline.0.is_empty());
+
+        let private_id = ChatStreamRequestId::parse_wire("42").unwrap();
+        assert!(begin_live_chat_request(
+            &window,
+            private_id,
+            "PRIVATE_PROMPT_SENTINEL",
+            true,
+        ));
+        assert_eq!(current_live_chat_preview(&window), baseline);
+        assert!(project_chat_stream_update(
+            &window,
+            private_id,
+            ChatStreamPhase::Receiving,
+            Some("PRIVATE_STREAM_REPLY_SENTINEL"),
+        ));
+        assert_eq!(current_live_chat_preview(&window), baseline);
+        assert!(settle_live_chat_request(
+            &window,
+            private_id,
+            ChatStreamPhase::Complete,
+            Some("PRIVATE_REPLY_SENTINEL"),
+        ));
+        assert_eq!(current_live_chat_preview(&window), baseline);
+        let local = window
+            .get_chat_channels()
+            .iter()
+            .find(|row| row.id == "cli")
+            .unwrap();
+        assert_eq!(local.last_message.as_str(), baseline.0.as_str());
+        assert_eq!(local.last_timestamp.as_str(), baseline.1.as_str());
+        assert!(!local.last_message.contains("PRIVATE"));
+
+        let private_only = MainWindow::new().unwrap();
+        private_only.set_chat_channels(ModelRc::new(VecModel::from(
+            build_chat_sidebar_channels(&[]),
+        )));
+        assert!(begin_live_chat_request(
+            &private_only,
+            private_id,
+            "PRIVATE_ONLY_PROMPT",
+            true,
+        ));
+        assert_eq!(
+            current_live_chat_preview(&private_only),
+            (String::new(), String::new())
+        );
+        assert!(settle_live_chat_request(
+            &private_only,
+            private_id,
+            ChatStreamPhase::Complete,
+            Some("PRIVATE_ONLY_REPLY"),
+        ));
+        assert_eq!(
+            current_live_chat_preview(&private_only),
+            (String::new(), String::new())
+        );
+        let local = private_only
+            .get_chat_channels()
+            .iter()
+            .find(|row| row.id == "cli")
+            .unwrap();
+        assert!(local.last_message.is_empty());
+        assert!(local.last_timestamp.is_empty());
     }
 
     #[test]

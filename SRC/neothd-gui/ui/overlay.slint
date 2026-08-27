@@ -110,6 +110,7 @@ export component MiniOverlay inherits Window {
     /// (text, captured-incognito). Rust must use this value for the entire
     /// request, including watchdog retry and auto-continue paths.
     callback send-clicked(string, bool);
+    callback incognito-selection-changed(bool);
     /// Operator changed the shared explicit Skill selection.
     callback skill-selected(int);
     /// Operator stopped the active overlay chat request.
@@ -406,6 +407,7 @@ export component MiniOverlay inherits Window {
                         accessible-label: root.incognito
                             ? "Incognito selected for the next Buddy turn: no profile, recall, or transcript data will be used"
                             : "Incognito unselected for the next Buddy turn: standard configured context policy will apply";
+                        toggled(selected) => { root.incognito-selection-changed(selected); }
                     }
                     // Preserve a semantic checked value while in flight. This
                     // is deliberately not bound to `root.incognito`: that is
@@ -784,6 +786,9 @@ export component MiniOverlay inherits Window {
                             accessible-label: root.incognito
                                 ? "Incognito selected for the next Buddy turn: no profile, recall, or transcript data will be used"
                                 : "Incognito unselected for the next Buddy turn: standard configured context policy will apply";
+                            toggled(selected) => {
+                                root.incognito-selection-changed(selected);
+                            }
                         }
                         Text {
                             horizontal-stretch: 1;
