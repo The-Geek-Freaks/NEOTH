@@ -211,7 +211,10 @@ remote_port: 8080
     fn ssh_auth_debug_never_prints_secrets() {
         let pw = SshAuth::Password("hunter2".into());
         let dbg = format!("{pw:?}");
-        assert!(!dbg.contains("hunter2"), "password leaked: {dbg}");
+        assert!(
+            !dbg.contains("hunter2"),
+            "SSH password must be redacted from Debug output"
+        );
         assert!(dbg.contains("<redacted>"));
 
         let key = SshAuth::PrivateKey {
@@ -219,7 +222,10 @@ remote_port: 8080
             passphrase: Some("s3cret".into()),
         };
         let dbg = format!("{key:?}");
-        assert!(!dbg.contains("s3cret"), "passphrase leaked: {dbg}");
+        assert!(
+            !dbg.contains("s3cret"),
+            "SSH private-key passphrase must be redacted from Debug output"
+        );
     }
 
     #[test]

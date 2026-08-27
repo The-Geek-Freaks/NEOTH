@@ -973,7 +973,7 @@ mod tests {
         let debug_str = format!("{:?}", ch.password);
         assert!(
             !debug_str.contains("super_secret_pw"),
-            "SecretString debug must not reveal the raw password: {debug_str}"
+            "SecretString Debug output must not reveal the raw password"
         );
     }
 

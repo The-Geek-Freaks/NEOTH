@@ -337,9 +337,18 @@ mod tests {
         // COR-29: traversal + odd chars collapse to `_`; the result can never
         // contain a path separator or `.`, so it cannot escape the archive root.
         let s = sanitize_session_id("../../../etc/cron");
-        assert!(!s.contains('/'), "no path separator: {s}");
-        assert!(!s.contains('.'), "no dot (blocks ..): {s}");
-        assert!(s.ends_with("etc_cron"), "got: {s}");
+        assert!(
+            !s.contains('/'),
+            "sanitized session ID must contain no path separator"
+        );
+        assert!(
+            !s.contains('.'),
+            "sanitized session ID must contain no dot"
+        );
+        assert!(
+            s.ends_with("etc_cron"),
+            "sanitized session ID must retain the final path component"
+        );
         // Safe ids (incl. brace-wrapped UUIDs) pass through unchanged.
         assert_eq!(sanitize_session_id("{abc-123_XY}"), "abc-123_XY");
         assert_eq!(sanitize_session_id("a b.c:d"), "a_b_c_d");

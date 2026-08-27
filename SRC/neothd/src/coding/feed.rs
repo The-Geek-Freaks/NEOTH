@@ -750,13 +750,25 @@ mod tests {
             ..Default::default()
         };
         let s = render_session_summary(&outcome, 7);
-        assert!(s.contains("#7"), "carries the session id, got: {s}");
-        assert!(s.contains("4/5"), "carries done/total, got: {s}");
-        assert!(s.contains("1 blocked"), "names the blocked count, got: {s}");
-        assert!(s.contains('⚠'), "blocked → warning icon, got: {s}");
+        assert!(
+            s.contains("#7"),
+            "session summary must include its session identifier"
+        );
+        assert!(
+            s.contains("4/5"),
+            "session summary must include completed and attempted counts"
+        );
+        assert!(
+            s.contains("1 blocked"),
+            "blocked session summary must include the blocked count"
+        );
+        assert!(
+            s.contains('⚠'),
+            "blocked session summary must use the warning icon"
+        );
         assert!(
             s.contains('█') || s.contains('░'),
-            "renders a progress bar, got: {s}"
+            "session summary must render a progress bar"
         );
     }
 
@@ -769,11 +781,17 @@ mod tests {
             ..Default::default()
         };
         let s = render_session_summary(&outcome, 1);
-        assert!(s.contains('✅'), "all done → check icon, got: {s}");
-        assert!(s.contains("3/3"), "got: {s}");
+        assert!(
+            s.contains('✅'),
+            "completed session summary must use the check icon"
+        );
+        assert!(
+            s.contains("3/3"),
+            "completed session summary must include completed and attempted counts"
+        );
         assert!(
             !s.contains("blocked"),
-            "no blocked clause when none, got: {s}"
+            "completed session summary must omit the blocked clause"
         );
     }
 
@@ -792,15 +810,13 @@ mod tests {
         );
         assert!(
             item.priority < 50,
-            "below the reflection-nudge tier so it can't starve reflections, got {}",
-            item.priority
+            "session summary priority must remain below the reflection-nudge tier"
         );
         assert_eq!(item.source, "coding_session");
         assert_eq!(item.scheduled_for_unix, 0, "drains on the next tick");
         assert!(
             item.body.contains("2/2"),
-            "body carries the counts, got: {}",
-            item.body
+            "session summary body must include completed and attempted counts"
         );
     }
 

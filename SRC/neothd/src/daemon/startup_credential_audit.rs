@@ -337,8 +337,7 @@ mod tests {
             .expect("github_pat hit");
         assert!(
             ghp.secret_excerpt.starts_with("ghp_"),
-            "excerpt must be the actual secret match, not a sibling token; got {}",
-            ghp.secret_excerpt,
+            "credential excerpt must derive from the matched token"
         );
     }
 

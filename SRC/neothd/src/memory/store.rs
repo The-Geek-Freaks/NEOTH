@@ -2597,10 +2597,10 @@ mod tests {
         for h in handles {
             uuids.insert(h.await.unwrap());
         }
-        assert_eq!(
-            uuids.len(),
-            1,
-            "concurrent first-sight must converge on ONE uuid, got: {uuids:?}"
+        let distinct_count = uuids.len();
+        assert!(
+            distinct_count == 1,
+            "concurrent first-sight must converge on exactly one UUID"
         );
 
         let alias_count: i64 = exec
