@@ -8,6 +8,10 @@
 
 #[cfg(unix)]
 use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::ffi::OsStr;
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -15,16 +19,12 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-#[cfg(unix)]
-use std::ffi::OsStr;
-#[cfg(unix)]
-use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
-#[cfg(unix)]
-use anyhow::ensure;
 #[cfg(unix)]
 use anyhow::Context as _;
+#[cfg(unix)]
+use anyhow::ensure;
+use anyhow::{Result, bail};
 #[cfg(unix)]
 use base64::Engine as _;
 #[cfg(unix)]
@@ -40,9 +40,15 @@ use tokio::task::JoinSet;
 use super::{ConnectorControlPlane, SubjectId};
 #[cfg(unix)]
 use super::{ConnectorInstanceId, daemon_authenticated_session};
-use crate::wal::writer::WalWriterHandle;
+#[cfg(unix)]
+use crate::connectors::local_import::{approve_import_root, issue_operator_import_capability};
+#[cfg(unix)]
+use crate::connectors::runtime_local_import::RuntimeLocalImport;
 #[cfg(unix)]
 use crate::n8n_api::auth::AuthCooldown;
+#[cfg(unix)]
+use crate::n8n_api::{constant_time_token_eq, extract_bearer_token};
+use crate::wal::writer::WalWriterHandle;
 #[cfg(unix)]
 use crate::{
     connectors::{
@@ -52,12 +58,6 @@ use crate::{
     context_graph::{ContextImportApplyKey, ContextStore},
     wal::events::ContextEvidenceReceipt,
 };
-#[cfg(unix)]
-use crate::connectors::local_import::{approve_import_root, issue_operator_import_capability};
-#[cfg(unix)]
-use crate::connectors::runtime_local_import::RuntimeLocalImport;
-#[cfg(unix)]
-use crate::n8n_api::{constant_time_token_eq, extract_bearer_token};
 
 const TOKEN_FILE: &str = "connector_control_rpc_token";
 #[cfg(unix)]
@@ -216,10 +216,7 @@ impl RpcShutdown {
     }
 
     #[cfg(any(unix, test))]
-    fn admit_blocking<T>(
-        &self,
-        start: impl FnOnce() -> JoinHandle<T>,
-    ) -> Option<JoinHandle<T>> {
+    fn admit_blocking<T>(&self, start: impl FnOnce() -> JoinHandle<T>) -> Option<JoinHandle<T>> {
         let _admission = self.admission.lock().ok()?;
         if self.stopped.load(Ordering::Acquire) {
             None
@@ -313,11 +310,11 @@ pub(crate) async fn bind_and_serve(
     let listener = match bind_listener(&endpoint) {
         Ok(listener) => listener,
         Err(error) => {
-            if let Err(cleanup_error) =
-                remove_endpoint_socket_and_empty_ancestors(home, &endpoint)
+            if let Err(cleanup_error) = remove_endpoint_socket_and_empty_ancestors(home, &endpoint)
             {
-                return Err(cleanup_error)
-                    .context("retain connector-control pre-bind journal after listener cleanup failure");
+                return Err(cleanup_error).context(
+                    "retain connector-control pre-bind journal after listener cleanup failure",
+                );
             }
             remove_prebind_checked(home)?;
             remove_boot_artifacts(home, None);
@@ -343,8 +340,9 @@ pub(crate) async fn bind_and_serve(
         // durable, so sidecar failure cannot race an admitted connection.
         drop(listener);
         if let Err(cleanup_error) = remove_endpoint_socket_and_empty_ancestors(home, &endpoint) {
-            return Err(cleanup_error)
-                .context("retain connector-control sidecar and pre-bind journal after cleanup failure");
+            return Err(cleanup_error).context(
+                "retain connector-control sidecar and pre-bind journal after cleanup failure",
+            );
         }
         remove_sidecar_checked(home)?;
         remove_prebind_checked(home)?;
@@ -354,9 +352,9 @@ pub(crate) async fn bind_and_serve(
     let endpoint_for_task = endpoint.clone();
     let task = {
         let shutdown = Arc::clone(&shutdown);
-        tokio::spawn(async move {
-            run_listener(listener, endpoint_for_task, state, shutdown).await
-        })
+        tokio::spawn(
+            async move { run_listener(listener, endpoint_for_task, state, shutdown).await },
+        )
     };
     Ok((
         task,
@@ -399,10 +397,11 @@ pub(crate) async fn replay_pending_context_evidence_at_startup(
 ) -> Result<usize> {
     let home = home.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        let subject = daemon_subject.context("daemon has no configured connector-control subject")?;
+        let subject =
+            daemon_subject.context("daemon has no configured connector-control subject")?;
         let instance = ConnectorInstanceId::accountless(ConnectorId::LocalImport);
-        let authority = plane
-            .authorize_context_import(&daemon_authenticated_session(subject), &instance)?;
+        let authority =
+            plane.authorize_context_import(&daemon_authenticated_session(subject), &instance)?;
         let binding = authority.acquire_context_import_runtime()?;
         let key = crate::wal::master_key::load_existing_master_key_at(&home)?;
         let store = ContextStore::open_at(home.join("context.db"), &key)?;
@@ -453,7 +452,8 @@ fn read_prior_sidecar_endpoint(home: &Path) -> Result<Option<Endpoint>> {
         home,
         false,
         "connector-control RPC sidecar directory",
-    )? else {
+    )?
+    else {
         return Ok(None);
     };
     let path = bound.display_path.join(SIDECAR_FILE);
@@ -472,7 +472,10 @@ fn read_prior_sidecar_endpoint(home: &Path) -> Result<Option<Endpoint>> {
         sidecar.schema_version == SIDECAR_SCHEMA_VERSION,
         "prior connector-control sidecar schema is unsupported"
     );
-    ensure!(sidecar.daemon_pid != 0, "prior connector-control sidecar has no daemon binding");
+    ensure!(
+        sidecar.daemon_pid != 0,
+        "prior connector-control sidecar has no daemon binding"
+    );
     validate_nonce(&sidecar.endpoint_nonce)?;
     let Endpoint::UnixSocket {
         endpoint_nonce,
@@ -507,7 +510,8 @@ fn read_prior_prebind_endpoint(home: &Path) -> Result<Option<Endpoint>> {
         home,
         false,
         "connector-control RPC pre-bind journal directory",
-    )? else {
+    )?
+    else {
         return Ok(None);
     };
     let path = bound.display_path.join(PREBIND_FILE);
@@ -567,7 +571,9 @@ fn remove_endpoint_socket_and_empty_ancestors(home: &Path, endpoint: &Endpoint) 
 fn remove_exact_private_socket_and_empty_ancestors(path: &Path) -> Result<()> {
     use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
 
-    let channel_root = path.parent().context("connector-control stale socket has no parent")?;
+    let channel_root = path
+        .parent()
+        .context("connector-control stale socket has no parent")?;
     let home_root = channel_root
         .parent()
         .context("connector-control stale socket has no home namespace")?;
@@ -578,12 +584,10 @@ fn remove_exact_private_socket_and_empty_ancestors(path: &Path) -> Result<()> {
         .parent()
         .context("connector-control stale socket runtime root has no parent")?;
     match std::fs::symlink_metadata(runtime_root) {
-        Ok(_) => {
-            validate_private_runtime_directory(
-                runtime_root,
-                "connector-control stale socket runtime root",
-            )?
-        }
+        Ok(_) => validate_private_runtime_directory(
+            runtime_root,
+            "connector-control stale socket runtime root",
+        )?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             // A prior crash may have happened after rmdir(runtime_root) but
             // before the parent namespace reached stable storage. Sync the
@@ -595,12 +599,10 @@ fn remove_exact_private_socket_and_empty_ancestors(path: &Path) -> Result<()> {
         Err(error) => return Err(error.into()),
     }
     match std::fs::symlink_metadata(home_root) {
-        Ok(_) => {
-            validate_private_runtime_directory(
-                home_root,
-                "connector-control stale socket home root",
-            )?
-        }
+        Ok(_) => validate_private_runtime_directory(
+            home_root,
+            "connector-control stale socket home root",
+        )?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             std::fs::remove_dir(runtime_root)?;
             sync_directory(runtime_parent)?;
@@ -609,12 +611,10 @@ fn remove_exact_private_socket_and_empty_ancestors(path: &Path) -> Result<()> {
         Err(error) => return Err(error.into()),
     }
     match std::fs::symlink_metadata(channel_root) {
-        Ok(_) => {
-            validate_private_runtime_directory(
-                channel_root,
-                "connector-control stale socket channel root",
-            )?
-        }
+        Ok(_) => validate_private_runtime_directory(
+            channel_root,
+            "connector-control stale socket channel root",
+        )?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             std::fs::remove_dir(home_root)?;
             sync_directory(runtime_root)?;
@@ -656,8 +656,12 @@ fn sync_directory(path: &Path) -> Result<()> {
         path,
         false,
         "connector-control cleanup directory",
-    )? else {
-        bail!("connector-control cleanup directory disappeared: {}", path.display());
+    )?
+    else {
+        bail!(
+            "connector-control cleanup directory disappeared: {}",
+            path.display()
+        );
     };
     crate::skills::store::sync_parent_directory(&bound.dir, &bound.display_path)
         .context("make connector-control cleanup deletion durable")
@@ -669,7 +673,8 @@ fn init_token(home: &Path) -> Result<String> {
     let mut raw = [0u8; 32];
     getrandom::getrandom(&mut raw).context("OS RNG unavailable for connector-control RPC token")?;
     let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
-    std::fs::create_dir_all(home).with_context(|| format!("create NEOTH home {}", home.display()))?;
+    std::fs::create_dir_all(home)
+        .with_context(|| format!("create NEOTH home {}", home.display()))?;
     crate::wal::compaction::write_key_securely(&home.join(TOKEN_FILE), token.as_bytes())
         .context("write connector-control RPC token")?;
     Ok(token)
@@ -683,7 +688,10 @@ fn write_sidecar(home: &Path, endpoint: &Endpoint, endpoint_nonce: &str) -> Resu
         endpoint_nonce,
         endpoint,
     })?;
-    ensure!(body.len() <= MAX_RESPONSE_BYTES, "connector-control sidecar exceeds cap");
+    ensure!(
+        body.len() <= MAX_RESPONSE_BYTES,
+        "connector-control sidecar exceeds cap"
+    );
     let trusted_anchor = home.parent().unwrap_or(home);
     let bound = crate::skills::store::open_bound_directory_from_trusted_anchor(
         trusted_anchor,
@@ -711,7 +719,10 @@ fn write_sidecar(home: &Path, endpoint: &Endpoint, endpoint_nonce: &str) -> Resu
         &path,
         MAX_RESPONSE_BYTES,
     )?;
-    ensure!(persisted == body, "connector-control sidecar namespace changed during publication");
+    ensure!(
+        persisted == body,
+        "connector-control sidecar namespace changed during publication"
+    );
     crate::skills::store::sync_parent_directory(&bound.dir, &bound.display_path)
         .context("make connector-control sidecar namespace commit durable")
 }
@@ -722,7 +733,10 @@ fn write_prebind(home: &Path, endpoint: &Endpoint) -> Result<()> {
         schema_version: SIDECAR_SCHEMA_VERSION,
         endpoint,
     })?;
-    ensure!(body.len() <= MAX_RESPONSE_BYTES, "connector-control pre-bind journal exceeds cap");
+    ensure!(
+        body.len() <= MAX_RESPONSE_BYTES,
+        "connector-control pre-bind journal exceeds cap"
+    );
     let trusted_anchor = home.parent().unwrap_or(home);
     let bound = crate::skills::store::open_bound_directory_from_trusted_anchor(
         trusted_anchor,
@@ -758,7 +772,8 @@ fn remove_sidecar_checked(home: &Path) -> Result<()> {
         home,
         false,
         "connector-control RPC sidecar directory",
-    )? else {
+    )?
+    else {
         return Ok(());
     };
     let path = bound.display_path.join(SIDECAR_FILE);
@@ -779,7 +794,8 @@ fn remove_prebind_checked(home: &Path) -> Result<()> {
         home,
         false,
         "connector-control RPC pre-bind journal directory",
-    )? else {
+    )?
+    else {
         return Ok(());
     };
     let path = bound.display_path.join(PREBIND_FILE);
@@ -866,11 +882,10 @@ fn bind_endpoint(home: &Path, endpoint_nonce: &str) -> Result<Endpoint> {
     // attacker-controlled entries under sticky `/tmp` on restart.
     write_prebind(home, &endpoint)?;
     if let Err(error) = ensure_endpoint_directories(&endpoint) {
-        if let Err(cleanup_error) =
-            remove_endpoint_socket_and_empty_ancestors(home, &endpoint)
-        {
-            return Err(cleanup_error)
-                .context("retain connector-control pre-bind journal after partial bind cleanup failure");
+        if let Err(cleanup_error) = remove_endpoint_socket_and_empty_ancestors(home, &endpoint) {
+            return Err(cleanup_error).context(
+                "retain connector-control pre-bind journal after partial bind cleanup failure",
+            );
         }
         remove_prebind_checked(home)?;
         return Err(error);
@@ -887,7 +902,11 @@ fn endpoint_for_home(home: &Path, endpoint_nonce: &str) -> Result<Endpoint> {
     let canonical_home = std::fs::canonicalize(home)
         .with_context(|| format!("canonicalize NEOTH home {}", home.display()))?;
     let runtime_nonce = random_runtime_nonce()?;
-    endpoint_for_home_hash(&canonical_home_sha256(&canonical_home), endpoint_nonce, &runtime_nonce)
+    endpoint_for_home_hash(
+        &canonical_home_sha256(&canonical_home),
+        endpoint_nonce,
+        &runtime_nonce,
+    )
 }
 
 #[cfg(unix)]
@@ -927,7 +946,9 @@ fn endpoint_for_home_hash(
     channel_hash.update(endpoint_nonce.as_bytes());
     let path = private_runtime_root(runtime_nonce)?
         .join(home_namespace_name(home_sha256))
-        .join(channel_namespace_name(&hex::encode(channel_hash.finalize())))
+        .join(channel_namespace_name(&hex::encode(
+            channel_hash.finalize(),
+        )))
         .join(SOCKET_BASENAME);
     ensure!(
         path.as_os_str().as_encoded_bytes().len() < MAX_UNIX_SOCKET_PATH_BYTES,
@@ -963,7 +984,10 @@ fn private_runtime_root(runtime_nonce: &str) -> Result<PathBuf> {
 
 #[cfg(unix)]
 fn home_namespace_name(home_sha256: &str) -> String {
-    format!("{HOME_NAMESPACE_PREFIX}{}", &home_sha256[..HOME_NAMESPACE_HEX_LEN])
+    format!(
+        "{HOME_NAMESPACE_PREFIX}{}",
+        &home_sha256[..HOME_NAMESPACE_HEX_LEN]
+    )
 }
 
 #[cfg(unix)]
@@ -1026,8 +1050,12 @@ fn private_directory_metadata_matches_owner(metadata: &std::fs::Metadata, owner:
 fn validate_safe_fallback_parent(path: &Path) -> Result<()> {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
-    let metadata = std::fs::symlink_metadata(path)
-        .with_context(|| format!("inspect connector-control fallback parent {}", path.display()))?;
+    let metadata = std::fs::symlink_metadata(path).with_context(|| {
+        format!(
+            "inspect connector-control fallback parent {}",
+            path.display()
+        )
+    })?;
     ensure!(
         metadata.is_dir() && !metadata.file_type().is_symlink(),
         "connector-control fallback runtime parent is not a real directory"
@@ -1209,7 +1237,7 @@ fn same_effective_uid(stream: &tokio::net::UnixStream) -> bool {
     // SAFETY: `stream` owns a live connected Unix-domain socket and the two
     // scalar output pointers are valid for getpeereid to initialize.
     unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) == 0 }
-        && uid == unsafe { libc::geteuid() }
+    &&uid == unsafe { libc::geteuid() }
 }
 
 #[cfg(all(
@@ -1613,10 +1641,7 @@ fn apply_import(state: &RpcState, request: ApplyRequest) -> Result<String> {
             // Authenticate the in-memory plan before querying durable state or
             // consuming it. A wrong nonce cannot poison the real reservation.
             ensure!(
-                constant_time_token_eq(
-                    &request.confirmation_nonce,
-                    &pending.confirmation_nonce,
-                ),
+                constant_time_token_eq(&request.confirmation_nonce, &pending.confirmation_nonce,),
                 "confirmation nonce does not match plan"
             );
         }
@@ -1639,10 +1664,7 @@ fn apply_import(state: &RpcState, request: ApplyRequest) -> Result<String> {
             .map_err(|_| anyhow::anyhow!("plan registry poisoned"))?;
         if let Some(pending) = registry.pending.get(&request.plan_id) {
             ensure!(
-                constant_time_token_eq(
-                    &request.confirmation_nonce,
-                    &pending.confirmation_nonce,
-                ),
+                constant_time_token_eq(&request.confirmation_nonce, &pending.confirmation_nonce,),
                 "confirmation nonce does not match plan"
             );
         }
@@ -1727,12 +1749,9 @@ fn release_expired_pending_plans(state: &RpcState) -> Result<()> {
                 .map_err(|_| anyhow::anyhow!("plan registry poisoned"))?;
             let now = Instant::now();
             registry.planning.retain(|_, deadline| *deadline > now);
-            let plan_id = registry
-                .pending
-                .iter()
-                .find_map(|(plan_id, pending)| {
-                    (pending.expires_at <= now).then(|| plan_id.clone())
-                });
+            let plan_id = registry.pending.iter().find_map(|(plan_id, pending)| {
+                (pending.expires_at <= now).then(|| plan_id.clone())
+            });
             plan_id.and_then(|plan_id| {
                 registry
                     .pending
@@ -1850,8 +1869,7 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use crate::connectors::{
-        control_plane::ConnectorAccountStatus,
-        control_state::ConnectorLifecycle,
+        control_plane::ConnectorAccountStatus, control_state::ConnectorLifecycle,
     };
     #[cfg(unix)]
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -1882,17 +1900,17 @@ mod tests {
         assert_eq!(plan.len(), 64);
         assert_eq!(confirmation.len(), 64);
         assert_ne!(plan, confirmation);
-        assert!(plan.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+        assert!(
+            plan.bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        );
     }
 
     #[cfg(unix)]
     #[test]
     fn apply_identity_decoder_accepts_only_exact_lowercase_hex() {
         let valid = "01".repeat(32);
-        assert_eq!(
-            decode_lower_hex_32("plan id", &valid).unwrap(),
-            [1_u8; 32]
-        );
+        assert_eq!(decode_lower_hex_32("plan id", &valid).unwrap(), [1_u8; 32]);
         assert!(decode_lower_hex_32("plan id", &valid.to_uppercase()).is_err());
         assert!(decode_lower_hex_32("plan id", &valid[..63]).is_err());
         assert!(decode_lower_hex_32("plan id", &format!("{valid}00")).is_err());
@@ -1917,13 +1935,15 @@ mod tests {
             )
             .unwrap();
         }
-        assert!(reserve_planning_slot_in_registry(
-            &mut registry,
-            &format!("{:064x}", MAX_PENDING_PLANS),
-            expires_at,
-            now,
-        )
-        .is_err());
+        assert!(
+            reserve_planning_slot_in_registry(
+                &mut registry,
+                &format!("{:064x}", MAX_PENDING_PLANS),
+                expires_at,
+                now,
+            )
+            .is_err()
+        );
         assert_eq!(registry.planning.len(), MAX_PENDING_PLANS);
         assert!(registry.pending.is_empty());
     }
@@ -1940,13 +1960,25 @@ mod tests {
         );
         let home = crate::test_env::canonical_tempdir().unwrap();
         let error = daemon_subject_from_operator_id(Some("Alice"), true).unwrap_err();
-        assert!(error.to_string().contains("operator_id is incompatible with SubjectId"));
+        assert!(
+            error
+                .to_string()
+                .contains("operator_id is incompatible with SubjectId")
+        );
         let error = daemon_subject_from_operator_id(Some("dev-"), true).unwrap_err();
-        assert!(error.to_string().contains("operator_id is incompatible with SubjectId"));
+        assert!(
+            error
+                .to_string()
+                .contains("operator_id is incompatible with SubjectId")
+        );
         assert!(!home.path().join(TOKEN_FILE).exists());
         assert!(!home.path().join(SIDECAR_FILE).exists());
         // A disabled CC path preserves legacy daemon configuration unchanged.
-        assert!(daemon_subject_from_operator_id(Some("dev-"), false).unwrap().is_none());
+        assert!(
+            daemon_subject_from_operator_id(Some("dev-"), false)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[cfg(unix)]
@@ -1967,9 +1999,11 @@ mod tests {
         let mut raw = Vec::new();
         client.read_to_end(&mut raw).await.unwrap();
         writer.await.unwrap().unwrap();
-        assert!(std::str::from_utf8(&raw)
-            .unwrap()
-            .starts_with("HTTP/1.1 422 Unprocessable Content\r\n"));
+        assert!(
+            std::str::from_utf8(&raw)
+                .unwrap()
+                .starts_with("HTTP/1.1 422 Unprocessable Content\r\n")
+        );
     }
 
     #[cfg(unix)]
@@ -2022,9 +2056,11 @@ mod tests {
             .await
             .expect("drop-time shutdown signal must not be lost");
         assert!(shutdown.is_stopped());
-        assert!(shutdown
-            .admit_blocking(|| tokio::task::spawn_blocking(|| ()))
-            .is_none());
+        assert!(
+            shutdown
+                .admit_blocking(|| tokio::task::spawn_blocking(|| ()))
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -2085,9 +2121,11 @@ mod tests {
         stopper.join().expect("stop contender must not panic");
         assert!(started.load(AtomicOrdering::Acquire));
         assert!(shutdown.is_stopped());
-        assert!(shutdown
-            .admit_blocking(|| tokio::task::spawn_blocking(|| ()))
-            .is_none());
+        assert!(
+            shutdown
+                .admit_blocking(|| tokio::task::spawn_blocking(|| ()))
+                .is_none()
+        );
     }
 
     #[cfg(unix)]
@@ -2270,7 +2308,10 @@ mod tests {
             .unwrap();
             assert!(cleanup_prior_boot_artifacts(home.path()).is_err(), "{case}");
             assert!(path.exists(), "{case} must preserve the real socket");
-            assert!(home.path().join(SIDECAR_FILE).exists(), "{case} must preserve the sidecar");
+            assert!(
+                home.path().join(SIDECAR_FILE).exists(),
+                "{case} must preserve the sidecar"
+            );
         }
 
         let home = crate::test_env::canonical_tempdir().unwrap();
@@ -2296,7 +2337,12 @@ mod tests {
         symlink(&target, path).unwrap();
         write_fixture_sidecar(home.path(), &endpoint, AUDIT_NONCE);
         assert!(cleanup_prior_boot_artifacts(home.path()).is_err());
-        assert!(std::fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+        assert!(
+            std::fs::symlink_metadata(path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         assert!(home.path().join(SIDECAR_FILE).exists());
 
         let home = crate::test_env::canonical_tempdir().unwrap();
@@ -2345,7 +2391,10 @@ mod tests {
                 serde_json::to_vec(&raw).unwrap(),
             )
             .unwrap();
-            assert!(cleanup_prior_boot_artifacts(home.path()).is_err(), "{mutation}");
+            assert!(
+                cleanup_prior_boot_artifacts(home.path()).is_err(),
+                "{mutation}"
+            );
             assert!(path.exists(), "{mutation} must preserve the socket");
             assert!(
                 home.path().join(SIDECAR_FILE).exists(),
@@ -2409,7 +2458,10 @@ mod tests {
             write_prebind(home.path(), &endpoint).unwrap();
             cleanup_prior_boot_artifacts(home.path()).unwrap();
             assert!(!runtime_root.exists(), "partial stage {depth}");
-            assert!(!home.path().join(PREBIND_FILE).exists(), "partial stage {depth}");
+            assert!(
+                !home.path().join(PREBIND_FILE).exists(),
+                "partial stage {depth}"
+            );
         }
     }
 

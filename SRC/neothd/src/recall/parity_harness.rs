@@ -3259,14 +3259,8 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n")
             .into_bytes();
-        let manifest = plan_run(
-            dir.path(),
-            &config,
-            &config_bytes,
-            &goldset,
-            &goldset_bytes,
-        )
-        .unwrap();
+        let manifest =
+            plan_run(dir.path(), &config, &config_bytes, &goldset, &goldset_bytes).unwrap();
         let first = ingest_offline_grades(
             dir.path(),
             &config,
