@@ -95,6 +95,8 @@ pub mod hooks;
 pub mod hysteria;
 pub mod identity;
 pub mod import;
+/// GOLD history onboarding v1: private review journal for historical exports.
+pub mod history;
 pub mod ingest;
 pub mod init;
 pub mod installer;
@@ -556,6 +558,10 @@ pub enum Commands {
     /// into ground-truth as un-surfaced corroboration candidates.
     /// GOLD-ADAPT-VIEW-04.
     Import(import::ImportArgs),
+
+    /// Review-only onboarding for historical ChatGPT, Claude, or OpenClaw
+    /// exports. Historical text never enters recall or profile learning here.
+    History(history::HistoryArgs),
 
     /// Opt-in anonymous version-check telemetry (E-18 Workstream N).
     ///
@@ -1628,6 +1634,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Import(mut args) => {
             args.output = global_output;
             import::run_import(args).await?;
+        }
+        Commands::History(mut args) => {
+            args.output = global_output;
+            history::run_history(args)?;
         }
         Commands::Telemetry(mut args) => {
             args.output = global_output;

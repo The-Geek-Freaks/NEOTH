@@ -951,9 +951,8 @@ fn rename_private_file_handle(
     Ok(())
 }
 
-/// Verify that `path` has a protected DACL containing exactly one explicit
-/// Full Control allow ACE. This detects both inherited access and any extra
-/// principal that could read operator-private state.
+/// Verify that `path` is owned by TokenUser and has a protected DACL containing
+/// exactly one explicit Full Control allow ACE for that same SID.
 pub fn verify_private_dacl(path: &Path) -> io::Result<()> {
     let expected_sid = current_process_token_sid()?;
     verify_private_dacl_for_sid(path, &expected_sid, NO_INHERITANCE as u8)
@@ -966,6 +965,12 @@ pub fn verify_private_dacl(path: &Path) -> io::Result<()> {
 pub fn verify_private_file_handle(file: &File) -> io::Result<()> {
     let expected_sid = current_process_token_sid()?;
     verify_private_handle_for_sid(file.as_raw_handle() as HANDLE, &expected_sid)
+}
+
+/// Compare two live file handles using their volume and kernel file index.
+pub fn same_file_object(first: &File, second: &File) -> io::Result<bool> {
+    Ok(private_file_identity(first.as_raw_handle() as HANDLE)?
+        == private_file_identity(second.as_raw_handle() as HANDLE)?)
 }
 
 /// Verify owner identity and the protected, inheritable TokenUser DACL through
@@ -1009,6 +1014,7 @@ fn verify_private_dacl_for_sid(
     expected_ace_flags: u8,
 ) -> io::Result<()> {
     let path_w = path_to_wide_nul(path)?;
+    let mut owner: *mut std::ffi::c_void = std::ptr::null_mut();
     let mut dacl: *mut ACL = std::ptr::null_mut();
     let mut descriptor: *mut std::ffi::c_void = std::ptr::null_mut();
 
@@ -1021,8 +1027,8 @@ fn verify_private_dacl_for_sid(
         GetNamedSecurityInfoW(
             path_w.as_ptr(),
             SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            std::ptr::null_mut(),
+            DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION,
+            &mut owner,
             std::ptr::null_mut(),
             &mut dacl,
             std::ptr::null_mut(),
@@ -1036,11 +1042,12 @@ fn verify_private_dacl_for_sid(
             "GetNamedSecurityInfoW returned a null security descriptor",
         ));
     }
+    verify_owner_sid(owner, expected_sid)?;
     verify_private_descriptor(descriptor.0, dacl, expected_sid, expected_ace_flags)
 }
 
 fn verify_private_handle_for_sid(handle: HANDLE, expected_sid: &[u8]) -> io::Result<()> {
-    verify_private_handle_security_for_sid(handle, expected_sid, NO_INHERITANCE as u8, false)
+    verify_private_handle_security_for_sid(handle, expected_sid, NO_INHERITANCE as u8, true)
 }
 
 fn verify_private_directory_handle_for_sid(handle: HANDLE, expected_sid: &[u8]) -> io::Result<()> {
@@ -1784,6 +1791,16 @@ mod tests {
 
         set_private_current_user_dacl(&path).expect("set protected token-SID DACL");
         verify_private_dacl(&path).expect("read-back must match process TokenUser SID");
+    }
+
+    #[test]
+    fn owner_policy_rejects_a_valid_foreign_sid() {
+        let expected = current_process_token_sid().unwrap();
+        let mut foreign = expected.clone();
+        let last = foreign.len() - 1;
+        foreign[last] ^= 1;
+        assert!(unsafe { IsValidSid(foreign.as_ptr() as *mut _) } != 0);
+        assert!(verify_owner_sid(foreign.as_mut_ptr().cast(), &expected).is_err());
     }
 
     #[test]

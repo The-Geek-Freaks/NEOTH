@@ -5,10 +5,42 @@
 //! current. Schema version tracked in `meta` table; future upgrades migrate
 //! in-place.
 
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsString,
+    fs::OpenOptions,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+
+pub(crate) struct PrivateHistoryConnection {
+    // Rust drops fields in declaration order: SQLite first, then the exact-file
+    // fence, and only then the retained namespace/ancestor fence.
+    connection: Connection,
+    _file_fence: Option<std::fs::File>,
+    _namespace_fence: crate::connectors::local_import::ApprovedImportRoot,
+}
+
+enum PreparedHistoryTarget {
+    Generic,
+    Existing(std::fs::File),
+    Fresh(std::fs::File),
+}
+
+impl std::ops::Deref for PrivateHistoryConnection {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.connection
+    }
+}
+
+impl std::ops::DerefMut for PrivateHistoryConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.connection
+    }
+}
 
 /// Schema version. Bump + add migration code when the columns change.
 /// v2 adds FTS5 virtual table `idx_episode_fts` linked to `idx_episode`.
@@ -793,17 +825,427 @@ pub fn default_path() -> PathBuf {
     crate::config::FreedomConfig::default_neoth_home().join("views.db")
 }
 
+/// Isolated operator-review journal used by the History CLI by default.
+pub fn default_history_path() -> PathBuf {
+    crate::config::FreedomConfig::default_neoth_home()
+        .join("history")
+        .join("history.db")
+}
+
+/// Open the review journal only after its directory, database, and existing
+/// SQLite sidecars have proved owner-private. A fresh empty file is created
+/// under the private parent before SQLite can write schema or journal bytes.
+pub(crate) fn open_private_history(path: &Path) -> Result<PrivateHistoryConnection> {
+    open_private_history_with_hooks(path, || {}, || {})
+}
+
+#[cfg(test)]
+fn open_private_history_with_hook(
+    path: &Path,
+    before_sqlite_open: impl FnOnce(),
+) -> Result<PrivateHistoryConnection> {
+    open_private_history_with_hooks(path, before_sqlite_open, || {})
+}
+
+fn open_private_history_with_hooks(
+    path: &Path,
+    before_sqlite_open: impl FnOnce(),
+    after_identity_proof: impl FnOnce(),
+) -> Result<PrivateHistoryConnection> {
+    let prepared = prepare_private_history_target(path)?;
+    let namespace_fence = crate::connectors::local_import::approve_import_root(
+        private_history_parent(path)?,
+    )
+    .context("pin private history database namespace")?;
+    verify_private_history_target(path, true)?;
+    before_sqlite_open();
+    let mut connection = open_with_prepared_history_target_and_hook(
+        path,
+        &prepared,
+        after_identity_proof,
+    )?;
+    let history_schema = connection
+        .transaction()
+        .context("begin isolated History schema transaction")?;
+    history_schema
+        .execute_batch(crate::memory::history_onboarding::HISTORY_ONBOARDING_V38_SQL)
+        .context("initialize isolated History review journal")?;
+    history_schema
+        .execute(
+            "INSERT INTO meta(key,value) VALUES('history_schema_version','1')
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [],
+        )
+        .context("record isolated History schema version")?;
+    history_schema
+        .commit()
+        .context("commit isolated History schema transaction")?;
+    match &prepared {
+        PreparedHistoryTarget::Generic => {}
+        PreparedHistoryTarget::Existing(file) | PreparedHistoryTarget::Fresh(file) => {
+            verify_fresh_history_path_identity(path, file)?;
+        }
+    }
+    harden_new_history_sidecars(path)?;
+    verify_private_history_target(path, true)?;
+    Ok(PrivateHistoryConnection {
+        connection,
+        _file_fence: match prepared {
+            PreparedHistoryTarget::Generic => None,
+            PreparedHistoryTarget::Existing(file) | PreparedHistoryTarget::Fresh(file) => {
+                Some(file)
+            }
+        },
+        _namespace_fence: namespace_fence,
+    })
+}
+
+fn prepare_private_history_target(path: &Path) -> Result<PreparedHistoryTarget> {
+    let parent = private_history_parent(path)?;
+    if parent.exists() {
+        verify_private_history_directory(parent)?;
+    } else {
+        std::fs::create_dir_all(parent).context("create private history database directory")?;
+        make_private_history_directory(parent)?;
+        verify_private_history_directory(parent)?;
+    }
+    for sidecar in sqlite_sidecar_paths(path) {
+        if sidecar.exists() {
+            verify_private_history_file(&sidecar)?;
+        }
+    }
+    if path.exists() {
+        verify_private_history_file(path)?;
+        Ok(PreparedHistoryTarget::Existing(open_private_history_file(path)?))
+    } else {
+        Ok(PreparedHistoryTarget::Fresh(create_private_history_file(path)?))
+    }
+}
+
+fn verify_private_history_target(path: &Path, require_database: bool) -> Result<()> {
+    verify_private_history_directory(private_history_parent(path)?)?;
+    if require_database || path.exists() {
+        verify_private_history_file(path)?;
+    }
+    for sidecar in sqlite_sidecar_paths(path) {
+        if sidecar.exists() {
+            verify_private_history_file(&sidecar)?;
+        }
+    }
+    Ok(())
+}
+
+fn private_history_parent(path: &Path) -> Result<&Path> {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("history database requires an explicit private parent"))
+}
+
+fn sqlite_sidecar_paths(path: &Path) -> [PathBuf; 3] {
+    ["-wal", "-shm", "-journal"].map(|suffix| {
+        let mut sidecar = OsString::from(path.as_os_str());
+        sidecar.push(suffix);
+        PathBuf::from(sidecar)
+    })
+}
+
+fn create_private_history_file(path: &Path) -> Result<std::fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+
+        options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    let file = options.open(path).context("create private history database file")?;
+    #[cfg(windows)]
+    crate::wal::win_native::set_private_current_user_file_dacl_bound(path, &file)
+        .context("set private history database DACL")?;
+    verify_private_history_file(path)?;
+    Ok(file)
+}
+
+fn open_private_history_file(path: &Path) -> Result<std::fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        options
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options
+        .open(path)
+        .context("open private History database witness")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let metadata = file
+            .metadata()
+            .context("inspect private History database witness")?;
+        let mode = metadata.permissions().mode();
+        anyhow::ensure!(metadata.is_file(), "History database witness is not a file");
+        anyhow::ensure!(
+            metadata.uid() == unsafe { libc::geteuid() },
+            "History database witness owner mismatch"
+        );
+        anyhow::ensure!(metadata.nlink() == 1, "History database witness is hard-linked");
+        anyhow::ensure!(
+            mode & 0o077 == 0 && mode & 0o600 == 0o600,
+            "History database witness is not owner-private"
+        );
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+        anyhow::ensure!(
+            file.metadata()
+                .context("inspect private History database witness")?
+                .file_attributes()
+                & FILE_ATTRIBUTE_REPARSE_POINT
+                == 0,
+            "private History database witness cannot be a reparse point"
+        );
+        crate::wal::win_native::verify_private_file_handle(&file)
+            .context("verify private History database witness owner and DACL")?;
+    }
+    Ok(file)
+}
+
+fn verify_fresh_history_path_identity(path: &Path, created: &std::fs::File) -> Result<()> {
+    let rebound = open_private_history_file(path)
+        .context("rebind prepared private History database")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let created = created.metadata().context("identify created History database")?;
+        let rebound = rebound.metadata().context("identify rebound History database")?;
+        anyhow::ensure!(
+            created.dev() == rebound.dev() && created.ino() == rebound.ino(),
+            "freshly prepared private History database identity changed"
+        );
+    }
+    #[cfg(windows)]
+    anyhow::ensure!(
+        crate::wal::win_native::same_file_object(created, &rebound)
+            .context("compare fresh History database identities")?,
+        "freshly prepared private History database identity changed"
+    );
+    Ok(())
+}
+
+fn make_private_history_directory(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+            .context("set private history directory mode")?;
+    }
+    #[cfg(windows)]
+    crate::wal::win_native::set_private_current_user_directory_dacl(path)
+        .context("set private history directory DACL")?;
+    Ok(())
+}
+
+fn verify_private_history_directory(path: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)
+        .context("inspect private history database directory")?;
+    anyhow::ensure!(metadata.is_dir(), "history database parent is not a directory");
+    anyhow::ensure!(
+        !metadata.file_type().is_symlink(),
+        "history database parent cannot be a link"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        anyhow::ensure!(
+            metadata.uid() == unsafe { libc::geteuid() },
+            "history database parent owner mismatch"
+        );
+        anyhow::ensure!(
+            metadata.permissions().mode() & 0o077 == 0,
+            "history database parent is not owner-private"
+        );
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
+            FILE_SHARE_WRITE,
+        };
+
+        let directory = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .context("open private history directory capability")?;
+        crate::wal::win_native::verify_private_directory_handle_dacl(&directory)
+            .context("verify private history directory owner and DACL")?;
+    }
+    Ok(())
+}
+
+fn verify_private_history_file(path: &Path) -> Result<()> {
+    let metadata =
+        std::fs::symlink_metadata(path).context("inspect private history file")?;
+    anyhow::ensure!(
+        metadata.is_file(),
+        "history database object is not a regular file"
+    );
+    anyhow::ensure!(
+        !metadata.file_type().is_symlink(),
+        "history database cannot be a link"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let mode = metadata.permissions().mode();
+        anyhow::ensure!(
+            metadata.uid() == unsafe { libc::geteuid() },
+            "history database owner mismatch"
+        );
+        anyhow::ensure!(
+            metadata.nlink() == 1,
+            "history database hard links are forbidden"
+        );
+        anyhow::ensure!(
+            mode & 0o077 == 0 && mode & 0o600 == 0o600,
+            "history database is not owner-private"
+        );
+    }
+    #[cfg(windows)]
+    {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .context("open private history file capability")?;
+        crate::wal::win_native::verify_private_file_handle(&file)
+            .context("verify private history file owner and DACL")?;
+    }
+    Ok(())
+}
+
+fn harden_new_history_sidecars(path: &Path) -> Result<()> {
+    for sidecar in sqlite_sidecar_paths(path) {
+        if !sidecar.exists() {
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+                .open(&sidecar)
+                .context("open SQLite sidecar without following links")?;
+            let metadata = file
+                .metadata()
+                .context("inspect handle-bound SQLite sidecar")?;
+            anyhow::ensure!(metadata.is_file(), "SQLite sidecar is not a regular file");
+            anyhow::ensure!(
+                metadata.uid() == unsafe { libc::geteuid() },
+                "SQLite sidecar owner mismatch"
+            );
+            anyhow::ensure!(metadata.nlink() == 1, "SQLite sidecar hard links are forbidden");
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .context("set private SQLite sidecar mode")?;
+        }
+        #[cfg(windows)]
+        {
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&sidecar)
+                .context("open SQLite sidecar for private DACL")?;
+            crate::wal::win_native::set_private_current_user_file_dacl_bound(&sidecar, &file)
+                .context("set private SQLite sidecar DACL")?;
+        }
+        verify_private_history_file(&sidecar)?;
+    }
+    Ok(())
+}
+
 /// Open or create the views database. Applies schema. Sets unix mode 0600
 /// on the file. Windows DACL restriction follows the same pattern as WAL
 /// segments (see `wal/win_acl.rs`).
 pub fn open(path: &Path) -> Result<Connection> {
+    open_with_prepared_history_target_and_hook(path, &PreparedHistoryTarget::Generic, || {})
+}
+
+fn open_with_prepared_history_target_and_hook(
+    path: &Path,
+    prepared: &PreparedHistoryTarget,
+    after_identity_proof: impl FnOnce(),
+) -> Result<Connection> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create parent dir for {}", path.display()))?;
     }
-    let is_new = !path.exists();
-    let conn =
-        Connection::open(path).with_context(|| format!("open SQLite db {}", path.display()))?;
+    let witness = match prepared {
+        PreparedHistoryTarget::Generic => None,
+        PreparedHistoryTarget::Existing(file) | PreparedHistoryTarget::Fresh(file) => Some(file),
+    };
+    let is_fresh = matches!(prepared, PreparedHistoryTarget::Fresh(_));
+    let is_new = !path.exists() || is_fresh;
+    if let Some(file) = witness {
+        let metadata = file
+            .metadata()
+            .context("inspect private History database witness")?;
+        anyhow::ensure!(
+            metadata.is_file(),
+            "private History database witness is not a regular file"
+        );
+        if is_fresh {
+            anyhow::ensure!(metadata.len() == 0, "fresh History database is no longer empty");
+        } else {
+            anyhow::ensure!(metadata.len() > 0, "existing History database is empty");
+        }
+        if is_fresh {
+            anyhow::ensure!(
+                sqlite_sidecar_paths(path)
+                    .iter()
+                    .all(|sidecar| !sidecar.exists()),
+                "fresh private History database already has SQLite sidecars"
+            );
+        }
+    }
+    let mut conn = if witness.is_some() {
+        Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )
+    } else {
+        Connection::open(path)
+    }
+    .with_context(|| format!("open SQLite db {}", path.display()))?;
+    if let Some(file) = witness {
+        verify_fresh_history_path_identity(path, file)?;
+    }
+    after_identity_proof();
 
     // Pragmas: WAL mode for concurrent read while writer is indexing,
     // synchronous=NORMAL for the right durability/perf trade-off for views
@@ -881,17 +1323,9 @@ pub fn open(path: &Path) -> Result<Connection> {
         if current == 0 {
             apply_schema(&conn)?;
         } else if current < SCHEMA_VERSION {
-            // `migrate` needs &mut Connection. Reborrow via a fresh
-            // open of the same path — the in-memory pragmas above are
-            // already applied so reconnect is cheap.
-            drop(conn);
-            let mut migrating = Connection::open(path)
-                .with_context(|| format!("reopen for migration {}", path.display()))?;
-            migrating
-                .pragma_update(None, "foreign_keys", "ON")
-                .context("set foreign_keys=ON during migration")?;
-            crate::memory::migrations::migrate(&mut migrating, current, SCHEMA_VERSION)?;
-            return Ok(migrating);
+            // Keep the already-open connection: prepared History targets have
+            // passed NOFOLLOW and exact-file identity checks on this handle.
+            crate::memory::migrations::migrate(&mut conn, current, SCHEMA_VERSION)?;
         }
         // current >= SCHEMA_VERSION: nothing to do. A higher version means
         // the operator ran a newer neothd against this db before; we
@@ -1770,7 +2204,6 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         .context("apply v37 transcript mining metadata tables")?;
     conn.execute_batch(TRANSCRIPT_MINING_V37_TRIGGERS_SQL)
         .context("apply v37 transcript mining metadata triggers")?;
-
     // SPEC-11 merge tombstone — idempotent column add for an `idx_human_identity`
     // created before the `merged_into` column existed. `CREATE TABLE IF NOT
     // EXISTS` never alters an existing table, so back-fill the column here;
@@ -2270,6 +2703,516 @@ mod tests {
         }
 
         assert_eq!(actual, home.path().join("views.db"));
+    }
+
+    #[test]
+    fn default_history_journal_is_private_and_isolated_from_views_database() {
+        let _env = crate::test_env::lock();
+        let home = tempdir().unwrap();
+        let views = home.path().join("views.db");
+        std::fs::write(&views, b"ordinary views sentinel").unwrap();
+        let previous = std::env::var_os("NEOTH_HOME");
+        unsafe { std::env::set_var("NEOTH_HOME", home.path()) };
+
+        let history = default_history_path();
+        let connection = open_private_history(&history).unwrap();
+        drop(connection);
+
+        match previous {
+            Some(value) => unsafe { std::env::set_var("NEOTH_HOME", value) },
+            None => unsafe { std::env::remove_var("NEOTH_HOME") },
+        }
+
+        assert_eq!(history, home.path().join("history").join("history.db"));
+        assert_eq!(std::fs::read(&views).unwrap(), b"ordinary views sentinel");
+        verify_private_history_target(&history, true).unwrap();
+    }
+
+    #[test]
+    fn fresh_views_database_contains_no_history_journal_tables() {
+        let dir = tempdir().unwrap();
+        let connection = open(&dir.path().join("views.db")).unwrap();
+        let history_tables: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type='table' AND name LIKE 'history_onboarding_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let version: i64 = connection
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM meta WHERE key='schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(history_tables, 0);
+        assert_eq!(version, 37);
+    }
+
+    #[test]
+    fn on_disk_v37_open_migrates_only_the_empty_history_journal() {
+        let dir = tempdir().unwrap();
+        let parent = dir.path().join("history");
+        std::fs::create_dir(&parent).unwrap();
+        make_private_history_directory(&parent).unwrap();
+        let path = parent.join("v37.db");
+        let conn = open(&path).unwrap();
+        conn.execute_batch(
+            "UPDATE meta SET value='37' WHERE key='schema_version';
+             INSERT INTO meta(key,value) VALUES('history_migration_sentinel','preserve-me');",
+        )
+        .unwrap();
+        drop(conn);
+
+        let migrated = open_private_history(&path).unwrap();
+        let foreign_keys: i64 = migrated
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .unwrap();
+        let version: String = migrated
+            .query_row(
+                "SELECT value FROM meta WHERE key='schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let history_version: String = migrated
+            .query_row(
+                "SELECT value FROM meta WHERE key='history_schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let sentinel: String = migrated
+            .query_row(
+                "SELECT value FROM meta WHERE key='history_migration_sentinel'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let history_rows: i64 = migrated
+            .query_row(
+                "SELECT COUNT(*) FROM history_onboarding_batches",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let episode_rows: i64 = migrated
+            .query_row("SELECT COUNT(*) FROM idx_episode", [], |row| row.get(0))
+            .unwrap();
+        let path_index: i64 = migrated
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type='index' AND name='history_onboarding_batches_path'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(foreign_keys, 1);
+        assert_eq!(version, SCHEMA_VERSION.to_string());
+        assert_eq!(history_version, "1");
+        assert_eq!(sentinel, "preserve-me");
+        assert_eq!((history_rows, episode_rows), (0, 0));
+        assert_eq!(path_index, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_history_open_rejects_existing_weak_database_before_sqlite_open() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("weak.db");
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(open_private_history(&path).is_err());
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_history_open_rejects_unprotected_inherited_database_dacl() {
+        let root = tempdir().unwrap();
+        let parent = root.path().join("private-parent");
+        std::fs::create_dir(&parent).unwrap();
+        make_private_history_directory(&parent).unwrap();
+        let path = parent.join("weak.db");
+        std::fs::write(&path, b"").unwrap();
+        assert!(open_private_history(&path).is_err());
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn private_history_open_creates_and_reverifies_private_target() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("private-history").join("views.db");
+        let connection = open_private_history(&path).unwrap();
+        let foreign_keys: i64 = connection
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .unwrap();
+        let versions: (String, String) = connection
+            .query_row(
+                "SELECT
+                    (SELECT value FROM meta WHERE key='schema_version'),
+                    (SELECT value FROM meta WHERE key='history_schema_version')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let journal_tables: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type='table' AND name LIKE 'history_onboarding_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let history_indexes: Vec<String> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT name FROM sqlite_master
+                     WHERE type='index' AND name LIKE 'history_onboarding_batches_%'
+                     ORDER BY name",
+                )
+                .unwrap();
+            statement
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
+        };
+        assert_eq!(foreign_keys, 1);
+        assert_eq!(versions, ("37".to_string(), "1".to_string()));
+        assert_eq!(journal_tables, 2);
+        assert_eq!(
+            history_indexes,
+            [
+                "history_onboarding_batches_object",
+                "history_onboarding_batches_path",
+                "history_onboarding_batches_subject_state",
+            ]
+            .map(str::to_string)
+        );
+        connection
+            .execute(
+                "INSERT INTO history_onboarding_batches
+                 (batch_id,operator_subject,source_family,source_sha256,
+                  source_object_sha256,source_path_sha256,parser_schema_version,
+                  scanned_at_unix,candidate_count,excluded_privacy_mode_count,
+                  skipped_structural_count)
+                 VALUES (?1,'owner','chatgpt_export',zeroblob(32),zeroblob(32),
+                         zeroblob(32),1,1,0,0,0)",
+                ["a".repeat(64)],
+            )
+            .unwrap();
+        assert!(connection
+            .execute(
+                "INSERT INTO history_onboarding_candidates
+                 (candidate_id,batch_id,operator_subject,conversation_id,turn_id,
+                  position,content_sha256,excerpt,kind,created_at_unix)
+                 VALUES (?1,?2,'intruder','c','t',0,zeroblob(32),'safe',
+                         'operator_turn',1)",
+                ["b".repeat(64), "a".repeat(64)],
+            )
+            .is_err());
+        verify_private_history_target(&path, true).unwrap();
+    }
+
+    #[test]
+    fn history_marker_abort_rolls_back_the_complete_ddl_prefix_atomically() {
+        let root = tempdir().unwrap();
+        let parent = root.path().join("private-history");
+        std::fs::create_dir(&parent).unwrap();
+        make_private_history_directory(&parent).unwrap();
+        let path = parent.join("history.db");
+        let connection = open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_history_schema_version
+                 BEFORE INSERT ON meta
+                 WHEN NEW.key='history_schema_version'
+                 BEGIN
+                     SELECT RAISE(ABORT, 'reject history schema marker');
+                 END;",
+            )
+            .unwrap();
+        drop(connection);
+
+        assert!(open_private_history(&path).is_err());
+        let connection = open(&path).unwrap();
+        let leaked: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE (type='table' OR type='index')
+                   AND name LIKE 'history_onboarding_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let marker: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM meta WHERE key='history_schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!((leaked, marker), (0, 0));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fresh_history_symlink_swap_cannot_create_external_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir().unwrap();
+        let database = root.path().join("history").join("history.db");
+        let external = root.path().join("must-not-exist.db");
+        let result = open_private_history_with_hook(&database, || {
+            std::fs::remove_file(&database).unwrap();
+            symlink(&external, &database).unwrap();
+        });
+        assert!(result.is_err());
+        assert!(!external.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_history_swap_to_views_database_cannot_mutate_views() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir().unwrap();
+        let history = root.path().join("history").join("history.db");
+        drop(open_private_history(&history).unwrap());
+        let views = root.path().join("views.db");
+        drop(open(&views).unwrap());
+        let before = std::fs::read(&views).unwrap();
+        let result = open_private_history_with_hook(&history, || {
+            std::fs::remove_file(&history).unwrap();
+            symlink(&views, &history).unwrap();
+        });
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&views).unwrap(), before);
+        let views = open(&views).unwrap();
+        let version: String = views
+            .query_row(
+                "SELECT value FROM meta WHERE key='schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let history_tables: i64 = views
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type='table' AND name LIKE 'history_onboarding_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!((version.as_str(), history_tables), ("37", 0));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_history_regular_replacement_fails_identity_rebind() {
+        let root = tempdir().unwrap();
+        let history = root.path().join("history").join("history.db");
+        drop(open_private_history(&history).unwrap());
+        let replacement = root.path().join("replacement.db");
+        std::fs::copy(&history, &replacement).unwrap();
+        let moved = root.path().join("original.db");
+        let result = open_private_history_with_hook(&history, || {
+            std::fs::rename(&history, &moved).unwrap();
+            std::fs::rename(&replacement, &history).unwrap();
+        });
+        let error = result.err().expect("replacement must fail");
+        assert!(
+            format!("{error:#}")
+                .contains("private History database identity changed"),
+            "replacement must reach the exact identity boundary: {error:#}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_history_migration_never_reopens_a_swapped_views_path() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir().unwrap();
+        let parent = root.path().join("history");
+        std::fs::create_dir(&parent).unwrap();
+        make_private_history_directory(&parent).unwrap();
+        let history = parent.join("history.db");
+        let legacy = open(&history).unwrap();
+        legacy
+            .execute(
+                "UPDATE meta SET value='36' WHERE key='schema_version'",
+                [],
+            )
+            .unwrap();
+        drop(legacy);
+        let views = root.path().join("views.db");
+        drop(open(&views).unwrap());
+        let views_before = std::fs::read(&views).unwrap();
+        let moved = root.path().join("legacy-original.db");
+
+        let result = open_private_history_with_hooks(
+            &history,
+            || {},
+            || {
+                std::fs::rename(&history, &moved).unwrap();
+                symlink(&views, &history).unwrap();
+            },
+        );
+        let error = result.err().expect("swapped migration must fail");
+        assert!(
+            format!("{error:#}").contains("rebind prepared private History database"),
+            "migration must fail at the final no-follow rebind: {error:#}"
+        );
+        assert_eq!(std::fs::read(&views).unwrap(), views_before);
+        let views = open(&views).unwrap();
+        let version: String = views
+            .query_row(
+                "SELECT value FROM meta WHERE key='schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let history_tables: i64 = views
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type='table' AND name LIKE 'history_onboarding_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!((version.as_str(), history_tables), ("37", 0));
+    }
+
+    #[test]
+    fn preexisting_private_empty_database_is_not_mistaken_for_fresh_prepare() {
+        let root = tempdir().unwrap();
+        let parent = root.path().join("private-history");
+        std::fs::create_dir(&parent).unwrap();
+        make_private_history_directory(&parent).unwrap();
+        let path = parent.join("history.db");
+        create_private_history_file(&path).unwrap();
+
+        assert!(open_private_history(&path).is_err());
+        assert_eq!(std::fs::metadata(path).unwrap().len(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn adversarial_preexisting_history_sidecars_fail_before_database_creation() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt, symlink};
+
+        for attack in ["weak", "hardlink", "symlink"] {
+            let root = tempdir().unwrap();
+            let parent = root.path().join("private-history");
+            std::fs::create_dir(&parent).unwrap();
+            make_private_history_directory(&parent).unwrap();
+            let database = parent.join("history.db");
+            let sidecar = sqlite_sidecar_paths(&database)[0].clone();
+            match attack {
+                "weak" => {
+                    std::fs::write(&sidecar, b"weak-sidecar").unwrap();
+                    std::fs::set_permissions(
+                        &sidecar,
+                        std::fs::Permissions::from_mode(0o644),
+                    )
+                    .unwrap();
+                }
+                "hardlink" => {
+                    let anchor = parent.join("anchor");
+                    OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .mode(0o600)
+                        .open(&anchor)
+                        .unwrap();
+                    std::fs::hard_link(anchor, &sidecar).unwrap();
+                }
+                "symlink" => {
+                    let target = parent.join("target");
+                    std::fs::write(&target, b"symlink-target").unwrap();
+                    std::fs::set_permissions(
+                        &target,
+                        std::fs::Permissions::from_mode(0o600),
+                    )
+                    .unwrap();
+                    symlink(target, &sidecar).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let before = std::fs::read(&sidecar).unwrap();
+            assert!(open_private_history(&database).is_err(), "attack={attack}");
+            assert!(!database.exists(), "attack={attack}");
+            assert_eq!(std::fs::read(&sidecar).unwrap(), before, "attack={attack}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fresh_private_history_sidecars_are_handle_hardened_to_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempdir().unwrap();
+        let database = root.path().join("history").join("history.db");
+        let connection = open_private_history(&database).unwrap();
+        let sidecars = sqlite_sidecar_paths(&database);
+        let present: Vec<_> = sidecars.iter().filter(|path| path.exists()).collect();
+        assert!(!present.is_empty(), "fresh WAL history must create a sidecar");
+        for sidecar in present {
+            let mode = std::fs::metadata(sidecar).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        drop(connection);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_history_normal_drop_releases_file_before_namespace() {
+        let fixture = tempdir().unwrap();
+        let parent = fixture.path().join("history");
+        let database = parent.join("history.db");
+        let moved = fixture.path().join("history-after-normal-drop");
+        let connection = open_private_history(&database).unwrap();
+
+        drop(connection);
+        std::fs::rename(&parent, &moved).unwrap();
+        assert!(moved.join("history.db").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_history_connection_holds_namespace_delete_fences_until_drop() {
+        let fixture = tempdir().unwrap();
+        let parent = fixture.path().join("history");
+        let database = parent.join("history.db");
+        let moved_parent = fixture
+            .path()
+            .join(format!("history-moved-{}", std::process::id()));
+        let PrivateHistoryConnection {
+            connection: sqlite,
+            _file_fence: file_fence,
+            _namespace_fence: fence,
+        } = open_private_history(&database).unwrap();
+        drop(sqlite);
+        drop(file_fence);
+
+        assert!(std::fs::rename(&parent, &moved_parent).is_err());
+        assert!(std::fs::remove_dir(&parent).is_err());
+        assert!(database.exists());
+
+        drop(fence);
+        std::fs::rename(&parent, &moved_parent).unwrap();
+        assert!(moved_parent.join("history.db").exists());
     }
 
     #[test]

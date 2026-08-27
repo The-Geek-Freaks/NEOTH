@@ -63,6 +63,9 @@ pub mod infra_scan;
 pub mod ingress;
 pub mod integrity;
 pub mod migrations;
+/// GOLD History Onboarding v1: private review journal for historical exports.
+/// It is intentionally disconnected from recall and profile learning.
+pub mod history_onboarding;
 /// GOLD-FEAT-07 — LOWKEY moral-core loader (operator behavioural directives
 /// injected at enrichment position 0). `neoth moral-core {list,preview,doctor}`.
 pub mod moral_core;

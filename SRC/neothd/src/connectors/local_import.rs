@@ -8,8 +8,12 @@
 
 use std::{
     fmt,
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
 };
+
+#[cfg(windows)]
+#[path = "local_import/windows_source.rs"]
+mod windows_source;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::{
@@ -19,7 +23,7 @@ use std::{
 };
 
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use super::control_plane::{
@@ -75,6 +79,8 @@ impl LocalImportPolicy {
 pub struct ApprovedImportRoot {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     handle: File,
+    #[cfg(windows)]
+    handle: windows_source::WindowsApprovedRoot,
     identity: PhysicalFileId,
 }
 
@@ -92,6 +98,125 @@ pub struct OperatorImportCapability {
     /// Non-cloneable, control-plane-issued binding. A root cannot be reused
     /// under a different subject/instance/revision or lease generation.
     runtime_binding: Option<ContextImportCapabilityBinding>,
+}
+
+/// A deliberately narrow, one-shot history-export authority.  It is minted
+/// only by the interactive `neoth history scan` owner after it has resolved
+/// the current configured operator.  Callers receive no root handle and no
+/// general raw-file API; they can only capture one no-follow selected leaf.
+pub(crate) struct InteractiveHistoryImportCapability {
+    capability: OperatorImportCapability,
+    operator_subject_binding: [u8; 32],
+    source_family_binding: [u8; 32],
+    selected_relative_path: PathBuf,
+    max_bytes: usize,
+}
+
+/// Exact bytes and opaque provenance captured through one bound file handle.
+/// The raw selected path is intentionally absent from this type and never
+/// persists.  The contents are untrusted and must never gain instruction or
+/// profile authority merely by being captured.
+pub(crate) struct VerifiedHistorySource {
+    bytes: Zeroizing<Vec<u8>>,
+    source_sha256: [u8; 32],
+    source_path_sha256: [u8; 32],
+    source_object_id: [u8; 32],
+    operator_subject_binding: [u8; 32],
+    source_family_binding: [u8; 32],
+}
+
+impl VerifiedHistorySource {
+    pub(crate) fn bytes(&self) -> &[u8] { self.bytes.as_slice() }
+    pub(crate) const fn source_sha256(&self) -> &[u8; 32] { &self.source_sha256 }
+    pub(crate) const fn source_path_sha256(&self) -> &[u8; 32] { &self.source_path_sha256 }
+    pub(crate) const fn source_object_id(&self) -> &[u8; 32] { &self.source_object_id }
+
+    pub(crate) fn binds_subject(&self, operator_subject: &str) -> bool {
+        let binding: [u8; 32] = Sha256::digest(operator_subject.as_bytes()).into();
+        self.operator_subject_binding == binding
+    }
+
+    pub(crate) fn binds_source_family(&self, source_family: &str) -> bool {
+        let binding: [u8; 32] = Sha256::digest(source_family.as_bytes()).into();
+        self.source_family_binding == binding
+    }
+}
+
+pub(crate) fn issue_interactive_history_import_capability(
+    root: ApprovedImportRoot,
+    plan_key: [u8; 32],
+    operator_subject: &str,
+    source_family: &str,
+    selected_relative_path: &Path,
+    max_bytes: usize,
+) -> Result<InteractiveHistoryImportCapability, LocalImportError> {
+    if operator_subject.is_empty()
+        || operator_subject.len() > 128
+        || source_family.is_empty()
+        || source_family.len() > 64
+        || max_bytes == 0
+        || max_bytes > 16 * 1024 * 1024
+    {
+        return Err(LocalImportError::InvalidPolicy);
+    }
+    validate_relative_selection(selected_relative_path)?;
+    Ok(InteractiveHistoryImportCapability {
+        capability: OperatorImportCapability {
+            root,
+            plan_key: Zeroizing::new(plan_key),
+            runtime_binding: None,
+        },
+        operator_subject_binding: Sha256::digest(operator_subject.as_bytes()).into(),
+        source_family_binding: Sha256::digest(source_family.as_bytes()).into(),
+        selected_relative_path: selected_relative_path.to_path_buf(),
+        max_bytes,
+    })
+}
+
+pub(crate) fn capture_verified_history_source(
+    capability: InteractiveHistoryImportCapability,
+) -> Result<VerifiedHistorySource, LocalImportError> {
+    let (bytes, identity) = read_bound_source(
+        &capability.capability.root,
+        &capability.selected_relative_path,
+        capability.max_bytes,
+    )?;
+    let root_identity = identity.root.encode();
+    let file_identity = identity.source.encode();
+    let source_object_id = history_provenance_sha256(
+        b"source-object",
+        &[&root_identity, &file_identity],
+    );
+    let selected = capability.selected_relative_path
+        .to_str()
+        .ok_or(LocalImportError::OutsideApprovedRoot)?;
+    let source_path_sha256 = history_provenance_sha256(
+        b"selected-path",
+        &[&root_identity, selected.as_bytes()],
+    );
+    Ok(VerifiedHistorySource {
+        source_sha256: Sha256::digest(&bytes).into(),
+        bytes: Zeroizing::new(bytes),
+        source_path_sha256,
+        source_object_id,
+        operator_subject_binding: capability.operator_subject_binding,
+        source_family_binding: capability.source_family_binding,
+    })
+}
+
+/// Stable provenance digest for the narrow history bridge. Field lengths
+/// prevent component-boundary ambiguity; raw paths and OS object IDs never
+/// leave the in-memory capture operation.
+fn history_provenance_sha256(domain: &[u8], fields: &[&[u8]]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"NEOTH\0HISTORY_IMPORT\0SHA256\0V1");
+    hasher.update(&(domain.len() as u64).to_be_bytes());
+    hasher.update(domain);
+    for field in fields {
+        hasher.update(&(field.len() as u64).to_be_bytes());
+        hasher.update(field);
+    }
+    hasher.finalize().into()
 }
 
 impl fmt::Debug for OperatorImportCapability {
@@ -397,7 +522,13 @@ fn validate_approved_root_path(path: &Path) -> Result<(), LocalImportError> {
     let mut normal_components = 0_usize;
     for component in path.components() {
         match component {
-            Component::Normal(_) => normal_components += 1,
+            Component::Normal(name) => {
+                #[cfg(windows)]
+                if windows_component_is_ambiguous(name) {
+                    return Err(LocalImportError::AmbiguousRoot);
+                }
+                normal_components += 1;
+            }
             Component::CurDir | Component::ParentDir => {
                 return Err(LocalImportError::AmbiguousRoot);
             }
@@ -432,7 +563,13 @@ fn validate_relative_selection(path: &Path) -> Result<(), LocalImportError> {
     let mut count = 0_usize;
     for component in path.components() {
         match component {
-            Component::Normal(_) => count += 1,
+            Component::Normal(name) => {
+                #[cfg(windows)]
+                if windows_component_is_ambiguous(name) {
+                    return Err(LocalImportError::OutsideApprovedRoot);
+                }
+                count += 1;
+            }
             Component::Prefix(_)
             | Component::RootDir
             | Component::CurDir
@@ -445,17 +582,34 @@ fn validate_relative_selection(path: &Path) -> Result<(), LocalImportError> {
     Ok(())
 }
 
+#[cfg(windows)]
+fn windows_component_is_ambiguous(component: &std::ffi::OsStr) -> bool {
+    let Some(component) = component.to_str() else {
+        return true;
+    };
+    component.is_empty() || component.contains(':') || component.ends_with('.')
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PhysicalFileId {
     volume: u64,
-    object: u64,
+    object: [u8; 16],
 }
 
 impl PhysicalFileId {
-    fn encode(self) -> [u8; 16] {
-        let mut bytes = [0_u8; 16];
+    fn unix(volume: u64, object: u64) -> Self {
+        let mut identifier = [0_u8; 16];
+        identifier[8..].copy_from_slice(&object.to_be_bytes());
+        Self {
+            volume,
+            object: identifier,
+        }
+    }
+
+    fn encode(self) -> [u8; 24] {
+        let mut bytes = [0_u8; 24];
         bytes[..8].copy_from_slice(&self.volume.to_be_bytes());
-        bytes[8..].copy_from_slice(&self.object.to_be_bytes());
+        bytes[8..].copy_from_slice(&self.object);
         bytes
     }
 }
@@ -483,10 +637,7 @@ fn snapshot(metadata: &Metadata) -> FileSnapshot {
     use std::os::unix::fs::MetadataExt;
 
     FileSnapshot {
-        identity: PhysicalFileId {
-            volume: metadata.dev(),
-            object: metadata.ino(),
-        },
+        identity: PhysicalFileId::unix(metadata.dev(), metadata.ino()),
         length: metadata.len(),
         link_count: metadata.nlink(),
         modified_seconds: metadata.mtime(),
@@ -574,10 +725,8 @@ fn open_approved_root(path: &Path) -> Result<ApprovedImportRoot, LocalImportErro
 }
 
 #[cfg(windows)]
-fn open_approved_root(_: &Path) -> Result<ApprovedImportRoot, LocalImportError> {
-    // Intentional fail-closed boundary until reparse-safe handle traversal and
-    // volume/file-ID binding are implemented for Windows.
-    Err(LocalImportError::PlatformUnsupported)
+fn open_approved_root(path: &Path) -> Result<ApprovedImportRoot, LocalImportError> {
+    windows_source::open_approved_root(path)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
@@ -1021,6 +1170,9 @@ fn read_bound_source_with_hook(
         return Err(LocalImportError::NotRegularFile);
     }
     let before = snapshot(&before_metadata);
+    if before.link_count != 1 {
+        return Err(LocalImportError::MultipleHardLinks);
+    }
     let expected_len = checked_len(before.length, max_bytes)?;
     let mut raw = Vec::with_capacity(expected_len);
     file.by_ref()
@@ -1116,11 +1268,11 @@ fn read_macos_bound_source_with_hook(
 
 #[cfg(windows)]
 fn read_bound_source(
-    _: &ApprovedImportRoot,
-    _: &Path,
-    _: usize,
+    root: &ApprovedImportRoot,
+    path: &Path,
+    max_bytes: usize,
 ) -> Result<(Vec<u8>, BoundSourceIdentity), LocalImportError> {
-    Err(LocalImportError::PlatformUnsupported)
+    windows_source::read_bound_source(root, path, max_bytes)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
@@ -1307,11 +1459,8 @@ mod tests {
     }
     fn identity(object: u64) -> BoundSourceIdentity {
         BoundSourceIdentity {
-            root: PhysicalFileId {
-                volume: 1,
-                object: 2,
-            },
-            source: PhysicalFileId { volume: 1, object },
+            root: PhysicalFileId::unix(1, 2),
+            source: PhysicalFileId::unix(1, object),
         }
     }
     fn plan_bytes(
@@ -1607,6 +1756,45 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn history_bridge_keeps_stable_path_provenance_and_subject_binding() {
+        let root = fixture_root("history-bridge");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("export.json"), b"{\"messages\":[]}").unwrap();
+        let first = capture_verified_history_source(
+            issue_interactive_history_import_capability(
+                approve_import_root(&root).unwrap(),
+                key(),
+                "operator-a",
+                "chatgpt_export",
+                Path::new("export.json"),
+                16 * 1024 * 1024,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let second = capture_verified_history_source(
+            issue_interactive_history_import_capability(
+                approve_import_root(&root).unwrap(),
+                [8_u8; 32],
+                "operator-a",
+                "chatgpt_export",
+                Path::new("export.json"),
+                16 * 1024 * 1024,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(first.source_sha256(), second.source_sha256());
+        assert_eq!(first.source_path_sha256(), second.source_path_sha256());
+        assert!(first.binds_subject("operator-a"));
+        assert!(!first.binds_subject("operator-b"));
+        assert!(first.binds_source_family("chatgpt_export"));
+        assert!(!first.binds_source_family("claude_export"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_component_traversal_rejects_links_and_hard_linked_leaves() {
@@ -1699,30 +1887,27 @@ mod tests {
             LocalImportError::MountBoundaryCrossed
         );
         assert!(is_within_macos_approved_volume(
-            PhysicalFileId {
-                volume: 7,
-                object: 9,
-            },
-            PhysicalFileId {
-                volume: 7,
-                object: 10,
-            }
+            PhysicalFileId::unix(7, 9),
+            PhysicalFileId::unix(7, 10)
         ));
         assert!(!is_within_macos_approved_volume(
-            PhysicalFileId {
-                volume: 7,
-                object: 9,
-            },
-            PhysicalFileId {
-                volume: 8,
-                object: 9,
-            }
+            PhysicalFileId::unix(7, 9),
+            PhysicalFileId::unix(8, 9)
         ));
     }
 
     #[cfg(windows)]
     #[test]
-    fn unc_device_and_verbatim_paths_are_rejected_and_windows_is_fail_closed() {
+    fn windows_history_source_is_handle_bound_and_rejects_path_tricks() {
+        use std::{
+            ffi::OsString,
+            fs,
+            os::windows::{
+                ffi::OsStringExt,
+                fs::{symlink_dir, symlink_file},
+            },
+        };
+
         for forbidden in [
             r"\\server\share\root",
             r"\\?\UNC\server\share\root",
@@ -1734,10 +1919,205 @@ mod tests {
                 Err(LocalImportError::ForbiddenPathPrefix)
             );
         }
-        assert!(matches!(
-            approve_import_root(Path::new(r"C:\approved")),
-            Err(LocalImportError::PlatformUnsupported)
-        ));
+        for invalid in [r"C:\approved:stream", r"C:\approved.\child", r"C:\."] {
+            assert!(validate_approved_root_path(Path::new(invalid)).is_err());
+        }
+
+        let root = fixture_root("windows-history-source");
+        fs::create_dir_all(&root).unwrap();
+        let selected = root.join("export.json");
+        fs::write(&selected, b"{\"messages\":[]}").unwrap();
+        let nul_selector = PathBuf::from(OsString::from_wide(&[
+            b'e' as u16,
+            b'x' as u16,
+            0,
+            b'p' as u16,
+        ]));
+        for invalid in [
+            Path::new("export.json:stream"),
+            Path::new("export.json."),
+            nul_selector.as_path(),
+        ] {
+            assert!(issue_interactive_history_import_capability(
+                approve_import_root(&root).unwrap(),
+                key(),
+                "operator-a",
+                "chatgpt_export",
+                invalid,
+                1024,
+            )
+            .is_err());
+        }
+        let capability = issue_interactive_history_import_capability(
+            approve_import_root(&root).unwrap(),
+            key(),
+            "operator-a",
+            "chatgpt_export",
+            Path::new("export.json"),
+            1024,
+        )
+        .unwrap();
+        // `capture_verified_history_source` consumes the capability by value;
+        // a second capture attempt cannot compile, which is the one-shot gate.
+        let source = capture_verified_history_source(capability).unwrap();
+        assert_eq!(source.bytes(), b"{\"messages\":[]}");
+        assert!(source.binds_subject("operator-a"));
+        assert!(source.binds_source_family("chatgpt_export"));
+        assert!(!root.join("views.db").exists());
+
+        let authority = approve_import_root(&root).unwrap();
+        assert_eq!(
+            windows_source::read_bound_source_with_hook(
+                &authority,
+                Path::new("export.json"),
+                1024,
+                || fs::write(&selected, b"{\"messageX\":[]}").unwrap(),
+            ),
+            Err(LocalImportError::ChangedDuringRead)
+        );
+        fs::write(&selected, b"{\"messages\":[]}").unwrap();
+        let replacement = root.join("replacement.json");
+        fs::write(&replacement, b"{\"messages\":[]}").unwrap();
+        assert!(windows_source::read_bound_source_with_hook(
+            &authority,
+            Path::new("export.json"),
+            1024,
+            || assert!(fs::rename(&replacement, &selected).is_err()),
+        )
+        .is_ok());
+        assert!(windows_source::read_bound_source_with_hook(
+            &authority,
+            Path::new("export.json"),
+            1024,
+            || assert!(fs::remove_file(&selected).is_err()),
+        )
+        .is_ok());
+        let linked = root.join("linked-export.json");
+        fs::hard_link(&selected, &linked).unwrap();
+        assert_eq!(
+            windows_source::read_bound_source(&authority, Path::new("linked-export.json"), 1024),
+            Err(LocalImportError::MultipleHardLinks)
+        );
+        drop(authority);
+
+        let oversized = root.join("oversized.json");
+        fs::write(&oversized, vec![b'x'; 1025]).unwrap();
+        let authority = approve_import_root(&root).unwrap();
+        assert_eq!(
+            windows_source::read_bound_source(&authority, Path::new("oversized.json"), 1024),
+            Err(LocalImportError::SizeLimitExceeded)
+        );
+        drop(authority);
+
+        let nested = root.join("nested");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("export.json"), b"{}").unwrap();
+        let renamed = root.join("renamed-nested");
+        let authority = approve_import_root(&root).unwrap();
+        assert!(windows_source::read_bound_source_with_hook(
+            &authority,
+            Path::new("nested/export.json"),
+            1024,
+            || assert!(fs::rename(&nested, &renamed).is_err()),
+        )
+        .is_ok());
+        drop(authority);
+
+        let reparse_leaf = root.join("reparse-leaf.json");
+        match symlink_file(&selected, &reparse_leaf) {
+            Ok(()) => {
+                let authority = approve_import_root(&root).unwrap();
+                assert_eq!(
+                    windows_source::read_bound_source(
+                        &authority,
+                        Path::new("reparse-leaf.json"),
+                        1024,
+                    ),
+                    Err(LocalImportError::SymlinkOrReparsePoint)
+                );
+            }
+            Err(error) if error.raw_os_error() == Some(1314) => {
+                // Standard CI exercises the mandatory junction-leaf fallback below.
+            }
+            Err(error) => panic!("create reparse leaf fixture: {error}"),
+        }
+        let reparse_parent = root.join("reparse-parent");
+        match symlink_dir(&nested, &reparse_parent) {
+            Ok(()) => {
+                let authority = approve_import_root(&root).unwrap();
+                assert_eq!(
+                    windows_source::read_bound_source(
+                        &authority,
+                        Path::new("reparse-parent/export.json"),
+                        1024,
+                    ),
+                    Err(LocalImportError::SymlinkOrReparsePoint)
+                );
+            }
+            Err(error) if error.raw_os_error() == Some(1314) => {
+                // Standard CI exercises the mandatory junction-parent fallback below.
+            }
+            Err(error) => panic!("create reparse parent fixture: {error}"),
+        }
+        let junction_leaf = root.join("junction-leaf");
+        let junction_parent = root.join("junction-parent");
+        create_windows_junction(&nested, &junction_leaf);
+        create_windows_junction(&nested, &junction_parent);
+        let authority = approve_import_root(&root).unwrap();
+        // A directory junction opened with FILE_NON_DIRECTORY_FILE may be
+        // rejected by NtOpenFile before its reparse attributes are available.
+        // The mandatory standard-CI contract is therefore fail-closed; the
+        // privileged file-symlink fixture above proves exact leaf classification.
+        assert!(
+            windows_source::read_bound_source(
+                &authority,
+                Path::new("junction-leaf"),
+                1024,
+            )
+            .is_err(),
+            "a directory junction selected as a leaf must be rejected"
+        );
+        assert_eq!(
+            windows_source::read_bound_source(
+                &authority,
+                Path::new("junction-parent/export.json"),
+                1024,
+            ),
+            Err(LocalImportError::SymlinkOrReparsePoint)
+        );
+        drop(authority);
+        fs::remove_dir(&junction_leaf).unwrap();
+        fs::remove_dir(&junction_parent).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn create_windows_junction(target: &Path, junction: &Path) {
+        use std::os::windows::ffi::OsStrExt;
+
+        for path in [target, junction] {
+            assert!(
+                !path.as_os_str().encode_wide().any(|unit| matches!(
+                    unit,
+                    0..=31 | 33 | 34 | 37 | 38 | 40 | 41 | 60 | 62 | 94 | 124
+                )),
+                "junction fixture path contains a cmd.exe metacharacter"
+            );
+        }
+        let output = std::process::Command::new("cmd.exe")
+            .arg("/d")
+            .arg("/c")
+            .arg("mklink")
+            .arg("/J")
+            .arg(junction)
+            .arg(target)
+            .output()
+            .expect("launch mklink junction fixture");
+        assert!(
+            output.status.success(),
+            "mklink /J must create a privilege-independent reparse fixture: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
