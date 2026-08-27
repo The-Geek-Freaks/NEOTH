@@ -41,6 +41,7 @@ impl ConnectorLifecycle {
 /// One operator-registered connector account.  This is content-free: it
 /// contains only a descriptor/configuration reference and lifecycle metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegisteredConnectorAccount {
     pub configuration: ConnectorConfiguration,
     pub lifecycle: ConnectorLifecycle,
@@ -71,7 +72,7 @@ impl RegisteredConnectorAccount {
 /// `enabled` is true and the account is individually admitted by the control
 /// plane.  This keeps config presence distinct from runtime readiness.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ConnectorControlConfig {
     #[serde(default = "default_connector_control_state_schema_version")]
     pub schema_version: u32,
@@ -149,6 +150,15 @@ mod tests {
         }
     }
 
+    fn populated_v1_config_value() -> serde_json::Value {
+        serde_json::to_value(ConnectorControlConfig {
+            enabled: true,
+            registered_accounts: vec![local_import_account(ConnectorLifecycle::Active)],
+            ..ConnectorControlConfig::default()
+        })
+        .unwrap()
+    }
+
     #[test]
     fn default_is_disabled_and_empty() {
         let config = ConnectorControlConfig::default();
@@ -213,5 +223,82 @@ mod tests {
         );
         assert!(partial.enabled);
         partial.validate().unwrap();
+    }
+
+    #[test]
+    fn serde_control_config_accepts_empty_and_minimal_v1_documents() {
+        let empty: ConnectorControlConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty, ConnectorControlConfig::default());
+        empty.validate().unwrap();
+
+        let minimal: ConnectorControlConfig = serde_json::from_str(
+            r#"{"schema_version":1,"enabled":false,"registered_accounts":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            minimal.schema_version,
+            CONNECTOR_CONTROL_STATE_SCHEMA_VERSION
+        );
+        assert!(!minimal.enabled);
+        assert!(minimal.registered_accounts.is_empty());
+        minimal.validate().unwrap();
+    }
+
+    #[test]
+    fn serde_control_config_rejects_unknown_root_fields() {
+        let mut value = populated_v1_config_value();
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("unknown_root".to_owned(), serde_json::Value::Bool(true));
+
+        assert!(serde_json::from_value::<ConnectorControlConfig>(value).is_err());
+    }
+
+    #[test]
+    fn serde_control_config_rejects_unknown_registered_account_fields() {
+        let mut value = populated_v1_config_value();
+        value["registered_accounts"][0]
+            .as_object_mut()
+            .unwrap()
+            .insert("unknown_account".to_owned(), serde_json::Value::Bool(true));
+
+        assert!(serde_json::from_value::<ConnectorControlConfig>(value).is_err());
+    }
+
+    #[test]
+    fn serde_control_config_rejects_unknown_connector_configuration_fields() {
+        let mut value = populated_v1_config_value();
+        value["registered_accounts"][0]["configuration"]
+            .as_object_mut()
+            .unwrap()
+            .insert(
+                "unknown_connector_configuration".to_owned(),
+                serde_json::Value::Bool(true),
+            );
+
+        assert!(serde_json::from_value::<ConnectorControlConfig>(value).is_err());
+    }
+
+    #[test]
+    fn serde_control_config_rejects_unknown_policy_snapshot_fields() {
+        let mut value = populated_v1_config_value();
+        value["registered_accounts"][0]["configuration"]["policy"]
+            .as_object_mut()
+            .unwrap()
+            .insert("unknown_policy".to_owned(), serde_json::Value::Bool(true));
+
+        assert!(serde_json::from_value::<ConnectorControlConfig>(value).is_err());
+    }
+
+    #[test]
+    fn serde_control_config_rejects_unknown_resource_limit_fields() {
+        let mut value = populated_v1_config_value();
+        value["registered_accounts"][0]["configuration"]["policy"]["limits"]
+            .as_object_mut()
+            .unwrap()
+            .insert("unknown_limit".to_owned(), serde_json::Value::Bool(true));
+
+        assert!(serde_json::from_value::<ConnectorControlConfig>(value).is_err());
     }
 }

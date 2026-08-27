@@ -431,6 +431,7 @@ pub enum ConnectorAvailability {
 
 /// Resource bounds are a policy snapshot, never a best-effort suggestion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResourceLimits {
     pub max_items_per_run: u32,
     pub max_bytes_per_item: u64,
@@ -495,6 +496,7 @@ pub enum SideEffectPolicy {
 /// Immutable-at-use policy input.  A later supervisor must take a fresh
 /// snapshot for each credential, egress, or provider-boundary fallback.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConnectorPolicySnapshot {
     pub revision: u64,
     pub consent: ConsentState,
@@ -539,6 +541,7 @@ impl ConnectorPolicySnapshot {
 /// Persistable configuration that holds only a SecretStore reference.  It is
 /// intentionally not a runnable connector object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConnectorConfiguration {
     pub connector_id: ConnectorId,
     pub account_id: Option<ConnectorAccountId>,
