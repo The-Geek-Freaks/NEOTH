@@ -1863,6 +1863,10 @@ async fn build_prompt_bundle(
             communication_profile: None,
         });
         let budget_items = enriched.budget_items;
+        // The MCP-free enriched request still has a structurally valid
+        // insertion boundary. Route/agent rewrites may later choose to omit
+        // it, but the base PromptBundle always carries the typed slot.
+        let mcp_catalogue_slot = McpCatalogueSlot::from_enriched(&budget_items)?;
         let (_, combined_system) =
             crate::tokens::budget::render_request(&budget_items).map_err(anyhow::Error::msg)?;
         return Ok((
@@ -1880,7 +1884,7 @@ async fn build_prompt_bundle(
                     degraded_reason: Some("incognito_extension_loading_disabled".to_string()),
                 },
                 budget_items,
-                mcp_catalogue_slot: None,
+                mcp_catalogue_slot,
                 skill_tool_allowlist: None,
                 plan_attest_hash: None,
                 agent_raw_layers: AgentRawLayers {
@@ -12240,6 +12244,31 @@ fn hydrate_resume_context(
 }
 
 #[cfg(test)]
+/// Minimal ChatArgs for tests (mirrors clap defaults).
+fn test_chat_args_default() -> ChatArgs {
+    ChatArgs {
+        message: None,
+        attach: Vec::new(),
+        model: None,
+        skill: None,
+        system: None,
+        edit: false,
+        config: None,
+        wal_segment: None,
+        stream: false,
+        gui_consent_token_stdin: false,
+        temperature: None,
+        top_p: None,
+        sampling_seed: None,
+        resume_from: None,
+        incognito: false,
+        loop_mode: false,
+        iterations: None,
+        until: vec![],
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::cli::init::ProviderKind;
@@ -14930,6 +14959,7 @@ modes:
     #[derive(Default)]
     struct ConsentCountingProvider {
         calls: std::sync::atomic::AtomicUsize,
+        last_reply: std::sync::Mutex<Option<String>>,
     }
 
     #[async_trait]
@@ -14944,9 +14974,11 @@ modes:
 
         async fn complete(&self, _req: Request) -> Result<Completion> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let reply = "controlled provider reply";
+            *self.last_reply.lock().unwrap() = Some(reply.to_string());
             Ok(Completion {
                 termination: Default::default(),
-                text: "must not dispatch".into(),
+                text: reply.into(),
                 identity: Default::default(),
                 model: "gpt-4o".into(),
                 latency: Duration::from_millis(1),
@@ -15007,7 +15039,7 @@ modes:
             "Reply with one short greeting.",
             "openai_api",
             "gpt-4o",
-            "must not dispatch",
+            "controlled provider reply",
         ] {
             assert!(
                 !surfaced.contains(secret),
@@ -17468,6 +17500,11 @@ modes:
         writer_join.await.unwrap();
 
         let bundle = result.0;
+        assert_eq!(
+            bundle.mcp_catalogue_slot,
+            McpCatalogueSlot::from_enriched(&bundle.budget_items)
+                .expect("Incognito bundle must retain the typed MCP insertion boundary")
+        );
         let (_, system) = crate::tokens::budget::render_request(&bundle.budget_items).unwrap();
         let system = system.unwrap_or_default();
         for forbidden in [
@@ -17488,6 +17525,51 @@ modes:
         assert_eq!(
             std::fs::read(home.join(".last-active")).unwrap(),
             marker_before
+        );
+    }
+
+    #[tokio::test]
+    async fn incognito_runtime_ignores_poisoned_mcp_and_profile_extension_registries() {
+        let home = tempfile::tempdir().unwrap();
+        let config_path = home.path().join("freedom.yaml");
+        let paths = InstancePaths::new(home.path(), &config_path);
+        std::fs::write(&paths.mcp_servers, "servers: [poisoned\n").unwrap();
+        std::fs::write(
+            &paths.profile_extensions,
+            "[extensions\npoisoned = true\n",
+        )
+        .unwrap();
+        crate::consent::grant(home.path(), ProviderKind::OpenaiApi).unwrap();
+
+        let config = FreedomConfig {
+            provider_kind: Some(ProviderKind::OpenaiApi),
+            provider_model: Some("gpt-4o".into()),
+            language_primary: Some("en".into()),
+            // The granted route makes a successful provider result an
+            // independently observable point after the MCP-free boundary.
+            autonomy: crate::permissions::AutonomyLevel::Full,
+            ..Default::default()
+        };
+        let provider = ConsentCountingProvider::default();
+        let args = ChatArgs {
+            message: Some("private ordinary request".into()),
+            config: Some(config_path),
+            wal_segment: Some(canonical_test_wal(home.path(), "incognito-poisoned-registries")),
+            incognito: true,
+            ..test_chat_args_default()
+        };
+
+        run_chat_with(args, config, &provider)
+            .await
+            .expect("Incognito must bypass poisoned instance extension registries");
+        assert_eq!(
+            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the controlled provider must be reached after the registry bypass"
+        );
+        assert_eq!(
+            provider.last_reply.lock().unwrap().as_deref(),
+            Some("controlled provider reply")
         );
     }
 
@@ -19374,27 +19456,4 @@ mod attach_tests {
         assert!(safe.chars().count() <= 256);
     }
 
-    /// Minimal ChatArgs for tests in this module (mirrors clap defaults).
-    fn test_chat_args_default() -> ChatArgs {
-        ChatArgs {
-            message: None,
-            attach: Vec::new(),
-            model: None,
-            skill: None,
-            system: None,
-            edit: false,
-            config: None,
-            wal_segment: None,
-            stream: false,
-            gui_consent_token_stdin: false,
-            temperature: None,
-            top_p: None,
-            sampling_seed: None,
-            resume_from: None,
-            incognito: false,
-            loop_mode: false,
-            iterations: None,
-            until: vec![],
-        }
-    }
 }

@@ -1083,21 +1083,12 @@ fn json_shape_error(message: impl Into<String>) -> serde_json::Error {
     ))
 }
 
-fn error_chain_has_kind(
-    error: &(dyn std::error::Error + 'static),
-    expected: std::io::ErrorKind,
-) -> bool {
-    let mut current = Some(error);
-    while let Some(error) = current {
-        if error
+fn error_chain_has_kind(error: &anyhow::Error, expected: std::io::ErrorKind) -> bool {
+    error.chain().any(|error| {
+        error
             .downcast_ref::<std::io::Error>()
             .is_some_and(|io| io.kind() == expected)
-        {
-            return true;
-        }
-        current = error.source();
-    }
-    false
+    })
 }
 
 fn write_state_at(
@@ -1168,6 +1159,42 @@ mod tests {
 
     fn prepare_private_hygiene_namespace(home: &TestHome) {
         open_hygiene_directory(home.path()).expect("create private hygiene namespace");
+    }
+
+    #[test]
+    fn error_chain_kind_detects_nested_invalid_data() {
+        let error = anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "bounded-read test failure",
+        ))
+        .context("outer hygiene read context");
+
+        assert!(error_chain_has_kind(
+            &error,
+            std::io::ErrorKind::InvalidData
+        ));
+        assert!(!error_chain_has_kind(
+            &error,
+            std::io::ErrorKind::PermissionDenied
+        ));
+    }
+
+    #[test]
+    fn error_chain_kind_rejects_non_matching_nested_io_kind() {
+        let error = anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "bounded-read test failure",
+        ))
+        .context("outer hygiene read context");
+
+        assert!(!error_chain_has_kind(
+            &error,
+            std::io::ErrorKind::InvalidData
+        ));
+        assert!(error_chain_has_kind(
+            &error,
+            std::io::ErrorKind::PermissionDenied
+        ));
     }
 
     #[cfg(unix)]
