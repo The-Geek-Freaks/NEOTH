@@ -5821,12 +5821,17 @@ mod tests {
             (
                 "cli/bg_session.rs",
                 1,
-                "a71bfceab3efcd54245a9e7b6b77e241e0485c12bf28718bc9f1599069fbd4e1",
+                // The detached worker constructs an AuthorizedProvider only
+                // after the job capability, live config, and consent checks.
+                "de7addacaed902c7078df7a36633b72ab19e964b6ba2325efce6ced9b8c57bd2",
             ),
             (
                 "cli/chat.rs",
-                4,
-                "52d9c5d586ebb480528a4568c3fbd26c08e51dd3aa5dde9cf8b14c1f9a973033",
+                6,
+                // The two additional calls are CanaryGuardedProvider's
+                // post-mint forwarding decorator; its inner provider remains
+                // the same authorized handle passed to chat dispatch.
+                "48faf34b5616d5563b94599be035b1c7d58cba1579a53b6350e97f79299ab1b5",
             ),
             (
                 "cli/clarify_chat.rs",
