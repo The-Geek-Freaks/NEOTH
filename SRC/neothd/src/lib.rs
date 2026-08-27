@@ -108,6 +108,10 @@ use tracing_subscriber::EnvFilter;
 pub mod shutdown;
 
 pub mod adr;
+/// ADOPT31-W1 — typed Wayfinder handoff artifacts. This module deliberately
+/// owns only goal clarification data; map ingestion, workflow execution, and
+/// evidence-gate wiring land in their separately scoped ADOPT31 slices.
+pub mod adw;
 /// Babel-Index analytics: async observer subsystem for the delta-kosmologie
 /// federation protocol.  Never blocks inference; consent-gated federation
 /// requires `freedom.yaml :: babel.federate = true` AND AutonomyLevel >= Elevated.
