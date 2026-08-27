@@ -131,7 +131,11 @@ pub fn build_summary_body(
 /// the back-compat / unit-test surface.
 pub fn build_summary_prompt(events: &[(i64, String)]) -> Result<String> {
     let body = build_summary_body(events)?;
-    build_summary_prompt_from_prepared(DEFAULT_SUMMARY_SYSTEM, DEFAULT_SUMMARY_INSTRUCTION, &body)
+    Ok(build_summary_prompt_from_prepared(
+        DEFAULT_SUMMARY_SYSTEM,
+        DEFAULT_SUMMARY_INSTRUCTION,
+        &body,
+    )?)
 }
 
 fn build_summary_prompt_from_prepared(

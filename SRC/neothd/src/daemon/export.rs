@@ -32,7 +32,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use rusqlite::Connection;
 use serde::Serialize;
 
@@ -61,6 +61,20 @@ impl std::error::Error for PrivateDsarAuthorityUnavailable {}
 
 pub(crate) fn private_dsar_authority_unavailable() -> anyhow::Error {
     PrivateDsarAuthorityUnavailable.into()
+}
+
+/// Validate the bounded selector accepted by the separate communication
+/// profile erasure flow. Generic export still rejects every private DSAR mode
+/// before it can inspect state or create output.
+pub(crate) fn validate_communication_subject_selector(subject_id: &str) -> Result<()> {
+    if subject_id.is_empty()
+        || subject_id.trim() != subject_id
+        || subject_id.len() > 256
+        || subject_id.chars().any(char::is_control)
+    {
+        bail!("invalid communication-profile subject selector");
+    }
+    Ok(())
 }
 
 impl ExportFormat {

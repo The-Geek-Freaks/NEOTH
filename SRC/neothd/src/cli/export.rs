@@ -106,6 +106,8 @@ fn ensure_generic_export_authority(args: &ExportArgs) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn private_dsar_flags_remain_parser_compatible() {
         use crate::cli::{Cli, Commands};

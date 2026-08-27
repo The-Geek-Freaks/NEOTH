@@ -2071,7 +2071,17 @@ fn write_new_child(
                 let rollback_sync =
                     store::sync_parent_directory(&directory.dir, &directory.display_path);
                 match rollback_sync.context("sync canonical receipt ledger rollback") {
-                    Ok(()) => CanonicalWrite::RolledBackDurably { cause },
+                    Ok(store::DirectorySyncOutcome::Confirmed) => {
+                        CanonicalWrite::RolledBackDurably { cause }
+                    }
+                    Ok(store::DirectorySyncOutcome::Unsupported) => {
+                        CanonicalWrite::PossiblyRetained {
+                            bytes: retained_bound,
+                            cause: cause.context(
+                                "canonical receipt ledger rollback durability is unsupported on this platform",
+                            ),
+                        }
+                    }
                     Err(cleanup_error) => CanonicalWrite::PossiblyRetained {
                         bytes: retained_bound,
                         cause: cause.context(format!(

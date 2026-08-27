@@ -449,7 +449,7 @@ fn prepare_entity_source_text(
 /// data; all extraction instructions remain trusted surrounding text.
 pub fn build_extraction_prompt(text: &str) -> Result<String> {
     let text = prepare_entity_source_text(text)?;
-    build_extraction_prompt_from_prepared(&text)
+    Ok(build_extraction_prompt_from_prepared(&text)?)
 }
 
 fn build_extraction_prompt_from_prepared(

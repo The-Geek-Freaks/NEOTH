@@ -18,6 +18,11 @@ use super::{
     control_state::{ConnectorControlConfig, ConnectorLifecycle, RegisteredConnectorAccount},
 };
 
+// The private same-user transport remains Unix-only. Its module also owns the
+// platform-neutral guard and the fail-closed non-Unix stub, which the daemon
+// needs to represent Windows as unavailable without a weaker transport.
+pub(crate) mod rpc;
+
 /// Capability representing a principal already authenticated by a later local
 /// control transport. There is deliberately no production issuer in this
 /// slice: fields, seal, and the only test constructor remain module-private so

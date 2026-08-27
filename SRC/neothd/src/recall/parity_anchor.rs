@@ -11,10 +11,12 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+#[cfg(test)]
+use super::goldset::EXPECTED_GOLDSET_QUERIES;
 use super::{
     goldset::{
-        EXPECTED_GOLDSET_QUERIES, GoldsetEntry, GradedSystem, GraderFamily, GraderGrade,
-        MAX_GRADES_BYTES, ValidatedGraderConfigFile,
+        GoldsetEntry, GradedSystem, GraderFamily, GraderGrade, MAX_GRADES_BYTES,
+        ValidatedGraderConfigFile,
     },
     parity::Dimension,
     parity_candidate_evidence::ValidatedCandidateEvidence,

@@ -806,7 +806,7 @@ fn read_bound_immutable_run_child(
         }
     }
     run.revalidate_lock()?;
-    let (mut file, binding) = crate::skills::store::open_bound_regular_file(
+    let (file, binding) = crate::skills::store::open_bound_regular_file(
         &run.root.dir,
         std::ffi::OsStr::new(name),
         &run.child_display(name),
@@ -2254,7 +2254,7 @@ fn read_pinned_attested_imports(
     for import in &state.imported_grades {
         let name = format!("{}.jsonl", import.source_sha256);
         let display = run.child_display(IMPORTS_DIR).join(&name);
-        let (mut file, identity) = crate::skills::store::open_bound_regular_file(
+        let (file, identity) = crate::skills::store::open_bound_regular_file(
             &dir,
             std::ffi::OsStr::new(&name),
             &display,
@@ -2910,7 +2910,7 @@ fn cluster_family_bias(
             )
         })
         .collect();
-    let mut totals: BTreeMap<(String, String, String), (u64, u64)> = BTreeMap::new();
+    let mut totals: BTreeMap<(String, String), (u64, u64)> = BTreeMap::new();
     let mut family_totals: BTreeMap<(String, String, String), (u64, u64)> = BTreeMap::new();
     for grade in grades {
         let family = family_by_grader
@@ -2970,11 +2970,11 @@ fn cluster_family_bias(
 }
 
 fn accumulate_total(
-    target: &mut BTreeMap<(String, String, String), (u64, u64)>,
+    target: &mut BTreeMap<(String, String), (u64, u64)>,
     key: (String, String),
     score: u8,
 ) -> Result<()> {
-    let entry = target.entry((String::new(), key.0, key.1)).or_default();
+    let entry = target.entry(key).or_default();
     entry.0 = entry
         .0
         .checked_add(u64::from(score))
@@ -3259,23 +3259,29 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n")
             .into_bytes();
-        let manifest =
-            plan_run(dir.path(), &config, config_bytes, &goldset, goldset_bytes).unwrap();
+        let manifest = plan_run(
+            dir.path(),
+            &config,
+            &config_bytes,
+            &goldset,
+            &goldset_bytes,
+        )
+        .unwrap();
         let first = ingest_offline_grades(
             dir.path(),
             &config,
-            config_bytes,
+            &config_bytes,
             &goldset,
-            goldset_bytes,
+            &goldset_bytes,
             &grades("shared"),
         )
         .unwrap();
         let retry = ingest_offline_grades(
             dir.path(),
             &config,
-            config_bytes,
+            &config_bytes,
             &goldset,
-            goldset_bytes,
+            &goldset_bytes,
             &grades("shared"),
         )
         .unwrap();
@@ -3283,9 +3289,9 @@ mod tests {
         let complete = ingest_offline_grades(
             dir.path(),
             &config,
-            config_bytes,
+            &config_bytes,
             &goldset,
-            goldset_bytes,
+            &goldset_bytes,
             &grades("external"),
         )
         .unwrap();
@@ -3293,9 +3299,9 @@ mod tests {
         let report = build_report(
             dir.path(),
             &config,
-            config_bytes,
+            &config_bytes,
             &goldset,
-            goldset_bytes,
+            &goldset_bytes,
             &receipt,
             &pubkey,
         )
@@ -3303,9 +3309,9 @@ mod tests {
         let retry_report = build_report(
             dir.path(),
             &config,
-            config_bytes,
+            &config_bytes,
             &goldset,
-            goldset_bytes,
+            &goldset_bytes,
             &receipt,
             &pubkey,
         )

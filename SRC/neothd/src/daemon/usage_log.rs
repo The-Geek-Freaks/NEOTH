@@ -871,7 +871,7 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
             }
             all_latency.push(ev.latency_ms);
             latency_samples
-                .entry(ev.provider)
+                .entry(ev.provider.clone())
                 .or_default()
                 .push(ev.latency_ms);
 
