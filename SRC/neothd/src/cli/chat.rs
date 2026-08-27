@@ -12794,22 +12794,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn public_valid_skill_from_doc_is_review_only_before_chat_runtime() {
+    async fn public_valid_skill_from_doc_returns_review_only_before_chat_runtime() {
         let root = crate::test_env::canonical_tempdir().expect("temp home");
         let source = root.path().join("operator-guide.rtf");
-        std::fs::write(
-            &source,
-            br"{\rtf1\ansi A bounded operator review document.\par}",
-        )
-        .expect("write valid RTF fixture");
+        let source_contents: &[u8] =
+            br"{\rtf1\ansi A bounded operator review document.\par}";
+        std::fs::write(&source, source_contents).expect("write valid RTF fixture");
 
-        let missing_config = root.path().join("must-not-be-loaded.yaml");
+        let config = root.path().join("must-not-be-loaded.yaml");
         let wal = root.path().join("would-be-created.wal");
         let prompt = format!("/skill-from-doc {}", source.display());
         let args = <ChatArgsParser as clap::Parser>::try_parse_from([
             "neoth-chat-test",
             "--config",
-            missing_config.to_str().expect("utf8 temp config path"),
+            config.to_str().expect("utf8 temp config path"),
             "--wal-segment",
             wal.to_str().expect("utf8 temp WAL path"),
             prompt.as_str(),
@@ -12817,7 +12815,10 @@ mod tests {
         .expect("parse valid review-only slash action")
         .chat;
 
-        assert!(!missing_config.exists());
+        let root_entries_before = std::fs::read_dir(root.path())
+            .expect("list test root before review")
+            .map(|entry| entry.expect("read test root entry").file_name())
+            .collect::<std::collections::BTreeSet<_>>();
         run_chat(args.clone())
             .await
             .expect("valid document action must finish before config loading");
@@ -12826,13 +12827,35 @@ mod tests {
         let provider = NeverCalledProvider::default();
         run_chat_with(args, FreedomConfig::default(), &provider)
             .await
-            .expect("alternate public ingress must complete document distillation");
+            .expect("public ingress must emit the document review and return successfully");
+
         assert_eq!(
             provider.calls.load(std::sync::atomic::Ordering::SeqCst),
             0,
             "review-only document action must not dispatch a provider"
         );
         assert!(!wal.exists(), "alternate ingress must not create a WAL");
+        assert!(
+            !config.exists(),
+            "review-only document action must not persist a config"
+        );
+        assert!(
+            !root.path().join("skills").exists(),
+            "review-only document action must not install or activate a skill"
+        );
+        let root_entries_after = std::fs::read_dir(root.path())
+            .expect("list test root after review")
+            .map(|entry| entry.expect("read test root entry").file_name())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            root_entries_after, root_entries_before,
+            "review-only document action must not create persistent files"
+        );
+        assert_eq!(
+            std::fs::read(&source).expect("read source after review"),
+            source_contents,
+            "review-only document action must leave its source unchanged"
+        );
     }
 
     #[test]
