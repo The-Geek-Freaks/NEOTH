@@ -30740,9 +30740,8 @@ mod tests {
             PoisonedPendingConsentRecovery::StaleOrAbsent
         );
         assert!(!pending.is_poisoned());
-        let preserved = pending
-            .lock()
-            .expect("recovered pending-consent mutex")
+        let recovered_pending = pending.lock().expect("recovered pending-consent mutex");
+        let preserved = recovered_pending
             .as_ref()
             .expect("newer pending consent remains");
         assert_eq!(preserved.request_id, newer_id);
