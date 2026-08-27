@@ -1345,10 +1345,7 @@ mod tests {
         let patch_root = tempfile::tempdir().unwrap();
         let worker = ProviderWorker::new("test/error", authorized, "", patch_root.path());
 
-        let error = worker
-            .execute(&sample_task())
-            .await
-            .unwrap_err();
+        let error = worker.execute(&sample_task()).await.unwrap_err();
         let diagnostic = format!("{error:#}");
         assert!(!diagnostic.contains(secret));
         assert!(!diagnostic.contains("upstream rejected"));

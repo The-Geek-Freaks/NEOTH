@@ -12747,13 +12747,9 @@ modes:
         let bounded = envelope["fields"][0]["data"].as_str().unwrap();
 
         assert_eq!(bounded.chars().count(), SESSION_NAMING_MAX_OPENING_CHARS);
-        assert_eq!(
-            bounded.len(),
-            "🙂".len() * SESSION_NAMING_MAX_OPENING_CHARS
-        );
+        assert_eq!(bounded.len(), "🙂".len() * SESSION_NAMING_MAX_OPENING_CHARS);
         assert!(
-            bounded.len()
-                <= crate::security::prompt_envelope::MAX_SESSION_NAMING_OPENING_BYTES
+            bounded.len() <= crate::security::prompt_envelope::MAX_SESSION_NAMING_OPENING_BYTES
         );
     }
     use tempfile::tempdir;

@@ -74,9 +74,8 @@ pub(crate) const MAX_OPERATION_READ_BYTES: usize =
 
 const _: () = assert!(SHARD_COUNT + 4 < MAX_DIRECTORY_ENTRIES);
 const _: () = assert!(MAX_OPERATION_FILE_READS >= 14);
-const _: () = assert!(
-    MAX_OPERATION_READ_BYTES >= MANIFEST_BYTES * 4 + SHARD_BYTES * 4 + PENDING_BYTES
-);
+const _: () =
+    assert!(MAX_OPERATION_READ_BYTES >= MANIFEST_BYTES * 4 + SHARD_BYTES * 4 + PENDING_BYTES);
 // Recovery may have to publish the manifest + anchor of one authenticated
 // pending predecessor before the requested handle can start its own complete
 // transaction.  Admission covers both bounded phases, including first-key
@@ -3106,8 +3105,6 @@ mod tests {
         let (production_source, _) = source
             .split_once("#[cfg(test)]\nmod tests {")
             .expect("receipt source must retain its test-module boundary");
-        assert!(
-            !production_source.contains("authenticated_context_evidence_receipt_exists(")
-        );
+        assert!(!production_source.contains("authenticated_context_evidence_receipt_exists("));
     }
 }

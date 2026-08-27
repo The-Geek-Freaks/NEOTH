@@ -53,7 +53,12 @@ fn migration_contract_keeps_legacy_unbound_and_raw_text_out_of_provenance() {
                     .and_then(|suffix| suffix.chars().next())
                     .is_some_and(char::is_whitespace)
             })
-            .map(|line| line.trim_end_matches(',').split_whitespace().collect::<Vec<_>>().join(" "))
+            .map(|line| {
+                line.trim_end_matches(',')
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
     }
 
     assert!(migration.contains("from: 35,"));

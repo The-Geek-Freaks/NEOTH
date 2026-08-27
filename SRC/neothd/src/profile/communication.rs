@@ -986,8 +986,7 @@ fn load_state_unlocked(home: &Path) -> Result<CommunicationState> {
                         Some(AuthenticatedSubjectOrigin::LegacyAuthenticated);
                 }
                 if legacy_state {
-                    item.legacy_authenticated_subject =
-                        LegacyAuthenticationAssertion::default();
+                    item.legacy_authenticated_subject = LegacyAuthenticationAssertion::default();
                 }
                 if legacy_state
                     && subject_id != COMMUNICATION_OPERATOR_SUBJECT
@@ -2491,25 +2490,26 @@ mod tests {
         std::fs::write(&path, serde_json::to_vec(&legacy_json).unwrap()).unwrap();
 
         let mut schema_v1_with_typed_origin = legacy_json.clone();
-        let alice_evidence = schema_v1_with_typed_origin["subjects"]["alice"]["evidence"]
-            ["directness"]
-            .as_array_mut()
-            .unwrap()
-            .first_mut()
-            .unwrap();
-        alice_evidence["authenticated_origin"] = serde_json::to_value(
-            AuthenticatedSubjectOrigin::AuthenticatedChannelParticipant,
-        )
-        .unwrap();
+        let alice_evidence =
+            schema_v1_with_typed_origin["subjects"]["alice"]["evidence"]["directness"]
+                .as_array_mut()
+                .unwrap()
+                .first_mut()
+                .unwrap();
+        alice_evidence["authenticated_origin"] =
+            serde_json::to_value(AuthenticatedSubjectOrigin::AuthenticatedChannelParticipant)
+                .unwrap();
         std::fs::write(
             &path,
             serde_json::to_vec(&schema_v1_with_typed_origin).unwrap(),
         )
         .unwrap();
         let error = load_state(dir.path()).unwrap_err();
-        assert!(format!("{error:#}").contains(
-            "schema-v1 communication evidence contains a typed authentication origin"
-        ));
+        assert!(
+            format!("{error:#}").contains(
+                "schema-v1 communication evidence contains a typed authentication origin"
+            )
+        );
 
         let mut schema_v2_with_legacy_assertion = legacy_json.clone();
         schema_v2_with_legacy_assertion["schema_version"] =

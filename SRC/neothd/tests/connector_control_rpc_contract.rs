@@ -63,9 +63,7 @@ fn connector_control_rpc_uses_its_own_domains_and_no_tcp_or_audit_routes() {
     assert!(CONTROL.contains("fn daemon_authenticated_session"));
     assert!(!CONTROL.contains("pub(crate) fn daemon_authenticated_session"));
     assert!(CONTROL.contains("test_context_import_runtime_fixture"));
-    assert!(CONTROL.contains(
-        "#[cfg(test)]\npub(crate) fn test_context_import_runtime_fixture"
-    ));
+    assert!(CONTROL.contains("#[cfg(test)]\npub(crate) fn test_context_import_runtime_fixture"));
     assert!(CONTROL.contains("AuthenticatedControlSession::test_authenticated"));
 }
 

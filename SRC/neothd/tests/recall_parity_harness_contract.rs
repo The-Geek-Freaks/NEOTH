@@ -371,7 +371,10 @@ fn attested_family_bias_export_is_read_only_pinned_and_non_gate() {
     let summary = HARNESS
         .split("pub fn summarize_attested_four_grader_family_bias")
         .nth(1)
-        .and_then(|tail| tail.split("fn attested_family_bias_summary_from_validated").next())
+        .and_then(|tail| {
+            tail.split("fn attested_family_bias_summary_from_validated")
+                .next()
+        })
         .expect("attested family-bias summary source");
     for forbidden in [
         "open_or_create",
