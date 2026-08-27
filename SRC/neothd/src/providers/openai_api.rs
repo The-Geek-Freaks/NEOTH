@@ -24,8 +24,7 @@ use super::response_bounds;
 use super::termination::{ObservedUpstreamEvidence, ProviderTermination, RefusalOrigin};
 use super::{
     ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
-    ProviderDispatchPermit,
-    ProviderRequestControls, Request,
+    ProviderDispatchPermit, ProviderRequestControls, Request,
 };
 use crate::config::inference::OpenAiCompatibleProfile;
 use crate::secret::SecretString;

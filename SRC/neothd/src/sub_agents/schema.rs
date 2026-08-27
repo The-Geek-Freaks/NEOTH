@@ -292,12 +292,16 @@ impl SubAgentProviderCall {
             if usage.provider() != self.provider.as_str()
                 || usage.wire_model() != self.wire_model.as_str()
             {
-                anyhow::bail!("provider usage attribution identity does not match its B22 call identity");
+                anyhow::bail!(
+                    "provider usage attribution identity does not match its B22 call identity"
+                );
             }
             if usage.input_tokens() != self.input_tokens
                 || usage.output_tokens() != self.output_tokens
             {
-                anyhow::bail!("provider usage attribution tokens do not match their enclosing call");
+                anyhow::bail!(
+                    "provider usage attribution tokens do not match their enclosing call"
+                );
             }
         }
         Ok(())

@@ -1687,9 +1687,8 @@ fn ensure_background_canary_absent(
     output: &str,
 ) -> Result<()> {
     let tracker = crate::security::injection_tracker::InjectionTracker::new();
-    if let Some(crate::security::injection_tracker::TrackerAlert::CanaryLeak {
-        canary_digest,
-    }) = tracker.observe_outbound(canary, output)
+    if let Some(crate::security::injection_tracker::TrackerAlert::CanaryLeak { canary_digest }) =
+        tracker.observe_outbound(canary, output)
     {
         warn!(
             canary_digest = %canary_digest,
@@ -2297,7 +2296,10 @@ mod tests {
     fn post_mint_background_failures_never_surface_provider_or_canary_content() {
         let canary = crate::security::injection_tracker::CanaryToken::generate().unwrap();
         let literal = canary.as_context_literal();
-        let whitespace_leak = literal.chars().map(|character| format!("{character} ")).collect::<String>();
+        let whitespace_leak = literal
+            .chars()
+            .map(|character| format!("{character} "))
+            .collect::<String>();
         let raw = anyhow::anyhow!(
             "provider exploded for request=secret-request contiguous={literal} whitespace={whitespace_leak}"
         );

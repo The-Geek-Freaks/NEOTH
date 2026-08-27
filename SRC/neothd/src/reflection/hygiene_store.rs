@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use super::hygiene::{
-    plan_legacy, plan_versioned, HygieneError, HygienePlan, LegacyHygieneInput,
-    RawReflection, TopicSynonymMap, VersionedHygieneInput, HYGIENE_PLAN_SCHEMA_VERSION,
+    HYGIENE_PLAN_SCHEMA_VERSION, HygieneError, HygienePlan, LegacyHygieneInput, RawReflection,
+    TopicSynonymMap, VersionedHygieneInput, plan_legacy, plan_versioned,
 };
 use super::periodic::PeriodReflection;
 
@@ -169,7 +169,10 @@ impl std::fmt::Display for HygieneStoreError {
                 write!(formatter, "invalid hygiene snapshot revision {found}")
             }
             Self::LegacyMigrationRequired => {
-                write!(formatter, "legacy hygiene state requires explicit migration")
+                write!(
+                    formatter,
+                    "legacy hygiene state requires explicit migration"
+                )
             }
             Self::LockPoisoned => write!(formatter, "hygiene state lock is poisoned"),
             Self::LockUnavailable => write!(formatter, "hygiene state lock is unavailable"),
@@ -178,7 +181,10 @@ impl std::fmt::Display for HygieneStoreError {
             }
             Self::CapacityExceeded => write!(formatter, "hygiene state exceeds a safety limit"),
             Self::DurabilityUnknown => {
-                write!(formatter, "hygiene state may be published but durability is unknown")
+                write!(
+                    formatter,
+                    "hygiene state may be published but durability is unknown"
+                )
             }
             Self::StaleRevision { expected, actual } => write!(
                 formatter,
@@ -422,9 +428,7 @@ fn open_hygiene_directory(
     Ok(crate::skills::store::BoundDirectory { dir, display_path })
 }
 
-fn verify_private_hygiene_directory(
-    directory: &cap_std::fs::Dir,
-) -> Result<(), HygieneStoreError> {
+fn verify_private_hygiene_directory(directory: &cap_std::fs::Dir) -> Result<(), HygieneStoreError> {
     #[cfg(unix)]
     {
         use cap_std::fs::MetadataExt as _;
@@ -602,8 +606,7 @@ fn validate_string_bound(value: &str, max_bytes: usize) -> Result<(), HygieneSto
 fn read_state_at(
     store: &crate::skills::store::BoundDirectory,
 ) -> Result<Option<HygieneState>, HygieneStoreError> {
-    let Some(bytes) = read_child_optional(store, HYGIENE_STATE_FILE)?
-    else {
+    let Some(bytes) = read_child_optional(store, HYGIENE_STATE_FILE)? else {
         return Ok(None);
     };
     let state: HygieneState =
@@ -686,7 +689,12 @@ fn parse_legacy_strict(bytes: &[u8]) -> Result<LegacyHygieneInput, HygieneStoreE
     })?;
     reject_unknown_fields(
         object,
-        &["now_unix", "raw_reflections", "period_reflections", "topic_synonyms"],
+        &[
+            "now_unix",
+            "raw_reflections",
+            "period_reflections",
+            "topic_synonyms",
+        ],
         "legacy hygiene state",
     )
     .map_err(|message| HygieneStoreError::InvalidSnapshot(json_shape_error(message)))?;
@@ -705,7 +713,11 @@ fn validate_raw_json_strict(value: &serde_json::Value) -> Result<(), String> {
     let object = value
         .as_object()
         .ok_or_else(|| "raw reflection must be an object".to_string())?;
-    reject_unknown_fields(object, &["id", "recorded_at_unix", "reflection"], "raw reflection")?;
+    reject_unknown_fields(
+        object,
+        &["id", "recorded_at_unix", "reflection"],
+        "raw reflection",
+    )?;
     let reflection = object
         .get("reflection")
         .ok_or_else(|| "raw reflection is missing reflection".to_string())?;
@@ -743,14 +755,20 @@ fn reject_unknown_fields(
     allowed: &[&str],
     owner: &str,
 ) -> Result<(), String> {
-    if let Some(field) = object.keys().find(|field| !allowed.contains(&field.as_str())) {
+    if let Some(field) = object
+        .keys()
+        .find(|field| !allowed.contains(&field.as_str()))
+    {
         return Err(format!("{owner} has unknown field {field:?}"));
     }
     Ok(())
 }
 
 fn json_shape_error(message: impl Into<String>) -> serde_json::Error {
-    serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, message.into()))
+    serde_json::Error::io(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        message.into(),
+    ))
 }
 
 fn error_chain_has_kind(
@@ -873,7 +891,10 @@ mod tests {
         let now = 200 * DAY;
         let outcome = apply_hygiene_plan(home.path(), 0, input(now)).expect("apply");
         assert_eq!(outcome.state.revision, 1);
-        assert_eq!(load_hygiene_state(home.path()).expect("load"), Some(outcome.state));
+        assert_eq!(
+            load_hygiene_state(home.path()).expect("load"),
+            Some(outcome.state)
+        );
 
         let path = hygiene_state_path(home.path());
         for malformed in [
@@ -927,7 +948,10 @@ mod tests {
         let second = apply_hygiene_plan(home.path(), first.state.revision, request).expect("no-op");
         assert!(!second.written);
         assert_eq!(second.state.revision, first.state.revision);
-        assert_eq!(std::fs::read(hygiene_state_path(home.path())).expect("state bytes"), before);
+        assert_eq!(
+            std::fs::read(hygiene_state_path(home.path())).expect("state bytes"),
+            before
+        );
     }
 
     #[test]
@@ -948,11 +972,13 @@ mod tests {
             "a same-process writer must wait for the process guard"
         );
         drop(process_guard);
-        assert!(done_receive
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .expect("writer result")
-            .expect("writer success")
-            .written);
+        assert!(
+            done_receive
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .expect("writer result")
+                .expect("writer success")
+                .written
+        );
         writer.join().expect("writer joins");
     }
 
@@ -1011,7 +1037,10 @@ mod tests {
             load_hygiene_state(home.path()),
             Ok(Some(HygieneState { revision: 1, .. }))
         ));
-        assert_eq!(std::fs::read(hygiene_state_path(home.path())).expect("state bytes"), before);
+        assert_eq!(
+            std::fs::read(hygiene_state_path(home.path())).expect("state bytes"),
+            before
+        );
     }
 
     #[test]
@@ -1249,20 +1278,24 @@ mod tests {
             &store_two.display_path.join("state-v1.lock"),
         )
         .expect("second bound lock");
-        assert!(binding_one
-            .matches_child(
-                &store_one.dir,
-                OsStr::new("state-v1.lock"),
-                &store_one.display_path.join("state-v1.lock"),
-            )
-            .expect("first binding check"));
-        assert!(binding_two
-            .matches_child(
-                &store_two.dir,
-                OsStr::new("state-v1.lock"),
-                &store_two.display_path.join("state-v1.lock"),
-            )
-            .expect("second binding check"));
+        assert!(
+            binding_one
+                .matches_child(
+                    &store_one.dir,
+                    OsStr::new("state-v1.lock"),
+                    &store_one.display_path.join("state-v1.lock"),
+                )
+                .expect("first binding check")
+        );
+        assert!(
+            binding_two
+                .matches_child(
+                    &store_two.dir,
+                    OsStr::new("state-v1.lock"),
+                    &store_two.display_path.join("state-v1.lock"),
+                )
+                .expect("second binding check")
+        );
         drop(lock_one);
         drop(lock_two);
 
@@ -1273,7 +1306,10 @@ mod tests {
             apply_hygiene_plan(home.path(), 0, input(200 * DAY)),
             Err(HygieneStoreError::StaleRevision { .. })
         ));
-        assert_eq!(std::fs::read(hygiene_state_path(home.path())).expect("state bytes"), before);
+        assert_eq!(
+            std::fs::read(hygiene_state_path(home.path())).expect("state bytes"),
+            before
+        );
     }
 
     #[cfg(unix)]
@@ -1290,7 +1326,10 @@ mod tests {
             apply_hygiene_plan(home.path(), 0, input(200 * DAY)),
             Err(HygieneStoreError::SafeStoreUnavailable)
         ));
-        assert_eq!(std::fs::read(&sentinel).expect("sentinel bytes"), b"outside");
+        assert_eq!(
+            std::fs::read(&sentinel).expect("sentinel bytes"),
+            b"outside"
+        );
 
         std::fs::remove_file(home.path().join("reflections")).expect("remove namespace link");
         let state_path = hygiene_state_path(home.path());
@@ -1300,7 +1339,10 @@ mod tests {
             load_hygiene_state(home.path()),
             Err(HygieneStoreError::SafeStoreUnavailable)
         ));
-        assert_eq!(std::fs::read(&sentinel).expect("sentinel bytes"), b"outside");
+        assert_eq!(
+            std::fs::read(&sentinel).expect("sentinel bytes"),
+            b"outside"
+        );
     }
 
     #[test]
@@ -1329,7 +1371,10 @@ mod tests {
         };
         assert_eq!(outcome.state.period_reflections, legacy.period_reflections);
         assert_eq!(outcome.state.topic_synonyms, legacy.topic_synonyms);
-        assert_eq!(std::fs::read(&legacy_path).expect("legacy remains"), legacy_bytes);
+        assert_eq!(
+            std::fs::read(&legacy_path).expect("legacy remains"),
+            legacy_bytes
+        );
         assert!(matches!(
             migrate_legacy_hygiene_state(home.path()),
             Err(HygieneStoreError::StateAlreadyExists)
@@ -1348,8 +1393,11 @@ mod tests {
         };
         let legacy_path = legacy_hygiene_state_path(home.path());
         prepare_private_hygiene_namespace(&home);
-        std::fs::write(&legacy_path, serde_json::to_vec(&invalid).expect("legacy json"))
-            .expect("legacy write");
+        std::fs::write(
+            &legacy_path,
+            serde_json::to_vec(&invalid).expect("legacy json"),
+        )
+        .expect("legacy write");
         assert!(matches!(
             migrate_legacy_hygiene_state(home.path()),
             Err(HygieneStoreError::InvalidPlan(_))
@@ -1369,7 +1417,10 @@ mod tests {
         assert!(outcome.state.raw_reflections.is_empty());
         assert_eq!(outcome.state.period_reflections.len(), 1);
         assert_eq!(outcome.plan.yearly_inputs.len(), 1);
-        assert_eq!(outcome.plan.yearly_inputs[0].source_tags, vec!["2026-01-02"]);
+        assert_eq!(
+            outcome.plan.yearly_inputs[0].source_tags,
+            vec!["2026-01-02"]
+        );
     }
 
     #[test]
@@ -1386,7 +1437,13 @@ mod tests {
         apply_hygiene_plan(home.path(), 0, input(200 * DAY)).expect("apply");
         let mut names = std::fs::read_dir(path.parent().expect("parent"))
             .expect("read state dir")
-            .map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect::<Vec<_>>();
         names.sort();
         assert_eq!(

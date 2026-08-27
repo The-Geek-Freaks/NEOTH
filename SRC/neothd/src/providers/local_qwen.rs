@@ -23,8 +23,7 @@ use tracing::info;
 
 use super::{
     ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
-    ProviderDispatchPermit,
-    ProviderRequestControls, Request,
+    ProviderDispatchPermit, ProviderRequestControls, Request,
 };
 
 use crate::daemon::accelerator::Accelerator;

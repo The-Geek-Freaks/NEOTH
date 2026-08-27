@@ -51,8 +51,7 @@ use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin, Retryability};
 use super::{
     ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
-    ProviderDispatchPermit,
-    ProviderRequestControls, Request,
+    ProviderDispatchPermit, ProviderRequestControls, Request,
 };
 
 /// The `claude` CLI is a governed local subprocess, but its stdout carries
@@ -1433,7 +1432,10 @@ fn completion_from_claude_envelope(
         termination,
         latency,
         input_tokens: envelope.usage.as_ref().and_then(|usage| usage.input_tokens),
-        output_tokens: envelope.usage.as_ref().and_then(|usage| usage.output_tokens),
+        output_tokens: envelope
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.output_tokens),
         cache_creation_tokens: None,
         cache_read_tokens: None,
         usage_measurements: claude_usage_measurements(envelope.usage.as_ref())?,

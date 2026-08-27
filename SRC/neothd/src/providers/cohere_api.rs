@@ -231,16 +231,16 @@ impl Provider for CohereAdapter {
                 .unwrap_or((None, None));
             let usage_measurements = match (input_tokens, output_tokens) {
                 (None, None) => None,
-                (input_tokens, output_tokens) => Some(
-                    CompletionUsageMeasurements::provider_reported(
+                (input_tokens, output_tokens) => {
+                    Some(CompletionUsageMeasurements::provider_reported(
                         input_tokens,
                         output_tokens,
                         None,
                         None,
                         None,
                         None,
-                    )?,
-                ),
+                    )?)
+                }
             };
 
             let latency = started.elapsed();

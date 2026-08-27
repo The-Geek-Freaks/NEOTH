@@ -32,8 +32,7 @@ use crate::providers::local_qwen::{
 };
 use crate::providers::{
     ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
-    ProviderDispatchPermit,
-    ProviderRequestControls, Request,
+    ProviderDispatchPermit, ProviderRequestControls, Request,
 };
 
 use super::forward::OuroModel;

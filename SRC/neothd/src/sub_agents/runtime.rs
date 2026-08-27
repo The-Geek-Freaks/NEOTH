@@ -120,7 +120,8 @@ impl PromptSegments {
             shape: self.shape(),
             input_tokens: usage.and_then(CompletionUsageMeasurements::input_tokens),
             output_tokens: usage.and_then(CompletionUsageMeasurements::output_tokens),
-            cache_creation_tokens: usage.and_then(CompletionUsageMeasurements::cache_creation_tokens),
+            cache_creation_tokens: usage
+                .and_then(CompletionUsageMeasurements::cache_creation_tokens),
             cache_read_tokens: usage.and_then(CompletionUsageMeasurements::cache_read_tokens),
             completion_latency_ms: completion
                 .latency
@@ -925,20 +926,14 @@ mod tests {
         drop(request_models);
         assert!(report.results.iter().all(|result| {
             result.provider_calls.len() == 2
-                && result
-                    .provider_calls
-                    .iter()
-                    .all(|call| {
-                        call.provider == "openai_api"
-                            && call.wire_model == "wire-model-v1"
-                            && call
-                                .usage_attribution
-                                .as_ref()
-                                .is_some_and(|usage| {
-                                    usage.provider() == "openai_api"
-                                        && usage.wire_model() == "wire-model-v1"
-                                })
-                    })
+                && result.provider_calls.iter().all(|call| {
+                    call.provider == "openai_api"
+                        && call.wire_model == "wire-model-v1"
+                        && call.usage_attribution.as_ref().is_some_and(|usage| {
+                            usage.provider() == "openai_api"
+                                && usage.wire_model() == "wire-model-v1"
+                        })
+                })
         }));
         for (result, (name, system, task_id)) in report
             .results

@@ -450,8 +450,8 @@ pub async fn run_loop(
     council_budget: Option<&crate::council::BudgetToken>,
     tool_scope: &crate::mcp::McpToolScope,
     elicitation: &crate::cli::elicitation::ElicitationHandler,
-    /// Interactive chat supplies this opaque in-RAM capability so a fresh
-    /// self-reflect provider leaf cannot bypass the session canary guard.
+    // Interactive chat supplies this opaque in-RAM capability so a fresh
+    // self-reflect provider leaf cannot bypass the session canary guard.
     session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
 ) -> Result<LoopRunRecord> {
     config.validate_safety()?;

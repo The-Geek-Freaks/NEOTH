@@ -405,7 +405,10 @@ pub(crate) fn validate_usage_identity_fields(provider: &str, wire_model: &str) -
             && value.len() <= maximum
             && value.bytes().all(|byte| {
                 byte.is_ascii_alphanumeric()
-                    || matches!(byte, b'.' | b'_' | b'-' | b':' | b'/' | b'@' | b'+' | b'[' | b']')
+                    || matches!(
+                        byte,
+                        b'.' | b'_' | b'-' | b':' | b'/' | b'@' | b'+' | b'[' | b']'
+                    )
             })
     }
     if !valid(provider, MAX_USAGE_PROVIDER_BYTES) {
@@ -3771,14 +3774,17 @@ mod tests {
             None,
         )
         .unwrap();
-        let attribution = ProviderUsageAttribution::from_measurement(
-            &identity,
-            &measurement,
-        )
-        .unwrap();
+        let attribution =
+            ProviderUsageAttribution::from_measurement(&identity, &measurement).unwrap();
 
-        assert_eq!(attribution.provider().as_bytes(), identity.provider.as_bytes());
-        assert_eq!(attribution.wire_model().as_bytes(), identity.wire_model.as_bytes());
+        assert_eq!(
+            attribution.provider().as_bytes(),
+            identity.provider.as_bytes()
+        );
+        assert_eq!(
+            attribution.wire_model().as_bytes(),
+            identity.wire_model.as_bytes()
+        );
         assert_eq!(attribution.input_tokens(), None);
         assert_eq!(attribution.output_tokens(), Some(0));
         assert_eq!(attribution.reasoning_tokens(), None);
@@ -3821,7 +3827,10 @@ mod tests {
             "error",
             "tensor",
         ] {
-            assert!(!rendered.contains(forbidden), "must not serialize {forbidden}");
+            assert!(
+                !rendered.contains(forbidden),
+                "must not serialize {forbidden}"
+            );
         }
     }
 
@@ -3832,25 +3841,15 @@ mod tests {
             wire_model: "wire-model-v1".into(),
             dispatch_route: Vec::new(),
         };
-        assert!(CompletionUsageMeasurements::local_estimate(
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .is_err());
-        let local = CompletionUsageMeasurements::local_estimate(
-            Some(0),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-        let local_attribution = ProviderUsageAttribution::from_measurement(&identity, &local).unwrap();
+        assert!(
+            CompletionUsageMeasurements::local_estimate(None, None, None, None, None, None,)
+                .is_err()
+        );
+        let local =
+            CompletionUsageMeasurements::local_estimate(Some(0), None, None, None, None, None)
+                .unwrap();
+        let local_attribution =
+            ProviderUsageAttribution::from_measurement(&identity, &local).unwrap();
         assert_eq!(
             local_attribution.provenance(),
             ProviderUsageProvenance::LocalEstimate
@@ -3862,12 +3861,21 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("local_estimate")
         );
-        assert!(ProviderUsageAttribution::from_measurement(
-            &identity,
-            &CompletionUsageMeasurements::provider_reported(Some(1), None, None, None, None, None)
+        assert!(
+            ProviderUsageAttribution::from_measurement(
+                &identity,
+                &CompletionUsageMeasurements::provider_reported(
+                    Some(1),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None
+                )
                 .unwrap(),
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
         assert!(serde_json::from_str::<ProviderUsageAttribution>(
             r#"{"schema":"neoth.provider-usage-attribution.v99","provenance":"provider_reported","provider":"openai_api","wire_model":"wire-model-v1","input_tokens":0}"#
         )
@@ -3885,10 +3893,16 @@ mod tests {
         )
         .is_err());
         for (provider, wire_model) in [
-            ("x".repeat(MAX_USAGE_PROVIDER_BYTES + 1), "wire-model-v1".into()),
+            (
+                "x".repeat(MAX_USAGE_PROVIDER_BYTES + 1),
+                "wire-model-v1".into(),
+            ),
             ("openai api".into(), "wire-model-v1".into()),
             ("openai_api".into(), "wire\nmodel".into()),
-            ("openai_api".into(), "x".repeat(MAX_USAGE_WIRE_MODEL_BYTES + 1)),
+            (
+                "openai_api".into(),
+                "x".repeat(MAX_USAGE_WIRE_MODEL_BYTES + 1),
+            ),
         ] {
             let value = serde_json::json!({
                 "schema": "neoth.provider-usage-attribution.v1",
@@ -3901,8 +3915,7 @@ mod tests {
         }
 
         assert_eq!(
-            ProviderUsageAttribution::from_explicit_completion(&Completion::default())
-                .unwrap(),
+            ProviderUsageAttribution::from_explicit_completion(&Completion::default()).unwrap(),
             None
         );
     }

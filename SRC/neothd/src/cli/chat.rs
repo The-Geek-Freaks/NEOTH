@@ -588,8 +588,8 @@ pub(crate) const CHAT_CANARY_CONTEXT_PREFIX: &str =
 /// One CLI chat runtime owns exactly one opaque canary.  Cloning this `Arc`
 /// only shares the in-RAM allocation; [`CanaryToken`] itself remains neither
 /// cloneable nor serializable, and no caller may format its literal for logs.
-fn mint_chat_session_canary(
-) -> Result<std::sync::Arc<crate::security::injection_tracker::CanaryToken>> {
+fn mint_chat_session_canary()
+-> Result<std::sync::Arc<crate::security::injection_tracker::CanaryToken>> {
     Ok(std::sync::Arc::new(
         crate::security::injection_tracker::CanaryToken::generate()
             .context("mint chat-session canary")?,
@@ -623,7 +623,10 @@ fn insert_chat_canary(
         insert_at,
         BlockItem::new(
             Block::A,
-            format!("{CHAT_CANARY_CONTEXT_PREFIX}{}", canary.as_context_literal()),
+            format!(
+                "{CHAT_CANARY_CONTEXT_PREFIX}{}",
+                canary.as_context_literal()
+            ),
         )
         .with_required_retention(),
     );
@@ -662,12 +665,12 @@ fn observe_chat_canary_output(
 ) -> Option<CanaryLeakObservation> {
     let tracker = crate::security::injection_tracker::InjectionTracker::new();
     match tracker.observe_outbound(canary, output) {
-        Some(crate::security::injection_tracker::TrackerAlert::CanaryLeak {
-            canary_digest,
-        }) => Some(CanaryLeakObservation {
-            phase,
-            canary_digest,
-        }),
+        Some(crate::security::injection_tracker::TrackerAlert::CanaryLeak { canary_digest }) => {
+            Some(CanaryLeakObservation {
+                phase,
+                canary_digest,
+            })
+        }
         Some(crate::security::injection_tracker::TrackerAlert::MultiTurnEscalation { .. })
         | None => None,
     }
@@ -675,10 +678,7 @@ fn observe_chat_canary_output(
 
 /// Emit only phase, digest, and length metadata.  In particular, neither the
 /// token nor provider/post-reply bytes are accepted as tracing fields.
-fn log_chat_canary_observation(
-    observation: Option<CanaryLeakObservation>,
-    output_bytes: usize,
-) {
+fn log_chat_canary_observation(observation: Option<CanaryLeakObservation>, output_bytes: usize) {
     if let Some(observation) = observation {
         tracing::warn!(
             phase = observation.phase.label(),
@@ -716,10 +716,7 @@ fn chat_post_mint_error_digest<E: std::fmt::Display + ?Sized>(error: &E) -> Stri
     hex::encode(Sha256::digest(error.to_string().as_bytes()))
 }
 
-fn log_chat_post_mint_failure<E: std::fmt::Display + ?Sized>(
-    phase: &'static str,
-    error: &E,
-) {
+fn log_chat_post_mint_failure<E: std::fmt::Display + ?Sized>(phase: &'static str, error: &E) {
     tracing::warn!(
         phase,
         error_digest = %chat_post_mint_error_digest(error),
@@ -744,7 +741,10 @@ fn sanitize_chat_post_mint_provider_error(
         tracing::warn!(
             phase,
             provider = quota.provider,
-            retry_after_secs = quota.retry_after.as_ref().map(|duration| duration.as_secs()),
+            retry_after_secs = quota
+                .retry_after
+                .as_ref()
+                .map(|duration| duration.as_secs()),
             "chat post-mint quota failure; provider body quarantined"
         );
         return anyhow::Error::new(crate::providers::quota::QuotaError {
@@ -767,7 +767,10 @@ struct CanaryGuardedProvider<'a> {
 }
 
 impl CanaryGuardedProvider<'_> {
-    fn guard(&self, completion: crate::providers::Completion) -> Result<crate::providers::Completion> {
+    fn guard(
+        &self,
+        completion: crate::providers::Completion,
+    ) -> Result<crate::providers::Completion> {
         ensure_chat_canary_absent(
             self.canary,
             CanaryOutputPhase::InitialProvider,
@@ -788,11 +791,9 @@ impl Provider for CanaryGuardedProvider<'_> {
     }
 
     fn validate_request_controls(&self, req: &Request) -> Result<()> {
-        self.inner
-            .validate_request_controls(req)
-            .map_err(|error| {
-                sanitize_chat_post_mint_provider_error("guarded_validate_request_controls", &error)
-            })
+        self.inner.validate_request_controls(req).map_err(|error| {
+            sanitize_chat_post_mint_provider_error("guarded_validate_request_controls", &error)
+        })
     }
 
     fn default_model(&self) -> Option<&str> {
@@ -824,11 +825,10 @@ impl Provider for CanaryGuardedProvider<'_> {
     }
 
     async fn complete(&self, req: Request) -> Result<crate::providers::Completion> {
-        let completion = self
-            .inner
-            .complete(req)
-            .await
-            .map_err(|error| sanitize_chat_post_mint_provider_error("guarded_complete", &error))?;
+        let completion =
+            self.inner.complete(req).await.map_err(|error| {
+                sanitize_chat_post_mint_provider_error("guarded_complete", &error)
+            })?;
         self.guard(completion)
     }
 
@@ -875,10 +875,7 @@ impl Provider for CanaryGuardedProvider<'_> {
             .complete_authorized_pinned(req, expected, authorizer, call_scope)
             .await
             .map_err(|error| {
-                sanitize_chat_post_mint_provider_error(
-                    "guarded_complete_authorized_pinned",
-                    &error,
-                )
+                sanitize_chat_post_mint_provider_error("guarded_complete_authorized_pinned", &error)
             })?;
         self.guard(completion)
     }
@@ -1037,13 +1034,8 @@ async fn emit_verified_stream_delta(
 
         if stream_control_token.is_some() {
             let stdout = std::io::stdout();
-            write_provider_stream_delta(
-                stdout.lock(),
-                stream_control_token,
-                next_sequence,
-                &delta,
-            )
-            .context("write authenticated provider stream delta")?;
+            write_provider_stream_delta(stdout.lock(), stream_control_token, next_sequence, &delta)
+                .context("write authenticated provider stream delta")?;
         } else if let Some(safe) = md_buf.push(&delta) {
             print!("{safe}");
             let _ = std::io::stdout().flush();
@@ -3355,8 +3347,11 @@ async fn enforce_preflight(
     // GOLD-ADOPT31-C1a: thread the one session token through every provider
     // turn. The literal enters the provider request only through this final
     // typed bundle; raw `final_system` is never appended to.
-    let final_mcp_catalogue_slot =
-        insert_chat_canary(&mut final_budget_items, final_mcp_catalogue_slot, session_canary)?;
+    let final_mcp_catalogue_slot = insert_chat_canary(
+        &mut final_budget_items,
+        final_mcp_catalogue_slot,
+        session_canary,
+    )?;
     let (typed_prompt, final_system) =
         crate::tokens::budget::render_request(&final_budget_items).map_err(anyhow::Error::msg)?;
     anyhow::ensure!(
@@ -5232,7 +5227,10 @@ async fn dispatch_provider(
         drop(call_authorizer);
         drop(writer);
         let _ = writer_join.await;
-        return Err(opaque_chat_post_mint_failure("initial_output_guard", &error));
+        return Err(opaque_chat_post_mint_failure(
+            "initial_output_guard",
+            &error,
+        ));
     }
 
     // Stream framing is route-independent. Council/MCP/direct routes produce a
@@ -10994,8 +10992,8 @@ async fn dispatch_council_with_recovery_for_turn(
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
     tool_scope: &crate::mcp::McpToolScope,
     incognito: bool,
-    /// CLI sessions supply their in-RAM canary; channel callers have no
-    /// canary contract and keep this `None`.
+    // CLI sessions supply their in-RAM canary; channel callers have no
+    // canary contract and keep this `None`.
     session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
 ) -> Result<String> {
     // Pick #8 F8 (Session 14 Pick #20) — channel-path pre-flight
@@ -11326,12 +11324,12 @@ async fn dispatch_council_with_recovery_for_turn(
             winner_req.model = Some(winner_model);
             // The dissent loop constructs a fresh concrete provider object, so
             // it must receive the same session guard before its first round.
-            let guarded_winner = session_canary.as_deref().map(|canary| {
-                CanaryGuardedProvider {
+            let guarded_winner = session_canary
+                .as_deref()
+                .map(|canary| CanaryGuardedProvider {
                     inner: winner_provider.as_ref(),
                     canary,
-                }
-            });
+                });
             let winner_for_loop: &dyn crate::providers::Provider = guarded_winner
                 .as_ref()
                 .map(|guarded| guarded as &dyn crate::providers::Provider)
@@ -12236,10 +12234,7 @@ mod tests {
     fn foreground_post_mint_error_is_content_free_for_contiguous_and_spaced_canaries() {
         let canary = crate::security::injection_tracker::CanaryToken::generate().unwrap();
         let literal = canary.as_context_literal().to_owned();
-        let spaced: String = literal
-            .chars()
-            .flat_map(|ch| [ch, '\u{2003}'])
-            .collect();
+        let spaced: String = literal.chars().flat_map(|ch| [ch, '\u{2003}']).collect();
         let request = "operator-private-request";
         let raw = anyhow::anyhow!(
             "provider echoed request={request}; contiguous={literal}; whitespace={spaced}"
@@ -12247,8 +12242,15 @@ mod tests {
 
         let opaque = opaque_chat_post_mint_failure("test_provider", &raw);
         let surfaced = format!("{opaque:#}");
-        assert!(surfaced.contains("chat post-mint provider/orchestration failure at test_provider"));
-        for secret in [request, literal.as_str(), spaced.as_str(), "provider echoed"] {
+        assert!(
+            surfaced.contains("chat post-mint provider/orchestration failure at test_provider")
+        );
+        for secret in [
+            request,
+            literal.as_str(),
+            spaced.as_str(),
+            "provider echoed",
+        ] {
             assert!(
                 !surfaced.contains(secret),
                 "foreground error surface must not retain post-mint content: {secret}"
@@ -12300,7 +12302,10 @@ mod tests {
     fn stream_canary_clean_end_flushes_only_the_verified_suffix() {
         let canary = crate::security::injection_tracker::CanaryToken::generate().unwrap();
         let mut buffer = CanaryStreamEgressBuffer::new(&canary);
-        let clean = format!("normal reply ending in {}", &canary.as_context_literal()[..1]);
+        let clean = format!(
+            "normal reply ending in {}",
+            &canary.as_context_literal()[..1]
+        );
         let safe = buffer.push(&clean).expect("clean output remains accepted");
         let flushed = buffer
             .flush_clean(&clean)
@@ -12333,7 +12338,10 @@ mod tests {
         let mut buffer = CanaryStreamEgressBuffer::new(&canary);
         let prefix = &literal[..1];
         assert!(
-            buffer.push(prefix).expect("prefix alone is pending").is_empty(),
+            buffer
+                .push(prefix)
+                .expect("prefix alone is pending")
+                .is_empty(),
             "no stdout/GUI/TurnEvent/WAL bytes may precede a later token suffix"
         );
         let error = buffer
@@ -12349,8 +12357,12 @@ mod tests {
         let literal = canary.as_context_literal();
         let mut buffer = CanaryStreamEgressBuffer::new(&canary);
         let input = format!("€{}clean", &literal[..1]);
-        let safe = buffer.push(&input).expect("valid UTF-8 must not be sliced mid-codepoint");
-        let tail = buffer.flush_clean(&input).expect("clean UTF-8 tail flushes");
+        let safe = buffer
+            .push(&input)
+            .expect("valid UTF-8 must not be sliced mid-codepoint");
+        let tail = buffer
+            .flush_clean(&input)
+            .expect("clean UTF-8 tail flushes");
         assert_eq!(format!("{safe}{tail}"), input);
     }
 
@@ -12359,10 +12371,15 @@ mod tests {
         let canary = crate::security::injection_tracker::CanaryToken::generate().unwrap();
         let mut buffer = CanaryStreamEgressBuffer::new(&canary);
         let clean = "x".repeat(buffer.pending_limit.saturating_mul(128));
-        let safe = buffer.push(&clean).expect("large clean output remains streamable");
+        let safe = buffer
+            .push(&clean)
+            .expect("large clean output remains streamable");
         let tail = buffer.flush_clean(&clean).expect("clean end flushes");
         assert_eq!(format!("{safe}{tail}"), clean);
-        assert!(buffer.pending.is_empty(), "clean bytes never accumulate in quarantine");
+        assert!(
+            buffer.pending.is_empty(),
+            "clean bytes never accumulate in quarantine"
+        );
     }
 
     #[test]
@@ -14435,7 +14452,12 @@ modes:
             .expect_err("guarded provider errors must cross the opaque post-mint boundary");
         let surfaced = format!("{error:#}");
         assert!(surfaced.contains("guarded_complete"));
-        for secret in ["private-request", literal.as_str(), spaced.as_str(), "transport request"] {
+        for secret in [
+            "private-request",
+            literal.as_str(),
+            spaced.as_str(),
+            "transport request",
+        ] {
             assert!(
                 !surfaced.contains(secret),
                 "guarded provider error must not expose post-mint content: {secret}"
@@ -14465,7 +14487,10 @@ modes:
             .expect("loop/MCP quota accounting must retain its typed downcast");
         assert_eq!(quota.provider, "quota-error-mock");
         assert_eq!(quota.retry_after, Some(Duration::from_secs(19)));
-        assert!(quota.body.is_empty(), "provider quota body must be quarantined");
+        assert!(
+            quota.body.is_empty(),
+            "provider quota body must be quarantined"
+        );
         let surfaced = format!("{error:#}");
         for secret in ["private-request", literal.as_str(), spaced.as_str()] {
             assert!(
@@ -14521,10 +14546,8 @@ modes:
         let canary = std::sync::Arc::new(
             crate::security::injection_tracker::CanaryToken::generate().unwrap(),
         );
-        let token_capped = crate::providers::token_cap::TokenCappedProvider::new(
-            &raw_provider,
-            8_192,
-        );
+        let token_capped =
+            crate::providers::token_cap::TokenCappedProvider::new(&raw_provider, 8_192);
         let guarded_raw_provider = CanaryGuardedProvider {
             inner: &token_capped,
             canary: canary.as_ref(),

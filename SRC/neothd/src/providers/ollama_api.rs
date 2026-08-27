@@ -30,8 +30,7 @@ use super::response_bounds;
 use super::termination::ProviderTermination;
 use super::{
     ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
-    ProviderDispatchPermit,
-    ProviderRequestControls, Request,
+    ProviderDispatchPermit, ProviderRequestControls, Request,
 };
 
 /// Default Ollama base URL when the operator hasn't overridden it.
@@ -177,16 +176,16 @@ impl Provider for OllamaAdapter {
             let text = parsed.message.content;
             let usage_measurements = match (parsed.prompt_eval_count, parsed.eval_count) {
                 (None, None) => None,
-                (input_tokens, output_tokens) => Some(
-                    CompletionUsageMeasurements::provider_reported(
+                (input_tokens, output_tokens) => {
+                    Some(CompletionUsageMeasurements::provider_reported(
                         input_tokens,
                         output_tokens,
                         None,
                         None,
                         None,
                         None,
-                    )?,
-                ),
+                    )?)
+                }
             };
             let latency = started.elapsed();
             debug!(
