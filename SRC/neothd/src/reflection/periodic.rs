@@ -314,10 +314,7 @@ pub fn append(home: &Path, reflection: &PeriodReflection) -> std::io::Result<()>
 }
 
 fn daily_archive_error(reason: &'static str) -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!("daily admission archive {reason}"),
-    )
+    std::io::Error::other(format!("daily admission archive {reason}"))
 }
 
 pub(crate) fn open_daily_archive_transaction(
@@ -874,7 +871,7 @@ pub fn settle_daily_admission(
         }
         (DailySettlementOutcome::Admitted, persisted)
     } else {
-        let outcome = if config.map_or(true, |policy| !policy.enabled) {
+        let outcome = if config.is_none_or(|policy| !policy.enabled) {
             DailySettlementOutcome::Admitted
         } else {
             let config = config.expect("enabled policy was checked above");
