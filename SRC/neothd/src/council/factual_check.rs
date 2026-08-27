@@ -172,7 +172,7 @@ pub fn embed_ground_truth_tag(prompt: &str, assertions: &[FactualAssertion]) -> 
 pub fn try_embed_ground_truth_tag(
     prompt: &str,
     assertions: &[FactualAssertion],
-) -> Result<String, PromptEnvelopeError> {
+) -> anyhow::Result<String> {
     let question_envelope = serialize_untrusted_prompt(
         PromptEnvelopePurpose::CouncilGroundTruthQuestion,
         &[UntrustedPromptField::new(

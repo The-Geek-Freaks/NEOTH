@@ -58,7 +58,7 @@ pub fn build_tiebreak_prompt(
     subject: &str,
     body: &str,
     assessment: &ThreatAssessment,
-) -> std::result::Result<String, crate::security::prompt_envelope::PromptEnvelopeError> {
+) -> anyhow::Result<String> {
     // identity_locked=false: email ingest does not carry persona-lock state.
     let subject_clean =
         crate::security::ingress_sanitizer::sanitize(subject, "email-subject", false);

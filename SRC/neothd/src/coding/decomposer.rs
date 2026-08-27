@@ -272,7 +272,7 @@ fn sanitize_decomposer_field(
 pub fn build_prompt(
     operator_prompt: &str,
     project_context: Option<&str>,
-) -> std::result::Result<String, crate::security::prompt_envelope::PromptEnvelopeError> {
+) -> Result<String> {
     use crate::security::prompt_envelope::{
         MAX_DECOMPOSER_OPERATOR_REQUEST_BYTES, MAX_DECOMPOSER_PROJECT_CONTEXT_BYTES,
         PromptEnvelopePurpose, PromptFieldKind, UntrustedPromptField, serialize_untrusted_prompt,
@@ -339,7 +339,7 @@ pub fn build_repair_prompt(
     operator_prompt: &str,
     project_context: Option<&str>,
     prior_provider_output: &str,
-) -> std::result::Result<String, crate::security::prompt_envelope::PromptEnvelopeError> {
+) -> Result<String> {
     use crate::security::prompt_envelope::{
         MAX_DECOMPOSER_OPERATOR_REQUEST_BYTES, MAX_DECOMPOSER_PRIOR_PROVIDER_OUTPUT_BYTES,
         MAX_DECOMPOSER_PROJECT_CONTEXT_BYTES, PromptEnvelopePurpose, PromptFieldKind,

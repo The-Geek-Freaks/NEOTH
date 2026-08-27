@@ -29,7 +29,7 @@ pub const MAX_REPLY_LEN: usize = 256;
 /// data before the Cerebellum can see them.
 pub fn build_classify_prompt(
     task: &KanbanTask,
-) -> std::result::Result<String, crate::security::prompt_envelope::PromptEnvelopeError> {
+) -> Result<String> {
     use crate::security::prompt_envelope::{
         PromptEnvelopeError, PromptEnvelopePurpose, PromptFieldKind, UntrustedPromptField,
     };
@@ -41,14 +41,16 @@ pub fn build_classify_prompt(
             kind: PromptFieldKind::TaskTitle,
             actual_bytes: title.len(),
             max_bytes: crate::security::prompt_envelope::MAX_CODING_TASK_TITLE_BYTES,
-        });
+        }
+        .into());
     }
     if description.len() > crate::security::prompt_envelope::MAX_CODING_TASK_DESCRIPTION_BYTES {
         return Err(PromptEnvelopeError::FieldTooLarge {
             kind: PromptFieldKind::TaskDescription,
             actual_bytes: description.len(),
             max_bytes: crate::security::prompt_envelope::MAX_CODING_TASK_DESCRIPTION_BYTES,
-        });
+        }
+        .into());
     }
 
     let title = crate::security::redact::redact_text(title);

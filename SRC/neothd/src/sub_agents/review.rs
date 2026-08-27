@@ -81,7 +81,7 @@ pub fn code_quality_system_prompt() -> &'static str {
 pub fn build_reviewer_user_message(
     operator_prompt: &str,
     primary_reply: &str,
-) -> std::result::Result<String, crate::security::prompt_envelope::PromptEnvelopeError> {
+) -> Result<String> {
     use crate::security::prompt_envelope::{
         PromptEnvelopeError, PromptEnvelopePurpose, PromptFieldKind, UntrustedPromptField,
     };
@@ -91,14 +91,16 @@ pub fn build_reviewer_user_message(
             kind: PromptFieldKind::OperatorTask,
             actual_bytes: operator_prompt.len(),
             max_bytes: crate::security::prompt_envelope::MAX_OPERATOR_TASK_BYTES,
-        });
+        }
+        .into());
     }
     if primary_reply.len() > crate::security::prompt_envelope::MAX_CANDIDATE_BYTES {
         return Err(PromptEnvelopeError::FieldTooLarge {
             kind: PromptFieldKind::Candidate,
             actual_bytes: primary_reply.len(),
             max_bytes: crate::security::prompt_envelope::MAX_CANDIDATE_BYTES,
-        });
+        }
+        .into());
     }
 
     let operator_task = crate::security::redact::redact_text(operator_prompt);

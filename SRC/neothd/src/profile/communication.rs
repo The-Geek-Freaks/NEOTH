@@ -223,7 +223,7 @@ impl CommunicationScope {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct AuthenticatedSubject {
+pub(crate) struct AuthenticatedSubject {
     subject_id: String,
     origin: AuthenticatedSubjectOrigin,
 }
@@ -264,11 +264,11 @@ mod approved_boundary {
 /// authenticated CLI/channel boundaries. Other crate modules cannot name the
 /// sealing trait and cannot mint an accepted communication subject.
 ///
-/// The intentionally narrower sealing supertrait and private return type make
-/// this a call-site capability rather than a crate-wide issuer. Keep those
-/// two visibility lints local to this boundary; widening either type would
-/// reintroduce a forgeable authority path.
-#[allow(private_bounds, private_interfaces)]
+/// The intentionally narrower sealing supertrait makes this a call-site
+/// capability rather than a crate-wide issuer. `AuthenticatedSubject` is
+/// crate-visible only because this trait's signature needs it; its fields and
+/// constructors stay private, so other modules still cannot mint authority.
+#[allow(private_bounds)]
 pub(crate) trait ApprovedCommunicationSubject: approved_boundary::Sealed {
     fn into_subject(self) -> AuthenticatedSubject;
 }
@@ -517,6 +517,7 @@ pub(crate) struct EvidenceInput {
 }
 
 impl EvidenceInput {
+    #[cfg(test)]
     pub fn new(
         event_hash: [u8; 32],
         subject: impl ApprovedCommunicationSubject,
@@ -1909,6 +1910,7 @@ fn is_response_feedback_text(text: &str) -> bool {
     )
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn record_text_observation(
     home: &Path,

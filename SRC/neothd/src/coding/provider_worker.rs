@@ -377,6 +377,7 @@ fn tool_routing_hint(tool_hint: Option<ToolCategory>) -> String {
 /// `tool_hint` is the GOLD-WIRE-01 Stage-1 result. It is treated as data even
 /// after parsing to the closed category enum, so it cannot change the trusted
 /// worker policy.
+#[cfg(test)]
 fn build_task_prompt(
     task: &KanbanTask,
     tool_hint: Option<ToolCategory>,

@@ -150,6 +150,7 @@ pub(crate) fn scan_generated_manifest_document(document: &Value) -> Vec<ScanWarn
 /// The associated package symlink check happens later in the same mutation
 /// lifecycle, under its capability lock. Performing it here via ambient paths
 /// would introduce a TOCTOU gap instead of adding protection.
+#[cfg(test)]
 pub(crate) fn reject_unsafe_generated_manifest(manifest: &str) -> Result<()> {
     reject_warnings(scan_generated_manifest(manifest))
 }
