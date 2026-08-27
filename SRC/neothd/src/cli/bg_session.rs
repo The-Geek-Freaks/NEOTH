@@ -1447,7 +1447,7 @@ async fn run_background_worker_with_key_and_attestor(
             }
         };
 
-    let result = async {
+    let result: Result<String> = async {
         // Policy, provider selection, credentials and consent are mutable.
         // Refuse a stale queued snapshot and repeat the check immediately
         // before dispatch so a later cheaper policy cannot be reused.
@@ -1461,40 +1461,50 @@ async fn run_background_worker_with_key_and_attestor(
         )
         .await
         .context("construct background provider chain")?;
-        let request = spec.request.clone();
-        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::explicit_request_capability(
-            live_config.autonomy_policy(),
-            writer.clone(),
-            live_config.tokens.max_per_request,
-            verified_approval.expires_unix,
-        )
-        .with_usage_home(instance_home.clone())
-        .with_usage_automated(true)
-        .with_audit_context(
-            crate::providers::cost_authorization::ProviderCallAuditContext {
-                source: Some("chat"),
-                call_type: Some("background_session"),
-                request_id: Some(job_id.as_str().to_owned()),
-                task_id: Some(spec.label.clone()),
-                operator_id: live_config.operator_id.clone(),
-                model_source: Some("background_exact_request"),
-                cost_estimate_model: request.model.clone(),
-                ..Default::default()
-            },
-        );
-        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
-            provider,
-            authorizer,
-            request.model.clone(),
-            "background_session",
-        );
-        let dispatch_config = load_unchanged_live_background_config(&instance_home, &spec)?;
-        crate::consent::ensure_all_still_granted(&instance_home, &dispatch_config)
-            .context("background provider consent was revoked before dispatch")?;
-        provider
-            .complete(request)
-            .await
-            .map(|completion| completion.text)
+        // The persisted job remains token-free.  This worker is a separate
+        // session, so it mints and binds its own marker only after claim,
+        // approval, live config, and consent have all succeeded.
+        let (request, canary) = bind_background_session_canary(
+            spec.request.clone(),
+            &live_config,
+            provider.name(),
+        )?;
+        let post_mint: Result<String> = async {
+            let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::explicit_request_capability(
+                live_config.autonomy_policy(),
+                writer.clone(),
+                live_config.tokens.max_per_request,
+                verified_approval.expires_unix,
+            )
+            .with_usage_home(instance_home.clone())
+            .with_usage_automated(true)
+            .with_audit_context(
+                crate::providers::cost_authorization::ProviderCallAuditContext {
+                    source: Some("chat"),
+                    call_type: Some("background_session"),
+                    request_id: Some(job_id.as_str().to_owned()),
+                    task_id: Some(spec.label.clone()),
+                    operator_id: live_config.operator_id.clone(),
+                    model_source: Some("background_exact_request"),
+                    cost_estimate_model: request.model.clone(),
+                    ..Default::default()
+                },
+            );
+            let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
+                provider,
+                authorizer,
+                request.model.clone(),
+                "background_session",
+            );
+            let dispatch_config = load_unchanged_live_background_config(&instance_home, &spec)?;
+            crate::consent::ensure_all_still_granted(&instance_home, &dispatch_config)
+                .context("background provider consent was revoked before dispatch")?;
+            let completion = provider.complete(request).await?;
+            ensure_background_canary_absent(&canary, &completion.text)?;
+            Ok(completion.text)
+        }
+        .await;
+        post_mint.map_err(|error| opaque_background_post_mint_failure(&error))
     }
     .await;
 
@@ -1600,6 +1610,110 @@ fn build_bg_request(prompt: &str, config: &FreedomConfig, system: Option<String>
         thinking_budget: None,
         max_output_tokens: None,
     }
+}
+
+/// A detached job is a new session: mint its canary only after the persisted
+/// job has been authenticated and loaded.  The queued `Request` therefore
+/// never contains the token; the provider-bound copy is rebuilt from typed
+/// A/A/E blocks immediately before dispatch and stays in worker RAM.
+fn bind_background_session_canary(
+    mut request: Request,
+    config: &FreedomConfig,
+    provider_name: &str,
+) -> Result<(Request, crate::security::injection_tracker::CanaryToken)> {
+    use crate::tokens::budget::{Block, BlockItem};
+
+    let canary = crate::security::injection_tracker::CanaryToken::generate()
+        .context("mint detached background-session canary")?;
+    let mut items = Vec::with_capacity(3);
+    if let Some(system) = request.system.take().filter(|system| !system.is_empty()) {
+        items.push(BlockItem::new(Block::A, system).with_required_retention());
+    }
+    items.push(
+        BlockItem::new(
+            Block::A,
+            format!(
+                "{}{}",
+                crate::cli::chat::CHAT_CANARY_CONTEXT_PREFIX,
+                canary.as_context_literal()
+            ),
+        )
+        .with_required_retention(),
+    );
+    let queued_prompt = std::mem::take(&mut request.prompt);
+    items.push(BlockItem::new(Block::E, queued_prompt));
+
+    let (preflight_prompt, preflight_system) =
+        crate::tokens::budget::render_request(&items).map_err(anyhow::Error::msg)?;
+    let cap = crate::tokens::budget::effective_cap(
+        provider_name,
+        request.model.as_deref().unwrap_or("provider_default"),
+        config.tokens.max_per_request,
+    );
+    let system_items = items.iter().filter(|item| item.block != Block::E).count();
+    let separators = system_items
+        .saturating_sub(1)
+        .saturating_mul(2)
+        .min(u32::MAX as usize) as u32;
+    let envelope = crate::providers::token_cap::request_non_content_token_upper_bound(&Request {
+        prompt: String::new(),
+        system: (system_items > 0).then(String::new),
+        model: request.model.clone(),
+        ..Default::default()
+    })
+    .saturating_add(separators);
+    let content_cap = cap.saturating_sub(envelope);
+    crate::tokens::budget::enforce_budget_to_fit(&mut items, content_cap)
+        .map_err(anyhow::Error::msg)?;
+    anyhow::ensure!(
+        crate::tokens::budget::count_total(&items) <= content_cap,
+        "background protected canary request exceeds its final token budget"
+    );
+    let (prompt, system) =
+        crate::tokens::budget::render_request(&items).map_err(anyhow::Error::msg)?;
+    anyhow::ensure!(
+        prompt == preflight_prompt && system == preflight_system,
+        "background typed canary bundle diverged before provider dispatch"
+    );
+    request.prompt = prompt;
+    request.system = system;
+    Ok((request, canary))
+}
+
+/// A leak is terminal for the detached job before its text can reach the
+/// durable result, transcript delivery, or normal worker diagnostics.
+fn ensure_background_canary_absent(
+    canary: &crate::security::injection_tracker::CanaryToken,
+    output: &str,
+) -> Result<()> {
+    let tracker = crate::security::injection_tracker::InjectionTracker::new();
+    if let Some(crate::security::injection_tracker::TrackerAlert::CanaryLeak {
+        canary_digest,
+    }) = tracker.observe_outbound(canary, output)
+    {
+        warn!(
+            canary_digest = %canary_digest,
+            output_bytes = output.len(),
+            "background canary reached generated output; content quarantined"
+        );
+        anyhow::bail!("background security canary reached generated output; content quarantined");
+    }
+    Ok(())
+}
+
+/// Once a detached-session canary exists, provider/config/consent failures can
+/// contain request or upstream body data.  Keep the raw chain in neither the
+/// worker result nor outer logging; retain only a one-way digest for diagnosis.
+fn opaque_background_post_mint_failure(error: &anyhow::Error) -> anyhow::Error {
+    use sha2::{Digest as _, Sha256};
+
+    let digest = hex::encode(Sha256::digest(error.to_string().as_bytes()));
+    warn!(
+        phase = "post_mint_dispatch",
+        error_digest = %digest,
+        "background worker post-mint dispatch failed; content quarantined"
+    );
+    anyhow::anyhow!("background worker post-mint dispatch failed; content quarantined")
 }
 
 fn valid_background_id(id: &str) -> bool {
@@ -2099,6 +2213,7 @@ mod tests {
                 output_tokens: None,
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }
@@ -2150,6 +2265,48 @@ mod tests {
             thinking_budget: Some(1_024),
             max_output_tokens: None,
         }
+    }
+
+    #[test]
+    fn detached_canary_is_not_persisted_but_is_bound_before_dispatch() {
+        let config = FreedomConfig::default();
+        let queued_request = exact_test_request();
+        let queued_json = serde_json::to_string(&queued_request).unwrap();
+        let (dispatch_request, canary) =
+            bind_background_session_canary(queued_request, &config, "mock").unwrap();
+        let literal = canary.as_context_literal().to_owned();
+
+        assert!(
+            !queued_json.contains(&literal),
+            "the persisted job request must never contain the worker token"
+        );
+        assert!(
+            dispatch_request
+                .system
+                .as_deref()
+                .is_some_and(|system| system.contains(&literal)),
+            "the provider-bound worker request must carry the typed canary"
+        );
+        assert!(ensure_background_canary_absent(&canary, "clean").is_ok());
+        let error = ensure_background_canary_absent(&canary, &format!("leaked {literal}"))
+            .expect_err("detached output leak must be quarantined");
+        assert!(!error.to_string().contains(&literal));
+    }
+
+    #[test]
+    fn post_mint_background_failures_never_surface_provider_or_canary_content() {
+        let canary = crate::security::injection_tracker::CanaryToken::generate().unwrap();
+        let literal = canary.as_context_literal();
+        let whitespace_leak = literal.chars().map(|character| format!("{character} ")).collect::<String>();
+        let raw = anyhow::anyhow!(
+            "provider exploded for request=secret-request contiguous={literal} whitespace={whitespace_leak}"
+        );
+        let opaque = opaque_background_post_mint_failure(&raw).to_string();
+        assert!(opaque.contains("content quarantined"));
+        assert!(!opaque.contains(literal));
+        assert!(!opaque.contains(&literal[..literal.len().min(8)]));
+        assert!(!opaque.contains("provider exploded"));
+        assert!(!opaque.contains("secret-request"));
     }
 
     const TEST_APPROVAL_KEY: [u8; BG_APPROVAL_KEY_BYTES] = [0x5a; BG_APPROVAL_KEY_BYTES];

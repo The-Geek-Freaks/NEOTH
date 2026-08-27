@@ -16,7 +16,10 @@ use tracing::debug;
 use super::quota::{QuotaError, parse_retry_after};
 use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin};
-use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
+use super::{
+    Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
+    ProviderRequestControls, Request,
+};
 use crate::secret::SecretString;
 
 /// `generativelanguage.googleapis.com` is an untrusted byte source even on
@@ -264,6 +267,25 @@ fn completion_from_response(
             )
         }
     };
+    let input_tokens = parsed
+        .usage_metadata
+        .as_ref()
+        .and_then(|usage| usage.prompt_token_count);
+    let output_tokens = parsed
+        .usage_metadata
+        .as_ref()
+        .and_then(|usage| usage.candidates_token_count);
+    let usage_measurements = match (input_tokens, output_tokens) {
+        (None, None) => None,
+        (input_tokens, output_tokens) => Some(CompletionUsageMeasurements::provider_reported(
+            input_tokens,
+            output_tokens,
+            None,
+            None,
+            None,
+            None,
+        )?),
+    };
 
     debug!(
         model = %model,
@@ -278,16 +300,11 @@ fn completion_from_response(
         model,
         termination,
         latency,
-        input_tokens: parsed
-            .usage_metadata
-            .as_ref()
-            .and_then(|usage| usage.prompt_token_count),
-        output_tokens: parsed
-            .usage_metadata
-            .as_ref()
-            .and_then(|usage| usage.candidates_token_count),
+        input_tokens,
+        output_tokens,
         cache_creation_tokens: None,
         cache_read_tokens: None,
+        usage_measurements,
     })
 }
 

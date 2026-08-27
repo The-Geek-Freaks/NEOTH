@@ -30,7 +30,10 @@ use tracing::debug;
 use super::quota::{QuotaError, parse_retry_after};
 use super::response_bounds;
 use super::termination::ProviderTermination;
-use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
+use super::{
+    Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
+    ProviderRequestControls, Request,
+};
 use crate::secret::SecretString;
 
 /// The Cohere endpoint is an untrusted byte source even on 2xx. These caps
@@ -226,6 +229,19 @@ impl Provider for CohereAdapter {
                 .and_then(|u| u.tokens.as_ref())
                 .map(|t| (Some(t.input_tokens), Some(t.output_tokens)))
                 .unwrap_or((None, None));
+            let usage_measurements = match (input_tokens, output_tokens) {
+                (None, None) => None,
+                (input_tokens, output_tokens) => Some(
+                    CompletionUsageMeasurements::provider_reported(
+                        input_tokens,
+                        output_tokens,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )?,
+                ),
+            };
 
             let latency = started.elapsed();
             debug!(
@@ -246,6 +262,7 @@ impl Provider for CohereAdapter {
                 output_tokens,
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements,
             })
         })
         .await

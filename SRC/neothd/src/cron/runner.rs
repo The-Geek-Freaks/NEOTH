@@ -1658,6 +1658,7 @@ mod workstream_c_tests {
                 output_tokens: Some(1),
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }
@@ -1693,6 +1694,7 @@ mod workstream_c_tests {
                 output_tokens: Some(1),
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }
@@ -1725,6 +1727,7 @@ mod workstream_c_tests {
                 output_tokens: Some(1),
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }
@@ -2603,6 +2606,7 @@ mod workstream_c_tests {
                 output_tokens: Some(120),
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }

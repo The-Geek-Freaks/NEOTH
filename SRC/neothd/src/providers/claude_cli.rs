@@ -50,7 +50,8 @@ const COMPACTION_MARKER: &str = "Memory was condensed";
 use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin, Retryability};
 use super::{
-    ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
+    ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
+    ProviderDispatchPermit,
     ProviderRequestControls, Request,
 };
 
@@ -106,9 +107,9 @@ struct ClaudeJsonEnvelope {
 #[derive(Debug, Deserialize)]
 struct ClaudeUsage {
     #[serde(default)]
-    input_tokens: u32,
+    input_tokens: Option<u32>,
     #[serde(default)]
-    output_tokens: u32,
+    output_tokens: Option<u32>,
 }
 
 /// Backend mode for the Claude CLI provider. `Auto` (default) picks
@@ -1431,11 +1432,32 @@ fn completion_from_claude_envelope(
         model,
         termination,
         latency,
-        input_tokens: envelope.usage.as_ref().map(|usage| usage.input_tokens),
-        output_tokens: envelope.usage.as_ref().map(|usage| usage.output_tokens),
+        input_tokens: envelope.usage.as_ref().and_then(|usage| usage.input_tokens),
+        output_tokens: envelope.usage.as_ref().and_then(|usage| usage.output_tokens),
         cache_creation_tokens: None,
         cache_read_tokens: None,
+        usage_measurements: claude_usage_measurements(envelope.usage.as_ref())?,
     })
+}
+
+fn claude_usage_measurements(
+    usage: Option<&ClaudeUsage>,
+) -> Result<Option<CompletionUsageMeasurements>> {
+    let Some(usage) = usage else {
+        return Ok(None);
+    };
+    if usage.input_tokens.is_none() && usage.output_tokens.is_none() {
+        return Ok(None);
+    }
+    CompletionUsageMeasurements::provider_reported(
+        usage.input_tokens,
+        usage.output_tokens,
+        None,
+        None,
+        None,
+        None,
+    )
+    .map(Some)
 }
 
 fn claude_termination(
@@ -1793,6 +1815,7 @@ async fn complete_tmux_uncached(
         output_tokens: None,
         cache_creation_tokens: None,
         cache_read_tokens: None,
+        usage_measurements: None,
     })
 }
 
@@ -2485,6 +2508,63 @@ mod tests {
         let refusal = completion.termination.refusal.expect("typed refusal");
         assert_eq!(refusal.reason, "refusal");
         assert_eq!(refusal.retryability, Retryability::DifferentProvider);
+    }
+
+    #[test]
+    fn claude_usage_preserves_missing_partial_and_zero_measurements() {
+        let cases = [
+            (None, None, None, false),
+            (Some(serde_json::json!({})), None, None, false),
+            (
+                Some(serde_json::json!({"input_tokens": 7})),
+                Some(7_u32),
+                None,
+                true,
+            ),
+            (
+                Some(serde_json::json!({"output_tokens": 3})),
+                None,
+                Some(3_u32),
+                true,
+            ),
+            (
+                Some(serde_json::json!({"input_tokens": 0, "output_tokens": 0})),
+                Some(0_u32),
+                Some(0_u32),
+                true,
+            ),
+        ];
+
+        for (usage, expected_input, expected_output, expects_measurement) in cases {
+            let mut value = serde_json::json!({"result": "ok"});
+            if let Some(usage) = usage {
+                value["usage"] = usage;
+            }
+            let envelope: ClaudeJsonEnvelope = serde_json::from_value(value).unwrap();
+            let completion = completion_from_claude_envelope(
+                envelope,
+                "claude-sonnet".into(),
+                std::time::Duration::ZERO,
+            )
+            .unwrap();
+            assert_eq!(completion.input_tokens, expected_input);
+            assert_eq!(completion.output_tokens, expected_output);
+            assert_eq!(completion.usage_measurements.is_some(), expects_measurement);
+            assert_eq!(
+                completion
+                    .usage_measurements
+                    .as_ref()
+                    .and_then(CompletionUsageMeasurements::input_tokens),
+                expected_input
+            );
+            assert_eq!(
+                completion
+                    .usage_measurements
+                    .as_ref()
+                    .and_then(CompletionUsageMeasurements::output_tokens),
+                expected_output
+            );
+        }
     }
 
     // ── B-6 Item 3: env scrub + model normalisation ──────────────────────

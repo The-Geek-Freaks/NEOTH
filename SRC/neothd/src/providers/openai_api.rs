@@ -23,7 +23,8 @@ use super::quota::{QuotaError, parse_retry_after};
 use super::response_bounds;
 use super::termination::{ObservedUpstreamEvidence, ProviderTermination, RefusalOrigin};
 use super::{
-    ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
+    ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
+    ProviderDispatchPermit,
     ProviderRequestControls, Request,
 };
 use crate::config::inference::OpenAiCompatibleProfile;
@@ -525,6 +526,7 @@ impl Provider for OpenAiAdapter {
                         output_tokens: None,
                         cache_creation_tokens: None,
                         cache_read_tokens: None,
+                        usage_measurements: None,
                     });
                 }
                 anyhow::bail!(
@@ -686,6 +688,19 @@ impl Provider for OpenAiAdapter {
                 output_tokens: usage.as_ref().map(|u| u.completion_tokens),
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: usage
+                    .as_ref()
+                    .map(|reported| {
+                        CompletionUsageMeasurements::provider_reported(
+                            Some(reported.prompt_tokens),
+                            Some(reported.completion_tokens),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    })
+                    .transpose()?,
             })
         })
         .await

@@ -529,6 +529,7 @@ pub async fn collect_provider_stream(
             output_tokens,
             cache_creation_tokens,
             cache_read_tokens,
+            usage_measurements: None,
         },
         delivery,
     })))

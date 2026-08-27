@@ -29,7 +29,8 @@ use tracing::debug;
 use super::response_bounds;
 use super::termination::ProviderTermination;
 use super::{
-    ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
+    ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
+    ProviderDispatchPermit,
     ProviderRequestControls, Request,
 };
 
@@ -174,6 +175,19 @@ impl Provider for OllamaAdapter {
 
             let termination = ProviderTermination::finished(parsed.done_reason.clone());
             let text = parsed.message.content;
+            let usage_measurements = match (parsed.prompt_eval_count, parsed.eval_count) {
+                (None, None) => None,
+                (input_tokens, output_tokens) => Some(
+                    CompletionUsageMeasurements::provider_reported(
+                        input_tokens,
+                        output_tokens,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )?,
+                ),
+            };
             let latency = started.elapsed();
             debug!(
                 adapter = provider_name,
@@ -193,6 +207,7 @@ impl Provider for OllamaAdapter {
                 output_tokens: parsed.eval_count,
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements,
             })
         })
         .await

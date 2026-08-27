@@ -3313,6 +3313,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     output_tokens: None,
                     cache_creation_tokens: None,
                     cache_read_tokens: None,
+                    usage_measurements: None,
                 }
             } else if let crate::cli::chat::TurnDispatchRoute::Council { decision } = &channel_route
             {
@@ -3345,6 +3346,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         output_tokens: None,
                         cache_creation_tokens: None,
                         cache_read_tokens: None,
+                        usage_measurements: None,
                     },
                     Err(e) => {
                         if e.downcast_ref::<crate::mcp::goal_tracker::GoalIntegrityError>()
@@ -3419,6 +3421,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &channel_tool_scope,
                         // P4 — channel path is headless (no TTY): elicitation off.
                         &crate::cli::elicitation::ElicitationHandler::Disabled,
+                        None,
                     )
                     .await
                     {
@@ -3451,6 +3454,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 output_tokens: None,
                                 cache_creation_tokens: None,
                                 cache_read_tokens: None,
+                                usage_measurements: None,
                             }
                         }
                         Err(e) => {
@@ -3567,6 +3571,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 output_tokens: None,
                                 cache_creation_tokens: None,
                                 cache_read_tokens: None,
+                                usage_measurements: None,
                             }
                         }
                         Err(e) => {

@@ -340,6 +340,7 @@ mod tests {
                 output_tokens: None,
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }
@@ -601,6 +602,7 @@ mod tests {
                     output_tokens: None,
                     cache_creation_tokens: None,
                     cache_read_tokens: None,
+                    usage_measurements: None,
                 })
             }
         }
@@ -741,6 +743,7 @@ mod tests {
                     output_tokens: None,
                     cache_creation_tokens: None,
                     cache_read_tokens: None,
+                    usage_measurements: None,
                 })
             }
         }

@@ -214,6 +214,7 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
         None,
         &tool_scope,
         &elicitation,
+        None,
     )
     .await;
 

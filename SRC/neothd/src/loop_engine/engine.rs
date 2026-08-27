@@ -450,6 +450,9 @@ pub async fn run_loop(
     council_budget: Option<&crate::council::BudgetToken>,
     tool_scope: &crate::mcp::McpToolScope,
     elicitation: &crate::cli::elicitation::ElicitationHandler,
+    /// Interactive chat supplies this opaque in-RAM capability so a fresh
+    /// self-reflect provider leaf cannot bypass the session canary guard.
+    session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
 ) -> Result<LoopRunRecord> {
     config.validate_safety()?;
 
@@ -631,6 +634,7 @@ pub async fn run_loop(
                 crate::config::inference::HemisphereRole::Left,
                 &req,
                 authorizer.clone(),
+                session_canary.clone(),
             )
             .await
             {
@@ -885,6 +889,7 @@ mod tests {
                 output_tokens: None,
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }
@@ -919,6 +924,7 @@ mod tests {
                 output_tokens: None,
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }
@@ -956,6 +962,7 @@ mod tests {
                 output_tokens: None,
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }
@@ -1025,6 +1032,7 @@ mod tests {
             None,
             &crate::mcp::McpToolScope::default(),
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            None,
         )
         .await
         .expect("minimum-round loop");
@@ -1090,6 +1098,7 @@ mod tests {
             None,
             &crate::mcp::McpToolScope::default(),
             &crate::cli::elicitation::ElicitationHandler::Disabled,
+            None,
         )
         .await
         .expect_err("an unavailable goal round must not become outer convergence");

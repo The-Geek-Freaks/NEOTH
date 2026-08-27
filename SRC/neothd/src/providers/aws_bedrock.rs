@@ -41,7 +41,10 @@ use super::quota::{QuotaError, parse_retry_after};
 use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin};
 
-use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
+use super::{
+    Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
+    ProviderRequestControls, Request,
+};
 
 /// The Bedrock runtime is an untrusted byte source even on 2xx. These caps
 /// bound allocation before any parse; the error envelope is classified under
@@ -363,6 +366,20 @@ impl Provider for AwsBedrockAdapter {
                 output_tokens: parsed.usage.as_ref().map(|u| u.output_tokens),
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: parsed
+                    .usage
+                    .as_ref()
+                    .map(|usage| {
+                        CompletionUsageMeasurements::provider_reported(
+                            Some(usage.input_tokens),
+                            Some(usage.output_tokens),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    })
+                    .transpose()?,
             })
         })
         .await

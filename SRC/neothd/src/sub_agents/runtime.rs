@@ -19,7 +19,9 @@ use super::schema::{
 };
 use crate::council::qa_verdict::QaVerdict;
 use crate::providers::cost_authorization::AuthorizedProvider;
-use crate::providers::{Completion, Provider, Request};
+use crate::providers::{
+    Completion, CompletionUsageMeasurements, Provider, ProviderUsageAttribution, Request,
+};
 use crate::security::prompt_envelope::{
     MAX_CANDIDATE_BYTES, MAX_OPERATOR_TASK_BYTES, PromptEnvelopePurpose, PromptFieldKind,
     UntrustedPromptField, serialize_untrusted_prompt,
@@ -113,12 +115,13 @@ impl PromptSegments {
     }
 
     fn baseline(&self, completion: &Completion) -> SubAgentPromptBaseline {
+        let usage = completion.usage_measurements.as_ref();
         SubAgentPromptBaseline {
             shape: self.shape(),
-            input_tokens: completion.input_tokens,
-            output_tokens: completion.output_tokens,
-            cache_creation_tokens: completion.cache_creation_tokens,
-            cache_read_tokens: completion.cache_read_tokens,
+            input_tokens: usage.and_then(CompletionUsageMeasurements::input_tokens),
+            output_tokens: usage.and_then(CompletionUsageMeasurements::output_tokens),
+            cache_creation_tokens: usage.and_then(CompletionUsageMeasurements::cache_creation_tokens),
+            cache_read_tokens: usage.and_then(CompletionUsageMeasurements::cache_read_tokens),
             completion_latency_ms: completion
                 .latency
                 .as_millis()
@@ -351,13 +354,23 @@ fn provider_call(
     if !completion.identity.is_bound() {
         anyhow::bail!("provider returned a completion without a B22-bound leaf identity");
     }
+    // Do not infer usage from prompt shape, wall-clock time, or response text.
+    // The only NCT-07 export path is an explicitly typed ingest measurement.
+    let usage_attribution = ProviderUsageAttribution::from_explicit_completion(completion)?;
+    let input_tokens = usage_attribution
+        .as_ref()
+        .and_then(ProviderUsageAttribution::input_tokens);
+    let output_tokens = usage_attribution
+        .as_ref()
+        .and_then(ProviderUsageAttribution::output_tokens);
     Ok(SubAgentProviderCall {
         stage: stage.to_string(),
         attempt,
         provider: completion.identity.provider.clone(),
         wire_model: completion.identity.wire_model.clone(),
-        input_tokens: completion.input_tokens,
-        output_tokens: completion.output_tokens,
+        input_tokens,
+        output_tokens,
+        usage_attribution,
         prompt_baseline: Some(segments.baseline(completion)),
     })
 }
@@ -557,6 +570,7 @@ pub fn persist_run(
     home: &std::path::Path,
     record: &SubAgentRunRecord,
 ) -> Result<std::path::PathBuf> {
+    validate_run_record(record)?;
     let path = run_dir(home).join(format!("{}.json", record.run_id));
     let bytes = serde_json::to_vec_pretty(record)?;
     crate::util::atomic_write::atomic_write_private(&path, &bytes)
@@ -573,7 +587,22 @@ pub fn load_run(home: &std::path::Path, run_id: &str) -> Result<SubAgentRunRecor
         anyhow::bail!("sub-agent run path is not a regular file");
     }
     let body = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    serde_json::from_slice(&body).with_context(|| format!("parse {}", path.display()))
+    let record: SubAgentRunRecord =
+        serde_json::from_slice(&body).with_context(|| format!("parse {}", path.display()))?;
+    if record.run_id != run_id {
+        anyhow::bail!("sub-agent run file does not match its requested run id");
+    }
+    validate_run_record(&record)?;
+    Ok(record)
+}
+
+fn validate_run_record(record: &SubAgentRunRecord) -> Result<()> {
+    for result in &record.results {
+        for call in &result.provider_calls {
+            call.validate()?;
+        }
+    }
+    Ok(())
 }
 
 pub fn list_runs(home: &std::path::Path, limit: usize) -> Result<Vec<SubAgentRunRecord>> {
@@ -729,6 +758,17 @@ mod tests {
                 model: "spoof".into(),
                 input_tokens: Some(10),
                 output_tokens: Some(5),
+                usage_measurements: Some(
+                    CompletionUsageMeasurements::provider_reported(
+                        Some(10),
+                        Some(5),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .unwrap(),
+                ),
                 ..Completion::default()
             })
         }
@@ -888,7 +928,17 @@ mod tests {
                 && result
                     .provider_calls
                     .iter()
-                    .all(|call| call.provider == "openai_api" && call.wire_model == "wire-model-v1")
+                    .all(|call| {
+                        call.provider == "openai_api"
+                            && call.wire_model == "wire-model-v1"
+                            && call
+                                .usage_attribution
+                                .as_ref()
+                                .is_some_and(|usage| {
+                                    usage.provider() == "openai_api"
+                                        && usage.wire_model() == "wire-model-v1"
+                                })
+                    })
         }));
         for (result, (name, system, task_id)) in report
             .results
@@ -1119,6 +1169,17 @@ mod tests {
             cache_creation_tokens: Some(0),
             cache_read_tokens: None,
             latency: std::time::Duration::from_millis(17),
+            usage_measurements: Some(
+                CompletionUsageMeasurements::provider_reported(
+                    None,
+                    Some(0),
+                    Some(0),
+                    None,
+                    None,
+                    Some(7),
+                )
+                .unwrap(),
+            ),
             ..Completion::default()
         };
         let baseline = PromptSegments::with_retry_parts(
@@ -1207,6 +1268,17 @@ mod tests {
                 cache_creation_tokens: Some(0),
                 cache_read_tokens: None,
                 latency: std::time::Duration::from_millis(19),
+                usage_measurements: Some(
+                    CompletionUsageMeasurements::provider_reported(
+                        None,
+                        Some(0),
+                        Some(0),
+                        None,
+                        None,
+                        Some(19),
+                    )
+                    .unwrap(),
+                ),
                 ..Completion::default()
             });
         assert_eq!(
@@ -1248,5 +1320,116 @@ mod tests {
         persist_run(dir.path(), &record).unwrap();
         assert_eq!(load_run(dir.path(), "run-123").unwrap().run_id, "run-123");
         assert!(load_run(dir.path(), "../secret").is_err());
+    }
+
+    #[test]
+    fn load_run_rejects_self_attesting_nested_usage_attribution() {
+        let dir = tempfile::tempdir().unwrap();
+        let runs = dir.path().join("sub-agent-runs");
+        std::fs::create_dir_all(&runs).unwrap();
+        let record = SubAgentRunRecord {
+            schema_version: 1,
+            run_id: "run-123".into(),
+            ts_unix: 1,
+            prompt_hash_xxh3: 2,
+            results: vec![SubAgentResult {
+                from: "a".into(),
+                to: "b".into(),
+                task_id: "t".into(),
+                verdict: QaVerdict::pass(),
+                evidence: Vec::new(),
+                output: String::new(),
+                provider_calls: Vec::new(),
+                attempts: 1,
+                next_agent: None,
+                ts_unix: 1,
+            }],
+        };
+        let mut value = serde_json::to_value(record).unwrap();
+        value["results"][0]["provider_calls"] = serde_json::json!([{
+            "stage": "primary",
+            "attempt": 1,
+            "provider": "openai_api",
+            "wire_model": "wire-model-v1",
+            "input_tokens": 2,
+            "output_tokens": null,
+            "usage_attribution": {
+                "schema": "neoth.provider-usage-attribution.v1",
+                "provenance": "provider_reported",
+                "provider": "anthropic_api",
+                "wire_model": "wire-model-v1",
+                "input_tokens": 2,
+            }
+        }]);
+        std::fs::write(
+            runs.join("run-123.json"),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+        assert!(load_run(dir.path(), "run-123").is_err());
+    }
+
+    #[test]
+    fn nct07_provider_call_exports_only_explicit_reported_usage() {
+        let segments = PromptSegments::primary("prompt", "system", "context");
+        let absent = Completion {
+            identity: CompletionIdentity {
+                provider: "openai_api".into(),
+                wire_model: "wire-model-v1".into(),
+                dispatch_route: Vec::new(),
+            },
+            // Legacy/raw fields alone are intentionally not provenance.
+            input_tokens: Some(44),
+            output_tokens: Some(0),
+            ..Completion::default()
+        };
+        let absent_call = provider_call("primary", 1, &absent, &segments).unwrap();
+        assert_eq!(absent_call.usage_attribution, None);
+        assert_eq!(absent_call.input_tokens, None);
+        assert_eq!(absent_call.output_tokens, None);
+        let absent_baseline = absent_call.prompt_baseline.as_ref().unwrap();
+        assert_eq!(absent_baseline.input_tokens, None);
+        assert_eq!(absent_baseline.output_tokens, None);
+        assert_eq!(absent_baseline.completion_latency_ms, 0);
+
+        let cached = Completion {
+            identity: CompletionIdentity {
+                provider: "openai_api".into(),
+                wire_model: "wire-model-v1".into(),
+                dispatch_route: Vec::new(),
+            },
+            input_tokens: Some(3),
+            cache_creation_tokens: Some(0),
+            cache_read_tokens: Some(9),
+            usage_measurements: Some(
+                CompletionUsageMeasurements::provider_reported(
+                    Some(3),
+                    None,
+                    Some(0),
+                    Some(9),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            ),
+            // The contract must never synthesize a reasoning measurement.
+            latency: std::time::Duration::from_millis(42),
+            ..Completion::default()
+        };
+        let attribution = provider_call("primary", 1, &cached, &segments)
+            .unwrap()
+            .usage_attribution
+            .unwrap();
+        assert_eq!(
+            attribution.provenance(),
+            crate::providers::ProviderUsageProvenance::ProviderReported
+        );
+        assert_eq!(attribution.input_tokens(), Some(3));
+        assert_eq!(attribution.cache_creation_tokens(), Some(0));
+        assert_eq!(attribution.cache_read_tokens(), Some(9));
+        assert_eq!(attribution.reasoning_tokens(), None);
+        assert_eq!(attribution.provider_latency_ms(), None);
+
+        assert!(provider_call("primary", 1, &Completion::default(), &segments).is_err());
     }
 }

@@ -39,7 +39,10 @@ use tracing::debug;
 use super::quota::{QuotaError, parse_retry_after};
 use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin};
-use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
+use super::{
+    Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
+    ProviderRequestControls, Request,
+};
 use crate::secret::SecretString;
 
 /// An Azure OpenAI resource is an untrusted byte source even on 2xx. These
@@ -293,6 +296,7 @@ impl Provider for AzureOpenAiAdapter {
                         output_tokens: None,
                         cache_creation_tokens: None,
                         cache_read_tokens: None,
+                        usage_measurements: None,
                     });
                 }
                 return Err(map_azure_error(
@@ -339,6 +343,20 @@ impl Provider for AzureOpenAiAdapter {
                 output_tokens: parsed.usage.as_ref().map(|u| u.completion_tokens),
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: parsed
+                    .usage
+                    .as_ref()
+                    .map(|usage| {
+                        CompletionUsageMeasurements::provider_reported(
+                            Some(usage.prompt_tokens),
+                            Some(usage.completion_tokens),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    })
+                    .transpose()?,
             })
         })
         .await

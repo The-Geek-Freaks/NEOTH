@@ -74,6 +74,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use futures_util::stream::{self, Stream};
+use serde::{Deserialize, Serialize};
 
 use crate::cli::init::ProviderKind;
 use crate::config::FreedomConfig;
@@ -137,6 +138,323 @@ impl CompletionIdentity {
     }
 }
 
+/// Fixed version of the content-free provider-usage attribution contract.
+///
+/// This is deliberately an enum rather than a free-form string: unknown
+/// versions fail deserialization instead of becoming an implicitly accepted
+/// telemetry shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProviderUsageAttributionSchema {
+    #[serde(rename = "neoth.provider-usage-attribution.v1")]
+    V1,
+}
+
+/// The sole source category for a provider-usage attribution.
+///
+/// A value cannot be both provider-reported and locally estimated: this enum
+/// makes the distinction structural, rather than a convention on a boolean or
+/// optional pair of fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderUsageProvenance {
+    ProviderReported,
+    LocalEstimate,
+}
+
+pub(crate) const MAX_USAGE_PROVIDER_BYTES: usize = 64;
+pub(crate) const MAX_USAGE_WIRE_MODEL_BYTES: usize = 256;
+
+/// Opaque, explicitly sourced measurements accepted from a provider adapter or
+/// a local estimator at ingestion time. Raw Completion token fields deliberately
+/// cannot construct this value by convention.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionUsageMeasurements {
+    provenance: ProviderUsageProvenance,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    cache_creation_tokens: Option<u32>,
+    cache_read_tokens: Option<u32>,
+    reasoning_tokens: Option<u32>,
+    provider_latency_ms: Option<u64>,
+}
+
+impl CompletionUsageMeasurements {
+    pub fn provider_reported(
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+        cache_creation_tokens: Option<u32>,
+        cache_read_tokens: Option<u32>,
+        reasoning_tokens: Option<u32>,
+        provider_latency_ms: Option<u64>,
+    ) -> Result<Self> {
+        Self::new(
+            ProviderUsageProvenance::ProviderReported,
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+            reasoning_tokens,
+            provider_latency_ms,
+        )
+    }
+
+    pub fn local_estimate(
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+        cache_creation_tokens: Option<u32>,
+        cache_read_tokens: Option<u32>,
+        reasoning_tokens: Option<u32>,
+        provider_latency_ms: Option<u64>,
+    ) -> Result<Self> {
+        Self::new(
+            ProviderUsageProvenance::LocalEstimate,
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+            reasoning_tokens,
+            provider_latency_ms,
+        )
+    }
+
+    fn new(
+        provenance: ProviderUsageProvenance,
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+        cache_creation_tokens: Option<u32>,
+        cache_read_tokens: Option<u32>,
+        reasoning_tokens: Option<u32>,
+        provider_latency_ms: Option<u64>,
+    ) -> Result<Self> {
+        if [
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+            reasoning_tokens,
+        ]
+        .iter()
+        .all(Option::is_none)
+            && provider_latency_ms.is_none()
+        {
+            anyhow::bail!("provider usage measurement requires at least one explicit value");
+        }
+        Ok(Self {
+            provenance,
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+            reasoning_tokens,
+            provider_latency_ms,
+        })
+    }
+
+    pub fn input_tokens(&self) -> Option<u32> {
+        self.input_tokens
+    }
+
+    pub fn output_tokens(&self) -> Option<u32> {
+        self.output_tokens
+    }
+
+    pub fn cache_creation_tokens(&self) -> Option<u32> {
+        self.cache_creation_tokens
+    }
+
+    pub fn cache_read_tokens(&self) -> Option<u32> {
+        self.cache_read_tokens
+    }
+
+    pub fn provider_latency_ms(&self) -> Option<u64> {
+        self.provider_latency_ms
+    }
+}
+
+/// Versioned, content-free measurements tied to one B22-bound provider leaf.
+///
+/// All measurements are optional. `None` means unknown; `Some(0)` is a real
+/// measured zero. This contract intentionally has no request IDs, prompts,
+/// responses, references, tensor data, endpoints, costs, floating-point
+/// values, secrets, dynamic maps, or diagnostic text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProviderUsageAttribution {
+    schema: ProviderUsageAttributionSchema,
+    provenance: ProviderUsageProvenance,
+    /// Exact B22-stamped provider leaf. Never selected from a decorator name.
+    provider: String,
+    /// Exact B22-stamped model identifier sent on the provider wire.
+    wire_model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    input_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    output_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cache_creation_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cache_read_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reasoning_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider_latency_ms: Option<u64>,
+}
+
+/// Strict wire shape used solely to validate externally shaped attribution
+/// records before they become the public contract type.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderUsageAttributionWire {
+    schema: ProviderUsageAttributionSchema,
+    provenance: ProviderUsageProvenance,
+    provider: String,
+    wire_model: String,
+    #[serde(default)]
+    input_tokens: Option<u32>,
+    #[serde(default)]
+    output_tokens: Option<u32>,
+    #[serde(default)]
+    cache_creation_tokens: Option<u32>,
+    #[serde(default)]
+    cache_read_tokens: Option<u32>,
+    #[serde(default)]
+    reasoning_tokens: Option<u32>,
+    #[serde(default)]
+    provider_latency_ms: Option<u64>,
+}
+
+impl ProviderUsageAttribution {
+    /// Creates a bounded export record from independently sourced measurements.
+    ///
+    /// `identity` must already have passed the B22 leaf-binding boundary. An
+    /// attribution with no measurements is refused so callers cannot turn an
+    /// absent/default `Completion` into fabricated provenance.
+    pub fn from_measurement(
+        identity: &CompletionIdentity,
+        measurement: &CompletionUsageMeasurements,
+    ) -> Result<Self> {
+        validate_usage_identity_fields(&identity.provider, &identity.wire_model)?;
+
+        Ok(Self {
+            schema: ProviderUsageAttributionSchema::V1,
+            provenance: measurement.provenance,
+            provider: identity.provider.clone(),
+            wire_model: identity.wire_model.clone(),
+            input_tokens: measurement.input_tokens,
+            output_tokens: measurement.output_tokens,
+            cache_creation_tokens: measurement.cache_creation_tokens,
+            cache_read_tokens: measurement.cache_read_tokens,
+            reasoning_tokens: measurement.reasoning_tokens,
+            provider_latency_ms: measurement.provider_latency_ms,
+        })
+    }
+
+    /// Exports only a measurement that an adapter or estimator explicitly
+    /// typed at ingestion. Legacy raw token fields remain non-attributable.
+    pub fn from_explicit_completion(completion: &Completion) -> Result<Option<Self>> {
+        completion
+            .usage_measurements
+            .as_ref()
+            .map(|measurement| Self::from_measurement(&completion.identity, measurement))
+            .transpose()
+    }
+
+    pub fn schema(&self) -> ProviderUsageAttributionSchema {
+        self.schema
+    }
+
+    pub fn provenance(&self) -> ProviderUsageProvenance {
+        self.provenance
+    }
+
+    pub fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    pub fn wire_model(&self) -> &str {
+        &self.wire_model
+    }
+
+    pub fn input_tokens(&self) -> Option<u32> {
+        self.input_tokens
+    }
+
+    pub fn output_tokens(&self) -> Option<u32> {
+        self.output_tokens
+    }
+
+    pub fn cache_creation_tokens(&self) -> Option<u32> {
+        self.cache_creation_tokens
+    }
+
+    pub fn cache_read_tokens(&self) -> Option<u32> {
+        self.cache_read_tokens
+    }
+
+    pub fn reasoning_tokens(&self) -> Option<u32> {
+        self.reasoning_tokens
+    }
+
+    pub fn provider_latency_ms(&self) -> Option<u64> {
+        self.provider_latency_ms
+    }
+}
+
+pub(crate) fn validate_usage_identity_fields(provider: &str, wire_model: &str) -> Result<()> {
+    fn valid(value: &str, maximum: usize) -> bool {
+        !value.is_empty()
+            && value.len() <= maximum
+            && value.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(byte, b'.' | b'_' | b'-' | b':' | b'/' | b'@' | b'+' | b'[' | b']')
+            })
+    }
+    if !valid(provider, MAX_USAGE_PROVIDER_BYTES) {
+        anyhow::bail!("provider usage attribution has an invalid provider identity");
+    }
+    if !valid(wire_model, MAX_USAGE_WIRE_MODEL_BYTES) {
+        anyhow::bail!("provider usage attribution has an invalid wire model identity");
+    }
+    Ok(())
+}
+
+impl TryFrom<ProviderUsageAttributionWire> for ProviderUsageAttribution {
+    type Error = anyhow::Error;
+
+    fn try_from(value: ProviderUsageAttributionWire) -> Result<Self> {
+        if value.schema != ProviderUsageAttributionSchema::V1 {
+            anyhow::bail!("unsupported provider usage attribution schema");
+        }
+        let measurement = CompletionUsageMeasurements::new(
+            value.provenance,
+            value.input_tokens,
+            value.output_tokens,
+            value.cache_creation_tokens,
+            value.cache_read_tokens,
+            value.reasoning_tokens,
+            value.provider_latency_ms,
+        )?;
+        Self::from_measurement(
+            &CompletionIdentity {
+                provider: value.provider,
+                wire_model: value.wire_model,
+                dispatch_route: Vec::new(),
+            },
+            &measurement,
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for ProviderUsageAttribution {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        ProviderUsageAttributionWire::deserialize(deserializer)?
+            .try_into()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// One completion result. `text` is the full final response; `latency` is
 /// wall-clock time from request to last token.
 #[derive(Debug, Clone, Default)]
@@ -162,6 +480,9 @@ pub struct Completion {
     /// (billed at 0.10× the normal input rate). `None` when cache was cold
     /// or for non-Anthropic providers.
     pub cache_read_tokens: Option<u32>,
+    /// Opaque, explicitly sourced usage. Legacy raw token options are retained
+    /// for compatibility but are not exportable as provenance.
+    pub usage_measurements: Option<CompletionUsageMeasurements>,
 }
 
 /// Render a deterministic NEOTH-authored notice when an upstream refusal has
@@ -3432,5 +3753,157 @@ mod tests {
         }]);
         config.fallback.max_hops = 0;
         assert!(consented_fallback_slots(tmp.path(), &config).is_empty());
+    }
+
+    #[test]
+    fn nct07_usage_attribution_is_versioned_content_free_and_identity_bound() {
+        let identity = CompletionIdentity {
+            provider: "openai_api/leaf".into(),
+            wire_model: "wire-model-v1".into(),
+            dispatch_route: Vec::new(),
+        };
+        let measurement = CompletionUsageMeasurements::provider_reported(
+            None,
+            Some(0),
+            Some(0),
+            Some(7),
+            None,
+            None,
+        )
+        .unwrap();
+        let attribution = ProviderUsageAttribution::from_measurement(
+            &identity,
+            &measurement,
+        )
+        .unwrap();
+
+        assert_eq!(attribution.provider().as_bytes(), identity.provider.as_bytes());
+        assert_eq!(attribution.wire_model().as_bytes(), identity.wire_model.as_bytes());
+        assert_eq!(attribution.input_tokens(), None);
+        assert_eq!(attribution.output_tokens(), Some(0));
+        assert_eq!(attribution.reasoning_tokens(), None);
+        assert_eq!(
+            serde_json::to_string(&attribution.provenance()).unwrap(),
+            "\"provider_reported\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ProviderUsageProvenance::LocalEstimate).unwrap(),
+            "\"local_estimate\""
+        );
+
+        let encoded = serde_json::to_value(&attribution).unwrap();
+        let keys = encoded
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            keys,
+            std::collections::BTreeSet::from([
+                "cache_creation_tokens",
+                "cache_read_tokens",
+                "output_tokens",
+                "provider",
+                "provenance",
+                "schema",
+                "wire_model",
+            ])
+        );
+        let rendered = encoded.to_string();
+        for forbidden in [
+            "prompt",
+            "response",
+            "request_id",
+            "endpoint",
+            "secret",
+            "cost",
+            "error",
+            "tensor",
+        ] {
+            assert!(!rendered.contains(forbidden), "must not serialize {forbidden}");
+        }
+    }
+
+    #[test]
+    fn nct07_usage_attribution_refuses_unknown_shapes_and_absent_measurements() {
+        let identity = CompletionIdentity {
+            provider: "openai_api".into(),
+            wire_model: "wire-model-v1".into(),
+            dispatch_route: Vec::new(),
+        };
+        assert!(CompletionUsageMeasurements::local_estimate(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .is_err());
+        let local = CompletionUsageMeasurements::local_estimate(
+            Some(0),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let local_attribution = ProviderUsageAttribution::from_measurement(&identity, &local).unwrap();
+        assert_eq!(
+            local_attribution.provenance(),
+            ProviderUsageProvenance::LocalEstimate
+        );
+        assert_eq!(
+            serde_json::to_value(&local_attribution)
+                .unwrap()
+                .get("provenance")
+                .and_then(serde_json::Value::as_str),
+            Some("local_estimate")
+        );
+        assert!(ProviderUsageAttribution::from_measurement(
+            &identity,
+            &CompletionUsageMeasurements::provider_reported(Some(1), None, None, None, None, None)
+                .unwrap(),
+        )
+        .is_ok());
+        assert!(serde_json::from_str::<ProviderUsageAttribution>(
+            r#"{"schema":"neoth.provider-usage-attribution.v99","provenance":"provider_reported","provider":"openai_api","wire_model":"wire-model-v1","input_tokens":0}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ProviderUsageAttribution>(
+            r#"{"schema":"neoth.provider-usage-attribution.v1","provenance":["provider_reported","local_estimate"],"provider":"openai_api","wire_model":"wire-model-v1","input_tokens":0}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ProviderUsageAttribution>(
+            r#"{"schema":"neoth.provider-usage-attribution.v1","provenance":"provider_reported","provider":"openai_api","wire_model":"wire-model-v1","input_tokens":0,"unknown":true}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ProviderUsageAttribution>(
+            r#"{"schema":"neoth.provider-usage-attribution.v1","provenance":"provider_reported","provider":"openai_api","wire_model":"wire-model-v1"}"#
+        )
+        .is_err());
+        for (provider, wire_model) in [
+            ("x".repeat(MAX_USAGE_PROVIDER_BYTES + 1), "wire-model-v1".into()),
+            ("openai api".into(), "wire-model-v1".into()),
+            ("openai_api".into(), "wire\nmodel".into()),
+            ("openai_api".into(), "x".repeat(MAX_USAGE_WIRE_MODEL_BYTES + 1)),
+        ] {
+            let value = serde_json::json!({
+                "schema": "neoth.provider-usage-attribution.v1",
+                "provenance": "provider_reported",
+                "provider": provider,
+                "wire_model": wire_model,
+                "input_tokens": 0,
+            });
+            assert!(serde_json::from_value::<ProviderUsageAttribution>(value).is_err());
+        }
+
+        assert_eq!(
+            ProviderUsageAttribution::from_explicit_completion(&Completion::default())
+                .unwrap(),
+            None
+        );
     }
 }

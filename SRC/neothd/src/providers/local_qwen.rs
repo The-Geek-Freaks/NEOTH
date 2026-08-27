@@ -22,7 +22,8 @@ use async_trait::async_trait;
 use tracing::info;
 
 use super::{
-    ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
+    ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
+    ProviderDispatchPermit,
     ProviderRequestControls, Request,
 };
 
@@ -1110,6 +1111,14 @@ fn run_forward(
         output_tokens: Some(new_tokens.len() as u32),
         cache_creation_tokens: None,
         cache_read_tokens: None,
+        usage_measurements: Some(CompletionUsageMeasurements::local_estimate(
+            Some(input_token_count as u32),
+            Some(new_tokens.len() as u32),
+            None,
+            None,
+            None,
+            None,
+        )?),
     })
 }
 

@@ -31,7 +31,8 @@ use crate::providers::local_qwen::{
     sample_token,
 };
 use crate::providers::{
-    ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
+    ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
+    ProviderDispatchPermit,
     ProviderRequestControls, Request,
 };
 
@@ -707,6 +708,14 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
         output_tokens: Some(new_tokens.len() as u32),
         cache_creation_tokens: None,
         cache_read_tokens: None,
+        usage_measurements: Some(CompletionUsageMeasurements::local_estimate(
+            Some(input_token_count as u32),
+            Some(new_tokens.len() as u32),
+            None,
+            None,
+            None,
+            None,
+        )?),
     })
 }
 

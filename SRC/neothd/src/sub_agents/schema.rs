@@ -34,6 +34,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::council::qa_verdict::QaVerdict;
+use crate::providers::{ProviderUsageAttribution, validate_usage_identity_fields};
 
 /// GOLD-ADAPT-OH-13 — per-agent context-layer omission flags.
 ///
@@ -236,7 +237,7 @@ pub struct SubAgentRequest {
 }
 
 /// Content-free audit evidence for one real provider invocation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SubAgentProviderCall {
     /// `primary` or `qa`.
     pub stage: String,
@@ -250,11 +251,87 @@ pub struct SubAgentProviderCall {
     pub input_tokens: Option<u32>,
     #[serde(default)]
     pub output_tokens: Option<u32>,
+    /// Versioned NCT-07 provider usage attribution. Absent on legacy records
+    /// and when a completion did not carry explicitly sourced usage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_attribution: Option<ProviderUsageAttribution>,
     /// Behavior-neutral NCT-01 measurement of the already-dispatched request
     /// and completion. Absent on legacy records and on callers which do not
     /// collect this bounded sub-agent baseline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_baseline: Option<SubAgentPromptBaseline>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubAgentProviderCallWire {
+    stage: String,
+    attempt: u8,
+    provider: String,
+    wire_model: String,
+    #[serde(default)]
+    input_tokens: Option<u32>,
+    #[serde(default)]
+    output_tokens: Option<u32>,
+    #[serde(default)]
+    usage_attribution: Option<ProviderUsageAttribution>,
+    #[serde(default)]
+    prompt_baseline: Option<SubAgentPromptBaseline>,
+}
+
+impl SubAgentProviderCall {
+    pub(crate) fn validate(&self) -> anyhow::Result<()> {
+        if !matches!(self.stage.as_str(), "primary" | "qa") {
+            anyhow::bail!("sub-agent provider call has an invalid stage");
+        }
+        if self.attempt == 0 || self.attempt > 2 {
+            anyhow::bail!("sub-agent provider call has an invalid attempt");
+        }
+        validate_usage_identity_fields(&self.provider, &self.wire_model)?;
+        if let Some(usage) = &self.usage_attribution {
+            if usage.provider() != self.provider.as_str()
+                || usage.wire_model() != self.wire_model.as_str()
+            {
+                anyhow::bail!("provider usage attribution identity does not match its B22 call identity");
+            }
+            if usage.input_tokens() != self.input_tokens
+                || usage.output_tokens() != self.output_tokens
+            {
+                anyhow::bail!("provider usage attribution tokens do not match their enclosing call");
+            }
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<SubAgentProviderCallWire> for SubAgentProviderCall {
+    type Error = anyhow::Error;
+
+    fn try_from(value: SubAgentProviderCallWire) -> anyhow::Result<Self> {
+        let call = Self {
+            stage: value.stage,
+            attempt: value.attempt,
+            provider: value.provider,
+            wire_model: value.wire_model,
+            input_tokens: value.input_tokens,
+            output_tokens: value.output_tokens,
+            usage_attribution: value.usage_attribution,
+            prompt_baseline: value.prompt_baseline,
+        };
+        call.validate()?;
+        Ok(call)
+    }
+}
+
+impl<'de> Deserialize<'de> for SubAgentProviderCall {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        SubAgentProviderCallWire::deserialize(deserializer)?
+            .try_into()
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 /// Content-free shape of one sub-agent provider request.
@@ -1628,7 +1705,35 @@ mod tests {
         }"#;
         let call: SubAgentProviderCall = serde_json::from_str(legacy).unwrap();
         assert_eq!(call.prompt_baseline, None);
+        assert_eq!(call.usage_attribution, None);
         let encoded = serde_json::to_value(&call).unwrap();
         assert!(encoded.get("prompt_baseline").is_none());
+        assert!(encoded.get("usage_attribution").is_none());
+    }
+
+    #[test]
+    fn provider_call_refuses_nested_usage_identity_or_token_mismatch() {
+        let nested = r#"{
+            "schema":"neoth.provider-usage-attribution.v1",
+            "provenance":"provider_reported",
+            "provider":"openai_api",
+            "wire_model":"wire-model-v1",
+            "input_tokens":5
+        }"#;
+        let mismatch_identity = format!(
+            r#"{{"stage":"primary","attempt":1,"provider":"anthropic_api","wire_model":"wire-model-v1","input_tokens":5,"output_tokens":null,"usage_attribution":{nested}}}"#
+        );
+        assert!(serde_json::from_str::<SubAgentProviderCall>(&mismatch_identity).is_err());
+
+        let mismatch_tokens = format!(
+            r#"{{"stage":"primary","attempt":1,"provider":"openai_api","wire_model":"wire-model-v1","input_tokens":4,"output_tokens":null,"usage_attribution":{nested}}}"#
+        );
+        assert!(serde_json::from_str::<SubAgentProviderCall>(&mismatch_tokens).is_err());
+
+        let control_identity = r#"{
+            "stage":"primary","attempt":1,"provider":"openai api",
+            "wire_model":"wire-model-v1","input_tokens":null,"output_tokens":null
+        }"#;
+        assert!(serde_json::from_str::<SubAgentProviderCall>(control_identity).is_err());
     }
 }

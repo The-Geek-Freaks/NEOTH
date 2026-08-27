@@ -458,6 +458,7 @@ mod tests {
                 output_tokens: None,
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
         fn name(&self) -> &'static str {
@@ -496,6 +497,7 @@ mod tests {
                 output_tokens: None,
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
 

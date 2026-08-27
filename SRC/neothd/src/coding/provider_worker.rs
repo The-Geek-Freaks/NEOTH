@@ -1009,6 +1009,7 @@ mod tests {
                 output_tokens: Some(0),
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }

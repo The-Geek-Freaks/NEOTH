@@ -34,7 +34,10 @@ use tracing::debug;
 use super::quota::{QuotaError, parse_retry_after};
 use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin, Retryability};
-use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
+use super::{
+    Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
+    ProviderRequestControls, Request,
+};
 use crate::secret::SecretString;
 
 /// The Messages endpoint is an untrusted byte source even on 2xx. These caps
@@ -321,6 +324,20 @@ impl Provider for AnthropicAdapter {
                     .as_ref()
                     .map(|u| u.cache_read_input_tokens)
                     .filter(|&n| n > 0),
+                usage_measurements: parsed
+                    .usage
+                    .as_ref()
+                    .map(|usage| {
+                        CompletionUsageMeasurements::provider_reported(
+                            Some(usage.input_tokens),
+                            Some(usage.output_tokens),
+                            Some(usage.cache_creation_input_tokens),
+                            Some(usage.cache_read_input_tokens),
+                            None,
+                            None,
+                        )
+                    })
+                    .transpose()?,
             })
         })
         .await

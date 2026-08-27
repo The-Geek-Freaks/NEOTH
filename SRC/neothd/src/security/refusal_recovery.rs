@@ -778,6 +778,7 @@ mod tests {
                     output_tokens: Some(20),
                     cache_creation_tokens: None,
                     cache_read_tokens: None,
+                    usage_measurements: None,
                 }),
                 Err(e) => Err(anyhow::anyhow!(e)),
             }
@@ -808,6 +809,7 @@ mod tests {
                 output_tokens: None,
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             })
         }
     }
@@ -907,6 +909,7 @@ mod tests {
             output_tokens: Some(3),
             cache_creation_tokens: Some(2),
             cache_read_tokens: None,
+            usage_measurements: None,
         };
         let recovered = Completion {
             text: "final answer".into(),
@@ -922,6 +925,7 @@ mod tests {
             output_tokens: Some(8),
             cache_creation_tokens: None,
             cache_read_tokens: Some(4),
+            usage_measurements: None,
         };
 
         let merged = merge_recovered_completion(&original, recovered);
@@ -1323,6 +1327,7 @@ mod tests {
                 output_tokens: None,
                 cache_creation_tokens: None,
                 cache_read_tokens: None,
+                usage_measurements: None,
             },
             reframing_id: "operator_authority",
         };
