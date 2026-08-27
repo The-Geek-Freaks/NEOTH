@@ -3649,9 +3649,9 @@ mod tests {
         )
         .unwrap();
 
-        let error = migrate(&mut conn, 36, 37).unwrap_err().to_string();
+        let error = migrate(&mut conn, 36, 37).unwrap_err();
         assert!(
-            error.contains(
+            format!("{error:#}").contains(
                 "v37 refuses unverifiable legacy transcript mining revocation outbox rows"
             )
         );
