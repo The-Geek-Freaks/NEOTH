@@ -2557,7 +2557,7 @@ fn open_segment_capability_bound_with_publication_owner(
             stage_binding,
             error,
         );
-        if cleaned && let Some(component) = receipt_quota_component.as_deref_mut() {
+        if cleaned && let Some(component) = receipt_quota_component.as_mut() {
             component.clear_after_confirmed_cleanup();
         }
         return Err(rollback_error);
@@ -2623,7 +2623,7 @@ fn open_segment_capability_bound_with_publication_owner(
             stage_binding,
             publish_error,
         );
-        if cleaned && let Some(component) = receipt_quota_component.as_deref_mut() {
+        if cleaned && let Some(component) = receipt_quota_component.as_mut() {
             component.clear_after_confirmed_cleanup();
         }
         if cleaned && target_exists && !create_new_only {
@@ -3448,11 +3448,11 @@ async fn rotate(
     );
 
     let receipt_quota_component = receipt_quota_reservation
-        .as_deref_mut()
+        .as_mut()
         .map(|reservation| reservation.split_component(MAX_ROTATION_SUCCESSOR_PREFIX_BYTES))
         .transpose()?;
     let owned_receipt_authority = receipt_authority
-        .as_deref_mut()
+        .as_mut()
         .and_then(|authority_slot| authority_slot.take());
     let predecessor_rewrite_lock = state.segment_rewrite_lock.take().ok_or_else(|| {
         WalError::Io(std::io::Error::other(

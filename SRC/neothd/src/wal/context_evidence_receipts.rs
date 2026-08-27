@@ -247,7 +247,6 @@ pub(crate) struct AppendOutcome {
     decision: AppendDecision,
     retained_bytes: u64,
     reclaimed_bytes: u64,
-    replacement_bytes: u64,
     reclaimed_debt_bytes: u64,
 }
 
@@ -269,14 +268,6 @@ impl AppendOutcome {
     #[must_use]
     pub(crate) const fn reclaimed_bytes(&self) -> u64 {
         self.reclaimed_bytes
-    }
-
-    /// Portion of the success-path retained objects that replaced exact
-    /// pre-existing objects.  The writer uses this only to transfer a still
-    /// live receipt-debt reservation; it is never extra physical growth.
-    #[must_use]
-    pub(crate) const fn replacement_bytes(&self) -> u64 {
-        self.replacement_bytes
     }
 
     /// Exact still-unmeasured receipt-debt bytes whose capability-bound
@@ -585,7 +576,6 @@ impl MutationAccounting {
             decision,
             retained_bytes: newly_retained.saturating_sub(replacement_bytes),
             reclaimed_bytes,
-            replacement_bytes,
             reclaimed_debt_bytes: debt_reclaim.owned_bytes,
         })
     }
@@ -682,6 +672,7 @@ impl IoBudget {
 /// Append exact authenticated receipt evidence at most once.  The caller must
 /// retain the writer's process + cross-process receipt authority for this
 /// complete call; this module adds no unbounded process cache or WAL scan.
+#[cfg(test)]
 pub(crate) fn append_once(
     home: &Path,
     handle: &[u8; 32],
@@ -840,8 +831,7 @@ pub(crate) fn append_once_with_quota_debt(
         Err(mut cause) => {
             let ordinary_reclaimed = accounting
                 .reclaimed_bytes()
-                .checked_sub(debt_reclaim.removed_bytes)
-                .unwrap_or(0);
+                .saturating_sub(debt_reclaim.removed_bytes);
             let inherited_capacity = ordinary_reclaimed
                 .checked_add(debt_reclaim.inherited_bytes)
                 .unwrap_or(MAX_TRANSACTION_BYTES);
@@ -864,14 +854,6 @@ pub(crate) fn append_once_with_quota_debt(
             })
         }
     }
-}
-
-/// Conservative maximum additional physical bytes that an admission must
-/// reserve.  It includes the durable pending journal, complete new shard, and
-/// new manifest simultaneously visible during the crash window.
-#[must_use]
-pub(crate) const fn bounded_physical_bytes() -> u64 {
-    MAX_TRANSACTION_BYTES
 }
 
 /// Test-only read path used by writer integration tests.  It authenticates the
@@ -1549,7 +1531,7 @@ fn recover_torn_pending(
 fn recover_pending(
     ledger: &store::BoundDirectory,
     key: &[u8; 32],
-    manifests: &mut Vec<Manifest>,
+    manifests: &mut [Manifest],
     pending: Pending,
     budget: &mut IoBudget,
     accounting: &mut MutationAccounting,
@@ -1705,14 +1687,14 @@ fn cleanup_after_commit(
     validate_names(&names)?;
     let mut orphan_shards = Vec::new();
     for name in &names {
-        if let Some(generation) = parse_manifest_name(name) {
-            if generation != active.generation {
-                anyhow::ensure!(
-                    generation < active.generation,
-                    "receipt ledger manifest replay/rollback evidence detected"
-                );
-                remove_exact_accounted(ledger, ObjectNamespace::Ledger, name, accounting)?;
-            }
+        if let Some(generation) = parse_manifest_name(name)
+            && generation != active.generation
+        {
+            anyhow::ensure!(
+                generation < active.generation,
+                "receipt ledger manifest replay/rollback evidence detected"
+            );
+            remove_exact_accounted(ledger, ObjectNamespace::Ledger, name, accounting)?;
         }
         if let Some((shard, slot, generation)) = parse_shard_name(name) {
             let referenced = active.entries[shard as usize];
@@ -2768,7 +2750,6 @@ mod tests {
         let first = append_once(home.path(), &handle, &receipt, &frame).unwrap();
         assert_eq!(first.decision(), AppendDecision::Appended);
         assert_eq!(first.reclaimed_bytes(), 0);
-        assert_eq!(first.replacement_bytes(), 0);
         assert_eq!(first.retained_bytes(), bounded_namespace_bytes(home.path()));
         assert!(first.retained_bytes() <= MAX_TRANSACTION_BYTES);
 
@@ -2888,7 +2869,6 @@ mod tests {
             append_once_with_quota_debt(home.path(), &handle, &receipt, &frame, &mut debt).unwrap();
         assert_eq!(recovered.decision(), AppendDecision::Appended);
         assert_eq!(recovered.reclaimed_debt_bytes(), PENDING_BYTES as u64);
-        assert!(recovered.replacement_bytes() <= recovered.reclaimed_bytes());
         assert!(contains_for_test(home.path(), &handle, &receipt).unwrap());
     }
 

@@ -663,6 +663,10 @@ where
 /// This helper remains only for an explicit offline migration/forensic tool;
 /// strict mode rejects an unmarked tail or partial home rather than claiming
 /// absence from incomplete legacy history.
+#[expect(
+    dead_code,
+    reason = "only a stopped-daemon migration or forensic tool may scan primary WAL history; runtime receipt admission must use the fixed authenticated ledger"
+)]
 pub(crate) fn authenticated_context_evidence_receipt_exists(
     home: &Path,
     limits: HomeWalScanLimits,
