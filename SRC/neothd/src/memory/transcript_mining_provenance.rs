@@ -9,22 +9,10 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize, Serializer};
 
 // These contracts are intentionally compiled ahead of the P1-08 authenticated
-// Rust-payload producer/reader. Per-leaf non-test expectations keep the
-// dormant release artifact explicit without weakening its test vectors.
-#[cfg_attr(not(test), expect(
-    dead_code,
-    reason = "GOLD-LF-P1-08 stages 1-2 reserve the canonical schema before an authenticated Rust payload producer or reader exists"
-))]
+// Rust-payload producer/reader. Root-level non-test expectations keep the
+// dormant release artifacts explicit without weakening their test vectors.
 pub(crate) const TRANSCRIPT_MINING_PAYLOAD_SCHEMA_VERSION: u8 = 1;
-#[cfg_attr(not(test), expect(
-    dead_code,
-    reason = "GOLD-LF-P1-08 stages 1-2 reserve the bounded payload limit before an authenticated Rust payload producer or reader exists"
-))]
 pub(crate) const MAX_TRANSCRIPT_MINING_PAYLOAD_BYTES: usize = 1024;
-#[cfg_attr(not(test), expect(
-    dead_code,
-    reason = "GOLD-LF-P1-08 stages 1-2 reserve the canonical SHA-256 width before an authenticated Rust payload producer or reader exists"
-))]
 const SHA256_HEX_LEN: usize = 64;
 
 macro_rules! opaque_id {
@@ -38,10 +26,6 @@ macro_rules! opaque_id {
         pub(crate) struct $name(String);
 
         impl $name {
-            #[cfg_attr(not(test), expect(
-                dead_code,
-                reason = "GOLD-LF-P1-08 stages 1-2 reserve opaque identifier parsing before an authenticated Rust payload producer or reader exists"
-            ))]
             fn parse(value: String) -> Result<Self> {
                 ensure!(
                     !value.is_empty()
@@ -56,10 +40,6 @@ macro_rules! opaque_id {
                 Ok(Self(value))
             }
 
-            #[cfg_attr(not(test), expect(
-                dead_code,
-                reason = "GOLD-LF-P1-08 stages 1-2 reserve opaque identifier validation before an authenticated Rust payload producer or reader exists"
-            ))]
             fn validate(&self) -> Result<()> {
                 Self::parse(self.0.clone()).map(|_| ())
             }
@@ -87,19 +67,11 @@ opaque_id!(MiningProvenanceId);
 pub(crate) struct RawTurnRowId(i64);
 
 impl RawTurnRowId {
-    #[cfg_attr(not(test), expect(
-        dead_code,
-        reason = "GOLD-LF-P1-08 stages 1-2 reserve raw-turn identifier parsing before an authenticated Rust payload producer or reader exists"
-    ))]
     fn parse(value: i64) -> Result<Self> {
         ensure!(value > 0, "invalid raw turn row identifier");
         Ok(Self(value))
     }
 
-    #[cfg_attr(not(test), expect(
-        dead_code,
-        reason = "GOLD-LF-P1-08 stages 1-2 reserve raw-turn identifier validation before an authenticated Rust payload producer or reader exists"
-    ))]
     fn validate(&self) -> Result<()> {
         Self::parse(self.0).map(|_| ())
     }
@@ -114,10 +86,6 @@ impl RawTurnRowId {
 pub(crate) struct Sha256Digest([u8; 32]);
 
 impl Sha256Digest {
-    #[cfg_attr(not(test), expect(
-        dead_code,
-        reason = "GOLD-LF-P1-08 stages 1-2 reserve canonical digest parsing before an authenticated Rust payload producer or reader exists"
-    ))]
     fn parse_lower_hex(value: &str) -> Result<Self> {
         ensure!(
             value.len() == SHA256_HEX_LEN
@@ -134,10 +102,6 @@ impl Sha256Digest {
         Ok(Self(bytes))
     }
 
-    #[cfg_attr(not(test), expect(
-        dead_code,
-        reason = "GOLD-LF-P1-08 stages 1-2 reserve canonical digest rendering before an authenticated Rust payload producer or reader exists"
-    ))]
     fn lower_hex(&self) -> String {
         self.0.iter().map(|byte| format!("{byte:02x}")).collect()
     }
@@ -155,10 +119,6 @@ impl std::fmt::Debug for Sha256Digest {
     }
 }
 
-#[cfg_attr(not(test), expect(
-    dead_code,
-    reason = "GOLD-LF-P1-08 stages 1-2 reserve canonical digest decoding before an authenticated Rust payload producer or reader exists"
-))]
 fn hex_nibble(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
@@ -178,10 +138,6 @@ fn hex_nibble(byte: u8) -> Option<u8> {
 pub(crate) struct AuthenticatedMiningSubject(Sha256Digest);
 
 impl AuthenticatedMiningSubject {
-    #[cfg_attr(not(test), expect(
-        dead_code,
-        reason = "GOLD-LF-P1-08 stages 1-2 reserve sealed subject construction before an authenticated Rust payload producer or reader exists"
-    ))]
     fn from_verified_digest(digest: Sha256Digest) -> Self {
         Self(digest)
     }
@@ -265,10 +221,6 @@ pub(crate) struct RawFrameReference {
 }
 
 impl RawFrameReference {
-    #[cfg_attr(not(test), expect(
-        dead_code,
-        reason = "GOLD-LF-P1-08 stages 1-2 reserve raw-frame validation before an authenticated Rust payload producer or reader exists"
-    ))]
     fn validate(&self) -> Result<()> {
         self.raw_turn_row_id.validate()
     }
@@ -317,10 +269,6 @@ pub(crate) struct TranscriptMiningRevokedV1 {
 }
 
 impl TranscriptMiningBoundV1 {
-    #[cfg_attr(not(test), expect(
-        dead_code,
-        reason = "GOLD-LF-P1-08 stages 1-2 reserve bound-payload validation before an authenticated Rust payload producer or reader exists"
-    ))]
     fn validate(&self) -> Result<()> {
         self.lifecycle_id.validate()?;
         self.provenance_id.validate()?;
@@ -362,10 +310,6 @@ impl TranscriptMiningBoundV1 {
         Ok(value)
     }
 
-    #[cfg_attr(not(test), expect(
-        dead_code,
-        reason = "GOLD-LF-P1-08 stages 1-2 reserve bound-payload wire conversion before an authenticated Rust payload producer or reader exists"
-    ))]
     fn from_wire(wire: TranscriptMiningBoundWire) -> Result<Self> {
         Ok(Self {
             schema_version: wire.schema_version,
@@ -390,10 +334,6 @@ impl TranscriptMiningBoundV1 {
 }
 
 impl TranscriptMiningRevokedV1 {
-    #[cfg_attr(not(test), expect(
-        dead_code,
-        reason = "GOLD-LF-P1-08 stages 1-2 reserve revocation-payload validation before an authenticated Rust payload producer or reader exists"
-    ))]
     fn validate(&self) -> Result<()> {
         self.lifecycle_id.validate()?;
         self.provenance_id.validate()?;
@@ -437,10 +377,6 @@ impl TranscriptMiningRevokedV1 {
         Ok(value)
     }
 
-    #[cfg_attr(not(test), expect(
-        dead_code,
-        reason = "GOLD-LF-P1-08 stages 1-2 reserve revocation-payload wire conversion before an authenticated Rust payload producer or reader exists"
-    ))]
     fn from_wire(wire: TranscriptMiningRevokedWire) -> Result<Self> {
         Ok(Self {
             schema_version: wire.schema_version,
@@ -513,10 +449,6 @@ struct TranscriptMiningRevokedWire {
     revoked_at_unix: i64,
 }
 
-#[cfg_attr(not(test), expect(
-    dead_code,
-    reason = "GOLD-LF-P1-08 stages 1-2 reserve bounded canonical payload encoding before an authenticated Rust payload producer or reader exists"
-))]
 fn encode_canonical<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     let bytes = serde_json::to_vec(value)
         .map_err(|_| anyhow::anyhow!("encode transcript mining payload"))?;
@@ -527,10 +459,6 @@ fn encode_canonical<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-#[cfg_attr(not(test), expect(
-    dead_code,
-    reason = "GOLD-LF-P1-08 stages 1-2 reserve bounded strict wire decoding before an authenticated Rust payload producer or reader exists"
-))]
 fn decode_wire<T>(bytes: &[u8]) -> Result<T>
 where
     T: serde::de::DeserializeOwned,
