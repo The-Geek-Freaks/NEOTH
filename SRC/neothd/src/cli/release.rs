@@ -2,10 +2,11 @@
 //!
 //! Generates the project's minisign-compatible signing keypair IN-PROCESS and
 //! signs release artifacts — no external `minisign` binary, no install, no
-//! interactive password. A maintainer runs `neoth release keygen` once, pastes
-//! two values into their CI, and every release is then signed so end-users'
-//! NEOTH verifies authenticity before an auto-update (the verify side already
-//! ships: `updater::sig_verify`).
+//! interactive password. A maintainer runs `neoth release keygen` once to save
+//! the private key locally, then `neoth release setup` provisions CI without
+//! exposing that secret. Every release is then signed so end-users' NEOTH
+//! verifies authenticity before an auto-update (the verify side already ships:
+//! `updater::sig_verify`).
 
 use std::path::PathBuf;
 
@@ -46,10 +47,10 @@ pub enum ReleaseAction {
         #[arg(long)]
         force: bool,
     },
-    /// Generate the project release-signing keypair (maintainers, one-time).
-    /// Prints the PUBLIC key (safe to share — goes in CI build env) + the
-    /// SECRET (goes in a GitHub secret, never committed). Prefer `setup` for
-    /// the zero-copy-paste path.
+    /// Generate and securely save the project release-signing keypair
+    /// (maintainers, one-time). Prints only the public key and an operator
+    /// receipt; `setup` provisions the saved private key into CI without
+    /// exposing it.
     Keygen {
         /// Overwrite an existing key. DANGER: invalidates every signature made
         /// with the currently-published public key — only when rotating.
@@ -97,55 +98,58 @@ pub fn run_release(args: ReleaseArgs) -> Result<()> {
     }
 }
 
+#[derive(Debug, serde::Serialize)]
+struct ReleaseKeygenReceipt {
+    /// Public verification key; safe to include in operator output.
+    public_key: String,
+    key_id: String,
+    /// Local protected file location, never the private key bytes themselves.
+    secret_key_path: String,
+    /// The only supported CI provisioning path. It passes the private key to
+    /// `gh` over stdin rather than returning it to the caller.
+    provisioning_command: &'static str,
+}
+
+fn keygen_receipt(keypair: &ReleaseKeypair, key_path: &std::path::Path) -> ReleaseKeygenReceipt {
+    ReleaseKeygenReceipt {
+        public_key: keypair.public_key_base64(),
+        key_id: keypair.key_id_hex(),
+        secret_key_path: key_path.display().to_string(),
+        provisioning_command: "neoth release setup",
+    }
+}
+
+fn render_keygen_table(receipt: &ReleaseKeygenReceipt) -> String {
+    format!(
+        concat!(
+            "✓ Release signing key generated (key id {}).\n",
+            "  Private signing key saved securely at: {}\n\n",
+            "PUBLIC key — safe to share; it is the release-verification trust root:\n\n",
+            "  NEOTH_RELEASE_MINISIGN_PUBKEY={}\n\n",
+            "Private key material is intentionally never printed. Provision CI securely\n",
+            "from the target checkout with:\n\n",
+            "  {}\n\n",
+            "`setup` sends the saved private key to GitHub over stdin and updates the\n",
+            "public trust pins when required. In CI, sign each artifact with:\n",
+            "  export {}=<the GitHub secret>\n",
+            "  neoth release sign neoth-<target>.tar.gz\n",
+        ),
+        receipt.key_id,
+        receipt.secret_key_path,
+        receipt.public_key,
+        receipt.provisioning_command,
+        SECRET_ENV,
+    )
+}
+
 fn keygen(key_path: &std::path::Path, force: bool, output: OutputFormat) -> Result<()> {
     let kp = ReleaseKeypair::generate()?;
     sig_keygen::save_secret_key(key_path, &kp, force)?;
-    let pubkey = kp.public_key_base64();
-    let secret_b64 = base64::engine::general_purpose::STANDARD.encode(kp.secret_bytes());
+    let receipt = keygen_receipt(&kp, key_path);
 
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => {
-            // The secret IS included here (operators script `| jq` to provision
-            // CI), but it is NEVER logged/audited by the daemon. The plain-text
-            // surface warns loudly.
-            println!(
-                "{}",
-                serde_json::json!({
-                    "public_key": pubkey,
-                    "key_id": kp.key_id_hex(),
-                    "secret_key_path": key_path.display().to_string(),
-                    "secret_base64": secret_b64,
-                })
-            );
-        }
-        OutputFormat::Table => {
-            println!(
-                "✓ Release signing key generated (key id {}).",
-                kp.key_id_hex()
-            );
-            println!("  Saved (secret): {}", key_path.display());
-            println!();
-            println!("Two values go into your release pipeline. Do this ONCE:");
-            println!();
-            println!("  1) PUBLIC key — safe to share. Set it as a build-time env var so");
-            println!("     shipped binaries can verify updates:");
-            println!();
-            println!("       NEOTH_RELEASE_MINISIGN_PUBKEY={pubkey}");
-            println!();
-            println!("  2) SECRET — NEVER commit or share. Add it as a GitHub Actions");
-            println!("     secret named {SECRET_ENV}:");
-            println!();
-            println!("       {secret_b64}");
-            println!();
-            println!("  3) In CI, after building each artifact, sign it:");
-            println!("       export {SECRET_ENV}=<the GitHub secret>");
-            println!("       neoth release sign neoth-<target>.tar.gz");
-            println!("     → writes neoth-<target>.tar.gz.minisig, uploaded alongside the asset.");
-            println!();
-            println!("End-users' NEOTH then verifies the .minisig before any auto-update —");
-            println!("a swapped or tampered release is rejected. (You never touch the");
-            println!("`minisign` tool; NEOTH did the keygen + will do the signing.)");
-        }
+        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
+        OutputFormat::Table => print!("{}", render_keygen_table(&receipt)),
     }
     Ok(())
 }
@@ -510,8 +514,8 @@ fn ensure_gh_ready() -> Result<()> {
     if v.map(|o| !o.status.success()).unwrap_or(true) {
         anyhow::bail!(
             "the GitHub CLI `gh` is not available. Install it (https://cli.github.com) and run \
-             `gh auth login`, then re-run `neoth release setup`. Or use the manual path: \
-             `neoth release keygen` prints the two values to paste yourself."
+             `gh auth login`, then re-run `neoth release setup`. `neoth release keygen` can \
+             save a private key locally, but intentionally never prints it."
         );
     }
     let auth = std::process::Command::new("gh")
@@ -723,6 +727,34 @@ mod tests {
         let sig = minisign_verify::Signature::decode(&sig_text).unwrap();
         pk.verify(b"artifact bytes", &sig, false)
             .expect("CLI-produced .minisig must verify");
+    }
+
+    #[test]
+    fn keygen_receipt_exposes_only_public_operator_data_in_every_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = sig_keygen::default_release_key_path(dir.path());
+        let keypair = ReleaseKeypair::generate().unwrap();
+        let receipt = keygen_receipt(&keypair, &key_path);
+
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "public_key": keypair.public_key_base64(),
+                "key_id": keypair.key_id_hex(),
+                "secret_key_path": key_path.display().to_string(),
+                "provisioning_command": "neoth release setup",
+            })
+        );
+        assert!(
+            json.get("secret_base64").is_none(),
+            "the typed JSON receipt must never gain a private-key field"
+        );
+
+        let table = render_keygen_table(&receipt);
+        assert!(table.contains(&keypair.public_key_base64()));
+        assert!(table.contains("Private key material is intentionally never printed."));
+        assert!(table.contains("neoth release setup"));
     }
 
     #[test]

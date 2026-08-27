@@ -3129,7 +3129,7 @@ MAR-02 — DAU-friendly release signing. `keygen` mints the project signing keyp
 
 ### `neoth release keygen`
 
-Generate the project release-signing keypair (maintainers, one-time). Prints the PUBLIC key (safe to share — goes in CI build env) + the SECRET (goes in a GitHub secret, never committed). Prefer `setup` for the zero-copy-paste path
+Generate and securely save the project release-signing keypair (maintainers, one-time). Prints only the public key and an operator receipt; `setup` provisions the saved private key into CI without exposing it
 
 - `--force` — Overwrite an existing key. DANGER: invalidates every signature made with the currently-published public key — only when rotating
 

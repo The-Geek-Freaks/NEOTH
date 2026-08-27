@@ -11,13 +11,14 @@ hardening the signing secret demands**.
 ## The model in one paragraph
 
 `neoth release keygen` mints an ed25519 keypair in-process, in minisign-
-compatible form. The **public key** is versioned in
+compatible form, and saves the private key locally without printing it. The
+**public key** is versioned in
 [`NEOTH_RELEASE_MINISIGN_PUBKEY.txt`](../NEOTH_RELEASE_MINISIGN_PUBKEY.txt),
 mirrored by the `NEOTH_RELEASE_MINISIGN_PUBKEY` Actions variable, and pinned
 into release binaries and bootstrap installers. The **private key** is saved
 with private permissions at `~/.neoth/release/minisign.key` on the provisioning
-maintainer's machine and copied into the GitHub Actions secret
-(`NEOTH_RELEASE_MINISIGN_SECRET`) without printing it. CI signs each artifact
+maintainer's machine and `neoth release setup` copies it into the GitHub Actions
+secret (`NEOTH_RELEASE_MINISIGN_SECRET`) over `gh` stdin without printing it. CI signs each artifact
 (`neoth release sign` → `<asset>.minisig`); the daemon's `updater::sig_verify`
 checks that signature against the pinned public key before any update apply.
 The recurring network-discovery lane is separately disabled as documented
