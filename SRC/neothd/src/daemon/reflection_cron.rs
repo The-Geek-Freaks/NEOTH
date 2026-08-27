@@ -587,6 +587,7 @@ fn run_period_reflection_tick_once(
 
 struct PeriodTickResults {
     daily: Result<bool, String>,
+    retention: Result<crate::reflection::periodic::DailyRetentionOutcome, String>,
     yearly: Result<bool, String>,
 }
 
@@ -598,7 +599,9 @@ fn run_period_reflection_ticks_once(
     now_unix: i64,
     config: &crate::config::FreedomConfig,
 ) -> Result<PeriodTickResults, String> {
-    use crate::reflection::periodic::{PeriodKind, date_tag_from_unix, year_tag_from_unix};
+    use crate::reflection::periodic::{
+        PeriodKind, date_tag_from_unix, enforce_daily_retention, year_tag_from_unix,
+    };
 
     let cfg = crate::cli::reflect::ReflectTopics::load_for_automation(home)
         .map_err(|error| format!("reflection automation config: {error}"))?;
@@ -617,6 +620,17 @@ fn run_period_reflection_ticks_once(
         obs_ref,
         cfg.daily_admission.as_ref(),
     );
+    // Daily retention inventory intentionally runs regardless of the opt-in
+    // composition cadence. `cfg` and `obs_ref` are immutable snapshots; the
+    // pre-v2 implementation is read-only and returns deferred candidates.
+    // A later authority-backed executor must retain this immutable snapshot.
+    let retention = enforce_daily_retention(
+        home,
+        now_unix,
+        &cfg.daily_retention,
+        obs_ref,
+    )
+    .map_err(|_| "daily retention enforcement failed".to_string());
     let yearly_tag = year_tag_from_unix(now_unix);
     let yearly = run_period_reflection_tick_once(
         home,
@@ -630,7 +644,11 @@ fn run_period_reflection_ticks_once(
         obs_ref,
         None,
     );
-    Ok(PeriodTickResults { daily, yearly })
+    Ok(PeriodTickResults {
+        daily,
+        retention,
+        yearly,
+    })
 }
 
 /// Spawn the reflection cron loop. Matches the doctor_cron /
@@ -704,11 +722,30 @@ pub fn spawn_reflection_cron_loop(
             .await
             {
                 Ok(Ok(results)) => {
+                    match results.retention {
+                        Ok(outcome) if outcome.awaiting_retention_authority() => warn!(
+                            retention_days = outcome.policy,
+                            archives_pending = outcome.archives_pending,
+                            unattested_note_debt = outcome.unattested_note_debt,
+                            "daily retention work is deferred awaiting authority"
+                        ),
+                        Ok(_) => {}
+                        Err(_) => warn!(
+                            retention_failures = 1_u8,
+                            "daily retention pass failed; will retry next interval"
+                        ),
+                    }
                     if let Err(e) = results.daily {
-                        warn!(error = %e, "daily reflection tick failed; will retry next interval");
+                        warn!(
+                            error = %e,
+                            "daily reflection tick failed; will retry next interval"
+                        );
                     }
                     if let Err(e) = results.yearly {
-                        warn!(error = %e, "yearly reflection tick failed; will retry next interval");
+                        warn!(
+                            error = %e,
+                            "yearly reflection tick failed; will retry next interval"
+                        );
                     }
                 }
                 Ok(Err(e)) => warn!(
@@ -1305,6 +1342,52 @@ mod tests {
         assert!(
             !tmp.path().join("reflections/daily-last.txt").exists(),
             "no marker written when off"
+        );
+    }
+
+    #[test]
+    fn period_tick_reaches_but_defers_default_daily_retention_without_authority() {
+        use crate::reflection::periodic::{
+            DailyRetentionConfig, DailyRetentionExecution, PeriodKind, build_reflection,
+            date_tag_from_unix, jsonl_file, settle_daily_admission,
+        };
+
+        let home = TempDir::new().unwrap();
+        let now = 1_787_788_800_i64;
+        let stale_tag = date_tag_from_unix(now - 90 * 86_400);
+        let current_tag = date_tag_from_unix(now);
+        let stale = build_reflection(
+            PeriodKind::Daily,
+            &stale_tag,
+            &["old-managed".into()],
+            now - 90 * 86_400,
+        )
+        .unwrap();
+        let current = build_reflection(
+            PeriodKind::Daily,
+            &current_tag,
+            &["current-managed".into()],
+            now,
+        )
+        .unwrap();
+        settle_daily_admission(home.path(), &stale, None, None).unwrap();
+        settle_daily_admission(home.path(), &current, None, None).unwrap();
+
+        let results = run_period_reflection_ticks_once(
+            home.path(),
+            now,
+            &crate::config::FreedomConfig::default(),
+        )
+        .unwrap();
+        let retention = results.retention.unwrap();
+        assert_eq!(retention.execution, DailyRetentionExecution::AwaitingRetentionAuthority);
+        assert_eq!(retention.archives_deleted, 0);
+        assert_eq!(retention.archives_pending, 1);
+        assert!(jsonl_file(home.path(), PeriodKind::Daily, &stale_tag).exists());
+        assert!(jsonl_file(home.path(), PeriodKind::Daily, &current_tag).exists());
+        assert_eq!(
+            retention.policy,
+            DailyRetentionConfig::default().retention_days
         );
     }
 
