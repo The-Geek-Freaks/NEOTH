@@ -197,12 +197,22 @@ function Get-ExecutableSlintSource {
                 [void]$masked.Append('  ')
                 $index += 1
             } else {
-                [void]$masked.Append((if ($character -eq "`n") { "`n" } else { ' ' }))
+                $maskedCharacter = ' '
+                if ($character -eq "`n") {
+                    $maskedCharacter = "`n"
+                }
+                [void]$masked.Append($maskedCharacter)
             }
             continue
         }
         if ($inString) {
-            [void]$masked.Append((if ($KeepStringLiterals) { $character } elseif ($character -eq "`n") { "`n" } else { ' ' }))
+            $maskedCharacter = ' '
+            if ($KeepStringLiterals) {
+                $maskedCharacter = $character
+            } elseif ($character -eq "`n") {
+                $maskedCharacter = "`n"
+            }
+            [void]$masked.Append($maskedCharacter)
             if ($escaped) {
                 $escaped = $false
             } elseif ($character -eq '\') {
@@ -230,7 +240,11 @@ function Get-ExecutableSlintSource {
         }
         if ($character -eq '"') {
             $inString = $true
-            [void]$masked.Append((if ($KeepStringLiterals) { $character } else { ' ' }))
+            $maskedCharacter = ' '
+            if ($KeepStringLiterals) {
+                $maskedCharacter = $character
+            }
+            [void]$masked.Append($maskedCharacter)
             continue
         }
         [void]$masked.Append($character)
