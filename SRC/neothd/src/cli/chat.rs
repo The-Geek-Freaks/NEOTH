@@ -244,7 +244,11 @@ fn ensure_incognito_argument_admission(args: &ChatArgs) -> Result<()> {
 /// Slash/agent operations may load skills, tools, documents or background
 /// state. They are never admitted to a private provider turn.
 fn ensure_incognito_prompt_admission(prompt: &str) -> Result<()> {
-    let command = prompt.trim_start().split_whitespace().next().unwrap_or_default();
+    let command = prompt
+        .trim_start()
+        .split_whitespace()
+        .next()
+        .unwrap_or_default();
     anyhow::ensure!(
         !command.starts_with('/'),
         "{command} is unavailable in Incognito because slash commands can access durable \
@@ -1840,8 +1844,8 @@ async fn build_prompt_bundle(
         let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
             prompt: &prompt,
             operator_sovereignty: Some(
-                crate::security::operator_sovereignty::OperatorSovereigntyPrompt::
-                    local_interactive(),
+                crate::security::operator_sovereignty::OperatorSovereigntyPrompt::local_interactive(
+                ),
             ),
             operator_context: None,
             preset_addendum: None,
@@ -6981,7 +6985,9 @@ async fn run_chat_with_consent(
     // a bad/missing checkpoint or an unrecorded legacy MCP scope fails closed
     // instead of silently running a normal turn with a different tool surface.
     let mut resumed_mcp_scope: Option<Vec<String>> = None;
-    if !args.incognito && let Some(hash_prefix) = args.resume_from.clone() {
+    if !args.incognito
+        && let Some(hash_prefix) = args.resume_from.clone()
+    {
         let hydration =
             hydrate_resume_context(&first_tour_home, &hash_prefix, args.system.as_deref())
                 .map_err(|why| anyhow::anyhow!("resume-from `{hash_prefix}` failed: {why}"))?;
@@ -7025,8 +7031,8 @@ async fn run_chat_with_consent(
         InstanceTurnState {
             mcp_servers: crate::mcp::McpServers::default(),
             tweaks: crate::tweaks::Tweaks::default(),
-            profile_extensions:
-                crate::profile::extension_registry::TypedExtensionRegistry::default(),
+            profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(
+            ),
         }
     } else {
         load_instance_turn_state(&instance_paths)?
@@ -7145,7 +7151,9 @@ async fn run_chat_with_consent(
     // the operator NEOTH carried context across runs. Best-effort +
     // naturally silent on a fresh install (zero memories → None), which
     // also keeps the post-wizard first-tour banner clean.
-    if !args.incognito && let Some(line) = session_memory_signal(&first_tour_home) {
+    if !args.incognito
+        && let Some(line) = session_memory_signal(&first_tour_home)
+    {
         write_chat_notice(args.stream, &line).context("write session memory notice")?;
     }
 
@@ -7319,7 +7327,7 @@ async fn run_chat_with_consent(
     // an audit signal, not a chat-correctness invariant.
     if !args.incognito
         && let Err(error) =
-        crate::profile::briefing_gate::record_last_active(&first_tour_home, now_unix() as i64)
+            crate::profile::briefing_gate::record_last_active(&first_tour_home, now_unix() as i64)
     {
         tracing::warn!(error = %error, "operator activity marker was not persisted");
     }
@@ -17468,13 +17476,19 @@ modes:
             "OLD_MORAL_CORE_DO_NOT_INJECT",
             "OLD_CODE_MAP_DO_NOT_INJECT",
         ] {
-            assert!(!system.contains(forbidden), "Incognito injected {forbidden}");
+            assert!(
+                !system.contains(forbidden),
+                "Incognito injected {forbidden}"
+            );
         }
         assert_eq!(
             bundle.skill_route_report.degraded_reason.as_deref(),
             Some("incognito_extension_loading_disabled")
         );
-        assert_eq!(std::fs::read(home.join(".last-active")).unwrap(), marker_before);
+        assert_eq!(
+            std::fs::read(home.join(".last-active")).unwrap(),
+            marker_before
+        );
     }
 
     #[test]
@@ -17567,7 +17581,10 @@ modes:
             .await
             .expect_err("private custom slash must stop before runtime setup");
         assert!(error.to_string().contains("unavailable in Incognito"));
-        assert_eq!(args.message.as_deref(), Some("/custom-private-command attachment"));
+        assert_eq!(
+            args.message.as_deref(),
+            Some("/custom-private-command attachment")
+        );
     }
 
     #[tokio::test]

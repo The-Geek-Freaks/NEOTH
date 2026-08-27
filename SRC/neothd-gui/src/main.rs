@@ -2829,10 +2829,7 @@ fn main() -> Result<()> {
     let last_operator_input_for_send = std::sync::Arc::clone(&last_operator_input);
     let last_operator_input_for_privacy = std::sync::Arc::clone(&last_operator_input);
     window.on_chat_incognito_selection_changed(move |selected| {
-        detach_operator_recall_for_incognito(
-            last_operator_input_for_privacy.as_ref(),
-            selected,
-        );
+        detach_operator_recall_for_incognito(last_operator_input_for_privacy.as_ref(), selected);
     });
 
     // GOLD-ADAPT-ODY-04 — shared stream-supervision state:
@@ -3908,25 +3905,21 @@ fn main() -> Result<()> {
     let main_chat_consent_token_for_send = main_chat_consent_token.clone();
     let chat_consent_flow_for_send = chat_consent_flow_active.clone();
     let chat_worker_barrier_for_send = chat_worker_barrier.clone();
-    let chat_send_approved =
-        move |request_id_wire, text, explicit_skill_id_wire, incognito| {
+    let chat_send_approved = move |request_id_wire, text, explicit_skill_id_wire, incognito| {
         let Some(request_id) = ChatStreamRequestId::parse_wire(request_id_wire.as_str()) else {
             chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
             return;
         };
         let body = text.trim().to_string();
-        let explicit_skill_id = (!explicit_skill_id_wire.is_empty())
-            .then(|| explicit_skill_id_wire.to_string());
+        let explicit_skill_id =
+            (!explicit_skill_id_wire.is_empty()).then(|| explicit_skill_id_wire.to_string());
         if body.is_empty() {
             if let Ok(mut controller) = chat_stream_for_send.lock() {
                 controller.settle(request_id, false);
             }
             discard_chat_consent_token(main_chat_consent_token_for_send.as_ref(), request_id);
             discard_chat_launch_gate(chat_launch_gate_for_send.as_ref(), request_id);
-            discard_chat_model_override(
-                chat_model_overrides_for_send.as_ref(),
-                request_id,
-            );
+            discard_chat_model_override(chat_model_overrides_for_send.as_ref(), request_id);
             chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
             if let Some(overlay) = overlay_weak_for_chat_send.upgrade() {
                 project_companion_chat_stream(
@@ -3943,10 +3936,7 @@ fn main() -> Result<()> {
             }
             discard_chat_consent_token(main_chat_consent_token_for_send.as_ref(), request_id);
             discard_chat_launch_gate(chat_launch_gate_for_send.as_ref(), request_id);
-            discard_chat_model_override(
-                chat_model_overrides_for_send.as_ref(),
-                request_id,
-            );
+            discard_chat_model_override(chat_model_overrides_for_send.as_ref(), request_id);
             chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
             if let Some(overlay) = overlay_weak_for_chat_send.upgrade() {
                 project_companion_chat_stream(
@@ -3957,11 +3947,8 @@ fn main() -> Result<()> {
             }
             return;
         };
-        let request_is_live = chat_stream_for_send
-            .lock()
-            .ok()
-            .is_some_and(|controller| {
-                controller.is_dispatchable_on(request_id, ChatStreamSurface::Main)
+        let request_is_live = chat_stream_for_send.lock().ok().is_some_and(|controller| {
+            controller.is_dispatchable_on(request_id, ChatStreamSurface::Main)
         });
         if !request_is_live {
             discard_chat_consent_token(main_chat_consent_token_for_send.as_ref(), request_id);
@@ -3976,10 +3963,7 @@ fn main() -> Result<()> {
                 controller.settle(request_id, false);
             }
             discard_chat_launch_gate(chat_launch_gate_for_send.as_ref(), request_id);
-            discard_chat_model_override(
-                chat_model_overrides_for_send.as_ref(),
-                request_id,
-            );
+            discard_chat_model_override(chat_model_overrides_for_send.as_ref(), request_id);
             chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
             settle_main_chat_request_ui(&w);
             buddy(&w, GuiActivity::ChatFailed);
@@ -3994,19 +3978,11 @@ fn main() -> Result<()> {
             return;
         }
         let dispatch_claimed = match chat_stream_for_send.lock() {
-            Ok(mut controller) => {
-                controller.claim_dispatch(request_id, ChatStreamSurface::Main)
-            }
+            Ok(mut controller) => controller.claim_dispatch(request_id, ChatStreamSurface::Main),
             Err(_) => {
-                discard_chat_consent_token(
-                    main_chat_consent_token_for_send.as_ref(),
-                    request_id,
-                );
+                discard_chat_consent_token(main_chat_consent_token_for_send.as_ref(), request_id);
                 discard_chat_launch_gate(chat_launch_gate_for_send.as_ref(), request_id);
-                discard_chat_model_override(
-                    chat_model_overrides_for_send.as_ref(),
-                    request_id,
-                );
+                discard_chat_model_override(chat_model_overrides_for_send.as_ref(), request_id);
                 chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
                 settle_main_chat_request_ui(&w);
                 buddy(&w, GuiActivity::ChatFailed);
@@ -4034,15 +4010,9 @@ fn main() -> Result<()> {
                 if let Ok(mut controller) = chat_stream_for_send.lock() {
                     controller.settle(request_id, false);
                 }
-                discard_chat_consent_token(
-                    main_chat_consent_token_for_send.as_ref(),
-                    request_id,
-                );
+                discard_chat_consent_token(main_chat_consent_token_for_send.as_ref(), request_id);
                 discard_chat_launch_gate(chat_launch_gate_for_send.as_ref(), request_id);
-                discard_chat_model_override(
-                    chat_model_overrides_for_send.as_ref(),
-                    request_id,
-                );
+                discard_chat_model_override(chat_model_overrides_for_send.as_ref(), request_id);
                 chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
                 settle_main_chat_request_ui(&w);
                 buddy(&w, GuiActivity::ChatFailed);
@@ -4061,12 +4031,8 @@ fn main() -> Result<()> {
                         main_chat_consent_token_for_send.as_ref(),
                         request_id,
                     );
-                    discard_chat_model_override(
-                        chat_model_overrides_for_send.as_ref(),
-                        request_id,
-                    );
-                    chat_consent_flow_for_send
-                        .store(false, std::sync::atomic::Ordering::Release);
+                    discard_chat_model_override(chat_model_overrides_for_send.as_ref(), request_id);
+                    chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
                     settle_main_chat_request_ui(&w);
                     buddy(&w, GuiActivity::ChatFailed);
                     if let Some(overlay) = overlay_weak_for_chat_send.upgrade() {
@@ -4076,7 +4042,9 @@ fn main() -> Result<()> {
                             Some(&format!("{error}; message was not sent.")),
                         );
                     }
-                    w.set_status_line(format!("{error}; draft and attachments were retained.").into());
+                    w.set_status_line(
+                        format!("{error}; draft and attachments were retained.").into(),
+                    );
                     return;
                 }
             };
@@ -4084,29 +4052,27 @@ fn main() -> Result<()> {
             match take_chat_consent_token(main_chat_consent_token_for_send.as_ref(), request_id) {
                 Ok(token) => token,
                 Err(_) => {
-                if let Ok(mut controller) = chat_stream_for_send.lock() {
-                    controller.settle(request_id, false);
-                }
-                discard_chat_launch_gate(chat_launch_gate_for_send.as_ref(), request_id);
-                discard_chat_model_override(
-                    chat_model_overrides_for_send.as_ref(),
-                    request_id,
-                );
-                chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
-                settle_main_chat_request_ui(&w);
-                buddy(&w, GuiActivity::ChatFailed);
-                if let Some(overlay) = overlay_weak_for_chat_send.upgrade() {
-                    project_companion_chat_stream(
-                        &overlay,
-                        ChatStreamPhase::Failed,
-                        Some("Private consent hand-off failed; message was not sent."),
+                    if let Ok(mut controller) = chat_stream_for_send.lock() {
+                        controller.settle(request_id, false);
+                    }
+                    discard_chat_launch_gate(chat_launch_gate_for_send.as_ref(), request_id);
+                    discard_chat_model_override(chat_model_overrides_for_send.as_ref(), request_id);
+                    chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
+                    settle_main_chat_request_ui(&w);
+                    buddy(&w, GuiActivity::ChatFailed);
+                    if let Some(overlay) = overlay_weak_for_chat_send.upgrade() {
+                        project_companion_chat_stream(
+                            &overlay,
+                            ChatStreamPhase::Failed,
+                            Some("Private consent hand-off failed; message was not sent."),
+                        );
+                    }
+                    w.set_status_line(
+                        "Private consent hand-off failed; draft and attachments were retained."
+                            .into(),
                     );
+                    return;
                 }
-                w.set_status_line(
-                    "Private consent hand-off failed; draft and attachments were retained.".into(),
-                );
-                return;
-            }
             };
         // ODY-10: only accepted live sends enter the recall buffer. Historical
         // callbacks must not mutate draft/recall state before this guard.
@@ -4123,10 +4089,7 @@ fn main() -> Result<()> {
                 controller.settle(request_id, false);
             }
             discard_chat_launch_gate(chat_launch_gate_for_send.as_ref(), request_id);
-            discard_chat_model_override(
-                chat_model_overrides_for_send.as_ref(),
-                request_id,
-            );
+            discard_chat_model_override(chat_model_overrides_for_send.as_ref(), request_id);
             chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
             settle_main_chat_request_ui(&w);
             buddy(&w, GuiActivity::ChatFailed);
@@ -4263,17 +4226,19 @@ fn main() -> Result<()> {
                 cmd.stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped());
                 let mut child = OwnedChatChild::spawn(request_id, &mut cmd).map_err(|e| {
-                        format!(
-                            "Chat subprocess could not start: {e}\n\
+                    format!(
+                        "Chat subprocess could not start: {e}\n\
                              Verify `neoth --version` works from a terminal."
-                        )
-                    })?;
+                    )
+                })?;
                 let Some(mut launch_stdin) = child.take_stdin() else {
                     let cleanup = child.terminate_and_reap().err();
                     return Err(cleanup.map_or_else(
                         || "private chat launch stdin unavailable".to_string(),
                         |error| {
-                            format!("private chat launch stdin unavailable; cleanup failed: {error}")
+                            format!(
+                                "private chat launch stdin unavailable; cleanup failed: {error}"
+                            )
                         },
                     ));
                 };
@@ -4301,18 +4266,10 @@ fn main() -> Result<()> {
                     let weak = weak_stderr.clone();
                     let stream = stream_stderr.clone();
                     let _ = slint::invoke_from_event_loop(move || {
-                        let is_current = stream
-                            .lock()
-                            .ok()
-                            .is_some_and(|controller| {
-                                controller.is_dispatchable_on(
-                                    request_id,
-                                    ChatStreamSurface::Main,
-                                )
-                            });
-                        if is_current
-                            && let Some(w) = weak.upgrade()
-                        {
+                        let is_current = stream.lock().ok().is_some_and(|controller| {
+                            controller.is_dispatchable_on(request_id, ChatStreamSurface::Main)
+                        });
+                        if is_current && let Some(w) = weak.upgrade() {
                             w.set_status_line(format!("NEOTH: {diagnostic}").into());
                         }
                     });
@@ -4346,13 +4303,12 @@ fn main() -> Result<()> {
                 let request_is_live = stream.lock().ok().is_some_and(|controller| {
                     controller.is_dispatchable_on(request_id, ChatStreamSurface::Main)
                 });
-                let launch_committed = request_is_live
-                    && matches!(launch_gate.commit(), ChatLaunchCommit::Committed);
+                let launch_committed =
+                    request_is_live && matches!(launch_gate.commit(), ChatLaunchCommit::Committed);
                 if !launch_committed {
                     drop(launch_stdin);
                     launch_envelope.zeroize();
-                    let kill_error =
-                        kill_owned_chat_child(child_slot.as_ref(), request_id).err();
+                    let kill_error = kill_owned_chat_child(child_slot.as_ref(), request_id).err();
                     let exit_result =
                         wait_for_owned_chat_child_exit(child_slot.as_ref(), request_id);
                     let diagnostic = stderr_reader.join().unwrap_or_default();
@@ -4365,10 +4321,7 @@ fn main() -> Result<()> {
                             )
                         },
                     );
-                    return Err(with_chat_diagnostic(
-                        message,
-                        &diagnostic,
-                    ));
+                    return Err(with_chat_diagnostic(message, &diagnostic));
                 }
                 let write_result = launch_stdin
                     .write_all(launch_envelope.as_slice())
@@ -4376,8 +4329,7 @@ fn main() -> Result<()> {
                 launch_envelope.zeroize();
                 drop(launch_stdin);
                 if let Err(error) = write_result {
-                    let kill_error =
-                        kill_owned_chat_child(child_slot.as_ref(), request_id).err();
+                    let kill_error = kill_owned_chat_child(child_slot.as_ref(), request_id).err();
                     let exit_result =
                         wait_for_owned_chat_child_exit(child_slot.as_ref(), request_id);
                     let diagnostic = stderr_reader.join().unwrap_or_default();
@@ -4401,9 +4353,7 @@ fn main() -> Result<()> {
                     match stdout.read(&mut buf) {
                         Ok(0) => break None, // EOF
                         Ok(n) => {
-                            if total_stdout_bytes.saturating_add(n)
-                                > CHAT_STREAM_STDOUT_MAX_BYTES
-                            {
+                            if total_stdout_bytes.saturating_add(n) > CHAT_STREAM_STDOUT_MAX_BYTES {
                                 break Some(std::io::Error::other(format!(
                                     "chat stream exceeded the {} byte GUI stdout limit",
                                     CHAT_STREAM_STDOUT_MAX_BYTES
@@ -4572,26 +4522,15 @@ fn main() -> Result<()> {
                                     buddy(w, GuiActivity::from(phase));
                                     // Keep partial chunks in the live feed, but do not
                                     // tick the sidebar preview until completion.
-                                    project_chat_stream_update(
-                                        w,
-                                        request_id,
-                                        phase,
-                                        Some(&live),
-                                    );
+                                    project_chat_stream_update(w, request_id, phase, Some(&live));
                                 }
                                 if let Some(overlay) = overlay.as_ref() {
-                                    project_companion_chat_stream(
-                                        overlay,
-                                        phase,
-                                        Some(&live),
-                                    );
+                                    project_companion_chat_stream(overlay, phase, Some(&live));
                                 }
                                 if let (Some(window), Some(overlay)) =
                                     (window.as_ref(), overlay.as_ref())
                                 {
-                                    sync_companion_recent_lines_from_canonical(
-                                        window, overlay,
-                                    );
+                                    sync_companion_recent_lines_from_canonical(window, overlay);
                                 }
                             });
                         }
@@ -4762,15 +4701,16 @@ fn main() -> Result<()> {
                     // routes the refill-guard in the send handler.
                     let auto_nudge = terminal_phase == ChatStreamPhase::Failed
                         && matches!(
-                        &outcome,
-                        Err(e) if e.starts_with("Stream ended before completion")
-                    ) && nudge_budget
-                        .fetch_update(
-                            std::sync::atomic::Ordering::AcqRel,
-                            std::sync::atomic::Ordering::Acquire,
-                            |b| b.checked_sub(1),
+                            &outcome,
+                            Err(e) if e.starts_with("Stream ended before completion")
                         )
-                        .is_ok();
+                        && nudge_budget
+                            .fetch_update(
+                                std::sync::atomic::Ordering::AcqRel,
+                                std::sync::atomic::Ordering::Acquire,
+                                |b| b.checked_sub(1),
+                            )
+                            .is_ok();
                     // Chat-feel parity: a successful reply is segmented into
                     // one bubble per paragraph (openhuman cluster feel); an
                     // error stays a single `error`-role bubble.
@@ -4834,8 +4774,9 @@ fn main() -> Result<()> {
                         }],
                         (_, Ok(_)) => vec![ChatMessage {
                             role: "error".into(),
-                            text: "Chat completion was rejected because its stream phase was invalid."
-                                .into(),
+                            text:
+                                "Chat completion was rejected because its stream phase was invalid."
+                                    .into(),
                             timestamp: ts.clone().into(),
                             request_id: request_id.as_wire().into(),
                             stream_phase: ChatStreamPhase::Failed.as_wire().into(),
@@ -4856,8 +4797,7 @@ fn main() -> Result<()> {
                             if rows[placeholder].text.trim().is_empty()
                                 || rows[placeholder].text.as_str() == "…"
                             {
-                                rows[placeholder].text =
-                                    "Stopped before a reply arrived.".into();
+                                rows[placeholder].text = "Stopped before a reply arrived.".into();
                             }
                             rows[placeholder].stream_phase =
                                 ChatStreamPhase::Cancelled.as_wire().into();
@@ -4917,13 +4857,9 @@ fn main() -> Result<()> {
                     if let Some(retry) = watchdog_retry_body {
                         if retry.surface == ChatStreamSurface::Main {
                             w.set_status_line(
-                                "Silent request cancelled; starting retry as a new request."
-                                    .into(),
+                                "Silent request cancelled; starting retry as a new request.".into(),
                             );
-                            w.invoke_chat_send_clicked(
-                                retry.body.as_str().into(),
-                                retry.incognito,
-                            );
+                            w.invoke_chat_send_clicked(retry.body.as_str().into(), retry.incognito);
                         } else {
                             w.set_status_line(
                                 "Watchdog retry was suppressed because its surface did not match the Main chat."
@@ -4934,7 +4870,7 @@ fn main() -> Result<()> {
                 }
             });
         });
-        };
+    };
     window.on_chat_send_approved(chat_send_approved);
 
     // P1-21 — retry is a request-bound, one-shot hand-off. It first asks the
@@ -14114,8 +14050,7 @@ fn main() -> Result<()> {
         // composer. The overlay draft is kept until the approved continuation
         // below; the modal itself lives in the main window.
         {
-            let last_operator_input_for_buddy_privacy =
-                std::sync::Arc::clone(&last_operator_input);
+            let last_operator_input_for_buddy_privacy = std::sync::Arc::clone(&last_operator_input);
             overlay.on_incognito_selection_changed(move |selected| {
                 detach_operator_recall_for_incognito(
                     last_operator_input_for_buddy_privacy.as_ref(),
@@ -14370,102 +14305,83 @@ fn main() -> Result<()> {
             let worker_barrier = chat_worker_barrier.clone();
             let buddy_chat_send_approved =
                 move |request_id_wire, text, explicit_skill_id_wire, incognito| {
-                let Some(request_id) =
-                    ChatStreamRequestId::parse_wire(request_id_wire.as_str())
-                else {
-                    flow_active.store(false, std::sync::atomic::Ordering::Release);
-                    return;
-                };
-                let body = text.trim().to_string();
-                let explicit_skill_id = (!explicit_skill_id_wire.is_empty())
-                    .then(|| explicit_skill_id_wire.to_string());
-                if body.is_empty() {
-                    if let Ok(mut controller) = stream.lock() {
-                        controller.settle(request_id, false);
-                    }
-                    discard_chat_consent_token(buddy_token.as_ref(), request_id);
-                    discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
-                    flow_active.store(false, std::sync::atomic::Ordering::Release);
-                    return;
-                }
-                let Some(ov) = overlay_weak.upgrade() else {
-                    if let Ok(mut controller) = stream.lock() {
-                        controller.settle(request_id, false);
-                    }
-                    discard_chat_consent_token(buddy_token.as_ref(), request_id);
-                    discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
-                    flow_active.store(false, std::sync::atomic::Ordering::Release);
-                    return;
-                };
-                let Some(win) = window_weak.upgrade() else {
-                    if let Ok(mut controller) = stream.lock() {
-                        controller.settle(request_id, false);
-                    }
-                    discard_chat_consent_token(buddy_token.as_ref(), request_id);
-                    discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
-                    flow_active.store(false, std::sync::atomic::Ordering::Release);
-                    return;
-                };
-                let request_is_live = stream.lock().ok().is_some_and(|controller| {
-                    controller.is_dispatchable_on(request_id, ChatStreamSurface::Buddy)
-                });
-                if !request_is_live {
-                    discard_chat_consent_token(buddy_token.as_ref(), request_id);
-                    discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
-                    return;
-                }
-                let dispatch_claimed = match stream.lock() {
-                    Ok(mut controller) => {
-                        controller.claim_dispatch(request_id, ChatStreamSurface::Buddy)
-                    }
-                    Err(_) => {
-                        discard_chat_consent_token(buddy_token.as_ref(), request_id);
-                        discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
+                    let Some(request_id) =
+                        ChatStreamRequestId::parse_wire(request_id_wire.as_str())
+                    else {
                         flow_active.store(false, std::sync::atomic::Ordering::Release);
-                        settle_buddy_chat_request_ui(&win, &ov);
-                        buddy(&win, GuiActivity::ChatFailed);
-                        project_companion_chat_stream(
-                            &ov,
-                            ChatStreamPhase::Failed,
-                            Some("Buddy stream controller failed; message was not sent."),
-                        );
                         return;
-                    }
-                };
-                if !dispatch_claimed {
-                    tracing::warn!(
-                        request_id = request_id.get(),
-                        "duplicate or stale approved Buddy dispatch suppressed"
-                    );
-                    return;
-                }
-                let worker_lease = match worker_barrier.claim(request_id) {
-                    Ok(lease) => lease,
-                    Err(error) => {
+                    };
+                    let body = text.trim().to_string();
+                    let explicit_skill_id = (!explicit_skill_id_wire.is_empty())
+                        .then(|| explicit_skill_id_wire.to_string());
+                    if body.is_empty() {
                         if let Ok(mut controller) = stream.lock() {
                             controller.settle(request_id, false);
                         }
                         discard_chat_consent_token(buddy_token.as_ref(), request_id);
                         discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
                         flow_active.store(false, std::sync::atomic::Ordering::Release);
-                        settle_buddy_chat_request_ui(&win, &ov);
-                        buddy(&win, GuiActivity::ChatFailed);
-                        project_companion_chat_stream(
-                            &ov,
-                            ChatStreamPhase::Failed,
-                            Some(&format!("{error}; message was not sent.")),
+                        return;
+                    }
+                    let Some(ov) = overlay_weak.upgrade() else {
+                        if let Ok(mut controller) = stream.lock() {
+                            controller.settle(request_id, false);
+                        }
+                        discard_chat_consent_token(buddy_token.as_ref(), request_id);
+                        discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
+                        flow_active.store(false, std::sync::atomic::Ordering::Release);
+                        return;
+                    };
+                    let Some(win) = window_weak.upgrade() else {
+                        if let Ok(mut controller) = stream.lock() {
+                            controller.settle(request_id, false);
+                        }
+                        discard_chat_consent_token(buddy_token.as_ref(), request_id);
+                        discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
+                        flow_active.store(false, std::sync::atomic::Ordering::Release);
+                        return;
+                    };
+                    let request_is_live = stream.lock().ok().is_some_and(|controller| {
+                        controller.is_dispatchable_on(request_id, ChatStreamSurface::Buddy)
+                    });
+                    if !request_is_live {
+                        discard_chat_consent_token(buddy_token.as_ref(), request_id);
+                        discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
+                        return;
+                    }
+                    let dispatch_claimed = match stream.lock() {
+                        Ok(mut controller) => {
+                            controller.claim_dispatch(request_id, ChatStreamSurface::Buddy)
+                        }
+                        Err(_) => {
+                            discard_chat_consent_token(buddy_token.as_ref(), request_id);
+                            discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
+                            flow_active.store(false, std::sync::atomic::Ordering::Release);
+                            settle_buddy_chat_request_ui(&win, &ov);
+                            buddy(&win, GuiActivity::ChatFailed);
+                            project_companion_chat_stream(
+                                &ov,
+                                ChatStreamPhase::Failed,
+                                Some("Buddy stream controller failed; message was not sent."),
+                            );
+                            return;
+                        }
+                    };
+                    if !dispatch_claimed {
+                        tracing::warn!(
+                            request_id = request_id.get(),
+                            "duplicate or stale approved Buddy dispatch suppressed"
                         );
                         return;
                     }
-                };
-                let launch_gate =
-                    match chat_launch_gate_for_request(launch_gate_slot.as_ref(), request_id) {
-                        Ok(gate) => gate,
+                    let worker_lease = match worker_barrier.claim(request_id) {
+                        Ok(lease) => lease,
                         Err(error) => {
                             if let Ok(mut controller) = stream.lock() {
                                 controller.settle(request_id, false);
                             }
                             discard_chat_consent_token(buddy_token.as_ref(), request_id);
+                            discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
                             flow_active.store(false, std::sync::atomic::Ordering::Release);
                             settle_buddy_chat_request_ui(&win, &ov);
                             buddy(&win, GuiActivity::ChatFailed);
@@ -14477,9 +14393,48 @@ fn main() -> Result<()> {
                             return;
                         }
                     };
-                let consent_token = match take_chat_consent_token(buddy_token.as_ref(), request_id) {
-                    Ok(token) => token,
-                    Err(_) => {
+                    let launch_gate =
+                        match chat_launch_gate_for_request(launch_gate_slot.as_ref(), request_id) {
+                            Ok(gate) => gate,
+                            Err(error) => {
+                                if let Ok(mut controller) = stream.lock() {
+                                    controller.settle(request_id, false);
+                                }
+                                discard_chat_consent_token(buddy_token.as_ref(), request_id);
+                                flow_active.store(false, std::sync::atomic::Ordering::Release);
+                                settle_buddy_chat_request_ui(&win, &ov);
+                                buddy(&win, GuiActivity::ChatFailed);
+                                project_companion_chat_stream(
+                                    &ov,
+                                    ChatStreamPhase::Failed,
+                                    Some(&format!("{error}; message was not sent.")),
+                                );
+                                return;
+                            }
+                        };
+                    let consent_token =
+                        match take_chat_consent_token(buddy_token.as_ref(), request_id) {
+                            Ok(token) => token,
+                            Err(_) => {
+                                if let Ok(mut controller) = stream.lock() {
+                                    controller.settle(request_id, false);
+                                }
+                                discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
+                                flow_active.store(false, std::sync::atomic::Ordering::Release);
+                                settle_buddy_chat_request_ui(&win, &ov);
+                                buddy(&win, GuiActivity::ChatFailed);
+                                ov.set_buddy_mood("error".into());
+                                ov.set_status_text(
+                                    "private consent hand-off failed; draft retained".into(),
+                                );
+                                return;
+                            }
+                        };
+
+                    win.hide().unwrap_or(());
+                    ov.show().unwrap_or(());
+                    ov.set_overlay_input("".into());
+                    if !begin_live_chat_request(&win, request_id, &body, incognito) {
                         if let Ok(mut controller) = stream.lock() {
                             controller.settle(request_id, false);
                         }
@@ -14487,115 +14442,96 @@ fn main() -> Result<()> {
                         flow_active.store(false, std::sync::atomic::Ordering::Release);
                         settle_buddy_chat_request_ui(&win, &ov);
                         buddy(&win, GuiActivity::ChatFailed);
-                        ov.set_buddy_mood("error".into());
-                        ov.set_status_text(
-                            "private consent hand-off failed; draft retained".into(),
+                        project_companion_chat_stream(
+                            &ov,
+                            ChatStreamPhase::Failed,
+                            Some(
+                                "Buddy request identity collided with an existing conversation row; provider launch was suppressed.",
+                            ),
                         );
                         return;
                     }
-                };
-
-                win.hide().unwrap_or(());
-                ov.show().unwrap_or(());
-                ov.set_overlay_input("".into());
-                if !begin_live_chat_request(&win, request_id, &body, incognito) {
-                    if let Ok(mut controller) = stream.lock() {
-                        controller.settle(request_id, false);
-                    }
-                    discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
-                    flow_active.store(false, std::sync::atomic::Ordering::Release);
-                    settle_buddy_chat_request_ui(&win, &ov);
-                    buddy(&win, GuiActivity::ChatFailed);
-                    project_companion_chat_stream(
-                        &ov,
-                        ChatStreamPhase::Failed,
-                        Some(
-                            "Buddy request identity collided with an existing conversation row; provider launch was suppressed.",
-                        ),
-                    );
-                    return;
-                }
-                win.set_chat_skill_route_status("Resolving Skill…".into());
-                ov.set_skill_route_status("Resolving Skill…".into());
-                buddy(&win, GuiActivity::ChatWaiting);
-                project_companion_chat_stream(&ov, ChatStreamPhase::Waiting, None);
-                sync_companion_recent_lines_from_canonical(&win, &ov);
-                win.set_chat_send_in_flight(true);
-                ov.set_stall_active(false);
-                *lock_chat_signal_clock(signal_clock.as_ref()) =
-                    Some(ChatTurnWatchdog::arm(request_id, std::time::Instant::now()));
-                *lock_chat_watchdog_input(watchdog_input.as_ref()) =
-                    Some(RequestBoundChatRetryInput {
-                        request_id,
-                        surface: ChatStreamSurface::Buddy,
-                        body: zeroize::Zeroizing::new(body.clone()),
-                        incognito,
-                    });
-                let mut retry = lock_chat_watchdog_retry(watchdog_retry.as_ref());
-                if retry
-                    .as_ref()
-                    .is_some_and(|retry| retry.request_id != request_id)
-                {
-                    *retry = None;
-                }
-                drop(retry);
-                let mut retry_stop =
-                    lock_chat_watchdog_retry_stop(watchdog_retry_stop.as_ref());
-                if retry_stop
-                    .as_ref()
-                    .is_some_and(|retry_stop| retry_stop.request_id != request_id)
-                {
-                    *retry_stop = None;
-                }
-
-                let ov_weak = ov.as_weak();
-                let win_weak = win.as_weak();
-                let flow_active = flow_active.clone();
-                let stream = stream.clone();
-                let launch_gate_slot = launch_gate_slot.clone();
-                let child_slot = child_slot.clone();
-                let signal_clock = signal_clock.clone();
-                let watchdog_retry = watchdog_retry.clone();
-                let watchdog_input = watchdog_input.clone();
-                let watchdog_retry_stop = watchdog_retry_stop.clone();
-                let launch_gate = launch_gate.clone();
-                std::thread::spawn(move || {
-                    let _worker_lease = worker_lease;
-                    let body = zeroize::Zeroizing::new(body);
-                    use std::io::Read as _;
-                    use zeroize::Zeroize as _;
-
-                    let result: std::result::Result<String, String> = (|| {
-                        let request_is_live = stream.lock().ok().is_some_and(|controller| {
-                            controller.is_dispatchable_on(request_id, ChatStreamSurface::Buddy)
+                    win.set_chat_skill_route_status("Resolving Skill…".into());
+                    ov.set_skill_route_status("Resolving Skill…".into());
+                    buddy(&win, GuiActivity::ChatWaiting);
+                    project_companion_chat_stream(&ov, ChatStreamPhase::Waiting, None);
+                    sync_companion_recent_lines_from_canonical(&win, &ov);
+                    win.set_chat_send_in_flight(true);
+                    ov.set_stall_active(false);
+                    *lock_chat_signal_clock(signal_clock.as_ref()) =
+                        Some(ChatTurnWatchdog::arm(request_id, std::time::Instant::now()));
+                    *lock_chat_watchdog_input(watchdog_input.as_ref()) =
+                        Some(RequestBoundChatRetryInput {
+                            request_id,
+                            surface: ChatStreamSurface::Buddy,
+                            body: zeroize::Zeroizing::new(body.clone()),
+                            incognito,
                         });
-                        if !request_is_live {
-                            return Err(
-                                "Buddy chat request was cancelled before provider launch"
-                                    .to_string(),
+                    let mut retry = lock_chat_watchdog_retry(watchdog_retry.as_ref());
+                    if retry
+                        .as_ref()
+                        .is_some_and(|retry| retry.request_id != request_id)
+                    {
+                        *retry = None;
+                    }
+                    drop(retry);
+                    let mut retry_stop =
+                        lock_chat_watchdog_retry_stop(watchdog_retry_stop.as_ref());
+                    if retry_stop
+                        .as_ref()
+                        .is_some_and(|retry_stop| retry_stop.request_id != request_id)
+                    {
+                        *retry_stop = None;
+                    }
+
+                    let ov_weak = ov.as_weak();
+                    let win_weak = win.as_weak();
+                    let flow_active = flow_active.clone();
+                    let stream = stream.clone();
+                    let launch_gate_slot = launch_gate_slot.clone();
+                    let child_slot = child_slot.clone();
+                    let signal_clock = signal_clock.clone();
+                    let watchdog_retry = watchdog_retry.clone();
+                    let watchdog_input = watchdog_input.clone();
+                    let watchdog_retry_stop = watchdog_retry_stop.clone();
+                    let launch_gate = launch_gate.clone();
+                    std::thread::spawn(move || {
+                        let _worker_lease = worker_lease;
+                        let body = zeroize::Zeroizing::new(body);
+                        use std::io::Read as _;
+                        use zeroize::Zeroize as _;
+
+                        let result: std::result::Result<String, String> = (|| {
+                            let request_is_live = stream.lock().ok().is_some_and(|controller| {
+                                controller.is_dispatchable_on(request_id, ChatStreamSurface::Buddy)
+                            });
+                            if !request_is_live {
+                                return Err(
+                                    "Buddy chat request was cancelled before provider launch"
+                                        .to_string(),
+                                );
+                            }
+                            let bin =
+                                which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
+                            let mut cmd = spawn_neothd_plain(&bin);
+                            let stream_control_token = new_stream_control_token()?;
+                            configure_gui_chat_launch_args(&mut cmd, incognito);
+                            let mut launch_envelope = encode_gui_chat_launch_envelope(
+                                stream_control_token.as_str(),
+                                consent_token.as_ref(),
+                            )?;
+                            append_chat_prompt_args(
+                                &mut cmd,
+                                explicit_skill_id.as_deref(),
+                                body.as_str(),
                             );
-                        }
-                        let bin =
-                            which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
-                        let mut cmd = spawn_neothd_plain(&bin);
-                        let stream_control_token = new_stream_control_token()?;
-                        configure_gui_chat_launch_args(&mut cmd, incognito);
-                        let mut launch_envelope = encode_gui_chat_launch_envelope(
-                            stream_control_token.as_str(),
-                            consent_token.as_ref(),
-                        )?;
-                        append_chat_prompt_args(
-                            &mut cmd,
-                            explicit_skill_id.as_deref(),
-                            body.as_str(),
-                        );
-                        cmd.stdout(std::process::Stdio::piped())
-                            .stderr(std::process::Stdio::piped());
-                        let mut child = OwnedChatChild::spawn(request_id, &mut cmd)
-                            .map_err(|error| format!("Buddy chat spawn failed: {error}"))?;
-                        let Some(mut launch_stdin) = child.take_stdin() else {
-                            let cleanup = child.terminate_and_reap().err();
-                            return Err(cleanup.map_or_else(
+                            cmd.stdout(std::process::Stdio::piped())
+                                .stderr(std::process::Stdio::piped());
+                            let mut child = OwnedChatChild::spawn(request_id, &mut cmd)
+                                .map_err(|error| format!("Buddy chat spawn failed: {error}"))?;
+                            let Some(mut launch_stdin) = child.take_stdin() else {
+                                let cleanup = child.terminate_and_reap().err();
+                                return Err(cleanup.map_or_else(
                                 || "Buddy private launch stdin unavailable".to_string(),
                                 |error| {
                                     format!(
@@ -14603,68 +14539,67 @@ fn main() -> Result<()> {
                                     )
                                 },
                             ));
-                        };
-                        let Some(stderr) = child.take_stderr() else {
-                            drop(launch_stdin);
-                            launch_envelope.zeroize();
-                            let cleanup = child.terminate_and_reap().err();
-                            return Err(cleanup.map_or_else(
-                                || "Buddy chat stderr unavailable".to_string(),
-                                |error| {
-                                    format!(
-                                        "Buddy chat stderr unavailable; cleanup failed: {error}"
-                                    )
-                                },
-                            ));
-                        };
-                        let Some(mut stdout) = child.take_stdout() else {
-                            drop(launch_stdin);
-                            launch_envelope.zeroize();
-                            let cleanup = child.terminate_and_reap().err();
-                            return Err(cleanup.map_or_else(
-                                || "Buddy chat stdout unavailable".to_string(),
-                                |error| {
-                                    format!(
-                                        "Buddy chat stdout unavailable; cleanup failed: {error}"
-                                    )
-                                },
-                            ));
-                        };
-                        let weak_stderr = ov_weak.clone();
-                        let stream_stderr = stream.clone();
-                        let stderr_reader = spawn_chat_stderr_reader(stderr, move |diagnostic| {
-                            let weak = weak_stderr.clone();
-                            let stream = stream_stderr.clone();
-                            let _ = slint::invoke_from_event_loop(move || {
-                                let is_current = stream
-                                    .lock()
-                                    .ok()
-                                    .is_some_and(|controller| {
-                                        controller.is_dispatchable_on(
-                                            request_id,
-                                            ChatStreamSurface::Buddy,
+                            };
+                            let Some(stderr) = child.take_stderr() else {
+                                drop(launch_stdin);
+                                launch_envelope.zeroize();
+                                let cleanup = child.terminate_and_reap().err();
+                                return Err(cleanup.map_or_else(
+                                    || "Buddy chat stderr unavailable".to_string(),
+                                    |error| {
+                                        format!(
+                                            "Buddy chat stderr unavailable; cleanup failed: {error}"
                                         )
+                                    },
+                                ));
+                            };
+                            let Some(mut stdout) = child.take_stdout() else {
+                                drop(launch_stdin);
+                                launch_envelope.zeroize();
+                                let cleanup = child.terminate_and_reap().err();
+                                return Err(cleanup.map_or_else(
+                                    || "Buddy chat stdout unavailable".to_string(),
+                                    |error| {
+                                        format!(
+                                            "Buddy chat stdout unavailable; cleanup failed: {error}"
+                                        )
+                                    },
+                                ));
+                            };
+                            let weak_stderr = ov_weak.clone();
+                            let stream_stderr = stream.clone();
+                            let stderr_reader =
+                                spawn_chat_stderr_reader(stderr, move |diagnostic| {
+                                    let weak = weak_stderr.clone();
+                                    let stream = stream_stderr.clone();
+                                    let _ = slint::invoke_from_event_loop(move || {
+                                        let is_current =
+                                            stream.lock().ok().is_some_and(|controller| {
+                                                controller.is_dispatchable_on(
+                                                    request_id,
+                                                    ChatStreamSurface::Buddy,
+                                                )
+                                            });
+                                        if is_current && let Some(ov) = weak.upgrade() {
+                                            ov.set_status_text(
+                                                format!("NEOTH: {diagnostic}").into(),
+                                            );
+                                        }
                                     });
-                                if is_current
-                                    && let Some(ov) = weak.upgrade()
-                                {
-                                    ov.set_status_text(format!("NEOTH: {diagnostic}").into());
-                                    }
                                 });
+                            let mut slot = child_slot.lock().unwrap_or_else(|poisoned| {
+                                tracing::warn!(
+                                    "recovering poisoned Buddy chat supervision state before launch"
+                                );
+                                poisoned.into_inner()
                             });
-                        let mut slot = child_slot.lock().unwrap_or_else(|poisoned| {
-                            tracing::warn!(
-                                "recovering poisoned Buddy chat supervision state before launch"
-                            );
-                            poisoned.into_inner()
-                        });
-                        if slot.is_some() {
-                            drop(slot);
-                            drop(launch_stdin);
-                            launch_envelope.zeroize();
-                            let cleanup_error = child.terminate_and_reap().err();
-                            let diagnostic = stderr_reader.join().unwrap_or_default();
-                            return Err(with_chat_diagnostic(
+                            if slot.is_some() {
+                                drop(slot);
+                                drop(launch_stdin);
+                                launch_envelope.zeroize();
+                                let cleanup_error = child.terminate_and_reap().err();
+                                let diagnostic = stderr_reader.join().unwrap_or_default();
+                                return Err(with_chat_diagnostic(
                                 cleanup_error.map_or_else(
                                     || {
                                         "Buddy chat supervision state already owns another subprocess"
@@ -14678,24 +14613,24 @@ fn main() -> Result<()> {
                                 ),
                                 &diagnostic,
                             ));
-                        }
-                        *slot = Some(child);
-                        drop(slot);
-                        let request_is_live = stream.lock().ok().is_some_and(|controller| {
-                            controller.is_dispatchable_on(request_id, ChatStreamSurface::Buddy)
-                        });
-                        let launch_committed = request_is_live
-                            && matches!(launch_gate.commit(), ChatLaunchCommit::Committed);
-                        if !launch_committed {
-                            drop(launch_stdin);
-                            launch_envelope.zeroize();
-                            let kill_error =
-                                kill_owned_chat_child(child_slot.as_ref(), request_id).err();
-                            let exit_result =
-                                wait_for_owned_chat_child_exit(child_slot.as_ref(), request_id);
-                            let diagnostic = stderr_reader.join().unwrap_or_default();
-                            exit_result?;
-                            let message = kill_error.map_or_else(
+                            }
+                            *slot = Some(child);
+                            drop(slot);
+                            let request_is_live = stream.lock().ok().is_some_and(|controller| {
+                                controller.is_dispatchable_on(request_id, ChatStreamSurface::Buddy)
+                            });
+                            let launch_committed = request_is_live
+                                && matches!(launch_gate.commit(), ChatLaunchCommit::Committed);
+                            if !launch_committed {
+                                drop(launch_stdin);
+                                launch_envelope.zeroize();
+                                let kill_error =
+                                    kill_owned_chat_child(child_slot.as_ref(), request_id).err();
+                                let exit_result =
+                                    wait_for_owned_chat_child_exit(child_slot.as_ref(), request_id);
+                                let diagnostic = stderr_reader.join().unwrap_or_default();
+                                exit_result?;
+                                let message = kill_error.map_or_else(
                                 || {
                                     "Buddy chat request was cancelled before provider launch"
                                         .to_string()
@@ -14706,291 +14641,288 @@ fn main() -> Result<()> {
                                     )
                                 },
                             );
-                            return Err(with_chat_diagnostic(
-                                message,
-                                &diagnostic,
-                            ));
-                        }
-                        let write_result = launch_stdin
-                            .write_all(launch_envelope.as_slice())
-                            .map_err(|error| {
-                                format!("could not commit private Buddy chat launch: {error}")
-                            });
-                        launch_envelope.zeroize();
-                        drop(launch_stdin);
-                        if let Err(error) = write_result {
-                            let kill_error =
-                                kill_owned_chat_child(child_slot.as_ref(), request_id).err();
-                            let exit_result =
-                                wait_for_owned_chat_child_exit(child_slot.as_ref(), request_id);
-                            let diagnostic = stderr_reader.join().unwrap_or_default();
-                            exit_result?;
-                            let error = kill_error
-                                .map(|kill_error| {
-                                    format!("{error}; initial stop failed: {kill_error}")
-                                })
-                                .unwrap_or(error);
-                            return Err(with_chat_diagnostic(error, &diagnostic));
-                        }
-                        let mut acc = zeroize::Zeroizing::new(Vec::<u8>::new());
-                        let mut total_stdout_bytes = 0usize;
-                        let mut buf = [0u8; 512];
-                        let mut control_frame_gate = IncrementalControlFrameGate::default();
-                        let mut delivered_notice_ids = std::collections::HashSet::new();
-                        let mut route_report_delivered = false;
-                        let mut terminal_signals = ChatTerminalSignalTracker::default();
-                        let mut last_visible_progress = String::new();
-                        let read_error = loop {
-                            match stdout.read(&mut buf) {
-                                Ok(0) => break None,
-                                Ok(n) => {
-                                    if total_stdout_bytes.saturating_add(n)
-                                        > CHAT_STREAM_STDOUT_MAX_BYTES
-                                    {
-                                        break Some(std::io::Error::other(format!(
-                                            "chat stream exceeded the {} byte GUI stdout limit",
-                                            CHAT_STREAM_STDOUT_MAX_BYTES
-                                        )));
-                                    }
-                                    total_stdout_bytes += n;
-                                    acc.extend_from_slice(&buf[..n]);
-                                    if control_frame_gate.can_defer_without_decoding(&buf[..n]) {
-                                        continue;
-                                    }
-                                    let Ok(decoded) = std::str::from_utf8(acc.as_slice()) else {
-                                        continue;
-                                    };
-                                    control_frame_gate.observe_decoded_buffer(decoded);
-                                    let parsed =
-                                        parse_chat_stream_protocol_incremental_with_route_state(
-                                        decoded,
-                                        Some(stream_control_token.as_str()),
-                                        route_report_delivered,
-                                    );
-                                    if !parsed.protocol_valid {
-                                        break Some(std::io::Error::other(
-                                            "Buddy chat emitted invalid or duplicate authenticated control frames",
-                                        ));
-                                    }
-                                    if parsed
-                                        .notices
-                                        .iter()
-                                        .any(|notice| delivered_notice_ids.contains(&notice.id))
-                                    {
-                                        break Some(std::io::Error::other(
-                                            "Buddy chat repeated an authenticated operator event",
-                                        ));
-                                    }
-                                    let new_notices = parsed.notices.to_vec();
-                                    let new_route_report = parsed.route_report.clone();
-                                    let route_progress = new_route_report.is_some();
-                                    let notice_progress = !new_notices.is_empty();
-                                    let terminal_progress = terminal_signals
-                                        .observe(parsed.provider_done, parsed.done);
-                                    let visible_progress = {
-                                        let visible = parsed.text.trim();
-                                        !visible.is_empty() && visible != last_visible_progress
-                                    };
-                                    if visible_progress {
-                                        last_visible_progress = parsed.text.trim().to_owned();
-                                    }
-                                    if visible_progress
-                                        || notice_progress
-                                        || route_progress
-                                        || terminal_progress
-                                    {
-                                        mark_chat_stream_progress(&signal_clock, request_id);
-                                    }
-                                    if let Err(error) = compact_completed_control_frames(
-                                        &mut acc,
-                                        &parsed.completed_control_ranges,
-                                    ) {
-                                        break Some(std::io::Error::other(error));
-                                    }
-                                    delivered_notice_ids.extend(
-                                        new_notices.iter().map(|notice| notice.id.clone()),
-                                    );
-                                    if let Some(report) = new_route_report {
-                                        route_report_delivered = true;
-                                        let status = format_skill_route_status(&report);
-                                        let ov_route = ov_weak.clone();
-                                        let win_route = win_weak.clone();
-                                        let stream_route = stream.clone();
-                                        let _ = slint::invoke_from_event_loop(move || {
-                                            let is_current = stream_route
-                                                .lock()
-                                                .ok()
-                                                .and_then(|controller| {
-                                                    controller.current_request()
-                                                })
-                                                .is_some_and(|current| {
-                                                    current.request_id == request_id
-                                                        && current.surface
-                                                            == ChatStreamSurface::Buddy
-                                                        && !current.cancel_requested
-                                                });
-                                            if !is_current {
-                                                return;
-                                            }
-                                            if let Some(window) = win_route.upgrade() {
-                                                window.set_chat_skill_route_status(
-                                                    status.clone().into(),
-                                                );
-                                            }
-                                            if let Some(overlay) = ov_route.upgrade() {
-                                                overlay.set_skill_route_status(status.into());
-                                            }
-                                        });
-                                    }
-                                    if !new_notices.is_empty() {
-                                        let ov_notice = ov_weak.clone();
-                                        let win_notice = win_weak.clone();
-                                        let stream_notice = stream.clone();
-                                        let _ = slint::invoke_from_event_loop(move || {
-                                            let is_current = stream_notice
-                                                .lock()
-                                                .ok()
-                                                .and_then(|controller| {
-                                                    controller.current_request()
-                                                })
-                                                .is_some_and(|current| {
-                                                    current.request_id == request_id
-                                                        && current.surface
-                                                            == ChatStreamSurface::Buddy
-                                                        && !current.cancel_requested
-                                                });
-                                            if !is_current {
-                                                return;
-                                            }
-                                            if let Some(window) = win_notice.upgrade() {
-                                                let inserted = materialize_stream_notices(
-                                                    &window,
-                                                    request_id,
-                                                    &new_notices,
-                                                );
-                                                acknowledge_materialized_stream_notices(
-                                                    &window,
-                                                    &new_notices,
-                                                );
-                                                if inserted > 0
-                                                    && let Some(overlay) = ov_notice.upgrade()
-                                                {
-                                                    sync_companion_recent_lines_from_canonical(
-                                                        &window, &overlay,
+                                return Err(with_chat_diagnostic(message, &diagnostic));
+                            }
+                            let write_result = launch_stdin
+                                .write_all(launch_envelope.as_slice())
+                                .map_err(|error| {
+                                    format!("could not commit private Buddy chat launch: {error}")
+                                });
+                            launch_envelope.zeroize();
+                            drop(launch_stdin);
+                            if let Err(error) = write_result {
+                                let kill_error =
+                                    kill_owned_chat_child(child_slot.as_ref(), request_id).err();
+                                let exit_result =
+                                    wait_for_owned_chat_child_exit(child_slot.as_ref(), request_id);
+                                let diagnostic = stderr_reader.join().unwrap_or_default();
+                                exit_result?;
+                                let error = kill_error
+                                    .map(|kill_error| {
+                                        format!("{error}; initial stop failed: {kill_error}")
+                                    })
+                                    .unwrap_or(error);
+                                return Err(with_chat_diagnostic(error, &diagnostic));
+                            }
+                            let mut acc = zeroize::Zeroizing::new(Vec::<u8>::new());
+                            let mut total_stdout_bytes = 0usize;
+                            let mut buf = [0u8; 512];
+                            let mut control_frame_gate = IncrementalControlFrameGate::default();
+                            let mut delivered_notice_ids = std::collections::HashSet::new();
+                            let mut route_report_delivered = false;
+                            let mut terminal_signals = ChatTerminalSignalTracker::default();
+                            let mut last_visible_progress = String::new();
+                            let read_error = loop {
+                                match stdout.read(&mut buf) {
+                                    Ok(0) => break None,
+                                    Ok(n) => {
+                                        if total_stdout_bytes.saturating_add(n)
+                                            > CHAT_STREAM_STDOUT_MAX_BYTES
+                                        {
+                                            break Some(std::io::Error::other(format!(
+                                                "chat stream exceeded the {} byte GUI stdout limit",
+                                                CHAT_STREAM_STDOUT_MAX_BYTES
+                                            )));
+                                        }
+                                        total_stdout_bytes += n;
+                                        acc.extend_from_slice(&buf[..n]);
+                                        if control_frame_gate.can_defer_without_decoding(&buf[..n])
+                                        {
+                                            continue;
+                                        }
+                                        let Ok(decoded) = std::str::from_utf8(acc.as_slice())
+                                        else {
+                                            continue;
+                                        };
+                                        control_frame_gate.observe_decoded_buffer(decoded);
+                                        let parsed =
+                                            parse_chat_stream_protocol_incremental_with_route_state(
+                                                decoded,
+                                                Some(stream_control_token.as_str()),
+                                                route_report_delivered,
+                                            );
+                                        if !parsed.protocol_valid {
+                                            break Some(std::io::Error::other(
+                                                "Buddy chat emitted invalid or duplicate authenticated control frames",
+                                            ));
+                                        }
+                                        if parsed
+                                            .notices
+                                            .iter()
+                                            .any(|notice| delivered_notice_ids.contains(&notice.id))
+                                        {
+                                            break Some(std::io::Error::other(
+                                                "Buddy chat repeated an authenticated operator event",
+                                            ));
+                                        }
+                                        let new_notices = parsed.notices.to_vec();
+                                        let new_route_report = parsed.route_report.clone();
+                                        let route_progress = new_route_report.is_some();
+                                        let notice_progress = !new_notices.is_empty();
+                                        let terminal_progress = terminal_signals
+                                            .observe(parsed.provider_done, parsed.done);
+                                        let visible_progress = {
+                                            let visible = parsed.text.trim();
+                                            !visible.is_empty() && visible != last_visible_progress
+                                        };
+                                        if visible_progress {
+                                            last_visible_progress = parsed.text.trim().to_owned();
+                                        }
+                                        if visible_progress
+                                            || notice_progress
+                                            || route_progress
+                                            || terminal_progress
+                                        {
+                                            mark_chat_stream_progress(&signal_clock, request_id);
+                                        }
+                                        if let Err(error) = compact_completed_control_frames(
+                                            &mut acc,
+                                            &parsed.completed_control_ranges,
+                                        ) {
+                                            break Some(std::io::Error::other(error));
+                                        }
+                                        delivered_notice_ids.extend(
+                                            new_notices.iter().map(|notice| notice.id.clone()),
+                                        );
+                                        if let Some(report) = new_route_report {
+                                            route_report_delivered = true;
+                                            let status = format_skill_route_status(&report);
+                                            let ov_route = ov_weak.clone();
+                                            let win_route = win_weak.clone();
+                                            let stream_route = stream.clone();
+                                            let _ = slint::invoke_from_event_loop(move || {
+                                                let is_current = stream_route
+                                                    .lock()
+                                                    .ok()
+                                                    .and_then(|controller| {
+                                                        controller.current_request()
+                                                    })
+                                                    .is_some_and(|current| {
+                                                        current.request_id == request_id
+                                                            && current.surface
+                                                                == ChatStreamSurface::Buddy
+                                                            && !current.cancel_requested
+                                                    });
+                                                if !is_current {
+                                                    return;
+                                                }
+                                                if let Some(window) = win_route.upgrade() {
+                                                    window.set_chat_skill_route_status(
+                                                        status.clone().into(),
                                                     );
                                                 }
+                                                if let Some(overlay) = ov_route.upgrade() {
+                                                    overlay.set_skill_route_status(status.into());
+                                                }
+                                            });
+                                        }
+                                        if !new_notices.is_empty() {
+                                            let ov_notice = ov_weak.clone();
+                                            let win_notice = win_weak.clone();
+                                            let stream_notice = stream.clone();
+                                            let _ = slint::invoke_from_event_loop(move || {
+                                                let is_current = stream_notice
+                                                    .lock()
+                                                    .ok()
+                                                    .and_then(|controller| {
+                                                        controller.current_request()
+                                                    })
+                                                    .is_some_and(|current| {
+                                                        current.request_id == request_id
+                                                            && current.surface
+                                                                == ChatStreamSurface::Buddy
+                                                            && !current.cancel_requested
+                                                    });
+                                                if !is_current {
+                                                    return;
+                                                }
+                                                if let Some(window) = win_notice.upgrade() {
+                                                    let inserted = materialize_stream_notices(
+                                                        &window,
+                                                        request_id,
+                                                        &new_notices,
+                                                    );
+                                                    acknowledge_materialized_stream_notices(
+                                                        &window,
+                                                        &new_notices,
+                                                    );
+                                                    if inserted > 0
+                                                        && let Some(overlay) = ov_notice.upgrade()
+                                                    {
+                                                        sync_companion_recent_lines_from_canonical(
+                                                            &window, &overlay,
+                                                        );
+                                                    }
+                                                }
+                                            });
+                                        }
+                                        let phase =
+                                            stream.lock().ok().and_then(|mut controller| {
+                                                let visible = controller
+                                                    .visible_delta(request_id, &parsed.text)
+                                                    .map(|update| update.phase);
+                                                if parsed.provider_done || parsed.done {
+                                                    controller
+                                                        .provider_finished(request_id)
+                                                        .map(|update| update.phase)
+                                                        .or(visible)
+                                                } else {
+                                                    visible
+                                                }
+                                            });
+                                        let Some(phase) = phase else {
+                                            continue;
+                                        };
+                                        let live = parsed.text;
+                                        let ov_live = ov_weak.clone();
+                                        let win_live = win_weak.clone();
+                                        let stream_live = stream.clone();
+                                        let _ = slint::invoke_from_event_loop(move || {
+                                            let is_current = stream_live
+                                                .lock()
+                                                .ok()
+                                                .and_then(|controller| controller.current_request())
+                                                .is_some_and(|current| {
+                                                    current.request_id == request_id
+                                                        && current.surface
+                                                            == ChatStreamSurface::Buddy
+                                                        && !current.cancel_requested
+                                                        && current.phase == phase
+                                                });
+                                            if !is_current {
+                                                return;
+                                            }
+                                            let activity = GuiActivity::from(phase);
+                                            let window = win_live.upgrade();
+                                            let overlay = ov_live.upgrade();
+                                            if let Some(win) = window.as_ref() {
+                                                buddy(win, activity);
+                                                project_chat_stream_update(
+                                                    win,
+                                                    request_id,
+                                                    phase,
+                                                    Some(&live),
+                                                );
+                                            }
+                                            if let Some(overlay) = overlay.as_ref() {
+                                                project_companion_chat_stream(
+                                                    overlay,
+                                                    phase,
+                                                    Some(&live),
+                                                );
+                                            }
+                                            if let (Some(window), Some(overlay)) =
+                                                (window.as_ref(), overlay.as_ref())
+                                            {
+                                                sync_companion_recent_lines_from_canonical(
+                                                    window, overlay,
+                                                );
                                             }
                                         });
                                     }
-                                    let phase =
-                                        stream.lock().ok().and_then(|mut controller| {
-                                            let visible = controller
-                                                .visible_delta(request_id, &parsed.text)
-                                                .map(|update| update.phase);
-                                            if parsed.provider_done || parsed.done {
-                                                controller
-                                                    .provider_finished(request_id)
-                                                    .map(|update| update.phase)
-                                                    .or(visible)
-                                            } else {
-                                                visible
-                                            }
-                                        });
-                                    let Some(phase) = phase else {
-                                        continue;
-                                    };
-                                    let live = parsed.text;
-                                    let ov_live = ov_weak.clone();
-                                    let win_live = win_weak.clone();
-                                    let stream_live = stream.clone();
-                                    let _ = slint::invoke_from_event_loop(move || {
-                                        let is_current = stream_live
-                                            .lock()
-                                            .ok()
-                                            .and_then(|controller| {
-                                                controller.current_request()
-                                            })
-                                            .is_some_and(|current| {
-                                                current.request_id == request_id
-                                                    && current.surface
-                                                        == ChatStreamSurface::Buddy
-                                                    && !current.cancel_requested
-                                                    && current.phase == phase
-                                            });
-                                        if !is_current {
-                                            return;
-                                        }
-                                        let activity = GuiActivity::from(phase);
-                                        let window = win_live.upgrade();
-                                        let overlay = ov_live.upgrade();
-                                        if let Some(win) = window.as_ref() {
-                                            buddy(win, activity);
-                                            project_chat_stream_update(
-                                                win,
-                                                request_id,
-                                                phase,
-                                                Some(&live),
-                                            );
-                                        }
-                                        if let Some(overlay) = overlay.as_ref() {
-                                            project_companion_chat_stream(
-                                                overlay,
-                                                phase,
-                                                Some(&live),
-                                            );
-                                        }
-                                        if let (Some(window), Some(overlay)) =
-                                            (window.as_ref(), overlay.as_ref())
-                                        {
-                                            sync_companion_recent_lines_from_canonical(
-                                                window, overlay,
-                                            );
-                                        }
-                                    });
+                                    Err(error) => break Some(error),
                                 }
-                                Err(error) => break Some(error),
+                            };
+                            if read_error.is_some() {
+                                let _ = kill_owned_chat_child(child_slot.as_ref(), request_id);
                             }
-                        };
-                        if read_error.is_some() {
-                            let _ = kill_owned_chat_child(child_slot.as_ref(), request_id);
-                        }
-                        // Preserve exact child ownership until the OS confirms
-                        // exit so overlay/Main Stop can retry at any time.
-                        let status =
-                            wait_for_owned_chat_child_exit(child_slot.as_ref(), request_id)?;
-                        let diagnostic = stderr_reader.join().unwrap_or_default();
-                        if let Some(error) = read_error {
-                            return Err(with_chat_diagnostic(
-                                format!("Buddy chat stream read failed: {error}"),
-                                &diagnostic,
-                            ));
-                        }
-                        let raw = zeroize::Zeroizing::new(
-                            String::from_utf8(std::mem::take(&mut *acc)).map_err(|_| {
-                                "Buddy chat stream emitted invalid UTF-8".to_string()
-                            })?,
-                        );
-                        let parsed = parse_chat_stream_protocol_with_route_state(
-                            raw.as_str(),
-                            Some(stream_control_token.as_str()),
-                            route_report_delivered,
-                        );
-                        if !parsed.protocol_valid {
-                            return Err(with_chat_diagnostic(
-                                "Buddy chat emitted invalid or duplicate authenticated control frames",
-                                &diagnostic,
-                            ));
-                        }
-                        if !parsed.done {
-                            return Err(with_chat_diagnostic(
-                                buddy_incomplete_stream_message(
-                                    status.code().unwrap_or(-1),
-                                    &parsed.text,
-                                ),
-                                &diagnostic,
-                            ));
-                        }
-                        stream
+                            // Preserve exact child ownership until the OS confirms
+                            // exit so overlay/Main Stop can retry at any time.
+                            let status =
+                                wait_for_owned_chat_child_exit(child_slot.as_ref(), request_id)?;
+                            let diagnostic = stderr_reader.join().unwrap_or_default();
+                            if let Some(error) = read_error {
+                                return Err(with_chat_diagnostic(
+                                    format!("Buddy chat stream read failed: {error}"),
+                                    &diagnostic,
+                                ));
+                            }
+                            let raw = zeroize::Zeroizing::new(
+                                String::from_utf8(std::mem::take(&mut *acc)).map_err(|_| {
+                                    "Buddy chat stream emitted invalid UTF-8".to_string()
+                                })?,
+                            );
+                            let parsed = parse_chat_stream_protocol_with_route_state(
+                                raw.as_str(),
+                                Some(stream_control_token.as_str()),
+                                route_report_delivered,
+                            );
+                            if !parsed.protocol_valid {
+                                return Err(with_chat_diagnostic(
+                                    "Buddy chat emitted invalid or duplicate authenticated control frames",
+                                    &diagnostic,
+                                ));
+                            }
+                            if !parsed.done {
+                                return Err(with_chat_diagnostic(
+                                    buddy_incomplete_stream_message(
+                                        status.code().unwrap_or(-1),
+                                        &parsed.text,
+                                    ),
+                                    &diagnostic,
+                                ));
+                            }
+                            stream
                             .lock()
                             .map_err(|_| "Buddy chat stream controller is unavailable".to_string())?
                             .provider_finished(request_id)
@@ -14998,142 +14930,135 @@ fn main() -> Result<()> {
                                 "Buddy completion marker belonged to a stale or cancelled request"
                                     .to_string()
                             })?;
-                        if !status.success() {
-                            return Err(with_chat_diagnostic(
-                                format!(
-                                    "Buddy chat subprocess exited {} after its completion marker.",
-                                    status.code().unwrap_or(-1)
-                                ),
-                                &diagnostic,
-                            ));
-                        }
-                        let reply = parsed.text.trim();
-                        if reply.is_empty() {
-                            return Err(with_chat_diagnostic(
-                                "Buddy chat provider returned an empty reply.",
-                                &diagnostic,
-                            ));
-                        }
-                        Ok(reply.to_string())
-                    })();
-                    let terminal = settle_chat_stream_worker_terminal(
-                        stream.as_ref(),
-                        request_id,
-                        ChatStreamSurface::Buddy,
-                        result.is_ok(),
-                    );
-                    let watchdog_retry = terminal.and_then(|terminal| {
-                        settle_chat_watchdog_retry_state(
-                            watchdog_retry.as_ref(),
-                            watchdog_input.as_ref(),
-                            watchdog_retry_stop.as_ref(),
+                            if !status.success() {
+                                return Err(with_chat_diagnostic(
+                                    format!(
+                                        "Buddy chat subprocess exited {} after its completion marker.",
+                                        status.code().unwrap_or(-1)
+                                    ),
+                                    &diagnostic,
+                                ));
+                            }
+                            let reply = parsed.text.trim();
+                            if reply.is_empty() {
+                                return Err(with_chat_diagnostic(
+                                    "Buddy chat provider returned an empty reply.",
+                                    &diagnostic,
+                                ));
+                            }
+                            Ok(reply.to_string())
+                        })(
+                        );
+                        let terminal = settle_chat_stream_worker_terminal(
+                            stream.as_ref(),
                             request_id,
                             ChatStreamSurface::Buddy,
-                            terminal.phase,
-                        )
-                    });
-                    discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
-                    let mut clock = lock_chat_signal_clock(signal_clock.as_ref());
-                    if terminal.is_some()
-                        && clock
-                            .as_ref()
-                            .is_some_and(|clock| clock.request_id == request_id)
-                    {
-                        *clock = None;
-                    }
-                    if terminal.is_some() {
-                        flow_active.store(false, std::sync::atomic::Ordering::Release);
-                    }
+                            result.is_ok(),
+                        );
+                        let watchdog_retry = terminal.and_then(|terminal| {
+                            settle_chat_watchdog_retry_state(
+                                watchdog_retry.as_ref(),
+                                watchdog_input.as_ref(),
+                                watchdog_retry_stop.as_ref(),
+                                request_id,
+                                ChatStreamSurface::Buddy,
+                                terminal.phase,
+                            )
+                        });
+                        discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
+                        let mut clock = lock_chat_signal_clock(signal_clock.as_ref());
+                        if terminal.is_some()
+                            && clock
+                                .as_ref()
+                                .is_some_and(|clock| clock.request_id == request_id)
+                        {
+                            *clock = None;
+                        }
+                        if terminal.is_some() {
+                            flow_active.store(false, std::sync::atomic::Ordering::Release);
+                        }
 
-                    let _ = slint::invoke_from_event_loop(move || {
-                        let Some(terminal) = terminal else {
-                            return;
-                        };
-                        let win = win_weak.upgrade();
-                        if let Some(win) = win.as_ref() {
-                            settle_main_chat_request_ui(win);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            let Some(terminal) = terminal else {
+                                return;
+                            };
+                            let win = win_weak.upgrade();
+                            if let Some(win) = win.as_ref() {
+                                settle_main_chat_request_ui(win);
+                                if let Some(status) = terminal_skill_route_status(
+                                    win.get_chat_skill_route_status().as_str(),
+                                    terminal.phase,
+                                ) {
+                                    win.set_chat_skill_route_status(status.into());
+                                }
+                                buddy(win, GuiActivity::from(terminal.phase));
+                                let terminal_text = match (terminal.phase, &result) {
+                                    (ChatStreamPhase::Complete, Ok(reply)) => Some(reply.as_str()),
+                                    (ChatStreamPhase::Failed, Err(error)) => Some(error.as_str()),
+                                    _ => None,
+                                };
+                                settle_live_chat_request(
+                                    win,
+                                    request_id,
+                                    terminal.phase,
+                                    terminal_text,
+                                );
+                                if terminal.phase == ChatStreamPhase::Complete && !incognito {
+                                    refresh_chat_session_history(win.as_weak());
+                                }
+                            }
+                            let Some(ov) = ov_weak.upgrade() else {
+                                return;
+                            };
+                            if let Some(win) = win.as_ref() {
+                                settle_buddy_chat_request_ui(win, &ov);
+                            } else {
+                                ov.set_send_in_flight(false);
+                                ov.set_incognito_active(false);
+                            }
+                            ov.set_stall_active(false);
                             if let Some(status) = terminal_skill_route_status(
-                                win.get_chat_skill_route_status().as_str(),
+                                ov.get_skill_route_status().as_str(),
                                 terminal.phase,
                             ) {
-                                win.set_chat_skill_route_status(status.into());
+                                ov.set_skill_route_status(status.into());
                             }
-                            buddy(win, GuiActivity::from(terminal.phase));
-                            let terminal_text = match (terminal.phase, &result) {
-                                (ChatStreamPhase::Complete, Ok(reply)) => {
-                                    Some(reply.as_str())
+                            let snippet = match (terminal.phase, &result) {
+                                (ChatStreamPhase::Complete, Ok(reply)) if !reply.is_empty() => {
+                                    let tail = utf8_suffix(reply, 120);
+                                    if tail.len() < reply.len() {
+                                        format!("…{tail}")
+                                    } else {
+                                        reply.clone()
+                                    }
                                 }
-                                (ChatStreamPhase::Failed, Err(error)) => {
-                                    Some(error.as_str())
-                                }
-                                _ => None,
+                                (ChatStreamPhase::Cancelled, _) => "stopped".to_string(),
+                                (_, Err(error)) => format!("⚠ {error}"),
+                                _ => "—".to_string(),
                             };
-                            settle_live_chat_request(
-                                win,
-                                request_id,
-                                terminal.phase,
-                                terminal_text,
-                            );
-                            if terminal.phase == ChatStreamPhase::Complete && !incognito {
-                                refresh_chat_session_history(win.as_weak());
+                            project_companion_chat_stream(&ov, terminal.phase, Some(&snippet));
+                            if let Some(win) = win.as_ref() {
+                                sync_companion_recent_lines_from_canonical(win, &ov);
                             }
-                        }
-                        let Some(ov) = ov_weak.upgrade() else {
-                            return;
-                        };
-                        if let Some(win) = win.as_ref() {
-                            settle_buddy_chat_request_ui(win, &ov);
-                        } else {
-                            ov.set_send_in_flight(false);
-                            ov.set_incognito_active(false);
-                        }
-                        ov.set_stall_active(false);
-                        if let Some(status) = terminal_skill_route_status(
-                            ov.get_skill_route_status().as_str(),
-                            terminal.phase,
-                        ) {
-                            ov.set_skill_route_status(status.into());
-                        }
-                        let snippet = match (terminal.phase, &result) {
-                            (ChatStreamPhase::Complete, Ok(reply)) if !reply.is_empty() => {
-                                let tail = utf8_suffix(reply, 120);
-                                if tail.len() < reply.len() {
-                                    format!("…{tail}")
-                                } else {
-                                    reply.clone()
-                                }
-                            }
-                            (ChatStreamPhase::Cancelled, _) => "stopped".to_string(),
-                            (_, Err(error)) => format!("⚠ {error}"),
-                            _ => "—".to_string(),
-                        };
-                        project_companion_chat_stream(
-                            &ov,
-                            terminal.phase,
-                            Some(&snippet),
-                        );
-                        if let Some(win) = win.as_ref() {
-                            sync_companion_recent_lines_from_canonical(win, &ov);
-                        }
-                        if let Some(retry) = watchdog_retry {
-                            if retry.surface == ChatStreamSurface::Buddy {
-                                ov.set_status_text(
+                            if let Some(retry) = watchdog_retry {
+                                if retry.surface == ChatStreamSurface::Buddy {
+                                    ov.set_status_text(
                                     "Silent Buddy request cancelled; starting its retry as a new request."
                                         .into(),
                                 );
-                                ov.invoke_send_clicked(
-                                    retry.body.as_str().into(),
-                                    retry.incognito,
-                                );
-                            } else if let Some(win) = win.as_ref() {
-                                win.set_status_line(
+                                    ov.invoke_send_clicked(
+                                        retry.body.as_str().into(),
+                                        retry.incognito,
+                                    );
+                                } else if let Some(win) = win.as_ref() {
+                                    win.set_status_line(
                                     "Watchdog retry was suppressed because its surface did not match Buddy."
                                         .into(),
                                 );
+                                }
                             }
-                        }
+                        });
                     });
-                });
                 };
             window.on_buddy_chat_send_approved(buddy_chat_send_approved);
         }
@@ -20690,11 +20615,7 @@ fn settle_main_chat_request_ui(window: &MainWindow) {
     window.set_chat_incognito_active(false);
 }
 
-fn activate_buddy_chat_request_ui(
-    window: &MainWindow,
-    overlay: &MiniOverlay,
-    incognito: bool,
-) {
+fn activate_buddy_chat_request_ui(window: &MainWindow, overlay: &MiniOverlay, incognito: bool) {
     window.set_chat_incognito_active(incognito);
     overlay.set_incognito_active(incognito);
 }
@@ -25515,9 +25436,7 @@ mod chat_subprocess_tests {
         assert!(production.contains("w.set_chat_incognito(false);"));
         assert!(production.contains("w.set_chat_incognito_active(incognito);"));
         assert!(production.contains("ov.set_incognito(false);"));
-        assert!(production.contains(
-            "activate_buddy_chat_request_ui(&win, &ov, incognito);"
-        ));
+        assert!(production.contains("activate_buddy_chat_request_ui(&win, &ov, incognito);"));
         assert!(production.contains("overlay.on_incognito_selection_changed"));
         assert!(production.contains("settle_main_chat_request_ui(&w);"));
         assert!(production.contains("settle_buddy_chat_request_ui(&win, &ov);"));
@@ -25525,25 +25444,31 @@ mod chat_subprocess_tests {
             .match_indices("install_chat_launch_gate(launch_gate_slot.as_ref()")
             .map(|(offset, _)| &production[offset..])
             .collect::<Vec<_>>();
-        assert!(launch_gate_failures[0]
-            .split("if let Some(model)")
-            .next()
-            .unwrap()
-            .contains("settle_main_chat_request_ui(&w);"));
-        assert!(launch_gate_failures[1]
-            .split("win.set_chat_send_in_flight(true)")
-            .next()
-            .unwrap()
-            .contains("settle_buddy_chat_request_ui(&win, &ov);"));
+        assert!(
+            launch_gate_failures[0]
+                .split("if let Some(model)")
+                .next()
+                .unwrap()
+                .contains("settle_main_chat_request_ui(&w);")
+        );
+        assert!(
+            launch_gate_failures[1]
+                .split("win.set_chat_send_in_flight(true)")
+                .next()
+                .unwrap()
+                .contains("settle_buddy_chat_request_ui(&win, &ov);")
+        );
         let model_lock_failure = production
             .split("Model selection state failed; message was not sent.")
             .next()
             .unwrap();
-        assert!(model_lock_failure
-            .rsplit("if let Some(model) = selected_model")
-            .next()
-            .unwrap()
-            .contains("settle_main_chat_request_ui(&w);"));
+        assert!(
+            model_lock_failure
+                .rsplit("if let Some(model) = selected_model")
+                .next()
+                .unwrap()
+                .contains("settle_main_chat_request_ui(&w);")
+        );
         assert!(production.contains("w.invoke_chat_send_clicked(text, m.incognito);"));
         assert!(production.contains("if !incognito {\n            if let Ok(mut last)"));
         assert!(production.contains("let request_incognito = rows"));
@@ -25562,33 +25487,25 @@ mod chat_subprocess_tests {
             assert!(ui.contains("checked <=> root.incognito;"));
         }
         assert!(chat_ui.contains("if root.message.incognito: Text"));
-        assert!(chat_ui.contains(
-            "Incognito request: no profile, recall, or transcript access"
-        ));
+        assert!(chat_ui.contains("Incognito request: no profile, recall, or transcript access"));
         assert!(main_ui.contains("in-out property <bool> chat-incognito: false;"));
         assert!(main_ui.contains("in property <bool> chat-incognito-active: false;"));
         assert!(main_ui.contains("incognito <=> root.chat-incognito;"));
-        assert!(overlay_ui.contains(
-            "if root.compact && !root.send-in-flight: NeothCheckBox"
-        ));
-        assert!(overlay_ui.contains(
-            concat!(
-                "Incognito selected for the next Buddy turn: ",
-                "no profile, recall, or transcript data will be used"
-            )
-        ));
-        assert!(overlay_ui.contains(
-            "if root.compact && root.send-in-flight: NeothCheckBox"
-        ));
+        assert!(overlay_ui.contains("if root.compact && !root.send-in-flight: NeothCheckBox"));
+        assert!(overlay_ui.contains(concat!(
+            "Incognito selected for the next Buddy turn: ",
+            "no profile, recall, or transcript data will be used"
+        )));
+        assert!(overlay_ui.contains("if root.compact && root.send-in-flight: NeothCheckBox"));
         assert!(overlay_ui.contains("checked: root.incognito-active;"));
         assert!(overlay_ui.contains("enabled: false;"));
         assert!(overlay_ui.contains("callback incognito-selection-changed(bool);"));
-        assert!(chat_ui.contains(
-            "!(root.incognito || (root.send-in-flight && root.incognito-active))"
-        ));
-        assert!(production.contains(
-            "Incognito selected — checking exact provider consent routes…"
-        ));
+        assert!(
+            chat_ui.contains("!(root.incognito || (root.send-in-flight && root.incognito-active))")
+        );
+        assert!(
+            production.contains("Incognito selected — checking exact provider consent routes…")
+        );
         assert!(production.contains("Incognito selected — checking provider consent…"));
     }
 
@@ -25650,9 +25567,9 @@ mod chat_subprocess_tests {
         use slint::{Model, ModelRc, VecModel};
 
         let window = MainWindow::new().unwrap();
-        window.set_chat_channels(ModelRc::new(VecModel::from(
-            build_chat_sidebar_channels(&[]),
-        )));
+        window.set_chat_channels(ModelRc::new(VecModel::from(build_chat_sidebar_channels(
+            &[],
+        ))));
         let standard_id = ChatStreamRequestId::parse_wire("41").unwrap();
         assert!(begin_live_chat_request(
             &window,
@@ -25701,9 +25618,9 @@ mod chat_subprocess_tests {
         assert!(!local.last_message.contains("PRIVATE"));
 
         let private_only = MainWindow::new().unwrap();
-        private_only.set_chat_channels(ModelRc::new(VecModel::from(
-            build_chat_sidebar_channels(&[]),
-        )));
+        private_only.set_chat_channels(ModelRc::new(VecModel::from(build_chat_sidebar_channels(
+            &[],
+        ))));
         assert!(begin_live_chat_request(
             &private_only,
             private_id,
