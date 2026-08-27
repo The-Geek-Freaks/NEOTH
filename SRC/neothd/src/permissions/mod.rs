@@ -22,11 +22,15 @@ pub mod audit;
 pub mod confirm;
 pub mod confirm_bus;
 pub mod gate;
+pub mod ifc;
 pub mod lease;
 pub mod policy;
 pub mod tier_classifier;
 
 pub use gate::{ConfirmStrategy, Gate, PermissionAuditSink};
+pub use ifc::{
+    may_flow_to_action, InformationFlowDenied, InformationLabel, SourceLabels, SourceLabelsError,
+};
 pub use policy::{
     ActionKind, AutonomyPolicySnapshot, CustomAutonomyConfig, CustomDecision, PolicyArgument,
 };
