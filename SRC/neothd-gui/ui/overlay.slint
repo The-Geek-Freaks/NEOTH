@@ -48,7 +48,7 @@
 
 import { Theme } from "theme.slint";
 import { Buddy } from "buddy.slint";
-import { Led, NeothButton, NeothLineEdit, NeothComboBox } from "components.slint";
+import { Led, NeothButton, NeothLineEdit, NeothComboBox, NeothCheckBox } from "components.slint";
 
 export component MiniOverlay inherits Window {
     // ── Window chrome ────────────────────────────────────────────────
@@ -71,6 +71,11 @@ export component MiniOverlay inherits Window {
     in property <[string]> recent-lines: [];
     /// Current text in the one-line composer (in-out so Rust can clear it).
     in-out property <string> overlay-input: "";
+    /// R4-11 — per-turn Buddy selection. Rust snapshots it before consent
+    /// preflight and only then may a child receive `--incognito`.
+    in-out property <bool> incognito: false;
+    /// The immutable privacy mode of the Buddy request currently in flight.
+    in property <bool> incognito-active: false;
     /// One-line status text below the composer (mood caption / daemon note).
     in property <string> status-text: "ready";
     /// True while the overlay's chat request is in preflight or streaming.
@@ -102,7 +107,9 @@ export component MiniOverlay inherits Window {
     /// Operator clicked "✕" hide — same as restore (never leave windowless).
     callback hide-clicked();
     /// Operator sent a message from the overlay composer.
-    callback send-clicked(string);
+    /// (text, captured-incognito). Rust must use this value for the entire
+    /// request, including watchdog retry and auto-continue paths.
+    callback send-clicked(string, bool);
     /// Operator changed the shared explicit Skill selection.
     callback skill-selected(int);
     /// Operator stopped the active overlay chat request.
@@ -363,7 +370,7 @@ export component MiniOverlay inherits Window {
                                     // Enter → send
                                     accepted => {
                                         if (self.text != "" && !root.send-in-flight) {
-                                            root.send-clicked(self.text);
+                                            root.send-clicked(self.text, root.incognito);
                                         }
                                     }
 
@@ -389,7 +396,29 @@ export component MiniOverlay inherits Window {
                         }
                     }
 
-                    // Mic glyph button — "◉" record indicator
+                    // Idle Compact Buddy is a real two-way checkbox. Once a
+                    // request starts, a separate read-only value describes
+                    // the frozen request mode without severing that binding.
+                    if root.compact && !root.send-in-flight: NeothCheckBox {
+                        width: 116px;
+                        checked <=> root.incognito;
+                        text: "Incog next";
+                        accessible-label: root.incognito
+                            ? "Incognito selected for the next Buddy turn: no profile, recall, or transcript data will be used"
+                            : "Incognito unselected for the next Buddy turn: standard configured context policy will apply";
+                    }
+                    // Preserve a semantic checked value while in flight. This
+                    // is deliberately not bound to `root.incognito`: that is
+                    // the already-reset next-turn choice, not this request.
+                    if root.compact && root.send-in-flight: NeothCheckBox {
+                        width: 116px;
+                        checked: root.incognito-active;
+                        enabled: false;
+                        text: root.incognito-active ? "Incog active" : "Std active";
+                        accessible-label: root.incognito-active
+                            ? "Incognito active: this request cannot use profile, recall, or transcript data"
+                            : "Standard active: this request may use configured profile and recall policy";
+                    }
                     if root.compact && !root.send-in-flight: Rectangle {
                         width: 32px; height: 32px;
                         border-radius: Theme.radius-sm;
@@ -724,8 +753,8 @@ export component MiniOverlay inherits Window {
 
             // ── Section 6: Composer — one-line input + send button ────────
             composer := Rectangle {
-                height: root.compact ? 0px : 104px;
-                clip: true;
+                height: root.compact ? 0px : composer-content.preferred-height + 12px;
+                clip: false;
                 background: Theme.bg-sunken;
                 border-radius: Theme.radius-card;
                 animate height {
@@ -738,9 +767,44 @@ export component MiniOverlay inherits Window {
                     y: 0; height: 1px;
                     background: Theme.border-subtle;
                 }
-                VerticalLayout {
+                composer-content := VerticalLayout {
                     padding: 6px;
                     spacing: 4px;
+
+                    HorizontalLayout {
+                        min-height: 32px;
+                        spacing: Theme.space-base;
+                        alignment: start;
+
+                        if !root.send-in-flight: NeothCheckBox {
+                            checked <=> root.incognito;
+                            text: root.incognito
+                                ? "Incognito — next turn selected"
+                                : "Incognito — next turn unselected";
+                            accessible-label: root.incognito
+                                ? "Incognito selected for the next Buddy turn: no profile, recall, or transcript data will be used"
+                                : "Incognito unselected for the next Buddy turn: standard configured context policy will apply";
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.send-in-flight && root.incognito-active
+                                ? "Incognito active: this request cannot use profile, recall, or transcript data."
+                                : root.send-in-flight
+                                ? "Standard active: this request may use the configured profile and recall policy."
+                                : root.incognito
+                                ? "Next turn selected: no profile, recall, or transcript data will be used."
+                                : "Next turn unselected: standard configured context policy will apply.";
+                            wrap: word-wrap;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-2xs;
+                            color: (root.send-in-flight && root.incognito-active) || root.incognito
+                                ? Theme.consent
+                                : Theme.text-tertiary;
+                            vertical-alignment: center;
+                            accessible-role: text;
+                            accessible-label: self.text;
+                        }
+                    }
 
                     // Skill route stays distinct from the generic overlay
                     // status bar above. Status elides first on narrow windows.
@@ -784,7 +848,7 @@ export component MiniOverlay inherits Window {
                             enabled: !root.compact && !root.send-in-flight;
                             accepted(t) => {
                                 if t != "" && !root.send-in-flight {
-                                    root.send-clicked(t);
+                                    root.send-clicked(t, root.incognito);
                                 }
                             }
                         }
@@ -795,7 +859,7 @@ export component MiniOverlay inherits Window {
                             enabled: root.overlay-input != "" && !root.compact;
                             clicked => {
                                 if root.overlay-input != "" {
-                                    root.send-clicked(root.overlay-input);
+                                    root.send-clicked(root.overlay-input, root.incognito);
                                 }
                             }
                         }

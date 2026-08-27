@@ -221,6 +221,59 @@ fn ensure_background_session_mode(name: &str, incognito: bool) -> Result<()> {
     Ok(())
 }
 
+/// Incognito admission happens before any pre-runtime route can open retained
+/// session, skill, loop, agent, hook, or other instance-local state. The
+/// normal provider/config/consent boundary remains available afterwards.
+fn ensure_incognito_argument_admission(args: &ChatArgs) -> Result<()> {
+    if !args.incognito {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        args.resume_from.is_none()
+            && args.skill.is_none()
+            && !args.loop_mode
+            && args.until.is_empty(),
+        "Incognito rejects resume, skills, and loops before personal state can be opened"
+    );
+    if let Some(message) = args.message.as_deref() {
+        ensure_incognito_prompt_admission(message)?;
+    }
+    Ok(())
+}
+
+/// Slash/agent operations may load skills, tools, documents or background
+/// state. They are never admitted to a private provider turn.
+fn ensure_incognito_prompt_admission(prompt: &str) -> Result<()> {
+    let command = prompt.trim_start().split_whitespace().next().unwrap_or_default();
+    anyhow::ensure!(
+        !command.starts_with('/'),
+        "{command} is unavailable in Incognito because slash commands can access durable \
+         personal or extension state"
+    );
+    Ok(())
+}
+
+/// Resolve the private prompt before any runtime setup can derive instance
+/// paths, read configuration, or inspect the operator's slash-command tree.
+/// The resolved value stays only in the in-memory argument object.  Normal
+/// turns retain their pre-runtime local-action dispatcher below.
+async fn admit_incognito_turn_before_runtime(args: &mut ChatArgs) -> Result<()> {
+    ensure_incognito_argument_admission(args)?;
+    if !args.incognito {
+        return Ok(());
+    }
+
+    let needs_prompt_resolution = args.edit
+        || !matches!(args.message.as_deref(), Some(message) if !message.trim().is_empty());
+    if needs_prompt_resolution {
+        let prompt = resolve_prompt_base(args).await?;
+        ensure_incognito_prompt_admission(&prompt)?;
+        args.message = Some(prompt);
+        args.edit = false;
+    }
+    Ok(())
+}
+
 pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
     // The private GUI launch commit is the first operation in this entry point.
     // Until the bounded envelope arrives, no config, provider, hook, tool, or
@@ -237,7 +290,8 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         );
     }
 
-    if dispatch_pre_runtime_local_action(&mut args).await? {
+    admit_incognito_turn_before_runtime(&mut args).await?;
+    if !args.incognito && dispatch_pre_runtime_local_action(&mut args).await? {
         return Ok(());
     }
 
@@ -1768,6 +1822,90 @@ async fn build_prompt_bundle(
         // B22-TWEAKS-MODEL-01 — pre-loaded fail-loud at the chat boundary.
         persona_override_from_tweaks,
     } = options;
+
+    // GOLD-R4-11 — this is the central, fail-closed Incognito prompt
+    // boundary.  Only the current request, its explicitly supplied system
+    // text/attachments, static product policy, accepted configuration and the
+    // already-authorized provider route may cross it.  In particular, return
+    // before opening skills, NEOTH.md/operator context, repo/code maps,
+    // moral-core/persona/profile data, recall, guidance or any instance
+    // extension.  Adding a new enrichment below therefore cannot accidentally
+    // make a private turn load historical operator state.
+    if args.incognito {
+        anyhow::ensure!(
+            args.skill.is_none() && slash_skill_name.is_none(),
+            "--skill and /skill routing are unavailable in Incognito because they load \
+             instance extensions"
+        );
+        let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
+            prompt: &prompt,
+            operator_sovereignty: Some(
+                crate::security::operator_sovereignty::OperatorSovereigntyPrompt::
+                    local_interactive(),
+            ),
+            operator_context: None,
+            preset_addendum: None,
+            explicit_system: args.system.as_deref(),
+            repo_context_block: None,
+            attachment_contexts,
+            skill_system_prompt: None,
+            used_skill_id: None,
+            mcp_catalogue: None,
+            persona_override: None,
+            moral_core: None,
+            identity_anchor: None,
+            identity_locked: false,
+            current_goal: None,
+            communication_profile: None,
+        });
+        let budget_items = enriched.budget_items;
+        let (_, combined_system) =
+            crate::tokens::budget::render_request(&budget_items).map_err(anyhow::Error::msg)?;
+        return Ok((
+            PromptBundle {
+                combined_system,
+                skill_route_guard: None,
+                skill_route_report: crate::skills::resolver::SkillRouteReport {
+                    outcome: crate::skills::resolver::SkillRouteOutcome::NoMatch,
+                    stage: None,
+                    config_epoch: 0,
+                    authority_epoch: 0,
+                    snapshot_sha256: "incognito-no-instance-skill-registry".to_string(),
+                    candidates: Vec::new(),
+                    rejection: None,
+                    degraded_reason: Some("incognito_extension_loading_disabled".to_string()),
+                },
+                budget_items,
+                mcp_catalogue_slot: None,
+                skill_tool_allowlist: None,
+                plan_attest_hash: None,
+                agent_raw_layers: AgentRawLayers {
+                    operator_context: None,
+                    preset_addendum: None,
+                    explicit_system: args.system.clone(),
+                    repo_context_block: None,
+                    attachment_contexts: attachment_contexts.cloned(),
+                    skill_layer: None,
+                    persona_override: None,
+                    moral_core: None,
+                    communication_profile: None,
+                    recall_block: None,
+                    guidance_block: None,
+                    skill_delegate_to: None,
+                    identity_anchor: None,
+                    identity_locked: false,
+                },
+                resolved_model: None,
+                resolved_effort: None,
+                skill_loop_trigger: false,
+                repo_recall_audit: None,
+                architecture_recall_audit: None,
+            },
+            config,
+            prompt,
+            home,
+        ));
+    }
     let cwd = current_path.to_path_buf();
     // GOLD-CCPARITY-SUBDIR-MD-01 — resolve extra_dirs from config; relative
     // paths are joined to cwd so operators can write `packages/core` in
@@ -2605,9 +2743,16 @@ async fn enforce_preflight(
     // The PaidProviderCall decision now happens at each real provider leaf,
     // after all prompt/model mutations and immediately before that exact call.
     let agent_dir = home.join("agents");
-    let agents = crate::sub_agents::load_all(&agent_dir)
-        .await
-        .unwrap_or_default();
+    // An Incognito turn may use the configured provider, but never discovers
+    // instance agents: their definitions are personal extension state and can
+    // carry prompt/model/tool policy from prior operator configuration.
+    let agents = if args.incognito {
+        Vec::new()
+    } else {
+        crate::sub_agents::load_all(&agent_dir)
+            .await
+            .unwrap_or_default()
+    };
     let agent_dispatch =
         crate::sub_agents::parse_agent_invocation(&prompt, &agents).or_else(|| {
             agent_raw_layers
@@ -3231,47 +3376,54 @@ async fn enforce_preflight(
     // Operator hooks are policy, not optional decoration. A malformed or
     // unreadable configured hook must never turn into an empty policy set and
     // let the provider call continue.
-    let hooks = match crate::hooks::load_all_strict(&hook_dir).await {
-        Ok(hooks) => hooks,
-        Err(error) => {
-            let reason = format!("operator hook set could not be loaded: {error:#}");
-            match serde_json::to_vec(&serde_json::json!({
-                "name": "hook-loader",
-                "stage": "pre_pipeline",
-                "reason": reason,
-                "ts_unix": crate::time::now_unix_secs(),
-            })) {
-                Ok(payload) => {
-                    let header = crate::wal::HeaderBuilder::new(
-                        crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
-                        &payload,
-                    )
-                    .build();
-                    if let Err(audit_error) = writer.append(header, payload).await {
-                        warn!(
-                            error = %audit_error,
-                            "WAL append HOOK_BLOCKED for invalid hook set failed"
-                        );
+    let hooks = if args.incognito {
+        // Hook files are operator-defined extension state.  Do not even open
+        // their directory for a private turn; an empty policy set preserves
+        // the normal provider/consent path without injecting personal policy.
+        Vec::new()
+    } else {
+        match crate::hooks::load_all_strict(&hook_dir).await {
+            Ok(hooks) => hooks,
+            Err(error) => {
+                let reason = format!("operator hook set could not be loaded: {error:#}");
+                match serde_json::to_vec(&serde_json::json!({
+                    "name": "hook-loader",
+                    "stage": "pre_pipeline",
+                    "reason": reason,
+                    "ts_unix": crate::time::now_unix_secs(),
+                })) {
+                    Ok(payload) => {
+                        let header = crate::wal::HeaderBuilder::new(
+                            crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                            &payload,
+                        )
+                        .build();
+                        if let Err(audit_error) = writer.append(header, payload).await {
+                            warn!(
+                                error = %audit_error,
+                                "WAL append HOOK_BLOCKED for invalid hook set failed"
+                            );
+                        }
                     }
+                    Err(audit_error) => warn!(
+                        error = %audit_error,
+                        "serialize HOOK_BLOCKED for invalid hook set failed"
+                    ),
                 }
-                Err(audit_error) => warn!(
-                    error = %audit_error,
-                    "serialize HOOK_BLOCKED for invalid hook set failed"
-                ),
+                drop(writer);
+                if let Err(join_error) = writer_join.await {
+                    warn!(
+                        error = %join_error,
+                        "WAL writer join failed while refusing an invalid hook set"
+                    );
+                }
+                return Err(error).with_context(|| {
+                    format!(
+                        "operator hooks at {} are invalid; provider dispatch refused",
+                        hook_dir.display()
+                    )
+                });
             }
-            drop(writer);
-            if let Err(join_error) = writer_join.await {
-                warn!(
-                    error = %join_error,
-                    "WAL writer join failed while refusing an invalid hook set"
-                );
-            }
-            return Err(error).with_context(|| {
-                format!(
-                    "operator hooks at {} are invalid; provider dispatch refused",
-                    hook_dir.display()
-                )
-            });
         }
     };
     let final_prompt = match run_hook_stage(
@@ -4459,7 +4611,11 @@ async fn dispatch_provider(
     // crashed mid-window → `neoth recover` surfaces it. Best-effort: a journal
     // error never blocks the turn. Closed (+0x06) at the single clean-completion
     // point below; any bail/crash before that leaves the file as a crash candidate.
-    let mut journal = {
+    let mut journal = if args.incognito {
+        // The journal contains prompt excerpts and streamed reply chunks.
+        // Incognito deliberately has no journal or journal WAL anchors.
+        None
+    } else {
         use crate::recovery::turn_journal::{TurnEvent, TurnJournal, opened_payload};
         match TurnJournal::open(home, turn_id) {
             Ok(mut j) => {
@@ -5429,6 +5585,9 @@ async fn run_post_reply_pipelines(
     mut stream_plan: PostReplyStreamPlan<'_>,
 ) -> Result<()> {
     let first_tour_home = instance_paths.home.clone();
+    // Defensive second boundary: callers other than `enforce_preflight` must
+    // not be able to make a private turn run retained PostProviderCall hooks.
+    let hooks = if args.incognito { Vec::new() } else { hooks };
     // Start the shared deadline before hooks, audits, and recovery selection.
     // Initial provider latency plus post-reply coordination must fit inside the
     // same refusal-recovery wall-clock budget.
@@ -5558,38 +5717,40 @@ async fn run_post_reply_pipelines(
     // Learn presentation preferences only from an authenticated, accepted
     // operator turn. The recorder stores typed evidence plus this durable WAL
     // identity; it never persists `prompt` itself and is inert in Incognito.
-    let communication_event_hash = crate::profile::communication::evidence_event_hash(
-        "cli_turn",
-        "operator",
-        &current_session_id,
-        &raw_event_id.to_le_bytes(),
-    );
-    let communication_scope = crate::profile::communication::CommunicationScope::Global;
-    let communication_subject = LocalChatCommunicationSubject::mint();
-    let communication_outcome = crate::profile::communication::record_authenticated_turn(
-        &first_tour_home,
-        &config.profile.communication,
-        &prompt,
-        communication_event_hash,
-        communication_subject,
-        &current_session_id,
-        chat_ts_unix,
-        communication_scope.clone(),
-        matches!(config.autonomy, crate::permissions::AutonomyLevel::Full),
-        args.incognito,
-    )
-    .context("record authenticated communication-adaptation evidence")?;
-    crate::profile::communication::append_observation_audit(
-        &first_tour_home,
-        &writer,
-        "operator",
-        communication_event_hash,
-        &communication_scope,
-        &communication_outcome,
-        chat_ts_unix,
-    )
-    .await
-    .context("audit authenticated communication-adaptation evidence")?;
+    if !args.incognito {
+        let communication_event_hash = crate::profile::communication::evidence_event_hash(
+            "cli_turn",
+            "operator",
+            &current_session_id,
+            &raw_event_id.to_le_bytes(),
+        );
+        let communication_scope = crate::profile::communication::CommunicationScope::Global;
+        let communication_subject = LocalChatCommunicationSubject::mint();
+        let communication_outcome = crate::profile::communication::record_authenticated_turn(
+            &first_tour_home,
+            &config.profile.communication,
+            &prompt,
+            communication_event_hash,
+            communication_subject,
+            &current_session_id,
+            chat_ts_unix,
+            communication_scope.clone(),
+            matches!(config.autonomy, crate::permissions::AutonomyLevel::Full),
+            false,
+        )
+        .context("record authenticated communication-adaptation evidence")?;
+        crate::profile::communication::append_observation_audit(
+            &first_tour_home,
+            &writer,
+            "operator",
+            communication_event_hash,
+            &communication_scope,
+            &communication_outcome,
+            chat_ts_unix,
+        )
+        .await
+        .context("audit authenticated communication-adaptation evidence")?;
+    }
 
     let mut refusal_completion = completion;
     let operator_origin =
@@ -5690,7 +5851,8 @@ async fn run_post_reply_pipelines(
     let refusal_recovery_env_enabled = std::env::var("NEOTH_REFUSAL_RECOVERY_DISABLE")
         .map(|v| !(v == "1" || v.eq_ignore_ascii_case("true")))
         .unwrap_or(true);
-    let truthful_retry_enabled = config.refusal_recovery.enabled && refusal_recovery_env_enabled;
+    let truthful_retry_enabled =
+        !args.incognito && config.refusal_recovery.enabled && refusal_recovery_env_enabled;
     let should_check_hard_block = should_check_refusal_hard_block(
         recovery_route_eligible,
         operator_origin,
@@ -5722,7 +5884,8 @@ async fn run_post_reply_pipelines(
             "native refusal retained without transparent retry because the live stream boundary was already emitted"
         );
     }
-    if recovery_route_eligible
+    if !args.incognito
+        && recovery_route_eligible
         && !hard_blocked
         && recovery_can_replace_visible_response
         && truthful_retry_enabled
@@ -5857,7 +6020,8 @@ async fn run_post_reply_pipelines(
     // model (operator-owned hardware — NOT provider-deception). The orchestrator
     // runs the permanent hard-block floor first and emits WAL 0x26/0x27/0x28
     // internally. Best-effort; never bails a turn.
-    if recovery_route_eligible
+    if !args.incognito
+        && recovery_route_eligible
         && !hard_blocked
         && recovery_can_replace_visible_response
         && config.refusal_recovery.abliterated_fallback_enabled
@@ -5965,7 +6129,8 @@ async fn run_post_reply_pipelines(
     // `derived_from_mirror_pipeline = true` (ADV-07) skips profile extraction
     // on corrected turns so the teacher's writing style is not learned as the
     // operator's own. Best-effort; never fails a turn.
-    if recovery_route_eligible
+    if !args.incognito
+        && recovery_route_eligible
         && !hard_blocked
         && recovery_can_replace_visible_response
         && crate::providers::is_local_provider(&provider_used)
@@ -6118,7 +6283,7 @@ async fn run_post_reply_pipelines(
     // Scan the provider's reply for DECISION:/Beschluss:/ADR: markers. Each
     // hit writes `~/.neoth/adr/NNNN-<slug>.md`. Failures log but never
     // block — ADR capture is operator-side bookkeeping, not load-bearing.
-    {
+    if !args.incognito {
         let adr_dir = &instance_paths.adr;
         let decisions = crate::adr::extract_decisions(&response_text);
         for d in &decisions {
@@ -6389,7 +6554,8 @@ async fn run_post_reply_pipelines(
     // Activates only when (a) the operator dispatched via `/agent`, and (b)
     // `freedom.yaml::review_gate_enabled` is true. Costs 2× extra provider
     // calls so it stays opt-in.
-    if let Some((agent_name, original_prompt)) = review_context
+    if !args.incognito
+        && let Some((agent_name, original_prompt)) = review_context
         && config.review_gate_enabled
     {
         tracing::info!(agent = %agent_name, "running two-stage review gate");
@@ -6631,7 +6797,8 @@ async fn run_post_reply_pipelines(
     // chat turn. Only persists when the flag is currently false (no-op on every
     // subsequent turn). Update the exact selected config path under its lock;
     // a custom `--config` must never mutate the process-default freedom.yaml.
-    if !config.chat_onboarding_completed
+    if !args.incognito
+        && !config.chat_onboarding_completed
         && let Err(e) = persist_chat_onboarding_complete(&instance_paths.config)
     {
         tracing::warn!(error = %e, "OH-11: could not persist chat_onboarding_completed=true (non-fatal)");
@@ -6659,7 +6826,8 @@ pub async fn run_chat_with(
 ) -> Result<()> {
     // Public alternate ingress: use the same terminal local-action dispatcher
     // before this helper can create a WAL writer or call the supplied provider.
-    if dispatch_pre_runtime_local_action(&mut args).await? {
+    admit_incognito_turn_before_runtime(&mut args).await?;
+    if !args.incognito && dispatch_pre_runtime_local_action(&mut args).await? {
         return Ok(());
     }
     run_chat_with_consent(
@@ -6679,6 +6847,7 @@ async fn run_chat_with_consent(
     ephemeral_consent: crate::consent::EphemeralConsent,
     stream_control_token: Option<Zeroizing<String>>,
 ) -> Result<()> {
+    admit_incognito_turn_before_runtime(&mut args).await?;
     info!(provider = provider.name(), "neoth chat");
     // The runtime owns one marker for its complete interactive session.  Every
     // foreground provider turn receives an Arc to this same in-memory token.
@@ -6693,12 +6862,21 @@ async fn run_chat_with_consent(
     );
     let first_tour_home = instance_paths.home.clone();
 
+    // Resume hydration opens historical transcript/checkpoint state. Refuse
+    // the contradictory combination before any such file can be read.
+    anyhow::ensure!(
+        !(args.incognito && args.resume_from.is_some()),
+        "--resume-from is unavailable in Incognito because it reads prior session state"
+    );
+
     // R-05 (Session 24) — surface the first-tour greeting at most
     // once per wizard run. `consume_first_tour_marker` reads + deletes
     // the marker so subsequent chat invocations don't repeat it. Best-
     // effort: a missing or unreadable marker means "operator past the
     // onboarding moment", which is the safe default.
-    if let Some(greeting) = crate::cli::init::consume_first_tour_marker(&first_tour_home) {
+    if !args.incognito
+        && let Some(greeting) = crate::cli::init::consume_first_tour_marker(&first_tour_home)
+    {
         write_chat_notice(args.stream, format_args!("[neoth] {greeting}"))
             .context("write first-tour chat notice")?;
     }
@@ -6707,7 +6885,7 @@ async fn run_chat_with_consent(
     // after a fresh `neoth init` (write_config sets the flag false). Suppressed
     // for existing operators (default_true serde default) and after the first
     // successful turn (run_post_reply_pipelines flips it true).
-    if !config.chat_onboarding_completed {
+    if !args.incognito && !config.chat_onboarding_completed {
         write_chat_notice(
             args.stream,
             "[neoth] First chat! Run `neoth doctor` to check system status, \
@@ -6803,7 +6981,7 @@ async fn run_chat_with_consent(
     // a bad/missing checkpoint or an unrecorded legacy MCP scope fails closed
     // instead of silently running a normal turn with a different tool surface.
     let mut resumed_mcp_scope: Option<Vec<String>> = None;
-    if let Some(hash_prefix) = args.resume_from.clone() {
+    if !args.incognito && let Some(hash_prefix) = args.resume_from.clone() {
         let hydration =
             hydrate_resume_context(&first_tour_home, &hash_prefix, args.system.as_deref())
                 .map_err(|why| anyhow::anyhow!("resume-from `{hash_prefix}` failed: {why}"))?;
@@ -6830,6 +7008,9 @@ async fn run_chat_with_consent(
         prompt,
         has_attachments,
     } = resolve_turn_input(&args, &first_tour_home).await?;
+    if args.incognito {
+        ensure_incognito_prompt_admission(&prompt)?;
+    }
 
     // One immutable MCP configuration snapshot per chat turn. Bad YAML is an
     // operator error and fails loud instead of silently removing tools. This
@@ -6838,7 +7019,18 @@ async fn run_chat_with_consent(
         mcp_servers: current_mcp_servers,
         tweaks,
         profile_extensions,
-    } = load_instance_turn_state(&instance_paths)?;
+    } = if args.incognito {
+        // Do not inspect instance MCP, tweak or extension files. Empty/default
+        // values disable those optional personalization/extension surfaces.
+        InstanceTurnState {
+            mcp_servers: crate::mcp::McpServers::default(),
+            tweaks: crate::tweaks::Tweaks::default(),
+            profile_extensions:
+                crate::profile::extension_registry::TypedExtensionRegistry::default(),
+        }
+    } else {
+        load_instance_turn_state(&instance_paths)?
+    };
     let mcp_servers = match resumed_mcp_scope.as_deref() {
         Some(scope) => restrict_mcp_servers_to_checkpoint(current_mcp_servers, scope)
             .map_err(|why| anyhow::anyhow!("resume MCP scope validation failed: {why}"))?,
@@ -6865,7 +7057,8 @@ async fn run_chat_with_consent(
     // auto-dispatch entirely. Low-confidence detections (verb XOR
     // noun, not both) print an offer banner but still run the chat
     // turn — only High confidence auto-dispatches.
-    if !explicit_route_requested
+    if !args.incognito
+        && !explicit_route_requested
         && !has_attachments
         && crate::coding::intent::should_auto_dispatch(&prompt)
     {
@@ -6895,7 +7088,8 @@ async fn run_chat_with_consent(
             .context("write coding auto-dispatch stream completion markers")?;
         }
         return result;
-    } else if !explicit_route_requested
+    } else if !args.incognito
+        && !explicit_route_requested
         && !has_attachments
         && let Some(intent) = crate::coding::intent::detect_coding_intent(&prompt)
     {
@@ -6927,9 +7121,22 @@ async fn run_chat_with_consent(
     // banner clean (operator just finished the wizard — no "since
     // last time" makes sense).
     let chat_ts_unix = now_unix() as i64;
-    let current_session_id = crate::memory::hindsight::session_id_for(chat_ts_unix, &prompt);
-    let seed_banner =
-        crate::memory::hindsight::next_session_seed_banner(&first_tour_home, &current_session_id);
+    // Private turns still need a request-bound metadata value for provider
+    // authorization frames, but it must not be derived from or join a stored
+    // hindsight session.
+    let current_session_id = if args.incognito {
+        format!("incognito-{}", uuid::Uuid::new_v4())
+    } else {
+        crate::memory::hindsight::session_id_for(chat_ts_unix, &prompt)
+    };
+    let seed_banner = (!args.incognito)
+        .then(|| {
+            crate::memory::hindsight::next_session_seed_banner(
+                &first_tour_home,
+                &current_session_id,
+            )
+        })
+        .unwrap_or_default();
     if !seed_banner.is_empty() {
         write_chat_notice(args.stream, &seed_banner).context("write session seed notice")?;
     }
@@ -6938,7 +7145,7 @@ async fn run_chat_with_consent(
     // the operator NEOTH carried context across runs. Best-effort +
     // naturally silent on a fresh install (zero memories → None), which
     // also keeps the post-wizard first-tour banner clean.
-    if let Some(line) = session_memory_signal(&first_tour_home) {
+    if !args.incognito && let Some(line) = session_memory_signal(&first_tour_home) {
         write_chat_notice(args.stream, &line).context("write session memory notice")?;
     }
 
@@ -6946,7 +7153,9 @@ async fn run_chat_with_consent(
     // operator toward opt-in features they still haven't switched on.
     // Self-suppresses via a marker file; naturally silent pre-30-days,
     // when all features are active, or on a fresh install.
-    if let Some(banner) = crate::cli::unlock_moment::maybe_unlock_banner(&first_tour_home, &config)
+    if !args.incognito
+        && let Some(banner) =
+            crate::cli::unlock_moment::maybe_unlock_banner(&first_tour_home, &config)
     {
         write_chat_notice(args.stream, &banner).context("write unlock notice")?;
     }
@@ -6958,7 +7167,7 @@ async fn run_chat_with_consent(
     // epoch and cannot safely be paired with this independently loaded config.
     // The catalog is printed right here in the session-start banner chain,
     // AFTER UX-05 and BEFORE the WAL writer opens, matching the research plan.
-    if config.skills.session_catalog {
+    if !args.incognito && config.skills.session_catalog {
         let skills_dir = first_tour_home.join("skills");
         let accepted = std::sync::Arc::new(crate::config::reload::ReloadController::new(
             config.clone(),
@@ -6999,7 +7208,7 @@ async fn run_chat_with_consent(
     // Provider name at this point: the live Provider hasn't been
     // constructed yet (it's passed in via the `provider` argument) but
     // its name() is available from the &dyn Provider reference.
-    {
+    if !args.incognito {
         use crate::recall::reconstruct::ModeCheckpoint;
         use crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT;
         // GOLD-ADAPT-G-01: three-way label: single > off > enabled.
@@ -7061,7 +7270,9 @@ async fn run_chat_with_consent(
     // must not mutate the learned operator profile. The audit stores only a
     // prompt hash (no message-content leak); sustained correction pressure is
     // consumed by the profile-adapt cron.
-    let _ = crate::feedback::record_operator_correction(&first_tour_home, &prompt).await;
+    if !args.incognito {
+        let _ = crate::feedback::record_operator_correction(&first_tour_home, &prompt).await;
+    }
 
     // ── RAW_TEXT (the actual prompt, for recall) ──────────────────────────
     // Stored before dispatch so `neoth recall "..."` can find what the
@@ -7074,8 +7285,13 @@ async fn run_chat_with_consent(
     let raw_event_id = if args.incognito {
         // ODY-09: no prompt stored; raw_event_id=0 signals "no anchor" to the
         // profile-learning pipeline (extract_window gates on valid non-zero ids).
-        let payload = serde_json::to_vec(&serde_json::json!({"ts_unix": now_unix()}))
-            .context("serialize incognito audit anchor")?;
+        // This is deliberately metadata-only.  Never add prompt, reply,
+        // session, profile, or provider-body fields to the privacy anchor.
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "ts_unix": now_unix(),
+            "incognito": true,
+        }))
+        .context("serialize incognito audit anchor")?;
         let hdr = crate::wal::make_header(EVENT_TYPE_INCOGNITO_TURN, &payload);
         writer
             .append(hdr, payload)
@@ -7101,7 +7317,8 @@ async fn run_chat_with_consent(
     // signal without re-scanning the WAL. Best-effort: a permission
     // failure on the marker file MUST NOT fail the chat — recording is
     // an audit signal, not a chat-correctness invariant.
-    if let Err(error) =
+    if !args.incognito
+        && let Err(error) =
         crate::profile::briefing_gate::record_last_active(&first_tour_home, now_unix() as i64)
     {
         tracing::warn!(error = %error, "operator activity marker was not persisted");
@@ -7118,7 +7335,8 @@ async fn run_chat_with_consent(
     // through to the normal provider path below unchanged.
     // GR-039: gated on `memory.recall_shortcut` (default true) so operators
     // can route recall-looking prompts to the provider like any other turn.
-    if !explicit_route_requested
+    if !args.incognito
+        && !explicit_route_requested
         && attachment_contexts.is_none()
         && config.memory.recall_shortcut
         && let Some(reply) = crate::cli::recall::answer_conversational_recall(
@@ -7387,10 +7605,11 @@ async fn run_chat_with_consent(
     let defer_provider_output = hooks.iter().any(|hook| {
         hook.stage == crate::hooks::HookStage::PostProviderCall && hook.enabled.unwrap_or(true)
     }) || !pending_block_restorations.is_empty()
-        || config.refusal_recovery.enabled
-        || config.refusal_recovery.abliterated_fallback_enabled
-        || (config.refusal_recovery.teacher_escalation_enabled
-            && crate::providers::is_local_provider(provider.name()));
+        || (!args.incognito
+            && (config.refusal_recovery.enabled
+                || config.refusal_recovery.abliterated_fallback_enabled
+                || (config.refusal_recovery.teacher_escalation_enabled
+                    && crate::providers::is_local_provider(provider.name()))));
 
     let route_thinking_budget = skill_effort
         .filter(|_| provider.request_controls().supports_thinking_budget())
@@ -8094,6 +8313,12 @@ async fn resolve_turn_input(
     neoth_home: &std::path::Path,
 ) -> Result<ResolvedTurnInput> {
     let base = resolve_prompt_base(args).await?;
+    // Non-argv prompt sources (stdin/editor) reach their first complete text
+    // here. Reject private slash invocations before attachment admission can
+    // inspect the operator's custom command directory.
+    if args.incognito {
+        ensure_incognito_prompt_admission(&base)?;
+    }
     reject_attachment_ignoring_slash_before_extraction(&base, &args.attach, neoth_home).await?;
     Ok(ResolvedTurnInput {
         prompt: base,
@@ -13018,6 +13243,44 @@ mod tests {
     }
 
     #[test]
+    fn incognito_stream_keeps_private_text_out_of_authenticated_terminal_metadata() {
+        let control_token = "0123456789abcdef0123456789abcdef";
+        let private_prompt = "INC0GNITO_PROMPT_MUST_NEVER_APPEAR_IN_METADATA";
+        let private_reply = "INC0GNITO_REPLY_VISIBLE_ONLY_AS_THE_STREAM_BODY";
+        let completion = crate::providers::Completion {
+            text: private_reply.to_string(),
+            ..Default::default()
+        };
+        let mut stdout = Vec::new();
+
+        emit_deferred_post_provider_stream_to(
+            &mut stdout,
+            Some(control_token),
+            256,
+            &completion,
+            private_reply,
+        )
+        .expect("private turn terminal framing must settle");
+
+        let stdout = String::from_utf8(stdout).unwrap();
+        assert!(stdout.starts_with(private_reply));
+        let frames = stdout
+            .lines()
+            .filter_map(|line| line.strip_prefix(CHAT_STREAM_CONTROL_PREFIX))
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0]["neoth_stream"], "provider_done");
+        assert_eq!(frames[1]["neoth_stream"], "done");
+        for frame in frames {
+            assert_eq!(frame["control_token"], control_token);
+            let metadata = frame.to_string();
+            assert!(!metadata.contains(private_prompt));
+            assert!(!metadata.contains(private_reply));
+        }
+    }
+
+    #[test]
     fn dispatch_stream_finalization_is_route_independent_and_single_boundary() {
         let control_token = "0123456789abcdef0123456789abcdef";
         for (provider, model, chunks) in [
@@ -17141,6 +17404,210 @@ modes:
             format!("{error:#}").contains("refused stale or unverifiable snapshot"),
             "prompt boundary lost the stale recall cause: {error:#}"
         );
+    }
+
+    #[tokio::test]
+    async fn incognito_prompt_boundary_excludes_populated_history_persona_and_repo_state() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join("history")).unwrap();
+        std::fs::write(home.join("views.db"), "OLD_TRANSCRIPT_DO_NOT_INJECT").unwrap();
+        std::fs::write(home.join("history/session.md"), "OLD_HISTORY_DO_NOT_INJECT").unwrap();
+        std::fs::write(home.join("moral_core.md"), "OLD_MORAL_CORE_DO_NOT_INJECT").unwrap();
+        std::fs::write(home.join("code_map.db"), "OLD_CODE_MAP_DO_NOT_INJECT").unwrap();
+        std::fs::write(home.join(".last-active"), "UNCHANGED_ACTIVITY_MARKER").unwrap();
+        let marker_before = std::fs::read(home.join(".last-active")).unwrap();
+        let args = ChatArgs {
+            attach: Vec::new(),
+            message: Some("current private request".to_string()),
+            model: None,
+            skill: None,
+            system: Some("current explicit system only".to_string()),
+            edit: false,
+            config: None,
+            wal_segment: None,
+            stream: false,
+            gui_consent_token_stdin: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+            incognito: true,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
+        };
+        let (writer, writer_join) = wal_spawn(home.join("incognito-prompt-build.wal")).unwrap();
+        let result = build_prompt_bundle(
+            FreedomConfig::default(),
+            "current private request".to_string(),
+            home.clone(),
+            PromptBuildContext {
+                args: &args,
+                prompt_bundle_hash: &"0".repeat(64),
+                writer: &writer,
+                current_path: dir.path(),
+                attachment_contexts: None,
+            },
+            PromptBuildOptions {
+                slash_skill_name: None,
+                persona_override_from_tweaks: None,
+            },
+        )
+        .await
+        .expect("private prompt bundle must not need populated instance state");
+        drop(writer);
+        writer_join.await.unwrap();
+
+        let bundle = result.0;
+        let (_, system) = crate::tokens::budget::render_request(&bundle.budget_items).unwrap();
+        let system = system.unwrap_or_default();
+        for forbidden in [
+            "OLD_TRANSCRIPT_DO_NOT_INJECT",
+            "OLD_HISTORY_DO_NOT_INJECT",
+            "OLD_MORAL_CORE_DO_NOT_INJECT",
+            "OLD_CODE_MAP_DO_NOT_INJECT",
+        ] {
+            assert!(!system.contains(forbidden), "Incognito injected {forbidden}");
+        }
+        assert_eq!(
+            bundle.skill_route_report.degraded_reason.as_deref(),
+            Some("incognito_extension_loading_disabled")
+        );
+        assert_eq!(std::fs::read(home.join(".last-active")).unwrap(), marker_before);
+    }
+
+    #[test]
+    fn incognito_turn_boundary_is_central_and_production_only() {
+        let source = include_str!("chat.rs");
+        let production = source
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .expect("production source before tests");
+        let boundary = production
+            .split("async fn build_prompt_bundle")
+            .nth(1)
+            .and_then(|tail| tail.split("let cwd = current_path.to_path_buf();").next())
+            .expect("central Incognito prompt boundary");
+        for denied_surface in [
+            "SkillRegistry::load_with_reload_controller",
+            "operator_md::assemble",
+            "maybe_repo_context_recall_async",
+            "moral_core::compact_for_injection",
+            "load_active_preset",
+            "load_persona_mode",
+            "maybe_recall_block",
+            "maybe_guidance_block",
+        ] {
+            assert!(
+                !boundary.contains(denied_surface),
+                "central Incognito boundary must return before {denied_surface}"
+            );
+        }
+        assert!(production.contains("!(args.incognito && args.resume_from.is_some())"));
+        assert!(production.contains(concat!(
+            "if !args.incognito {\n",
+            "        let _ = crate::feedback::record_operator_correction"
+        )));
+        assert!(production.contains("if !args.incognito\n        && let Err(error) ="));
+        assert!(production.contains(concat!(
+            "if !args.incognito\n",
+            "        && !config.chat_onboarding_completed"
+        )));
+        assert!(production.contains("let hooks = if args.incognito {"));
+        assert!(production.contains("let mut journal = if args.incognito {"));
+        assert!(production.contains("!args.incognito && config.refusal_recovery.enabled"));
+        let alternate_ingress = production
+            .split("pub async fn run_chat_with(")
+            .nth(1)
+            .and_then(|tail| tail.split("run_chat_with_consent(").next())
+            .expect("alternate public chat ingress");
+        let admission = alternate_ingress
+            .find("admit_incognito_turn_before_runtime(&mut args).await?;")
+            .expect("Incognito argument admission");
+        let dispatcher = alternate_ingress
+            .find("!args.incognito && dispatch_pre_runtime_local_action")
+            .expect("Incognito-skipped local action dispatcher");
+        assert!(admission < dispatcher);
+        let anchor = production
+            .split("let raw_event_id = if args.incognito")
+            .nth(1)
+            .and_then(|tail| tail.split("} else {").next())
+            .expect("Incognito audit anchor");
+        assert!(anchor.contains("\"incognito\": true"));
+        assert!(!anchor.contains("prompt.as_bytes"));
+        assert!(!anchor.contains("response_text"));
+    }
+
+    #[test]
+    fn incognito_rejects_every_leading_slash_command_without_an_allowlist() {
+        for command in [
+            "/",
+            "/skill-from-doc notes.md",
+            "/wizard",
+            "/custom-private-command argument",
+            "   /future-command",
+        ] {
+            let error = ensure_incognito_prompt_admission(command).unwrap_err();
+            assert!(error.to_string().contains("unavailable in Incognito"));
+        }
+        ensure_incognito_prompt_admission("ordinary private prompt").unwrap();
+    }
+
+    #[tokio::test]
+    async fn incognito_runtime_admission_rejects_a_custom_slash_before_dispatch() {
+        let mut args = ChatArgs {
+            message: Some("/custom-private-command attachment".into()),
+            attach: vec![PathBuf::from("not-opened.txt")],
+            incognito: true,
+            ..test_chat_args_default()
+        };
+
+        let error = admit_incognito_turn_before_runtime(&mut args)
+            .await
+            .expect_err("private custom slash must stop before runtime setup");
+        assert!(error.to_string().contains("unavailable in Incognito"));
+        assert_eq!(args.message.as_deref(), Some("/custom-private-command attachment"));
+    }
+
+    #[tokio::test]
+    async fn incognito_attachment_slash_rejects_before_custom_command_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let commands = dir.path().join("commands");
+        std::fs::create_dir_all(&commands).unwrap();
+        std::fs::write(commands.join("broken.toml"), "not valid command syntax = [").unwrap();
+        let args = ChatArgs {
+            message: Some("/custom-private-command".into()),
+            attach: vec![dir.path().join("missing-private-attachment.txt")],
+            incognito: true,
+            ..test_chat_args_default()
+        };
+
+        let error = resolve_turn_input(&args, dir.path()).await.unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("unavailable in Incognito"));
+        assert!(!message.contains("operator slash commands"));
+        assert!(!message.contains("open attachment"));
+    }
+
+    #[tokio::test]
+    async fn incognito_bare_slash_with_attachment_rejects_before_command_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let commands = dir.path().join("commands");
+        std::fs::create_dir_all(&commands).unwrap();
+        std::fs::write(commands.join("broken.toml"), "not valid command syntax = [").unwrap();
+        let args = ChatArgs {
+            message: Some("/".into()),
+            attach: vec![dir.path().join("missing-private-attachment.txt")],
+            incognito: true,
+            ..test_chat_args_default()
+        };
+
+        let error = resolve_turn_input(&args, dir.path()).await.unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("unavailable in Incognito"));
+        assert!(!message.contains("operator slash commands"));
+        assert!(!message.contains("open attachment"));
     }
 
     #[tokio::test]

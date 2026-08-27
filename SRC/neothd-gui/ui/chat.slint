@@ -50,7 +50,7 @@
 
 import { ScrollView, LineEdit, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, Led, ConfirmDialog, NeothComboBox } from "components.slint";
+import { NeothButton, Card, Led, ConfirmDialog, NeothComboBox, NeothCheckBox } from "components.slint";
 
 /// One message in the scrollback. Owned by the Rust side; Slint
 /// renders the list reactively.
@@ -66,6 +66,9 @@ export struct ChatMessage {
     /// `waiting | receiving | finalizing | complete | cancelled | failed`.
     /// Timers may animate an active phase but never advance it.
     stream-phase: string,
+    /// Request-bound privacy mode. This follows an operator row through
+    /// regeneration instead of consulting the next-turn checkbox later.
+    incognito: bool,
     /// GOLD-ADAPT-ODY-02/05 — per-message metrics chip ("ctx 6% · 38 tok/s")
     /// + the click-popup detail block. Pre-formatted Rust-side
     /// (`panel_logic::format_stream_metrics`); empty = no chip.
@@ -252,6 +255,16 @@ component ChatBubble inherits Rectangle {
                         font-size: Theme.font-size-caption;
                         color: Theme.text-dim;
                         vertical-alignment: center;
+                    }
+                    // The row owns its privacy mode, so regenerating it
+                    // cannot silently consult the next-turn control instead.
+                    if root.message.incognito: Text {
+                        text: "Incognito";
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        color: Theme.consent;
+                        accessible-role: text;
+                        accessible-label: "Incognito request: no profile, recall, or transcript access";
                     }
                     // ODY-02/05 — context/throughput chip; click pops the
                     // full metrics detail.
@@ -708,6 +721,12 @@ component ConversationItem inherits Rectangle {
 
 component Composer inherits Rectangle {
     in-out property <string> draft: "";
+    /// Per-turn privacy boundary. Rust snapshots this value before consent
+    /// preflight and passes it to the exact CLI launch for this request.
+    in-out property <bool> incognito: false;
+    /// Captured privacy mode of the request that is currently in flight.
+    /// This is intentionally separate from the next-turn selection above.
+    in property <bool> incognito-active: false;
     in property <bool> send-enabled: true;
     /// GOLD-ADAPT-GUI-07 — true while a chat subprocess is streaming a
     /// reply; the Send button shows its spinner and re-sends are blocked.
@@ -724,7 +743,10 @@ component Composer inherits Rectangle {
     in-out property <int> selected-skill-index: 0;
     /// Typed result of the Skill router for this composer surface.
     in property <string> skill-route-status: "";
-    callback send-clicked(string);
+    /// Privacy is carried as an immutable request value rather than reread
+    /// from this widget by Rust after a retry or continuation is queued.
+    callback send-clicked(string, bool);
+    callback incognito-selection-changed(bool);
     callback skill-selected(int);
     callback attach-clicked();
     callback remove-attachment(int);
@@ -768,6 +790,47 @@ component Composer inherits Rectangle {
             font-weight: Theme.weight-medium;
             letter-spacing: Theme.letter-spacing-tight;
             color: Theme.text-tertiary;
+        }
+
+        // R4-11 — this is deliberately an explicit per-turn control next to
+        // the composer rather than a cosmetic global privacy indicator. The
+        // captured value is passed to `neoth chat --incognito`; selected means
+        // only that the upcoming request is being prepared with that boundary.
+        HorizontalLayout {
+            min-height: 32px;
+            spacing: Theme.space-base;
+            alignment: start;
+
+            if !root.send-in-flight: NeothCheckBox {
+                checked <=> root.incognito;
+                text: root.incognito
+                    ? "Incognito — next turn selected"
+                    : "Incognito — next turn unselected";
+                accessible-label: root.incognito
+                    ? "Incognito selected for the next turn: no profile, recall, or transcript data will be used"
+                    : "Incognito unselected for the next turn: standard configured context policy will apply";
+                toggled(selected) => { root.incognito-selection-changed(selected); }
+            }
+
+            Text {
+                horizontal-stretch: 1;
+                text: root.send-in-flight && root.incognito-active
+                    ? "Incognito active: this request cannot use profile, recall, or transcript data."
+                    : root.send-in-flight
+                    ? "Standard active: this request may use the configured profile and recall policy."
+                    : root.incognito
+                    ? "Next turn selected: no profile, recall, or transcript data will be used."
+                    : "Next turn unselected: standard configured context policy will apply.";
+                wrap: word-wrap;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-2xs;
+                color: (root.send-in-flight && root.incognito-active) || root.incognito
+                    ? Theme.consent
+                    : Theme.text-tertiary;
+                vertical-alignment: center;
+                accessible-role: text;
+                accessible-label: self.text;
+            }
         }
 
         // ODY-03 — pending-attachment strip: one removable chip per file.
@@ -967,7 +1030,7 @@ component Composer inherits Rectangle {
                         // typed consent preflight accepts this exact draft.
                         // GUI-07: swallowed while a reply is in flight.
                         if (root.send-enabled && root.draft != "" && !root.send-in-flight) {
-                            root.send-clicked(root.draft);
+                            root.send-clicked(root.draft, root.incognito);
                         }
                         return accept;
                     }
@@ -1000,7 +1063,7 @@ component Composer inherits Rectangle {
             enabled: root.send-enabled && root.draft != "";
             clicked => {
                 if (root.draft != "") {
-                    root.send-clicked(root.draft);
+                    root.send-clicked(root.draft, root.incognito);
                 }
             }
         }
@@ -1032,6 +1095,11 @@ export component ChatView inherits Rectangle {
 
     in property <[ChatMessage]> messages: [];
     in-out property <string> composer-draft: "";
+    /// R4-11 — selected per turn and snapshotted by Rust before preflight.
+    in-out property <bool> incognito: false;
+    /// Privacy mode frozen for the active request. The next-turn selection
+    /// resets immediately after dispatch and must not change this indicator.
+    in property <bool> incognito-active: false;
     in property <bool> send-enabled: true;
     /// GUI-07 — a reply subprocess is running; Send shows its spinner.
     in property <bool> send-in-flight: false;
@@ -1072,7 +1140,8 @@ export component ChatView inherits Rectangle {
     /// Rust may override these from startup config; defaults shown here.
     in property <[string]> starter-prompts: ["What can you do?", "Show me a demo", "Help me get started"];
 
-    callback send-clicked(string);
+    callback send-clicked(string, bool);
+    callback incognito-selection-changed(bool);
     callback skill-selected(int);
     callback channel-ctx(string /*channel*/, length /*x*/, length /*y*/);
     callback live-session-selected();
@@ -1201,10 +1270,10 @@ export component ChatView inherits Rectangle {
                 }
 
                 // ── ODY-01: recent sessions (hindsight cards) ─────────
-                if root.session-history.length > 0: Rectangle {
+                if root.session-history.length > 0 && !(root.incognito || (root.send-in-flight && root.incognito-active)): Rectangle {
                     height: 1px; background: Theme.border-subtle;
                 }
-                if root.session-history.length > 0: Text {
+                if root.session-history.length > 0 && !(root.incognito || (root.send-in-flight && root.incognito-active)): Text {
                     text: "SESSIONS";
                     font-family: Theme.font-display;
                     font-size: Theme.font-size-caption;
@@ -1212,14 +1281,14 @@ export component ChatView inherits Rectangle {
                     letter-spacing: Theme.letter-spacing-extra-wide;
                     color: Theme.text-dim;
                 }
-                if root.session-history.length > 0: Text {
+                if root.session-history.length > 0 && !(root.incognito || (root.send-in-flight && root.incognito-active)): Text {
                     text: "Read-only history · select a session to inspect";
                     font-family: Theme.font-display;
                     font-size: Theme.font-size-2xs;
                     color: Theme.text-muted;
                     wrap: word-wrap;
                 }
-                Flickable {
+                if !(root.incognito || (root.send-in-flight && root.incognito-active)): Flickable {
                     vertical-stretch: 1;
                     VerticalLayout {
                         spacing: 2px;
@@ -1790,6 +1859,8 @@ export component ChatView inherits Rectangle {
 
             if !root.history-active: Composer {
                 draft <=> root.composer-draft;
+                incognito <=> root.incognito;
+                incognito-active: root.incognito-active;
                 send-enabled: root.send-enabled;
                 send-in-flight: root.send-in-flight;
                 slash-active: root.slash-active;
@@ -1797,7 +1868,10 @@ export component ChatView inherits Rectangle {
                 skill-options: root.skill-options;
                 selected-skill-index <=> root.selected-skill-index;
                 skill-route-status: root.skill-route-status;
-                send-clicked(text) => { root.send-clicked(text); }
+                send-clicked(text, incognito) => { root.send-clicked(text, incognito); }
+                incognito-selection-changed(selected) => {
+                    root.incognito-selection-changed(selected);
+                }
                 skill-selected(i) => { root.skill-selected(i); }
                 attach-clicked => { root.attach-clicked(); }
                 remove-attachment(i) => { root.remove-attachment(i); }

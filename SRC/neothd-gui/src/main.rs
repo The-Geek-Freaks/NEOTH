@@ -92,6 +92,9 @@ struct PendingGuiChatConsent {
     surface: chat_stream_phase::ChatStreamSurface,
     body: String,
     explicit_skill_id: Option<String>,
+    /// Captured before any async preflight so changing a visible toggle while
+    /// consent is open cannot change the already-authorized child launch.
+    incognito: bool,
     preflight: gui_action::VerifiedConsentChatPreflight,
 }
 
@@ -179,6 +182,9 @@ struct PendingChatWatchdogRetry {
     request_id: ChatStreamRequestId,
     surface: ChatStreamSurface,
     body: zeroize::Zeroizing<String>,
+    /// Frozen with the request body so a watchdog retry cannot consult a
+    /// privacy widget which the operator may have changed meanwhile.
+    incognito: bool,
 }
 
 /// The retryable input belongs to the same request as the watchdog. The
@@ -188,6 +194,8 @@ struct RequestBoundChatRetryInput {
     request_id: ChatStreamRequestId,
     surface: ChatStreamSurface,
     body: zeroize::Zeroizing<String>,
+    /// The request's dispatch privacy mode, not presentation state.
+    incognito: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -428,15 +436,18 @@ fn prepare_chat_watchdog_retry_for_surface(
 ) -> Option<chat_stream_phase::ChatStreamUpdate> {
     let request =
         diagnosed_chat_watchdog_request_for_surface(stream, signal_clock, expected_surface)?;
-    let body = lock_chat_watchdog_input(input)
+    let (body, incognito) = lock_chat_watchdog_input(input)
         .as_ref()
         .filter(|input| input.request_id == request.request_id && input.surface == expected_surface)
-        .map(|input| zeroize::Zeroizing::new(input.body.trim().to_owned()))
-        .filter(|body| !body.is_empty())?;
+        .and_then(|input| {
+            let body = zeroize::Zeroizing::new(input.body.trim().to_owned());
+            (!body.is_empty()).then_some((body, input.incognito))
+        })?;
     *lock_chat_watchdog_retry(retry) = Some(PendingChatWatchdogRetry {
         request_id: request.request_id,
         surface: expected_surface,
         body,
+        incognito,
     });
     *lock_chat_watchdog_retry_stop(retry_stop) = Some(RequestBoundChatWatchdogRetryStop {
         request_id: request.request_id,
@@ -2816,6 +2827,13 @@ fn main() -> Result<()> {
     let last_operator_input: std::sync::Arc<std::sync::Mutex<String>> =
         std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let last_operator_input_for_send = std::sync::Arc::clone(&last_operator_input);
+    let last_operator_input_for_privacy = std::sync::Arc::clone(&last_operator_input);
+    window.on_chat_incognito_selection_changed(move |selected| {
+        detach_operator_recall_for_incognito(
+            last_operator_input_for_privacy.as_ref(),
+            selected,
+        );
+    });
 
     // GOLD-ADAPT-ODY-04 — shared stream-supervision state:
     //   chat_stream         — the sole request/phase/cancellation authority.
@@ -3130,7 +3148,7 @@ fn main() -> Result<()> {
                     w.set_status_line(
                         "Silent request cancelled; starting retry as a new request.".into(),
                     );
-                    w.invoke_chat_send_clicked(retry.body.as_str().into());
+                    w.invoke_chat_send_clicked(retry.body.as_str().into(), retry.incognito);
                 }
             }
             if let Some(overlay) = overlay_weak_stop_now.upgrade() {
@@ -3171,7 +3189,7 @@ fn main() -> Result<()> {
                         "Silent Buddy request cancelled; starting its retry as a new request."
                             .into(),
                     );
-                    overlay.invoke_send_clicked(retry.body.as_str().into());
+                    overlay.invoke_send_clicked(retry.body.as_str().into(), retry.incognito);
                 }
             }
         });
@@ -3274,7 +3292,7 @@ fn main() -> Result<()> {
                 let Some(m) = msgs.row_data(i) else { break };
                 if m.role == "operator" {
                     let text = m.text.clone();
-                    w.invoke_chat_send_clicked(text);
+                    w.invoke_chat_send_clicked(text, m.incognito);
                     break;
                 }
                 if i == 0 {
@@ -3343,7 +3361,7 @@ fn main() -> Result<()> {
         let launch_gate_slot = chat_launch_gate.clone();
         let model_overrides = chat_model_overrides.clone();
         let overlay_weak = overlay.as_weak();
-        window.on_chat_send_clicked(move |text| {
+        window.on_chat_send_clicked(move |text, incognito| {
             let body = text.trim().to_string();
             if body.is_empty() {
                 return;
@@ -3358,6 +3376,10 @@ fn main() -> Result<()> {
             let Some(w) = weak_chat_preflight.upgrade() else {
                 return;
             };
+            // The UI supplies a by-value snapshot. Reset the next-turn
+            // control now; after a request exists its separate active marker
+            // communicates the frozen mode without allowing it to change.
+            w.set_chat_incognito(false);
             let explicit_skill_id = match selected_skill_id_for_request() {
                 Ok(selection) => selection,
                 Err(error) => {
@@ -3402,6 +3424,7 @@ fn main() -> Result<()> {
                     return;
                 }
             };
+            w.set_chat_incognito_active(incognito);
             if let Err(error) =
                 install_chat_launch_gate(launch_gate_slot.as_ref(), request.request_id)
             {
@@ -3409,6 +3432,7 @@ fn main() -> Result<()> {
                     controller.settle(request.request_id, false);
                 }
                 flow_active.store(false, std::sync::atomic::Ordering::Release);
+                settle_main_chat_request_ui(&w);
                 w.set_status_line(format!("{error}; message was not sent.").into());
                 return;
             }
@@ -3426,6 +3450,7 @@ fn main() -> Result<()> {
                             request.request_id,
                         );
                         flow_active.store(false, std::sync::atomic::Ordering::Release);
+                        settle_main_chat_request_ui(&w);
                         buddy(&w, GuiActivity::ChatFailed);
                         w.set_status_line(
                             "Model selection state failed; message was not sent.".into(),
@@ -3436,7 +3461,14 @@ fn main() -> Result<()> {
             }
             w.set_chat_send_in_flight(true);
             buddy(&w, GuiActivity::ChatWaiting);
-            w.set_status_line("Checking exact provider consent routes…".into());
+            w.set_status_line(
+                (if incognito {
+                    "Incognito selected — checking exact provider consent routes…"
+                } else {
+                    "Checking exact provider consent routes…"
+                })
+                .into(),
+            );
             let weak = w.as_weak();
             let pending = pending.clone();
             let flow_active = flow_active.clone();
@@ -3487,6 +3519,7 @@ fn main() -> Result<()> {
                                 request.request_id.as_wire().into(),
                                 body.into(),
                                 explicit_skill_id.unwrap_or_default().into(),
+                                incognito,
                             );
                         }
                         Ok(preflight) => {
@@ -3507,7 +3540,7 @@ fn main() -> Result<()> {
                                     );
                                     flow_active
                                         .store(false, std::sync::atomic::Ordering::Release);
-                                    w.set_chat_send_in_flight(false);
+                                    settle_main_chat_request_ui(&w);
                                     buddy(&w, GuiActivity::ChatFailed);
                                     if let Some(overlay) = overlay_weak.upgrade() {
                                         project_companion_chat_stream(
@@ -3527,6 +3560,7 @@ fn main() -> Result<()> {
                                 surface: ChatStreamSurface::Main,
                                 body,
                                 explicit_skill_id,
+                                incognito,
                                 preflight,
                             });
                             w.set_chat_consent_prompt_request_id(
@@ -3557,7 +3591,7 @@ fn main() -> Result<()> {
                                 request.request_id,
                             );
                             flow_active.store(false, std::sync::atomic::Ordering::Release);
-                            w.set_chat_send_in_flight(false);
+                            settle_main_chat_request_ui(&w);
                             buddy(&w, GuiActivity::ChatFailed);
                             if let Some(overlay) = overlay_weak.upgrade() {
                                 project_companion_chat_stream(
@@ -3639,7 +3673,7 @@ fn main() -> Result<()> {
                     flow_active.store(false, std::sync::atomic::Ordering::Release);
                     w.set_chat_consent_prompt_open(false);
                     w.set_chat_consent_prompt_request_id("".into());
-                    w.set_chat_send_in_flight(false);
+                    settle_main_chat_request_ui(&w);
                     buddy(&w, GuiActivity::ChatFailed);
                     if let Some(overlay) = overlay_weak.upgrade() {
                         project_companion_chat_stream(
@@ -3672,6 +3706,7 @@ fn main() -> Result<()> {
                 let surface = pending_send.surface;
                 let body = pending_send.body;
                 let explicit_skill_id = pending_send.explicit_skill_id;
+                let incognito = pending_send.incognito;
                 let result = decide_chat_consent_verified(pending_send.preflight, &decision);
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(w) = weak.upgrade() else {
@@ -3715,7 +3750,7 @@ fn main() -> Result<()> {
                                 request_id,
                             );
                             flow_active.store(false, std::sync::atomic::Ordering::Release);
-                            w.set_chat_send_in_flight(false);
+                            settle_main_chat_request_ui(&w);
                             buddy(&w, GuiActivity::ChatCancelled);
                             if let Some(overlay) = overlay_weak.upgrade() {
                                 project_companion_chat_stream(
@@ -3761,7 +3796,7 @@ fn main() -> Result<()> {
                                     );
                                     flow_active
                                         .store(false, std::sync::atomic::Ordering::Release);
-                                    w.set_chat_send_in_flight(false);
+                                    settle_main_chat_request_ui(&w);
                                     buddy(&w, GuiActivity::ChatFailed);
                                     if let Some(overlay) = overlay_weak.upgrade() {
                                         project_companion_chat_stream(
@@ -3807,7 +3842,7 @@ fn main() -> Result<()> {
                                 );
                                 flow_active
                                     .store(false, std::sync::atomic::Ordering::Release);
-                                w.set_chat_send_in_flight(false);
+                                settle_main_chat_request_ui(&w);
                                 return;
                             }
                             match surface {
@@ -3815,12 +3850,14 @@ fn main() -> Result<()> {
                                     request_id.as_wire().into(),
                                     body.into(),
                                     explicit_skill_id.unwrap_or_default().into(),
+                                    incognito,
                                 ),
                                 ChatStreamSurface::Buddy => {
                                     w.invoke_buddy_chat_send_approved(
                                         request_id.as_wire().into(),
                                         body.into(),
                                         explicit_skill_id.unwrap_or_default().into(),
+                                        incognito,
                                     )
                                 }
                             }
@@ -3835,7 +3872,7 @@ fn main() -> Result<()> {
                                 request_id,
                             );
                             flow_active.store(false, std::sync::atomic::Ordering::Release);
-                            w.set_chat_send_in_flight(false);
+                            settle_main_chat_request_ui(&w);
                             buddy(&w, GuiActivity::ChatFailed);
                             if let Some(overlay) = overlay_weak.upgrade() {
                                 project_companion_chat_stream(
@@ -3871,7 +3908,8 @@ fn main() -> Result<()> {
     let main_chat_consent_token_for_send = main_chat_consent_token.clone();
     let chat_consent_flow_for_send = chat_consent_flow_active.clone();
     let chat_worker_barrier_for_send = chat_worker_barrier.clone();
-    window.on_chat_send_approved(move |request_id_wire, text, explicit_skill_id_wire| {
+    let chat_send_approved =
+        move |request_id_wire, text, explicit_skill_id_wire, incognito| {
         let Some(request_id) = ChatStreamRequestId::parse_wire(request_id_wire.as_str()) else {
             chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
             return;
@@ -3943,7 +3981,7 @@ fn main() -> Result<()> {
                 request_id,
             );
             chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
-            w.set_chat_send_in_flight(false);
+            settle_main_chat_request_ui(&w);
             buddy(&w, GuiActivity::ChatFailed);
             if let Some(overlay) = overlay_weak_for_chat_send.upgrade() {
                 project_companion_chat_stream(
@@ -3970,7 +4008,7 @@ fn main() -> Result<()> {
                     request_id,
                 );
                 chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
-                w.set_chat_send_in_flight(false);
+                settle_main_chat_request_ui(&w);
                 buddy(&w, GuiActivity::ChatFailed);
                 if let Some(overlay) = overlay_weak_for_chat_send.upgrade() {
                     project_companion_chat_stream(
@@ -4006,7 +4044,7 @@ fn main() -> Result<()> {
                     request_id,
                 );
                 chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
-                w.set_chat_send_in_flight(false);
+                settle_main_chat_request_ui(&w);
                 buddy(&w, GuiActivity::ChatFailed);
                 w.set_status_line(format!("{error}; message was not sent.").into());
                 return;
@@ -4029,7 +4067,7 @@ fn main() -> Result<()> {
                     );
                     chat_consent_flow_for_send
                         .store(false, std::sync::atomic::Ordering::Release);
-                    w.set_chat_send_in_flight(false);
+                    settle_main_chat_request_ui(&w);
                     buddy(&w, GuiActivity::ChatFailed);
                     if let Some(overlay) = overlay_weak_for_chat_send.upgrade() {
                         project_companion_chat_stream(
@@ -4055,7 +4093,7 @@ fn main() -> Result<()> {
                     request_id,
                 );
                 chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
-                w.set_chat_send_in_flight(false);
+                settle_main_chat_request_ui(&w);
                 buddy(&w, GuiActivity::ChatFailed);
                 if let Some(overlay) = overlay_weak_for_chat_send.upgrade() {
                     project_companion_chat_stream(
@@ -4072,13 +4110,15 @@ fn main() -> Result<()> {
             };
         // ODY-10: only accepted live sends enter the recall buffer. Historical
         // callbacks must not mutate draft/recall state before this guard.
-        if let Ok(mut last) = last_operator_input_for_send.lock() {
-            *last = body.clone();
+        if !incognito {
+            if let Ok(mut last) = last_operator_input_for_send.lock() {
+                *last = body.clone();
+            }
         }
         info!(message_len = body.len(), "chat: send-clicked");
 
         buddy(&w, GuiActivity::ChatWaiting);
-        if !begin_live_chat_request(&w, request_id, &body) {
+        if !begin_live_chat_request(&w, request_id, &body, incognito) {
             if let Ok(mut controller) = chat_stream_for_send.lock() {
                 controller.settle(request_id, false);
             }
@@ -4088,7 +4128,7 @@ fn main() -> Result<()> {
                 request_id,
             );
             chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
-            w.set_chat_send_in_flight(false);
+            settle_main_chat_request_ui(&w);
             buddy(&w, GuiActivity::ChatFailed);
             w.set_status_line(
                 "Chat request identity collided with an existing conversation row; provider launch was suppressed."
@@ -4122,6 +4162,7 @@ fn main() -> Result<()> {
                 request_id,
                 surface: ChatStreamSurface::Main,
                 body: zeroize::Zeroizing::new(body.clone()),
+                incognito,
             });
         let mut retry = lock_chat_watchdog_retry(chat_watchdog_retry_for_send.as_ref());
         if retry
@@ -4201,9 +4242,7 @@ fn main() -> Result<()> {
                 let bin = which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
                 let mut cmd = spawn_neothd_plain(&bin);
                 let stream_control_token = new_stream_control_token()?;
-                cmd.arg("chat").arg("--stream");
-                cmd.arg("--gui-launch-envelope-stdin")
-                    .stdin(std::process::Stdio::piped());
+                configure_gui_chat_launch_args(&mut cmd, incognito);
                 // H18 — request-bound one-shot model override. A denied or
                 // stale request cannot leak its selection into a later send.
                 if let Some(m) = model_override {
@@ -4668,7 +4707,7 @@ fn main() -> Result<()> {
                     && let Some(terminal) = terminal
                 {
                     // GUI-07: the stream settled (reply or error) — unspin Send.
-                    w.set_chat_send_in_flight(false);
+                    settle_main_chat_request_ui(&w);
                     w.set_chat_stall_active(false);
                     // Wave-2 feed A: settle plan row + push metric.
                     {
@@ -4707,6 +4746,14 @@ fn main() -> Result<()> {
                     w.set_chat_link_chips(slint::ModelRc::new(slint::VecModel::from(chips)));
                     use slint::Model;
                     let mut rows: Vec<ChatMessage> = w.get_chat_live_messages().iter().collect();
+                    let request_incognito = rows
+                        .iter()
+                        .find(|row| {
+                            row.request_id.as_str() == request_id.as_wire().as_str()
+                                && row.role == "assistant"
+                        })
+                        .map(|row| row.incognito)
+                        .unwrap_or(false);
                     let ts = format_now_hms();
                     let terminal_phase = terminal.phase;
                     let succeeded = terminal_phase == ChatStreamPhase::Complete;
@@ -4756,6 +4803,7 @@ fn main() -> Result<()> {
                                         timestamp: ts.clone().into(),
                                         request_id: request_id.as_wire().into(),
                                         stream_phase: ChatStreamPhase::Complete.as_wire().into(),
+                                        incognito: request_incognito,
                                         metrics: chip.into(),
                                         metrics_detail: detail.into(),
                                         model: if i == last {
@@ -4781,6 +4829,7 @@ fn main() -> Result<()> {
                             timestamp: ts.clone().into(),
                             request_id: request_id.as_wire().into(),
                             stream_phase: ChatStreamPhase::Failed.as_wire().into(),
+                            incognito: request_incognito,
                             ..Default::default()
                         }],
                         (_, Ok(_)) => vec![ChatMessage {
@@ -4790,6 +4839,7 @@ fn main() -> Result<()> {
                             timestamp: ts.clone().into(),
                             request_id: request_id.as_wire().into(),
                             stream_phase: ChatStreamPhase::Failed.as_wire().into(),
+                            incognito: request_incognito,
                             ..Default::default()
                         }],
                     };
@@ -4831,7 +4881,7 @@ fn main() -> Result<()> {
                     recompute_live_chat_preview(&w);
                     // The child has exited and persisted its raw turns/card;
                     // reload the canonical history rows off-thread.
-                    if succeeded {
+                    if succeeded && !incognito {
                         refresh_chat_session_history(w.as_weak());
                     }
                     let unresolved_route_status = terminal_skill_route_status(
@@ -4862,7 +4912,7 @@ fn main() -> Result<()> {
                     if auto_nudge {
                         auto_flag.store(true, std::sync::atomic::Ordering::Release);
                         w.set_status_line("stream truncated — auto-continue fired (1/1)".into());
-                        w.invoke_chat_send_clicked("continue".into());
+                        w.invoke_chat_send_clicked("continue".into(), incognito);
                     }
                     if let Some(retry) = watchdog_retry_body {
                         if retry.surface == ChatStreamSurface::Main {
@@ -4870,7 +4920,10 @@ fn main() -> Result<()> {
                                 "Silent request cancelled; starting retry as a new request."
                                     .into(),
                             );
-                            w.invoke_chat_send_clicked(retry.body.as_str().into());
+                            w.invoke_chat_send_clicked(
+                                retry.body.as_str().into(),
+                                retry.incognito,
+                            );
                         } else {
                             w.set_status_line(
                                 "Watchdog retry was suppressed because its surface did not match the Main chat."
@@ -4881,7 +4934,8 @@ fn main() -> Result<()> {
                 }
             });
         });
-    });
+        };
+    window.on_chat_send_approved(chat_send_approved);
 
     // P1-21 — retry is a request-bound, one-shot hand-off. It first asks the
     // canonical Stop path to settle the silent request; only that terminal
@@ -5157,6 +5211,10 @@ fn main() -> Result<()> {
                 w.set_status_line("Historical transcripts are read-only.".into());
                 return;
             }
+            if w.get_chat_incognito() || w.get_chat_incognito_active() {
+                w.set_chat_composer_draft("".into());
+                return;
+            }
             if w.get_chat_send_in_flight() {
                 w.set_status_line(
                     "Wait for the active reply or stop it before changing attachments.".into(),
@@ -5358,13 +5416,13 @@ fn main() -> Result<()> {
                 );
                 return;
             }
-            let last = last_input_for_recall
-                .lock()
-                .map(|g| g.clone())
-                .unwrap_or_default();
-            if last.is_empty() {
+            let Some(last) = eligible_operator_recall(
+                last_input_for_recall.as_ref(),
+                w.get_chat_incognito(),
+                w.get_chat_incognito_active(),
+            ) else {
                 return;
-            }
+            };
             w.set_chat_composer_draft(last.into());
         });
     }
@@ -13933,6 +13991,7 @@ fn main() -> Result<()> {
                 ov2.set_skill_options(win2.get_chat_skill_options());
                 ov2.set_selected_skill_index(win2.get_chat_selected_skill_index());
                 ov2.set_skill_route_status(win2.get_chat_skill_route_status());
+                ov2.set_incognito_active(win2.get_chat_incognito_active());
                 let active = stream_for_minimize
                     .lock()
                     .ok()
@@ -13946,7 +14005,7 @@ fn main() -> Result<()> {
                         ov2.set_status_text("stopping…".into());
                     }
                 } else {
-                    ov2.set_send_in_flight(false);
+                    settle_buddy_chat_request_ui(&win2, &ov2);
                     resize_companion_overlay(&ov2);
                 }
                 sync_companion_recent_lines_from_canonical(&win2, &ov2);
@@ -14081,8 +14140,7 @@ fn main() -> Result<()> {
                     return;
                 };
                 win.hide().unwrap_or(());
-                win.set_chat_send_in_flight(false);
-                ov.set_send_in_flight(false);
+                settle_buddy_chat_request_ui(&win, &ov);
                 ov.set_buddy_mood("idle".into());
                 ov.set_status_text(status);
                 ov.show().unwrap_or(());
@@ -14110,7 +14168,7 @@ fn main() -> Result<()> {
             let flow_active = chat_consent_flow_active.clone();
             let stream = chat_stream.clone();
             let launch_gate_slot = chat_launch_gate.clone();
-            overlay.on_send_clicked(move |text| {
+            overlay.on_send_clicked(move |text, incognito| {
                 let body = text.trim().to_string();
                 if body.is_empty() {
                     return;
@@ -14121,6 +14179,9 @@ fn main() -> Result<()> {
                 let Some(win) = window_weak.upgrade() else {
                     return;
                 };
+                // The overlay passes an immutable privacy snapshot. Its
+                // next-turn choice resets now and cannot affect this request.
+                ov.set_incognito(false);
                 let explicit_skill_id = match selected_skill_id_for_request() {
                     Ok(selection) => selection,
                     Err(error) => {
@@ -14157,6 +14218,7 @@ fn main() -> Result<()> {
                         return;
                     }
                 };
+                ov.set_incognito_active(incognito);
                 if let Err(error) =
                     install_chat_launch_gate(launch_gate_slot.as_ref(), request.request_id)
                 {
@@ -14164,6 +14226,7 @@ fn main() -> Result<()> {
                         controller.settle(request.request_id, false);
                     }
                     flow_active.store(false, std::sync::atomic::Ordering::Release);
+                    settle_buddy_chat_request_ui(&win, &ov);
                     ov.set_status_text(format!("{error}; message was not sent").into());
                     return;
                 }
@@ -14171,7 +14234,14 @@ fn main() -> Result<()> {
                 buddy(&win, GuiActivity::ChatWaiting);
                 ov.set_send_in_flight(true);
                 ov.set_buddy_mood("thinking".into());
-                ov.set_status_text("waiting…".into());
+                ov.set_status_text(
+                    (if incognito {
+                        "Incognito selected — checking provider consent…"
+                    } else {
+                        "waiting…"
+                    })
+                    .into(),
+                );
                 let ov_weak = ov.as_weak();
                 let win_weak = win.as_weak();
                 let pending = pending.clone();
@@ -14210,6 +14280,7 @@ fn main() -> Result<()> {
                                     request.request_id.as_wire().into(),
                                     body.into(),
                                     explicit_skill_id.unwrap_or_default().into(),
+                                    incognito,
                                 );
                             }
                             Ok(preflight) => {
@@ -14226,9 +14297,8 @@ fn main() -> Result<()> {
                                             launch_gate_slot.as_ref(),
                                             request.request_id,
                                         );
-                                        win.set_chat_send_in_flight(false);
+                                        settle_buddy_chat_request_ui(&win, &ov);
                                         buddy(&win, GuiActivity::ChatFailed);
-                                        ov.set_send_in_flight(false);
                                         ov.set_buddy_mood("error".into());
                                         ov.set_status_text(
                                             "consent state failed; draft retained".into(),
@@ -14241,6 +14311,7 @@ fn main() -> Result<()> {
                                     surface: ChatStreamSurface::Buddy,
                                     body,
                                     explicit_skill_id,
+                                    incognito,
                                     preflight,
                                 });
                                 win.set_chat_consent_prompt_request_id(
@@ -14260,9 +14331,8 @@ fn main() -> Result<()> {
                                     request.request_id,
                                 );
                                 flow_active.store(false, std::sync::atomic::Ordering::Release);
-                                win.set_chat_send_in_flight(false);
+                                settle_buddy_chat_request_ui(&win, &ov);
                                 buddy(&win, GuiActivity::ChatFailed);
-                                ov.set_send_in_flight(false);
                                 ov.set_buddy_mood("error".into());
                                 ov.set_status_text(
                                     format!("consent check failed; draft retained: {error}").into(),
@@ -14287,8 +14357,8 @@ fn main() -> Result<()> {
             let watchdog_input = chat_watchdog_input.clone();
             let watchdog_retry_stop = chat_watchdog_retry_stop.clone();
             let worker_barrier = chat_worker_barrier.clone();
-            window.on_buddy_chat_send_approved(
-                move |request_id_wire, text, explicit_skill_id_wire| {
+            let buddy_chat_send_approved =
+                move |request_id_wire, text, explicit_skill_id_wire, incognito| {
                 let Some(request_id) =
                     ChatStreamRequestId::parse_wire(request_id_wire.as_str())
                 else {
@@ -14341,7 +14411,7 @@ fn main() -> Result<()> {
                         discard_chat_consent_token(buddy_token.as_ref(), request_id);
                         discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
                         flow_active.store(false, std::sync::atomic::Ordering::Release);
-                        win.set_chat_send_in_flight(false);
+                        settle_buddy_chat_request_ui(&win, &ov);
                         buddy(&win, GuiActivity::ChatFailed);
                         project_companion_chat_stream(
                             &ov,
@@ -14367,7 +14437,7 @@ fn main() -> Result<()> {
                         discard_chat_consent_token(buddy_token.as_ref(), request_id);
                         discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
                         flow_active.store(false, std::sync::atomic::Ordering::Release);
-                        win.set_chat_send_in_flight(false);
+                        settle_buddy_chat_request_ui(&win, &ov);
                         buddy(&win, GuiActivity::ChatFailed);
                         project_companion_chat_stream(
                             &ov,
@@ -14386,7 +14456,7 @@ fn main() -> Result<()> {
                             }
                             discard_chat_consent_token(buddy_token.as_ref(), request_id);
                             flow_active.store(false, std::sync::atomic::Ordering::Release);
-                            win.set_chat_send_in_flight(false);
+                            settle_buddy_chat_request_ui(&win, &ov);
                             buddy(&win, GuiActivity::ChatFailed);
                             project_companion_chat_stream(
                                 &ov,
@@ -14404,9 +14474,8 @@ fn main() -> Result<()> {
                         }
                         discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
                         flow_active.store(false, std::sync::atomic::Ordering::Release);
-                        win.set_chat_send_in_flight(false);
+                        settle_buddy_chat_request_ui(&win, &ov);
                         buddy(&win, GuiActivity::ChatFailed);
-                        ov.set_send_in_flight(false);
                         ov.set_buddy_mood("error".into());
                         ov.set_status_text(
                             "private consent hand-off failed; draft retained".into(),
@@ -14418,13 +14487,13 @@ fn main() -> Result<()> {
                 win.hide().unwrap_or(());
                 ov.show().unwrap_or(());
                 ov.set_overlay_input("".into());
-                if !begin_live_chat_request(&win, request_id, &body) {
+                if !begin_live_chat_request(&win, request_id, &body, incognito) {
                     if let Ok(mut controller) = stream.lock() {
                         controller.settle(request_id, false);
                     }
                     discard_chat_launch_gate(launch_gate_slot.as_ref(), request_id);
                     flow_active.store(false, std::sync::atomic::Ordering::Release);
-                    win.set_chat_send_in_flight(false);
+                    settle_buddy_chat_request_ui(&win, &ov);
                     buddy(&win, GuiActivity::ChatFailed);
                     project_companion_chat_stream(
                         &ov,
@@ -14449,6 +14518,7 @@ fn main() -> Result<()> {
                         request_id,
                         surface: ChatStreamSurface::Buddy,
                         body: zeroize::Zeroizing::new(body.clone()),
+                        incognito,
                     });
                 let mut retry = lock_chat_watchdog_retry(watchdog_retry.as_ref());
                 if retry
@@ -14498,9 +14568,7 @@ fn main() -> Result<()> {
                             which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
                         let mut cmd = spawn_neothd_plain(&bin);
                         let stream_control_token = new_stream_control_token()?;
-                        cmd.arg("chat").arg("--stream");
-                        cmd.arg("--gui-launch-envelope-stdin")
-                            .stdin(std::process::Stdio::piped());
+                        configure_gui_chat_launch_args(&mut cmd, incognito);
                         let mut launch_envelope = encode_gui_chat_launch_envelope(
                             stream_control_token.as_str(),
                             consent_token.as_ref(),
@@ -14972,7 +15040,7 @@ fn main() -> Result<()> {
                         };
                         let win = win_weak.upgrade();
                         if let Some(win) = win.as_ref() {
-                            win.set_chat_send_in_flight(false);
+                            settle_main_chat_request_ui(win);
                             if let Some(status) = terminal_skill_route_status(
                                 win.get_chat_skill_route_status().as_str(),
                                 terminal.phase,
@@ -14995,13 +15063,19 @@ fn main() -> Result<()> {
                                 terminal.phase,
                                 terminal_text,
                             );
-                            if terminal.phase == ChatStreamPhase::Complete {
+                            if terminal.phase == ChatStreamPhase::Complete && !incognito {
                                 refresh_chat_session_history(win.as_weak());
                             }
                         }
                         let Some(ov) = ov_weak.upgrade() else {
                             return;
                         };
+                        if let Some(win) = win.as_ref() {
+                            settle_buddy_chat_request_ui(win, &ov);
+                        } else {
+                            ov.set_send_in_flight(false);
+                            ov.set_incognito_active(false);
+                        }
                         ov.set_stall_active(false);
                         if let Some(status) = terminal_skill_route_status(
                             ov.get_skill_route_status().as_str(),
@@ -15036,7 +15110,10 @@ fn main() -> Result<()> {
                                     "Silent Buddy request cancelled; starting its retry as a new request."
                                         .into(),
                                 );
-                                ov.invoke_send_clicked(retry.body.as_str().into());
+                                ov.invoke_send_clicked(
+                                    retry.body.as_str().into(),
+                                    retry.incognito,
+                                );
                             } else if let Some(win) = win.as_ref() {
                                 win.set_status_line(
                                     "Watchdog retry was suppressed because its surface did not match Buddy."
@@ -15046,7 +15123,8 @@ fn main() -> Result<()> {
                         }
                     });
                 });
-            });
+                };
+            window.on_buddy_chat_send_approved(buddy_chat_send_approved);
         }
     } // end companion overlay wiring
 
@@ -17696,6 +17774,20 @@ fn spawn_neothd_plain(bin: &Path) -> std::process::Command {
         .env("NEOTH_LOG", "error");
     suppress_console_window(&mut cmd);
     cmd
+}
+
+/// Configure the two GUI-owned chat entry points identically before either
+/// may spawn. `incognito` is a request-bound snapshot, never a late read of a
+/// mutable widget property, so the CLI remains the sole privacy authority for
+/// the launched turn.
+fn configure_gui_chat_launch_args(command: &mut std::process::Command, incognito: bool) {
+    command.arg("chat").arg("--stream");
+    if incognito {
+        command.arg("--incognito");
+    }
+    command
+        .arg("--gui-launch-envelope-stdin")
+        .stdin(std::process::Stdio::piped());
 }
 
 fn append_chat_prompt_args(
@@ -20539,6 +20631,7 @@ fn begin_live_chat_request(
     window: &MainWindow,
     request_id: ChatStreamRequestId,
     body: &str,
+    incognito: bool,
 ) -> bool {
     use slint::Model;
     let request_id_wire = request_id.as_wire();
@@ -20555,6 +20648,7 @@ fn begin_live_chat_request(
         timestamp: timestamp.clone().into(),
         request_id: request_id_wire.clone().into(),
         stream_phase: ChatStreamPhase::Complete.as_wire().into(),
+        incognito,
         ..Default::default()
     });
     rows.push(ChatMessage {
@@ -20563,11 +20657,53 @@ fn begin_live_chat_request(
         timestamp: timestamp.into(),
         request_id: request_id_wire.into(),
         stream_phase: ChatStreamPhase::Waiting.as_wire().into(),
+        incognito,
         ..Default::default()
     });
     set_live_chat_messages(window, rows);
     recompute_live_chat_preview(window);
     true
+}
+
+/// Settle every request-owned presentation flag together. Pre-launch and
+/// terminal error paths must never leave an Incognito badge active after the
+/// request itself has stopped owning the UI.
+fn settle_main_chat_request_ui(window: &MainWindow) {
+    window.set_chat_send_in_flight(false);
+    window.set_chat_incognito_active(false);
+}
+
+fn settle_buddy_chat_request_ui(window: &MainWindow, overlay: &MiniOverlay) {
+    settle_main_chat_request_ui(window);
+    overlay.set_send_in_flight(false);
+    overlay.set_incognito_active(false);
+}
+
+fn detach_operator_recall_for_incognito(
+    last_operator_input: &std::sync::Mutex<String>,
+    selected: bool,
+) {
+    if selected {
+        last_operator_input
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .zeroize();
+    }
+}
+
+fn eligible_operator_recall(
+    last_operator_input: &std::sync::Mutex<String>,
+    incognito_selected: bool,
+    incognito_active: bool,
+) -> Option<String> {
+    if incognito_selected || incognito_active {
+        return None;
+    }
+    let value = last_operator_input
+        .lock()
+        .map(|value| value.clone())
+        .unwrap_or_default();
+    (!value.is_empty()).then_some(value)
 }
 
 /// Project a request-bound provider event into the canonical live feed. The
@@ -20731,6 +20867,11 @@ fn project_companion_chat_stream(
     let activity = GuiActivity::from(phase);
     let (mood, caption) = activity.mood();
     overlay.set_send_in_flight(phase.is_active());
+    if !phase.is_active() {
+        // All pre-launch failures and terminal projections converge here, so
+        // Buddy cannot retain a stale active-Incognito indicator.
+        overlay.set_incognito_active(false);
+    }
     overlay.set_buddy_mood(mood.into());
     overlay.set_status_text(caption.into());
     if phase == ChatStreamPhase::Waiting {
@@ -25295,6 +25436,161 @@ mod chat_subprocess_tests {
     }
 
     #[test]
+    fn main_and_buddy_incognito_launches_are_request_bound_and_truthful() {
+        let command_args = |incognito| {
+            let mut command = std::process::Command::new("neoth");
+            configure_gui_chat_launch_args(&mut command, incognito);
+            command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            command_args(false),
+            vec!["chat", "--stream", "--gui-launch-envelope-stdin"],
+            "a normal per-turn selection must not silently enable Incognito"
+        );
+        assert_eq!(
+            command_args(true),
+            vec![
+                "chat",
+                "--stream",
+                "--incognito",
+                "--gui-launch-envelope-stdin",
+            ],
+            "the captured Incognito selection must reach the CLI before the private envelope"
+        );
+
+        let source = include_str!("main.rs");
+        let production = source.split("mod chat_subprocess_tests").next().unwrap();
+        assert_eq!(
+            production
+                .matches("configure_gui_chat_launch_args(&mut cmd, incognito);")
+                .count(),
+            2,
+            "Main and Buddy must share the exact request-bound Incognito launch path"
+        );
+        assert!(production.contains("window.on_chat_send_clicked(move |text, incognito|"));
+        assert!(production.contains("overlay.on_send_clicked(move |text, incognito|"));
+        assert!(production.contains("incognito: bool,"));
+        assert!(production.contains("PendingChatWatchdogRetry"));
+        assert!(production.contains("retry.incognito"));
+        assert!(production.contains("w.invoke_chat_send_clicked(\"continue\".into(), incognito)"));
+        assert!(production.contains("succeeded && !incognito"));
+        assert!(production.contains("ChatStreamPhase::Complete && !incognito"));
+        assert!(production.contains("w.set_chat_incognito(false);"));
+        assert!(production.contains("w.set_chat_incognito_active(incognito);"));
+        assert!(production.contains("ov.set_incognito(false);"));
+        assert!(production.contains("ov.set_incognito_active(incognito);"));
+        assert!(production.contains("settle_main_chat_request_ui(&w);"));
+        assert!(production.contains("settle_buddy_chat_request_ui(&win, &ov);"));
+        let launch_gate_failures = production
+            .match_indices("install_chat_launch_gate(launch_gate_slot.as_ref()")
+            .map(|(offset, _)| &production[offset..])
+            .collect::<Vec<_>>();
+        assert!(launch_gate_failures[0]
+            .split("if let Some(model)")
+            .next()
+            .unwrap()
+            .contains("settle_main_chat_request_ui(&w);"));
+        assert!(launch_gate_failures[1]
+            .split("win.set_chat_send_in_flight(true)")
+            .next()
+            .unwrap()
+            .contains("settle_buddy_chat_request_ui(&win, &ov);"));
+        let model_lock_failure = production
+            .split("Model selection state failed; message was not sent.")
+            .next()
+            .unwrap();
+        assert!(model_lock_failure
+            .rsplit("if let Some(model) = selected_model")
+            .next()
+            .unwrap()
+            .contains("settle_main_chat_request_ui(&w);"));
+        assert!(production.contains("w.invoke_chat_send_clicked(text, m.incognito);"));
+        assert!(production.contains("if !incognito {\n            if let Ok(mut last)"));
+        assert!(production.contains("let request_incognito = rows"));
+        assert!(production.contains("incognito: request_incognito,"));
+
+        let chat_ui = include_str!("../ui/chat.slint");
+        let overlay_ui = include_str!("../ui/overlay.slint");
+        let main_ui = include_str!("../ui/main.slint");
+        for ui in [chat_ui, overlay_ui] {
+            assert!(ui.contains("Incognito"));
+            assert!(ui.contains("Next turn selected"));
+            assert!(ui.contains("Next turn unselected"));
+            assert!(ui.contains("Incognito active"));
+            assert!(ui.contains("Standard active"));
+            assert!(ui.contains("wrap: word-wrap"));
+            assert!(ui.contains("checked <=> root.incognito;"));
+        }
+        assert!(chat_ui.contains("if root.message.incognito: Text"));
+        assert!(chat_ui.contains(
+            "Incognito request: no profile, recall, or transcript access"
+        ));
+        assert!(main_ui.contains("in-out property <bool> chat-incognito: false;"));
+        assert!(main_ui.contains("in property <bool> chat-incognito-active: false;"));
+        assert!(main_ui.contains("incognito <=> root.chat-incognito;"));
+        assert!(overlay_ui.contains(
+            "if root.compact && !root.send-in-flight: NeothCheckBox"
+        ));
+        assert!(overlay_ui.contains(
+            concat!(
+                "Incognito selected for the next Buddy turn: ",
+                "no profile, recall, or transcript data will be used"
+            )
+        ));
+        assert!(overlay_ui.contains(
+            "if root.compact && root.send-in-flight: NeothCheckBox"
+        ));
+        assert!(overlay_ui.contains("checked: root.incognito-active;"));
+        assert!(overlay_ui.contains("enabled: false;"));
+        assert!(chat_ui.contains(
+            "!(root.incognito || (root.send-in-flight && root.incognito-active))"
+        ));
+        assert!(production.contains(
+            "Incognito selected — checking exact provider consent routes…"
+        ));
+        assert!(production.contains("Incognito selected — checking provider consent…"));
+    }
+
+    #[test]
+    fn selecting_incognito_detaches_arrow_up_recall_from_a_standard_turn() {
+        let recalled = std::sync::Mutex::new("previous standard prompt".to_string());
+        assert_eq!(
+            eligible_operator_recall(&recalled, false, false).as_deref(),
+            Some("previous standard prompt")
+        );
+
+        detach_operator_recall_for_incognito(&recalled, true);
+        assert!(eligible_operator_recall(&recalled, true, false).is_none());
+        assert!(eligible_operator_recall(&recalled, false, true).is_none());
+        assert!(eligible_operator_recall(&recalled, false, false).is_none());
+    }
+
+    #[test]
+    fn prelaunch_failure_settlement_clears_active_privacy_on_main_and_buddy() {
+        let window = MainWindow::new().unwrap();
+        let overlay = MiniOverlay::new().unwrap();
+
+        window.set_chat_send_in_flight(true);
+        window.set_chat_incognito_active(true);
+        settle_main_chat_request_ui(&window);
+        assert!(!window.get_chat_send_in_flight());
+        assert!(!window.get_chat_incognito_active());
+
+        window.set_chat_send_in_flight(true);
+        window.set_chat_incognito_active(true);
+        overlay.set_send_in_flight(true);
+        overlay.set_incognito_active(true);
+        settle_buddy_chat_request_ui(&window, &overlay);
+        assert!(!window.get_chat_send_in_flight());
+        assert!(!window.get_chat_incognito_active());
+        assert!(!overlay.get_send_in_flight());
+        assert!(!overlay.get_incognito_active());
+    }
+
+    #[test]
     fn consent_bound_skill_selection_is_captured_by_value_and_refreshes_by_id() {
         let mut state = SkillPickerState::default();
         state.refresh(vec![
@@ -29781,6 +30077,7 @@ mod tests {
             request_id: request.request_id,
             surface: ChatStreamSurface::Main,
             body: zeroize::Zeroizing::new("retry only this turn".to_string()),
+            incognito: true,
         });
 
         // Covers Retry → incomplete/failed stop → explicit Cancel → late
@@ -29806,6 +30103,7 @@ mod tests {
             request_id: buddy_request.request_id,
             surface: ChatStreamSurface::Buddy,
             body: zeroize::Zeroizing::new("retry only the Buddy turn".to_string()),
+            incognito: false,
         });
         let released = take_watchdog_retry_after_cancelled_settlement(
             &mut buddy_retry,
@@ -29902,11 +30200,13 @@ mod tests {
             request_id: request.request_id,
             surface: ChatStreamSurface::Buddy,
             body: zeroize::Zeroizing::new("secret retry body".to_string()),
+            incognito: true,
         })));
         let input = std::sync::Arc::new(std::sync::Mutex::new(Some(RequestBoundChatRetryInput {
             request_id: request.request_id,
             surface: ChatStreamSurface::Buddy,
             body: zeroize::Zeroizing::new("secret input body".to_string()),
+            incognito: true,
         })));
         let retry_stop = std::sync::Arc::new(std::sync::Mutex::new(Some(
             RequestBoundChatWatchdogRetryStop {
@@ -29953,6 +30253,7 @@ mod tests {
             request_id: request.request_id,
             surface: ChatStreamSurface::Main,
             body: zeroize::Zeroizing::new("main only".to_string()),
+            incognito: false,
         }));
         let retry = std::sync::Mutex::new(None);
         let retry_stop = std::sync::Mutex::new(None);
@@ -30096,6 +30397,7 @@ mod tests {
             request_id: first.request_id,
             surface: ChatStreamSurface::Main,
             body: zeroize::Zeroizing::new("stale main input".to_string()),
+            incognito: true,
         }));
         let retry = std::sync::Mutex::new(None);
         let retry_stop = std::sync::Mutex::new(None);
@@ -30151,7 +30453,8 @@ mod tests {
         let main_handler_call = ["handler(ChatStreamSurface::", "Main)"].concat();
         let buddy_redispatch = [
             "overlay.invoke_send_clicked(",
-            "retry.body.as_str().into())",
+            "retry.body.as_str().into(),",
+            "retry.incognito",
         ]
         .concat();
         assert!(source.contains(&overlay_retry_registration));

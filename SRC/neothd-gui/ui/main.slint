@@ -1058,6 +1058,12 @@ export component MainWindow inherits Window {
     /// Preserved live feed while a read-only historical session is selected.
     in property <[ChatMessage]> chat-live-messages: [];
     in-out property <string> chat-composer-draft: "";
+    /// R4-11 — explicit, per-turn privacy selection. The Rust callback
+    /// snapshots it before consent preflight; it is not durable GUI state.
+    in-out property <bool> chat-incognito: false;
+    /// Immutable privacy mode for the request in flight. It remains visible
+    /// after `chat-incognito` resets for the next turn.
+    in property <bool> chat-incognito-active: false;
     in property <bool> chat-send-enabled: true;
     /// GOLD-ADAPT-GUI-07 — a reply subprocess is streaming; the Send
     /// button spins and re-sends are blocked until it settles.
@@ -1111,13 +1117,16 @@ export component MainWindow inherits Window {
 
     /// Operator typed + sent a message. Rust dispatches through
     /// `cli::chat::run_chat_with`.
-    callback chat-send-clicked(string);
+    /// (text, captured-incognito). The UI passes the privacy snapshot with
+    /// the event so retries/continuations cannot reread a changed widget.
+    callback chat-send-clicked(string, bool);
+    callback chat-incognito-selection-changed(bool);
     /// Internal continuation invoked by Rust only after typed consent preflight:
-    /// (request-id, text, captured-skill-id).
-    callback chat-send-approved(string, string, string);
+    /// (request-id, text, captured-skill-id, captured-incognito).
+    callback chat-send-approved(string, string, string, bool);
     /// Internal Buddy continuation after the same typed consent preflight:
-    /// (request-id, text, captured-skill-id).
-    callback buddy-chat-send-approved(string, string, string);
+    /// (request-id, text, captured-skill-id, captured-incognito).
+    callback buddy-chat-send-approved(string, string, string, bool);
     /// Internal Buddy window hand-off while the main window owns the consent modal.
     callback buddy-chat-consent-prompt-required();
     /// Internal Buddy restoration when consent is denied or preflight fails.
@@ -3920,6 +3929,8 @@ export component MainWindow inherits Window {
                 if root.nav-active == "chat": SovereignFade { ChatView {
                     messages: root.chat-messages;
                     composer-draft <=> root.chat-composer-draft;
+                    incognito <=> root.chat-incognito;
+                    incognito-active: root.chat-incognito-active;
                     send-enabled: root.chat-send-enabled;
                     send-in-flight: root.chat-send-in-flight;
                     slash-active: root.chat-slash-active;
@@ -3935,7 +3946,10 @@ export component MainWindow inherits Window {
                     skill-route-status: root.chat-skill-route-status;
                     link-chips: root.chat-link-chips;
                     link-chip-clicked(k, id) => { root.chat-link-chip-clicked(k, id); }
-                    send-clicked(text) => { root.chat-send-clicked(text); }
+                    send-clicked(text, incognito) => { root.chat-send-clicked(text, incognito); }
+                    incognito-selection-changed(selected) => {
+                        root.chat-incognito-selection-changed(selected);
+                    }
                     skill-selected(i) => { root.chat-skill-selected(i); }
                     live-session-selected => { root.chat-live-session-selected(); }
                     session-selected(id) => { root.chat-session-selected(id); }
@@ -3959,7 +3973,7 @@ export component MainWindow inherits Window {
                     message-retry(i) => { root.chat-message-retry(i); }
                     message-delete(i) => { root.chat-message-delete(i); }
                     scroll-to-bottom-clicked => { root.chat-unseen-count = 0; }
-                    starter-clicked(p) => { root.chat-send-clicked(p); }
+                    starter-clicked(p) => { root.chat-send-clicked(p, root.chat-incognito); }
                     // Wave 8 — code panel copy + stop-while-streaming.
                     code-copy(i) => { root.chat-code-copy(i); }
                     stop-stream-clicked => { root.chat-stop-stream(); }
