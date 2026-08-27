@@ -349,12 +349,14 @@ pub fn migrate_legacy_hygiene_state(
         }
         Err(_) => return Err(HygieneStoreError::SafeStoreUnavailable),
     };
-    Ok(HygieneMigrationOutcome::Migrated(Box::new(HygieneApplyOutcome {
-        state,
-        plan,
-        written: true,
-        durability,
-    })))
+    Ok(HygieneMigrationOutcome::Migrated(Box::new(
+        HygieneApplyOutcome {
+            state,
+            plan,
+            written: true,
+            durability,
+        },
+    )))
 }
 
 fn lock_state(
