@@ -4,10 +4,8 @@ const ENVELOPE: &str = include_str!("../src/security/prompt_envelope.rs");
 const FACTUAL_CHECK: &str = include_str!("../src/council/factual_check.rs");
 const ORCHESTRATOR: &str = include_str!("../src/council/orchestrator.rs");
 
-const TRY_EMBED_GROUND_TRUTH_TAG_DECLARATION: &str =
-    "pubfntry_embed_ground_truth_tag(prompt:&str,assertions:&[FactualAssertion],)->Result<String,crate::security::PromptBuildError>";
-const FACTUAL_CONTRADICTION_CHECK_DECLARATION: &str =
-    "pubfnfactual_contradiction_check(response:&str,assertions:&[FactualAssertion],negation_markers:&[&str],window_chars:usize,)->FactualCheckOutcome";
+const TRY_EMBED_GROUND_TRUTH_TAG_DECLARATION: &str = "pubfntry_embed_ground_truth_tag(prompt:&str,assertions:&[FactualAssertion],)->Result<String,crate::security::PromptBuildError>";
+const FACTUAL_CONTRADICTION_CHECK_DECLARATION: &str = "pubfnfactual_contradiction_check(response:&str,assertions:&[FactualAssertion],negation_markers:&[&str],window_chars:usize,)->FactualCheckOutcome";
 
 fn function_body(source: &str, signature: &str) -> String {
     let code = code_only(source);

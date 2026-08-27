@@ -25221,16 +25221,10 @@ mod chat_subprocess_tests {
         let overview_registry = source
             .rsplit_once(concat!("fn spawn_usage_", "overview_worker("))
             .map(|(_, tail)| tail)
-            .and_then(|tail| {
-                tail.split(concat!("fn refresh_overview_", "cost("))
-                    .next()
-            })
+            .and_then(|tail| tail.split(concat!("fn refresh_overview_", "cost(")).next())
             .unwrap();
         let overview_worker_bound = source
-            .rsplit_once(concat!(
-                "const MAX_USAGE_",
-                "OVERVIEW_WORKERS: usize = "
-            ))
+            .rsplit_once(concat!("const MAX_USAGE_", "OVERVIEW_WORKERS: usize = "))
             .map(|(_, tail)| tail)
             .and_then(|tail| tail.split(';').next())
             .unwrap();

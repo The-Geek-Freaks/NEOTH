@@ -1930,7 +1930,10 @@ mod tests {
     fn apply_identity_decoder_accepts_only_exact_lowercase_hex() {
         let valid = hex::encode([b'\n'; 32]);
         let uppercase = valid.to_uppercase();
-        assert_ne!(valid, uppercase, "fixture must contain lowercase hex letters");
+        assert_ne!(
+            valid, uppercase,
+            "fixture must contain lowercase hex letters"
+        );
         assert_eq!(decode_lower_hex_32("plan id", &valid).unwrap(), [b'\n'; 32]);
         assert!(decode_lower_hex_32("plan id", &uppercase).is_err());
         assert!(decode_lower_hex_32("plan id", &valid[..63]).is_err());
