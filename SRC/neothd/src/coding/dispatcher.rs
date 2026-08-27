@@ -1745,7 +1745,6 @@ fn apply_is_test_verified(test_cmd_present: bool, patch_text: &str) -> bool {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::path::PathBuf;
     use std::sync::Arc;
 
     #[test]

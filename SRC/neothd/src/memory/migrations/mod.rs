@@ -3501,15 +3501,7 @@ mod tests {
             ("provenance-v36-bound".into(), "pending".into(), 1, None),
             "v37 must retain, not promote, a v36 binding",
         );
-        let bound_outbox: (
-            String,
-            i64,
-            Vec<u8>,
-            Vec<u8>,
-            String,
-            Option<i64>,
-            Option<Vec<u8>>,
-        ) = conn
+        let bound_outbox = conn
             .query_row(
                 "SELECT logical_subtype,event_subtype,payload,payload_sha256,state,
                         delivered_at_unix,delivered_frame_sha256
@@ -3517,13 +3509,13 @@ mod tests {
                 [],
                 |row| {
                     Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                        row.get::<_, Vec<u8>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<i64>>(5)?,
+                        row.get::<_, Option<Vec<u8>>>(6)?,
                     ))
                 },
             )

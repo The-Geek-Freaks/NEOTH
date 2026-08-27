@@ -5218,10 +5218,10 @@ fn main() -> Result<()> {
                     if w.get_chat_stall_active() != main_diagnostic {
                         w.set_chat_stall_active(main_diagnostic);
                     }
-                    if let Some(overlay) = overlay_weak_watchdog.upgrade() {
-                        if overlay.get_stall_active() != buddy_diagnostic {
-                            overlay.set_stall_active(buddy_diagnostic);
-                        }
+                    if let Some(overlay) = overlay_weak_watchdog.upgrade()
+                        && overlay.get_stall_active() != buddy_diagnostic
+                    {
+                        overlay.set_stall_active(buddy_diagnostic);
                     }
                     if diagnostic.is_some_and(|(surface, entered, _)| {
                         surface == ChatStreamSurface::Main && entered
