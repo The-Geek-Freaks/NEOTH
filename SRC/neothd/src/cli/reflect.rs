@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::memory::store;
-use crate::sources::hackernews::{self, GapFilter};
 use crate::reflection::hygiene::DailyAdmissionConfig;
+use crate::sources::hackernews::{self, GapFilter};
 
 /// A deliberately small ceiling for the unattended reflection config.  The
 /// interactive topic lists have no reason to grow into an allocation surface.
@@ -147,10 +147,14 @@ impl ReflectTopics {
             false,
             "reflection automation home",
         )
-        .map_err(|_| ReflectTopicsLoadError::SafeConfigUnavailable)? else {
+        .map_err(|_| ReflectTopicsLoadError::SafeConfigUnavailable)?
+        else {
             return Ok(Self::default());
         };
-        let bytes = match directory.dir.symlink_metadata(OsStr::new("reflect_topics.yaml")) {
+        let bytes = match directory
+            .dir
+            .symlink_metadata(OsStr::new("reflect_topics.yaml"))
+        {
             Ok(_) => crate::skills::store::read_regular_file_bounded(
                 &directory.dir,
                 OsStr::new("reflect_topics.yaml"),
@@ -158,7 +162,9 @@ impl ReflectTopics {
                 MAX_REFLECT_TOPICS_CONFIG_BYTES,
             )
             .map_err(|_| ReflectTopicsLoadError::SafeConfigUnavailable)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
             Err(_) => return Err(ReflectTopicsLoadError::SafeConfigUnavailable),
         };
         serde_yaml::from_slice(&bytes).map_err(|_| ReflectTopicsLoadError::InvalidConfig)
@@ -251,14 +257,18 @@ fn digest_at(
     // reflection. Share the daemon's marker files so daemon + CLI see each other's
     // completion for this tag.
     let yearly_marker = home.join("reflections").join("yearly-last.txt");
-    let already_done = if matches!(period, DigestPeriod::Yearly) && yearly_marker
-        .try_exists()
-        .with_context(|| format!("inspect reflection marker {}", yearly_marker.display()))?
+    let already_done = if matches!(period, DigestPeriod::Yearly)
+        && yearly_marker
+            .try_exists()
+            .with_context(|| format!("inspect reflection marker {}", yearly_marker.display()))?
     {
         std::fs::read_to_string(&yearly_marker)
             .with_context(|| format!("read reflection marker {}", yearly_marker.display()))?
-            .trim() == tag.as_str()
-    } else { false };
+            .trim()
+            == tag.as_str()
+    } else {
+        false
+    };
     if already_done {
         if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
             println!(
@@ -305,12 +315,17 @@ fn digest_at(
     let mut obsidian_path = None;
     if matches!(period, DigestPeriod::Daily) {
         let obsidian = cfg.obsidian_vault.as_deref().map(|vault| {
-            (std::path::Path::new(vault), cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH"))
+            (
+                std::path::Path::new(vault),
+                cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH"),
+            )
         });
         match periodic::settle_daily_admission(
             home,
             &refl,
-            daily_admission.as_ref().and_then(|topics| topics.daily_admission.as_ref()),
+            daily_admission
+                .as_ref()
+                .and_then(|topics| topics.daily_admission.as_ref()),
             obsidian,
         )
         .map_err(anyhow::Error::from)
@@ -330,7 +345,9 @@ fn digest_at(
                         serde_json::json!({ "kind": kind.as_str(), "tag": tag, "written": false, "reason": "suppressed" })
                     );
                 } else {
-                    println!("Daily reflection {tag}: suppressed by the configured admission policy.");
+                    println!(
+                        "Daily reflection {tag}: suppressed by the configured admission policy."
+                    );
                 }
                 return Ok(());
             }
@@ -352,8 +369,9 @@ fn digest_at(
             .with_context(|| format!("persist reflection marker {}", yearly_marker.display()))?;
         if let Some(vault) = cfg.obsidian_vault.as_deref() {
             let subdir = cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH");
-            let o = periodic::sync_to_obsidian(home, std::path::Path::new(vault), subdir, kind, &tag)
-                .context("Obsidian sync")?;
+            let o =
+                periodic::sync_to_obsidian(home, std::path::Path::new(vault), subdir, kind, &tag)
+                    .context("Obsidian sync")?;
             if o.written {
                 obsidian_path = Some(o.target_path.display().to_string());
             }
@@ -594,13 +612,24 @@ mod tests {
     #[test]
     fn automation_config_missing_is_disabled_but_unknown_malformed_and_oversized_fail_closed() {
         let home = tempfile::tempdir().unwrap();
-        assert_eq!(ReflectTopics::load_for_automation(home.path()).unwrap(), ReflectTopics::default());
-        std::fs::write(home.path().join("reflect_topics.yaml"), "unknown_key: true\n").unwrap();
+        assert_eq!(
+            ReflectTopics::load_for_automation(home.path()).unwrap(),
+            ReflectTopics::default()
+        );
+        std::fs::write(
+            home.path().join("reflect_topics.yaml"),
+            "unknown_key: true\n",
+        )
+        .unwrap();
         assert_eq!(
             ReflectTopics::load_for_automation(home.path()).unwrap_err(),
             ReflectTopicsLoadError::InvalidConfig
         );
-        std::fs::write(home.path().join("reflect_topics.yaml"), "daily_notes: [not: yaml\n").unwrap();
+        std::fs::write(
+            home.path().join("reflect_topics.yaml"),
+            "daily_notes: [not: yaml\n",
+        )
+        .unwrap();
         assert_eq!(
             ReflectTopics::load_for_automation(home.path()).unwrap_err(),
             ReflectTopicsLoadError::InvalidConfig
@@ -619,7 +648,11 @@ mod tests {
     #[test]
     fn old_valid_config_preserves_disabled_daily_admission() {
         let home = tempfile::tempdir().unwrap();
-        std::fs::write(home.path().join("reflect_topics.yaml"), "daily_notes: true\n").unwrap();
+        std::fs::write(
+            home.path().join("reflect_topics.yaml"),
+            "daily_notes: true\n",
+        )
+        .unwrap();
         let config = ReflectTopics::load_for_automation(home.path()).unwrap();
         assert!(config.daily_notes);
         assert_eq!(config.daily_admission, None);
@@ -628,7 +661,7 @@ mod tests {
     #[test]
     fn cli_daily_digest_first_settlement_honours_enabled_suppression_policy() {
         use crate::reflection::hygiene::DailyAdmissionConfig;
-        use crate::reflection::hygiene_store::{lock_daily_admission, DailyAdmissionOutcome};
+        use crate::reflection::hygiene_store::{DailyAdmissionOutcome, lock_daily_admission};
         use crate::reflection::periodic::{self, PeriodKind};
 
         let home = tempfile::tempdir().unwrap();
@@ -648,22 +681,29 @@ mod tests {
             &periodic::date_tag_from_unix(now.saturating_sub(86_400)),
             &topics,
             now.saturating_sub(86_400),
-        ).unwrap();
-        periodic::settle_daily_admission(
-            home.path(), &prior, Some(&admission), None,
-        ).unwrap();
+        )
+        .unwrap();
+        periodic::settle_daily_admission(home.path(), &prior, Some(&admission), None).unwrap();
         std::fs::write(
             home.path().join("reflect_topics.yaml"),
             "daily_admission:\n  version: 1\n  enabled: true\n  min_jaccard_basis_points: 10000\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, now).unwrap();
         let tag = periodic::date_tag_from_unix(now);
         assert!(!periodic::jsonl_file(home.path(), PeriodKind::Daily, &tag).exists());
-        let state = lock_daily_admission(home.path()).unwrap().load().unwrap().unwrap();
+        let state = lock_daily_admission(home.path())
+            .unwrap()
+            .load()
+            .unwrap()
+            .unwrap();
         assert_eq!(state.tag, tag);
         assert_eq!(state.outcome, DailyAdmissionOutcome::Suppressed);
-        assert_eq!(std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(), tag);
+        assert_eq!(
+            std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(),
+            tag
+        );
     }
 
     #[test]
@@ -685,7 +725,11 @@ mod tests {
             obsidian_subdir: Some("NEOTH".to_string()),
             ..Default::default()
         };
-        std::fs::write(home.path().join("freedom.yaml"), serde_yaml::to_string(&config).unwrap()).unwrap();
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config).unwrap(),
+        )
+        .unwrap();
 
         assert!(digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, now).is_err());
         let tag = periodic::date_tag_from_unix(now);
@@ -699,21 +743,40 @@ mod tests {
             rusqlite::params![2i64, crate::wal::events::EVENT_TYPE_RAW_TEXT as i64, retry_now.saturating_mul(1_000_000_000), "replacement replacement replacement replacement replacement", "digest-obsidian-retry"],
         ).unwrap();
         let retry_topics = crate::reflection::top_topics_in_days(
-            &conn, retry_now.saturating_mul(1_000_000_000), 1, 5,
+            &conn,
+            retry_now.saturating_mul(1_000_000_000),
+            1,
+            5,
         )
         .unwrap();
-        let rebuilt = periodic::build_reflection(PeriodKind::Daily, &tag, &retry_topics, retry_now).unwrap();
-        assert_ne!(rebuilt.topics, original.topics, "the retry must exercise distinct same-day topics");
-        assert_ne!(rebuilt, original, "the retry must exercise a distinct same-day candidate");
+        let rebuilt =
+            periodic::build_reflection(PeriodKind::Daily, &tag, &retry_topics, retry_now).unwrap();
+        assert_ne!(
+            rebuilt.topics, original.topics,
+            "the retry must exercise distinct same-day topics"
+        );
+        assert_ne!(
+            rebuilt, original,
+            "the retry must exercise a distinct same-day candidate"
+        );
         std::fs::remove_file(&vault).unwrap();
         std::fs::create_dir(&vault).unwrap();
-        digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, retry_now).unwrap();
+        digest_at(
+            home.path(),
+            DigestPeriod::Daily,
+            OutputFormat::Table,
+            retry_now,
+        )
+        .unwrap();
         assert_eq!(std::fs::read(&archive_path).unwrap(), archive);
         assert_eq!(
             std::fs::read_to_string(vault.join(format!("NEOTH/Daily/{tag}.md"))).unwrap(),
             original.to_obsidian_md(),
         );
-        assert_eq!(std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(), tag);
+        assert_eq!(
+            std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(),
+            tag
+        );
     }
 
     #[test]
@@ -730,14 +793,28 @@ mod tests {
         ).unwrap();
         let tag = periodic::date_tag_from_unix(now);
         let original = periodic::build_reflection(
-            PeriodKind::Daily, &tag, &["cli-persisted-original".into()], now.saturating_sub(60),
+            PeriodKind::Daily,
+            &tag,
+            &["cli-persisted-original".into()],
+            now.saturating_sub(60),
         )
         .unwrap();
-        periodic::open_daily_archive_transaction(home.path()).unwrap().append_once(&original).unwrap();
+        periodic::open_daily_archive_transaction(home.path())
+            .unwrap()
+            .append_once(&original)
+            .unwrap();
         digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, now).unwrap();
-        let archive = std::fs::read(periodic::jsonl_file(home.path(), PeriodKind::Daily, &tag)).unwrap();
-        assert_eq!(serde_json::from_slice::<periodic::PeriodReflection>(&archive).unwrap(), original);
-        let state = lock_daily_admission(home.path()).unwrap().load().unwrap().unwrap();
+        let archive =
+            std::fs::read(periodic::jsonl_file(home.path(), PeriodKind::Daily, &tag)).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<periodic::PeriodReflection>(&archive).unwrap(),
+            original
+        );
+        let state = lock_daily_admission(home.path())
+            .unwrap()
+            .load()
+            .unwrap()
+            .unwrap();
         assert!(state.archive_sha256.is_some());
     }
 

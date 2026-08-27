@@ -218,9 +218,7 @@ impl fmt::Debug for HygieneError {
             Self::InvalidPeriodReflection { .. } => "InvalidPeriodReflection",
             Self::InvalidSynonym { .. } => "InvalidSynonym",
             Self::SynonymCycle { .. } => "SynonymCycle",
-            Self::UnknownDailyAdmissionConfigVersion { .. } => {
-                "UnknownDailyAdmissionConfigVersion"
-            }
+            Self::UnknownDailyAdmissionConfigVersion { .. } => "UnknownDailyAdmissionConfigVersion",
             Self::InvalidDailyAdmissionThreshold { .. } => "InvalidDailyAdmissionThreshold",
             Self::DailyAdmissionCapacityExceeded => "DailyAdmissionCapacityExceeded",
             Self::EmptyAdmissionCandidate => "EmptyAdmissionCandidate",
@@ -253,7 +251,9 @@ impl fmt::Display for HygieneError {
             Self::InvalidDailyAdmissionThreshold { found } => {
                 write!(f, "invalid daily-admission Jaccard threshold {found}")
             }
-            Self::DailyAdmissionCapacityExceeded => write!(f, "daily-admission configuration exceeds safety limits"),
+            Self::DailyAdmissionCapacityExceeded => {
+                write!(f, "daily-admission configuration exceeds safety limits")
+            }
             Self::EmptyAdmissionCandidate => write!(f, "daily-admission candidate has no topics"),
         }
     }
@@ -360,9 +360,13 @@ pub fn decide_daily_admission(
         && superset_ok
         && jaccard_basis_points >= config.min_jaccard_basis_points
     {
-        Ok(DailyAdmissionDecision::Suppress { jaccard_basis_points })
+        Ok(DailyAdmissionDecision::Suppress {
+            jaccard_basis_points,
+        })
     } else {
-        Ok(DailyAdmissionDecision::Admit { jaccard_basis_points })
+        Ok(DailyAdmissionDecision::Admit {
+            jaccard_basis_points,
+        })
     }
 }
 
@@ -646,7 +650,9 @@ fn resolve_synonym(
         });
     }
     colors.insert(alias.to_owned(), VisitColor::Visiting);
-    let next = direct.get(alias).expect("DFS only starts from direct aliases");
+    let next = direct
+        .get(alias)
+        .expect("DFS only starts from direct aliases");
     let canonical = if direct.contains_key(next) {
         resolve_synonym(next, direct, colors, resolved)?
     } else {
@@ -722,7 +728,9 @@ mod tests {
         };
         assert_eq!(
             decide_daily_admission(&["K8S".into()], &["kubernetes".into()], &config).unwrap(),
-            DailyAdmissionDecision::Suppress { jaccard_basis_points: 10_000 }
+            DailyAdmissionDecision::Suppress {
+                jaccard_basis_points: 10_000
+            }
         );
     }
 
@@ -742,13 +750,17 @@ mod tests {
         assert_eq!(
             decide_daily_admission(&["rust".into()], &["rust".into(), "wal".into()], &config)
                 .unwrap(),
-            DailyAdmissionDecision::Admit { jaccard_basis_points: 5_000 }
+            DailyAdmissionDecision::Admit {
+                jaccard_basis_points: 5_000
+            }
         );
         config.candidate_must_be_superset = false;
         assert_eq!(
             decide_daily_admission(&["rust".into()], &["rust".into(), "wal".into()], &config)
                 .unwrap(),
-            DailyAdmissionDecision::Suppress { jaccard_basis_points: 5_000 }
+            DailyAdmissionDecision::Suppress {
+                jaccard_basis_points: 5_000
+            }
         );
     }
 
@@ -762,10 +774,8 @@ mod tests {
             Err(HygieneError::UnknownDailyAdmissionConfigVersion { .. })
         ));
         config.version = DAILY_ADMISSION_CONFIG_VERSION;
-        config.topic_synonyms.entries = BTreeMap::from([
-            ("a".into(), "b".into()),
-            ("b".into(), "a".into()),
-        ]);
+        config.topic_synonyms.entries =
+            BTreeMap::from([("a".into(), "b".into()), ("b".into(), "a".into())]);
         assert!(matches!(
             decide_daily_admission(&["a".into()], &["b".into()], &config),
             Err(HygieneError::SynonymCycle { .. })
@@ -798,11 +808,16 @@ mod tests {
             } else {
                 format!("alias-{}", index + 1)
             };
-            config.topic_synonyms.entries.insert(format!("alias-{index}"), next);
+            config
+                .topic_synonyms
+                .entries
+                .insert(format!("alias-{index}"), next);
         }
         assert_eq!(
             decide_daily_admission(&["alias-0".into()], &["canonical".into()], &config),
-            Ok(DailyAdmissionDecision::Suppress { jaccard_basis_points: 10_000 })
+            Ok(DailyAdmissionDecision::Suppress {
+                jaccard_basis_points: 10_000
+            })
         );
 
         let oversized = "x".repeat(MAX_DAILY_ADMISSION_TOPIC_BYTES + 1);
@@ -828,7 +843,9 @@ mod tests {
                 alias: secret.into(),
                 canonical: secret.into(),
             },
-            HygieneError::SynonymCycle { alias: secret.into() },
+            HygieneError::SynonymCycle {
+                alias: secret.into(),
+            },
             HygieneError::InvalidPeriodReflection {
                 source: secret.into(),
                 reason: "operator body",

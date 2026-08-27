@@ -300,7 +300,7 @@ pub fn append(home: &Path, reflection: &PeriodReflection) -> std::io::Result<()>
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "unsupported reflection period",
-            ))
+            ));
         }
     };
     fs::create_dir_all(periodic_dir(home, kind))?;
@@ -314,17 +314,23 @@ pub fn append(home: &Path, reflection: &PeriodReflection) -> std::io::Result<()>
 }
 
 fn daily_archive_error(reason: &'static str) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, format!("daily admission archive {reason}"))
+    std::io::Error::new(
+        std::io::ErrorKind::Other,
+        format!("daily admission archive {reason}"),
+    )
 }
 
-pub(crate) fn open_daily_archive_transaction(home: &Path) -> std::io::Result<DailyArchiveTransaction> {
+pub(crate) fn open_daily_archive_transaction(
+    home: &Path,
+) -> std::io::Result<DailyArchiveTransaction> {
     crate::reflection::hygiene_store::prepare_daily_admission_namespace(home)
         .map_err(std::io::Error::other)?;
-    let home_dir = crate::skills::store::open_absolute_bound_directory(
-        home, false, "daily admission home",
-    )
-    .map_err(std::io::Error::other)?
-    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "daily admission home missing"))?;
+    let home_dir =
+        crate::skills::store::open_absolute_bound_directory(home, false, "daily admission home")
+            .map_err(std::io::Error::other)?
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "daily admission home missing")
+            })?;
     let reflections_path = home.join("reflections");
     let reflections = crate::skills::store::open_or_create_private_child_dir(
         &home_dir.dir,
@@ -333,7 +339,10 @@ pub(crate) fn open_daily_archive_transaction(home: &Path) -> std::io::Result<Dai
     )
     .map_err(std::io::Error::other)?;
     let (reflections, reflections_binding) = crate::skills::store::bind_retained_real_child_dir(
-        &home_dir.dir, OsStr::new("reflections"), &reflections_path, reflections,
+        &home_dir.dir,
+        OsStr::new("reflections"),
+        &reflections_path,
+        reflections,
     )
     .map_err(std::io::Error::other)?;
     let daily_path = periodic_dir(home, PeriodKind::Daily);
@@ -344,7 +353,10 @@ pub(crate) fn open_daily_archive_transaction(home: &Path) -> std::io::Result<Dai
     )
     .map_err(std::io::Error::other)?;
     let (daily, daily_binding) = crate::skills::store::bind_retained_real_child_dir(
-        &reflections, OsStr::new("daily"), &daily_path, daily,
+        &reflections,
+        OsStr::new("daily"),
+        &daily_path,
+        daily,
     )
     .map_err(std::io::Error::other)?;
     Ok(DailyArchiveTransaction {
@@ -360,21 +372,35 @@ pub(crate) fn open_daily_archive_transaction(home: &Path) -> std::io::Result<Dai
 
 fn validate_obsidian_subdir(subdir: &str) -> std::io::Result<Vec<OsString>> {
     if subdir.is_empty() || subdir.len() > MAX_OBSIDIAN_SUBDIR_BYTES {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid Obsidian subdirectory"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid Obsidian subdirectory",
+        ));
     }
     let path = Path::new(subdir);
     if path.is_absolute() || path.has_root() {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid Obsidian subdirectory"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid Obsidian subdirectory",
+        ));
     }
     let components: Vec<OsString> = path
         .components()
         .map(|component| match component {
-            Component::Normal(name) if name.len() <= MAX_OBSIDIAN_SUBDIR_COMPONENT_BYTES => Ok(name.to_os_string()),
-            _ => Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid Obsidian subdirectory")),
+            Component::Normal(name) if name.len() <= MAX_OBSIDIAN_SUBDIR_COMPONENT_BYTES => {
+                Ok(name.to_os_string())
+            }
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid Obsidian subdirectory",
+            )),
         })
         .collect::<std::io::Result<_>>()?;
     if components.is_empty() || components.len() > MAX_OBSIDIAN_SUBDIR_COMPONENTS {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid Obsidian subdirectory"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid Obsidian subdirectory",
+        ));
     }
     Ok(components)
 }
@@ -382,21 +408,36 @@ fn validate_obsidian_subdir(subdir: &str) -> std::io::Result<Vec<OsString>> {
 impl BoundObsidianDailyTarget {
     fn open(vault_path: &Path, subdir: &str) -> std::io::Result<Self> {
         let components = validate_obsidian_subdir(subdir)?;
-        let vault_parent_path = vault_path.parent()
+        let vault_parent_path = vault_path
+            .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid Obsidian vault"))?
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid Obsidian vault")
+            })?
             .to_path_buf();
-        let vault_name = vault_path.file_name()
+        let vault_name = vault_path
+            .file_name()
             .filter(|name| !name.is_empty())
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid Obsidian vault"))?
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid Obsidian vault")
+            })?
             .to_os_string();
         let vault_parent = crate::skills::store::open_absolute_bound_directory(
-            &vault_parent_path, false, "Obsidian vault parent",
+            &vault_parent_path,
+            false,
+            "Obsidian vault parent",
         )
         .map_err(std::io::Error::other)?
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Obsidian vault parent missing"))?;
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Obsidian vault parent missing",
+            )
+        })?;
         let (vault, vault_binding) = crate::skills::store::open_mutation_bound_real_child_dir(
-            &vault_parent.dir, &vault_name, vault_path,
+            &vault_parent.dir,
+            &vault_name,
+            vault_path,
         )
         .map_err(std::io::Error::other)?;
         let mut chain = vec![BoundObsidianDirectoryLink {
@@ -408,17 +449,23 @@ impl BoundObsidianDailyTarget {
         }];
         let mut current_path = vault_path.to_path_buf();
         for component in components {
-            let parent = chain.last()
+            let parent = chain
+                .last()
                 .expect("vault root is always the first bound target link")
                 .dir
                 .try_clone()?;
             let child_path = current_path.join(&component);
             let child = crate::skills::store::open_or_create_private_child_dir(
-                &parent, &component, &child_path,
+                &parent,
+                &component,
+                &child_path,
             )
-                .map_err(std::io::Error::other)?;
+            .map_err(std::io::Error::other)?;
             let (child, binding) = crate::skills::store::bind_retained_real_child_dir(
-                &parent, &component, &child_path, child,
+                &parent,
+                &component,
+                &child_path,
+                child,
             )
             .map_err(std::io::Error::other)?;
             chain.push(BoundObsidianDirectoryLink {
@@ -430,18 +477,24 @@ impl BoundObsidianDailyTarget {
             });
             current_path = child_path;
         }
-        let parent = chain.last()
+        let parent = chain
+            .last()
             .expect("validated Obsidian subdirectory chain is nonempty")
             .dir
             .try_clone()?;
         let daily_name = OsString::from(PeriodKind::Daily.vault_subdir());
         let daily_path = current_path.join(&daily_name);
         let daily = crate::skills::store::open_or_create_private_child_dir(
-            &parent, &daily_name, &daily_path,
+            &parent,
+            &daily_name,
+            &daily_path,
         )
         .map_err(std::io::Error::other)?;
         let (daily, binding) = crate::skills::store::bind_retained_real_child_dir(
-            &parent, &daily_name, &daily_path, daily,
+            &parent,
+            &daily_name,
+            &daily_path,
+            daily,
         )
         .map_err(std::io::Error::other)?;
         chain.push(BoundObsidianDirectoryLink {
@@ -457,7 +510,9 @@ impl BoundObsidianDailyTarget {
     fn revalidate(&self) -> std::io::Result<()> {
         for link in &self.chain {
             link.dir.dir_metadata()?;
-            if !link.binding.matches_child(&link.parent, &link.name, &link.path)
+            if !link
+                .binding
+                .matches_child(&link.parent, &link.name, &link.path)
                 .map_err(std::io::Error::other)?
             {
                 return Err(std::io::Error::new(
@@ -472,15 +527,22 @@ impl BoundObsidianDailyTarget {
     fn write_exact(&self, expected: &PeriodReflection) -> std::io::Result<PeriodSyncOutcome> {
         self.revalidate()?;
         let name = OsString::from(format!("{}.md", expected.tag));
-        let daily = self.chain.last()
+        let daily = self
+            .chain
+            .last()
             .expect("Daily leaf is always retained in an Obsidian target");
         let target_path = daily.path.join(&name);
         let body = expected.to_obsidian_md();
         self.revalidate()?;
         match crate::skills::store::atomic_write_private_child_reported(
-            &daily.dir, &name, &target_path, body.as_bytes(),
+            &daily.dir,
+            &name,
+            &target_path,
+            body.as_bytes(),
         ) {
-            Ok(crate::skills::store::PrivateChildCommit::PublishedAndSynced) => self.revalidate()?,
+            Ok(crate::skills::store::PrivateChildCommit::PublishedAndSynced) => {
+                self.revalidate()?
+            }
             Ok(crate::skills::store::PrivateChildCommit::PublishedDurabilityUnknown(_)) => {
                 return Err(std::io::Error::other("Obsidian note durability is unknown"));
             }
@@ -500,7 +562,11 @@ impl DailyArchiveTransaction {
     fn revalidate(&self) -> std::io::Result<()> {
         if !self
             .reflections_binding
-            .matches_child(&self.home, OsStr::new("reflections"), &self.reflections_path)
+            .matches_child(
+                &self.home,
+                OsStr::new("reflections"),
+                &self.reflections_path,
+            )
             .map_err(std::io::Error::other)?
         {
             return Err(std::io::Error::new(
@@ -522,7 +588,10 @@ impl DailyArchiveTransaction {
         }
     }
 
-    pub(crate) fn inspect(&self, expected: &PeriodReflection) -> std::io::Result<DailyArchiveStatus> {
+    pub(crate) fn inspect(
+        &self,
+        expected: &PeriodReflection,
+    ) -> std::io::Result<DailyArchiveStatus> {
         self.revalidate()?;
         let path = self.daily_path.join(format!("{}.jsonl", expected.tag));
         let name = format!("{}.jsonl", expected.tag);
@@ -533,15 +602,22 @@ impl DailyArchiveTransaction {
             MAX_DAILY_ADMISSION_ARCHIVE_BYTES,
         ) {
             Ok(bytes) => bytes,
-            Err(error) if error.root_cause().downcast_ref::<std::io::Error>()
-                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) => return Ok(DailyArchiveStatus::Missing),
+            Err(error)
+                if error
+                    .root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                return Ok(DailyArchiveStatus::Missing);
+            }
             Err(error) => return Err(std::io::Error::other(error)),
         };
         parse_expected_daily_archive(&bytes, expected)
     }
 
     pub(crate) fn load_previous(&self, tag: &str) -> std::io::Result<Option<PeriodReflection>> {
-        self.load_record(tag).map(|record| record.map(|(reflection, _)| reflection))
+        self.load_record(tag)
+            .map(|record| record.map(|(reflection, _)| reflection))
     }
 
     /// Read exactly one current-tag record from the retained Daily directory
@@ -552,20 +628,39 @@ impl DailyArchiveTransaction {
         let name = format!("{tag}.jsonl");
         let path = self.daily_path.join(&name);
         let bytes = match crate::skills::store::read_regular_file_bounded(
-            &self.daily, OsStr::new(&name), &path, MAX_DAILY_ADMISSION_ARCHIVE_BYTES,
+            &self.daily,
+            OsStr::new(&name),
+            &path,
+            MAX_DAILY_ADMISSION_ARCHIVE_BYTES,
         ) {
             Ok(bytes) => bytes,
-            Err(error) if error.root_cause().downcast_ref::<std::io::Error>()
-                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) => return Ok(None),
+            Err(error)
+                if error
+                    .root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                return Ok(None);
+            }
             Err(error) => return Err(std::io::Error::other(error)),
         };
         if !bytes.ends_with(b"\n") || bytes.iter().filter(|byte| **byte == b'\n').count() != 1 {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "daily archive has invalid record framing"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "daily archive has invalid record framing",
+            ));
         }
-        let reflection: PeriodReflection = serde_json::from_slice(&bytes)
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "daily archive contains malformed record"))?;
+        let reflection: PeriodReflection = serde_json::from_slice(&bytes).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "daily archive contains malformed record",
+            )
+        })?;
         if reflection.kind != "daily" || reflection.tag != tag {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "daily archive conflicts with requested tag"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "daily archive conflicts with requested tag",
+            ));
         }
         let digest = hex::encode(Sha256::digest(&bytes));
         Ok(Some((reflection, digest)))
@@ -579,11 +674,20 @@ impl DailyArchiveTransaction {
         self.revalidate()?;
         let path = self.marker_path();
         let bytes = match crate::skills::store::read_regular_file_bounded(
-            &self.reflections, OsStr::new("daily-last.txt"), &path, MAX_DAILY_ADMISSION_MARKER_BYTES,
+            &self.reflections,
+            OsStr::new("daily-last.txt"),
+            &path,
+            MAX_DAILY_ADMISSION_MARKER_BYTES,
         ) {
             Ok(bytes) => bytes,
-            Err(error) if error.root_cause().downcast_ref::<std::io::Error>()
-                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) => return Ok(false),
+            Err(error)
+                if error
+                    .root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                return Ok(false);
+            }
             Err(error) => return Err(std::io::Error::other(error)),
         };
         Ok(bytes == tag.as_bytes())
@@ -614,7 +718,10 @@ impl DailyArchiveTransaction {
         }
     }
 
-    pub(crate) fn append_once(&self, expected: &PeriodReflection) -> std::io::Result<DailyArchiveStatus> {
+    pub(crate) fn append_once(
+        &self,
+        expected: &PeriodReflection,
+    ) -> std::io::Result<DailyArchiveStatus> {
         match self.inspect(expected)? {
             DailyArchiveStatus::Matching => return Ok(DailyArchiveStatus::Matching),
             DailyArchiveStatus::Missing => {}
@@ -625,7 +732,10 @@ impl DailyArchiveTransaction {
         line.push(b'\n');
         let name = format!("{}.jsonl", expected.tag);
         match crate::skills::store::atomic_write_private_child_create_new_reported(
-            &self.daily, OsStr::new(&name), &path, &line,
+            &self.daily,
+            OsStr::new(&name),
+            &path,
+            &line,
         ) {
             Ok(crate::skills::store::PrivateChildCommit::PublishedAndSynced) => {
                 self.revalidate()?;
@@ -634,13 +744,23 @@ impl DailyArchiveTransaction {
             Ok(crate::skills::store::PrivateChildCommit::PublishedDurabilityUnknown(error)) => {
                 Err(std::io::Error::other(error))
             }
-            Err(error) if error.root_cause().downcast_ref::<std::io::Error>()
-                .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists) => self.inspect(expected),
+            Err(error)
+                if error
+                    .root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists) =>
+            {
+                self.inspect(expected)
+            }
             Err(error) => Err(std::io::Error::other(error)),
         }
     }
 
-    fn verify_settlement(&self, expected: &PeriodReflection, outcome: DailySettlementOutcome) -> std::io::Result<()> {
+    fn verify_settlement(
+        &self,
+        expected: &PeriodReflection,
+        outcome: DailySettlementOutcome,
+    ) -> std::io::Result<()> {
         match (outcome, self.inspect(expected)?) {
             (DailySettlementOutcome::Admitted, DailyArchiveStatus::Matching)
             | (DailySettlementOutcome::Suppressed, DailyArchiveStatus::Missing) => Ok(()),
@@ -678,56 +798,78 @@ pub fn settle_daily_admission(
     config: Option<&crate::reflection::hygiene::DailyAdmissionConfig>,
     obsidian: Option<(&Path, &str)>,
 ) -> Result<DailySettlementOutcome, DailySettlementError> {
-    use crate::reflection::hygiene::{decide_daily_admission, DailyAdmissionDecision};
+    use crate::reflection::hygiene::{DailyAdmissionDecision, decide_daily_admission};
     use crate::reflection::hygiene_store::{
-        lock_daily_admission, DailyAdmissionOutcome, HygieneDurability,
+        DailyAdmissionOutcome, HygieneDurability, lock_daily_admission,
     };
 
     if expected.kind != "daily" {
-        return Err(DailySettlementError { reason: "invalid daily reflection" });
+        return Err(DailySettlementError {
+            reason: "invalid daily reflection",
+        });
     }
     // Namespace preparation is performed by this transaction before the gate,
     // including safe legacy permissions migration. The exact transaction then
     // remains capability-bound across inspect, publish, visible sync, marker.
-    let archive = open_daily_archive_transaction(home)
-        .map_err(|_| DailySettlementError { reason: "archive unavailable" })?;
-    let gate = lock_daily_admission(home)
-        .map_err(|_| DailySettlementError { reason: "gate unavailable" })?;
-    let existing = gate.load()
-        .map_err(|_| DailySettlementError { reason: "state unavailable" })?;
+    let archive = open_daily_archive_transaction(home).map_err(|_| DailySettlementError {
+        reason: "archive unavailable",
+    })?;
+    let gate = lock_daily_admission(home).map_err(|_| DailySettlementError {
+        reason: "gate unavailable",
+    })?;
+    let existing = gate.load().map_err(|_| DailySettlementError {
+        reason: "state unavailable",
+    })?;
     let revision = existing.as_ref().map_or(0, |state| state.revision);
     // Archive-first recovery is intentionally before policy evaluation. A
     // state write can fail after an archive publish; that exact bounded record
     // is the only authority for the retry, even if today's candidate changed.
-    let current_archive = archive.load_record(&expected.tag)
-        .map_err(|_| DailySettlementError { reason: "current archive recovery failed" })?;
+    let current_archive = archive
+        .load_record(&expected.tag)
+        .map_err(|_| DailySettlementError {
+            reason: "current archive recovery failed",
+        })?;
 
-    let (outcome, settled) = if let Some(state) = existing.as_ref().filter(|state| state.tag == expected.tag) {
+    let (outcome, settled) = if let Some(state) =
+        existing.as_ref().filter(|state| state.tag == expected.tag)
+    {
         match state.outcome {
             DailyAdmissionOutcome::Admitted => {
-                let (persisted, sha256) = current_archive
-                    .clone()
-                    .ok_or(DailySettlementError { reason: "admitted archive is missing" })?;
+                let (persisted, sha256) = current_archive.clone().ok_or(DailySettlementError {
+                    reason: "admitted archive is missing",
+                })?;
                 if state.archive_sha256.as_deref() != Some(sha256.as_str()) {
-                    return Err(DailySettlementError { reason: "admitted archive digest conflicts with state" });
+                    return Err(DailySettlementError {
+                        reason: "admitted archive digest conflicts with state",
+                    });
                 }
                 (DailySettlementOutcome::Admitted, persisted)
             }
             DailyAdmissionOutcome::Suppressed => {
-                archive.verify_settlement(expected, DailySettlementOutcome::Suppressed)
-                    .map_err(|_| DailySettlementError { reason: "suppression conflicts with archive" })?;
+                archive
+                    .verify_settlement(expected, DailySettlementOutcome::Suppressed)
+                    .map_err(|_| DailySettlementError {
+                        reason: "suppression conflicts with archive",
+                    })?;
                 (DailySettlementOutcome::Suppressed, expected.clone())
             }
         }
     } else if let Some((persisted, sha256)) = current_archive {
-        match gate.compare_and_set(
-            revision, &expected.tag, DailyAdmissionOutcome::Admitted, Some(&sha256),
-        )
-        .map_err(|_| DailySettlementError { reason: "recovered state compare-and-set failed" })?
-        {
+        match gate
+            .compare_and_set(
+                revision,
+                &expected.tag,
+                DailyAdmissionOutcome::Admitted,
+                Some(&sha256),
+            )
+            .map_err(|_| DailySettlementError {
+                reason: "recovered state compare-and-set failed",
+            })? {
             HygieneDurability::Confirmed => {}
             HygieneDurability::RecoveryReadRequired => {
-                return Err(DailySettlementError { reason: "state durability is unknown; recovery required" });
+                return Err(DailySettlementError {
+                    reason: "state durability is unknown; recovery required",
+                });
             }
         }
         (DailySettlementOutcome::Admitted, persisted)
@@ -736,26 +878,42 @@ pub fn settle_daily_admission(
             DailySettlementOutcome::Admitted
         } else {
             let config = config.expect("enabled policy was checked above");
-            let previous_tag = date_tag_from_unix(expected.generated_ts_unix.saturating_sub(86_400));
-            let previous_topics = archive.load_previous(&previous_tag)
-                .map_err(|_| DailySettlementError { reason: "previous archive inspection failed" })?
+            let previous_tag =
+                date_tag_from_unix(expected.generated_ts_unix.saturating_sub(86_400));
+            let previous_topics = archive
+                .load_previous(&previous_tag)
+                .map_err(|_| DailySettlementError {
+                    reason: "previous archive inspection failed",
+                })?
                 .map(|item| item.topics)
                 .unwrap_or_default();
-            match decide_daily_admission(&expected.topics, &previous_topics, config)
-                .map_err(|_| DailySettlementError { reason: "policy invalid" })?
-            {
+            match decide_daily_admission(&expected.topics, &previous_topics, config).map_err(
+                |_| DailySettlementError {
+                    reason: "policy invalid",
+                },
+            )? {
                 DailyAdmissionDecision::Admit { .. } => DailySettlementOutcome::Admitted,
                 DailyAdmissionDecision::Suppress { .. } => DailySettlementOutcome::Suppressed,
             }
         };
         let (settled, sha256) = if outcome == DailySettlementOutcome::Admitted {
-            archive.append_once(expected)
-                .map_err(|_| DailySettlementError { reason: "archive append failed" })?;
-            let (persisted, sha256) = archive.load_record(&expected.tag)
-                .map_err(|_| DailySettlementError { reason: "admitted archive digest read failed" })?
-                .ok_or(DailySettlementError { reason: "admitted archive is missing" })?;
+            archive
+                .append_once(expected)
+                .map_err(|_| DailySettlementError {
+                    reason: "archive append failed",
+                })?;
+            let (persisted, sha256) = archive
+                .load_record(&expected.tag)
+                .map_err(|_| DailySettlementError {
+                    reason: "admitted archive digest read failed",
+                })?
+                .ok_or(DailySettlementError {
+                    reason: "admitted archive is missing",
+                })?;
             if persisted != *expected {
-                return Err(DailySettlementError { reason: "admitted archive conflicts with candidate" });
+                return Err(DailySettlementError {
+                    reason: "admitted archive conflicts with candidate",
+                });
             }
             (persisted, Some(sha256))
         } else {
@@ -765,15 +923,21 @@ pub fn settle_daily_admission(
             DailySettlementOutcome::Admitted => DailyAdmissionOutcome::Admitted,
             DailySettlementOutcome::Suppressed => DailyAdmissionOutcome::Suppressed,
             DailySettlementOutcome::AlreadyCompleted => {
-                return Err(DailySettlementError { reason: "invalid completed state transition" });
+                return Err(DailySettlementError {
+                    reason: "invalid completed state transition",
+                });
             }
         };
-        match gate.compare_and_set(revision, &expected.tag, persisted, sha256.as_deref())
-            .map_err(|_| DailySettlementError { reason: "state compare-and-set failed" })?
-        {
+        match gate
+            .compare_and_set(revision, &expected.tag, persisted, sha256.as_deref())
+            .map_err(|_| DailySettlementError {
+                reason: "state compare-and-set failed",
+            })? {
             HygieneDurability::Confirmed => {}
             HygieneDurability::RecoveryReadRequired => {
-                return Err(DailySettlementError { reason: "state durability is unknown; recovery required" });
+                return Err(DailySettlementError {
+                    reason: "state durability is unknown; recovery required",
+                });
             }
         }
         (outcome, settled)
@@ -782,16 +946,24 @@ pub fn settle_daily_admission(
     // A marker is completion evidence only after the state/archive decision
     // above has been freshly verified through the retained capabilities. Do
     // not rewrite an already completed note or marker on ordinary intervals.
-    if archive.marker_matches_exact(&settled.tag)
-        .map_err(|_| DailySettlementError { reason: "marker inspection failed" })?
+    if archive
+        .marker_matches_exact(&settled.tag)
+        .map_err(|_| DailySettlementError {
+            reason: "marker inspection failed",
+        })?
     {
         return Ok(DailySettlementOutcome::AlreadyCompleted);
     }
 
     let obsidian_target = if outcome == DailySettlementOutcome::Admitted {
         if let Some((vault, subdir)) = obsidian {
-            Some(archive.sync_expected_to_obsidian(vault, subdir, &settled)
-                .map_err(|_| DailySettlementError { reason: "Obsidian sync failed" })?)
+            Some(
+                archive
+                    .sync_expected_to_obsidian(vault, subdir, &settled)
+                    .map_err(|_| DailySettlementError {
+                        reason: "Obsidian sync failed",
+                    })?,
+            )
         } else {
             None
         }
@@ -801,15 +973,20 @@ pub fn settle_daily_admission(
     // Marker is deliberately last, after the exact expected archive is
     // revalidated again and after the optional visible note has converged.
     if let Some(target) = obsidian_target.as_ref() {
-        target.revalidate()
-            .map_err(|_| DailySettlementError { reason: "Obsidian binding changed before marker" })?;
+        target.revalidate().map_err(|_| DailySettlementError {
+            reason: "Obsidian binding changed before marker",
+        })?;
     }
-    match archive.publish_marker(&settled, outcome)
-        .map_err(|_| DailySettlementError { reason: "settlement verification failed" })?
-    {
+    match archive
+        .publish_marker(&settled, outcome)
+        .map_err(|_| DailySettlementError {
+            reason: "settlement verification failed",
+        })? {
         DailyMarkerDurability::Confirmed => {}
         DailyMarkerDurability::RecoveryReadRequired => {
-            return Err(DailySettlementError { reason: "marker durability is unknown; recovery required" });
+            return Err(DailySettlementError {
+                reason: "marker durability is unknown; recovery required",
+            });
         }
     }
     Ok(outcome)
@@ -819,22 +996,39 @@ fn parse_expected_daily_archive(
     bytes: &[u8],
     expected: &PeriodReflection,
 ) -> std::io::Result<DailyArchiveStatus> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "daily archive is not UTF-8"))?;
+    let text = std::str::from_utf8(bytes).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "daily archive is not UTF-8",
+        )
+    })?;
     let mut count = 0usize;
     for line in text.lines() {
         count += 1;
         if count > MAX_DAILY_ADMISSION_ARCHIVE_LINES {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "daily archive has too many records"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "daily archive has too many records",
+            ));
         }
-        let actual: PeriodReflection = serde_json::from_str(line)
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "daily archive contains malformed record"))?;
+        let actual: PeriodReflection = serde_json::from_str(line).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "daily archive contains malformed record",
+            )
+        })?;
         if actual.kind != "daily" || actual.tag != expected.tag || actual != *expected {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "daily archive conflicts with admission candidate"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "daily archive conflicts with admission candidate",
+            ));
         }
     }
     if count != 1 || !bytes.ends_with(b"\n") {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "daily archive has invalid record framing"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "daily archive has invalid record framing",
+        ));
     }
     Ok(DailyArchiveStatus::Matching)
 }
@@ -868,7 +1062,10 @@ pub fn load_daily_archive_for_admission(
 /// append is acknowledged only after `sync_all`; callers still keep the marker
 /// last and use `inspect_daily_archive` after crashes.
 #[cfg(test)]
-pub(crate) fn append_daily_admission_once(home: &Path, expected: &PeriodReflection) -> std::io::Result<DailyArchiveStatus> {
+pub(crate) fn append_daily_admission_once(
+    home: &Path,
+    expected: &PeriodReflection,
+) -> std::io::Result<DailyArchiveStatus> {
     open_daily_archive_transaction(home)
         .and_then(|archive| archive.append_once(expected))
         .map_err(|_| daily_archive_error("publication failed"))
@@ -881,7 +1078,11 @@ pub fn load_daily_archive_for_reporting(
     tag: &str,
 ) -> std::io::Result<Option<PeriodReflection>> {
     open_daily_archive_transaction(home)
-        .and_then(|archive| archive.load_record(tag).map(|record| record.map(|(item, _)| item)))
+        .and_then(|archive| {
+            archive
+                .load_record(tag)
+                .map(|record| record.map(|(item, _)| item))
+        })
         .map_err(|_| daily_archive_error("reporting inspection failed"))
 }
 
@@ -904,7 +1105,10 @@ pub fn load_for_tag(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error),
     };
-    Ok(body.lines().filter_map(|line| serde_json::from_str(line).ok()).collect())
+    Ok(body
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect())
 }
 
 /// Outcome of [`sync_to_obsidian`].
@@ -992,7 +1196,11 @@ mod tests {
             append_daily_admission_once(home.path(), &expected).unwrap(),
             DailyArchiveStatus::Matching
         );
-        assert_eq!(std::fs::read(&path).unwrap(), before, "recovery must not duplicate bytes");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "recovery must not duplicate bytes"
+        );
         std::fs::write(&path, b"not-json\n").unwrap();
         assert!(inspect_daily_archive(home.path(), &expected).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"not-json\n");
@@ -1009,10 +1217,16 @@ mod tests {
         );
         let home = TempDir::new().unwrap();
         let reflection = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["gate".into()], 1_777_000_000,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["gate".into()],
+            1_777_000_000,
         )
         .unwrap();
-        assert!(append(home.path(), &reflection).is_err(), "direct daily append is forbidden");
+        assert!(
+            append(home.path(), &reflection).is_err(),
+            "direct daily append is forbidden"
+        );
         assert!(load_for_tag(home.path(), PeriodKind::Daily, &reflection.tag).is_err());
         let cli_source = include_str!("../cli/reflect.rs");
         let cron_source = include_str!("../daemon/reflection_cron.rs");
@@ -1042,12 +1256,15 @@ mod tests {
         let secret = "ALIAS_TOPIC_BODY_PATH_SHOULD_NOT_LEAK";
         std::fs::create_dir(home.path().join("reflections")).unwrap();
         symlink(outside.path(), home.path().join("reflections/daily")).unwrap();
-        let reflection = build_reflection(
-            PeriodKind::Daily, secret, &["bound".into()], 1_777_000_000,
-        )
-        .unwrap();
+        let reflection =
+            build_reflection(PeriodKind::Daily, secret, &["bound".into()], 1_777_000_000).unwrap();
         assert!(open_daily_archive_transaction(home.path()).is_err());
-        assert!(!outside.path().join(format!("{}.jsonl", reflection.tag)).exists());
+        assert!(
+            !outside
+                .path()
+                .join(format!("{}.jsonl", reflection.tag))
+                .exists()
+        );
         assert!(!jsonl_file(home.path(), PeriodKind::Daily, &reflection.tag).is_file());
         let error = append_daily_admission_once(home.path(), &reflection).unwrap_err();
         assert!(!error.to_string().contains(secret));
@@ -1058,7 +1275,10 @@ mod tests {
     fn stale_stage_and_partial_target_never_poison_or_truncate_daily_recovery() {
         let home = TempDir::new().unwrap();
         let reflection = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["atomic".into()], 1_777_000_000,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["atomic".into()],
+            1_777_000_000,
         )
         .unwrap();
         let archive = open_daily_archive_transaction(home.path()).unwrap();
@@ -1068,9 +1288,18 @@ mod tests {
         assert!(archive.append_once(&reflection).is_err());
         assert_eq!(std::fs::read(&target).unwrap(), b"partial");
         std::fs::remove_file(&target).unwrap();
-        assert_eq!(archive.append_once(&reflection).unwrap(), DailyArchiveStatus::Matching);
-        assert_eq!(archive.inspect(&reflection).unwrap(), DailyArchiveStatus::Matching);
-        assert_eq!(std::fs::read(archive.daily_path.join(".neoth-atomic-stale")).unwrap(), b"stale");
+        assert_eq!(
+            archive.append_once(&reflection).unwrap(),
+            DailyArchiveStatus::Matching
+        );
+        assert_eq!(
+            archive.inspect(&reflection).unwrap(),
+            DailyArchiveStatus::Matching
+        );
+        assert_eq!(
+            std::fs::read(archive.daily_path.join(".neoth-atomic-stale")).unwrap(),
+            b"stale"
+        );
     }
 
     #[cfg(test)]
@@ -1078,7 +1307,10 @@ mod tests {
     fn published_unknown_create_new_requires_a_fresh_recovery_read_without_duplicate() {
         let home = TempDir::new().unwrap();
         let reflection = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["durability".into()], 1_777_000_000,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["durability".into()],
+            1_777_000_000,
         )
         .unwrap();
         let target = jsonl_file(home.path(), PeriodKind::Daily, &reflection.tag);
@@ -1089,7 +1321,10 @@ mod tests {
         assert!(archive.append_once(&reflection).is_err());
         let published = std::fs::read(&target).unwrap();
         drop(archive);
-        assert_eq!(append_daily_admission_once(home.path(), &reflection).unwrap(), DailyArchiveStatus::Matching);
+        assert_eq!(
+            append_daily_admission_once(home.path(), &reflection).unwrap(),
+            DailyArchiveStatus::Matching
+        );
         assert_eq!(std::fs::read(&target).unwrap(), published);
     }
 
@@ -1100,22 +1335,35 @@ mod tests {
         let mut config = crate::reflection::hygiene::DailyAdmissionConfig::default();
         config.enabled = true;
         let prior = build_reflection(
-            PeriodKind::Daily, "2026-08-26", &["same".into()], 1_787_702_400,
-        ).unwrap();
-        settle_daily_admission(
-            home.path(), &prior, Some(&config), None,
-        ).unwrap();
+            PeriodKind::Daily,
+            "2026-08-26",
+            &["same".into()],
+            1_787_702_400,
+        )
+        .unwrap();
+        settle_daily_admission(home.path(), &prior, Some(&config), None).unwrap();
         let current = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["same".into()], 1_787_788_800,
-        ).unwrap();
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["same".into()],
+            1_787_788_800,
+        )
+        .unwrap();
         assert_eq!(
             settle_daily_admission(
-                home.path(), &current, Some(&config), Some((vault.path(), "NEOTH")),
-            ).unwrap(),
+                home.path(),
+                &current,
+                Some(&config),
+                Some((vault.path(), "NEOTH")),
+            )
+            .unwrap(),
             DailySettlementOutcome::Suppressed
         );
         assert!(!jsonl_file(home.path(), PeriodKind::Daily, &current.tag).exists());
-        assert_eq!(std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(), current.tag);
+        assert_eq!(
+            std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(),
+            current.tag
+        );
         assert!(!vault.path().join("NEOTH/Daily/2026-08-27.md").exists());
     }
 
@@ -1125,24 +1373,35 @@ mod tests {
         let vault = home.path().join("vault-is-a-file");
         std::fs::write(&vault, b"not a directory").unwrap();
         let reflection = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["retry".into()], 1_787_788_800,
-        ).unwrap();
-        assert!(settle_daily_admission(
-            home.path(), &reflection, None, Some((&vault, "NEOTH")),
-        ).is_err());
-        let archive = std::fs::read(jsonl_file(home.path(), PeriodKind::Daily, &reflection.tag)).unwrap();
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["retry".into()],
+            1_787_788_800,
+        )
+        .unwrap();
+        assert!(
+            settle_daily_admission(home.path(), &reflection, None, Some((&vault, "NEOTH")),)
+                .is_err()
+        );
+        let archive =
+            std::fs::read(jsonl_file(home.path(), PeriodKind::Daily, &reflection.tag)).unwrap();
         assert!(!home.path().join("reflections/daily-last.txt").exists());
         std::fs::remove_file(&vault).unwrap();
         std::fs::create_dir(&vault).unwrap();
         assert_eq!(
-            settle_daily_admission(
-                home.path(), &reflection, None, Some((&vault, "NEOTH")),
-            ).unwrap(),
+            settle_daily_admission(home.path(), &reflection, None, Some((&vault, "NEOTH")),)
+                .unwrap(),
             DailySettlementOutcome::Admitted
         );
-        assert_eq!(std::fs::read(jsonl_file(home.path(), PeriodKind::Daily, &reflection.tag)).unwrap(), archive);
+        assert_eq!(
+            std::fs::read(jsonl_file(home.path(), PeriodKind::Daily, &reflection.tag)).unwrap(),
+            archive
+        );
         assert!(vault.join("NEOTH/Daily/2026-08-27.md").exists());
-        assert_eq!(std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(), reflection.tag);
+        assert_eq!(
+            std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(),
+            reflection.tag
+        );
     }
 
     #[test]
@@ -1151,13 +1410,15 @@ mod tests {
         let vault = home.path().join("vault-is-a-file");
         std::fs::write(&vault, b"not a directory").unwrap();
         let original = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["original-topic".into()], 1_787_788_800,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["original-topic".into()],
+            1_787_788_800,
         )
         .unwrap();
-        assert!(settle_daily_admission(
-            home.path(), &original, None, Some((&vault, "NEOTH")),
-        )
-        .is_err());
+        assert!(
+            settle_daily_admission(home.path(), &original, None, Some((&vault, "NEOTH")),).is_err()
+        );
         let archive_path = jsonl_file(home.path(), PeriodKind::Daily, &original.tag);
         let archived = std::fs::read(&archive_path).unwrap();
         assert!(!home.path().join("reflections/daily-last.txt").exists());
@@ -1165,16 +1426,16 @@ mod tests {
         // A retry may construct a different reflection later on the same UTC
         // day. The state fingerprint makes the existing archive authoritative.
         let rebuilt = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["replacement-topic".into()], 1_787_792_000,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["replacement-topic".into()],
+            1_787_792_000,
         )
         .unwrap();
         std::fs::remove_file(&vault).unwrap();
         std::fs::create_dir(&vault).unwrap();
         assert_eq!(
-            settle_daily_admission(
-                home.path(), &rebuilt, None, Some((&vault, "NEOTH")),
-            )
-            .unwrap(),
+            settle_daily_admission(home.path(), &rebuilt, None, Some((&vault, "NEOTH")),).unwrap(),
             DailySettlementOutcome::Admitted
         );
         assert_eq!(std::fs::read(&archive_path).unwrap(), archived);
@@ -1192,12 +1453,21 @@ mod tests {
     fn no_state_archive_recovery_precedes_policy_and_rejects_digest_tampering() {
         let home = TempDir::new().unwrap();
         let original = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["archive-first".into()], 1_787_788_800,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["archive-first".into()],
+            1_787_788_800,
         )
         .unwrap();
-        open_daily_archive_transaction(home.path()).unwrap().append_once(&original).unwrap();
+        open_daily_archive_transaction(home.path())
+            .unwrap()
+            .append_once(&original)
+            .unwrap();
         let rebuilt = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["policy-would-differ".into()], 1_787_792_000,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["policy-would-differ".into()],
+            1_787_792_000,
         )
         .unwrap();
         let mut policy = crate::reflection::hygiene::DailyAdmissionConfig::default();
@@ -1207,12 +1477,18 @@ mod tests {
             DailySettlementOutcome::Admitted,
         );
         let state = crate::reflection::hygiene_store::lock_daily_admission(home.path())
-            .unwrap().load().unwrap().unwrap();
+            .unwrap()
+            .load()
+            .unwrap()
+            .unwrap();
         assert_eq!(state.tag, original.tag);
         assert!(state.archive_sha256.is_some());
         let archive_path = jsonl_file(home.path(), PeriodKind::Daily, &original.tag);
         let altered = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["valid-but-altered".into()], 1_787_793_000,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["valid-but-altered".into()],
+            1_787_793_000,
         )
         .unwrap();
         let mut altered_bytes = serde_json::to_vec(&altered).unwrap();
@@ -1235,13 +1511,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            settle_daily_admission(
-                home.path(),
-                &original,
-                None,
-                Some((vault.path(), "NEOTH")),
-            )
-            .unwrap(),
+            settle_daily_admission(home.path(), &original, None, Some((vault.path(), "NEOTH")),)
+                .unwrap(),
             DailySettlementOutcome::Admitted,
         );
         let note_path = vault.path().join("NEOTH/Daily/2026-08-27.md");
@@ -1257,13 +1528,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            settle_daily_admission(
-                home.path(),
-                &rebuilt,
-                None,
-                Some((vault.path(), "NEOTH")),
-            )
-            .unwrap(),
+            settle_daily_admission(home.path(), &rebuilt, None, Some((vault.path(), "NEOTH")),)
+                .unwrap(),
             DailySettlementOutcome::AlreadyCompleted,
         );
         assert_eq!(std::fs::read(&note_path).unwrap(), note_before);
@@ -1291,7 +1557,12 @@ mod tests {
         std::fs::create_dir_all(vault.path().join("NEOTH/Inner")).unwrap();
 
         assert!(target.write_exact(&reflection).is_err());
-        assert!(!vault.path().join("NEOTH/Inner/Daily/2026-08-27.md").exists());
+        assert!(
+            !vault
+                .path()
+                .join("NEOTH/Inner/Daily/2026-08-27.md")
+                .exists()
+        );
         assert!(!home.path().join("reflections/daily-last.txt").exists());
     }
 
@@ -1316,7 +1587,12 @@ mod tests {
         std::fs::create_dir_all(vault.path().join("NEOTH/Inner")).unwrap();
 
         assert!(target.write_exact(&reflection).is_err());
-        assert!(!vault.path().join("NEOTH/Inner/Daily/2026-08-27.md").exists());
+        assert!(
+            !vault
+                .path()
+                .join("NEOTH/Inner/Daily/2026-08-27.md")
+                .exists()
+        );
         assert!(!home.path().join("reflections/daily-last.txt").exists());
     }
 
@@ -1344,7 +1620,12 @@ mod tests {
             DailySettlementOutcome::Admitted,
         );
         assert!(jsonl_file(home.path(), PeriodKind::Daily, &reflection.tag).exists());
-        assert!(vault.path().join("NEOTH/Inner/Daily/2026-08-27.md").exists());
+        assert!(
+            vault
+                .path()
+                .join("NEOTH/Inner/Daily/2026-08-27.md")
+                .exists()
+        );
         assert_eq!(
             std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(),
             reflection.tag,
@@ -1358,13 +1639,21 @@ mod tests {
             let home = TempDir::new().unwrap();
             let vault = TempDir::new().unwrap();
             let reflection = build_reflection(
-                PeriodKind::Daily, "2026-08-27", &["vault-bound".into()], 1_787_788_800,
+                PeriodKind::Daily,
+                "2026-08-27",
+                &["vault-bound".into()],
+                1_787_788_800,
             )
             .unwrap();
-            assert!(settle_daily_admission(
-                home.path(), &reflection, None, Some((vault.path(), subdir)),
-            )
-            .is_err());
+            assert!(
+                settle_daily_admission(
+                    home.path(),
+                    &reflection,
+                    None,
+                    Some((vault.path(), subdir)),
+                )
+                .is_err()
+            );
             assert!(!home.path().join("reflections/daily-last.txt").exists());
             assert!(!vault.path().join("outside").exists());
         }
@@ -1383,10 +1672,16 @@ mod tests {
         let vault = home.path().join("vault-reparse-refusal");
         std::fs::write(&vault, b"not a directory").unwrap();
         let reflection = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["windows-vault".into()], 1_787_788_800,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["windows-vault".into()],
+            1_787_788_800,
         )
         .unwrap();
-        assert!(settle_daily_admission(home.path(), &reflection, None, Some((&vault, "NEOTH"))).is_err());
+        assert!(
+            settle_daily_admission(home.path(), &reflection, None, Some((&vault, "NEOTH")))
+                .is_err()
+        );
         assert!(!home.path().join("reflections/daily-last.txt").exists());
     }
 
@@ -1400,10 +1695,16 @@ mod tests {
         let linked = home.path().join("vault-link");
         symlink(outside.path(), &linked).unwrap();
         let reflection = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["vault-link".into()], 1_787_788_800,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["vault-link".into()],
+            1_787_788_800,
         )
         .unwrap();
-        assert!(settle_daily_admission(home.path(), &reflection, None, Some((&linked, "NEOTH"))).is_err());
+        assert!(
+            settle_daily_admission(home.path(), &reflection, None, Some((&linked, "NEOTH")))
+                .is_err()
+        );
         assert!(!outside.path().join("NEOTH/Daily/2026-08-27.md").exists());
         assert!(!home.path().join("reflections/daily-last.txt").exists());
     }
@@ -1413,7 +1714,10 @@ mod tests {
     fn marker_durability_unknown_requires_recovery_before_completion() {
         let home = TempDir::new().unwrap();
         let original = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["marker-original".into()], 1_787_788_800,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["marker-original".into()],
+            1_787_788_800,
         )
         .unwrap();
         let marker = home.path().join("reflections/daily-last.txt");
@@ -1423,7 +1727,10 @@ mod tests {
         let archived = std::fs::read(&archive_path).unwrap();
 
         let rebuilt = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["marker-rebuilt".into()], 1_787_792_000,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["marker-rebuilt".into()],
+            1_787_792_000,
         )
         .unwrap();
         assert_eq!(
@@ -1439,12 +1746,20 @@ mod tests {
         let home = TempDir::new().unwrap();
         let vault = TempDir::new().unwrap();
         let reflection = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["verified".into()], 1_787_788_800,
-        ).unwrap();
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["verified".into()],
+            1_787_788_800,
+        )
+        .unwrap();
         let archive = open_daily_archive_transaction(home.path()).unwrap();
         archive.append_once(&reflection).unwrap();
         std::fs::write(archive.daily_path.join("2026-08-27.jsonl"), b"corrupt\n").unwrap();
-        assert!(archive.sync_expected_to_obsidian(vault.path(), "NEOTH", &reflection).is_err());
+        assert!(
+            archive
+                .sync_expected_to_obsidian(vault.path(), "NEOTH", &reflection)
+                .is_err()
+        );
         assert!(!vault.path().join("NEOTH/Daily/2026-08-27.md").exists());
         assert!(!home.path().join("reflections/daily-last.txt").exists());
     }
@@ -1455,14 +1770,22 @@ mod tests {
         let home = TempDir::new().unwrap();
         let vault = TempDir::new().unwrap();
         let reflection = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["swap".into()], 1_787_788_800,
-        ).unwrap();
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["swap".into()],
+            1_787_788_800,
+        )
+        .unwrap();
         let archive = open_daily_archive_transaction(home.path()).unwrap();
         archive.append_once(&reflection).unwrap();
         let old = home.path().join("reflections/daily-old");
         std::fs::rename(home.path().join("reflections/daily"), &old).unwrap();
         std::fs::create_dir(home.path().join("reflections/daily")).unwrap();
-        assert!(archive.sync_expected_to_obsidian(vault.path(), "NEOTH", &reflection).is_err());
+        assert!(
+            archive
+                .sync_expected_to_obsidian(vault.path(), "NEOTH", &reflection)
+                .is_err()
+        );
         assert!(!vault.path().join("NEOTH/Daily/2026-08-27.md").exists());
         assert!(!home.path().join("reflections/daily-last.txt").exists());
     }
@@ -1472,7 +1795,10 @@ mod tests {
     fn swapped_reflections_namespace_is_revalidated_before_marker_publication() {
         let home = TempDir::new().unwrap();
         let reflection = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["marker-swap".into()], 1_787_788_800,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["marker-swap".into()],
+            1_787_788_800,
         )
         .unwrap();
         let archive = open_daily_archive_transaction(home.path()).unwrap();
@@ -1480,7 +1806,11 @@ mod tests {
         let old = home.path().join("reflections-old");
         std::fs::rename(home.path().join("reflections"), &old).unwrap();
         std::fs::create_dir(home.path().join("reflections")).unwrap();
-        assert!(archive.publish_marker(&reflection, DailySettlementOutcome::Admitted).is_err());
+        assert!(
+            archive
+                .publish_marker(&reflection, DailySettlementOutcome::Admitted)
+                .is_err()
+        );
         assert!(!home.path().join("reflections/daily-last.txt").exists());
         assert!(!old.join("daily-last.txt").exists());
     }
@@ -1494,7 +1824,10 @@ mod tests {
         let home = TempDir::new().unwrap();
         std::fs::write(home.path().join("reflections"), b"not-a-directory").unwrap();
         let reflection = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["windows-bound".into()], 1_787_788_800,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["windows-bound".into()],
+            1_787_788_800,
         )
         .unwrap();
         assert!(open_daily_archive_transaction(home.path()).is_err());
@@ -1507,7 +1840,10 @@ mod tests {
     fn windows_retained_reflections_handle_blocks_namespace_swap_before_marker() {
         let home = TempDir::new().unwrap();
         let reflection = build_reflection(
-            PeriodKind::Daily, "2026-08-27", &["windows-swap".into()], 1_787_788_800,
+            PeriodKind::Daily,
+            "2026-08-27",
+            &["windows-swap".into()],
+            1_787_788_800,
         )
         .unwrap();
         let archive = open_daily_archive_transaction(home.path()).unwrap();
@@ -1522,12 +1858,18 @@ mod tests {
         match swapped {
             Ok(()) => {
                 std::fs::create_dir(home.path().join("reflections")).unwrap();
-                assert!(archive.publish_marker(&reflection, DailySettlementOutcome::Admitted).is_err());
+                assert!(
+                    archive
+                        .publish_marker(&reflection, DailySettlementOutcome::Admitted)
+                        .is_err()
+                );
             }
             Err(_) => {
                 assert!(!home.path().join("reflections/daily-last.txt").exists());
                 assert_eq!(
-                    archive.publish_marker(&reflection, DailySettlementOutcome::Admitted).unwrap(),
+                    archive
+                        .publish_marker(&reflection, DailySettlementOutcome::Admitted)
+                        .unwrap(),
                     DailyMarkerDurability::Confirmed,
                 );
             }
@@ -1605,6 +1947,9 @@ mod tests {
             PeriodKind::Daily,
             "1999-01-01",
         );
-        assert!(empty.is_err(), "generic daily sync is forbidden outside settlement");
+        assert!(
+            empty.is_err(),
+            "generic daily sync is forbidden outside settlement"
+        );
     }
 }

@@ -285,9 +285,7 @@ pub fn daily_admission_state_path(neoth_home: &Path) -> PathBuf {
 /// Acquire the one daily-admission gate in process-before-OS-lock order.  The
 /// returned guard intentionally spans archive inspection, append/recovery,
 /// state CAS, and marker publication so two daemons cannot interleave them.
-pub fn lock_daily_admission(
-    neoth_home: &Path,
-) -> Result<DailyAdmissionGuard, HygieneStoreError> {
+pub fn lock_daily_admission(neoth_home: &Path) -> Result<DailyAdmissionGuard, HygieneStoreError> {
     let process_lock = DAILY_ADMISSION_STATE_LOCK
         .lock()
         .map_err(|_| HygieneStoreError::LockPoisoned)?;
@@ -353,11 +351,20 @@ impl DailyAdmissionGuard {
                 found: state.schema_version,
             });
         }
-        if state.revision == 0 || state.tag.is_empty() || state.tag.len() > MAX_HYGIENE_TAG_BYTES
-            || (state.outcome == DailyAdmissionOutcome::Admitted && !state.archive_sha256.as_deref().is_some_and(valid_daily_archive_sha256))
-            || (state.outcome == DailyAdmissionOutcome::Suppressed && state.archive_sha256.is_some())
+        if state.revision == 0
+            || state.tag.is_empty()
+            || state.tag.len() > MAX_HYGIENE_TAG_BYTES
+            || (state.outcome == DailyAdmissionOutcome::Admitted
+                && !state
+                    .archive_sha256
+                    .as_deref()
+                    .is_some_and(valid_daily_archive_sha256))
+            || (state.outcome == DailyAdmissionOutcome::Suppressed
+                && state.archive_sha256.is_some())
         {
-            return Err(HygieneStoreError::InvalidSnapshotRevision { found: state.revision });
+            return Err(HygieneStoreError::InvalidSnapshotRevision {
+                found: state.revision,
+            });
         }
         Ok(Some(state))
     }
@@ -403,10 +410,12 @@ impl DailyAdmissionGuard {
         }
         let state = DailyAdmissionState {
             schema_version: DAILY_ADMISSION_STATE_SCHEMA_VERSION,
-            revision: actual.checked_add(1).ok_or(HygieneStoreError::StaleRevision {
-                expected: expected_revision,
-                actual,
-            })?,
+            revision: actual
+                .checked_add(1)
+                .ok_or(HygieneStoreError::StaleRevision {
+                    expected: expected_revision,
+                    actual,
+                })?,
             tag: tag.to_string(),
             outcome,
             archive_sha256: archive_sha256.map(str::to_owned),
@@ -447,7 +456,9 @@ impl DailyAdmissionGuard {
 
 fn valid_daily_archive_sha256(value: &str) -> bool {
     value.len() == DAILY_ADMISSION_ARCHIVE_SHA256_BYTES
-        && value.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 /// Loads and structurally validates the authoritative snapshot. Missing state
@@ -739,8 +750,11 @@ fn tighten_legacy_private_directory(
     }
     #[cfg(windows)]
     {
-        crate::wal::win_native::set_private_current_user_directory_dacl_bound(display_path, directory)
-            .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
+        crate::wal::win_native::set_private_current_user_directory_dacl_bound(
+            display_path,
+            directory,
+        )
+        .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
     }
     verify_private_hygiene_directory(directory)
 }
@@ -1154,8 +1168,18 @@ mod tests {
         std::fs::set_permissions(&daily, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         prepare_daily_admission_namespace(home.path()).unwrap();
-        assert_eq!(std::fs::metadata(&reflections).unwrap().permissions().mode() & 0o777, 0o700);
-        assert_eq!(std::fs::metadata(&daily).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            std::fs::metadata(&reflections)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&daily).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
         lock_daily_admission(home.path()).expect("private daily gate opens after migration");
     }
 
@@ -1170,13 +1194,20 @@ mod tests {
         prepare_daily_admission_namespace(home.path()).unwrap();
         let reflection = crate::reflection::periodic::build_reflection(
             crate::reflection::periodic::PeriodKind::Daily,
-            "2026-08-27", &["windows-migration".into()], 1_787_788_800,
+            "2026-08-27",
+            &["windows-migration".into()],
+            1_787_788_800,
         )
         .unwrap();
-        assert!(crate::reflection::periodic::settle_daily_admission(
-            home.path(), &reflection, None, None,
-        )
-        .is_ok());
+        assert!(
+            crate::reflection::periodic::settle_daily_admission(
+                home.path(),
+                &reflection,
+                None,
+                None,
+            )
+            .is_ok()
+        );
     }
 
     fn period(kind: &str, tag: &str, at: i64, body: &str) -> PeriodReflection {
