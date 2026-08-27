@@ -15404,7 +15404,7 @@ fn write_credentials_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<Op
         prior.cerebellum_key.as_deref(),
         None,
     );
-    if let Some(value) = additions.telegram_token {
+    if let Some(value) = additions.telegram_token.as_deref() {
         map.insert(
             serde_yaml::Value::from("telegram_token"),
             serde_yaml::Value::from(value),

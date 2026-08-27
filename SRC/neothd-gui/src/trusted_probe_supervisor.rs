@@ -77,7 +77,7 @@ pub(crate) enum ProbeError {
 
 impl ProbeError {
     /// Static, non-sensitive text suitable for the D2 unavailable state.
-    pub(crate) const fn as_static_message(self) -> &'static str {
+    pub(crate) fn as_static_message(self) -> &'static str {
         match self {
             Self::Cancelled => "usage probe cancelled",
             Self::TimedOut => "usage probe timed out",
