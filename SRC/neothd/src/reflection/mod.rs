@@ -38,6 +38,11 @@ use rusqlite::Connection;
 /// archivable records + Obsidian daily-notes / yearly summaries.
 pub mod periodic;
 
+/// Pure, versioned reflection-retention, topic-deduplication, and yearly-input
+/// planning. This module deliberately plans changes only; retention execution,
+/// persistence, and cron/CLI wiring remain separate follow-up work.
+pub mod hygiene;
+
 use crate::proactive::ProactiveItem;
 
 const NS_PER_DAY: i64 = 86_400 * 1_000_000_000;
