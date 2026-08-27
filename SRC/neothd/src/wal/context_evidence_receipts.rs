@@ -101,7 +101,7 @@ const DOMAIN_ANCHOR: &[u8] = b"neoth.context-evidence-receipts.anchor.v1\0";
 /// treat the new ledger's authenticated absence as proof of absence there.
 pub(crate) const LEDGER_V1_IS_FIRST_CONTEXT_EVIDENCE_RECEIPT_PRODUCER: bool = true;
 
-const _: () = assert!(LEDGER_V1_IS_FIRST_CONTEXT_EVIDENCE_RECEIPT_PRODUCER);
+const _: [(); 1] = [(); LEDGER_V1_IS_FIRST_CONTEXT_EVIDENCE_RECEIPT_PRODUCER as usize];
 
 type HmacSha256 = Hmac<Sha256>;
 
