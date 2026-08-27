@@ -14307,7 +14307,10 @@ fn main() -> Result<()> {
             let watchdog_retry_stop = chat_watchdog_retry_stop.clone();
             let worker_barrier = chat_worker_barrier.clone();
             let buddy_chat_send_approved =
-                move |request_id_wire, text, explicit_skill_id_wire, incognito| {
+                move |request_id_wire: slint::SharedString,
+                      text: slint::SharedString,
+                      explicit_skill_id_wire: slint::SharedString,
+                      incognito: bool| {
                     let Some(request_id) =
                         ChatStreamRequestId::parse_wire(request_id_wire.as_str())
                     else {
@@ -20634,6 +20637,8 @@ fn detach_operator_recall_for_incognito(
     selected: bool,
 ) {
     if selected {
+        use zeroize::Zeroize as _;
+
         last_operator_input
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())

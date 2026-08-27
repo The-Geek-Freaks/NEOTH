@@ -1212,13 +1212,18 @@ mod tests {
         let store = open_hygiene_directory(home.path()).expect("create private hygiene store");
         let name = OsStr::new("already-exists.json");
         let path = store.display_path.join("already-exists.json");
-        crate::skills::store::atomic_write_private_child_create_new_reported(
+        let commit = crate::skills::store::atomic_write_private_child_create_new_reported(
             &store.dir,
             name,
             &path,
             b"first value",
         )
         .expect("create initial private child");
+        assert!(matches!(
+            commit,
+            crate::skills::store::PrivateChildCommit::PublishedAndSynced
+                | crate::skills::store::PrivateChildCommit::PublishedDurabilityUnknown(_)
+        ));
         let error = crate::skills::store::atomic_write_private_child_create_new_reported(
             &store.dir,
             name,
