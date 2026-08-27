@@ -942,7 +942,7 @@ fn read_child_optional(
         )
         .map(Some)
         .map_err(|error| {
-            if error_chain_has_kind(&error, std::io::ErrorKind::InvalidData) {
+            if error_chain_has_kind(error.as_ref(), std::io::ErrorKind::InvalidData) {
                 HygieneStoreError::CapacityExceeded
             } else {
                 HygieneStoreError::SafeStoreUnavailable
@@ -1083,12 +1083,21 @@ fn json_shape_error(message: impl Into<String>) -> serde_json::Error {
     ))
 }
 
-fn error_chain_has_kind(error: &anyhow::Error, expected: std::io::ErrorKind) -> bool {
-    error.chain().any(|error| {
-        error
+fn error_chain_has_kind(
+    error: &(dyn std::error::Error + 'static),
+    expected: std::io::ErrorKind,
+) -> bool {
+    let mut current = Some(error);
+    while let Some(error) = current {
+        if error
             .downcast_ref::<std::io::Error>()
             .is_some_and(|io| io.kind() == expected)
-    })
+        {
+            return true;
+        }
+        current = error.source();
+    }
+    false
 }
 
 fn write_state_at(
@@ -1170,11 +1179,11 @@ mod tests {
         .context("outer hygiene read context");
 
         assert!(error_chain_has_kind(
-            &error,
+            error.as_ref(),
             std::io::ErrorKind::InvalidData
         ));
         assert!(!error_chain_has_kind(
-            &error,
+            error.as_ref(),
             std::io::ErrorKind::PermissionDenied
         ));
     }
@@ -1188,12 +1197,39 @@ mod tests {
         .context("outer hygiene read context");
 
         assert!(!error_chain_has_kind(
-            &error,
+            error.as_ref(),
             std::io::ErrorKind::InvalidData
         ));
         assert!(error_chain_has_kind(
-            &error,
+            error.as_ref(),
             std::io::ErrorKind::PermissionDenied
+        ));
+    }
+
+    #[test]
+    fn error_chain_kind_detects_private_child_precommit_source() {
+        let home = test_home();
+        let store = open_hygiene_directory(home.path()).expect("create private hygiene store");
+        let name = OsStr::new("already-exists.json");
+        let path = store.display_path.join("already-exists.json");
+        crate::skills::store::atomic_write_private_child_create_new_reported(
+            &store.dir,
+            name,
+            &path,
+            b"first value",
+        )
+        .expect("create initial private child");
+        let error = crate::skills::store::atomic_write_private_child_create_new_reported(
+            &store.dir,
+            name,
+            &path,
+            b"second value",
+        )
+        .expect_err("existing private child must fail before commit");
+
+        assert!(error_chain_has_kind(
+            &error,
+            std::io::ErrorKind::AlreadyExists
         ));
     }
 
