@@ -7138,10 +7138,7 @@ async fn run_chat_with_consent(
     let seed_banner = if args.incognito {
         String::new()
     } else {
-        crate::memory::hindsight::next_session_seed_banner(
-            &first_tour_home,
-            &current_session_id,
-        )
+        crate::memory::hindsight::next_session_seed_banner(&first_tour_home, &current_session_id)
     };
     if !seed_banner.is_empty() {
         write_chat_notice(args.stream, &seed_banner).context("write session seed notice")?;
