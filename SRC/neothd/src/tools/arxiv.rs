@@ -104,10 +104,8 @@ pub(crate) async fn search_against_authorized(
 /// cannot be the enforcement mechanism because chunked responses may omit or
 /// lie about that header. [`append_response_chunk`] is the authoritative cap.
 fn preflight_response_content_length(content_length: Option<u64>) -> Result<()> {
-    if let Some(content_length) = content_length {
-        if content_length > MAX_ARXIV_RESPONSE_BYTES as u64 {
-            anyhow::bail!("arxiv response exceeds configured size limit");
-        }
+    if content_length.is_some_and(|length| length > MAX_ARXIV_RESPONSE_BYTES as u64) {
+        anyhow::bail!("arxiv response exceeds configured size limit");
     }
     Ok(())
 }

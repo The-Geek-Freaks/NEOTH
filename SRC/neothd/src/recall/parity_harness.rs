@@ -77,6 +77,9 @@ pub const ATTESTED_FAMILY_BIAS_EXPORT_PURPOSE: &str =
 pub const ATTESTED_PARITY_GATE_REPORT_PURPOSE: &str = "neoth-recall-parity-attested-gate-report/v1";
 pub const ATTESTED_PARITY_GATE_REPORT_SCHEMA_VERSION: u32 = 1;
 
+/// One validated batch-result artifact paired with its bounded source bytes.
+type ValidatedBatchResultFiles = Vec<(FourGraderBatchResultArtifact, Vec<u8>)>;
+
 /// Capability-bound run namespace. Its root directory and advisory lock are
 /// opened exactly once; every persistent child operation must be relative to
 /// this retained directory handle rather than re-resolving `run_dir`.
@@ -1273,7 +1276,7 @@ fn validate_batch_result_inputs(
     expected_receipt_pubkey_b64: &str,
     result_bytes: &[Vec<u8>],
 ) -> Result<(
-    Vec<(FourGraderBatchResultArtifact, Vec<u8>)>,
+    ValidatedBatchResultFiles,
     String,
     String,
 )> {

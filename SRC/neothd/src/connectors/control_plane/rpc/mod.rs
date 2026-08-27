@@ -433,12 +433,12 @@ fn cleanup_prior_boot_artifacts(home: &Path) -> Result<()> {
     let sidecar_endpoint = read_prior_sidecar_endpoint(home)?;
     let prebind_endpoint = read_prior_prebind_endpoint(home)?;
     if let Some(endpoint) = &sidecar_endpoint {
-        remove_endpoint_socket_and_empty_ancestors(home, &endpoint)?;
+        remove_endpoint_socket_and_empty_ancestors(home, endpoint)?;
     }
-    if let Some(endpoint) = &prebind_endpoint {
-        if sidecar_endpoint.as_ref() != Some(endpoint) {
-            remove_endpoint_socket_and_empty_ancestors(home, endpoint)?;
-        }
+    if let Some(endpoint) = &prebind_endpoint
+        && sidecar_endpoint.as_ref() != Some(endpoint)
+    {
+        remove_endpoint_socket_and_empty_ancestors(home, endpoint)?;
     }
     remove_sidecar_checked(home)?;
     remove_prebind_checked(home)?;
@@ -490,7 +490,7 @@ fn read_prior_sidecar_endpoint(home: &Path) -> Result<Option<Endpoint>> {
     let expected =
         endpoint_for_home_with_runtime_nonce(home, &sidecar.endpoint_nonce, runtime_nonce)?;
     ensure!(
-        &sidecar.endpoint == &expected,
+        sidecar.endpoint == expected,
         "prior connector-control sidecar endpoint is not bound to canonical home and endpoint nonce"
     );
     let Endpoint::UnixSocket {
@@ -1097,9 +1097,9 @@ fn ensure_private_socket_directory(path: &Path, label: &str) -> Result<()> {
 fn bind_listener(endpoint: &Endpoint) -> Result<tokio::net::UnixListener> {
     use std::os::unix::fs::PermissionsExt as _;
     let Endpoint::UnixSocket { path, .. } = endpoint;
-    let listener = tokio::net::UnixListener::bind(&path)
+    let listener = tokio::net::UnixListener::bind(path)
         .with_context(|| format!("bind connector-control RPC socket {}", path.display()))?;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     Ok(listener)
 }
 

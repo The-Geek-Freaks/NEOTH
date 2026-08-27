@@ -283,12 +283,10 @@ pub(crate) fn load_operator_anchor_evidence_link_with_provenance(
     let mut linked_candidates = BTreeSet::new();
     let mut prior_query: Option<&str> = None;
     for item in &link.links {
-        if let Some(previous) = prior_query {
-            if item.query_id.as_str() <= previous {
-                anyhow::bail!(
-                    "operator anchor evidence links must be strictly sorted by unique query_id"
-                );
-            }
+        if prior_query.is_some_and(|previous| item.query_id.as_str() <= previous) {
+            anyhow::bail!(
+                "operator anchor evidence links must be strictly sorted by unique query_id"
+            );
         }
         prior_query = Some(item.query_id.as_str());
         if !anchor_queries.contains(item.query_id.as_str())

@@ -526,12 +526,13 @@ fn parse_candidates(bytes: &[u8]) -> Result<Vec<MinedCandidate>> {
                 index + 1
             );
         }
-        if let Some(previous) = &prior_id {
-            if candidate.candidate_id.as_str() <= previous.as_str() {
-                anyhow::bail!(
-                    "candidate evidence records must be strictly sorted by unique candidate_id"
-                );
-            }
+        if prior_id
+            .as_deref()
+            .is_some_and(|previous| candidate.candidate_id.as_str() <= previous)
+        {
+            anyhow::bail!(
+                "candidate evidence records must be strictly sorted by unique candidate_id"
+            );
         }
         prior_id = Some(candidate.candidate_id.clone());
         candidates.push(candidate);
