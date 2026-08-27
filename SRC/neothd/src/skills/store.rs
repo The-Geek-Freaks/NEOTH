@@ -95,30 +95,30 @@ fn run_after_bound_file_revalidation_for_test() {
 }
 
 #[cfg(test)]
-static TEST_FAIL_OPEN_FILE_POST_COMMIT_VALIDATION_AT: std::sync::Mutex<Vec<PathBuf>> =
+static TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT: std::sync::Mutex<Vec<PathBuf>> =
     std::sync::Mutex::new(Vec::new());
 
-/// Inject a failure after an open regular-file stage has been atomically
-/// renamed, but before the publisher validates the committed target identity.
+/// Inject a failure after a private regular-file stage has been atomically
+/// renamed, but before the writer validates the committed target identity.
 /// This is keyed by the operator-facing target path so parallel tests cannot
 /// consume one another's failure.
 #[cfg(test)]
-pub(crate) fn fail_open_file_post_commit_validation_for_test(target: &Path) {
-    let mut targets = TEST_FAIL_OPEN_FILE_POST_COMMIT_VALIDATION_AT
+pub(crate) fn fail_private_child_post_commit_validation_for_test(target: &Path) {
+    let mut targets = TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT
         .lock()
-        .expect("open-file post-commit validation test hook poisoned");
+        .expect("private-child post-commit validation test hook poisoned");
     targets.retain(|candidate| candidate != target);
     targets.push(target.to_path_buf());
 }
 
 #[cfg(test)]
-fn inject_open_file_post_commit_validation_failure(target: &Path) -> Result<()> {
-    let mut targets = TEST_FAIL_OPEN_FILE_POST_COMMIT_VALIDATION_AT
+fn inject_private_child_post_commit_validation_failure(target: &Path) -> Result<()> {
+    let mut targets = TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT
         .lock()
-        .expect("open-file post-commit validation test hook poisoned");
+        .expect("private-child post-commit validation test hook poisoned");
     if let Some(index) = targets.iter().position(|candidate| candidate == target) {
         targets.swap_remove(index);
-        anyhow::bail!("injected open-file post-commit validation failure");
+        anyhow::bail!("injected private-child post-commit validation failure");
     }
     Ok(())
 }
@@ -1869,7 +1869,7 @@ pub(crate) fn publish_open_regular_file_child_observed(
     // because validation reports an error after the object became visible.
     on_commit();
     #[cfg(test)]
-    inject_open_file_post_commit_validation_failure(target_display)?;
+    inject_private_child_post_commit_validation_failure(target_display)?;
     let published_metadata = target_parent
         .symlink_metadata(target_name)
         .with_context(|| {
@@ -2530,13 +2530,17 @@ pub(crate) fn replace_existing_regular_file_if_matches_report(
 /// Atomically publish private bytes as one direct regular-file child of an
 /// already-bound directory. Creation, write, sync, rename and cleanup are all
 /// capability-relative; a swapped ancestor cannot redirect the commit.
+///
+/// Compatibility wrapper: callers that do not need recovery metadata retain
+/// the historical `Result<()>` contract. New state machines should use the
+/// reported variant and treat either published outcome as revision-consuming.
 pub(crate) fn atomic_write_private_child(
     parent: &Dir,
     name: &OsStr,
     display_path: &Path,
     bytes: &[u8],
 ) -> Result<()> {
-    atomic_write_private_child_inner(parent, name, display_path, bytes, true)
+    atomic_write_private_child_legacy(parent, name, display_path, bytes, true)
 }
 
 /// Atomically create a new private direct-child file without replacing an
@@ -2551,16 +2555,120 @@ pub(crate) fn atomic_write_private_child_create_new(
     display_path: &Path,
     bytes: &[u8],
 ) -> Result<()> {
-    atomic_write_private_child_inner(parent, name, display_path, bytes, false)
+    atomic_write_private_child_legacy(parent, name, display_path, bytes, false)
 }
 
-fn atomic_write_private_child_inner(
+/// The only retry-safe failure from a reported private-child write.
+///
+/// Once the kernel rename succeeds, the reported API returns an `Ok` outcome
+/// even if later identity validation or directory durability confirmation
+/// fails. Callers must consume that revision rather than retrying it.
+#[derive(Debug)]
+pub(crate) struct PrivateChildPreCommitError {
+    source: anyhow::Error,
+}
+
+impl std::fmt::Display for PrivateChildPreCommitError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.source.fmt(formatter)
+    }
+}
+
+impl std::error::Error for PrivateChildPreCommitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+impl PrivateChildPreCommitError {
+    fn into_anyhow(self) -> anyhow::Error {
+        self.source
+    }
+}
+
+/// A committed private child write. `PublishedDurabilityUnknown` means the
+/// atomic namespace change already happened; retrying would be unsafe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[must_use]
+pub(crate) enum PrivateChildCommit {
+    PublishedAndSynced,
+    PublishedDurabilityUnknown(PrivateChildDurabilityUnknown),
+}
+
+/// Why a published child cannot be reported power-loss durable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PrivateChildDurabilityUnknown {
+    ParentSyncUnsupported,
+    ParentSyncFailed,
+    PostCommitValidationFailed,
+}
+
+/// Atomic replacement with an exact pre-/post-publication outcome boundary.
+pub(crate) fn atomic_write_private_child_reported(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+    bytes: &[u8],
+) -> std::result::Result<PrivateChildCommit, PrivateChildPreCommitError> {
+    atomic_write_private_child_reported_core(parent, name, display_path, bytes, true)
+        .map(PrivateChildReportedCommit::into_commit)
+        .map_err(|source| PrivateChildPreCommitError { source })
+}
+
+/// Exclusive atomic creation with the same recovery outcome as replacement.
+pub(crate) fn atomic_write_private_child_create_new_reported(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+    bytes: &[u8],
+) -> std::result::Result<PrivateChildCommit, PrivateChildPreCommitError> {
+    atomic_write_private_child_reported_core(parent, name, display_path, bytes, false)
+        .map(PrivateChildReportedCommit::into_commit)
+        .map_err(|source| PrivateChildPreCommitError { source })
+}
+
+/// Internal carrier keeps the historical post-commit diagnostic available to
+/// the source-compatible `Result<()>` wrappers without exposing it as a
+/// retry-safe error to new callers.
+struct PrivateChildReportedCommit {
+    commit: PrivateChildCommit,
+    legacy_post_commit_error: Option<anyhow::Error>,
+}
+
+impl PrivateChildReportedCommit {
+    fn into_commit(self) -> PrivateChildCommit {
+        self.commit
+    }
+}
+
+fn atomic_write_private_child_legacy(
     parent: &Dir,
     name: &OsStr,
     display_path: &Path,
     bytes: &[u8],
     replace_existing: bool,
 ) -> Result<()> {
+    let report = atomic_write_private_child_reported_core(
+        parent,
+        name,
+        display_path,
+        bytes,
+        replace_existing,
+    )
+    .map_err(|source| PrivateChildPreCommitError { source }.into_anyhow())?;
+    match report.legacy_post_commit_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+fn atomic_write_private_child_reported_core(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+    bytes: &[u8],
+    replace_existing: bool,
+) -> Result<PrivateChildReportedCommit> {
     validate_child_name(name)?;
     match parent.symlink_metadata(name) {
         Ok(_metadata) if !replace_existing => {
@@ -2648,51 +2756,82 @@ fn atomic_write_private_child_inner(
     }
     let stage_name = stage_name.context("could not allocate a private atomic stage file")?;
     let mut stage = stage.context("private atomic stage handle is unexpectedly absent")?;
-    let result = (|| -> Result<()> {
+    let mut committed = false;
+    let result = (|| -> Result<PrivateChildReportedCommit> {
         stage.write_all(bytes).with_context(|| {
             format!("write private atomic stage for {}", display_path.display())
         })?;
         stage
             .sync_all()
             .with_context(|| format!("sync private atomic stage for {}", display_path.display()))?;
-        replace_staged_file(
+        replace_staged_file_observed(
             parent,
             &stage,
             &stage_name,
             name,
             display_path,
             replace_existing,
+            || committed = true,
         )?;
-        sync_parent_directory(parent, display_path.parent().unwrap_or(display_path))?;
-        Ok(())
+        match sync_parent_directory(parent, display_path.parent().unwrap_or(display_path)) {
+            Ok(DirectorySyncOutcome::Confirmed) => Ok(PrivateChildReportedCommit {
+                commit: PrivateChildCommit::PublishedAndSynced,
+                legacy_post_commit_error: None,
+            }),
+            Ok(DirectorySyncOutcome::Unsupported) => Ok(PrivateChildReportedCommit {
+                commit: PrivateChildCommit::PublishedDurabilityUnknown(
+                    PrivateChildDurabilityUnknown::ParentSyncUnsupported,
+                ),
+                legacy_post_commit_error: None,
+            }),
+            Err(error) => Ok(PrivateChildReportedCommit {
+                commit: PrivateChildCommit::PublishedDurabilityUnknown(
+                    PrivateChildDurabilityUnknown::ParentSyncFailed,
+                ),
+                legacy_post_commit_error: Some(error),
+            }),
+        }
     })();
 
-    if let Err(error) = result {
-        let stage_display = display_path
-            .parent()
-            .unwrap_or(display_path)
-            .join(&stage_name);
-        let cleanup =
-            remove_named_file_if_same_open_object(parent, &stage_name, &stage, &stage_display);
-        drop(stage);
-        return match cleanup {
-            Ok(()) => Err(error),
-            Err(cleanup_error)
-                if cleanup_error
-                    .root_cause()
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
-            {
-                Err(error)
+    match result {
+        Ok(commit) => {
+            drop(stage);
+            Ok(commit)
+        }
+        Err(error) if committed => {
+            drop(stage);
+            Ok(PrivateChildReportedCommit {
+                commit: PrivateChildCommit::PublishedDurabilityUnknown(
+                    PrivateChildDurabilityUnknown::PostCommitValidationFailed,
+                ),
+                legacy_post_commit_error: Some(error),
+            })
+        }
+        Err(error) => {
+            let stage_display = display_path
+                .parent()
+                .unwrap_or(display_path)
+                .join(&stage_name);
+            let cleanup =
+                remove_named_file_if_same_open_object(parent, &stage_name, &stage, &stage_display);
+            drop(stage);
+            match cleanup {
+                Ok(()) => Err(error),
+                Err(cleanup_error)
+                    if cleanup_error
+                        .root_cause()
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    Err(error)
+                }
+                Err(cleanup_error) => Err(error.context(format!(
+                    "cleanup of capability-bound atomic stage `{}` also failed: {cleanup_error}",
+                    stage_name.to_string_lossy()
+                ))),
             }
-            Err(cleanup_error) => Err(error.context(format!(
-                "cleanup of capability-bound atomic stage `{}` also failed: {cleanup_error}",
-                stage_name.to_string_lossy()
-            ))),
-        };
+        }
     }
-    drop(stage);
-    Ok(())
 }
 
 fn replace_existing_regular_file_report_inner(
@@ -2853,6 +2992,27 @@ fn replace_staged_file(
     display_path: &Path,
     replace_existing: bool,
 ) -> Result<()> {
+    replace_staged_file_observed(
+        parent,
+        stage,
+        stage_name,
+        target_name,
+        display_path,
+        replace_existing,
+        || {},
+    )
+}
+
+#[cfg(unix)]
+fn replace_staged_file_observed(
+    parent: &Dir,
+    stage: &File,
+    stage_name: &OsStr,
+    target_name: &OsStr,
+    display_path: &Path,
+    replace_existing: bool,
+    on_commit: impl FnOnce(),
+) -> Result<()> {
     if replace_existing {
         anyhow::ensure!(
             named_regular_file_matches_open_object(parent, stage_name, stage, display_path)?,
@@ -2864,6 +3024,9 @@ fn replace_staged_file(
         parent
             .rename(stage_name, parent, target_name)
             .with_context(|| format!("atomically replace {}", display_path.display()))?;
+        on_commit();
+        #[cfg(test)]
+        inject_private_child_post_commit_validation_failure(display_path)?;
         anyhow::ensure!(
             named_regular_file_matches_open_object(parent, target_name, stage, display_path)?,
             "replacement target is not the exact open stage object: {}",
@@ -2875,7 +3038,7 @@ fn replace_staged_file(
             .parent()
             .unwrap_or(display_path)
             .join(stage_name);
-        publish_open_regular_file_child(
+        publish_open_regular_file_child_observed(
             parent,
             stage,
             stage_name,
@@ -2883,6 +3046,7 @@ fn replace_staged_file(
             target_name,
             &stage_display,
             display_path,
+            on_commit,
         )
         .with_context(|| format!("atomically create {}", display_path.display()))
     }
@@ -2892,12 +3056,35 @@ fn replace_staged_file(
 fn replace_staged_file(
     parent: &Dir,
     stage: &File,
-    _stage_name: &OsStr,
+    stage_name: &OsStr,
     target_name: &OsStr,
     display_path: &Path,
     replace_existing: bool,
 ) -> Result<()> {
-    windows_rename_open_handle(stage, parent, target_name, replace_existing, display_path)
+    replace_staged_file_observed(
+        parent,
+        stage,
+        stage_name,
+        target_name,
+        display_path,
+        replace_existing,
+        || {},
+    )
+}
+
+#[cfg(windows)]
+fn replace_staged_file_observed(
+    parent: &Dir,
+    stage: &File,
+    _stage_name: &OsStr,
+    target_name: &OsStr,
+    display_path: &Path,
+    replace_existing: bool,
+    on_commit: impl FnOnce(),
+) -> Result<()> {
+    windows_rename_open_handle(stage, parent, target_name, replace_existing, display_path)?;
+    on_commit();
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -3500,7 +3687,7 @@ mod tests {
         use std::io::Write as _;
         stage.write_all(b"committed prefix").unwrap();
         stage.sync_all().unwrap();
-        fail_open_file_post_commit_validation_for_test(&target_display);
+        fail_private_child_post_commit_validation_for_test(&target_display);
         let mut commits = 0usize;
 
         let error = publish_open_regular_file_child_observed(
@@ -4168,5 +4355,191 @@ mod tests {
 
         assert!(std::fs::symlink_metadata(&target).unwrap().is_symlink());
         assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
+    }
+}
+
+#[cfg(test)]
+mod reported_commit_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn reported_private_child_write_returns_a_published_commit() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("state.json");
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        let commit = atomic_write_private_child_reported(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+            b"private state",
+        )
+        .unwrap();
+        assert!(matches!(
+            commit,
+            PrivateChildCommit::PublishedAndSynced
+                | PrivateChildCommit::PublishedDurabilityUnknown(_)
+        ));
+        assert_eq!(std::fs::read(&target).unwrap(), b"private state");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reported_private_child_sync_failure_is_published_not_retryable() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("state.json");
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        force_parent_sync_failure_for_test(true);
+        let commit = atomic_write_private_child_reported(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+            b"private state",
+        )
+        .unwrap();
+        force_parent_sync_failure_for_test(false);
+        assert_eq!(
+            commit,
+            PrivateChildCommit::PublishedDurabilityUnknown(
+                PrivateChildDurabilityUnknown::ParentSyncFailed
+            )
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"private state");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reported_create_new_observes_publication_before_post_commit_validation_failure() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("state.json");
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        fail_private_child_post_commit_validation_for_test(&target);
+        let commit = atomic_write_private_child_create_new_reported(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+            b"private state",
+        )
+        .expect("post-rename validation failure is a published outcome");
+
+        assert_eq!(
+            commit,
+            PrivateChildCommit::PublishedDurabilityUnknown(
+                PrivateChildDurabilityUnknown::PostCommitValidationFailed
+            )
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"private state");
+        assert_eq!(
+            std::fs::read_dir(temp.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".neoth-atomic-"))
+                .count(),
+            0,
+            "a committed stage is neither cleaned up nor retried"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reported_replacement_observes_publication_before_post_commit_validation_failure() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("state.json");
+        std::fs::write(&target, b"previous state").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        fail_private_child_post_commit_validation_for_test(&target);
+        let commit = atomic_write_private_child_reported(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+            b"replacement state",
+        )
+        .expect("post-rename validation failure is a published outcome");
+
+        assert_eq!(
+            commit,
+            PrivateChildCommit::PublishedDurabilityUnknown(
+                PrivateChildDurabilityUnknown::PostCommitValidationFailed
+            )
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"replacement state");
+        assert_eq!(
+            std::fs::read_dir(temp.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".neoth-atomic-"))
+                .count(),
+            0,
+            "a committed replacement stage is neither cleaned up nor retried"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_replacement_keeps_post_commit_validation_error() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("state.json");
+        std::fs::write(&target, b"previous state").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        fail_private_child_post_commit_validation_for_test(&target);
+        let error = atomic_write_private_child(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+            b"replacement state",
+        )
+        .expect_err("legacy callers must retain their historical error contract");
+
+        assert!(
+            format!("{error:#}").contains("injected private-child post-commit validation failure"),
+            "{error:#}"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"replacement state");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reported_private_child_write_preserves_windows_parent_sync_unknown() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("state.json");
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        let commit = atomic_write_private_child_reported(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+            b"private state",
+        )
+        .unwrap();
+
+        assert_eq!(
+            commit,
+            PrivateChildCommit::PublishedDurabilityUnknown(
+                PrivateChildDurabilityUnknown::ParentSyncUnsupported
+            )
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"private state");
     }
 }
