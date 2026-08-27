@@ -104,7 +104,9 @@ struct PendingGuiChatConsent {
 /// request and its private body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PoisonedPendingConsentRecovery {
-    Exact { surface: chat_stream_phase::ChatStreamSurface },
+    Exact {
+        surface: chat_stream_phase::ChatStreamSurface,
+    },
     StaleOrAbsent,
     NotPoisoned,
 }
@@ -20829,10 +20831,7 @@ fn begin_live_chat_request(
 /// terminal error paths must never leave an Incognito badge active after the
 /// request itself has stopped owning the UI.
 fn settle_main_chat_request_ui(window: &MainWindow) {
-    project_main_chat_request_ui_state(
-        window,
-        main_chat_request_ui_state(window).settle_main(),
-    );
+    project_main_chat_request_ui_state(window, main_chat_request_ui_state(window).settle_main());
 }
 
 /// Request-scoped state projected onto the Main and Buddy chat surfaces.
@@ -20900,9 +20899,8 @@ impl ChatPresentationOwner {
     }
 
     fn is_current(&self, request_id: ChatStreamRequestId, generation: u64) -> bool {
-        self.current.is_some_and(|lease| {
-            lease.request_id == request_id && lease.generation == generation
-        })
+        self.current
+            .is_some_and(|lease| lease.request_id == request_id && lease.generation == generation)
     }
 
     fn terminal_settlement(
@@ -20912,10 +20910,11 @@ impl ChatPresentationOwner {
         surface: ChatStreamSurface,
         state: ChatRequestUiState,
     ) -> Option<ChatRequestUiState> {
-        self.is_current(request_id, generation).then(|| match surface {
-            ChatStreamSurface::Main => state.settle_main(),
-            ChatStreamSurface::Buddy => state.settle_buddy(),
-        })
+        self.is_current(request_id, generation)
+            .then(|| match surface {
+                ChatStreamSurface::Main => state.settle_main(),
+                ChatStreamSurface::Buddy => state.settle_buddy(),
+            })
     }
 
     /// A poisoned pending-consent slot may no longer reveal which surface
@@ -25822,7 +25821,13 @@ mod chat_subprocess_tests {
             .collect::<Vec<_>>();
         assert_eq!(
             automatic_args,
-            vec!["chat", "--stream", "--gui-launch-envelope-stdin", "--", "prompt"]
+            vec![
+                "chat",
+                "--stream",
+                "--gui-launch-envelope-stdin",
+                "--",
+                "prompt"
+            ]
         );
 
         let source = include_str!("main.rs");
@@ -26135,19 +26140,21 @@ mod chat_subprocess_tests {
 
     #[test]
     fn incognito_rows_never_replace_or_create_local_sidebar_preview() {
-        let row = |text: &str, timestamp: &str, incognito: bool, phase: ChatStreamPhase| {
-            ChatMessage {
+        let row =
+            |text: &str, timestamp: &str, incognito: bool, phase: ChatStreamPhase| ChatMessage {
                 role: "assistant".into(),
                 text: text.into(),
                 timestamp: timestamp.into(),
                 stream_phase: phase.as_wire().into(),
                 incognito,
                 ..Default::default()
-            }
-        };
+            };
         let standard = row("standard reply", "10:00", false, ChatStreamPhase::Complete);
         let baseline = live_chat_sidebar_preview(&[standard.clone()]);
-        assert_eq!(baseline, ("standard reply".to_string(), "10:00".to_string()));
+        assert_eq!(
+            baseline,
+            ("standard reply".to_string(), "10:00".to_string())
+        );
 
         let private_rows = vec![
             standard,
@@ -30675,7 +30682,10 @@ mod tests {
 
     #[test]
     fn poisoned_pending_consent_exact_entries_are_zeroized_removed_and_reusable() {
-        for (wire, surface) in [("91", ChatStreamSurface::Main), ("92", ChatStreamSurface::Buddy)] {
+        for (wire, surface) in [
+            ("91", ChatStreamSurface::Main),
+            ("92", ChatStreamSurface::Buddy),
+        ] {
             let request_id = ChatStreamRequestId::parse_wire(wire).unwrap();
             let pending = std::sync::Arc::new(std::sync::Mutex::new(Some(
                 pending_consent_for_poison_test(request_id, surface, "opaque"),
@@ -30748,7 +30758,10 @@ mod tests {
             StalePendingConsentOrigin::EmptyTakenSlot,
         ] {
             let outcome = stale_pending_consent_decision_outcome(origin);
-            assert_eq!(outcome, StalePendingConsentDecisionOutcome::IgnoreNoUiMutation);
+            assert_eq!(
+                outcome,
+                StalePendingConsentDecisionOutcome::IgnoreNoUiMutation
+            );
             assert_eq!(
                 outcome.effects(),
                 PendingConsentDecisionEffects {

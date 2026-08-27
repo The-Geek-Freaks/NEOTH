@@ -620,8 +620,15 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_var_capability_parent_leaves_non_var_paths_unchanged() {
-        for path in ["/private/var/folders/review.pdf", "/tmp/review.pdf", "var/review.pdf"] {
-            assert_eq!(macos_var_capability_parent(Path::new(path)), PathBuf::from(path));
+        for path in [
+            "/private/var/folders/review.pdf",
+            "/tmp/review.pdf",
+            "var/review.pdf",
+        ] {
+            assert_eq!(
+                macos_var_capability_parent(Path::new(path)),
+                PathBuf::from(path)
+            );
         }
     }
 

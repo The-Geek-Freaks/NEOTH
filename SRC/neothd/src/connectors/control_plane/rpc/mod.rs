@@ -2072,13 +2072,10 @@ mod tests {
             client.shutdown().await
         });
         assert!(
-            tokio::time::timeout(
-                std::time::Duration::from_secs(1),
-                read_request(&mut server)
-            )
-            .await
-            .expect("over-cap request parser must finish within one second")
-            .is_none()
+            tokio::time::timeout(std::time::Duration::from_secs(1), read_request(&mut server))
+                .await
+                .expect("over-cap request parser must finish within one second")
+                .is_none()
         );
         tokio::time::timeout(std::time::Duration::from_secs(1), writer)
             .await

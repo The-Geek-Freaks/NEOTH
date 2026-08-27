@@ -111,9 +111,7 @@ pub(crate) mod test_env {
     }
 
     #[cfg(windows)]
-    fn canonical_local_disk_parts(
-        path: &Path,
-    ) -> std::io::Result<(u8, Vec<std::ffi::OsString>)> {
+    fn canonical_local_disk_parts(path: &Path) -> std::io::Result<(u8, Vec<std::ffi::OsString>)> {
         use std::path::{Component, Prefix};
 
         let mut components = path.components();
