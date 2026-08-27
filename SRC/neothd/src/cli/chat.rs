@@ -17534,11 +17534,7 @@ modes:
         let config_path = home.path().join("freedom.yaml");
         let paths = InstancePaths::new(home.path(), &config_path);
         std::fs::write(&paths.mcp_servers, "servers: [poisoned\n").unwrap();
-        std::fs::write(
-            &paths.profile_extensions,
-            "[extensions\npoisoned = true\n",
-        )
-        .unwrap();
+        std::fs::write(&paths.profile_extensions, "[extensions\npoisoned = true\n").unwrap();
         crate::consent::grant(home.path(), ProviderKind::OpenaiApi).unwrap();
 
         let config = FreedomConfig {
@@ -17554,7 +17550,10 @@ modes:
         let args = ChatArgs {
             message: Some("private ordinary request".into()),
             config: Some(config_path),
-            wal_segment: Some(canonical_test_wal(home.path(), "incognito-poisoned-registries")),
+            wal_segment: Some(canonical_test_wal(
+                home.path(),
+                "incognito-poisoned-registries",
+            )),
             incognito: true,
             ..test_chat_args_default()
         };
@@ -19455,5 +19454,4 @@ mod attach_tests {
         assert!(!safe.contains('\r'));
         assert!(safe.chars().count() <= 256);
     }
-
 }
