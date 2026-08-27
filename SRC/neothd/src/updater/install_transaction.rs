@@ -2178,7 +2178,6 @@ mod tests {
     use std::process::Command;
 
     use super::*;
-    use tempfile::TempDir;
 
     const CHILD_ROOT: &str = "NEOTH_INSTALL_TXN_TEST_ROOT";
     const CHILD_FIXTURE: &str = "NEOTH_INSTALL_TXN_TEST_FIXTURE";
@@ -2186,7 +2185,7 @@ mod tests {
     const CHILD_HOOK: &str = "NEOTH_INSTALL_TXN_TEST_HOOK";
 
     struct StandardFixture {
-        temp: TempDir,
+        temp: crate::test_env::CanonicalTempDir,
         file_target: PathBuf,
         directory_target: PathBuf,
     }
@@ -2455,7 +2454,7 @@ mod tests {
         // This locks the Windows guard's behavior onto the Unix path, which
         // previously used bare POSIX rename (replace-existing). `durable_replace`
         // remains the primitive for intentional replacement.
-        let dir = TempDir::new().unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
         let from = dir.path().join("stage");
         let to = dir.path().join("target");
         fs::write(&from, b"new").unwrap();

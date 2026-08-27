@@ -882,7 +882,7 @@ impl McpGuardian {
 mod tests {
     use super::*;
     use crate::mcp::client::ToolAnnotations;
-    fn home_with_key() -> tempfile::TempDir {
+    fn home_with_key() -> crate::test_env::CanonicalTempDir {
         let dir = crate::test_env::canonical_tempdir().unwrap();
         #[cfg(unix)]
         {

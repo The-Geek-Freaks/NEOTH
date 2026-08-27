@@ -941,7 +941,13 @@ fn read_child_optional(
             MAX_HYGIENE_SNAPSHOT_BYTES,
         )
         .map(Some)
-        .map_err(|_| HygieneStoreError::SafeStoreUnavailable),
+        .map_err(|error| {
+            if error_chain_has_kind(&error, std::io::ErrorKind::InvalidData) {
+                HygieneStoreError::CapacityExceeded
+            } else {
+                HygieneStoreError::SafeStoreUnavailable
+            }
+        }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(_) => Err(HygieneStoreError::SafeStoreUnavailable),
     }
@@ -1127,7 +1133,7 @@ mod tests {
     const DAY: i64 = 86_400;
 
     struct TestHome {
-        _root: tempfile::TempDir,
+        _root: crate::test_env::CanonicalTempDir,
         path: PathBuf,
     }
 
@@ -1138,7 +1144,7 @@ mod tests {
     }
 
     fn test_home() -> TestHome {
-        let root = tempfile::tempdir().expect("test root");
+        let root = crate::test_env::canonical_tempdir().expect("private test root");
         #[cfg(unix)]
         let path = {
             use std::os::unix::fs::DirBuilderExt as _;

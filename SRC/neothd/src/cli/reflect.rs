@@ -613,7 +613,7 @@ mod tests {
     /// on Unix, which is commonly 0755 in CI and correctly rejected by the
     /// production capability boundary.
     struct TestHome {
-        _root: tempfile::TempDir,
+        _root: crate::test_env::CanonicalTempDir,
         path: std::path::PathBuf,
     }
 
@@ -624,7 +624,7 @@ mod tests {
     }
 
     fn private_test_home() -> TestHome {
-        let root = tempfile::tempdir().expect("test root");
+        let root = crate::test_env::canonical_tempdir().expect("private test root");
         #[cfg(unix)]
         let path = {
             use std::os::unix::fs::DirBuilderExt as _;

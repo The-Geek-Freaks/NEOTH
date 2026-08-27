@@ -2322,12 +2322,11 @@ mod tests {
     use super::*;
     use crate::code_map::RebuildOptions;
     use crate::code_map::snapshot::rebuild_snapshot_scoped;
-    use tempfile::TempDir;
 
     struct Fixture {
-        repo: TempDir,
-        vault: TempDir,
-        database: TempDir,
+        repo: crate::test_env::CanonicalTempDir,
+        vault: crate::test_env::CanonicalTempDir,
+        database: crate::test_env::CanonicalTempDir,
     }
 
     impl Fixture {

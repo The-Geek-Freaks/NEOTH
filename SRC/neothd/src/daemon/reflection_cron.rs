@@ -738,19 +738,18 @@ pub fn iso_week_tag_from_unix(ts_unix: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir as RawTempDir;
 
     /// The admission boundary intentionally rejects ambient 0755 temporary
     /// directories. Keep every test home representative of a real private
     /// NEOTH_HOME without weakening that production guard.
     struct TempDir {
-        _root: RawTempDir,
+        _root: crate::test_env::CanonicalTempDir,
         path: PathBuf,
     }
 
     impl TempDir {
         fn new() -> std::io::Result<Self> {
-            let root = RawTempDir::new()?;
+            let root = crate::test_env::canonical_tempdir()?;
             #[cfg(unix)]
             let path = {
                 use std::os::unix::fs::DirBuilderExt as _;

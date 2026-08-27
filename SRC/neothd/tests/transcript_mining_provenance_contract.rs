@@ -100,7 +100,8 @@ fn fresh_v37_database_reserves_plan_payload_and_all_proof_states() {
                      planned_header_sha256, planned_at_unix)
                  VALUES ('ordinary-plan', 'ordinary-provenance', 'ordinary-lifecycle', 1,
                          1, 0, 2, 4, zeroblob(8), zeroblob(8), 0,
-                         CAST('secret' AS BLOB) || zeroblob(90), zeroblob(32), 1)",
+                         CAST(CAST('secret' AS BLOB) || zeroblob(90) AS BLOB),
+                         zeroblob(32), 1)",
         "stage 3a reserves raw frame plan creation for authenticated attestation",
     );
     connection

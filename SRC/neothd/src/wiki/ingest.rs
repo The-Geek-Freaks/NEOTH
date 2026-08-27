@@ -990,8 +990,8 @@ mod tests {
     }
 
     struct GraphifyFixture {
-        repository: tempfile::TempDir,
-        vault: tempfile::TempDir,
+        repository: crate::test_env::CanonicalTempDir,
+        vault: crate::test_env::CanonicalTempDir,
         corpus_dir: PathBuf,
         generation_dir: PathBuf,
         receipt: GraphifyGenerationReceipt,

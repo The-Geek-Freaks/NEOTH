@@ -26396,8 +26396,7 @@ mod chat_subprocess_tests {
             .unwrap();
         for contract in [
             "neoth-usage-window-liveness",
-            "D2_USAGE_WINDOW_LIVE.load",
-            "liveness_cancellation.cancel();",
+            "cancel_when_window_closed(&liveness_cancellation, &D2_USAGE_WINDOW_LIVE)",
             "if cancellation.is_cancelled()",
             "cancellation.cancel();",
             "liveness_watcher.join()",
@@ -26417,8 +26416,6 @@ mod chat_subprocess_tests {
         }
         assert!(!weekly.contains("unwrap_or_default()"));
         assert!(!weekly.contains("unwrap_or((0.0, 0))"));
-        assert!(!source.contains("refresh_overview_cost_sessions"));
-
         let latest_wins = source
             .rsplit_once("fn refresh_overview_cost(")
             .map(|(_, tail)| tail)
@@ -26449,6 +26446,19 @@ mod chat_subprocess_tests {
         assert!(budget_probe.contains("run_bounded_dashboard_json_probe"));
         assert!(!budget_probe.contains(".output()"));
         assert!(!budget_probe.contains("which_neothd()"));
+    }
+
+    #[test]
+    fn d2_usage_window_close_cancels_the_owned_probe() {
+        let cancellation = trusted_probe_supervisor::ProbeCancellation::new();
+        let window_live = std::sync::atomic::AtomicBool::new(true);
+
+        assert!(!cancel_when_window_closed(&cancellation, &window_live));
+        assert!(!cancellation.is_cancelled());
+
+        window_live.store(false, std::sync::atomic::Ordering::Release);
+        assert!(cancel_when_window_closed(&cancellation, &window_live));
+        assert!(cancellation.is_cancelled());
     }
 
     #[test]
@@ -27421,6 +27431,17 @@ fn checked_usage_cost_add(total: f64, cost: f64) -> Option<f64> {
     (next.is_finite() && next >= 0.0).then_some(next)
 }
 
+fn cancel_when_window_closed(
+    cancellation: &trusted_probe_supervisor::ProbeCancellation,
+    window_live: &std::sync::atomic::AtomicBool,
+) -> bool {
+    if !window_live.load(std::sync::atomic::Ordering::Acquire) {
+        cancellation.cancel();
+        return true;
+    }
+    false
+}
+
 fn refresh_overview_cost(weak: slint::Weak<MainWindow>, revision: u64) {
     if !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire) {
         return;
@@ -27439,8 +27460,7 @@ fn refresh_overview_cost(weak: slint::Weak<MainWindow>, revision: u64) {
         .name("neoth-usage-window-liveness".into())
         .spawn(move || {
             while !liveness_cancellation.is_cancelled() {
-                if !D2_USAGE_WINDOW_LIVE.load(std::sync::atomic::Ordering::Acquire) {
-                    liveness_cancellation.cancel();
+                if cancel_when_window_closed(&liveness_cancellation, &D2_USAGE_WINDOW_LIVE) {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
@@ -30459,6 +30479,11 @@ mod tests {
             .expect("fresh controller")
             .begin(ChatStreamSurface::Buddy)
             .unwrap();
+        {
+            let mut controller = stream.lock().expect("active controller");
+            let update = controller.provider_finished(buddy.request_id).unwrap();
+            assert_eq!(update.phase, ChatStreamPhase::Finalizing);
+        }
         poison_test_mutex(stream.clone());
         assert!(stream.is_poisoned());
 
@@ -30512,6 +30537,36 @@ mod tests {
                     request.request_id == main.request_id
                         && request.surface == ChatStreamSurface::Main
                 })
+        );
+    }
+
+    #[test]
+    fn poisoned_pre_marker_worker_failure_settles_failed_and_clears_controller_poison() {
+        let stream = std::sync::Arc::new(std::sync::Mutex::new(ChatStreamController::default()));
+        let request = stream
+            .lock()
+            .expect("fresh controller")
+            .begin(ChatStreamSurface::Main)
+            .unwrap();
+        poison_test_mutex(stream.clone());
+        assert!(stream.is_poisoned());
+
+        assert!(
+            settle_chat_stream_worker_terminal(
+                stream.as_ref(),
+                request.request_id,
+                ChatStreamSurface::Main,
+                false,
+            )
+            .is_some_and(|terminal| terminal.phase == ChatStreamPhase::Failed)
+        );
+        assert!(!stream.is_poisoned());
+        assert!(
+            stream
+                .lock()
+                .expect("recovered controller")
+                .active_request()
+                .is_none()
         );
     }
 

@@ -698,7 +698,7 @@ mod tests {
 
     // ---- ADOPT31-C4a: a re-declared tool loses its auto-approval ----------
 
-    fn home_with_key() -> tempfile::TempDir {
+    fn home_with_key() -> crate::test_env::CanonicalTempDir {
         let dir = crate::test_env::canonical_tempdir().unwrap();
         #[cfg(unix)]
         {

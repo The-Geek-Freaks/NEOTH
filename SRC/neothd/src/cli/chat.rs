@@ -12719,7 +12719,7 @@ mod tests {
 
     #[tokio::test]
     async fn public_valid_skill_from_doc_is_review_only_before_chat_runtime() {
-        let root = tempfile::tempdir().expect("temp home");
+        let root = crate::test_env::canonical_tempdir().expect("temp home");
         let source = root.path().join("operator-guide.rtf");
         std::fs::write(
             &source,
