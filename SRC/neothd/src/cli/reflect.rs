@@ -609,9 +609,48 @@ pub fn collect_covered(home: &std::path::Path) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// Model a private NEOTH_HOME. `tempfile::tempdir` uses the process umask
+    /// on Unix, which is commonly 0755 in CI and correctly rejected by the
+    /// production capability boundary.
+    struct TestHome {
+        _root: tempfile::TempDir,
+        path: std::path::PathBuf,
+    }
+
+    impl TestHome {
+        fn path(&self) -> &std::path::Path {
+            &self.path
+        }
+    }
+
+    fn private_test_home() -> TestHome {
+        let root = tempfile::tempdir().expect("test root");
+        #[cfg(unix)]
+        let path = {
+            use std::os::unix::fs::DirBuilderExt as _;
+
+            let path = root.path().join("private-home");
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&path)
+                .expect("create private Unix test home");
+            path
+        };
+        #[cfg(windows)]
+        let path = {
+            let path = root.path().join("private-home");
+            crate::wal::win_native::create_private_directory_new(&path)
+                .expect("create private Windows test home");
+            path
+        };
+        #[cfg(not(any(unix, windows)))]
+        let path = root.path().to_path_buf();
+        TestHome { _root: root, path }
+    }
+
     #[test]
     fn automation_config_missing_is_disabled_but_unknown_malformed_and_oversized_fail_closed() {
-        let home = tempfile::tempdir().unwrap();
+        let home = private_test_home();
         assert_eq!(
             ReflectTopics::load_for_automation(home.path()).unwrap(),
             ReflectTopics::default()
@@ -647,7 +686,7 @@ mod tests {
 
     #[test]
     fn old_valid_config_preserves_disabled_daily_admission() {
-        let home = tempfile::tempdir().unwrap();
+        let home = private_test_home();
         std::fs::write(
             home.path().join("reflect_topics.yaml"),
             "daily_notes: true\n",
@@ -664,7 +703,7 @@ mod tests {
         use crate::reflection::hygiene_store::{DailyAdmissionOutcome, lock_daily_admission};
         use crate::reflection::periodic::{self, PeriodKind};
 
-        let home = tempfile::tempdir().unwrap();
+        let home = private_test_home();
         let now = 1_787_788_800i64;
         let now_ns = now.saturating_mul(1_000_000_000);
         let conn = store::open(&home.path().join("views.db")).unwrap();
@@ -710,7 +749,7 @@ mod tests {
     fn cli_daily_retry_uses_original_same_tag_record_after_candidate_changes() {
         use crate::reflection::periodic::{self, PeriodKind};
 
-        let home = tempfile::tempdir().unwrap();
+        let home = private_test_home();
         let now = 1_787_788_800i64;
         let now_ns = now.saturating_mul(1_000_000_000);
         let conn = store::open(&home.path().join("views.db")).unwrap();
@@ -784,7 +823,7 @@ mod tests {
         use crate::reflection::hygiene_store::lock_daily_admission;
         use crate::reflection::periodic::{self, PeriodKind};
 
-        let home = tempfile::tempdir().unwrap();
+        let home = private_test_home();
         let now = 1_787_788_800i64;
         let conn = store::open(&home.path().join("views.db")).unwrap();
         conn.execute(
@@ -820,7 +859,7 @@ mod tests {
 
     #[test]
     fn collect_covered_reads_skills_from_the_supplied_home() {
-        let home = tempfile::tempdir().unwrap();
+        let home = private_test_home();
         let skill_dir = home.path().join("skills").join("home-specific");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(

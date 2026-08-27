@@ -1171,7 +1171,42 @@ pub fn sync_to_obsidian(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use tempfile::TempDir as RawTempDir;
+
+    /// The admission boundary intentionally rejects ambient 0755 temporary
+    /// directories. Keep every test home representative of a real private
+    /// NEOTH_HOME without weakening that production guard.
+    struct TempDir {
+        _root: RawTempDir,
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new() -> std::io::Result<Self> {
+            let root = RawTempDir::new()?;
+            #[cfg(unix)]
+            let path = {
+                use std::os::unix::fs::DirBuilderExt as _;
+
+                let path = root.path().join("private-home");
+                std::fs::DirBuilder::new().mode(0o700).create(&path)?;
+                path
+            };
+            #[cfg(windows)]
+            let path = {
+                let path = root.path().join("private-home");
+                crate::wal::win_native::create_private_directory_new(&path)?;
+                path
+            };
+            #[cfg(not(any(unix, windows)))]
+            let path = root.path().to_path_buf();
+            Ok(Self { _root: root, path })
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
 
     #[test]
     fn daily_admission_archive_recovery_is_byte_preserving_and_conflicts_fail_closed() {

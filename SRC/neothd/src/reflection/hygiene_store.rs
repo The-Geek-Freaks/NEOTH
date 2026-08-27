@@ -1140,7 +1140,16 @@ mod tests {
     fn test_home() -> TestHome {
         let root = tempfile::tempdir().expect("test root");
         #[cfg(unix)]
-        let path = root.path().to_path_buf();
+        let path = {
+            use std::os::unix::fs::DirBuilderExt as _;
+
+            let path = root.path().join("private-home");
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&path)
+                .expect("create private Unix test home");
+            path
+        };
         #[cfg(windows)]
         let path = {
             let path = root.path().join("private-home");
@@ -1153,6 +1162,21 @@ mod tests {
 
     fn prepare_private_hygiene_namespace(home: &TestHome) {
         open_hygiene_directory(home.path()).expect("create private hygiene namespace");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ambient_group_readable_home_is_rejected_before_hygiene_creation() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let home = tempfile::tempdir().expect("ambient test home");
+        std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o755))
+            .expect("make ambient home group-readable");
+        assert!(matches!(
+            open_hygiene_directory(home.path()),
+            Err(HygieneStoreError::SafeStoreUnavailable)
+        ));
+        assert!(!home.path().join("reflections").exists());
     }
 
     #[cfg(unix)]
