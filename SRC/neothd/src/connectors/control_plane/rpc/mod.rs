@@ -1148,7 +1148,7 @@ async fn run_listener(
                 tracing::warn!(%error, "connector-control RPC connection failed");
             }
         });
-    }
+    };
     // The listener is no longer needed after an accept-loop exit. On an
     // internal failure, close the fd before withdrawing its filesystem leaf.
     drop(listener);
