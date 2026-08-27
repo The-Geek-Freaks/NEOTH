@@ -725,6 +725,7 @@ fn write_sidecar(home: &Path, endpoint: &Endpoint, endpoint_nonce: &str) -> Resu
     );
     crate::skills::store::sync_parent_directory(&bound.dir, &bound.display_path)
         .context("make connector-control sidecar namespace commit durable")
+        .map(|_| ())
 }
 
 #[cfg(unix)]
@@ -764,6 +765,7 @@ fn write_prebind(home: &Path, endpoint: &Endpoint) -> Result<()> {
     );
     crate::skills::store::sync_parent_directory(&bound.dir, &bound.display_path)
         .context("make connector-control pre-bind journal durable")
+        .map(|_| ())
 }
 
 #[cfg(unix)]
@@ -783,7 +785,8 @@ fn remove_sidecar_checked(home: &Path) -> Result<()> {
         &path,
     )? {
         true => crate::skills::store::sync_parent_directory(&bound.dir, &bound.display_path)
-            .context("make connector-control sidecar removal durable"),
+            .context("make connector-control sidecar removal durable")
+            .map(|_| ()),
         false => Ok(()),
     }
 }
@@ -805,7 +808,8 @@ fn remove_prebind_checked(home: &Path) -> Result<()> {
         &path,
     )? {
         true => crate::skills::store::sync_parent_directory(&bound.dir, &bound.display_path)
-            .context("make connector-control pre-bind journal removal durable"),
+            .context("make connector-control pre-bind journal removal durable")
+            .map(|_| ()),
         false => Ok(()),
     }
 }
@@ -1038,7 +1042,7 @@ fn validate_private_runtime_directory(path: &Path, label: &str) -> Result<()> {
 
 #[cfg(unix)]
 fn private_directory_metadata_matches_owner(metadata: &std::fs::Metadata, owner: u32) -> bool {
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+    use std::os::unix::fs::MetadataExt as _;
 
     metadata.is_dir()
         && !metadata.file_type().is_symlink()
@@ -1048,7 +1052,7 @@ fn private_directory_metadata_matches_owner(metadata: &std::fs::Metadata, owner:
 
 #[cfg(unix)]
 fn validate_safe_fallback_parent(path: &Path) -> Result<()> {
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+    use std::os::unix::fs::MetadataExt as _;
 
     let metadata = std::fs::symlink_metadata(path).with_context(|| {
         format!(
@@ -1236,8 +1240,8 @@ fn same_effective_uid(stream: &tokio::net::UnixStream) -> bool {
     let mut gid = 0;
     // SAFETY: `stream` owns a live connected Unix-domain socket and the two
     // scalar output pointers are valid for getpeereid to initialize.
-    unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) == 0 }
-    &&uid == unsafe { libc::geteuid() }
+    (unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) == 0 })
+        && uid == unsafe { libc::geteuid() }
 }
 
 #[cfg(all(

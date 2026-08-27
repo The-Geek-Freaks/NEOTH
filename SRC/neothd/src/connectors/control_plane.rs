@@ -24,9 +24,9 @@ use super::{
 pub(crate) mod rpc;
 
 /// Capability representing a principal already authenticated by a later local
-/// control transport. There is deliberately no production issuer in this
-/// slice: fields, seal, and the only test constructor remain module-private so
-/// a SubjectId supplied by a client cannot become authority.
+/// control transport. Fields, seal, the daemon-only Unix mint, and the test
+/// constructor remain module-private so a SubjectId supplied by a client
+/// cannot become authority.
 #[derive(Clone, Debug)]
 pub(crate) struct AuthenticatedControlSession {
     subject_id: SubjectId,
@@ -47,6 +47,19 @@ impl AuthenticatedControlSession {
             subject_id,
             _unforgeable: AuthenticatedControlSessionSeal(()),
         }
+    }
+}
+
+/// Mints the private session used exclusively by the Unix daemon-owned RPC
+/// child module after it has selected the startup-configured subject.
+///
+/// This is not exported beyond this control-plane module tree, so request data
+/// cannot construct a session or choose a subject.
+#[cfg(unix)]
+fn daemon_authenticated_session(subject_id: SubjectId) -> AuthenticatedControlSession {
+    AuthenticatedControlSession {
+        subject_id,
+        _unforgeable: AuthenticatedControlSessionSeal(()),
     }
 }
 
