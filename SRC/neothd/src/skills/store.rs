@@ -1069,15 +1069,16 @@ pub(crate) fn open_or_create_private_child_dir(
 }
 
 /// Direct no-follow directory open that retains exactly the access needed for
-/// later capability-relative creation/replacement. On Windows the returned
-/// handle carries generic write and delete rights; a `FILE_GENERIC_READ` handle
-/// is not sufficient as the parent of an atomic rename publication.
+/// later capability-relative creation/replacement. On Windows directory
+/// `DELETE` is deliberately deferred until after owner-DACL hardening;
+/// file/object-specific mutation handles retain `DELETE`. A `FILE_GENERIC_READ`
+/// handle is not sufficient as the parent of an atomic rename publication.
 fn open_mutation_capable_child_dir(parent: &Dir, name: &OsStr) -> std::io::Result<Dir> {
     #[cfg(windows)]
     {
         use cap_std::fs::OpenOptionsExt as _;
         use windows_sys::Win32::Storage::FileSystem::{
-            DELETE, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
             FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
         };
 
@@ -1086,7 +1087,7 @@ fn open_mutation_capable_child_dir(parent: &Dir, name: &OsStr) -> std::io::Resul
             .read(true)
             .write(true)
             .follow(FollowSymlinks::No)
-            .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE)
+            .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE)
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
         let file = parent.open_with(name, &options)?;
@@ -3474,6 +3475,40 @@ mod tests {
                 .matches_child(&root.dir, OsStr::new("stage"), &child_path)
                 .unwrap()
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_child_dacl_hardening_defers_delete_until_atomic_publication() {
+        let temp = tempdir().unwrap();
+        let child_path = temp.path().join("private-state");
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        let child = open_or_create_private_child_dir(
+            &root.dir,
+            OsStr::new("private-state"),
+            &child_path,
+        )
+        .expect("open private child with a DACL-migration-compatible capability");
+
+        crate::wal::win_native::set_private_current_user_directory_dacl_bound(
+            &child_path,
+            &child,
+        )
+        .expect("bound DACL hardening must precede directory DELETE authority");
+        crate::wal::win_native::verify_private_directory_handle_dacl(&child)
+            .expect("private child capability must retain the hardened DACL");
+
+        let target = child_path.join("state.json");
+        atomic_write_private_child(
+            &child,
+            OsStr::new("state.json"),
+            &target,
+            b"private state",
+        )
+        .expect("hardened private child must support capability-relative atomic publication");
+        assert_eq!(std::fs::read(&target).unwrap(), b"private state");
     }
 
     #[test]

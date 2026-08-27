@@ -3470,6 +3470,7 @@ List installed skills + probe the router with a test message
 
 _Aliases:_ `neoth skill`
 
+- `--from-doc <PATH>` — Extract one PDF, office document, or EPUB into a sanitized operator review draft. This is read-only: it never writes, installs, activates, routes, or provider-dispatches a skill
 - `--list` — Print the table of installed skills
 - `--check-routing` — Validate catalogue-wide parent/mode alias ownership and emit every cross-owner collision. Exits non-zero when the hot-reload gate would reject the current catalogue
 - `--test <MESSAGE>` — Run the router against an arbitrary message and report the match

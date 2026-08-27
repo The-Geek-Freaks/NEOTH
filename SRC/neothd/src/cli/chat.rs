@@ -14556,7 +14556,7 @@ modes:
             min_rounds: 1,
             max_rounds: 1,
             until: Vec::new(),
-            tool_call_budget: None,
+            tool_call_budget: Some(1),
             autonomy: crate::permissions::AutonomyLevel::Full,
             refine_enabled: false,
             neoth_home: home.path().to_path_buf(),
@@ -14727,10 +14727,22 @@ modes:
         let error = run_chat_with(args, config, &provider)
             .await
             .expect_err("missing live consent marker must stop the final dispatch");
-        assert!(
-            error.to_string().contains("consent"),
-            "unexpected pre-dispatch error: {error:#}"
+        let surfaced = format!("{error:#}");
+        assert_eq!(
+            surfaced,
+            "chat post-mint provider/orchestration failure at dispatch_outer; content quarantined"
         );
+        for secret in [
+            "Reply with one short greeting.",
+            "openai_api",
+            "gpt-4o",
+            "must not dispatch",
+        ] {
+            assert!(
+                !surfaced.contains(secret),
+                "revoked-consent failure must not expose post-mint content: {secret}"
+            );
+        }
         assert_eq!(
             provider.calls.load(std::sync::atomic::Ordering::SeqCst),
             0,
@@ -15488,7 +15500,9 @@ modes:
 
     #[tokio::test]
     async fn chat_propagates_provider_error() {
-        struct FailingProvider;
+        struct FailingProvider {
+            calls: std::sync::atomic::AtomicUsize,
+        }
         #[async_trait]
         impl Provider for FailingProvider {
             fn name(&self) -> &'static str {
@@ -15498,6 +15512,8 @@ modes:
                 Some("fail-1")
             }
             async fn complete(&self, _req: Request) -> Result<Completion> {
+                self.calls
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 anyhow::bail!("simulated upstream failure")
             }
         }
@@ -15572,12 +15588,25 @@ modes:
             until: vec![],
         };
 
-        let error = run_chat_with(args, config, &FailingProvider)
+        let provider = FailingProvider {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let error = run_chat_with(args, config, &provider)
             .await
             .expect_err("the synthetic transport must fail after authorization");
+        let surfaced = format!("{error:#}");
+        assert_eq!(
+            surfaced,
+            "chat post-mint provider/orchestration failure at dispatch_outer; content quarantined"
+        );
         assert!(
-            error.to_string().contains("simulated upstream failure"),
-            "test must reach the provider transport, got: {error:#}"
+            !surfaced.contains("simulated upstream failure"),
+            "opaque provider failure must not expose the raw upstream text"
+        );
+        assert_eq!(
+            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the provider transport must have been reached before its error was quarantined"
         );
 
         // B22 — a failed wire call must still have its final request estimate
@@ -18174,11 +18203,17 @@ modes:
             Ok(_) => panic!("strict policy must block the unknown paid provider"),
             Err(error) => error,
         };
-        assert!(
-            error.to_string().contains("authorization")
-                || error.to_string().contains("fail-closed"),
-            "unexpected error: {error}"
+        let surfaced = format!("{error:#}");
+        assert_eq!(
+            surfaced,
+            "chat post-mint provider/orchestration failure at dispatch_outer; content quarantined"
         );
+        for secret in ["blocked prompt", "unknown-paid-model"] {
+            assert!(
+                !surfaced.contains(secret),
+                "authorization failure must not expose post-mint content: {secret}"
+            );
+        }
         assert!(
             seen.lock().unwrap().is_none(),
             "the provider transport must not run after authorization is denied"
