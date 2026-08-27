@@ -409,7 +409,9 @@ pub struct PromptBuildError {
 
 impl fmt::Debug for PromptBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("PromptBuildError").finish_non_exhaustive()
+        formatter
+            .debug_struct("PromptBuildError")
+            .finish_non_exhaustive()
     }
 }
 

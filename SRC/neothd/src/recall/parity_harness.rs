@@ -1275,11 +1275,7 @@ fn validate_batch_result_inputs(
     receipt: &SignedFourGraderBatchResultReceipt,
     expected_receipt_pubkey_b64: &str,
     result_bytes: &[Vec<u8>],
-) -> Result<(
-    ValidatedBatchResultFiles,
-    String,
-    String,
-)> {
+) -> Result<(ValidatedBatchResultFiles, String, String)> {
     if result_bytes.len() != FOUR_GRADER_COUNT {
         anyhow::bail!("attested batch result ingest requires exactly four result files");
     }
