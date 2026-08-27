@@ -342,7 +342,7 @@ pub fn migrate_legacy_hygiene_state(
             return Err(HygieneStoreError::StateAlreadyExists);
         }
         Err(_) => return Err(HygieneStoreError::SafeStoreUnavailable),
-    }
+    };
     Ok(HygieneMigrationOutcome::Migrated(HygieneApplyOutcome {
         state,
         plan,
@@ -381,7 +381,7 @@ fn acquire_bound_lock(lock: &std::fs::File) -> Result<(), HygieneStoreError> {
     loop {
         match lock.try_lock() {
             Ok(()) => return Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            Err(std::fs::TryLockError::WouldBlock) => {
                 if started.elapsed() >= std::time::Duration::from_secs(5) {
                     return Err(HygieneStoreError::LockUnavailable);
                 }
@@ -428,7 +428,7 @@ fn verify_private_hygiene_directory(
     #[cfg(unix)]
     {
         use cap_std::fs::MetadataExt as _;
-        use std::os::unix::fs::PermissionsExt as _;
+        use cap_std::fs::PermissionsExt as _;
 
         let metadata = directory
             .dir_metadata()

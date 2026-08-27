@@ -14559,7 +14559,7 @@ modes:
             None,
             &crate::mcp::McpToolScope::default(),
             &crate::cli::elicitation::ElicitationHandler::Disabled,
-            Some(canary),
+            Some(std::sync::Arc::clone(&canary)),
         )
         .await
         .expect("the loop must install exactly one authorization boundary around the raw guard");
