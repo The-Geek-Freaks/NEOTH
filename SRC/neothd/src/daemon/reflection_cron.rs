@@ -624,13 +624,8 @@ fn run_period_reflection_ticks_once(
     // composition cadence. `cfg` and `obs_ref` are immutable snapshots; the
     // pre-v2 implementation is read-only and returns deferred candidates.
     // A later authority-backed executor must retain this immutable snapshot.
-    let retention = enforce_daily_retention(
-        home,
-        now_unix,
-        &cfg.daily_retention,
-        obs_ref,
-    )
-    .map_err(|_| "daily retention enforcement failed".to_string());
+    let retention = enforce_daily_retention(home, now_unix, &cfg.daily_retention, obs_ref)
+        .map_err(|_| "daily retention enforcement failed".to_string());
     let yearly_tag = year_tag_from_unix(now_unix);
     let yearly = run_period_reflection_tick_once(
         home,
@@ -1380,7 +1375,10 @@ mod tests {
         )
         .unwrap();
         let retention = results.retention.unwrap();
-        assert_eq!(retention.execution, DailyRetentionExecution::AwaitingRetentionAuthority);
+        assert_eq!(
+            retention.execution,
+            DailyRetentionExecution::AwaitingRetentionAuthority
+        );
         assert_eq!(retention.archives_deleted, 0);
         assert_eq!(retention.archives_pending, 1);
         assert!(jsonl_file(home.path(), PeriodKind::Daily, &stale_tag).exists());

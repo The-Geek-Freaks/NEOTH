@@ -595,30 +595,21 @@ fn open_existing_read_only_child(
 fn open_existing_daily_retention_archive(
     home: &Path,
 ) -> std::io::Result<Option<ReadOnlyDailyArchive>> {
-    let Some(home_dir) = crate::skills::store::open_absolute_bound_directory(
-        home,
-        false,
-        "daily retention home",
-    )
-    .map_err(std::io::Error::other)?
+    let Some(home_dir) =
+        crate::skills::store::open_absolute_bound_directory(home, false, "daily retention home")
+            .map_err(std::io::Error::other)?
     else {
         return Ok(None);
     };
     let reflections_path = home.join("reflections");
-    let Some(reflections) = open_existing_read_only_child(
-        &home_dir.dir,
-        OsStr::new("reflections"),
-        &reflections_path,
-    )?
+    let Some(reflections) =
+        open_existing_read_only_child(&home_dir.dir, OsStr::new("reflections"), &reflections_path)?
     else {
         return Ok(None);
     };
     let daily_path = periodic_dir(home, PeriodKind::Daily);
-    let Some(daily) = open_existing_read_only_child(
-        &reflections,
-        OsStr::new("daily"),
-        &daily_path,
-    )?
+    let Some(daily) =
+        open_existing_read_only_child(&reflections, OsStr::new("daily"), &daily_path)?
     else {
         return Ok(None);
     };
@@ -689,19 +680,15 @@ impl ReadOnlyObsidianDailyTarget {
         else {
             return Ok(None);
         };
-        let Some(mut current) = open_existing_read_only_child(
-            &vault_parent.dir,
-            &vault_name,
-            vault_path,
-        )?
+        let Some(mut current) =
+            open_existing_read_only_child(&vault_parent.dir, &vault_name, vault_path)?
         else {
             return Ok(None);
         };
         let mut current_path = vault_path.to_path_buf();
         for component in components {
             let child_path = current_path.join(&component);
-            let Some(child) =
-                open_existing_read_only_child(&current, &component, &child_path)?
+            let Some(child) = open_existing_read_only_child(&current, &component, &child_path)?
             else {
                 return Ok(None);
             };
@@ -1393,22 +1380,20 @@ fn daily_retention_tags(
                 "daily retention clock is invalid",
             )
         })?;
-    let current = chrono::DateTime::<chrono::Utc>::from_timestamp(now_unix, 0).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "daily retention clock is invalid",
-        )
-    })?;
-    let expired_through = chrono::DateTime::<chrono::Utc>::from_timestamp(
-        expired_through_unix,
-        0,
-    )
-    .ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "daily retention clock is invalid",
-        )
-    })?;
+    let current =
+        chrono::DateTime::<chrono::Utc>::from_timestamp(now_unix, 0).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "daily retention clock is invalid",
+            )
+        })?;
+    let expired_through = chrono::DateTime::<chrono::Utc>::from_timestamp(expired_through_unix, 0)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "daily retention clock is invalid",
+            )
+        })?;
     let current_tag = current.format("%Y-%m-%d").to_string();
     let expired_through_tag = expired_through.format("%Y-%m-%d").to_string();
     if !is_exact_daily_tag(&current_tag) || !is_exact_daily_tag(&expired_through_tag) {
@@ -1514,12 +1499,12 @@ fn is_pending_bound_delete_tombstone(name: &OsStr) -> bool {
 /// tombstone. The durable identity/receipt that could prove it belongs to a
 /// particular effect is unavailable in this slice, so stop explicitly rather
 /// than treating the tombstone as an unknown leaf forever or guessing cleanup.
-fn has_pending_retention_effect_tombstone(
-    archive: &ReadOnlyDailyArchive,
-) -> std::io::Result<bool> {
-    Ok(bounded_retention_child_names(&archive.daily, MAX_DAILY_RETENTION_ENTRIES)?
-        .iter()
-        .any(|name| is_pending_bound_delete_tombstone(name)))
+fn has_pending_retention_effect_tombstone(archive: &ReadOnlyDailyArchive) -> std::io::Result<bool> {
+    Ok(
+        bounded_retention_child_names(&archive.daily, MAX_DAILY_RETENTION_ENTRIES)?
+            .iter()
+            .any(|name| is_pending_bound_delete_tombstone(name)),
+    )
 }
 
 fn archive_tag_from_retention_leaf(name: &OsStr) -> std::io::Result<String> {
@@ -1544,9 +1529,7 @@ fn archive_tag_from_retention_leaf(name: &OsStr) -> std::io::Result<String> {
     Ok(tag.to_string())
 }
 
-fn note_leaf_from_retention_name(
-    name: &OsStr,
-) -> std::io::Result<(String, RetentionNoteLeafKind)> {
+fn note_leaf_from_retention_name(name: &OsStr) -> std::io::Result<(String, RetentionNoteLeafKind)> {
     let name = name.to_str().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -1585,10 +1568,7 @@ fn note_leaf_from_retention_name(
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
         if decimal || windows_nonce {
-            return Ok((
-                name[..10].to_string(),
-                RetentionNoteLeafKind::LegacyTemp,
-            ));
+            return Ok((name[..10].to_string(), RetentionNoteLeafKind::LegacyTemp));
         }
     }
     Err(std::io::Error::new(
@@ -1695,11 +1675,8 @@ fn plan_daily_archive_retention(
             sha256: record.sha256.clone(),
         })
         .collect();
-    let selected = select_deterministic_retention_batch(
-        candidates,
-        None,
-        MAX_DAILY_RETENTION_BATCH_ENTRIES,
-    )?;
+    let selected =
+        select_deterministic_retention_batch(candidates, None, MAX_DAILY_RETENTION_BATCH_ENTRIES)?;
     Ok(RetentionArchivePlan { records, selected })
 }
 
@@ -1733,12 +1710,10 @@ fn plan_managed_daily_note_retention(
         if record.expired {
             match kind {
                 RetentionNoteLeafKind::LegacyNote => {
-                    plan.unattested_expired_notes =
-                        plan.unattested_expired_notes.saturating_add(1);
+                    plan.unattested_expired_notes = plan.unattested_expired_notes.saturating_add(1);
                 }
                 RetentionNoteLeafKind::LegacyTemp => {
-                    plan.unattested_expired_temps =
-                        plan.unattested_expired_temps.saturating_add(1);
+                    plan.unattested_expired_temps = plan.unattested_expired_temps.saturating_add(1);
                 }
             }
         }
@@ -1779,27 +1754,22 @@ pub fn enforce_daily_retention(
     obsidian: Option<(&Path, &str)>,
 ) -> Result<DailyRetentionOutcome, DailyRetentionError> {
     policy.validate()?;
-    let (current_tag, expired_through_tag) = daily_retention_tags(now_unix, policy).map_err(|_| {
-        DailyRetentionError {
+    let (current_tag, expired_through_tag) =
+        daily_retention_tags(now_unix, policy).map_err(|_| DailyRetentionError {
             reason: "clock unavailable",
-        }
-    })?;
+        })?;
     let note_target = match obsidian {
-        Some((vault, subdir)) => {
-            ReadOnlyObsidianDailyTarget::open_existing(vault, subdir).map_err(|_| {
-                DailyRetentionError {
-                    reason: "managed note target is unavailable",
-                }
-            })?
-        }
+        Some((vault, subdir)) => ReadOnlyObsidianDailyTarget::open_existing(vault, subdir)
+            .map_err(|_| DailyRetentionError {
+                reason: "managed note target is unavailable",
+            })?,
         None => None,
     };
     let mut total_bytes = 0usize;
-    let Some(archive) = open_existing_daily_retention_archive(home).map_err(|_| {
-        DailyRetentionError {
+    let Some(archive) =
+        open_existing_daily_retention_archive(home).map_err(|_| DailyRetentionError {
             reason: "archive inventory is invalid",
-        }
-    })?
+        })?
     else {
         let unattested_note_debt = note_target
             .as_ref()
@@ -1862,10 +1832,7 @@ pub fn enforce_daily_retention(
         }
     };
 
-    let archives_pending = archives
-        .values()
-        .filter(|record| record.expired)
-        .count();
+    let archives_pending = archives.values().filter(|record| record.expired).count();
     let unattested_note_debt = note_plan
         .unattested_expired_notes
         .saturating_add(note_plan.unattested_expired_temps);
@@ -2925,12 +2892,8 @@ mod tests {
         let mut after = None;
         let mut recovered = Vec::new();
         loop {
-            let batch = select_deterministic_retention_batch(
-                all.clone(),
-                after.as_deref(),
-                64,
-            )
-            .unwrap();
+            let batch =
+                select_deterministic_retention_batch(all.clone(), after.as_deref(), 64).unwrap();
             if batch.is_empty() {
                 break;
             }
@@ -2944,8 +2907,7 @@ mod tests {
 
         assert_eq!(recovered.len(), 365, "257+ and multiyear histories batch");
         assert_eq!(
-            recovered,
-            all,
+            recovered, all,
             "each retry continues after the exact prior terminal candidate"
         );
     }
@@ -3007,20 +2969,12 @@ mod tests {
         .unwrap();
         settle_daily_admission(home.path(), &current, None, None).unwrap();
 
-        let first = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
-        let retry = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let first =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
+        let retry =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
 
         assert_eq!(
             first.execution,
@@ -3029,12 +2983,14 @@ mod tests {
         assert_eq!(first.archives_deleted, 0);
         assert_eq!(first.archives_pending, 257);
         assert_eq!(retry, first, "a retry cannot advance an unsigned batch");
-        assert!(jsonl_file(
-            home.path(),
-            PeriodKind::Daily,
-            &date_tag_from_unix(now - 346 * 86_400),
-        )
-        .exists());
+        assert!(
+            jsonl_file(
+                home.path(),
+                PeriodKind::Daily,
+                &date_tag_from_unix(now - 346 * 86_400),
+            )
+            .exists()
+        );
         assert!(jsonl_file(home.path(), PeriodKind::Daily, &current_tag).exists());
     }
 
@@ -3093,21 +3049,29 @@ mod tests {
         .unwrap();
         assert_eq!(emitted.len(), MAX_DAILY_RETENTION_BATCH_ENTRIES);
         assert!(emitted.len() <= MAX_DAILY_RETENTION_BATCH_ENTRIES);
-        assert!(select_deterministic_retention_batch(
-            candidates,
-            None,
-            MAX_DAILY_RETENTION_BATCH_ENTRIES + 1,
-        )
-        .is_err());
+        assert!(
+            select_deterministic_retention_batch(
+                candidates,
+                None,
+                MAX_DAILY_RETENTION_BATCH_ENTRIES + 1,
+            )
+            .is_err()
+        );
 
         let outcome = enforce_daily_retention(home.path(), now, &policy, None).unwrap();
-        assert_eq!(outcome.execution, DailyRetentionExecution::AwaitingRetentionAuthority);
+        assert_eq!(
+            outcome.execution,
+            DailyRetentionExecution::AwaitingRetentionAuthority
+        );
         assert_eq!(
             outcome.archives_pending,
             MAX_DAILY_RETENTION_ENTRIES - usize::from(DEFAULT_DAILY_RETENTION_DAYS)
         );
         assert_eq!(outcome.archives_deleted, 0);
-        assert_eq!(daily_retention_archive_manifest(home.path()), manifest_before);
+        assert_eq!(
+            daily_retention_archive_manifest(home.path()),
+            manifest_before
+        );
     }
 
     #[test]
@@ -3140,23 +3104,17 @@ mod tests {
         let archive = open_existing_daily_retention_archive(home.path())
             .unwrap()
             .expect("over-cap fixture archive exists");
-        let capacity_error = bounded_retention_child_names(
-            &archive.daily,
-            MAX_DAILY_RETENTION_ENTRIES,
-        )
-        .unwrap_err();
+        let capacity_error =
+            bounded_retention_child_names(&archive.daily, MAX_DAILY_RETENTION_ENTRIES).unwrap_err();
         assert_eq!(capacity_error.kind(), std::io::ErrorKind::InvalidData);
         assert_eq!(
             capacity_error.to_string(),
             "daily retention inventory exceeds its entry limit"
         );
-        assert!(enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .is_err());
+        assert!(
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None,)
+                .is_err()
+        );
         for (path, bytes) in [
             first.expect("first fixture bytes"),
             last.expect("last fixture bytes"),
@@ -3201,13 +3159,9 @@ mod tests {
         let manifest_before = daily_retention_archive_manifest(home.path());
         assert_eq!(manifest_before.0, 366);
 
-        let outcome = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let outcome =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
 
         assert_eq!(
             outcome.execution,
@@ -3234,7 +3188,10 @@ mod tests {
             std::fs::read(jsonl_file(home.path(), PeriodKind::Daily, &current_tag)).unwrap(),
             current_bytes
         );
-        assert_eq!(daily_retention_archive_manifest(home.path()), manifest_before);
+        assert_eq!(
+            daily_retention_archive_manifest(home.path()),
+            manifest_before
+        );
     }
 
     #[test]
@@ -3269,13 +3226,9 @@ mod tests {
         let manifest_before = daily_retention_archive_manifest(home.path());
         assert_eq!(manifest_before.0, 732);
 
-        let outcome = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let outcome =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
 
         assert_ne!(
             &representatives[3].0[..4],
@@ -3307,7 +3260,10 @@ mod tests {
             std::fs::read(jsonl_file(home.path(), PeriodKind::Daily, &current_tag)).unwrap(),
             current_bytes
         );
-        assert_eq!(daily_retention_archive_manifest(home.path()), manifest_before);
+        assert_eq!(
+            daily_retention_archive_manifest(home.path()),
+            manifest_before
+        );
     }
 
     #[test]
@@ -3335,20 +3291,12 @@ mod tests {
         .unwrap();
         settle_daily_admission(home.path(), &current, None, None).unwrap();
 
-        let first = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
-        let retry = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let first =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
+        let retry =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
 
         assert_eq!(
             first.execution,
@@ -3378,9 +3326,7 @@ mod tests {
         )
         .unwrap();
         settle_daily_admission(home.path(), &stale, None, Some((vault.path(), "NEOTH"))).unwrap();
-        let historical_tmp = vault
-            .path()
-            .join(format!("NEOTH/Daily/{stale_tag}.md.tmp"));
+        let historical_tmp = vault.path().join(format!("NEOTH/Daily/{stale_tag}.md.tmp"));
         std::fs::write(&historical_tmp, stale.to_obsidian_md()).unwrap();
 
         let outcome = enforce_daily_retention(
@@ -3401,10 +3347,12 @@ mod tests {
         assert_eq!(outcome.note_temps_deleted, 0);
         assert_eq!(outcome.daily_leaves_removed, 0);
         assert!(jsonl_file(home.path(), PeriodKind::Daily, &stale_tag).exists());
-        assert!(vault
-            .path()
-            .join(format!("NEOTH/Daily/{stale_tag}.md"))
-            .exists());
+        assert!(
+            vault
+                .path()
+                .join(format!("NEOTH/Daily/{stale_tag}.md"))
+                .exists()
+        );
         assert!(historical_tmp.exists());
     }
 
@@ -3483,15 +3431,15 @@ mod tests {
             return;
         }
 
-        assert!(enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .is_err());
+        assert!(
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None,)
+                .is_err()
+        );
         assert!(archive.exists(), "the reparse leaf itself remains");
-        assert!(outside_archive.exists(), "cleanup never followed the target");
+        assert!(
+            outside_archive.exists(),
+            "cleanup never followed the target"
+        );
         assert!(jsonl_file(home.path(), PeriodKind::Daily, &current_tag).exists());
     }
 
@@ -3514,13 +3462,8 @@ mod tests {
             now,
         )
         .unwrap();
-        let stale = build_reflection(
-            PeriodKind::Daily,
-            &stale_tag,
-            &["old-managed".into()],
-            now,
-        )
-        .unwrap();
+        let stale =
+            build_reflection(PeriodKind::Daily, &stale_tag, &["old-managed".into()], now).unwrap();
         let oldest_retained = build_reflection(
             PeriodKind::Daily,
             &oldest_retained_tag,
@@ -3541,13 +3484,9 @@ mod tests {
         settle_daily_admission(home.path(), &oldest_retained, None, None).unwrap();
         settle_daily_admission(home.path(), &current, None, None).unwrap();
 
-        let outcome = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let outcome =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
         assert_eq!(
             outcome.execution,
             DailyRetentionExecution::AwaitingRetentionAuthority
@@ -3591,13 +3530,9 @@ mod tests {
         .unwrap();
         settle_daily_admission(home.path(), &stale, None, None).unwrap();
 
-        let outcome = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let outcome =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
 
         assert_eq!(
             outcome.execution,
@@ -3652,13 +3587,9 @@ mod tests {
         )
         .unwrap();
 
-        let outcome = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let outcome =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
         assert_eq!(
             outcome.execution,
             DailyRetentionExecution::AwaitingRetentionAuthority
@@ -3744,13 +3675,9 @@ mod tests {
         // `enforce_daily_retention` intentionally accepts no lease, receipt,
         // or ambient authority input. Its pre-v2 public path can therefore
         // only inventory and report the pending bounded candidate set.
-        let outcome = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let outcome =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
 
         assert_eq!(
             outcome.execution,
@@ -3799,13 +3726,9 @@ mod tests {
         std::fs::write(&forged, b"forged authority lease").unwrap();
         std::fs::write(&stale_receipt, b"stale authority receipt").unwrap();
 
-        let outcome = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let outcome =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
 
         assert_eq!(
             outcome.execution,
@@ -3928,13 +3851,8 @@ mod tests {
         std::fs::rename(&stale_path, &tombstone).unwrap();
 
         assert_eq!(
-            enforce_daily_retention(
-                home.path(),
-                now,
-                &DailyRetentionConfig::default(),
-                None,
-            )
-            .unwrap_err(),
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None,)
+                .unwrap_err(),
             DailyRetentionError {
                 reason: "retention pending-effect recovery required",
             }
@@ -3966,21 +3884,28 @@ mod tests {
         .unwrap();
         settle_daily_admission(home.path(), &stale, None, Some((vault.path(), "NEOTH"))).unwrap();
         settle_daily_admission(home.path(), &current, None, None).unwrap();
-        std::fs::write(periodic_dir(home.path(), PeriodKind::Daily).join("unrelated.bin"), b"x")
-            .unwrap();
-
-        assert!(enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            Some((vault.path(), "NEOTH")),
+        std::fs::write(
+            periodic_dir(home.path(), PeriodKind::Daily).join("unrelated.bin"),
+            b"x",
         )
-        .is_err());
+        .unwrap();
+
+        assert!(
+            enforce_daily_retention(
+                home.path(),
+                now,
+                &DailyRetentionConfig::default(),
+                Some((vault.path(), "NEOTH")),
+            )
+            .is_err()
+        );
         assert!(jsonl_file(home.path(), PeriodKind::Daily, &stale_tag).exists());
-        assert!(vault
-            .path()
-            .join(format!("NEOTH/Daily/{stale_tag}.md"))
-            .exists());
+        assert!(
+            vault
+                .path()
+                .join(format!("NEOTH/Daily/{stale_tag}.md"))
+                .exists()
+        );
     }
 
     #[test]
@@ -4022,13 +3947,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            enforce_daily_retention(
-                home.path(),
-                now,
-                &DailyRetentionConfig::default(),
-                None,
-            )
-            .unwrap_err(),
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None,)
+                .unwrap_err(),
             DailyRetentionError {
                 reason: "archive inventory is invalid",
             }
@@ -4065,13 +3985,8 @@ mod tests {
         std::fs::write(&stale_archive, &oversized).unwrap();
 
         assert_eq!(
-            enforce_daily_retention(
-                home.path(),
-                now,
-                &DailyRetentionConfig::default(),
-                None,
-            )
-            .unwrap_err(),
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None,)
+                .unwrap_err(),
             DailyRetentionError {
                 reason: "archive inventory is invalid",
             }
@@ -4103,13 +4018,9 @@ mod tests {
         settle_daily_admission(home.path(), &stale, None, None).unwrap();
         settle_daily_admission(home.path(), &current, None, None).unwrap();
 
-        let first = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let first =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
         assert_eq!(
             first.execution,
             DailyRetentionExecution::AwaitingRetentionAuthority
@@ -4119,13 +4030,8 @@ mod tests {
         std::fs::write(&stale_path, swapped).unwrap();
 
         assert_eq!(
-            enforce_daily_retention(
-                home.path(),
-                now,
-                &DailyRetentionConfig::default(),
-                None,
-            )
-            .unwrap_err(),
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None,)
+                .unwrap_err(),
             DailyRetentionError {
                 reason: "archive inventory is invalid",
             }
@@ -4157,13 +4063,9 @@ mod tests {
         settle_daily_admission(home.path(), &stale, None, None).unwrap();
         settle_daily_admission(home.path(), &current, None, None).unwrap();
 
-        let first = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let first =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
         assert_eq!(
             first.execution,
             DailyRetentionExecution::AwaitingRetentionAuthority
@@ -4175,13 +4077,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            enforce_daily_retention(
-                home.path(),
-                now,
-                &DailyRetentionConfig::default(),
-                None,
-            )
-            .unwrap_err(),
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None,)
+                .unwrap_err(),
             DailyRetentionError {
                 reason: "archive inventory is invalid",
             }
@@ -4251,13 +4148,9 @@ mod tests {
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
         let retained_non_delete_handle = archive.daily.open_with(&stale_name, &options).unwrap();
 
-        let outcome = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let outcome =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
         assert_eq!(
             outcome.execution,
             DailyRetentionExecution::AwaitingRetentionAuthority
@@ -4311,21 +4204,28 @@ mod tests {
             "\"kind\":\"daily\",\"kind\":\"daily\"",
             1,
         );
-        assert_ne!(duplicate, serialized, "fixture must contain the daily kind field");
+        assert_ne!(
+            duplicate, serialized,
+            "fixture must contain the daily kind field"
+        );
         std::fs::write(&stale_archive, duplicate).unwrap();
 
-        assert!(enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            Some((vault.path(), "NEOTH")),
-        )
-        .is_err());
+        assert!(
+            enforce_daily_retention(
+                home.path(),
+                now,
+                &DailyRetentionConfig::default(),
+                Some((vault.path(), "NEOTH")),
+            )
+            .is_err()
+        );
         assert!(stale_archive.exists());
-        assert!(vault
-            .path()
-            .join(format!("NEOTH/Daily/{stale_tag}.md"))
-            .exists());
+        assert!(
+            vault
+                .path()
+                .join(format!("NEOTH/Daily/{stale_tag}.md"))
+                .exists()
+        );
     }
 
     #[test]
@@ -4373,10 +4273,12 @@ mod tests {
         assert_eq!(outcome.note_temps_deleted, 0);
         assert_eq!(outcome.daily_leaves_removed, 0);
         assert!(jsonl_file(home.path(), PeriodKind::Daily, &stale_tag).exists());
-        assert!(vault
-            .path()
-            .join(format!("NEOTH/Daily/{stale_tag}.md"))
-            .exists());
+        assert!(
+            vault
+                .path()
+                .join(format!("NEOTH/Daily/{stale_tag}.md"))
+                .exists()
+        );
         assert_eq!(
             std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(),
             "not-a-managed-daily-tag"
@@ -4404,36 +4306,21 @@ mod tests {
             now - 86_400,
         )
         .unwrap();
-        let current = build_reflection(
-            PeriodKind::Daily,
-            &current_tag,
-            &["same".into()],
-            now,
-        )
-        .unwrap();
+        let current =
+            build_reflection(PeriodKind::Daily, &current_tag, &["same".into()], now).unwrap();
         let mut admission = crate::reflection::hygiene::DailyAdmissionConfig::default();
         admission.enabled = true;
 
         settle_daily_admission(home.path(), &stale, None, None).unwrap();
         settle_daily_admission(home.path(), &prior, Some(&admission), None).unwrap();
         assert_eq!(
-            settle_daily_admission(
-                home.path(),
-                &current,
-                Some(&admission),
-                None,
-            )
-            .unwrap(),
+            settle_daily_admission(home.path(), &current, Some(&admission), None,).unwrap(),
             DailySettlementOutcome::Suppressed
         );
 
-        let outcome = enforce_daily_retention(
-            home.path(),
-            now,
-            &DailyRetentionConfig::default(),
-            None,
-        )
-        .unwrap();
+        let outcome =
+            enforce_daily_retention(home.path(), now, &DailyRetentionConfig::default(), None)
+                .unwrap();
         assert_eq!(
             outcome.execution,
             DailyRetentionExecution::AwaitingRetentionAuthority

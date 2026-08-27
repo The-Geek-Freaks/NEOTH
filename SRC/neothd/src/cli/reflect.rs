@@ -104,9 +104,7 @@ impl ReflectTopicsUpdateLock {
         let process_lock = REFLECT_TOPICS_UPDATE_LOCK
             .lock()
             .map_err(|_| ReflectTopicsUpdateError::SafeConfigUnavailable)?;
-        let display_path = directory
-            .display_path
-            .join(REFLECT_TOPICS_UPDATE_LOCK_FILE);
+        let display_path = directory.display_path.join(REFLECT_TOPICS_UPDATE_LOCK_FILE);
         let (os_lock, binding) = crate::skills::store::open_or_create_bound_lockfile(
             &directory.dir,
             OsStr::new(REFLECT_TOPICS_UPDATE_LOCK_FILE),
@@ -138,9 +136,7 @@ impl ReflectTopicsUpdateLock {
         &self,
         directory: &crate::skills::store::BoundDirectory,
     ) -> std::result::Result<(), ReflectTopicsUpdateError> {
-        let display_path = directory
-            .display_path
-            .join(REFLECT_TOPICS_UPDATE_LOCK_FILE);
+        let display_path = directory.display_path.join(REFLECT_TOPICS_UPDATE_LOCK_FILE);
         if self
             .binding
             .matches_regular_file_child_readonly(
@@ -348,20 +344,22 @@ impl ReflectTopicsUpdate {
         let path = self.directory.display_path.join(REFLECT_TOPICS_CONFIG_FILE);
         write_lock.revalidate(&self.directory)?;
         let write = match self.expected_bytes.as_deref() {
-            Some(expected) => crate::skills::store::replace_existing_regular_file_if_matches_report(
-                &self.directory.dir,
-                OsStr::new(REFLECT_TOPICS_CONFIG_FILE),
-                &path,
-                expected,
-                &replacement,
-            )
-            .map(|report| {
-                if report.warnings.is_empty() {
-                    ReflectTopicsWriteDurability::Confirmed
-                } else {
-                    ReflectTopicsWriteDurability::Unknown
-                }
-            }),
+            Some(expected) => {
+                crate::skills::store::replace_existing_regular_file_if_matches_report(
+                    &self.directory.dir,
+                    OsStr::new(REFLECT_TOPICS_CONFIG_FILE),
+                    &path,
+                    expected,
+                    &replacement,
+                )
+                .map(|report| {
+                    if report.warnings.is_empty() {
+                        ReflectTopicsWriteDurability::Confirmed
+                    } else {
+                        ReflectTopicsWriteDurability::Unknown
+                    }
+                })
+            }
             None => crate::skills::store::atomic_write_private_child_create_new_reported(
                 &self.directory.dir,
                 OsStr::new(REFLECT_TOPICS_CONFIG_FILE),
@@ -1122,8 +1120,14 @@ mod tests {
 
         let home = private_test_home();
         let default = ReflectTopics::load_for_automation(home.path()).unwrap();
-        assert_eq!(default.daily_retention.version, DAILY_RETENTION_CONFIG_VERSION);
-        assert_eq!(default.daily_retention.retention_days, DEFAULT_DAILY_RETENTION_DAYS);
+        assert_eq!(
+            default.daily_retention.version,
+            DAILY_RETENTION_CONFIG_VERSION
+        );
+        assert_eq!(
+            default.daily_retention.retention_days,
+            DEFAULT_DAILY_RETENTION_DAYS
+        );
 
         for yaml in [
             "daily_retention:\n  version: 1\n  retention_days: 0\n",
@@ -1262,25 +1266,15 @@ mod tests {
             second_ready: &std::path::Path,
             second_result: &std::path::Path,
         ) -> std::io::Result<Self> {
-            let first = spawn_reflect_topics_cas_child(
-                home,
-                first_ready,
-                start,
-                first_result,
-                "daily",
-            )?;
+            let first =
+                spawn_reflect_topics_cas_child(home, first_ready, start, first_result, "daily")?;
             let mut pair = Self {
                 first: Some(first),
                 second: None,
                 completed: false,
             };
-            match spawn_reflect_topics_cas_child(
-                home,
-                second_ready,
-                start,
-                second_result,
-                "yearly",
-            ) {
+            match spawn_reflect_topics_cas_child(home, second_ready, start, second_result, "yearly")
+            {
                 Ok(second) => {
                     pair.second = Some(second);
                     Ok(pair)
@@ -1334,7 +1328,9 @@ mod tests {
                 }
                 if std::time::Instant::now() >= deadline {
                     self.abort_and_reap();
-                    return Err("Topics CAS children did not load the common generation within 15s");
+                    return Err(
+                        "Topics CAS children did not load the common generation within 15s",
+                    );
                 }
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
@@ -1407,9 +1403,7 @@ mod tests {
             }
         }
 
-        fn take_outputs_after_completion(
-            &mut self,
-        ) -> Result<[std::process::Output; 2], ()> {
+        fn take_outputs_after_completion(&mut self) -> Result<[std::process::Output; 2], ()> {
             if !self.completed {
                 return Err(());
             }
@@ -1511,7 +1505,10 @@ mod tests {
             std::fs::read_to_string(&second_result).expect("second Topics child outcome"),
         ];
         assert_eq!(
-            outcomes.iter().filter(|outcome| outcome.as_str() == "confirmed").count(),
+            outcomes
+                .iter()
+                .filter(|outcome| outcome.as_str() == "confirmed")
+                .count(),
             1,
             "exactly one process may confirm its strict Topics generation"
         );
@@ -1747,8 +1744,8 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let error = digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, now)
-            .unwrap_err();
+        let error =
+            digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, now).unwrap_err();
         assert!(
             error
                 .downcast_ref::<DailyCommittedRetentionInventoryFailed>()
@@ -1761,7 +1758,10 @@ mod tests {
 
         let current_path = periodic::jsonl_file(home.path(), PeriodKind::Daily, &current_tag);
         let first_current = std::fs::read(&current_path).unwrap();
-        assert_eq!(first_current.iter().filter(|byte| **byte == b'\n').count(), 1);
+        assert_eq!(
+            first_current.iter().filter(|byte| **byte == b'\n').count(),
+            1
+        );
         let record: periodic::PeriodReflection = serde_json::from_slice(&first_current).unwrap();
         assert_eq!(record.kind, "daily");
         assert_eq!(record.tag, current_tag);
@@ -1777,8 +1777,8 @@ mod tests {
             .unwrap();
         assert_eq!(state.tag, current_tag);
 
-        let retry = digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, now)
-            .unwrap_err();
+        let retry =
+            digest_at(home.path(), DigestPeriod::Daily, OutputFormat::Table, now).unwrap_err();
         assert!(
             retry
                 .downcast_ref::<DailyCommittedRetentionInventoryFailed>()
@@ -1810,7 +1810,8 @@ mod tests {
                 "rust admission policy",
                 "digest-suppression",
             ],
-        ).unwrap();
+        )
+        .unwrap();
         let topics = crate::reflection::top_topics_in_days(&conn, now_ns, 1, 5).unwrap();
         assert!(!topics.is_empty());
         let mut admission = DailyAdmissionConfig::default();
@@ -1877,7 +1878,8 @@ mod tests {
                 "rust obsidian retry",
                 "digest-obsidian",
             ],
-        ).unwrap();
+        )
+        .unwrap();
         let vault = home.path().join("vault-is-a-file");
         std::fs::write(&vault, b"not a directory").unwrap();
         let config = FreedomConfig {
@@ -1909,7 +1911,8 @@ mod tests {
                 "replacement replacement replacement replacement replacement",
                 "digest-obsidian-retry",
             ],
-        ).unwrap();
+        )
+        .unwrap();
         let retry_topics = crate::reflection::top_topics_in_days(
             &conn,
             retry_now.saturating_mul(1_000_000_000),
@@ -1966,7 +1969,8 @@ mod tests {
                 "cli changed candidate topics",
                 "cli-archive-first",
             ],
-        ).unwrap();
+        )
+        .unwrap();
         let tag = periodic::date_tag_from_unix(now);
         let original = periodic::build_reflection(
             PeriodKind::Daily,
