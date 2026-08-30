@@ -440,7 +440,7 @@ impl DailyAdmissionGuard {
     fn ensure_lock(&self) -> Result<(), HygieneStoreError> {
         if self
             .lock_binding
-            .matches_child(
+            .matches_regular_file_child_readonly(
                 &self.store.dir,
                 OsStr::new("state-v1.lock"),
                 &self.store.display_path.join("state-v1.lock"),
@@ -765,7 +765,7 @@ fn ensure_lock_binding(
     lock_binding: &crate::skills::store::BoundChildObject,
 ) -> Result<(), HygieneStoreError> {
     if lock_binding
-        .matches_child(
+        .matches_regular_file_child_readonly(
             &store.dir,
             OsStr::new("state-v1.lock"),
             &store.display_path.join("state-v1.lock"),
@@ -1309,6 +1309,30 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_daily_guard_load_and_cas_revalidate_a_held_lock_readonly() {
+        let home = test_home();
+        let guard = lock_daily_admission(home.path()).expect("open private daily-admission guard");
+
+        assert_eq!(guard.load().expect("read through held lock"), None);
+        let durability = guard
+            .compare_and_set(0, "2026-08-27", DailyAdmissionOutcome::Suppressed, None)
+            .expect("CAS through held lock");
+        assert!(matches!(
+            durability,
+            HygieneDurability::Confirmed | HygieneDurability::RecoveryReadRequired
+        ));
+
+        let state = guard
+            .load()
+            .expect("revalidate the same held lock after CAS")
+            .expect("CAS state remains readable through the held lock");
+        assert_eq!(state.revision, 1);
+        assert_eq!(state.tag, "2026-08-27");
+        assert_eq!(state.outcome, DailyAdmissionOutcome::Suppressed);
+    }
+
     fn period(kind: &str, tag: &str, at: i64, body: &str) -> PeriodReflection {
         PeriodReflection {
             kind: kind.to_string(),
@@ -1740,7 +1764,7 @@ mod tests {
         .expect("second bound lock");
         assert!(
             binding_one
-                .matches_child(
+                .matches_regular_file_child_readonly(
                     &store_one.dir,
                     OsStr::new("state-v1.lock"),
                     &store_one.display_path.join("state-v1.lock"),
@@ -1749,7 +1773,7 @@ mod tests {
         );
         assert!(
             binding_two
-                .matches_child(
+                .matches_regular_file_child_readonly(
                     &store_two.dir,
                     OsStr::new("state-v1.lock"),
                     &store_two.display_path.join("state-v1.lock"),

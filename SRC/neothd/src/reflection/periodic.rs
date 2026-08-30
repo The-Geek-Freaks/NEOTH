@@ -217,10 +217,10 @@ impl std::error::Error for DailySettlementError {}
 pub(crate) struct DailyArchiveTransaction {
     home: cap_std::fs::Dir,
     reflections: cap_std::fs::Dir,
-    reflections_binding: crate::skills::store::BoundChildObject,
+    reflections_binding: crate::skills::store::BoundDirectoryChild,
     reflections_path: PathBuf,
     daily: cap_std::fs::Dir,
-    daily_binding: crate::skills::store::BoundChildObject,
+    daily_binding: crate::skills::store::BoundDirectoryChild,
     daily_path: PathBuf,
 }
 
@@ -232,7 +232,7 @@ struct BoundObsidianDirectoryLink {
     parent: cap_std::fs::Dir,
     name: OsString,
     dir: cap_std::fs::Dir,
-    binding: crate::skills::store::BoundChildObject,
+    binding: crate::skills::store::BoundDirectoryChild,
     path: PathBuf,
 }
 
@@ -247,7 +247,7 @@ struct BoundObsidianDailyTarget {
 /// Read-only capability for an existing private Daily archive. This is
 /// intentionally separate from [`DailyArchiveTransaction`]: retention v1 may
 /// inspect already-existing input but must not create private namespaces or
-/// obtain the mutation-capable retained handles used by daily settlement.
+/// obtain the retained capability chain used by daily settlement.
 struct ReadOnlyDailyArchive {
     daily: cap_std::fs::Dir,
     daily_path: PathBuf,
@@ -733,7 +733,7 @@ impl BoundObsidianDailyTarget {
                 "Obsidian vault parent missing",
             )
         })?;
-        let (vault, vault_binding) = crate::skills::store::open_mutation_bound_real_child_dir(
+        let (vault, vault_binding) = crate::skills::store::open_bound_real_child_dir(
             &vault_parent.dir,
             &vault_name,
             vault_path,
@@ -811,7 +811,7 @@ impl BoundObsidianDailyTarget {
             link.dir.dir_metadata()?;
             if !link
                 .binding
-                .matches_child(&link.parent, &link.name, &link.path)
+                .matches_directory_child(&link.parent, &link.name, &link.path)
                 .map_err(std::io::Error::other)?
             {
                 return Err(std::io::Error::new(
@@ -861,7 +861,7 @@ impl DailyArchiveTransaction {
     fn revalidate(&self) -> std::io::Result<()> {
         if !self
             .reflections_binding
-            .matches_child(
+            .matches_directory_child(
                 &self.home,
                 OsStr::new("reflections"),
                 &self.reflections_path,
@@ -875,7 +875,7 @@ impl DailyArchiveTransaction {
         }
         if self
             .daily_binding
-            .matches_child(&self.reflections, OsStr::new("daily"), &self.daily_path)
+            .matches_directory_child(&self.reflections, OsStr::new("daily"), &self.daily_path)
             .map_err(std::io::Error::other)?
         {
             Ok(())
@@ -2470,7 +2470,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_nested_obsidian_ancestor_swap_refuses_detached_note_and_marker() {
+    fn windows_retained_obsidian_directory_capability_blocks_ancestor_swap() {
         let home = TempDir::new().unwrap();
         let vault = TempDir::new().unwrap();
         let reflection = build_reflection(
@@ -2482,56 +2482,58 @@ mod tests {
         .unwrap();
         let archive = open_daily_archive_transaction(home.path()).unwrap();
         archive.append_once(&reflection).unwrap();
-        let target = BoundObsidianDailyTarget::open(vault.path(), "NEOTH/Inner").unwrap();
+        let _target = BoundObsidianDailyTarget::open(vault.path(), "NEOTH/Inner").unwrap();
         let old = vault.path().join("old-NEOTH");
-        std::fs::rename(vault.path().join("NEOTH"), &old).unwrap();
-        std::fs::create_dir(vault.path().join("NEOTH")).unwrap();
-        std::fs::create_dir_all(vault.path().join("NEOTH/Inner")).unwrap();
-
-        assert!(target.write_exact(&reflection).is_err());
         assert!(
-            !vault
-                .path()
-                .join("NEOTH/Inner/Daily/2026-08-27.md")
-                .exists()
+            std::fs::rename(vault.path().join("NEOTH"), &old).is_err(),
+            "the retained cap-std directory capability must withhold delete sharing"
         );
-        assert!(!home.path().join("reflections/daily-last.txt").exists());
+        assert!(!old.exists());
     }
 
     #[cfg(windows)]
     #[test]
-    fn windows_mutation_capabilities_publish_daily_archive_note_and_marker() {
+    fn windows_direct_missing_tag_daily_transaction_publishes_from_private_capabilities() {
         let home = TempDir::new().unwrap();
-        let vault = TempDir::new().unwrap();
         let reflection = build_reflection(
             PeriodKind::Daily,
             "2026-08-27",
-            &["windows-capability".into()],
+            &["windows-direct-archive".into()],
             1_777_000_000,
         )
         .unwrap();
 
-        assert_eq!(
-            settle_daily_admission(
-                home.path(),
-                &reflection,
-                None,
-                Some((vault.path(), "NEOTH/Inner")),
-            )
-            .unwrap(),
-            DailySettlementOutcome::Admitted,
-        );
-        assert!(jsonl_file(home.path(), PeriodKind::Daily, &reflection.tag).exists());
+        let archive = open_daily_archive_transaction(home.path()).unwrap();
+        crate::wal::win_native::verify_private_directory_handle_dacl(&archive.home)
+            .expect("private test home must retain its TokenUser DACL");
+        crate::wal::win_native::verify_private_directory_handle_dacl(&archive.reflections)
+            .expect("private reflections capability must retain its TokenUser DACL");
+        crate::wal::win_native::verify_private_directory_handle_dacl(&archive.daily)
+            .expect("private Daily capability must retain its TokenUser DACL");
+        let lock_path = home
+            .path()
+            .join("reflections/daily-admission/state-v1.lock");
         assert!(
-            vault
-                .path()
-                .join("NEOTH/Inner/Daily/2026-08-27.md")
-                .exists()
+            !lock_path.exists(),
+            "the exact direct transaction regression intentionally has no admission lock leaf"
+        );
+
+        assert_eq!(
+            archive.inspect(&reflection).unwrap(),
+            DailyArchiveStatus::Missing,
+            "the exact direct transaction topology starts without a target leaf"
         );
         assert_eq!(
-            std::fs::read_to_string(home.path().join("reflections/daily-last.txt")).unwrap(),
-            reflection.tag,
+            archive.append_once(&reflection).unwrap(),
+            DailyArchiveStatus::Matching,
+            "the staged handle must publish through the retained cap-std Daily capability"
         );
+        assert_eq!(
+            archive.inspect(&reflection).unwrap(),
+            DailyArchiveStatus::Matching,
+        );
+        assert!(!lock_path.exists());
+        assert!(!crate::reflection::hygiene_store::daily_admission_state_path(home.path()).exists());
     }
 
     #[test]
@@ -2750,8 +2752,8 @@ mod tests {
         .unwrap();
         let archive = open_daily_archive_transaction(home.path()).unwrap();
         archive.append_once(&reflection).unwrap();
-        // The retained mutation-capable binding normally denies replacement on
-        // Windows. If a filesystem permits it, the identity check below must
+        // The retained cap-std directory capability normally denies replacement
+        // on Windows. If a filesystem permits it, the identity check below must
         // still reject publication into the replacement namespace.
         let swapped = std::fs::rename(
             home.path().join("reflections"),

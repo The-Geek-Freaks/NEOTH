@@ -339,7 +339,7 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
         "read_pinned_attested_imports",
         "state_artifact.revalidate(run, STATE_FILE)",
         "self.imports.revalidate(run)",
-        "directory_identity.matches_child",
+        "directory_identity.matches_directory_child",
         "attested imports directory identity changed",
     ] {
         assert!(
@@ -351,9 +351,10 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
         "pub(crate) fn open_bound_real_child_dir",
         "let child = open_real_child_dir(parent, name, display_path)?",
         "child.dir_metadata()",
-        "let binding = bind_child_object(parent, name, display_path)?",
-        "opened_identity == binding.identity_token()",
-        "binding.matches_child(parent, name, display_path)?",
+        "pub(crate) struct BoundDirectoryChild",
+        "let binding = bind_directory_child(parent, name, display_path)?",
+        "opened_identity == binding.identity_token",
+        "binding.matches_directory_child(parent, name, display_path)?",
     ] {
         assert!(
             STORE.contains(required),
@@ -364,6 +365,25 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
         HARNESS.contains("open_bound_real_child_dir("),
         "attested imports must bind their retained directory capability through the shared helper"
     );
+    let directory_open = STORE
+        .split("pub(crate) fn open_real_child_dir")
+        .nth(1)
+        .and_then(|tail| tail.split("fn readonly_real_directory_identity").next())
+        .expect("shared real-directory opener source");
+    assert!(
+        directory_open.contains("parent.open_dir_nofollow(name)"),
+        "typed directory binding must use cap-std's no-follow directory opener"
+    );
+    for forbidden in [
+        "FILE_SHARE_DELETE",
+        "Dir::from_std_file",
+        "open_mutation_capable_child_dir",
+    ] {
+        assert!(
+            !directory_open.contains(forbidden),
+            "typed directory opener must not retain DELETE-sharing authority: {forbidden}"
+        );
+    }
 }
 
 #[test]

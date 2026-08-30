@@ -2210,13 +2210,13 @@ struct BoundAttestedImport {
 
 struct PinnedAttestedImports {
     dir: cap_std::fs::Dir,
-    directory_identity: crate::skills::store::BoundChildObject,
+    directory_identity: crate::skills::store::BoundDirectoryChild,
     entries: Vec<BoundAttestedImport>,
 }
 
 impl PinnedAttestedImports {
     fn revalidate(&self, run: &BoundParityRun) -> Result<()> {
-        if !self.directory_identity.matches_child(
+        if !self.directory_identity.matches_directory_child(
             &run.root.dir,
             std::ffi::OsStr::new(IMPORTS_DIR),
             &run.child_display(IMPORTS_DIR),

@@ -41,6 +41,13 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+#[cfg(all(test, windows))]
+thread_local! {
+    static TEST_BEFORE_WINDOWS_RECURSIVE_LEAF_DELETE:
+        std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 #[cfg(test)]
 pub(crate) fn fail_delete_after_work_units(units: usize) {
     TEST_DELETE_WORK_BEFORE_FAILURE.with(|remaining| remaining.set(Some(units)));
@@ -94,6 +101,22 @@ fn run_after_bound_file_revalidation_for_test() {
     });
 }
 
+#[cfg(all(test, windows))]
+fn set_before_windows_recursive_leaf_delete_for_test(hook: impl FnOnce() + 'static) {
+    TEST_BEFORE_WINDOWS_RECURSIVE_LEAF_DELETE.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(all(test, windows))]
+fn run_before_windows_recursive_leaf_delete_for_test() {
+    TEST_BEFORE_WINDOWS_RECURSIVE_LEAF_DELETE.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
 #[cfg(test)]
 static TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT: std::sync::Mutex<Vec<PathBuf>> =
     std::sync::Mutex::new(Vec::new());
@@ -138,6 +161,30 @@ pub(crate) struct BoundDirectory {
 pub(crate) struct BoundChildObject {
     identity_token: String,
     _handle: Option<File>,
+}
+
+/// Stable no-follow identity for one direct real-directory child.
+///
+/// Unlike [`BoundChildObject`], this intentionally retains no native mutation
+/// handle. `cap_std::fs::Dir` requires its Windows handle to withhold
+/// `FILE_SHARE_DELETE`; revalidating a retained directory through another
+/// no-follow directory capability preserves that fence without ever requesting
+/// directory `DELETE` access.
+pub(crate) struct BoundDirectoryChild {
+    identity_token: String,
+}
+
+impl BoundDirectoryChild {
+    /// Re-check a direct real-directory child through a cap-std-compliant
+    /// no-follow capability and compare its stable identity.
+    pub(crate) fn matches_directory_child(
+        &self,
+        parent: &Dir,
+        name: &OsStr,
+        display_path: &Path,
+    ) -> Result<bool> {
+        Ok(readonly_real_directory_identity(parent, name, display_path)? == self.identity_token)
+    }
 }
 
 impl BoundChildObject {
@@ -478,6 +525,19 @@ pub(crate) fn bind_child_object(
             }
         }
     }
+}
+
+/// Bind one direct real-directory child without acquiring directory mutation
+/// authority. The identity is revalidated through `open_dir_nofollow`, whose
+/// Windows handle honors cap-std's no-delete-share requirement.
+fn bind_directory_child(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<BoundDirectoryChild> {
+    Ok(BoundDirectoryChild {
+        identity_token: readonly_real_directory_identity(parent, name, display_path)?,
+    })
 }
 
 /// Open `path` as a stable directory capability. The grandparent is the
@@ -857,34 +917,6 @@ fn create_private_child_directory(parent: &Dir, name: &OsStr) -> std::io::Result
 /// other Windows reparse point.
 pub(crate) fn open_real_child_dir(parent: &Dir, name: &OsStr, display_path: &Path) -> Result<Dir> {
     validate_child_name(name)?;
-    #[cfg(windows)]
-    let child = {
-        use cap_std::fs::OpenOptionsExt as _;
-        use windows_sys::Win32::Storage::FileSystem::{
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
-            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        };
-
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .follow(FollowSymlinks::No)
-            .access_mode(FILE_GENERIC_READ)
-            // A prepared mutation keeps a DELETE-capable identity handle open
-            // across generation revalidation. The read handle must therefore
-            // share DELETE as well as read/write or Windows rejects the second
-            // open with ERROR_SHARING_VIOLATION before the atomic rename.
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
-        let file = parent.open_with(name, &options).with_context(|| {
-            format!(
-                "installed skill must be a real directory, not a file, symlink, or reparse point: {}",
-                display_path.display()
-            )
-        })?;
-        Dir::from_std_file(file.into_std())
-    };
-    #[cfg(not(windows))]
     let child = parent.open_dir_nofollow(name).with_context(|| {
         format!(
             "installed skill must be a real directory, not a file, symlink, or reparse point: {}",
@@ -895,6 +927,23 @@ pub(crate) fn open_real_child_dir(parent: &Dir, name: &OsStr, display_path: &Pat
     Ok(child)
 }
 
+/// Read a direct real-directory child's stable identity through cap-std's
+/// no-follow directory open. No returned or temporary handle requests
+/// directory `DELETE` access.
+fn readonly_real_directory_identity(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<String> {
+    let child = open_real_child_dir(parent, name, display_path)?;
+    child_identity_token(&child.dir_metadata().with_context(|| {
+        format!(
+            "inspect real directory for read-only identity check {}",
+            display_path.display()
+        )
+    })?)
+}
+
 /// Open one real child directory and bind the exact retained directory handle
 /// to its current direct-child namespace entry.
 ///
@@ -902,13 +951,14 @@ pub(crate) fn open_real_child_dir(parent: &Dir, name: &OsStr, display_path: &Pat
 /// handle identity is derived before the name binding, then compared to the
 /// no-follow binding of that name.  Consequently an A-to-B-to-A namespace
 /// swap cannot pair a capability for B with a binding for A.  Callers retain
-/// both returned values and invoke [`BoundChildObject::matches_child`] before
-/// their final aggregate effect or return.
+/// both returned values and invoke
+/// [`BoundDirectoryChild::matches_directory_child`] before their final
+/// aggregate effect or return.
 pub(crate) fn open_bound_real_child_dir(
     parent: &Dir,
     name: &OsStr,
     display_path: &Path,
-) -> Result<(Dir, BoundChildObject)> {
+) -> Result<(Dir, BoundDirectoryChild)> {
     let child = open_real_child_dir(parent, name, display_path)?;
     let opened_identity = child_identity_token(&child.dir_metadata().with_context(|| {
         format!(
@@ -916,70 +966,50 @@ pub(crate) fn open_bound_real_child_dir(
             display_path.display()
         )
     })?)?;
-    let binding = bind_child_object(parent, name, display_path)?;
+    let binding = bind_directory_child(parent, name, display_path)?;
     anyhow::ensure!(
-        opened_identity == binding.identity_token(),
+        opened_identity == binding.identity_token,
         "child directory changed while its capability was being bound: {}",
         display_path.display()
     );
     anyhow::ensure!(
-        binding.matches_child(parent, name, display_path)?,
+        binding.matches_directory_child(parent, name, display_path)?,
         "child directory changed before its capability binding completed: {}",
         display_path.display()
     );
     Ok((child, binding))
 }
 
-/// Bind a caller-retained, mutation-capable direct-child directory to the
-/// exact current namespace object. This deliberately does not reopen the
-/// child through the read-only directory helper: Daily settlement uses the
-/// returned capability as the parent of later atomic publications on Windows.
+/// Bind a caller-retained direct-child directory to the exact current namespace
+/// object without converting a delete-sharing Windows handle into `Dir`.
 pub(crate) fn bind_retained_real_child_dir(
     parent: &Dir,
     name: &OsStr,
     display_path: &Path,
     child: Dir,
-) -> Result<(Dir, BoundChildObject)> {
+) -> Result<(Dir, BoundDirectoryChild)> {
     validate_child_name(name)?;
-    ensure_cap_directory_is_real(&child, "bound mutable child", display_path)?;
+    ensure_cap_directory_is_real(&child, "bound child", display_path)?;
     let opened_identity = child_identity_token(&child.dir_metadata().with_context(|| {
         format!(
             "inspect retained bound child directory {}",
             display_path.display()
         )
     })?)?;
-    let binding = bind_child_object(parent, name, display_path)?;
+    let binding = bind_directory_child(parent, name, display_path)?;
     anyhow::ensure!(
-        opened_identity == binding.identity_token(),
+        opened_identity == binding.identity_token,
         "child directory changed while its retained capability was being bound: {}",
         display_path.display()
     );
     anyhow::ensure!(
-        binding.matches_child(parent, name, display_path)?,
+        binding.matches_directory_child(parent, name, display_path)?,
         "child directory changed before its retained capability binding completed: {}",
         display_path.display()
     );
     Ok((child, binding))
 }
 
-/// Open an existing direct real-directory child with Windows mutation rights,
-/// then retain a no-follow identity binding for it. This is intentionally
-/// narrow: callers must not create a configured external root merely to gain
-/// a write-capable directory capability.
-pub(crate) fn open_mutation_bound_real_child_dir(
-    parent: &Dir,
-    name: &OsStr,
-    display_path: &Path,
-) -> Result<(Dir, BoundChildObject)> {
-    validate_child_name(name)?;
-    let child = open_mutation_capable_child_dir(parent, name).with_context(|| {
-        format!(
-            "open mutable bound child directory without following links {}",
-            display_path.display()
-        )
-    })?;
-    bind_retained_real_child_dir(parent, name, display_path, child)
-}
 
 /// Open one direct real-directory child if it exists. Absence is not an error;
 /// a file, symlink, junction, or other reparse point remains a hard refusal.
@@ -1016,7 +1046,7 @@ pub(crate) fn open_or_create_private_child_dir(
     display_path: &Path,
 ) -> Result<Dir> {
     validate_child_name(name)?;
-    match open_mutation_capable_child_dir(parent, name) {
+    match open_private_child_dir_nofollow(parent, name) {
         Ok(child) => {
             ensure_cap_directory_is_real(&child, "private child", display_path)?;
             // Existing may mean "mkdir succeeded, parent fsync failed" from a
@@ -1050,7 +1080,7 @@ pub(crate) fn open_or_create_private_child_dir(
                         display_path.display()
                     )
                 })?;
-            let child = open_mutation_capable_child_dir(parent, name).with_context(|| {
+            let child = open_private_child_dir_nofollow(parent, name).with_context(|| {
                 format!(
                     "open private child directory without following links {}",
                     display_path.display()
@@ -1068,35 +1098,14 @@ pub(crate) fn open_or_create_private_child_dir(
     }
 }
 
-/// Direct no-follow directory open that retains exactly the access needed for
-/// later capability-relative creation/replacement. On Windows directory
-/// `DELETE` is deliberately deferred until after owner-DACL hardening;
-/// file/object-specific mutation handles retain `DELETE`. A `FILE_GENERIC_READ`
-/// handle is not sufficient as the parent of an atomic rename publication.
-fn open_mutation_capable_child_dir(parent: &Dir, name: &OsStr) -> std::io::Result<Dir> {
-    #[cfg(windows)]
-    {
-        use cap_std::fs::OpenOptionsExt as _;
-        use windows_sys::Win32::Storage::FileSystem::{
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
-            FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        };
-
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .write(true)
-            .follow(FollowSymlinks::No)
-            .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
-        let file = parent.open_with(name, &options)?;
-        Ok(Dir::from_std_file(file.into_std()))
-    }
-    #[cfg(not(windows))]
-    {
-        parent.open_dir_nofollow(name)
-    }
+/// Open a private directory child through cap-std's no-follow directory API.
+///
+/// On Windows this deliberately preserves cap-std's `FILE_SHARE_DELETE`
+/// exclusion for every handle converted to [`Dir`]. Atomic publication needs
+/// `DELETE` only on its staged regular-file handle; the retained parent
+/// directory capability remains a namespace fence.
+fn open_private_child_dir_nofollow(parent: &Dir, name: &OsStr) -> std::io::Result<Dir> {
+    parent.open_dir_nofollow(name)
 }
 
 /// Read a direct regular-file child without following links and with a strict
@@ -2092,27 +2101,23 @@ fn remove_real_directory_tree_with_budget(
     }
     #[cfg(windows)]
     {
-        let handle = open_windows_mutation_handle(parent, name, display_path)?;
-        let metadata = handle
-            .metadata()
-            .with_context(|| format!("inspect removal target {}", display_path.display()))?;
-        if !metadata.is_dir() || cap_metadata_is_link_like(&metadata) {
-            anyhow::bail!(
-                "removal target must be a real directory: {}",
-                display_path.display()
-            );
-        }
-        let directory = Dir::from_std_file(
-            handle
-                .try_clone()
-                .with_context(|| format!("clone removal handle {}", display_path.display()))?
-                .into_std(),
-        );
+        let directory = open_real_child_dir(parent, name, display_path)?;
+        let expected_identity = child_identity_token(&directory.dir_metadata().with_context(|| {
+            format!("inspect removal target {}", display_path.display())
+        })?)?;
         remove_directory_contents(&directory, display_path, 0, budget)?;
         drop(directory);
 
-        // Commit deletion through the same root handle that was validated
-        // before traversal. Namespace swaps cannot redirect the commit.
+        // `Dir` deliberately withholds delete sharing, so acquire native
+        // DELETE authority only after the traversal capability closes. The
+        // identity comparison below rejects a same-name replacement in that
+        // hand-off window before the exact opened handle is marked deleted.
+        let handle = open_windows_bound_real_directory_mutation_handle(
+            parent,
+            name,
+            display_path,
+            &expected_identity,
+        )?;
         windows_mark_delete(&handle, display_path)?;
     }
     Ok(())
@@ -2262,35 +2267,27 @@ pub(crate) fn remove_empty_real_child_dir_if_present(
     }
     #[cfg(windows)]
     {
-        let handle = match open_windows_mutation_handle(parent, name, display_path) {
+        let Some(directory) = open_real_child_dir_if_present(parent, name, display_path)? else {
+            return Ok(false);
+        };
+        let expected_identity = child_identity_token(&directory.dir_metadata().with_context(|| {
+            format!("inspect empty-directory target {}", display_path.display())
+        })?)?;
+        ensure_directory_is_empty(&directory, display_path)?;
+        drop(directory);
+
+        let handle = match open_windows_bound_real_directory_mutation_handle(
+            parent,
+            name,
+            display_path,
+            &expected_identity,
+        ) {
             Ok(handle) => handle,
             Err(error) if error_has_io_kind(&error, std::io::ErrorKind::NotFound) => {
                 return Ok(false);
             }
             Err(error) => return Err(error),
         };
-        let metadata = handle.metadata().with_context(|| {
-            format!("inspect empty-directory target {}", display_path.display())
-        })?;
-        if !metadata.is_dir() || cap_metadata_is_link_like(&metadata) {
-            anyhow::bail!(
-                "empty-directory removal target must be a real directory: {}",
-                display_path.display()
-            );
-        }
-        let directory = Dir::from_std_file(
-            handle
-                .try_clone()
-                .with_context(|| {
-                    format!(
-                        "clone empty-directory removal handle {}",
-                        display_path.display()
-                    )
-                })?
-                .into_std(),
-        );
-        ensure_directory_is_empty(&directory, display_path)?;
-        drop(directory);
         windows_mark_delete(&handle, display_path)?;
         Ok(true)
     }
@@ -2352,6 +2349,35 @@ fn open_windows_mutation_handle(parent: &Dir, name: &OsStr, display_path: &Path)
     })
 }
 
+/// Acquire exact-object directory deletion authority only after every
+/// cap-std directory traversal handle for that object has closed. The caller
+/// supplies the identity observed through the preceding no-follow traversal;
+/// a same-name swap in the hand-off window fails before the raw native handle
+/// can mark any directory for deletion.
+#[cfg(windows)]
+fn open_windows_bound_real_directory_mutation_handle(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+    expected_identity: &str,
+) -> Result<File> {
+    let handle = open_windows_mutation_handle(parent, name, display_path)?;
+    let metadata = handle
+        .metadata()
+        .with_context(|| format!("inspect bound removal target {}", display_path.display()))?;
+    anyhow::ensure!(
+        metadata.is_dir() && !cap_metadata_is_link_like(&metadata),
+        "removal target must be a real directory: {}",
+        display_path.display()
+    );
+    anyhow::ensure!(
+        child_identity_token(&metadata)? == expected_identity,
+        "directory changed before exact deletion authority was acquired: {}",
+        display_path.display()
+    );
+    Ok(handle)
+}
+
 fn remove_directory_contents(
     directory: &Dir,
     display_path: &Path,
@@ -2402,24 +2428,42 @@ fn remove_directory_contents(
 
         #[cfg(windows)]
         {
-            let handle = open_windows_mutation_handle(directory, &name, &child_display)?;
-            let metadata = handle
-                .metadata()
+            let metadata = directory
+                .symlink_metadata(&name)
                 .with_context(|| format!("inspect removal child {}", child_display.display()))?;
             if metadata.is_dir() && !cap_metadata_is_link_like(&metadata) {
-                let child = Dir::from_std_file(
-                    handle
-                        .try_clone()
-                        .with_context(|| {
-                            format!("clone directory removal handle {}", child_display.display())
-                        })?
-                        .into_std(),
-                );
+                let child = open_real_child_dir(directory, &name, &child_display)?;
+                let expected_identity = child_identity_token(&child.dir_metadata().with_context(|| {
+                    format!("inspect removal child {}", child_display.display())
+                })?)?;
                 remove_directory_contents(&child, &child_display, depth + 1, budget)?;
                 drop(child);
+                budget.charge_work(&child_display)?;
+                let handle = open_windows_bound_real_directory_mutation_handle(
+                    directory,
+                    &name,
+                    &child_display,
+                    &expected_identity,
+                )?;
+                windows_mark_delete(&handle, &child_display)?;
+            } else {
+                budget.charge_work(&child_display)?;
+                #[cfg(test)]
+                run_before_windows_recursive_leaf_delete_for_test();
+                let handle = open_windows_mutation_handle(directory, &name, &child_display)?;
+                let opened_metadata = handle.metadata().with_context(|| {
+                    format!(
+                        "inspect opened removal leaf before delete {}",
+                        child_display.display()
+                    )
+                })?;
+                anyhow::ensure!(
+                    !opened_metadata.is_dir() || cap_metadata_is_link_like(&opened_metadata),
+                    "removal leaf changed into a real directory before delete: {}",
+                    child_display.display()
+                );
+                windows_mark_delete(&handle, &child_display)?;
             }
-            budget.charge_work(&child_display)?;
-            windows_mark_delete(&handle, &child_display)?;
         }
     }
     Ok(())
@@ -3456,7 +3500,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn read_directory_open_shares_delete_with_bound_mutation_identity() {
+    fn cap_std_directory_capability_fences_rename_delete_and_revalidates_identity() {
         let temp = tempdir().unwrap();
         let child_path = temp.path().join("stage");
         std::fs::create_dir(&child_path).unwrap();
@@ -3465,24 +3509,39 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let bound = bind_child_object(&root.dir, OsStr::new("stage"), &child_path).unwrap();
-        let child = open_real_child_dir(&root.dir, OsStr::new("stage"), &child_path)
-            .expect("generation revalidation must coexist with the DELETE-capable identity handle");
+        let (child, bound) = open_bound_real_child_dir(&root.dir, OsStr::new("stage"), &child_path)
+            .expect("cap-std directory capability and no-follow identity must bind together");
 
         assert!(child.entries().unwrap().next().is_some());
         assert!(
             bound
-                .matches_child(&root.dir, OsStr::new("stage"), &child_path)
+                .matches_directory_child(&root.dir, OsStr::new("stage"), &child_path)
                 .unwrap()
         );
+
+        let renamed = temp.path().join("stage-renamed");
+        assert!(
+            std::fs::rename(&child_path, &renamed).is_err(),
+            "a retained cap-std directory capability must withhold delete sharing"
+        );
+        assert!(
+            std::fs::remove_dir(&child_path).is_err(),
+            "a retained cap-std directory capability must fence deletion"
+        );
+        drop(child);
+        std::fs::rename(&child_path, &renamed)
+            .expect("rename succeeds after the cap-std directory capability closes");
     }
 
     #[cfg(windows)]
     #[test]
-    fn private_child_dacl_hardening_defers_delete_until_atomic_publication() {
+    fn private_child_dacl_hardening_preserves_cap_std_atomic_publication() {
         let temp = tempdir().unwrap();
-        let child_path = temp.path().join("private-state");
-        let root = open_bound_directory(temp.path(), false, "test store")
+        let private_root = temp.path().join("private-root");
+        crate::wal::win_native::create_private_directory_new(&private_root)
+            .expect("create TokenUser-private test root");
+        let child_path = private_root.join("private-state");
+        let root = open_bound_directory(&private_root, false, "test store")
             .unwrap()
             .unwrap();
         let child =
@@ -3490,7 +3549,7 @@ mod tests {
                 .expect("open private child with a DACL-migration-compatible capability");
 
         crate::wal::win_native::set_private_current_user_directory_dacl_bound(&child_path, &child)
-            .expect("bound DACL hardening must precede directory DELETE authority");
+            .expect("bound DACL hardening must preserve the cap-std directory capability");
         crate::wal::win_native::verify_private_directory_handle_dacl(&child)
             .expect("private child capability must retain the hardened DACL");
 
@@ -3498,6 +3557,36 @@ mod tests {
         atomic_write_private_child(&child, OsStr::new("state.json"), &target, b"private state")
             .expect("hardened private child must support capability-relative atomic publication");
         assert_eq!(std::fs::read(&target).unwrap(), b"private state");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn held_bound_lock_leaf_rejects_atomic_replacement() {
+        let temp = tempdir().unwrap();
+        let lock_path = temp.path().join("state-v1.lock");
+        let root = open_bound_directory(temp.path(), false, "test SafeStore")
+            .unwrap()
+            .unwrap();
+        let (_lock, _binding) = open_or_create_bound_lockfile(
+            &root.dir,
+            OsStr::new("state-v1.lock"),
+            &lock_path,
+        )
+        .expect("open and retain the SafeStore lock leaf");
+
+        let error = atomic_write_private_child(
+            &root.dir,
+            OsStr::new("state-v1.lock"),
+            &lock_path,
+            b"replacement",
+        )
+        .expect_err("an open lock leaf must deny atomic replacement on Windows");
+
+        assert!(
+            format!("{error:#}").contains("Win32 error 0x00000020"),
+            "expected ERROR_SHARING_VIOLATION, got {error:#}"
+        );
+        assert_eq!(std::fs::read(&lock_path).unwrap(), b"");
     }
 
     #[test]
@@ -4142,6 +4231,59 @@ mod tests {
                 "refused link must remain for explicit leaf cleanup"
             );
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_directory_deletion_traverses_before_acquiring_delete_authority() {
+        let temp = tempdir().unwrap();
+        let empty = temp.path().join("empty");
+        let tree = temp.path().join("tree");
+        std::fs::create_dir(&empty).unwrap();
+        std::fs::create_dir_all(tree.join("nested")).unwrap();
+        std::fs::write(tree.join("nested").join("entry.txt"), b"remove").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            remove_empty_real_child_dir_if_present(&root.dir, OsStr::new("empty"), &empty)
+                .unwrap()
+        );
+        assert!(!empty.exists());
+
+        remove_real_directory_tree(&root.dir, OsStr::new("tree"), &tree).unwrap();
+        assert!(!tree.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_recursive_delete_refuses_leaf_that_changes_to_real_directory() {
+        let temp = tempdir().unwrap();
+        let victim = temp.path().join("victim");
+        let leaf = victim.join("stage");
+        let displaced = victim.join("displaced-stage");
+        std::fs::create_dir(&victim).unwrap();
+        std::fs::write(&leaf, b"authorized leaf").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        let hook_leaf = leaf.clone();
+        let hook_displaced = displaced.clone();
+        set_before_windows_recursive_leaf_delete_for_test(move || {
+            std::fs::rename(&hook_leaf, &hook_displaced).unwrap();
+            std::fs::create_dir(&hook_leaf).unwrap();
+        });
+        let error = remove_real_directory_tree(&root.dir, OsStr::new("victim"), &victim)
+            .expect_err("a classified leaf that becomes a real directory must fail closed");
+
+        assert!(
+            format!("{error:#}").contains("changed into a real directory"),
+            "{error:#}"
+        );
+        assert!(leaf.is_dir(), "replacement directory must never be deleted");
+        assert_eq!(std::fs::read(&displaced).unwrap(), b"authorized leaf");
     }
 
     #[cfg(unix)]
