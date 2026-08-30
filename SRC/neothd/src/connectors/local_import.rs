@@ -2061,8 +2061,7 @@ mod tests {
             },
         };
         use windows_sys::Win32::Storage::FileSystem::{
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
-            FILE_SHARE_WRITE,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_WRITE,
         };
 
         let nul_root = PathBuf::from(OsString::from_wide(&[
@@ -2167,8 +2166,7 @@ mod tests {
         );
         fs::write(&selected, b"{\"messages\":[]}").unwrap();
         let (expected_bytes, expected_identity) =
-            windows_source::read_bound_source(&authority, Path::new("export.json"), 1024)
-                .unwrap();
+            windows_source::read_bound_source(&authority, Path::new("export.json"), 1024).unwrap();
         assert_eq!(expected_bytes, b"{\"messages\":[]}");
 
         // The outside candidate is deliberately non-share-readable while the

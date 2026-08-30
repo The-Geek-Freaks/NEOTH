@@ -6471,11 +6471,17 @@ mod tests {
         std::fs::rename(&stage, &displaced).unwrap();
         write_skill(&stage, "swap_cleanup", &good_yaml("swap_cleanup"));
 
-        let error = remove_transaction_directory(&root, &stage_name, Some(&expected_identity))
-            .unwrap_err();
+        let error =
+            remove_transaction_directory(&root, &stage_name, Some(&expected_identity)).unwrap_err();
         assert!(format!("{error:#}").contains("identity changed"));
-        assert!(stage.exists(), "same-name replacement must never be deleted");
-        assert!(displaced.exists(), "original private evidence must be retained");
+        assert!(
+            stage.exists(),
+            "same-name replacement must never be deleted"
+        );
+        assert!(
+            displaced.exists(),
+            "original private evidence must be retained"
+        );
     }
 
     #[test]

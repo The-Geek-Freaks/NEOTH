@@ -2168,7 +2168,8 @@ fn remove_real_directory_tree_with_budget(
             anyhow::ensure!(
                 child_identity_token(&directory.dir_metadata().with_context(|| {
                     format!("inspect bound removal target {}", display_path.display())
-                })?)? == expected_identity,
+                })?)?
+                    == expected_identity,
                 "directory changed before bound deletion traversal: {}",
                 display_path.display()
             );
