@@ -3265,7 +3265,7 @@ mod windows_private_atomic_stage {
             parent: &Dir,
             name: &OsStr,
             display_path: &Path,
-            protect_private_dacl: bool,
+            protect_private_dacl_enabled: bool,
         ) -> std::io::Result<Self> {
             use cap_std::fs::OpenOptionsExt as _;
             use windows_sys::Win32::Storage::FileSystem::{
@@ -3274,7 +3274,7 @@ mod windows_private_atomic_stage {
             };
 
             let mut options = OpenOptions::new();
-            let access = if protect_private_dacl {
+            let access = if protect_private_dacl_enabled {
                 FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | READ_CONTROL | WRITE_DAC
             } else {
                 FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE
@@ -3287,7 +3287,7 @@ mod windows_private_atomic_stage {
                 .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
                 .custom_flags(FILE_FLAG_WRITE_THROUGH);
             let file = parent.open_with(name, &options)?;
-            if protect_private_dacl {
+            if protect_private_dacl_enabled {
                 if let Err(error) = protect_private_dacl(&file) {
                     let stage_display = display_path.parent().unwrap_or(display_path).join(name);
                     let cleanup = super::windows_mark_delete(&file, &stage_display);
