@@ -2057,8 +2057,12 @@ mod tests {
             fs,
             os::windows::{
                 ffi::OsStringExt,
-                fs::{symlink_dir, symlink_file},
+                fs::{OpenOptionsExt as _, symlink_dir, symlink_file},
             },
+        };
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
+            FILE_SHARE_WRITE,
         };
 
         let nul_root = PathBuf::from(OsString::from_wide(&[
@@ -2100,6 +2104,11 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let selected = root.join("export.json");
         fs::write(&selected, b"{\"messages\":[]}").unwrap();
+        let outside_root = fixture_root("windows-history-source-outside");
+        fs::create_dir_all(&outside_root).unwrap();
+        let outside_selected = outside_root.join("export.json");
+        let outside_bytes = b"{\"messages\":[\"outside-target-must-never-be-read\"]}";
+        fs::write(&outside_selected, outside_bytes).unwrap();
         let nul_selector = PathBuf::from(OsString::from_wide(&[
             b'e' as u16,
             b'x' as u16,
@@ -2151,21 +2160,53 @@ mod tests {
                 &authority,
                 Path::new("export.json"),
                 1024,
-                || fs::write(&selected, b"{\"messageX\":[]}").unwrap(),
+                || fs::write(&selected, b"{\"messages\":[\"source-drift\"]}").unwrap(),
             ),
-            Err(LocalImportError::ChangedDuringRead)
+            Err(LocalImportError::ChangedDuringRead),
+            "a changed source snapshot, including a different bounded length, must fail"
         );
         fs::write(&selected, b"{\"messages\":[]}").unwrap();
-        let replacement = root.join("replacement.json");
-        fs::write(&replacement, b"{\"messages\":[]}").unwrap();
-        assert!(
-            windows_source::read_bound_source_with_hook(
-                &authority,
-                Path::new("export.json"),
-                1024,
-                || assert!(fs::rename(&replacement, &selected).is_err()),
-            )
-            .is_ok()
+        let (expected_bytes, expected_identity) =
+            windows_source::read_bound_source(&authority, Path::new("export.json"), 1024)
+                .unwrap();
+        assert_eq!(expected_bytes, b"{\"messages\":[]}");
+
+        // The outside candidate is deliberately non-share-readable while the
+        // import runs.  A stale ambient-path reopen after the attempted
+        // retarget would therefore fail instead of substituting its bytes.
+        // The held source handle also omits delete sharing, so the retarget
+        // itself must fail and the already-bound source remains authoritative.
+        let outside_read_fence = fs::OpenOptions::new()
+            .access_mode(FILE_GENERIC_WRITE)
+            .share_mode(FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&outside_selected)
+            .unwrap();
+        let (actual_bytes, actual_identity) = windows_source::read_bound_source_with_hook(
+            &authority,
+            Path::new("export.json"),
+            1024,
+            || {
+                assert!(
+                    fs::rename(&outside_selected, &selected).is_err(),
+                    "the bound source leaf must reject a post-open namespace retarget"
+                );
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            actual_bytes, expected_bytes,
+            "a post-open path swap must not substitute outside bytes"
+        );
+        assert_eq!(
+            actual_identity, expected_identity,
+            "the returned source identity must be the original physical source"
+        );
+        drop(outside_read_fence);
+        assert_eq!(
+            fs::read(&outside_selected).unwrap(),
+            outside_bytes,
+            "the outside candidate must remain untouched and unread by capture"
         );
         assert!(
             windows_source::read_bound_source_with_hook(
@@ -2271,6 +2312,7 @@ mod tests {
         fs::remove_dir(&junction_leaf).unwrap();
         fs::remove_dir(&junction_parent).unwrap();
         fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside_root).unwrap();
     }
 
     #[cfg(windows)]
