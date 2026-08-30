@@ -3375,7 +3375,6 @@ mod windows_private_atomic_stage {
                 VolumeQualification::Unsupported => RenameCommit::Unsupported,
             })
         }
-
     }
 
     pub(super) fn durability_after_rename(
