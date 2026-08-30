@@ -21,8 +21,8 @@ use std::{
 use windows_sys::Win32::{
     Foundation::{HANDLE, INVALID_HANDLE_VALUE},
     Storage::FileSystem::{
-        DRIVE_FIXED, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
-        FILE_ID_INFO, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TYPE_DISK,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_ID_INFO,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TYPE_DISK,
         FileBasicInfo, FileIdInfo, FileStandardInfo, GetDriveTypeW, GetFileInformationByHandleEx,
         GetFileType,
     },
@@ -36,6 +36,9 @@ use super::{
     validate_relative_selection,
 };
 
+// Win32 GetDriveTypeW returns DRIVE_FIXED (3) for a fixed disk:
+// https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getdrivetypew
+const DRIVE_FIXED: u32 = 3;
 const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
 const FILE_OPEN: u32 = 0x0000_0001;
 const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
