@@ -1693,7 +1693,8 @@ mod tests {
             &self,
             _asset: &crate::media::Asset,
         ) -> std::result::Result<crate::media::Extraction, crate::media::ExtractionError> {
-            self.reached.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.reached
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(crate::media::Extraction::default())
         }
     }
