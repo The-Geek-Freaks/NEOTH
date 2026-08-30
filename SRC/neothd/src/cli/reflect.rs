@@ -1601,7 +1601,9 @@ mod tests {
         std::fs::write(&path, malformed).unwrap();
 
         assert_eq!(
-            ReflectTopics::load_for_update(home.path()).unwrap_err(),
+            ReflectTopics::load_for_update(home.path())
+                .err()
+                .expect("malformed config must fail strict update"),
             ReflectTopicsUpdateError::InvalidConfig
         );
         assert!(set_weekly(home.path(), true, OutputFormat::Table).is_err());
@@ -1609,14 +1611,18 @@ mod tests {
 
         std::fs::write(&path, b"unknown_key: true\n").unwrap();
         assert_eq!(
-            ReflectTopics::load_for_update(home.path()).unwrap_err(),
+            ReflectTopics::load_for_update(home.path())
+                .err()
+                .expect("unknown config key must fail strict update"),
             ReflectTopicsUpdateError::InvalidConfig
         );
 
         let conflicting = b"weekly_refresh: true\nweekly_refresh: false\n";
         std::fs::write(&path, conflicting).unwrap();
         assert_eq!(
-            ReflectTopics::load_for_update(home.path()).unwrap_err(),
+            ReflectTopics::load_for_update(home.path())
+                .err()
+                .expect("conflicting config keys must fail strict update"),
             ReflectTopicsUpdateError::InvalidConfig
         );
         assert!(set_weekly(home.path(), true, OutputFormat::Table).is_err());
@@ -1625,7 +1631,9 @@ mod tests {
         let oversized = vec![b'x'; MAX_REFLECT_TOPICS_CONFIG_BYTES + 1];
         std::fs::write(&path, &oversized).unwrap();
         assert_eq!(
-            ReflectTopics::load_for_update(home.path()).unwrap_err(),
+            ReflectTopics::load_for_update(home.path())
+                .err()
+                .expect("oversized config must fail strict update"),
             ReflectTopicsUpdateError::SafeConfigUnavailable
         );
         assert!(set_weekly(home.path(), true, OutputFormat::Table).is_err());
@@ -1634,7 +1642,9 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(&path).unwrap();
         assert_eq!(
-            ReflectTopics::load_for_update(home.path()).unwrap_err(),
+            ReflectTopics::load_for_update(home.path())
+                .err()
+                .expect("non-regular config must fail strict update"),
             ReflectTopicsUpdateError::SafeConfigUnavailable
         );
         assert!(set_cadence(home.path(), Cadence::Daily, true, OutputFormat::Table).is_err());
@@ -1664,7 +1674,9 @@ mod tests {
         }
 
         assert_eq!(
-            ReflectTopics::load_for_update(home.path()).unwrap_err(),
+            ReflectTopics::load_for_update(home.path())
+                .err()
+                .expect("linked config must fail strict update"),
             ReflectTopicsUpdateError::SafeConfigUnavailable
         );
         assert!(set_weekly(home.path(), true, OutputFormat::Table).is_err());
