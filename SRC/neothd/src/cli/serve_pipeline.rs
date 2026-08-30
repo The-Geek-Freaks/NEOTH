@@ -2523,7 +2523,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     if name == "research" {
                         let release = operator_released_external_research_topic(
                             pinned_operator_proofs.external_research_release.take(),
-                            args,
+                            &args,
                         );
                         let reply_text = match release {
                             Err(guidance) => guidance.to_string(),

@@ -650,6 +650,7 @@ async fn emit_released_research_started(writer: &WalWriterHandle, release_id: &s
         .append(header, payload)
         .await
         .context("append released channel research start")
+        .map(|_| ())
 }
 
 async fn emit_released_research_completed(
@@ -667,6 +668,7 @@ async fn emit_released_research_completed(
         .append(header, payload)
         .await
         .context("append released channel research completion")
+        .map(|_| ())
 }
 
 async fn emit_wal_started(writer: &WalWriterHandle, topic_hash: &str) {
