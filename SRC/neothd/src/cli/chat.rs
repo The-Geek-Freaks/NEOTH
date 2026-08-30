@@ -12797,8 +12797,7 @@ mod tests {
     async fn public_valid_skill_from_doc_returns_review_only_before_chat_runtime() {
         let root = crate::test_env::canonical_tempdir().expect("temp home");
         let source = root.path().join("operator-guide.rtf");
-        let source_contents: &[u8] =
-            br"{\rtf1\ansi A bounded operator review document.\par}";
+        let source_contents: &[u8] = br"{\rtf1\ansi A bounded operator review document.\par}";
         std::fs::write(&source, source_contents).expect("write valid RTF fixture");
 
         let config = root.path().join("must-not-be-loaded.yaml");
