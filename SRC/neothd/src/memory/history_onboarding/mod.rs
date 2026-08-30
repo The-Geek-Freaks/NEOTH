@@ -292,7 +292,7 @@ pub fn preview(
         .query_map(
             params![operator_subject, batch_id, limit as i64],
             row_to_preview,
-        )?
+        )
         .context("read history-onboarding preview")?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("decode history-onboarding preview")
@@ -317,7 +317,7 @@ pub fn review(
         .query_map(
             params![operator_subject, batch_id, limit as i64],
             row_to_preview,
-        )?
+        )
         .context("read pending history-onboarding review")?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("decode pending history-onboarding review")
@@ -332,7 +332,7 @@ pub fn status(conn: &Connection, operator_subject: &str) -> Result<Vec<BatchStat
          WHERE operator_subject=?1 ORDER BY scanned_at_unix DESC,batch_id DESC",
     )?;
     statement
-        .query_map([operator_subject], row_to_status)?
+        .query_map([operator_subject], row_to_status)
         .context("read history-onboarding status")?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("decode history-onboarding status")
