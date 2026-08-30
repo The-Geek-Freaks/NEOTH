@@ -26743,7 +26743,10 @@ mod chat_subprocess_tests {
     fn d2_usage_workers_are_owned_by_the_window_lifecycle() {
         let source = include_str!("main.rs");
         let periodic = source
-            .rsplit_once(concat!("let usage_probe_", "worker = std::thread::Builder::new()"))
+            .rsplit_once(concat!(
+                "let usage_probe_",
+                "worker = std::thread::Builder::new()"
+            ))
             .map(|(_, tail)| tail)
             .and_then(|tail| tail.split(concat!("// GOLD-WIRE-", "10b")).next())
             .unwrap();
@@ -26760,7 +26763,10 @@ mod chat_subprocess_tests {
         }
 
         let budget = source
-            .rsplit_once(concat!("let budget_probe_", "worker = std::thread::Builder::new()"))
+            .rsplit_once(concat!(
+                "let budget_probe_",
+                "worker = std::thread::Builder::new()"
+            ))
             .map(|(_, tail)| tail)
             .and_then(|tail| tail.split(concat!("// QM-", "8 Phase 2")).next())
             .unwrap();
