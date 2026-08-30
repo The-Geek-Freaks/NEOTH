@@ -16,9 +16,12 @@ use rusqlite::Connection;
 
 pub(crate) struct PrivateHistoryConnection {
     // Rust drops fields in declaration order: SQLite first, then the exact-file
-    // fence, and only then the retained namespace/ancestor fence.
+    // fence, then the exact private-parent fence, and only then the retained
+    // namespace/ancestor fence.
     connection: Connection,
     _file_fence: Option<std::fs::File>,
+    #[cfg(windows)]
+    _parent_fence: std::fs::File,
     _namespace_fence: crate::connectors::local_import::ApprovedImportRoot,
 }
 
@@ -864,6 +867,11 @@ fn open_private_history_with_hooks(
     let namespace_fence =
         crate::connectors::local_import::approve_import_root(private_history_parent(&path)?)
             .context("pin private history database namespace")?;
+    #[cfg(windows)]
+    let parent_fence = open_private_history_parent_delete_fence(
+        private_history_parent(&path)?,
+        &namespace_fence,
+    )?;
     verify_private_history_target(&path, true)?;
     before_sqlite_open();
     let mut connection =
@@ -900,8 +908,38 @@ fn open_private_history_with_hooks(
                 Some(file)
             }
         },
+        #[cfg(windows)]
+        _parent_fence: parent_fence,
         _namespace_fence: namespace_fence,
     })
+}
+
+/// Retain an explicit no-follow handle to the exact private History parent for
+/// the complete connection lifetime. The generic approved-root capability is
+/// retained as the ancestor/reparse fence; this separate parent handle is the
+/// concrete Windows namespace-delete fence used by the History connection.
+#[cfg(windows)]
+fn open_private_history_parent_delete_fence(
+    path: &Path,
+    approved_root: &crate::connectors::local_import::ApprovedImportRoot,
+) -> Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, FILE_READ_ATTRIBUTES, READ_CONTROL,
+    };
+
+    let directory = OpenOptions::new()
+        .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .context("open private History parent delete fence")?;
+    crate::connectors::local_import::verify_approved_import_root_handle(approved_root, &directory)
+        .context("bind private History parent delete fence to approved namespace")?;
+    crate::wal::win_native::verify_private_directory_handle_dacl(&directory)
+        .context("verify private History parent delete fence owner and DACL")?;
+    Ok(directory)
 }
 
 /// Anchor the caller-approved History namespace to one physical path before
@@ -937,21 +975,79 @@ fn prepare_private_history_target(path: &Path) -> Result<PreparedHistoryTarget> 
         make_private_history_directory(parent)?;
         verify_private_history_directory(parent)?;
     }
-    for sidecar in sqlite_sidecar_paths(path) {
-        if sidecar.exists() {
-            verify_private_history_file(&sidecar)?;
-        }
-    }
     if path.exists() {
-        verify_private_history_file(path)?;
-        Ok(PreparedHistoryTarget::Existing(open_private_history_file(
-            path,
-        )?))
+        let file = prepare_existing_private_history_file(path)?;
+        prepare_existing_private_history_sidecars(path)?;
+        Ok(PreparedHistoryTarget::Existing(file))
     } else {
         Ok(PreparedHistoryTarget::Fresh(create_private_history_file(
             path,
         )?))
     }
+}
+
+/// Admit an existing review journal only after it satisfies the private-file
+/// contract. Windows v37 journals predate that contract and can therefore be
+/// TokenUser-owned while retaining inherited ACEs. A nonempty legacy database
+/// is hardened through an identity-bound, no-reparse handle before SQLite sees
+/// it; empty or foreign-owned database files remain rejected.
+fn prepare_existing_private_history_file(path: &Path) -> Result<std::fs::File> {
+    match open_private_history_file(path) {
+        Ok(file) => Ok(file),
+        Err(_strict_error) => {
+            #[cfg(windows)]
+            {
+                let file = open_private_history_file_witness(path)?;
+                anyhow::ensure!(
+                    file.metadata()
+                        .context("inspect legacy private History database witness")?
+                        .len()
+                        > 0,
+                    "existing private History database is empty and does not qualify for legacy DACL migration"
+                );
+                crate::wal::win_native::set_private_current_user_file_dacl_bound(path, &file)
+                    .context("harden owner-bound legacy private History database DACL")?;
+                verify_private_history_file(path)?;
+                Ok(file)
+            }
+            #[cfg(not(windows))]
+            {
+                Err(_strict_error)
+            }
+        }
+    }
+}
+
+/// Sidecars are recovered independently from the main database because an
+/// interrupted prior migration can leave a strict main file beside a legacy
+/// `-wal`, `-shm`, or rollback-journal. The operation is idempotent: an already
+/// private sidecar is only verified; any other Windows sidecar must prove the
+/// current owner through its no-reparse handle before it is hardened.
+fn prepare_existing_private_history_sidecars(path: &Path) -> Result<()> {
+    for sidecar in sqlite_sidecar_paths(path) {
+        if !sidecar.exists() {
+            continue;
+        }
+        match verify_private_history_file(&sidecar) {
+            Ok(()) => continue,
+            Err(_strict_error) => {
+                #[cfg(windows)]
+                {
+                    let file = open_private_history_file_witness(&sidecar)?;
+                    crate::wal::win_native::set_private_current_user_file_dacl_bound(
+                        &sidecar, &file,
+                    )
+                    .context("harden owner-bound legacy private History sidecar DACL")?;
+                    verify_private_history_file(&sidecar)?;
+                }
+                #[cfg(not(windows))]
+                {
+                    return Err(_strict_error);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn verify_private_history_target(path: &Path, require_database: bool) -> Result<()> {
@@ -1007,26 +1103,7 @@ fn create_private_history_file(path: &Path) -> Result<std::fs::File> {
 }
 
 fn open_private_history_file(path: &Path) -> Result<std::fs::File> {
-    let mut options = OpenOptions::new();
-    options.read(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        use windows_sys::Win32::Storage::FileSystem::{
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        };
-        options
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-    }
-    let file = options
-        .open(path)
-        .context("open private History database witness")?;
+    let file = open_private_history_file_witness(path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -1049,6 +1126,37 @@ fn open_private_history_file(path: &Path) -> Result<std::fs::File> {
         );
     }
     #[cfg(windows)]
+    crate::wal::win_native::verify_private_file_handle(&file)
+        .context("verify private History database witness owner and DACL")?;
+    Ok(file)
+}
+
+/// Open the exact existing History object without following a final link.
+/// Windows legacy migration performs only its owner proof and DACL transition
+/// through this handle; strict private verification stays in
+/// [`open_private_history_file`].
+fn open_private_history_file_witness(path: &Path) -> Result<std::fs::File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        options
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options
+        .open(path)
+        .context("open private History database witness")?;
+    #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
         use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
@@ -1060,8 +1168,6 @@ fn open_private_history_file(path: &Path) -> Result<std::fs::File> {
                 == 0,
             "private History database witness cannot be a reparse point"
         );
-        crate::wal::win_native::verify_private_file_handle(&file)
-            .context("verify private History database witness owner and DACL")?;
     }
     Ok(file)
 }
@@ -2815,6 +2921,11 @@ mod tests {
         .unwrap();
         drop(conn);
 
+        #[cfg(windows)]
+        {
+            assert!(verify_private_history_file(&path).is_err());
+        }
+
         let migrated = open_private_history(&path).unwrap();
         let foreign_keys: i64 = migrated
             .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
@@ -2864,6 +2975,7 @@ mod tests {
         assert_eq!(sentinel, "preserve-me");
         assert_eq!((history_rows, episode_rows), (0, 0));
         assert_eq!(path_index, 1);
+        verify_private_history_target(&path, true).unwrap();
     }
 
     #[cfg(unix)]
@@ -2895,6 +3007,67 @@ mod tests {
         std::fs::write(&path, b"").unwrap();
         assert!(open_private_history(&path).is_err());
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+        assert!(verify_private_history_file(&path).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn strict_main_hardens_owner_bound_legacy_sidecars_and_retry_is_idempotent() {
+        let root = tempdir().unwrap();
+        let parent = root.path().join("private-history");
+        std::fs::create_dir(&parent).unwrap();
+        make_private_history_directory(&parent).unwrap();
+        let database = parent.join("history.db");
+        drop(create_private_history_file(&database).unwrap());
+
+        let sidecars = sqlite_sidecar_paths(&database);
+        for sidecar in &sidecars[..2] {
+            std::fs::write(sidecar, b"legacy-sidecar").unwrap();
+            crate::wal::win_native::set_unprotected_current_user_file_dacl_for_test(sidecar)
+                .unwrap();
+            assert!(verify_private_history_file(sidecar).is_err());
+        }
+
+        let first = prepare_private_history_target(&database).unwrap();
+        drop(first);
+        for sidecar in &sidecars[..2] {
+            verify_private_history_file(sidecar).unwrap();
+        }
+
+        let retry = prepare_private_history_target(&database).unwrap();
+        drop(retry);
+        for sidecar in &sidecars[..2] {
+            verify_private_history_file(sidecar).unwrap();
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn owner_bound_legacy_main_and_existing_sidecars_harden_before_sqlite_open() {
+        let root = tempdir().unwrap();
+        let parent = root.path().join("private-history");
+        std::fs::create_dir(&parent).unwrap();
+        make_private_history_directory(&parent).unwrap();
+        let database = parent.join("history.db");
+        std::fs::write(&database, b"legacy-history-database").unwrap();
+        crate::wal::win_native::set_unprotected_current_user_file_dacl_for_test(&database)
+            .unwrap();
+
+        let sidecars = sqlite_sidecar_paths(&database);
+        for sidecar in &sidecars[..2] {
+            std::fs::write(sidecar, b"legacy-sidecar").unwrap();
+            crate::wal::win_native::set_unprotected_current_user_file_dacl_for_test(sidecar)
+                .unwrap();
+        }
+
+        assert!(verify_private_history_file(&database).is_err());
+        assert!(verify_private_history_file(&sidecars[0]).is_err());
+        let prepared = prepare_private_history_target(&database).unwrap();
+        drop(prepared);
+        verify_private_history_file(&database).unwrap();
+        for sidecar in &sidecars[..2] {
+            verify_private_history_file(sidecar).unwrap();
+        }
     }
 
     #[test]
@@ -3279,18 +3452,30 @@ mod tests {
         let PrivateHistoryConnection {
             connection: sqlite,
             _file_fence: file_fence,
+            _parent_fence: parent_fence,
             _namespace_fence: fence,
         } = open_private_history(&database).unwrap();
         drop(sqlite);
         drop(file_fence);
 
+        // The opaque import-root capability is intentionally no longer relied
+        // on for this connection-level promise. The explicit minimal-access
+        // parent fence alone must reject namespace mutation until it drops.
+        drop(fence);
         assert!(std::fs::rename(&parent, &moved_parent).is_err());
-        assert!(std::fs::remove_dir(&parent).is_err());
         assert!(database.exists());
 
-        drop(fence);
-        std::fs::rename(&parent, &moved_parent).unwrap();
-        assert!(moved_parent.join("history.db").exists());
+        for entry in std::iter::once(database.clone()).chain(sqlite_sidecar_paths(&database)) {
+            if entry.exists() {
+                std::fs::remove_file(entry).unwrap();
+            }
+        }
+        assert!(std::fs::remove_dir(&parent).is_err());
+
+        drop(parent_fence);
+        std::fs::remove_dir(&parent).unwrap();
+        assert!(!parent.exists());
+        assert!(!moved_parent.exists());
     }
 
     #[test]

@@ -769,6 +769,18 @@ fn open_approved_root(path: &Path) -> Result<ApprovedImportRoot, LocalImportErro
     windows_source::open_approved_root(path)
 }
 
+/// Bind a newly opened Windows directory fence to the exact physical object
+/// retained by an approved root. The caller keeps both handles alive, so a
+/// display-path replacement cannot turn a later History namespace fence into
+/// authority over another directory.
+#[cfg(windows)]
+pub(crate) fn verify_approved_import_root_handle(
+    root: &ApprovedImportRoot,
+    directory: &std::fs::File,
+) -> Result<(), LocalImportError> {
+    windows_source::verify_approved_root_handle(root, directory)
+}
+
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn open_approved_root(_: &Path) -> Result<ApprovedImportRoot, LocalImportError> {
     Err(LocalImportError::PlatformUnsupported)

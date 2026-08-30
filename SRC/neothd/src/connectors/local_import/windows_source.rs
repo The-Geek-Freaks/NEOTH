@@ -161,6 +161,17 @@ pub(super) fn open_approved_root(path: &Path) -> Result<ApprovedImportRoot, Loca
     })
 }
 
+pub(super) fn verify_approved_root_handle(
+    root: &ApprovedImportRoot,
+    directory: &File,
+) -> Result<(), LocalImportError> {
+    let approved = root.handle.root()?;
+    if directory_snapshot(approved)?.identity != directory_snapshot(directory)?.identity {
+        return Err(LocalImportError::ChangedDuringRead);
+    }
+    Ok(())
+}
+
 pub(super) fn read_bound_source(
     root: &ApprovedImportRoot,
     path: &Path,
