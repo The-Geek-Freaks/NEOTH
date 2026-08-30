@@ -2450,7 +2450,6 @@ fn remove_directory_contents(
                 })?;
             }
         }
-
         #[cfg(windows)]
         {
             let metadata = directory
