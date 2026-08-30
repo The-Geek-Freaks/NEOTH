@@ -1368,6 +1368,50 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
     unreachable!("every skills command mode returns before the strict runtime load falls through")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DocumentReviewDoclingPolicy {
+    Disabled,
+}
+
+impl DocumentReviewDoclingPolicy {
+    const fn enabled(self) -> bool {
+        match self {
+            Self::Disabled => false,
+        }
+    }
+}
+
+const DOCUMENT_REVIEW_DOCLING_POLICY: DocumentReviewDoclingPolicy =
+    DocumentReviewDoclingPolicy::Disabled;
+
+// Security: this pre-runtime review entry point intentionally does not load
+// `FreedomConfig`; the fixed disabled policy keeps Docling typed `Unsupported`.
+// The shared router falls through only `Unsupported`; every other extraction
+// error fails review.
+fn document_review_backends() -> Vec<std::sync::Arc<dyn MediaExtractor>> {
+    vec![
+        std::sync::Arc::new(crate::media::docling::DoclingExtractor::new(
+            DOCUMENT_REVIEW_DOCLING_POLICY.enabled(),
+        )),
+        std::sync::Arc::new(crate::media::pdf::PdfExtractor),
+        std::sync::Arc::new(crate::media::document::DocumentExtractor),
+    ]
+}
+
+async fn extract_document_for_review_with_backends(
+    backends: &[std::sync::Arc<dyn MediaExtractor>],
+    asset: &crate::media::Asset,
+) -> std::result::Result<crate::media::Extraction, crate::media::ExtractionError> {
+    crate::media::route_to_first_match(backends, asset).await
+}
+
+async fn extract_document_for_review(
+    asset: &crate::media::Asset,
+) -> std::result::Result<crate::media::Extraction, crate::media::ExtractionError> {
+    let backends = document_review_backends();
+    extract_document_for_review_with_backends(&backends, asset).await
+}
+
 /// The shared CLI/chat handler for `/skill-from-doc <path>` and the secondary
 /// `neoth skills --from-doc <path>` surface. It reads one bounded file and
 /// prints a review draft; it has no skill filesystem, config, WAL, router, or
@@ -1379,19 +1423,9 @@ pub async fn run_document_review(path: &Path, output: OutputFormat) -> Result<()
     })
     .await
     .map_err(|_| anyhow::anyhow!("document source admission worker failed"))??;
-    let extraction = match admitted.source_kind() {
-        crate::skills::doc_distill::DocumentSourceKind::Pdf => {
-            crate::media::pdf::PdfExtractor
-                .extract(admitted.asset())
-                .await
-        }
-        crate::skills::doc_distill::DocumentSourceKind::OfficeOrBook => {
-            crate::media::document::DocumentExtractor
-                .extract(admitted.asset())
-                .await
-        }
-    }
-    .map_err(|_| anyhow::anyhow!("document extraction failed; no review draft was produced"))?;
+    let extraction = extract_document_for_review(admitted.asset())
+        .await
+        .map_err(|_| anyhow::anyhow!("document extraction failed; no review draft was produced"))?;
     let document = crate::skills::doc_distill::distill_doc(
         extraction,
         admitted.source_kind(),
@@ -1613,6 +1647,57 @@ mod tests {
     use crate::config::SkillsConfig;
     use clap::Parser as _;
 
+    #[derive(Clone, Copy)]
+    enum InjectedReviewFailure {
+        Backend,
+        Io,
+    }
+
+    struct FatalReviewExtractor {
+        failure: InjectedReviewFailure,
+    }
+
+    #[async_trait::async_trait]
+    impl MediaExtractor for FatalReviewExtractor {
+        fn name(&self) -> &'static str {
+            "injected-fatal"
+        }
+
+        async fn extract(
+            &self,
+            _asset: &crate::media::Asset,
+        ) -> std::result::Result<crate::media::Extraction, crate::media::ExtractionError> {
+            Err(match self.failure {
+                InjectedReviewFailure::Backend => crate::media::ExtractionError::Backend {
+                    backend: "injected-fatal",
+                    reason: "injected backend failure".into(),
+                },
+                InjectedReviewFailure::Io => {
+                    crate::media::ExtractionError::Io("injected IO failure".into())
+                }
+            })
+        }
+    }
+
+    struct NativeFallbackProbe {
+        reached: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl MediaExtractor for NativeFallbackProbe {
+        fn name(&self) -> &'static str {
+            "native-fallback-probe"
+        }
+
+        async fn extract(
+            &self,
+            _asset: &crate::media::Asset,
+        ) -> std::result::Result<crate::media::Extraction, crate::media::ExtractionError> {
+            self.reached.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(crate::media::Extraction::default())
+        }
+    }
+
     #[test]
     fn routing_collision_probe_is_typed_and_exclusive() {
         let cli = crate::cli::Cli::try_parse_from(["neoth", "skills", "--check-routing"])
@@ -1660,6 +1745,86 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn document_review_backends_keep_disabled_docling_before_native_fallbacks() {
+        assert_eq!(
+            DOCUMENT_REVIEW_DOCLING_POLICY,
+            DocumentReviewDoclingPolicy::Disabled
+        );
+        assert!(!DOCUMENT_REVIEW_DOCLING_POLICY.enabled());
+
+        let backends = document_review_backends();
+        let names: Vec<_> = backends.iter().map(|backend| backend.name()).collect();
+
+        assert_eq!(names.as_slice(), &["docling", "pdf", "document"]);
+    }
+
+    #[tokio::test]
+    async fn document_review_rtf_falls_back_from_disabled_docling_to_native_metadata() {
+        let asset = crate::media::Asset::Bytes {
+            kind: crate::media::AssetKind::Document,
+            mime: "application/rtf".into(),
+            data: br"{\rtf1\ansi Operator review\par}".to_vec(),
+        };
+
+        let docling_error = document_review_backends()[0]
+            .extract(&asset)
+            .await
+            .expect_err("disabled Docling must fail with a typed fallback signal");
+        assert!(matches!(
+            docling_error,
+            crate::media::ExtractionError::Unsupported {
+                backend: "docling",
+                got: crate::media::AssetKind::Document,
+            }
+        ));
+
+        let extraction = extract_document_for_review(&asset)
+            .await
+            .expect("typed Unsupported must fall through to the native RTF extractor");
+        assert_eq!(extraction.text, "Operator review");
+        assert_eq!(extraction.metadata["extractor"], "document");
+        assert_eq!(extraction.metadata["format"], "rtf");
+    }
+
+    #[tokio::test]
+    async fn document_review_fatal_errors_stop_before_native_fallbacks() {
+        let asset = crate::media::Asset::Bytes {
+            kind: crate::media::AssetKind::Document,
+            mime: "application/rtf".into(),
+            data: br"{\rtf1\ansi Operator review\par}".to_vec(),
+        };
+
+        for failure in [InjectedReviewFailure::Backend, InjectedReviewFailure::Io] {
+            let fallback_reached = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let backends: Vec<std::sync::Arc<dyn MediaExtractor>> = vec![
+                std::sync::Arc::new(FatalReviewExtractor { failure }),
+                std::sync::Arc::new(NativeFallbackProbe {
+                    reached: std::sync::Arc::clone(&fallback_reached),
+                }),
+            ];
+
+            let error = extract_document_for_review_with_backends(&backends, &asset)
+                .await
+                .expect_err("fatal extraction errors must not fall through");
+            match (failure, error) {
+                (
+                    InjectedReviewFailure::Backend,
+                    crate::media::ExtractionError::Backend {
+                        backend: "injected-fatal",
+                        ..
+                    },
+                )
+                | (InjectedReviewFailure::Io, crate::media::ExtractionError::Io(_)) => {}
+                (_, unexpected) => panic!("unexpected extraction error: {unexpected:?}"),
+            }
+            assert!(
+                !fallback_reached.load(std::sync::atomic::Ordering::SeqCst),
+                "native fallback must not receive a fatal extraction error"
+            );
+        }
     }
 
     #[test]
