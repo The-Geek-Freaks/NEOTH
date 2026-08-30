@@ -861,7 +861,7 @@ mod tests {
             subtype: ExtendedSubtype,
             payload: Vec<u8>,
         ) -> Result<()> {
-            let decoded = serde_json::from_slice(&payload)?;
+            let decoded: serde_json::Value = serde_json::from_slice(&payload)?;
             self.attempts
                 .lock()
                 .unwrap()
