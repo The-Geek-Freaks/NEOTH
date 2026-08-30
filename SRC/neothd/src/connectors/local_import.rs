@@ -527,9 +527,9 @@ fn validate_approved_root_path(path: &Path) -> Result<(), LocalImportError> {
     let mut normal_components = 0_usize;
     for component in path.components() {
         match component {
-            Component::Normal(name) => {
+            Component::Normal(_name) => {
                 #[cfg(windows)]
-                if windows_component_is_ambiguous(name) {
+                if windows_component_is_ambiguous(_name) {
                     return Err(LocalImportError::AmbiguousRoot);
                 }
                 normal_components += 1;
@@ -568,9 +568,9 @@ fn validate_relative_selection(path: &Path) -> Result<(), LocalImportError> {
     let mut count = 0_usize;
     for component in path.components() {
         match component {
-            Component::Normal(name) => {
+            Component::Normal(_name) => {
                 #[cfg(windows)]
-                if windows_component_is_ambiguous(name) {
+                if windows_component_is_ambiguous(_name) {
                     return Err(LocalImportError::OutsideApprovedRoot);
                 }
                 count += 1;
