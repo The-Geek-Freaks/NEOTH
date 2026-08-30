@@ -232,7 +232,35 @@ impl fmt::Debug for OperatorImportCapability {
 
 pub(crate) fn approve_import_root(path: &Path) -> Result<ApprovedImportRoot, LocalImportError> {
     validate_approved_root_path(path)?;
+    #[cfg(target_os = "macos")]
+    {
+        // `/var` is a Darwin system alias for `/private/var`.  Resolve that
+        // operator-selected root once, then bind the canonical directory with
+        // the no-follow handle walk below.  Descendant selections never use
+        // this ambient-path resolution path.
+        let canonical_root = canonicalize_macos_approved_root(path)?;
+        return open_approved_root(&canonical_root);
+    }
+    #[cfg(not(target_os = "macos"))]
     open_approved_root(path)
+}
+
+#[cfg(target_os = "macos")]
+fn canonicalize_macos_approved_root(path: &Path) -> Result<PathBuf, LocalImportError> {
+    let canonical = std::fs::canonicalize(path).map_err(|_| LocalImportError::Unavailable)?;
+    validate_approved_root_path(&canonical)?;
+    Ok(canonical)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn approve_import_root_with_macos_canonicalization_hook(
+    path: &Path,
+    after_canonicalization: impl FnOnce(&Path),
+) -> Result<ApprovedImportRoot, LocalImportError> {
+    validate_approved_root_path(path)?;
+    let canonical_root = canonicalize_macos_approved_root(path)?;
+    after_canonicalization(&canonical_root);
+    open_approved_root(&canonical_root)
 }
 
 pub(crate) fn issue_operator_import_capability(
@@ -592,7 +620,14 @@ fn windows_component_is_ambiguous(component: &std::ffi::OsStr) -> bool {
     let Some(component) = component.to_str() else {
         return true;
     };
-    component.is_empty() || component.contains(':') || component.ends_with('.')
+    // An embedded NUL is representable in an `OsString`, but it is not a
+    // valid selector component.  Reject it when the one-shot capability is
+    // minted, rather than letting the later native handle open reject it
+    // after authority has already been issued.
+    component.is_empty()
+        || component.contains('\0')
+        || component.contains(':')
+        || component.ends_with('.')
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1802,6 +1837,118 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn macos_system_alias_root_is_canonicalized_once_and_descendants_remain_nofollow() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir_in("/private/var/tmp")
+            .expect("create an APFS fixture below the canonical system temp root");
+        let canonical_root = fs::canonicalize(root.path()).expect("canonicalize fixture root");
+        let alias_root = Path::new("/var").join(
+            canonical_root
+                .strip_prefix("/private/var")
+                .expect("the canonical fixture remains below the Darwin system alias target"),
+        );
+        assert_eq!(
+            fs::canonicalize(&alias_root).expect("resolve the documented /var system alias"),
+            canonical_root
+        );
+
+        fs::write(root.path().join("export.json"), b"{\"messages\":[]}")
+            .expect("write valid selected export");
+        let source = capture_verified_history_source(
+            issue_interactive_history_import_capability(
+                approve_import_root(&alias_root).expect("approve canonicalized system-alias root"),
+                key(),
+                "operator-a",
+                "chatgpt_export",
+                Path::new("export.json"),
+                1024,
+            )
+            .expect("issue authority below the bound root"),
+        )
+        .expect("capture valid child through the bound canonical root");
+        assert_eq!(source.bytes(), b"{\"messages\":[]}");
+
+        let outside = tempfile::tempdir_in("/private/var/tmp")
+            .expect("create an independent outside fixture");
+        fs::write(outside.path().join("secret.json"), b"secret").expect("write outside file");
+        symlink(outside.path(), root.path().join("escape-parent"))
+            .expect("create descendant escape fixture");
+        let authority = capability(&alias_root);
+        let request = LocalImportRequest::new(
+            &authority,
+            Path::new("escape-parent/secret.json"),
+            policy(1),
+        )
+        .expect("the lexical relative selector is intentionally valid");
+        assert_eq!(
+            plan_operator_selected_file(request),
+            Err(LocalImportError::SymlinkOrReparsePoint),
+            "canonicalizing the approved root must not relax descendant no-follow"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_root_swap_after_canonicalization_binds_the_object_actually_opened() {
+        let root = tempfile::tempdir_in("/private/var/tmp")
+            .expect("create the originally approved root fixture");
+        let replacement = tempfile::tempdir_in("/private/var/tmp")
+            .expect("create the controlled replacement-root fixture");
+        let canonical_root = fs::canonicalize(root.path()).expect("canonicalize original root");
+        let alias_root = Path::new("/var").join(
+            canonical_root
+                .strip_prefix("/private/var")
+                .expect("the fixture remains below the Darwin system alias target"),
+        );
+        let parked_root = replacement.path().with_extension("parked-root");
+        assert!(!parked_root.exists(), "the deterministic parking path must be free");
+
+        let original_bytes = b"{\"root\":\"operator-approved\"}";
+        let replacement_bytes = b"{\"root\":\"replacement\"}";
+        fs::write(root.path().join("export.json"), original_bytes)
+            .expect("write original-root sentinel");
+        fs::write(replacement.path().join("export.json"), replacement_bytes)
+            .expect("write replacement-root sentinel");
+        let replacement_identity = snapshot(
+            &fs::metadata(replacement.path()).expect("snapshot replacement before the swap"),
+        )
+        .identity;
+
+        let authority = approve_import_root_with_macos_canonicalization_hook(
+            &alias_root,
+            |resolved_root| {
+                assert_eq!(resolved_root, canonical_root.as_path());
+                fs::rename(resolved_root, &parked_root).expect("park original canonical root");
+                fs::rename(replacement.path(), resolved_root)
+                    .expect("install controlled replacement at canonical root");
+            },
+        )
+        .expect("bind the directory object present at the canonical path after the hook");
+        assert_eq!(authority.identity, replacement_identity);
+
+        let (bytes, binding) = read_bound_source(&authority, Path::new("export.json"), 1024)
+            .expect("read through the actually opened replacement-root handle");
+        assert_eq!(binding.root, replacement_identity);
+        assert_eq!(bytes, replacement_bytes);
+        assert_eq!(
+            fs::read(parked_root.join("export.json")).expect("read parked original sentinel"),
+            original_bytes,
+            "the parked operator-selected object must not be mutated"
+        );
+        assert_eq!(
+            fs::read(canonical_root.join("export.json")).expect("read replacement sentinel"),
+            replacement_bytes,
+            "the replacement object must not be mutated by source capture"
+        );
+
+        drop(authority);
+        fs::rename(&canonical_root, replacement.path()).expect("restore replacement temp root");
+        fs::rename(&parked_root, &canonical_root).expect("restore operator-selected temp root");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn macos_component_traversal_rejects_links_and_hard_linked_leaves() {
         use std::os::unix::fs::symlink;
 
@@ -1913,6 +2060,26 @@ mod tests {
             },
         };
 
+        let nul_root = PathBuf::from(OsString::from_wide(&[
+            b'C' as u16,
+            b':' as u16,
+            b'\\' as u16,
+            b'a' as u16,
+            b'p' as u16,
+            b'p' as u16,
+            b'r' as u16,
+            b'o' as u16,
+            b'v' as u16,
+            b'e' as u16,
+            b'd' as u16,
+            0,
+            b'x' as u16,
+        ]));
+        assert!(matches!(
+            approve_import_root(&nul_root),
+            Err(LocalImportError::AmbiguousRoot)
+        ));
+
         for forbidden in [
             r"\\server\share\root",
             r"\\?\UNC\server\share\root",
@@ -1938,6 +2105,11 @@ mod tests {
             0,
             b'p' as u16,
         ]));
+        assert_eq!(
+            validate_relative_selection(nul_selector.as_path()),
+            Err(LocalImportError::OutsideApprovedRoot),
+            "the capability boundary must reject embedded Windows NULs before native handle open"
+        );
         for invalid in [
             Path::new("export.json:stream"),
             Path::new("export.json."),
