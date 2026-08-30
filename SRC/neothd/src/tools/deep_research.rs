@@ -10,8 +10,9 @@
 //!    if yes, or after `max_rounds`, runs a final synthesis pass.
 //! 4. Emits WAL `0x6B DEEP_RESEARCH_STARTED` / `0x6C DEEP_RESEARCH_COMPLETED`.
 //!
-//! Called from `cli/chat.rs` and `cli/serve_pipeline.rs` via the `/research`
-//! slash command — not from the MCP dispatch loop.
+//! The generic model-planned engine is called from `cli/chat.rs`. The pinned
+//! channel operator's explicit external release uses a separate deterministic,
+//! one-request search path below; it never hands model output to HTTP.
 
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
@@ -20,7 +21,7 @@ use crate::pipeline::{RenderedUntrustedContext, UntrustedContext, UntrustedConte
 use crate::providers::{Provider, Request};
 use crate::secret::SecretString;
 use crate::tools::web_fetch;
-use crate::tools::web_search::{self, Provider as SearchProvider};
+use crate::tools::web_search::{self, Provider as SearchProvider, SearchHit};
 use crate::wal::writer::WalWriterHandle;
 
 // ── Compiled-in defaults (all operator-overrideable via DeepResearchConfig) ──
@@ -37,6 +38,14 @@ const MAX_EVIDENCE_BYTES: usize = 24_000;
 /// evidence buffer. Matches `web_fetch::MAX_EXTRACTED_BYTES / 10` —
 /// research pages contribute a summary, not the raw dump.
 const MAX_PAGE_EVIDENCE_CHARS: usize = 2_000;
+
+/// Hard security boundary for the explicit channel release. This path issues
+/// exactly one search request with the normalized operator topic and never
+/// enables model-planned queries or follow-up page fetches.
+const MAX_RELEASED_RESEARCH_RESULTS: usize = 5;
+const MAX_RELEASED_RESULT_TITLE_CHARS: usize = 180;
+const MAX_RELEASED_RESULT_SNIPPET_CHARS: usize = 600;
+const MAX_RELEASED_RESULT_URL_BYTES: usize = 2_048;
 
 // ── Public surface types ───────────────────────────────────────────────────
 
@@ -80,7 +89,202 @@ impl Budget {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReleasedChannelResearchPlan {
+    query: String,
+    max_results: usize,
+}
+
+impl ReleasedChannelResearchPlan {
+    fn for_exact_topic(topic: &str) -> Result<Self> {
+        let topic = topic.trim();
+        if topic.is_empty() {
+            anyhow::bail!("released channel research topic is empty");
+        }
+        if topic.len()
+            > crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES
+        {
+            anyhow::bail!(
+                "released channel research topic exceeds the {}-byte limit",
+                crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES
+            );
+        }
+        Ok(Self {
+            query: topic.to_owned(),
+            max_results: MAX_RELEASED_RESEARCH_RESULTS,
+        })
+    }
+}
+
 // ── Main entry point ───────────────────────────────────────────────────────
+
+/// Execute the pinned channel operator's explicit external research release.
+///
+/// Unlike [`run_deep_research`], this capability-scoped path performs one
+/// deterministic search whose query bytes equal the normalized released topic.
+/// It does not call an LLM, accept model-generated subqueries, use the shared
+/// search cache/analytics store, or fetch result URLs. Hard caps remain
+/// compiled in rather than operator-configurable so one release cannot widen
+/// into an unbounded HTTP session.
+pub async fn run_operator_released_channel_research(
+    topic: &str,
+    search_key: &SecretString,
+    search_provider: SearchProvider,
+    writer: &WalWriterHandle,
+    http: &crate::tools::external_http::ExternalHttpAuthorizer,
+) -> Result<ResearchReport> {
+    let plan = ReleasedChannelResearchPlan::for_exact_topic(topic)?;
+    let release_id = http
+        .arm_operator_released_exact_topic(&plan.query)
+        .context("released channel research requires an unused exact-topic release")?;
+
+    emit_released_research_started(writer, &release_id)
+        .await
+        .context("append mandatory released research start frame")?;
+    info!(
+        research_release_id = %release_id,
+        topic_len = plan.query.len(),
+        max_results = plan.max_results,
+        "released channel research: starting bounded exact-topic search"
+    );
+
+    let hits = match web_search::search_authorized(
+        search_provider,
+        search_key,
+        &plan.query,
+        plan.max_results,
+        http,
+    )
+    .await
+    {
+        Ok(hits) => hits,
+        Err(error) => {
+            if let Err(audit) =
+                emit_released_research_completed(writer, &release_id, "failure", 0).await
+            {
+                return Err(anyhow::anyhow!(
+                    "released channel research search failed: {error:#}; terminal audit also failed: {audit:#}"
+                ));
+            }
+            return Err(error).context("released channel research exact-topic search failed");
+        }
+    };
+
+    let report = render_released_search_report(hits);
+    emit_released_research_completed(
+        writer,
+        &release_id,
+        "success",
+        report.citations.len(),
+    )
+    .await
+    .context("append mandatory released research completion frame")?;
+    info!(
+        research_release_id = %release_id,
+        result_count = report.citations.len(),
+        "released channel research: bounded search complete"
+    );
+    Ok(report)
+}
+
+fn render_released_search_report(hits: Vec<SearchHit>) -> ResearchReport {
+    let mut article = String::from(
+        "# Released external research results\n\n\
+         This bounded path used the exact operator-released topic for one search. \
+         It did not run model planning or fetch result pages.\n",
+    );
+    let mut citations = Vec::new();
+
+    for hit in hits.into_iter().take(MAX_RELEASED_RESEARCH_RESULTS) {
+        let Ok(parsed) = url::Url::parse(&hit.url) else {
+            continue;
+        };
+        if !matches!(parsed.scheme(), "http" | "https")
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            continue;
+        }
+        let canonical_url = parsed.to_string();
+        if canonical_url.len() > MAX_RELEASED_RESULT_URL_BYTES {
+            continue;
+        }
+
+        let title = compact_released_result_text(&hit.title, MAX_RELEASED_RESULT_TITLE_CHARS);
+        let snippet =
+            compact_released_result_text(&hit.snippet, MAX_RELEASED_RESULT_SNIPPET_CHARS);
+        let title = if title.is_empty() {
+            "Untitled public result".to_owned()
+        } else {
+            title
+        };
+        let number = citations.len() + 1;
+        article.push_str(&format!("\n## Result {number}: {title}\n"));
+        if !snippet.is_empty() {
+            article.push_str(&format!("\n{snippet}\n"));
+        }
+        citations.push(CitedSource {
+            title,
+            url: canonical_url,
+        });
+    }
+
+    if citations.is_empty() {
+        article.push_str("\nNo valid public HTTP(S) search results were returned.\n");
+    }
+    ResearchReport { article, citations }
+}
+
+fn compact_released_result_text(input: &str, max_chars: usize) -> String {
+    let mut output = String::new();
+    let mut pending_space = false;
+    let mut written = 0usize;
+    for character in input.chars() {
+        if character.is_control() || is_invisible_format_character(character) {
+            continue;
+        }
+        if character.is_whitespace() {
+            pending_space = !output.is_empty();
+            continue;
+        }
+        if pending_space {
+            if written >= max_chars.saturating_sub(1) {
+                break;
+            }
+            output.push(' ');
+            written += 1;
+            pending_space = false;
+        }
+        let escape_markdown = matches!(
+            character,
+            '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '<' | '>' | '#'
+                | '+' | '-' | '.' | '!' | '|' | '~'
+        );
+        let required = usize::from(escape_markdown) + 1;
+        if written.saturating_add(required) > max_chars {
+            break;
+        }
+        if escape_markdown {
+            output.push('\\');
+            written += 1;
+        }
+        output.push(character);
+        written += 1;
+    }
+    output
+}
+
+fn is_invisible_format_character(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x061c
+            | 0x200b..=0x200f
+            | 0x202a..=0x202e
+            | 0x2060..=0x206f
+            | 0xfeff
+    )
+}
 
 /// Run a multi-step deep-research loop on `topic`.
 ///
@@ -405,6 +609,61 @@ Use Markdown headings. Be factual, accurate, and analytical.";
 
 // ── WAL helpers ───────────────────────────────────────────────────────────
 
+fn released_research_started_payload(release_id: &str) -> Result<Vec<u8>> {
+    serde_json::to_vec(&serde_json::json!({
+        "research_release_id": release_id,
+        "status": "started",
+        "ts_unix": crate::time::now_unix_secs(),
+    }))
+    .context("serialise released channel research start payload")
+}
+
+fn released_research_completed_payload(
+    release_id: &str,
+    status: &str,
+    result_count: usize,
+) -> Result<Vec<u8>> {
+    serde_json::to_vec(&serde_json::json!({
+        "research_release_id": release_id,
+        "status": status,
+        "result_count": result_count,
+        "ts_unix": crate::time::now_unix_secs(),
+    }))
+    .context("serialise released channel research completion payload")
+}
+
+async fn emit_released_research_started(
+    writer: &WalWriterHandle,
+    release_id: &str,
+) -> Result<()> {
+    let payload = released_research_started_payload(release_id)?;
+    let header = crate::wal::make_header(
+        crate::wal::events::EVENT_TYPE_DEEP_RESEARCH_STARTED,
+        &payload,
+    );
+    writer
+        .append(header, payload)
+        .await
+        .context("append released channel research start")
+}
+
+async fn emit_released_research_completed(
+    writer: &WalWriterHandle,
+    release_id: &str,
+    status: &str,
+    result_count: usize,
+) -> Result<()> {
+    let payload = released_research_completed_payload(release_id, status, result_count)?;
+    let header = crate::wal::make_header(
+        crate::wal::events::EVENT_TYPE_DEEP_RESEARCH_COMPLETED,
+        &payload,
+    );
+    writer
+        .append(header, payload)
+        .await
+        .context("append released channel research completion")
+}
+
 async fn emit_wal_started(writer: &WalWriterHandle, topic_hash: &str) {
     let payload = match serde_json::to_vec(&serde_json::json!({
         "topic_hash": topic_hash,
@@ -614,6 +873,73 @@ mod tests {
     fn truncate_evidence_empty_input() {
         let out = truncate_evidence(&[], 100);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn released_channel_research_uses_one_exact_hard_bounded_query() {
+        let plan = ReleasedChannelResearchPlan::for_exact_topic("  exact operator topic  ")
+            .expect("valid released topic");
+        assert_eq!(plan.query, "exact operator topic");
+        assert_eq!(plan.max_results, MAX_RELEASED_RESEARCH_RESULTS);
+        assert!(ReleasedChannelResearchPlan::for_exact_topic("   ").is_err());
+        assert!(ReleasedChannelResearchPlan::for_exact_topic(
+            &"x".repeat(
+                crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES + 1
+            )
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn released_search_report_filters_non_http_and_bounds_untrusted_fields() {
+        let report = render_released_search_report(vec![
+            SearchHit {
+                title: format!(
+                    "[ok]\u{202e}\n{}",
+                    "t".repeat(MAX_RELEASED_RESULT_TITLE_CHARS + 40)
+                ),
+                url: "https://example.test/result".into(),
+                snippet: format!(
+                    "summary\r\n{}",
+                    "s".repeat(MAX_RELEASED_RESULT_SNIPPET_CHARS + 40)
+                ),
+            },
+            SearchHit {
+                title: "credential URL".into(),
+                url: "https://user:secret@example.test/private".into(),
+                snippet: "must be filtered".into(),
+            },
+            SearchHit {
+                title: "non-http".into(),
+                url: "javascript:alert(1)".into(),
+                snippet: "must be filtered".into(),
+            },
+        ]);
+
+        assert_eq!(report.citations.len(), 1);
+        assert_eq!(report.citations[0].url, "https://example.test/result");
+        assert!(!report.citations[0].title.contains('\n'));
+        assert!(!report.citations[0].title.contains('\u{202e}'));
+        assert!(report.citations[0].title.starts_with("\\[ok\\]"));
+        assert!(!report.article.contains('\r'));
+        assert!(!report.article.contains("secret"));
+        assert!(report.article.len() < 2_000);
+        assert_eq!(compact_released_result_text("abcd next", 4), "abcd");
+        assert_eq!(compact_released_result_text("[x]", 3), "\\[x");
+    }
+
+    #[test]
+    fn released_research_wal_payloads_use_only_random_release_correlation() {
+        let started = released_research_started_payload("opaque-release-id").unwrap();
+        let completed =
+            released_research_completed_payload("opaque-release-id", "success", 3).unwrap();
+        for payload in [started, completed] {
+            let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+            assert_eq!(value["research_release_id"], "opaque-release-id");
+            assert!(value.get("topic").is_none());
+            assert!(value.get("topic_hash").is_none());
+            assert!(value.get("released_topic_sha256").is_none());
+        }
     }
 
     #[test]

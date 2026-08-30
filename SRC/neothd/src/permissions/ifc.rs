@@ -13,9 +13,23 @@
 //! assumes a missing label is public. `ExternalHttpRequest` and
 //! `McpToolInvocation` are deliberately public-clearance egress boundaries.
 
-use std::{cmp::Ordering, collections::BTreeSet, fmt};
+use std::{
+    cmp::Ordering,
+    collections::BTreeSet,
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering as AtomicOrdering},
+    },
+};
+
+use sha2::{Digest, Sha256};
 
 use super::ActionKind;
+
+/// Hard cap for the one-request pinned-channel research release. Enforced at
+/// parsing and again at the capability-scoped execution boundary.
+pub(crate) const MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES: usize = 2_048;
 
 /// Ordered information-sensitivity lattice used by the IFC kernel.
 ///
@@ -153,6 +167,247 @@ impl SourceLabels {
     /// The sensitivity that controls a multi-source information-flow decision.
     pub const fn highest(&self) -> InformationLabel {
         self.highest
+    }
+}
+
+/// Provenance for an external-egress decision.
+///
+/// `LegacyUnscoped` is deliberately *not* a claim that its input is public:
+/// older HTTP callers do not yet carry a trusted source classification, so
+/// this IFC slice leaves their historical gate contract intact. The only
+/// non-legacy variant is minted by the pinned-operator `/research
+/// --release-external <topic>` boundary. Its public release has no
+/// caller-supplied label or free-form string; future trusted classifications
+/// need a separate, explicit ingress boundary rather than a generic
+/// declassification API.
+#[derive(Clone)]
+pub(crate) enum EgressProvenance {
+    LegacyUnscoped,
+    OperatorReleasedChannelResearch(Arc<OperatorReleasedChannelResearchProvenance>),
+}
+
+impl fmt::Debug for EgressProvenance {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LegacyUnscoped => formatter.write_str("EgressProvenance::LegacyUnscoped"),
+            Self::OperatorReleasedChannelResearch(payload) => formatter
+                .debug_struct("EgressProvenance::OperatorReleasedChannelResearch")
+                .field("research_release_id", &payload.research_release_id)
+                .field(
+                    "execution_state",
+                    &released_research_execution_state_label(
+                        payload.execution_state.load(AtomicOrdering::Acquire),
+                    ),
+                )
+                .finish(),
+        }
+    }
+}
+
+/// Private payload makes direct construction of the public-release variant
+/// impossible outside this module. Only [`ExplicitExternalResearchRelease`]
+/// can create it after consuming the single-use release authority.
+struct OperatorReleasedChannelResearchProvenance {
+    sources: SourceLabels,
+    research_release_id: String,
+    released_topic_sha256: String,
+    execution_state: AtomicU8,
+}
+
+const RELEASE_FRESH: u8 = 0;
+const RELEASE_ARMED: u8 = 1;
+const RELEASE_SPENT: u8 = 2;
+
+const fn released_research_execution_state_label(execution_state: u8) -> &'static str {
+    match execution_state {
+        RELEASE_FRESH => "fresh",
+        RELEASE_ARMED => "armed",
+        RELEASE_SPENT => "spent",
+        _ => "invalid",
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReleasedResearchBindingError {
+    NotOperatorReleased,
+    TopicMismatch,
+    AlreadyUsed,
+    RequestMismatch,
+}
+
+impl fmt::Display for ReleasedResearchBindingError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::NotOperatorReleased => "operator-released research provenance is required",
+            Self::TopicMismatch => "released research topic binding mismatch",
+            Self::AlreadyUsed => "released research capability was already used",
+            Self::RequestMismatch => "released research request binding mismatch",
+        })
+    }
+}
+
+impl std::error::Error for ReleasedResearchBindingError {}
+
+/// Opaque binding minted only after `/research --release-external <topic>`
+/// parsed one nonempty topic. It retains no plaintext topic, so the later WAL
+/// provenance can bind the exact operator release without disclosing it.
+pub(crate) struct ExplicitExternalResearchRelease {
+    research_release_id: String,
+    topic_sha256: String,
+}
+
+impl ExplicitExternalResearchRelease {
+    /// Mint an egress-release binding only from the opaque proof produced by
+    /// the exact resolved-and-pinned operator comparison in the channel
+    /// pipeline. The proof is consumed by value; an arbitrary topic alone can
+    /// never construct this authority-bearing token.
+    pub(crate) fn for_pinned_operator_exact_topic(
+        _release_authority: crate::cli::serve_pipeline::PinnedChannelExternalResearchReleaseAuthority,
+        topic: &str,
+    ) -> Self {
+        debug_assert!(!topic.is_empty());
+        Self {
+            research_release_id: uuid::Uuid::now_v7().to_string(),
+            topic_sha256: hex::encode(Sha256::digest(topic.as_bytes())),
+        }
+    }
+
+    /// Convert the proof-bound release token into IFC provenance. This is the
+    /// only production construction path for a non-legacy public provenance.
+    pub(crate) fn into_egress_provenance(self) -> EgressProvenance {
+        EgressProvenance::OperatorReleasedChannelResearch(Arc::new(
+            OperatorReleasedChannelResearchProvenance {
+                sources: SourceLabels::from_labels([InformationLabel::Public])
+                    .expect("a fixed public provenance label is nonempty"),
+                research_release_id: self.research_release_id,
+                released_topic_sha256: self.topic_sha256,
+                execution_state: AtomicU8::new(RELEASE_FRESH),
+            },
+        ))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_for_exact_topic(topic: &str) -> Self {
+        Self {
+            research_release_id: "test-research-release-id".to_owned(),
+            topic_sha256: hex::encode(Sha256::digest(topic.as_bytes())),
+        }
+    }
+}
+
+impl EgressProvenance {
+    /// Returns a source classification only when a trusted ingress boundary
+    /// attached one. `None` means legacy/unscoped, never implicit `Public`.
+    pub(crate) fn sources(&self) -> Option<&SourceLabels> {
+        match self {
+            Self::LegacyUnscoped => None,
+            Self::OperatorReleasedChannelResearch(payload) => Some(&payload.sources),
+        }
+    }
+
+    /// In-memory permit domain separator. Released research deliberately uses
+    /// only its random release ID here; the private topic digest is reserved
+    /// for exact-query comparison and never enters a persistable binding.
+    pub(crate) fn binding_material(&self) -> String {
+        match self {
+            Self::LegacyUnscoped => "legacy_unscoped".to_owned(),
+            Self::OperatorReleasedChannelResearch(payload) => format!(
+                "operator_released_channel_research:{}:{research_release_id}",
+                payload.sources.highest(),
+                research_release_id = payload.research_release_id,
+            ),
+        }
+    }
+
+    /// Stable audit label that deliberately excludes the topic binding.
+    pub(crate) fn audit_tag(&self) -> &'static str {
+        match self {
+            Self::LegacyUnscoped => "legacy_unscoped",
+            Self::OperatorReleasedChannelResearch(_) => "operator_released_channel_research",
+        }
+    }
+
+    /// Random per-release correlation identifier. Unlike the topic digest,
+    /// this value is safe for lifecycle WAL metadata and cannot be used to
+    /// dictionary-match a low-entropy research topic.
+    pub(crate) fn released_research_id(&self) -> Option<&str> {
+        match self {
+            Self::LegacyUnscoped => None,
+            Self::OperatorReleasedChannelResearch(payload) => Some(&payload.research_release_id),
+        }
+    }
+
+    /// Verify and reserve the exact normalized topic before any released-path
+    /// WAL frame, confirmation, or transport. A successful reservation can be
+    /// consumed exactly once by the matching outbound search request.
+    pub(crate) fn arm_operator_released_exact_topic(
+        &self,
+        topic: &str,
+    ) -> Result<&str, ReleasedResearchBindingError> {
+        let Self::OperatorReleasedChannelResearch(payload) = self else {
+            return Err(ReleasedResearchBindingError::NotOperatorReleased);
+        };
+        let actual = hex::encode(Sha256::digest(topic.as_bytes()));
+        if actual != payload.released_topic_sha256 {
+            return Err(ReleasedResearchBindingError::TopicMismatch);
+        }
+        payload
+            .execution_state
+            .compare_exchange(
+                RELEASE_FRESH,
+                RELEASE_ARMED,
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Acquire,
+            )
+            .map_err(|_| ReleasedResearchBindingError::AlreadyUsed)?;
+        Ok(&payload.research_release_id)
+    }
+
+    /// Spend the reserved release on one search request whose query was
+    /// derived from the actual URL/body bytes by the HTTP request descriptor.
+    pub(crate) fn consume_operator_released_search_query(
+        &self,
+        query_sha256: Option<&str>,
+    ) -> Result<(), ReleasedResearchBindingError> {
+        let Self::OperatorReleasedChannelResearch(payload) = self else {
+            return Ok(());
+        };
+        if query_sha256 != Some(payload.released_topic_sha256.as_str()) {
+            return Err(ReleasedResearchBindingError::RequestMismatch);
+        }
+        payload
+            .execution_state
+            .compare_exchange(
+                RELEASE_ARMED,
+                RELEASE_SPENT,
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Acquire,
+            )
+            .map_err(|_| ReleasedResearchBindingError::AlreadyUsed)?;
+        Ok(())
+    }
+
+    /// Test-only view of the exact release binding. Production callers can
+    /// use it only through `binding_material`, so a low-entropy topic digest
+    /// cannot accidentally be persisted as naked WAL metadata.
+    #[cfg(test)]
+    pub(crate) fn released_topic_sha256(&self) -> Option<&str> {
+        match self {
+            Self::LegacyUnscoped => None,
+            Self::OperatorReleasedChannelResearch(payload) => Some(&payload.released_topic_sha256),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_operator_released_channel_research(sources: SourceLabels) -> Self {
+        Self::OperatorReleasedChannelResearch(Arc::new(
+            OperatorReleasedChannelResearchProvenance {
+                sources,
+                research_release_id: "test-research-release-id".to_owned(),
+                released_topic_sha256: hex::encode(Sha256::digest(b"approved topic")),
+                execution_state: AtomicU8::new(RELEASE_FRESH),
+            },
+        ))
     }
 }
 
@@ -317,6 +572,71 @@ mod tests {
             SourceLabels::from_names(["\u{2003}public\u{2003}"]),
             Err(SourceLabelsError::UnknownLabel)
         );
+    }
+
+    #[test]
+    fn operator_research_public_release_is_topic_bound_and_legacy_is_not_public() {
+        let release = ExplicitExternalResearchRelease::test_for_exact_topic("one exact topic")
+            .into_egress_provenance();
+
+        assert_eq!(
+            release.sources().map(SourceLabels::highest),
+            Some(InformationLabel::Public)
+        );
+        assert_eq!(
+            release.audit_tag(),
+            "operator_released_channel_research"
+        );
+        assert_eq!(
+            release.released_research_id(),
+            Some("test-research-release-id")
+        );
+        let expected_topic_sha256 = hex::encode(Sha256::digest(b"one exact topic"));
+        assert_eq!(
+            release.released_topic_sha256(),
+            Some(expected_topic_sha256.as_str())
+        );
+        assert_eq!(
+            release.arm_operator_released_exact_topic("different topic"),
+            Err(ReleasedResearchBindingError::TopicMismatch)
+        );
+        assert_eq!(
+            release.arm_operator_released_exact_topic("one exact topic"),
+            Ok("test-research-release-id")
+        );
+        assert_eq!(
+            release.arm_operator_released_exact_topic("one exact topic"),
+            Err(ReleasedResearchBindingError::AlreadyUsed)
+        );
+        assert_eq!(
+            release.consume_operator_released_search_query(Some(expected_topic_sha256.as_str())),
+            Ok(())
+        );
+        assert_eq!(
+            release.consume_operator_released_search_query(Some(expected_topic_sha256.as_str())),
+            Err(ReleasedResearchBindingError::AlreadyUsed)
+        );
+        assert!(EgressProvenance::LegacyUnscoped.sources().is_none());
+        assert_eq!(
+            EgressProvenance::LegacyUnscoped.audit_tag(),
+            "legacy_unscoped"
+        );
+    }
+
+    #[test]
+    fn egress_provenance_debug_redacts_released_topic_and_digest() {
+        const LOW_ENTROPY_TOPIC: &str = "weather";
+
+        let release = ExplicitExternalResearchRelease::test_for_exact_topic(LOW_ENTROPY_TOPIC)
+            .into_egress_provenance();
+        let topic_sha256 = hex::encode(Sha256::digest(LOW_ENTROPY_TOPIC.as_bytes()));
+        let formatted = format!("{release:?}");
+
+        assert!(!formatted.contains(LOW_ENTROPY_TOPIC));
+        assert!(!formatted.contains(&topic_sha256));
+        assert!(formatted.contains("EgressProvenance::OperatorReleasedChannelResearch"));
+        assert!(formatted.contains("test-research-release-id"));
+        assert!(formatted.contains("fresh"));
     }
 
     #[test]

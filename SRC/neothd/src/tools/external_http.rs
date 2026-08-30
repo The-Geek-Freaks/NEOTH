@@ -7,6 +7,7 @@
 //! closed by a matching result frame before it is released to the caller.
 
 use std::future::Future;
+use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
@@ -17,6 +18,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
 use crate::permissions::gate::ChannelAsker;
+use crate::permissions::ifc::{EgressProvenance, ExplicitExternalResearchRelease};
 use crate::permissions::{Action, AutonomyPolicySnapshot, ConfirmStrategy, Gate};
 use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 use crate::wal::writer::WalWriterHandle;
@@ -46,15 +48,18 @@ impl ExternalHttpSurface {
     }
 }
 
-/// Exact request descriptor. The URL/body never enter WAL; their SHA-256
-/// binding does. API credentials belong in headers and must not be included in
-/// `body_binding`.
-#[derive(Clone, Debug)]
+/// Exact request descriptor. The URL/body never enter WAL. Legacy callers
+/// retain their historical SHA-256 audit binding; explicit released research
+/// uses a random request correlation in WAL and keeps the topic-bearing permit
+/// binding memory-only. API credentials belong in headers and must not be
+/// included in `body_binding`.
+#[derive(Clone)]
 pub struct ExternalHttpRequest {
     method: &'static str,
     url: String,
     surface: ExternalHttpSurface,
     body_binding_sha256: String,
+    search_query_sha256: Option<String>,
 }
 
 impl ExternalHttpRequest {
@@ -72,15 +77,17 @@ impl ExternalHttpRequest {
         surface: ExternalHttpSurface,
         body_binding: &[u8],
     ) -> Self {
+        let url = url.into();
         Self {
             method,
-            url: url.into(),
+            search_query_sha256: released_search_query_sha256(&url, surface, body_binding),
+            url,
             surface,
             body_binding_sha256: hex::encode(Sha256::digest(body_binding)),
         }
     }
 
-    fn binding_sha256(&self) -> String {
+    fn binding_sha256(&self, egress_provenance_binding: &str) -> String {
         let mut digest = Sha256::new();
         digest.update(self.method.as_bytes());
         digest.update([0]);
@@ -89,25 +96,68 @@ impl ExternalHttpRequest {
         digest.update(self.surface.as_str().as_bytes());
         digest.update([0]);
         digest.update(self.body_binding_sha256.as_bytes());
+        digest.update([0]);
+        digest.update(egress_provenance_binding.as_bytes());
         hex::encode(digest.finalize())
     }
+}
+
+impl fmt::Debug for ExternalHttpRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ExternalHttpRequest")
+            .field("method", &self.method)
+            .field("url", &"<redacted>")
+            .field("surface", &self.surface)
+            .field("body_binding_sha256", &"<redacted>")
+            .field("search_query_sha256", &"<redacted>")
+            .finish()
+    }
+}
+
+fn released_search_query_sha256(
+    url: &str,
+    surface: ExternalHttpSurface,
+    body: &[u8],
+) -> Option<String> {
+    let query = match surface {
+        ExternalHttpSurface::SearchBrave | ExternalHttpSurface::SearchSearxng => {
+            let parsed = url::Url::parse(url).ok()?;
+            let mut queries = parsed
+                .query_pairs()
+                .filter(|(name, _)| name == "q")
+                .map(|(_, value)| value.into_owned());
+            let query = queries.next()?;
+            if queries.next().is_some() {
+                return None;
+            }
+            query
+        }
+        ExternalHttpSurface::SearchTavily => serde_json::from_slice::<serde_json::Value>(body)
+            .ok()?
+            .get("query")?
+            .as_str()?
+            .to_owned(),
+        _ => return None,
+    };
+    Some(hex::encode(Sha256::digest(query.as_bytes())))
 }
 
 /// Capability minted only by [`ExternalHttpAuthorizer::execute`]. Its fields
 /// are private so a caller cannot fabricate authority or reuse it for another
 /// URL/body/surface tuple.
-#[derive(Debug)]
 pub struct ExternalHttpPermit {
     request_id: String,
-    request_binding_sha256: String,
+    permit_binding_sha256: String,
+    egress_provenance_binding: String,
 }
 
 impl ExternalHttpPermit {
     pub fn require(&self, request: &ExternalHttpRequest) -> Result<()> {
-        let binding = request.binding_sha256();
-        if binding != self.request_binding_sha256 {
+        let binding = request.binding_sha256(&self.egress_provenance_binding);
+        if binding != self.permit_binding_sha256 {
             anyhow::bail!(
-                "external HTTP permit/request mismatch for {}",
+                "external HTTP permit/request/provenance mismatch for {}",
                 request.surface.as_str()
             );
         }
@@ -116,6 +166,17 @@ impl ExternalHttpPermit {
 
     pub fn request_id(&self) -> &str {
         &self.request_id
+    }
+}
+
+impl fmt::Debug for ExternalHttpPermit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ExternalHttpPermit")
+            .field("request_id", &self.request_id)
+            .field("permit_binding_sha256", &"<redacted>")
+            .field("egress_provenance_binding", &"<redacted>")
+            .finish()
     }
 }
 
@@ -165,6 +226,10 @@ pub struct ExternalHttpAuthorizer {
     confirm: ConfirmStrategy,
     channel_asker: Option<Arc<dyn ChannelAsker>>,
     sink: Arc<dyn ExternalHttpAuditSink>,
+    /// `LegacyUnscoped` preserves pre-C7 callers without falsely classifying
+    /// their data as public. Only the pinned-operator explicit-release
+    /// `/research` constructor below may opt into the trusted provenance path.
+    egress_provenance: EgressProvenance,
 }
 
 enum ExternalHttpPolicySource {
@@ -213,6 +278,7 @@ impl ExternalHttpAuthorizer {
             confirm: Gate::auto_confirm(),
             channel_asker: None,
             sink,
+            egress_provenance: EgressProvenance::LegacyUnscoped,
         })
     }
 
@@ -232,6 +298,7 @@ impl ExternalHttpAuthorizer {
             confirm,
             channel_asker: None,
             sink: Arc::new(writer),
+            egress_provenance: EgressProvenance::LegacyUnscoped,
         }
     }
 
@@ -247,6 +314,7 @@ impl ExternalHttpAuthorizer {
             confirm,
             channel_asker: None,
             sink: Arc::new(writer),
+            egress_provenance: EgressProvenance::LegacyUnscoped,
         }
     }
 
@@ -260,7 +328,47 @@ impl ExternalHttpAuthorizer {
             confirm: ConfirmStrategy::Channel,
             channel_asker: Some(asker),
             sink: Arc::new(writer),
+            egress_provenance: EgressProvenance::LegacyUnscoped,
         }
+    }
+
+    /// Pinned-operator explicit-release channel `/research` context.
+    ///
+    /// This is intentionally crate-visible and takes the parser-minted topic
+    /// binding rather than any caller-supplied label. The caller has already
+    /// proven the pinned operator and recognized `/research
+    /// --release-external <topic>`; all other HTTP call sites retain
+    /// `LegacyUnscoped` until they gain an equally narrow trusted ingress
+    /// boundary. A public IFC release still proceeds through the ordinary
+    /// autonomy/confirmation gate below.
+    pub(crate) fn with_operator_released_channel_research_writer(
+        policy: AutonomyPolicySnapshot,
+        writer: WalWriterHandle,
+        asker: Option<Arc<dyn ChannelAsker>>,
+        release: ExplicitExternalResearchRelease,
+    ) -> Self {
+        let confirm = if asker.is_some() {
+            ConfirmStrategy::Channel
+        } else {
+            ConfirmStrategy::FailClosed
+        };
+        Self {
+            policy: ExternalHttpPolicySource::Fixed(policy),
+            confirm,
+            channel_asker: asker,
+            sink: Arc::new(writer),
+            egress_provenance: release.into_egress_provenance(),
+        }
+    }
+
+    /// Opaque lifecycle correlation for the explicit released-research path.
+    /// Generic/legacy authorizers return `None`; the released topic digest is
+    /// intentionally not exposed to production callers.
+    pub(crate) fn arm_operator_released_exact_topic(&self, topic: &str) -> Result<String> {
+        self.egress_provenance
+            .arm_operator_released_exact_topic(topic)
+            .map(str::to_owned)
+            .context("arm exact operator-released research topic")
     }
 
     /// Would this surface be refused right now, without asking anyone?
@@ -297,13 +405,46 @@ impl ExternalHttpAuthorizer {
         F: FnOnce(ExternalHttpPermit) -> Fut,
         Fut: Future<Output = Result<T>>,
     {
+        // C7 boundary: trusted provenance must satisfy IFC before the
+        // confirmer, permission/audit intent, permit, or transport can run.
+        // Legacy callers intentionally have no source classification here;
+        // treating their absence as `Public` would be a false provenance
+        // claim and a breaking behavioural change.
+        let trusted_provenance = self.egress_provenance.sources();
+        if let Some(sources) = trusted_provenance {
+            crate::permissions::may_flow_to_action(
+                sources,
+                crate::permissions::ActionKind::ExternalHttpRequest,
+            )
+            .context("external HTTP IFC denied trusted egress provenance")?;
+            self.egress_provenance
+                .consume_operator_released_search_query(request.search_query_sha256.as_deref())
+                .context("consume exact operator-released research request")?;
+        }
+
         let parsed = validate_request_url(&request.url)?;
         let local = classify_local_searxng(&request, &parsed)?;
         let request_id = uuid::Uuid::now_v7().to_string();
-        let request_binding_sha256 = request.binding_sha256();
+        let egress_provenance_binding = self.egress_provenance.binding_material();
+        let permit_binding_sha256 = request.binding_sha256(&egress_provenance_binding);
+        let egress_provenance_tag = self.egress_provenance.audit_tag();
+        let research_release_id = self.egress_provenance.released_research_id();
+        let request_binding_sha256 = if research_release_id.is_some() {
+            let mut digest = Sha256::new();
+            digest.update(b"NEOTH\0EXTERNAL_HTTP\0AUDIT_BINDING\0V1");
+            digest.update(request_id.as_bytes());
+            hex::encode(digest.finalize())
+        } else {
+            permit_binding_sha256.clone()
+        };
         let destination = origin_without_credentials(&parsed)?;
+        // Legacy local SearXNG keeps its historical direct-local contract.
+        // Explicitly released research never takes that shortcut: private/LAN
+        // address space is not a trust boundary, so confirmation and both WAL
+        // lifecycle frames remain mandatory before/after transport.
+        let requires_lifecycle_gate = !local || trusted_provenance.is_some();
 
-        if !local {
+        if requires_lifecycle_gate {
             let action = Action::ExternalHttpRequest {
                 method: request.method.to_string(),
                 destination: destination.clone(),
@@ -324,17 +465,20 @@ impl ExternalHttpAuthorizer {
                 request.method,
                 &destination,
                 request.surface,
+                egress_provenance_tag,
+                research_release_id,
             )
             .await?;
         }
 
         let permit = ExternalHttpPermit {
             request_id: request_id.clone(),
-            request_binding_sha256: request_binding_sha256.clone(),
+            permit_binding_sha256,
+            egress_provenance_binding,
         };
         permit.require(&request)?;
         let outcome = network(permit).await;
-        if local {
+        if !requires_lifecycle_gate {
             return outcome;
         }
 
@@ -345,6 +489,8 @@ impl ExternalHttpAuthorizer {
                 request.method,
                 &destination,
                 request.surface,
+                egress_provenance_tag,
+                research_release_id,
                 &outcome,
             )
             .await;
@@ -365,6 +511,8 @@ impl ExternalHttpAuthorizer {
         method: &str,
         destination: &str,
         surface: ExternalHttpSurface,
+        egress_provenance_tag: &str,
+        research_release_id: Option<&str>,
     ) -> Result<()> {
         let payload = serde_json::to_vec(&serde_json::json!({
             "request_id": request_id,
@@ -372,6 +520,8 @@ impl ExternalHttpAuthorizer {
             "method": method,
             "destination": destination,
             "surface": surface.as_str(),
+            "egress_provenance": egress_provenance_tag,
+            "research_release_id": research_release_id,
             "status": "intent",
             "ts_unix": crate::time::now_unix_secs(),
         }))?;
@@ -388,25 +538,47 @@ impl ExternalHttpAuthorizer {
         method: &str,
         destination: &str,
         surface: ExternalHttpSurface,
+        egress_provenance_tag: &str,
+        research_release_id: Option<&str>,
         outcome: &Result<T>,
     ) -> Result<()> {
-        let (status, error_sha256) = match outcome {
-            Ok(_) => ("success", None),
+        // A released-research error can repeat the exact search URL.  Its
+        // formatted text is therefore topic-bearing and must never become a
+        // deterministic WAL value (including through a digest).  The stable
+        // coarse code records the terminal state without weakening the legacy
+        // audit contract for unscoped callers.
+        let (status, error_sha256, released_error_code) = match outcome {
+            Ok(_) => ("success", None, None),
+            Err(_) if research_release_id.is_some() => {
+                ("failure", None, Some("external_http_request_failed"))
+            }
             Err(error) => (
                 "failure",
                 Some(hex::encode(Sha256::digest(format!("{error:#}").as_bytes()))),
+                None,
             ),
         };
-        let payload = serde_json::to_vec(&serde_json::json!({
+        let mut payload = serde_json::json!({
             "request_id": request_id,
             "request_binding_sha256": binding,
             "method": method,
             "destination": destination,
             "surface": surface.as_str(),
+            "egress_provenance": egress_provenance_tag,
+            "research_release_id": research_release_id,
             "status": status,
             "error_sha256": error_sha256,
             "ts_unix": crate::time::now_unix_secs(),
-        }))?;
+        });
+        if let (Some(error_code), Some(object)) =
+            (released_error_code, payload.as_object_mut())
+        {
+            object.insert(
+                "error_code".to_owned(),
+                serde_json::Value::String(error_code.to_owned()),
+            );
+        }
+        let payload = serde_json::to_vec(&payload)?;
         self.sink
             .append_external_http(ExtendedSubtype::ExternalHttpResult, payload)
             .await
@@ -428,6 +600,7 @@ impl ExternalHttpAuthorizer {
             confirm,
             channel_asker: None,
             sink: Arc::new(NoopAuditSink),
+            egress_provenance: EgressProvenance::LegacyUnscoped,
         }
     }
 
@@ -441,6 +614,7 @@ impl ExternalHttpAuthorizer {
             confirm,
             channel_asker: None,
             sink: Arc::new(NoopAuditSink),
+            egress_provenance: EgressProvenance::LegacyUnscoped,
         }
     }
 }
@@ -552,7 +726,7 @@ impl ExternalHttpAuditSink for NoopAuditSink {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use super::*;
 
@@ -583,6 +757,7 @@ mod tests {
     struct RecordingSink {
         events: Mutex<Vec<(ExtendedSubtype, serde_json::Value)>>,
         fail: Option<ExtendedSubtype>,
+        sequence: Option<Arc<Mutex<Vec<&'static str>>>>,
     }
 
     #[async_trait::async_trait]
@@ -594,6 +769,13 @@ mod tests {
         ) -> Result<()> {
             if self.fail == Some(subtype) {
                 anyhow::bail!("injected audit failure");
+            }
+            if let Some(sequence) = &self.sequence {
+                sequence.lock().unwrap().push(match subtype {
+                    ExtendedSubtype::ExternalHttpIntent => "intent",
+                    ExtendedSubtype::ExternalHttpResult => "result",
+                    _ => "other",
+                });
             }
             self.events
                 .lock()
@@ -611,6 +793,7 @@ mod tests {
             confirm: ConfirmStrategy::AlwaysAllow,
             channel_asker: None,
             sink,
+            egress_provenance: EgressProvenance::LegacyUnscoped,
         }
     }
 
@@ -710,10 +893,543 @@ mod tests {
         );
         let permit = ExternalHttpPermit {
             request_id: "id".into(),
-            request_binding_sha256: first.binding_sha256(),
+            permit_binding_sha256: first.binding_sha256("legacy_unscoped"),
+            egress_provenance_binding: "legacy_unscoped".into(),
         };
         assert!(permit.require(&first).is_ok());
         assert!(permit.require(&second).is_err());
+    }
+
+    #[test]
+    fn permit_rejects_a_provenance_binding_mismatch() {
+        let request = ExternalHttpRequest::get(
+            "https://example.com/api",
+            ExternalHttpSurface::SearchBrave,
+        );
+        let permit = ExternalHttpPermit {
+            request_id: "id".into(),
+            permit_binding_sha256: request
+                .binding_sha256("operator_released_channel_research:public:test-topic-binding"),
+            egress_provenance_binding: "legacy_unscoped".into(),
+        };
+
+        assert!(permit.require(&request).is_err());
+    }
+
+    #[test]
+    fn released_search_query_binding_is_derived_from_actual_wire_fields() {
+        let expected = hex::encode(Sha256::digest(b"approved topic"));
+        let brave = ExternalHttpRequest::get(
+            "https://api.search.brave.com/res/v1/web/search?q=approved%20topic",
+            ExternalHttpSurface::SearchBrave,
+        );
+        let searxng = ExternalHttpRequest::get(
+            "http://127.0.0.1:8888/search?format=json&q=approved+topic",
+            ExternalHttpSurface::SearchSearxng,
+        );
+        let tavily = ExternalHttpRequest::post(
+            "https://api.tavily.com/search",
+            ExternalHttpSurface::SearchTavily,
+            br#"{"query":"approved topic","max_results":5}"#,
+        );
+        for request in [brave, searxng, tavily] {
+            assert_eq!(request.search_query_sha256.as_deref(), Some(expected.as_str()));
+        }
+
+        let duplicate = ExternalHttpRequest::get(
+            "https://example.test/search?q=approved%20topic&q=different",
+            ExternalHttpSurface::SearchBrave,
+        );
+        assert!(duplicate.search_query_sha256.is_none());
+        let fetch = ExternalHttpRequest::get(
+            "https://example.test/?q=approved%20topic",
+            ExternalHttpSurface::Fetch,
+        );
+        assert!(fetch.search_query_sha256.is_none());
+    }
+
+    #[test]
+    fn request_and_permit_debug_output_redacts_topic_bearing_bindings() {
+        let request = ExternalHttpRequest::get(
+            "https://example.test/?q=low-entropy-topic",
+            ExternalHttpSurface::SearchBrave,
+        );
+        let permit = ExternalHttpPermit {
+            request_id: "request-id".into(),
+            permit_binding_sha256: "sensitive-permit-binding".into(),
+            egress_provenance_binding: "sensitive-provenance-binding".into(),
+        };
+        let request_debug = format!("{request:?}");
+        let permit_debug = format!("{permit:?}");
+        assert!(!request_debug.contains("low-entropy-topic"));
+        assert!(!permit_debug.contains("sensitive-permit-binding"));
+        assert!(!permit_debug.contains("sensitive-provenance-binding"));
+    }
+
+    struct CountingAsker {
+        asked: AtomicBool,
+        approve: bool,
+        sequence: Option<Arc<Mutex<Vec<&'static str>>>>,
+    }
+
+    impl CountingAsker {
+        fn approving() -> Self {
+            Self {
+                asked: AtomicBool::new(false),
+                approve: true,
+                sequence: None,
+            }
+        }
+
+        fn rejecting() -> Self {
+            Self {
+                asked: AtomicBool::new(false),
+                approve: false,
+                sequence: None,
+            }
+        }
+
+        fn approving_with_sequence(sequence: Arc<Mutex<Vec<&'static str>>>) -> Self {
+            Self {
+                asked: AtomicBool::new(false),
+                approve: true,
+                sequence: Some(sequence),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChannelAsker for CountingAsker {
+        async fn ask(&self, _reason: &str) -> Option<bool> {
+            self.asked.store(true, Ordering::SeqCst);
+            if let Some(sequence) = &self.sequence {
+                sequence.lock().unwrap().push("confirm");
+            }
+            Some(self.approve)
+        }
+    }
+
+    #[tokio::test]
+    async fn non_public_trusted_provenance_stops_before_confirmer_or_network() {
+        for label in [
+            crate::permissions::InformationLabel::Internal,
+            crate::permissions::InformationLabel::Confidential,
+            crate::permissions::InformationLabel::Secret,
+        ] {
+            let asked = Arc::new(CountingAsker::approving());
+            let called = AtomicBool::new(false);
+            let sink = Arc::new(RecordingSink::default());
+            let auth = ExternalHttpAuthorizer {
+                policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                    crate::permissions::AutonomyLevel::Standard,
+                )),
+                confirm: ConfirmStrategy::Channel,
+                channel_asker: Some(asked.clone()),
+                sink: sink.clone(),
+                egress_provenance: EgressProvenance::test_operator_released_channel_research(
+                    crate::permissions::SourceLabels::from_labels([label]).unwrap(),
+                ),
+            };
+
+            let result = auth
+                .execute(
+                    ExternalHttpRequest::get("https://example.com/x", ExternalHttpSurface::Fetch),
+                    |_permit| async {
+                        called.store(true, Ordering::SeqCst);
+                        Ok(())
+                    },
+                )
+                .await;
+
+            assert!(result.is_err(), "{label} trusted egress must be denied");
+            assert!(!asked.asked.load(Ordering::SeqCst));
+            assert!(!called.load(Ordering::SeqCst));
+            assert!(sink.events.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn released_topic_or_wire_query_mismatch_stops_before_confirmation_and_transport() {
+        let asked = Arc::new(CountingAsker::approving());
+        let called = AtomicBool::new(false);
+        let sink = Arc::new(RecordingSink::default());
+        let auth = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Standard,
+            )),
+            confirm: ConfirmStrategy::Channel,
+            channel_asker: Some(asked.clone()),
+            sink: sink.clone(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(
+                "approved topic",
+            )
+            .into_egress_provenance(),
+        };
+
+        assert!(auth
+            .arm_operator_released_exact_topic("different topic")
+            .is_err());
+        assert!(!asked.asked.load(Ordering::SeqCst));
+        assert!(sink.events.lock().unwrap().is_empty());
+
+        auth.arm_operator_released_exact_topic("approved topic")
+            .unwrap();
+        assert!(auth
+            .execute(
+                ExternalHttpRequest::get(
+                    "https://api.search.brave.com/res/v1/web/search?q=different",
+                    ExternalHttpSurface::SearchBrave,
+                ),
+                |_permit| async {
+                    called.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .await
+            .is_err());
+        assert!(!asked.asked.load(Ordering::SeqCst));
+        assert!(!called.load(Ordering::SeqCst));
+        assert!(sink.events.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn released_search_capability_spends_exactly_once() {
+        let called = AtomicUsize::new(0);
+        let sink = Arc::new(RecordingSink::default());
+        let auth = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Full,
+            )),
+            confirm: ConfirmStrategy::AlwaysAllow,
+            channel_asker: None,
+            sink: sink.clone(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(
+                "approved topic",
+            )
+            .into_egress_provenance(),
+        };
+        auth.arm_operator_released_exact_topic("approved topic")
+            .unwrap();
+        let request = || {
+            ExternalHttpRequest::get(
+                "https://api.search.brave.com/res/v1/web/search?q=approved%20topic",
+                ExternalHttpSurface::SearchBrave,
+            )
+        };
+
+        auth.execute(request(), |_permit| async {
+            called.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert!(auth
+            .execute(request(), |_permit| async {
+                called.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .await
+            .is_err());
+        assert_eq!(called.load(Ordering::SeqCst), 1);
+        assert_eq!(sink.events.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn operator_released_research_still_uses_the_autonomy_gate() {
+        let sequence = Arc::new(Mutex::new(Vec::new()));
+        let asked = Arc::new(CountingAsker::approving_with_sequence(Arc::clone(&sequence)));
+        let called = AtomicBool::new(false);
+        let sink = Arc::new(RecordingSink {
+            sequence: Some(Arc::clone(&sequence)),
+            ..RecordingSink::default()
+        });
+        let auth = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Standard,
+            )),
+            confirm: ConfirmStrategy::Channel,
+            channel_asker: Some(asked.clone()),
+            sink: sink.clone(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(
+                "approved topic",
+            )
+            .into_egress_provenance(),
+        };
+        auth.arm_operator_released_exact_topic("approved topic")
+            .unwrap();
+
+        auth.execute(
+            ExternalHttpRequest::get(
+                "https://api.search.brave.com/res/v1/web/search?q=approved%20topic",
+                ExternalHttpSurface::SearchBrave,
+            ),
+            |_permit| async {
+                called.store(true, Ordering::SeqCst);
+                sequence.lock().unwrap().push("transport");
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(asked.asked.load(Ordering::SeqCst));
+        assert!(called.load(Ordering::SeqCst));
+        assert_eq!(
+            sequence.lock().unwrap().as_slice(),
+            ["confirm", "intent", "transport", "result"]
+        );
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events[0].1["egress_provenance"],
+            "operator_released_channel_research"
+        );
+        assert_eq!(
+            events[0].1["research_release_id"],
+            "test-research-release-id"
+        );
+        assert_eq!(
+            events[1].1["research_release_id"],
+            "test-research-release-id"
+        );
+        let request_id = events[0].1["request_id"].as_str().unwrap();
+        let mut audit_digest = Sha256::new();
+        audit_digest.update(b"NEOTH\0EXTERNAL_HTTP\0AUDIT_BINDING\0V1");
+        audit_digest.update(request_id.as_bytes());
+        assert_eq!(
+            events[0].1["request_binding_sha256"],
+            hex::encode(audit_digest.finalize())
+        );
+        let private_permit_binding = ExternalHttpRequest::get(
+            "https://api.search.brave.com/res/v1/web/search?q=approved%20topic",
+            ExternalHttpSurface::SearchBrave,
+        )
+        .binding_sha256(&auth.egress_provenance.binding_material());
+        assert_ne!(
+            events[0].1["request_binding_sha256"],
+            private_permit_binding
+        );
+        assert!(events[0].1.get("released_topic_sha256").is_none());
+        assert!(events[1].1.get("released_topic_sha256").is_none());
+    }
+
+    #[tokio::test]
+    async fn released_research_failure_never_hashes_or_persists_topic_bearing_error() {
+        let topic = "c7 private topic 2026";
+        let request_url = "https://api.search.brave.com/res/v1/web/search?q=c7%20private%20topic%202026";
+        let topic_bearing_error_url =
+            "https://failed.example.invalid/retry?q=c7%20private%20topic%202026";
+        let error_text = format!("upstream retry failed for {topic_bearing_error_url}");
+        let topic_bearing_error = anyhow::anyhow!(error_text.clone());
+        let legacy_error_sha256 =
+            hex::encode(Sha256::digest(format!("{topic_bearing_error:#}").as_bytes()));
+        let sink = Arc::new(RecordingSink::default());
+        let auth = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Standard,
+            )),
+            confirm: ConfirmStrategy::AlwaysAllow,
+            channel_asker: None,
+            sink: sink.clone(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(topic)
+                .into_egress_provenance(),
+        };
+        auth.arm_operator_released_exact_topic(topic).unwrap();
+
+        let result: Result<()> = auth
+            .execute(
+                ExternalHttpRequest::get(request_url, ExternalHttpSurface::SearchBrave),
+                move |_permit| async move { Err(anyhow::anyhow!(error_text)) },
+            )
+            .await;
+        assert!(result.is_err());
+
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        let request_id = events[0].1["request_id"].as_str().unwrap();
+        let mut expected_audit_binding = Sha256::new();
+        expected_audit_binding.update(b"NEOTH\0EXTERNAL_HTTP\0AUDIT_BINDING\0V1");
+        expected_audit_binding.update(request_id.as_bytes());
+        let expected_audit_binding = hex::encode(expected_audit_binding.finalize());
+        assert_eq!(events[0].1["request_binding_sha256"], expected_audit_binding);
+        assert_eq!(events[1].1["request_binding_sha256"], expected_audit_binding);
+        assert_eq!(events[1].1["status"], "failure");
+        assert!(events[1].1["error_sha256"].is_null());
+        assert_eq!(
+            events[1].1["error_code"],
+            "external_http_request_failed"
+        );
+
+        for (_, payload) in events.iter() {
+            let persisted = serde_json::to_string(payload).unwrap();
+            assert!(!persisted.contains(topic));
+            assert!(!persisted.contains(topic_bearing_error_url));
+            assert!(!persisted.contains(&legacy_error_sha256));
+            assert!(payload.get("released_topic_sha256").is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn operator_released_local_searxng_still_uses_gate_and_lifecycle_audit() {
+        for url in [
+            "http://127.0.0.1:8888/search?q=approved%20topic",
+            "http://192.168.1.23:8888/search?q=approved%20topic",
+        ] {
+            let sequence = Arc::new(Mutex::new(Vec::new()));
+            let asked = Arc::new(CountingAsker::approving_with_sequence(Arc::clone(&sequence)));
+            let called = AtomicBool::new(false);
+            let sink = Arc::new(RecordingSink {
+                sequence: Some(Arc::clone(&sequence)),
+                ..RecordingSink::default()
+            });
+            let auth = ExternalHttpAuthorizer {
+                policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                    crate::permissions::AutonomyLevel::Standard,
+                )),
+                confirm: ConfirmStrategy::Channel,
+                channel_asker: Some(asked.clone()),
+                sink: sink.clone(),
+                egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(
+                    "approved topic",
+                )
+                .into_egress_provenance(),
+            };
+            auth.arm_operator_released_exact_topic("approved topic")
+                .unwrap();
+
+            auth.execute(
+                ExternalHttpRequest::get(url, ExternalHttpSurface::SearchSearxng),
+                |_permit| async {
+                    called.store(true, Ordering::SeqCst);
+                    sequence.lock().unwrap().push("transport");
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap();
+
+            assert!(asked.asked.load(Ordering::SeqCst));
+            assert!(called.load(Ordering::SeqCst));
+            assert_eq!(
+                sequence.lock().unwrap().as_slice(),
+                ["confirm", "intent", "transport", "result"]
+            );
+            assert_eq!(sink.events.lock().unwrap().len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_operator_released_local_searxng_never_audits_or_transports() {
+        let asked = Arc::new(CountingAsker::rejecting());
+        let called = AtomicBool::new(false);
+        let sink = Arc::new(RecordingSink::default());
+        let auth = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Standard,
+            )),
+            confirm: ConfirmStrategy::Channel,
+            channel_asker: Some(asked.clone()),
+            sink: sink.clone(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(
+                "approved topic",
+            )
+            .into_egress_provenance(),
+        };
+        auth.arm_operator_released_exact_topic("approved topic")
+            .unwrap();
+
+        assert!(auth
+            .execute(
+                ExternalHttpRequest::get(
+                    "http://127.0.0.1:8888/search?q=approved%20topic",
+                    ExternalHttpSurface::SearchSearxng,
+                ),
+                |_permit| async {
+                    called.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .await
+            .is_err());
+        assert!(asked.asked.load(Ordering::SeqCst));
+        assert!(!called.load(Ordering::SeqCst));
+        assert!(sink.events.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejecting_operator_confirmation_writes_no_intent_or_result_and_never_transports() {
+        let asked = Arc::new(CountingAsker::rejecting());
+        let called = AtomicBool::new(false);
+        let sink = Arc::new(RecordingSink::default());
+        let auth = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Standard,
+            )),
+            confirm: ConfirmStrategy::Channel,
+            channel_asker: Some(asked.clone()),
+            sink: sink.clone(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(
+                "approved topic",
+            )
+            .into_egress_provenance(),
+        };
+        auth.arm_operator_released_exact_topic("approved topic")
+            .unwrap();
+
+        assert!(auth
+            .execute(
+                ExternalHttpRequest::get(
+                    "https://api.search.brave.com/res/v1/web/search?q=approved%20topic",
+                    ExternalHttpSurface::SearchBrave,
+                ),
+                |_permit| async {
+                    called.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .await
+            .is_err());
+        assert!(asked.asked.load(Ordering::SeqCst));
+        assert!(!called.load(Ordering::SeqCst));
+        assert!(sink.events.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn terminal_result_audit_failure_is_returned_after_transport() {
+        let called = AtomicBool::new(false);
+        let auth = authorizer(Arc::new(RecordingSink {
+            fail: Some(ExtendedSubtype::ExternalHttpResult),
+            ..RecordingSink::default()
+        }));
+
+        assert!(auth
+            .execute(
+                ExternalHttpRequest::get("https://example.com/x", ExternalHttpSurface::Fetch),
+                |_permit| async {
+                    called.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .await
+            .is_err());
+        assert!(called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn legacy_unscoped_callers_remain_unclassified_not_implicitly_public() {
+        let sink = Arc::new(RecordingSink::default());
+        let auth = authorizer(sink.clone());
+        assert!(auth.egress_provenance.sources().is_none());
+
+        auth.execute(
+            ExternalHttpRequest::get("https://example.com/x", ExternalHttpSurface::Fetch),
+            |_permit| async { Ok(()) },
+        )
+        .await
+        .unwrap();
+
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events[0].1["egress_provenance"], "legacy_unscoped");
     }
 
     #[tokio::test]

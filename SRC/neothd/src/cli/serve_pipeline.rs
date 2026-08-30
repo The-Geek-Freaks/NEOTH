@@ -193,7 +193,24 @@ pub(crate) fn sender_hash_of(sender_id: &str) -> String {
 }
 
 /// Opaque capability for the configured operator after resolved-UUID equality.
+///
+/// This is the single channel-side proof for effects that require the pinned
+/// operator, including authenticated ingress provenance and the narrowly
+/// released `/research` HTTP provenance. It cannot be fabricated outside this
+/// module because its field remains private.
+#[derive(Clone, Copy)]
 pub(crate) struct PinnedChannelCommunicationSubject(());
+
+/// Single-use authority for an explicit external `/research` release. Unlike
+/// the communication subject, this deliberately implements neither `Clone`
+/// nor `Copy`: one authenticated operator decision may mint at most one
+/// release token for this inbound turn.
+pub(crate) struct PinnedChannelExternalResearchReleaseAuthority(());
+
+struct PinnedChannelOperatorProofs {
+    communication: Option<PinnedChannelCommunicationSubject>,
+    external_research_release: Option<PinnedChannelExternalResearchReleaseAuthority>,
+}
 
 impl PinnedChannelCommunicationSubject {
     fn try_mint(
@@ -206,6 +223,82 @@ impl PinnedChannelCommunicationSubject {
         )
         .then_some(Self(()))
     }
+}
+
+/// Mint the single pinned-operator proof for an already resolved inbound
+/// identity. Missing identity, missing pin, and every non-exact match return
+/// `None`; callers must preserve that fail-closed result instead of treating
+/// an accepted channel message as an operator-authorized message.
+fn pinned_channel_operator_proofs(
+    inbound: &InboundMessage,
+    configured_operator_uuid: Option<&str>,
+) -> PinnedChannelOperatorProofs {
+    let communication = PinnedChannelCommunicationSubject::try_mint(
+        inbound.human_uuid.as_deref(),
+        configured_operator_uuid,
+    );
+    PinnedChannelOperatorProofs {
+        external_research_release: communication
+            .is_some()
+            .then_some(PinnedChannelExternalResearchReleaseAuthority(())),
+        communication,
+    }
+}
+
+/// The only accepted syntax for releasing an exact research topic to external
+/// HTTP. The release token retains a random lifecycle ID plus a private SHA-256
+/// capability binding. The bounded released-search WAL path persists only the
+/// random ID, never the plaintext topic or its deterministic digest.
+struct ExplicitExternalResearchTopic {
+    topic: String,
+    release: crate::permissions::ifc::ExplicitExternalResearchRelease,
+}
+
+const EXTERNAL_RESEARCH_RELEASE_USAGE: &str =
+    "External research requires a pinned operator and the exact syntax: /research --release-external <topic>";
+
+/// Parse the explicit external-release grammar without accepting lookalike
+/// flags or an empty topic. This is intentionally independent of model/config
+/// input; the returned opaque token binds the exact trimmed topic.
+fn parse_explicit_external_research_release(
+    args: &str,
+) -> Result<String, &'static str> {
+    let Some(after_flag) = args.strip_prefix("--release-external") else {
+        return Err(EXTERNAL_RESEARCH_RELEASE_USAGE);
+    };
+    if !after_flag
+        .chars()
+        .next()
+        .is_some_and(char::is_whitespace)
+    {
+        return Err(EXTERNAL_RESEARCH_RELEASE_USAGE);
+    }
+    let topic = after_flag.trim();
+    if topic.is_empty()
+        || topic.len()
+            > crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES
+    {
+        return Err(EXTERNAL_RESEARCH_RELEASE_USAGE);
+    }
+
+    Ok(topic.to_owned())
+}
+
+/// Require the already-minted pinned-operator proof before accepting the
+/// explicit-release grammar. Keeping this separate from parsing makes the
+/// pipeline's one identity decision reusable without allowing a syntax-only
+/// release to construct external egress provenance.
+fn operator_released_external_research_topic(
+    release_authority: Option<PinnedChannelExternalResearchReleaseAuthority>,
+    args: &str,
+) -> Result<ExplicitExternalResearchTopic, &'static str> {
+    let topic = parse_explicit_external_research_release(args)?;
+    let release_authority = release_authority.ok_or(EXTERNAL_RESEARCH_RELEASE_USAGE)?;
+    let release = crate::permissions::ifc::ExplicitExternalResearchRelease::for_pinned_operator_exact_topic(
+        release_authority,
+        &topic,
+    );
+    Ok(ExplicitExternalResearchTopic { topic, release })
 }
 
 /// Resolve the communication audit label for one inbound turn. The pinned
@@ -1392,16 +1485,18 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // the ingress gate can block persona-override attempts in locked mode.
             let _serve_persona_mode = crate::cli::profile::load_persona_mode(&neoth_home);
             let serve_identity_locked = _serve_persona_mode.is_some();
-            // R4-15: only the exact configured operator UUID, established by
-            // the channel identity resolver above, receives operator ingress
-            // provenance. Message text cannot construct or inherit this value.
-            let ingress_trust = if crate::cli::recall::channel_recall_authorized(
-                inbound.human_uuid.as_deref(),
+            // R4-15/C7: resolve this once from the pinned UUID comparison and
+            // retain the opaque result. Both operator ingress trust and the
+            // `/research` public egress release below consume this exact
+            // decision; accepting a channel message alone never grants either.
+            let mut pinned_operator_proofs = pinned_channel_operator_proofs(
+                &inbound,
                 config_for_handler
                     .channel_weights
                     .operator_human_uuid
                     .as_deref(),
-            ) {
+            );
+            let ingress_trust = if pinned_operator_proofs.communication.is_some() {
                 crate::security::ingress_sanitizer::IngressTrust::AuthenticatedOperator
             } else {
                 crate::security::ingress_sanitizer::IngressTrust::Untrusted
@@ -1481,13 +1576,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // channel ingress. Other people have no implicit consent to a
             // longitudinal behavioural profile or provider disclosure.
             let communication_profile_incognito = channel_communication_subject != "operator";
-            let communication_subject_proof = PinnedChannelCommunicationSubject::try_mint(
-                inbound.human_uuid.as_deref(),
-                config_for_handler
-                    .channel_weights
-                    .operator_human_uuid
-                    .as_deref(),
-            );
+            let communication_subject_proof = pinned_operator_proofs.communication;
             let communication_outcome = match communication_subject_proof {
                 Some(proof) => crate::profile::communication::record_authenticated_turn(
                     &neoth_home,
@@ -2402,11 +2491,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     // them here, before constructing a research loop or
                     // spawning a background task, so marker revocation yields
                     // zero provider calls on every early-return path.
-                    if let Err(error) = ensure_provider_backed_channel_slash_consent(
-                        &name,
-                        &neoth_home,
-                        config_for_handler.as_ref(),
-                    ) {
+                    if name != "research"
+                        && let Err(error) = ensure_provider_backed_channel_slash_consent(
+                            &name,
+                            &neoth_home,
+                            config_for_handler.as_ref(),
+                        )
+                    {
                         warn!(
                             channel = channel_str,
                             command = %name,
@@ -2429,70 +2520,72 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         )
                         .await;
                     }
-                    // ── GOLD-ADAPT-ODY-17: `/research <topic>` deep-research engine ──
-                    // Read-only: no system mutation → not blocked by the channel
-                    // privilege ceiling. Runs the multi-step search→read→synthesize
-                    // loop and returns the result as an OutboundMessage reply.
+                    // ── GOLD-ADAPT-ODY-17/C7: explicitly released research ──
+                    // External HTTP can carry topic-derived data. It is therefore
+                    // available only to the resolved, pinned operator who uses the
+                    // exact `/research --release-external <topic>` syntax. Neither
+                    // channel authentication nor the later autonomy confirmation
+                    // declassifies a topic; both proofs are required before even
+                    // constructing the authorizer (including local SearXNG).
                     if name == "research" {
-                        let topic = args.trim();
-                        let reply_text = if topic.is_empty() {
-                            "Usage: /research <topic>".to_string()
-                        } else {
-                            let search_provider =
-                                crate::tools::deep_research::resolve_search_provider();
-                            match crate::tools::deep_research::resolve_search_key(search_provider) {
-                                Err(e) => format!("deep-research: {e}"),
-                                Ok(search_key) => {
-                                    info!(
-                                        channel = channel_str,
-                                        topic = topic,
-                                        "slash /research: starting deep-research engine"
-                                    );
-                                    let research_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
-                                            provider.as_ref(),
-                                            provider_call_authorizer.clone(),
-                                            crate::providers::provider_default_wire_model(provider.as_ref()),
-                                            "channel_deep_research_round",
+                        let release = operator_released_external_research_topic(
+                            pinned_operator_proofs.external_research_release.take(),
+                            args,
+                        );
+                        let reply_text = match release {
+                            Err(guidance) => guidance.to_string(),
+                            Ok(ExplicitExternalResearchTopic { topic, release }) => {
+                                let search_provider =
+                                    crate::tools::deep_research::resolve_search_provider();
+                                match crate::tools::deep_research::resolve_search_key(
+                                    search_provider,
+                                ) {
+                                    Err(e) => format!("deep-research: {e}"),
+                                    Ok(search_key) => {
+                                        info!(
+                                            channel = channel_str,
+                                            topic_len = topic.len(),
+                                            "slash /research: starting bounded operator-released search"
                                         );
-                                    let http = match channel_asker.as_ref() {
-                                        Some(asker) => crate::tools::external_http::ExternalHttpAuthorizer::with_channel_writer(
-                                            config_for_handler.autonomy_policy(),
-                                            writer.clone(),
-                                            Arc::clone(asker),
-                                        ),
-                                        None => crate::tools::external_http::ExternalHttpAuthorizer::with_writer(
-                                            config_for_handler.autonomy_policy(),
-                                            crate::permissions::ConfirmStrategy::FailClosed,
-                                            writer.clone(),
-                                        ),
-                                    };
-                                    match crate::tools::deep_research::run_deep_research(
-                                        topic,
-                                        &research_provider,
-                                        &search_key,
-                                        search_provider,
-                                        &config_for_handler.deep_research,
-                                        &writer,
-                                        &http,
-                                    )
-                                    .await
-                                    {
-                                        Ok(report) => {
-                                            let mut out = report.article.clone();
-                                            if !report.citations.is_empty() {
-                                                out.push_str("\n\n---\nSources:\n");
-                                                for (i, c) in report.citations.iter().enumerate() {
-                                                    out.push_str(&format!(
-                                                        "[{}] {} — {}\n",
-                                                        i + 1,
-                                                        c.title,
-                                                        c.url
-                                                    ));
+                                        // C7: only the exact parser-minted release
+                                        // reaches this constructor. The released path
+                                        // performs one exact-topic search with compiled-in
+                                        // caps; it never exposes a public authorizer to
+                                        // model-planned queries or follow-up page fetches.
+                                        let http =
+                                            crate::tools::external_http::ExternalHttpAuthorizer::
+                                                with_operator_released_channel_research_writer(
+                                                    config_for_handler.autonomy_policy(),
+                                                    writer.clone(),
+                                                    channel_asker.as_ref().map(Arc::clone),
+                                                    release,
+                                                );
+                                        match crate::tools::deep_research::run_operator_released_channel_research(
+                                            &topic,
+                                            &search_key,
+                                            search_provider,
+                                            &writer,
+                                            &http,
+                                        )
+                                        .await
+                                        {
+                                            Ok(report) => {
+                                                let mut out = report.article.clone();
+                                                if !report.citations.is_empty() {
+                                                    out.push_str("\n\n---\nSources:\n");
+                                                    for (i, c) in report.citations.iter().enumerate() {
+                                                        out.push_str(&format!(
+                                                            "[{}] {} — {}\n",
+                                                            i + 1,
+                                                            c.title,
+                                                            c.url
+                                                        ));
+                                                    }
                                                 }
+                                                out
                                             }
-                                            out
+                                            Err(e) => format!("deep-research error: {e:#}"),
                                         }
-                                        Err(e) => format!("deep-research error: {e:#}"),
                                     }
                                 }
                             }
@@ -5412,6 +5505,108 @@ mod tests {
             "human-operator",
             "missing operator pin must never promote a sender"
         );
+    }
+
+    #[test]
+    fn operator_released_research_requires_the_same_resolved_pinned_operator_proof() {
+        let mut operator = inbound(Some("/research --release-external tide tables"), None);
+        operator.human_uuid = Some("human-operator".into());
+        let mut proofs = pinned_channel_operator_proofs(&operator, Some("human-operator"));
+        assert!(proofs.communication.is_some());
+        let proof = proofs.external_research_release.take();
+        assert!(proofs.external_research_release.is_none());
+        assert!(operator_released_external_research_topic(
+            proof,
+            "--release-external tide tables"
+        )
+        .is_ok());
+        assert!(operator_released_external_research_topic(
+            proofs.external_research_release.take(),
+            "--release-external second attempt"
+        )
+        .is_err());
+
+        let mut different_sender = operator.clone();
+        different_sender.human_uuid = Some("human-other".into());
+        assert!(operator_released_external_research_topic(
+            pinned_channel_operator_proofs(&different_sender, Some("human-operator"))
+                .external_research_release,
+            "--release-external tide tables"
+        )
+        .is_err());
+        assert!(operator_released_external_research_topic(
+            pinned_channel_operator_proofs(&operator, None).external_research_release,
+            "--release-external tide tables"
+        )
+        .is_err());
+
+        let missing_identity = inbound(Some("/research --release-external tide tables"), None);
+        assert!(operator_released_external_research_topic(
+            pinned_channel_operator_proofs(&missing_identity, Some("human-operator"))
+                .external_research_release,
+            "--release-external tide tables"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn explicit_external_research_release_parses_one_exact_nonempty_topic() {
+        let release = parse_explicit_external_research_release(
+            "--release-external   tide tables near Hamburg  ",
+        )
+        .expect("valid explicit release");
+        assert_eq!(release, "tide tables near Hamburg");
+        let mut operator = inbound(Some("/research --release-external tide tables"), None);
+        operator.human_uuid = Some("human-operator".into());
+        let first = operator_released_external_research_topic(
+            pinned_channel_operator_proofs(&operator, Some("human-operator"))
+                .external_research_release,
+            "--release-external tide tables near Hamburg",
+        )
+        .expect("proof-bound release")
+        .release
+        .into_egress_provenance();
+        let second = operator_released_external_research_topic(
+            pinned_channel_operator_proofs(&operator, Some("human-operator"))
+                .external_research_release,
+            "--release-external another topic",
+        )
+        .expect("second proof-bound release")
+        .release
+        .into_egress_provenance();
+        assert_ne!(first.binding_material(), second.binding_material());
+
+        for invalid in [
+            "",
+            "ordinary topic",
+            "--release-external",
+            "--release-external   ",
+            "--release-external-topic lookalike",
+        ] {
+            assert!(
+                parse_explicit_external_research_release(invalid).is_err(),
+                "must reject {invalid:?}"
+            );
+        }
+        let oversized = format!(
+            "--release-external {}",
+            "x".repeat(
+                crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES + 1
+            )
+        );
+        assert!(parse_explicit_external_research_release(&oversized).is_err());
+    }
+
+    #[test]
+    fn plain_research_syntax_cannot_mint_an_external_release_even_for_operator() {
+        let mut operator = inbound(Some("/research ordinary topic"), None);
+        operator.human_uuid = Some("human-operator".into());
+        assert!(operator_released_external_research_topic(
+            pinned_channel_operator_proofs(&operator, Some("human-operator"))
+                .external_research_release,
+            "ordinary topic"
+        )
+        .is_err());
     }
 
     #[test]
