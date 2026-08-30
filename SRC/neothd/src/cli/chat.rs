@@ -12554,7 +12554,7 @@ mod tests {
         ] {
             assert!(
                 !surfaced.contains(secret),
-                "foreground error surface must not retain post-mint content: {secret}"
+                "foreground error surface must not retain post-mint content"
             );
         }
     }
@@ -14423,11 +14423,26 @@ modes:
             "Useful session sk-\x1b[31m{}\x1b[0m\rforged",
             &secret[3..]
         ));
-        assert!(title.contains("Useful session"), "{title}");
-        assert!(title.contains("REDACTED"), "{title}");
-        assert!(!title.contains(secret), "{title}");
-        assert!(!title.contains('\x1b'), "{title:?}");
-        assert!(!title.contains('\r'), "{title:?}");
+        assert!(
+            title.contains("Useful session"),
+            "sanitized session title lost its safe label"
+        );
+        assert!(
+            title.contains("REDACTED"),
+            "sanitized session title lost its redaction marker"
+        );
+        assert!(
+            !title.contains(secret),
+            "sanitized session title retained credential material"
+        );
+        assert!(
+            !title.contains('\x1b'),
+            "sanitized session title retained a terminal escape"
+        );
+        assert!(
+            !title.contains('\r'),
+            "sanitized session title retained a carriage return"
+        );
     }
 
     #[test]
@@ -14917,7 +14932,7 @@ modes:
         ] {
             assert!(
                 !surfaced.contains(secret),
-                "guarded provider error must not expose post-mint content: {secret}"
+                "guarded provider error must not expose post-mint content"
             );
         }
     }
@@ -14952,7 +14967,7 @@ modes:
         for secret in ["private-request", literal.as_str(), spaced.as_str()] {
             assert!(
                 !surfaced.contains(secret),
-                "sanitized quota error must not expose post-mint content: {secret}"
+                "sanitized quota error must not expose post-mint content"
             );
         }
     }
@@ -15200,7 +15215,7 @@ modes:
         ] {
             assert!(
                 !surfaced.contains(secret),
-                "revoked-consent failure must not expose post-mint content: {secret}"
+                "revoked-consent failure must not expose post-mint content"
             );
         }
         assert_eq!(
@@ -15450,7 +15465,7 @@ modes:
             assert_eq!(req_payload["operator_id_sha256"], expected);
             assert!(
                 req_payload.get("operator_id").is_none(),
-                "the operator id must not appear in the clear: {req_payload}"
+                "the operator id must not appear in the cleartext request payload"
             );
         }
         assert_eq!(req_payload["model_source"], "freedom");
@@ -17906,7 +17921,7 @@ modes:
         ] {
             assert!(
                 !payload_text.contains(forbidden),
-                "raw recall data leaked into WAL payload: {payload_text}"
+                "raw recall data leaked into the WAL payload"
             );
         }
         let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
@@ -17964,8 +17979,14 @@ modes:
         let prompt_block =
             maybe_repo_context_block_at_paths(&cfg, "auth", &db, &ccr, "/repo/imported")
                 .expect("imported matching context must reach the prompt boundary");
-        assert!(!prompt_block.contains(secret), "{prompt_block}");
-        assert!(!prompt_block.contains('\x1b'), "{prompt_block:?}");
+        assert!(
+            !prompt_block.contains(secret),
+            "prompt block retained credential material"
+        );
+        assert!(
+            !prompt_block.contains('\x1b'),
+            "prompt block retained a terminal escape"
+        );
 
         let payloads: Vec<String> = std::fs::read_dir(&ccr)
             .expect("compression must create its persistent CCR directory")
@@ -17978,12 +17999,21 @@ modes:
             "structured repo context must be CCR-backed"
         );
         for payload in payloads {
-            assert!(payload.contains("[REDACTED:openai_key]"), "{payload}");
-            assert!(!payload.contains(secret), "{payload}");
-            assert!(!payload.contains('\x1b'), "{payload:?}");
+            assert!(
+                payload.contains("[REDACTED:openai_key]"),
+                "CCR payload lost its credential redaction marker"
+            );
+            assert!(
+                !payload.contains(secret),
+                "CCR payload retained credential material"
+            );
+            assert!(
+                !payload.contains('\x1b'),
+                "CCR payload retained a terminal escape"
+            );
             assert!(
                 payload.contains("auth"),
-                "useful context must survive: {payload}"
+                "CCR payload lost its useful context marker"
             );
         }
     }
@@ -18243,10 +18273,22 @@ modes:
         };
 
         let block = render_recall_block_layered(&output);
-        assert!(block.contains("useful memory"), "{block}");
-        assert!(block.contains("[REDACTED:openai_key]"), "{block}");
-        assert!(!block.contains(secret), "{block}");
-        assert!(!block.contains('\x1b'), "{block:?}");
+        assert!(
+            block.contains("useful memory"),
+            "layered recall block lost useful memory"
+        );
+        assert!(
+            block.contains("[REDACTED:openai_key]"),
+            "layered recall block lost its credential redaction marker"
+        );
+        assert!(
+            !block.contains(secret),
+            "layered recall block retained credential material"
+        );
+        assert!(
+            !block.contains('\x1b'),
+            "layered recall block retained a terminal escape"
+        );
     }
 
     /// One EpisodeHit carrying just `text` — the other fields are inert for the
@@ -18932,7 +18974,7 @@ modes:
         for secret in ["blocked prompt", "unknown-paid-model"] {
             assert!(
                 !surfaced.contains(secret),
-                "authorization failure must not expose post-mint content: {secret}"
+                "authorization failure must not expose post-mint content"
             );
         }
         assert!(
