@@ -355,7 +355,20 @@ jobs:
     timeout-minutes: 60
     continue-on-error: true
     env:
-      CARGO_BUILD_JOBS: 2
+      # This all-targets matrix includes the large Slint GUI with `wizard`.
+      # Runs 33307754192 and 33310686909 both received a hosted-runner
+      # shutdown (exit 143) during that cold GUI compile at two jobs.  One
+      # compiler job bounds peak memory; it deliberately does not weaken the
+      # workspace, target, feature, or advisory-warning coverage below.
+      CARGO_BUILD_JOBS: 1
+      # Keep beta build artefacts separate from the stable workspace and out
+      # of the cache.  The old cached SRC/target tree could reach multi-GB,
+      # turning an advisory retry into an unbounded restore/save and retaining
+      # incompatible beta intermediates.  Cargo sources remain cached; a
+      # bounded cold compile is the intended trade-off.  Reintroduce a beta
+      # target cache only after three consecutive successful beta runs and an
+      # explicit cache-size review.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/SRC/target/beta-advisory
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -375,17 +388,18 @@ jobs:
             libxcb1-dev \
             libxkbcommon-dev
 
-      - name: Cache Cargo registry + target
+      - name: Cache Cargo sources (beta; no build artefacts)
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            SRC/target/
-          key: linux-beta-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          # A new namespace prevents restoring the former multi-GB target
+          # archive under its path-derived cache version.
+          key: linux-beta-sources-v2-${{ hashFiles('SRC/Cargo.lock') }}
           restore-keys: |
-            linux-beta-cargo-
+            linux-beta-sources-v2-
 
       - name: cargo clippy workspace (beta)
         timeout-minutes: 40
