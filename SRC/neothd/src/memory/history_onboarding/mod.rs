@@ -747,10 +747,12 @@ mod tests {
     fn all_three_families_parse_neutral_review_candidates() {
         let chatgpt = r#"{"mapping":{"n":{"id":"a","conversation_id":"c","message":{"author":{"role":"user"},"content":{"parts":["hello"]}}}}}"#
             .as_bytes();
-        let claude = r#"{"messages":[{"id":"a","conversation_id":"c","role":"user","text":"hello"}]}"#
-            .as_bytes();
-        let openclaw = r#"{"messages":[{"id":"a","session_id":"c","role":"user","content":"hello"}]}"#
-            .as_bytes();
+        let claude =
+            r#"{"messages":[{"id":"a","conversation_id":"c","role":"user","text":"hello"}]}"#
+                .as_bytes();
+        let openclaw =
+            r#"{"messages":[{"id":"a","session_id":"c","role":"user","content":"hello"}]}"#
+                .as_bytes();
         assert_eq!(
             parse_source(SourceFamily::ChatgptExport, chatgpt)
                 .unwrap()
