@@ -6,8 +6,8 @@
 //! mandatory intent frame have succeeded. Every returned network outcome is
 //! closed by a matching result frame before it is released to the caller.
 
-use std::future::Future;
 use std::fmt;
+use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
@@ -570,9 +570,7 @@ impl ExternalHttpAuthorizer {
             "error_sha256": error_sha256,
             "ts_unix": crate::time::now_unix_secs(),
         });
-        if let (Some(error_code), Some(object)) =
-            (released_error_code, payload.as_object_mut())
-        {
+        if let (Some(error_code), Some(object)) = (released_error_code, payload.as_object_mut()) {
             object.insert(
                 "error_code".to_owned(),
                 serde_json::Value::String(error_code.to_owned()),
@@ -902,10 +900,8 @@ mod tests {
 
     #[test]
     fn permit_rejects_a_provenance_binding_mismatch() {
-        let request = ExternalHttpRequest::get(
-            "https://example.com/api",
-            ExternalHttpSurface::SearchBrave,
-        );
+        let request =
+            ExternalHttpRequest::get("https://example.com/api", ExternalHttpSurface::SearchBrave);
         let permit = ExternalHttpPermit {
             request_id: "id".into(),
             permit_binding_sha256: request
@@ -933,7 +929,10 @@ mod tests {
             br#"{"query":"approved topic","max_results":5}"#,
         );
         for request in [brave, searxng, tavily] {
-            assert_eq!(request.search_query_sha256.as_deref(), Some(expected.as_str()));
+            assert_eq!(
+                request.search_query_sha256.as_deref(),
+                Some(expected.as_str())
+            );
         }
 
         let duplicate = ExternalHttpRequest::get(
@@ -1066,16 +1065,17 @@ mod tests {
             .into_egress_provenance(),
         };
 
-        assert!(auth
-            .arm_operator_released_exact_topic("different topic")
-            .is_err());
+        assert!(
+            auth.arm_operator_released_exact_topic("different topic")
+                .is_err()
+        );
         assert!(!asked.asked.load(Ordering::SeqCst));
         assert!(sink.events.lock().unwrap().is_empty());
 
         auth.arm_operator_released_exact_topic("approved topic")
             .unwrap();
-        assert!(auth
-            .execute(
+        assert!(
+            auth.execute(
                 ExternalHttpRequest::get(
                     "https://api.search.brave.com/res/v1/web/search?q=different",
                     ExternalHttpSurface::SearchBrave,
@@ -1086,7 +1086,8 @@ mod tests {
                 },
             )
             .await
-            .is_err());
+            .is_err()
+        );
         assert!(!asked.asked.load(Ordering::SeqCst));
         assert!(!called.load(Ordering::SeqCst));
         assert!(sink.events.lock().unwrap().is_empty());
@@ -1123,13 +1124,14 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(auth
-            .execute(request(), |_permit| async {
+        assert!(
+            auth.execute(request(), |_permit| async {
                 called.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             })
             .await
-            .is_err());
+            .is_err()
+        );
         assert_eq!(called.load(Ordering::SeqCst), 1);
         assert_eq!(sink.events.lock().unwrap().len(), 2);
     }
@@ -1137,7 +1139,9 @@ mod tests {
     #[tokio::test]
     async fn operator_released_research_still_uses_the_autonomy_gate() {
         let sequence = Arc::new(Mutex::new(Vec::new()));
-        let asked = Arc::new(CountingAsker::approving_with_sequence(Arc::clone(&sequence)));
+        let asked = Arc::new(CountingAsker::approving_with_sequence(Arc::clone(
+            &sequence,
+        )));
         let called = AtomicBool::new(false);
         let sink = Arc::new(RecordingSink {
             sequence: Some(Arc::clone(&sequence)),
@@ -1216,13 +1220,15 @@ mod tests {
     #[tokio::test]
     async fn released_research_failure_never_hashes_or_persists_topic_bearing_error() {
         let topic = "c7 private topic 2026";
-        let request_url = "https://api.search.brave.com/res/v1/web/search?q=c7%20private%20topic%202026";
+        let request_url =
+            "https://api.search.brave.com/res/v1/web/search?q=c7%20private%20topic%202026";
         let topic_bearing_error_url =
             "https://failed.example.invalid/retry?q=c7%20private%20topic%202026";
         let error_text = format!("upstream retry failed for {topic_bearing_error_url}");
         let topic_bearing_error = anyhow::anyhow!(error_text.clone());
-        let legacy_error_sha256 =
-            hex::encode(Sha256::digest(format!("{topic_bearing_error:#}").as_bytes()));
+        let legacy_error_sha256 = hex::encode(Sha256::digest(
+            format!("{topic_bearing_error:#}").as_bytes(),
+        ));
         let sink = Arc::new(RecordingSink::default());
         let auth = ExternalHttpAuthorizer {
             policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
@@ -1251,14 +1257,17 @@ mod tests {
         expected_audit_binding.update(b"NEOTH\0EXTERNAL_HTTP\0AUDIT_BINDING\0V1");
         expected_audit_binding.update(request_id.as_bytes());
         let expected_audit_binding = hex::encode(expected_audit_binding.finalize());
-        assert_eq!(events[0].1["request_binding_sha256"], expected_audit_binding);
-        assert_eq!(events[1].1["request_binding_sha256"], expected_audit_binding);
+        assert_eq!(
+            events[0].1["request_binding_sha256"],
+            expected_audit_binding
+        );
+        assert_eq!(
+            events[1].1["request_binding_sha256"],
+            expected_audit_binding
+        );
         assert_eq!(events[1].1["status"], "failure");
         assert!(events[1].1["error_sha256"].is_null());
-        assert_eq!(
-            events[1].1["error_code"],
-            "external_http_request_failed"
-        );
+        assert_eq!(events[1].1["error_code"], "external_http_request_failed");
 
         for (_, payload) in events.iter() {
             let persisted = serde_json::to_string(payload).unwrap();
@@ -1276,7 +1285,9 @@ mod tests {
             "http://192.168.1.23:8888/search?q=approved%20topic",
         ] {
             let sequence = Arc::new(Mutex::new(Vec::new()));
-            let asked = Arc::new(CountingAsker::approving_with_sequence(Arc::clone(&sequence)));
+            let asked = Arc::new(CountingAsker::approving_with_sequence(Arc::clone(
+                &sequence,
+            )));
             let called = AtomicBool::new(false);
             let sink = Arc::new(RecordingSink {
                 sequence: Some(Arc::clone(&sequence)),
@@ -1338,8 +1349,8 @@ mod tests {
         auth.arm_operator_released_exact_topic("approved topic")
             .unwrap();
 
-        assert!(auth
-            .execute(
+        assert!(
+            auth.execute(
                 ExternalHttpRequest::get(
                     "http://127.0.0.1:8888/search?q=approved%20topic",
                     ExternalHttpSurface::SearchSearxng,
@@ -1350,7 +1361,8 @@ mod tests {
                 },
             )
             .await
-            .is_err());
+            .is_err()
+        );
         assert!(asked.asked.load(Ordering::SeqCst));
         assert!(!called.load(Ordering::SeqCst));
         assert!(sink.events.lock().unwrap().is_empty());
@@ -1376,8 +1388,8 @@ mod tests {
         auth.arm_operator_released_exact_topic("approved topic")
             .unwrap();
 
-        assert!(auth
-            .execute(
+        assert!(
+            auth.execute(
                 ExternalHttpRequest::get(
                     "https://api.search.brave.com/res/v1/web/search?q=approved%20topic",
                     ExternalHttpSurface::SearchBrave,
@@ -1388,7 +1400,8 @@ mod tests {
                 },
             )
             .await
-            .is_err());
+            .is_err()
+        );
         assert!(asked.asked.load(Ordering::SeqCst));
         assert!(!called.load(Ordering::SeqCst));
         assert!(sink.events.lock().unwrap().is_empty());
@@ -1402,8 +1415,8 @@ mod tests {
             ..RecordingSink::default()
         }));
 
-        assert!(auth
-            .execute(
+        assert!(
+            auth.execute(
                 ExternalHttpRequest::get("https://example.com/x", ExternalHttpSurface::Fetch),
                 |_permit| async {
                     called.store(true, Ordering::SeqCst);
@@ -1411,7 +1424,8 @@ mod tests {
                 },
             )
             .await
-            .is_err());
+            .is_err()
+        );
         assert!(called.load(Ordering::SeqCst));
     }
 

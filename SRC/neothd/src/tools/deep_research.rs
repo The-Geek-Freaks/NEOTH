@@ -101,9 +101,7 @@ impl ReleasedChannelResearchPlan {
         if topic.is_empty() {
             anyhow::bail!("released channel research topic is empty");
         }
-        if topic.len()
-            > crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES
-        {
+        if topic.len() > crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES {
             anyhow::bail!(
                 "released channel research topic exceeds the {}-byte limit",
                 crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES
@@ -171,14 +169,9 @@ pub async fn run_operator_released_channel_research(
     };
 
     let report = render_released_search_report(hits);
-    emit_released_research_completed(
-        writer,
-        &release_id,
-        "success",
-        report.citations.len(),
-    )
-    .await
-    .context("append mandatory released research completion frame")?;
+    emit_released_research_completed(writer, &release_id, "success", report.citations.len())
+        .await
+        .context("append mandatory released research completion frame")?;
     info!(
         research_release_id = %release_id,
         result_count = report.citations.len(),
@@ -212,8 +205,7 @@ fn render_released_search_report(hits: Vec<SearchHit>) -> ResearchReport {
         }
 
         let title = compact_released_result_text(&hit.title, MAX_RELEASED_RESULT_TITLE_CHARS);
-        let snippet =
-            compact_released_result_text(&hit.snippet, MAX_RELEASED_RESULT_SNIPPET_CHARS);
+        let snippet = compact_released_result_text(&hit.snippet, MAX_RELEASED_RESULT_SNIPPET_CHARS);
         let title = if title.is_empty() {
             "Untitled public result".to_owned()
         } else {
@@ -258,8 +250,24 @@ fn compact_released_result_text(input: &str, max_chars: usize) -> String {
         }
         let escape_markdown = matches!(
             character,
-            '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '<' | '>' | '#'
-                | '+' | '-' | '.' | '!' | '|' | '~'
+            '\\' | '`'
+                | '*'
+                | '_'
+                | '{'
+                | '}'
+                | '['
+                | ']'
+                | '('
+                | ')'
+                | '<'
+                | '>'
+                | '#'
+                | '+'
+                | '-'
+                | '.'
+                | '!'
+                | '|'
+                | '~'
         );
         let required = usize::from(escape_markdown) + 1;
         if written.saturating_add(required) > max_chars {
@@ -632,10 +640,7 @@ fn released_research_completed_payload(
     .context("serialise released channel research completion payload")
 }
 
-async fn emit_released_research_started(
-    writer: &WalWriterHandle,
-    release_id: &str,
-) -> Result<()> {
+async fn emit_released_research_started(writer: &WalWriterHandle, release_id: &str) -> Result<()> {
     let payload = released_research_started_payload(release_id)?;
     let header = crate::wal::make_header(
         crate::wal::events::EVENT_TYPE_DEEP_RESEARCH_STARTED,
@@ -882,12 +887,14 @@ mod tests {
         assert_eq!(plan.query, "exact operator topic");
         assert_eq!(plan.max_results, MAX_RELEASED_RESEARCH_RESULTS);
         assert!(ReleasedChannelResearchPlan::for_exact_topic("   ").is_err());
-        assert!(ReleasedChannelResearchPlan::for_exact_topic(
-            &"x".repeat(
-                crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES + 1
+        assert!(
+            ReleasedChannelResearchPlan::for_exact_topic(
+                &"x".repeat(
+                    crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES + 1
+                )
             )
-        )
-        .is_err());
+            .is_err()
+        );
     }
 
     #[test]

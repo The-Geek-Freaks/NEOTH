@@ -254,29 +254,21 @@ struct ExplicitExternalResearchTopic {
     release: crate::permissions::ifc::ExplicitExternalResearchRelease,
 }
 
-const EXTERNAL_RESEARCH_RELEASE_USAGE: &str =
-    "External research requires a pinned operator and the exact syntax: /research --release-external <topic>";
+const EXTERNAL_RESEARCH_RELEASE_USAGE: &str = "External research requires a pinned operator and the exact syntax: /research --release-external <topic>";
 
 /// Parse the explicit external-release grammar without accepting lookalike
 /// flags or an empty topic. This is intentionally independent of model/config
 /// input; the returned opaque token binds the exact trimmed topic.
-fn parse_explicit_external_research_release(
-    args: &str,
-) -> Result<String, &'static str> {
+fn parse_explicit_external_research_release(args: &str) -> Result<String, &'static str> {
     let Some(after_flag) = args.strip_prefix("--release-external") else {
         return Err(EXTERNAL_RESEARCH_RELEASE_USAGE);
     };
-    if !after_flag
-        .chars()
-        .next()
-        .is_some_and(char::is_whitespace)
-    {
+    if !after_flag.chars().next().is_some_and(char::is_whitespace) {
         return Err(EXTERNAL_RESEARCH_RELEASE_USAGE);
     }
     let topic = after_flag.trim();
     if topic.is_empty()
-        || topic.len()
-            > crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES
+        || topic.len() > crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES
     {
         return Err(EXTERNAL_RESEARCH_RELEASE_USAGE);
     }
@@ -294,10 +286,11 @@ fn operator_released_external_research_topic(
 ) -> Result<ExplicitExternalResearchTopic, &'static str> {
     let topic = parse_explicit_external_research_release(args)?;
     let release_authority = release_authority.ok_or(EXTERNAL_RESEARCH_RELEASE_USAGE)?;
-    let release = crate::permissions::ifc::ExplicitExternalResearchRelease::for_pinned_operator_exact_topic(
-        release_authority,
-        &topic,
-    );
+    let release =
+        crate::permissions::ifc::ExplicitExternalResearchRelease::for_pinned_operator_exact_topic(
+            release_authority,
+            &topic,
+        );
     Ok(ExplicitExternalResearchTopic { topic, release })
 }
 
@@ -5515,38 +5508,45 @@ mod tests {
         assert!(proofs.communication.is_some());
         let proof = proofs.external_research_release.take();
         assert!(proofs.external_research_release.is_none());
-        assert!(operator_released_external_research_topic(
-            proof,
-            "--release-external tide tables"
-        )
-        .is_ok());
-        assert!(operator_released_external_research_topic(
-            proofs.external_research_release.take(),
-            "--release-external second attempt"
-        )
-        .is_err());
+        assert!(
+            operator_released_external_research_topic(proof, "--release-external tide tables")
+                .is_ok()
+        );
+        assert!(
+            operator_released_external_research_topic(
+                proofs.external_research_release.take(),
+                "--release-external second attempt"
+            )
+            .is_err()
+        );
 
         let mut different_sender = operator.clone();
         different_sender.human_uuid = Some("human-other".into());
-        assert!(operator_released_external_research_topic(
-            pinned_channel_operator_proofs(&different_sender, Some("human-operator"))
-                .external_research_release,
-            "--release-external tide tables"
-        )
-        .is_err());
-        assert!(operator_released_external_research_topic(
-            pinned_channel_operator_proofs(&operator, None).external_research_release,
-            "--release-external tide tables"
-        )
-        .is_err());
+        assert!(
+            operator_released_external_research_topic(
+                pinned_channel_operator_proofs(&different_sender, Some("human-operator"))
+                    .external_research_release,
+                "--release-external tide tables"
+            )
+            .is_err()
+        );
+        assert!(
+            operator_released_external_research_topic(
+                pinned_channel_operator_proofs(&operator, None).external_research_release,
+                "--release-external tide tables"
+            )
+            .is_err()
+        );
 
         let missing_identity = inbound(Some("/research --release-external tide tables"), None);
-        assert!(operator_released_external_research_topic(
-            pinned_channel_operator_proofs(&missing_identity, Some("human-operator"))
-                .external_research_release,
-            "--release-external tide tables"
-        )
-        .is_err());
+        assert!(
+            operator_released_external_research_topic(
+                pinned_channel_operator_proofs(&missing_identity, Some("human-operator"))
+                    .external_research_release,
+                "--release-external tide tables"
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -5590,9 +5590,7 @@ mod tests {
         }
         let oversized = format!(
             "--release-external {}",
-            "x".repeat(
-                crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES + 1
-            )
+            "x".repeat(crate::permissions::ifc::MAX_OPERATOR_RELEASED_RESEARCH_TOPIC_BYTES + 1)
         );
         assert!(parse_explicit_external_research_release(&oversized).is_err());
     }
@@ -5601,12 +5599,14 @@ mod tests {
     fn plain_research_syntax_cannot_mint_an_external_release_even_for_operator() {
         let mut operator = inbound(Some("/research ordinary topic"), None);
         operator.human_uuid = Some("human-operator".into());
-        assert!(operator_released_external_research_topic(
-            pinned_channel_operator_proofs(&operator, Some("human-operator"))
-                .external_research_release,
-            "ordinary topic"
-        )
-        .is_err());
+        assert!(
+            operator_released_external_research_topic(
+                pinned_channel_operator_proofs(&operator, Some("human-operator"))
+                    .external_research_release,
+                "ordinary topic"
+            )
+            .is_err()
+        );
     }
 
     #[test]

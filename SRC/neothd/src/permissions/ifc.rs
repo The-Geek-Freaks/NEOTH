@@ -400,14 +400,12 @@ impl EgressProvenance {
 
     #[cfg(test)]
     pub(crate) fn test_operator_released_channel_research(sources: SourceLabels) -> Self {
-        Self::OperatorReleasedChannelResearch(Arc::new(
-            OperatorReleasedChannelResearchProvenance {
-                sources,
-                research_release_id: "test-research-release-id".to_owned(),
-                released_topic_sha256: hex::encode(Sha256::digest(b"approved topic")),
-                execution_state: AtomicU8::new(RELEASE_FRESH),
-            },
-        ))
+        Self::OperatorReleasedChannelResearch(Arc::new(OperatorReleasedChannelResearchProvenance {
+            sources,
+            research_release_id: "test-research-release-id".to_owned(),
+            released_topic_sha256: hex::encode(Sha256::digest(b"approved topic")),
+            execution_state: AtomicU8::new(RELEASE_FRESH),
+        }))
     }
 }
 
@@ -583,10 +581,7 @@ mod tests {
             release.sources().map(SourceLabels::highest),
             Some(InformationLabel::Public)
         );
-        assert_eq!(
-            release.audit_tag(),
-            "operator_released_channel_research"
-        );
+        assert_eq!(release.audit_tag(), "operator_released_channel_research");
         assert_eq!(
             release.released_research_id(),
             Some("test-research-release-id")
