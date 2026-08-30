@@ -146,27 +146,31 @@ already-gated release workflow itself.
 | WS-NCT Cognitive Transport + selective Buzz/Prime coordination (2026-07-27; Prime decision 2026-08-10) | 30 (`GOLD-NCT-00..27` + `GOLD-ADOPT-BUZZ-01` + `GOLD-ADOPT-PRIME-01`) | **28** | **2** |
 | WS-ADOPT31 18-source forensic adoption wave + Wayfinder/ADW/Evidence-Gated pipeline (2026-07-31) | 67 (`ADOPT31-*`; lanes A7/B12/C10/D7/E2/F4/G7/H2/**W2+I7+V5**/X2) | **65** | **2** |
 | WS-CC Context Connectors & People Intelligence (2026-08-13) | 13 (`GOLD-CC-00..12`) | **12** | **1** |
+| WS-ADOPT30 8-source bounded external-adoption review (2026-08-30) | 8 (`GOLD-ADAPT-ARCHIFY-01`, `GOLD-ADAPT-GN-01`, `GOLD-ADAPT-S2C-VISUAL-REVIEW-01`, `GOLD-ADAPT-TAILCAT-01`, `GOLD-ADOPT-FREELLMAPI-01`, `GOLD-ADAPT-WIKISKILL-01`, `GOLD-ADAPT-AIMEM-01`, `GOLD-ADOPT-MODULAR-01`) | **7** | **1** |
 
 `GOLD-R4-13a..l` and `GOLD-R4-15a..l` are mandatory acceptance subcontracts
 inside their already-open parent rollups and therefore are not added a second
 time to the WS-R4 top-level total.
 
-**Current count semantics (machine-recomputed 2026-08-13):** the
-dashboard tracks broad/workstream rollups, whose current OPEN column sums to **242**
-(`1 + 6 + 14 + 116 + 28 + 65 + 12`). The release workflow uses a different and stricter
+**Current count semantics (machine-recomputed 2026-08-13; additive WS-ADOPT30
+delta reconciled 2026-08-30):** the dashboard tracks broad/workstream rollups,
+whose current OPEN column sums to **249**
+(`1 + 6 + 14 + 116 + 28 + 65 + 12 + 7`). The release workflow uses a different and stricter
 contract: `packaging/roadmap_release_gate.py` counts every Markdown task outside
 fenced code, including mandatory child contracts. Its current whole-file result
-from `python packaging/roadmap_release_gate.py --summary-json` is **1,314 total
- / 999 done / 313 open / 2 partial = 315 raw blockers**. A release tag therefore has **314
+is **1,322 total / 1,000 done / 320 open / 2 partial = 322 raw blockers**
+(the last exact parser result plus the mechanically exact eight-checkbox
+WS-ADOPT30 delta; no local Python was run on the BSOD-sensitive workstation).
+A release tag therefore has **321
 pre-tag blockers**, because only the single
 `GOLD-RELEASE-ARTIFACTS` task may remain open while that workflow creates its
-evidence. The values 242, 315 and 314 answer different questions and must not be
+evidence. The values 249, 322 and 321 answer different questions and must not be
 substituted for one another in release-readiness claims. The two partials are deliberate
 honesty states and still block release; notably A6 has a tested VAD primitive but no live
 Playback-Cancel consumer until A2/A7 exist. `ADOPT31-C3` uses the canonical open state
 instead of the invalid historical `[?]`, so the release gate can parse every task again.
 
-<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1314 complete=999 open=313 partial=2 raw_blockers=315 release_tag_blockers=314 release_generated_items=1 -->
+<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1322 complete=1000 open=320 partial=2 raw_blockers=322 release_tag_blockers=321 release_generated_items=1 -->
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
 
@@ -2702,6 +2706,17 @@ Finally, `self-dev accept` still marks `SwitchPreset`, `AdjustVerbosity`,
 transactionally applying their effects. Those paths must be wired and proven
 before the checkbox can close.
 
+**Evidence checkpoint (2026-08-30):** Request-bound Incognito CLI, Main and
+Buddy implementation is on GitHub `main` through `794a6445`; exact-SHA Code
+Quality `33304466539` is green. Preflight `33304466997` failed only on one
+formatter hunk in the B1 review-only regression; successor commit `9890fc8a`
+contains the exact formatter output. Full CI `33113679777` on the earlier
+`10fe35a` checkpoint completed with Linux Clippy, three GUI source-contract and
+one Windows SafeStore failure family; `cc3cad71` fixed Clippy and successor
+commit `6f67952c` repairs the three GUI test contracts. These successor commits
+still require exact-head Preflight and Full CI evidence. Channel/profile/cluster
+parity and every other acceptance criterion stay open.
+
 The current Mobile Companion is also not release-ready: the wizard renders a
 LAN URL for a loopback-only listener and the wrong route, does not enable the
 required P2P carrier, reports timeout as success, stores tokens only in memory
@@ -4920,10 +4935,23 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
 - [ ] **GOLD-LF-P2-02 — Hippocampus importance cron:** add the 0.75 importance selection contract, decay task and durable importance field, with hot-reload, Custom fail-closed and boundary/retention tests. Source: Jarvis cherry-pick #1.
 - [ ] **GOLD-LF-P2-03 — Nightly vault Git WAL-mirror backup:** implement policy-gated, credential-safe nightly commit/verification/retention for the configured external vault and surface status/repair in CLI, GUI and Buddy; no operator data may be silently pushed or deleted. Source: Jarvis cherry-pick #3.
 - [ ] **GOLD-LF-P2-04 — Complete reflection hygiene:** enforce ≤90-day retention, Jaccard topic deduplication, yearly synthesis from period reflections and a deterministic topic-synonym map, with migration and long-horizon regressions. Source: REFLECT_BACKLOG §A.
+  **Evidence update (2026-08-30; exact shipped boundary):** the fail-closed
+  retention inventory and recovery foundation is on GitHub `main` in
+  `d30fb37e` (with its formatting follow-up in the `1e48f3d4..794a6445`
+  mainline). It cannot delete without reviewed v2 authority. V2 authority,
+  quarantine, operator and executor paths, Jaccard topic deduplication, yearly
+  synthesis and deterministic synonym mapping remain open; no parent
+  acceptance criterion is complete.
 - [ ] **GOLD-LF-P2-05 — Self-improve proposal quality schema:** version and persist eval source, corpus hash, regressions and quality evidence, reject incomplete/stale proposals before acceptance, and expose the same proof in CLI/GUI/Buddy. Source: REFLECT_BACKLOG §B.
 - [ ] **GOLD-LF-P2-06 — Capability decay tracking:** define and persist provider/capability quality-over-time metrics, decay/recovery rules and operator-visible diagnostics without allowing noisy samples to silently disable capabilities. Source: FEATURE_EVAL.md C-13.
 - [ ] **GOLD-LF-P2-07 — EXP-FD-1..5 fractal-dimension experiments:** complete the reasoning-depth literature/design note, then implement all five reproducible gated experiments with datasets, metrics, provenance and explicit promotion/rejection criteria. Source: dimension.rs gated experiment backlog.
 - [ ] **GOLD-LF-P2-08 — Universal WAL session_id:** thread the authenticated session identity through make_header and every applicable emitter, migrate/read legacy zero values safely and prove cross-session replay/query isolation. Source: builder.rs session_id finding.
+  **Evidence update (2026-08-30; static audit):** universal `session_id`
+  remains open. An additive draft was rejected because authenticated registry
+  and contextual writer support are missing; no implementation was accepted
+  and there is no dynamic proof. GitHub `main` checkpoint `794a6445` has green
+  Code Quality `33304466539`; its unrelated Preflight formatter failure and the
+  earlier failing Full CI provide no `session_id` closure evidence.
 - [ ] **GOLD-LF-P2-09 — Autonomous research loop:** implement an operator-governed agent-goal lifecycle with bounded planning/execution, budgets, pause/resume/cancel, evidence capture, proposal-first mutation and full audit/rollback surfaces. Source: FEATURE_EVAL.md C-2.
 - [ ] **GOLD-LF-P2-10 — Session-start skill registry injection:** inject the exact enabled, dependency-ready skill registry into every new session and downstream retry/fallback/sub-agent path; prove hot-reload and subject/policy isolation. Source: SP-H1.
 - [ ] **GOLD-LF-P2-11 — CodeGraph import/type/BFS edges:** add ImportGraph, TypeHierarchy and bounded BFS APIs beside the existing CallGraph, regenerate Graphify/self-knowledge consumers and test cross-language, cycle and stale-index behavior. Source: CG-2/3/5.
@@ -5704,6 +5732,173 @@ they are not optional follow-ups:
 27. Reconnect generation N exiting cannot unregister generation N+1. Revoke
     aborts every live generation and evicts every outbound target on both
     carriers; restart cannot restore an old-epoch pending delivery.
+
+## WS-ADOPT30 — Bounded external-adoption review (2026-08-30)
+
+> **Decision contract:** this wave adds only capability deltas that survive a
+> primary-source review against NEOTH's current native architecture. It does not
+> vendor a candidate application, introduce a parallel source of truth, weaken
+> Cost/Consent/WAL/retention boundaries, or remove, defer or relabel any existing
+> GOLD item. A completed `REJECTED` row closes the adoption evaluation only; it
+> does not claim that a product capability shipped. The seven accepted rows stay
+> open until their native acceptance evidence exists on exact GitHub `main`.
+
+- [ ] **GOLD-ADAPT-ARCHIFY-01 — Source-pinned architecture evidence, not a
+  Node runtime dependency.** Adapt Archify's deterministic intermediate-model
+  and validation idea into a native, offline `architecture_evidence_v1` receipt
+  over NEOTH's existing `code_map` snapshot. Bind every declared component,
+  boundary and rendered release diagram to the exact repository identity,
+  release SHA, code-map generation and bounded source-slice digests; reject
+  missing, mixed-generation, stale or budget-truncated evidence rather than
+  presenting it as complete. Do not embed Archify, Node/npm, its update check or
+  URL/brand-capture paths. Completion requires deterministic regeneration,
+  tamper/stale/root-mismatch failures, zero network proof, bounded output and a
+  release-doc consumer that shows the receipt rather than trusting prose.
+  Cross-link: `GOLD-R4-10` and `ADOPT31-E1/E2`. Source review:
+  [README](https://github.com/tt-a1i/archify/blob/main/README.md),
+  [skill contract](https://github.com/tt-a1i/archify/blob/main/archify/SKILL.md),
+  [MIT license](https://github.com/tt-a1i/archify/blob/main/LICENSE). **M**
+
+- [ ] **GOLD-ADAPT-GN-01 — Native pre-change code-graph impact receipt; no
+  GitNexus code or graph database.** Add a read-only
+  `codegraph_prechange_impact_v1` consumer that maps a bounded Git working-tree
+  diff onto NEOTH's existing persisted declarations, confidence-aware edges and
+  impact traversal. The receipt must carry canonical-root identity, index/graph
+  generations, freshness, truncation and unmatched-change truth; return no raw
+  source or diff by default and perform no provider, filesystem mutation or WAL
+  write. The PolyForm Noncommercial candidate is research input only: do not
+  copy, vendor, translate or redistribute its implementation, LadybugDB,
+  Tree-sitter stack, browser agent or Graph-RAG service. Completion requires
+  rename/delete/untracked/binary/oversize/stale-generation/cycle tests and a
+  bounded CLI/GUI review surface. Cross-link: `ADOPT31-E1/E2` and
+  `GOLD-LF-P2-11`. Source review:
+  [architecture](https://raw.githubusercontent.com/abhigyanpatwari/GitNexus/main/ARCHITECTURE.md),
+  [security](https://raw.githubusercontent.com/abhigyanpatwari/GitNexus/main/SECURITY.md),
+  [PolyForm Noncommercial license](https://raw.githubusercontent.com/abhigyanpatwari/GitNexus/main/LICENSE).
+  **M**
+
+- [ ] **GOLD-ADAPT-S2C-VISUAL-REVIEW-01 — Deterministic local Slint visual
+  fixtures; no screenshot-to-code application.** Adapt only the useful
+  render-capture-compare feedback loop: allowlisted synthetic fixture -> bounded
+  native/headless Slint render -> normalized screenshot digest/golden plus
+  contrast/token checks -> typed receipt. The initial vertical has zero model,
+  provider, browser navigation, arbitrary HTML, remote URL, user-data or cloud
+  media egress; raw screenshots are disabled outside an explicitly protected
+  run-scoped CI artifact directory. Render absence, timeout, resource overflow,
+  artifact failure or golden mismatch remains a visible failure. Do not reuse
+  the candidate's React/FastAPI application, direct provider SDKs, hosted image
+  services or Chromium `--no-sandbox` path. A later provider-assisted turn is
+  blocked on the typed R4-14 image/tool/result envelope and exact final-provider
+  Cost/Consent/WAL authorization. Cross-link: completion child of `ADOPT31-G7`.
+  Source review:
+  [README](https://github.com/abi/screenshot-to-code/blob/main/README.md),
+  [Playwright backend](https://github.com/abi/screenshot-to-code/blob/main/backend/preview_screenshot/playwright_backend.py),
+  [MIT license](https://github.com/abi/screenshot-to-code/blob/main/LICENSE).
+  **M**
+
+- [ ] **GOLD-ADAPT-TAILCAT-01 — Experimental one-shot Tailcat diagnostic
+  transport; never a NEOTH trust or SSH plane.** Behind the existing
+  `GOLD-R4-13g` carrier contract, allow an explicitly enabled, exact-version and
+  checksum-pinned Tailcat executable sidecar to expose one fixed loopback-only,
+  session-bound diagnostic endpoint. Require a fresh server key, exactly one
+  pre-approved client node-key allowlist, bounded TTL, owned/custom DERP for
+  non-lab use, process-group cleanup and revoke/cancel/expiry kill. A raw `tc...`
+  capability is credential material and may never enter logs, WAL, SQLite,
+  receipts, task context, telemetry, crash reports or URLs; persist only keyed
+  fingerprints and redacted terminal metadata. Forbid saved keys, allow-all,
+  no-auth/system SSH, SOCKS, exit/subnet forwarding, arbitrary destinations,
+  `serve=all`, public-relay fallback, browser transport and remote command/file/
+  plugin access. Completion requires trusted-key success, foreign/expired/
+  revoked denial, raw-token sink tests, direct-versus-relay truth and proof that
+  every failure leaves no listener, child or reusable capability. Source review:
+  [mechanism](https://github.com/tailscale/tailcat#how-it-works),
+  [key management](https://github.com/tailscale/tailcat#key-management),
+  [stability contract](https://github.com/tailscale/tailcat#stability),
+  [BSD-3-Clause license](https://github.com/tailscale/tailcat/blob/main/LICENSE).
+  **L**
+
+- [x] **GOLD-ADOPT-FREELLMAPI-01 — REJECTED as a dependency, backend and
+  provider catalogue (evaluation complete 2026-08-30).** Its health/quota/
+  cooldown concepts are already owned by NEOTH's canonical provider-instance,
+  route, credential, cost and bounded 429-only fallback contracts. A volatile
+  third-party free-provider catalogue, generic forwarding gateway, alternate
+  encrypted-key store, signed remote route-policy channel and default analytics
+  would duplicate authority while widening credential, endpoint, privacy,
+  DNS-rebinding, terms and failover risk. No code, endpoint list, provider keys,
+  model counts or analytics path is adopted. Future provider entries must use
+  `ADOPT31-H1` plus `GOLD-R3-19`; useful circuit-breaker behavior may be
+  implemented natively only when it preserves one-shot route identity and exact
+  provider Cost/Consent/WAL evidence. Source review:
+  [repository](https://github.com/tashfeenahmed/freellmapi),
+  [router](https://github.com/tashfeenahmed/freellmapi/blob/main/server/src/services/router.ts),
+  [URL guard](https://github.com/tashfeenahmed/freellmapi/blob/main/server/src/lib/url-guard.ts),
+  [MIT license](https://github.com/tashfeenahmed/freellmapi/blob/main/LICENSE).
+
+- [ ] **GOLD-ADAPT-WIKISKILL-01 — Evidence-bound skill evolution with sealed
+  validation and explicit activation.** Adapt the paper's trace -> persistent
+  pattern -> atomic skill candidate -> validation -> accept/rollback loop onto
+  NEOTH's existing capability-bound skill store and self-improve proposal path.
+  Ingest only bounded, minimized and redacted evidence with source/subject/
+  policy/runtime provenance; raw prompts, transcripts, secrets and untrusted
+  repository instructions may not become executable skill text. Evaluate on a
+  sealed non-overlapping holdout with safety, privacy, cost and regression gates,
+  and reject model/runtime transfer unless separately proven—the paper itself
+  reports severe negative cross-model transfer. Accepted output remains a
+  review-only candidate until an operator explicitly activates a versioned skill;
+  rollback must restore the prior registry exactly. Do not add a parallel wiki,
+  implicit auto-approval or always-injected unbounded skill corpus. Completion
+  requires contamination/leakage/prompt-injection/negative-transfer/rollback/
+  restart tests and an auditable candidate-to-evidence receipt. Source review:
+  [paper](https://arxiv.org/abs/2608.27454),
+  [method](https://arxiv.org/html/2608.27454#S3),
+  [results and transfer](https://arxiv.org/html/2608.27454#S5),
+  [limitations](https://arxiv.org/html/2608.27454#S7). **L**
+
+- [ ] **GOLD-ADAPT-AIMEM-01 — WAL-authoritative cross-harness workstream
+  continuity, not a second memory store.** Add a Codex-first local workstream
+  ledger that records a closed vocabulary of bounded, sanitized lifecycle events
+  with typed repository/worktree/session/actor provenance and stable idempotency
+  keys through NEOTH's canonical WAL append boundary. Derive an untrusted,
+  deterministic `HandoffCandidate` plus generation watermark at session close;
+  the next session may explicitly accept, dismiss or mark it stale and receives a
+  durable receipt for that decision. The candidate may not mutate GroundTruth,
+  profile, reflection or recall authority, and default operation has no network,
+  remote sync, provider call or raw transcript capture. SQLite/materialized views
+  remain reconstructible; retention, correction, forget and subject isolation
+  must cover the derived workstream view. Do not adopt ai-memory's Git Markdown
+  wiki, background auto-approval, remote providers or parallel durability model.
+  Completion requires duplicate/crash/replay/concurrent-worktree/stale-generation/
+  subject-isolation/retention/forget/no-egress tests plus CLI, GUI, Buddy and
+  Doctor parity. Cross-link: JV-MEM, Hindsight, History Onboarding and
+  `GOLD-LF-P2-10`. Source review:
+  [architecture](https://github.com/akitaonrails/ai-memory/blob/main/docs/ARCHITECTURE.md),
+  [security](https://github.com/akitaonrails/ai-memory/blob/main/SECURITY.md),
+  [MIT license](https://github.com/akitaonrails/ai-memory/blob/main/LICENSE).
+  **L**
+
+- [ ] **GOLD-ADOPT-MODULAR-01 — Optional operator-installed MAX Serve provider
+  through the existing OpenAI-compatible boundary.** Do not vendor the Modular
+  repository, MAX runtime, models or toolchain. When an operator has separately
+  installed and licensed a compatible MAX Serve runtime, permit a default-off
+  `ProviderInstance` that reuses NEOTH's reviewed `openai_compat` request path,
+  credential isolation, endpoint-origin consent, exact final model/cost identity,
+  bounded streaming, timeout/cancel and WAL terminal evidence. Preflight and bind
+  the exact executable/runtime/model/config/device fingerprint; report
+  installed/healthy/degraded/unavailable truth and never describe CPU fallback,
+  WSL or an unsupported accelerator as native GPU operation. First scope is text
+  streaming only; no Mojo execution, automatic download/update, opaque sidecar,
+  default bundle, silent fallback or hardware mutation. Windows support is WSL
+  only unless upstream changes and exact CI proves otherwise. Completion requires
+  license acknowledgement, supply-chain pin, local-loopback and remote-endpoint
+  classification tests, model/runtime drift denial, P40/P100 unsupported-device
+  honesty, cancellation/restart cleanup and CLI/GUI/Buddy/Doctor parity.
+  Cross-link: `GOLD-ADAPT-RMAS-01..03`, `GOLD-R4-04`, `GOLD-R3-19` and
+  `ADOPT31-H1`. Source review:
+  [repository](https://github.com/modular/modular),
+  [MAX Serve](https://max.modular.com/cli/serve/),
+  [model compatibility](https://max.modular.com/models/),
+  [community license](https://www.modular.com/legal/community),
+  [Mojo requirements](https://mojolang.org/docs/requirements/). **L**
 
 ## 5. Definition of GOLD (Release Gate)
 
