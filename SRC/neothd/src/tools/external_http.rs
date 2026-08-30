@@ -1529,13 +1529,14 @@ mod tests {
                 "injected audit failure",
             ],
         );
-        let intent_attempts = intent_sink.attempts.lock().unwrap();
-        assert_eq!(intent_attempts.len(), 1);
-        assert_released_payload_is_provider_neutral(
-            &intent_attempts[0].1,
-            &[topic, "api.tavily.com", "POST", "search_tavily"],
-        );
-        drop(intent_attempts);
+        {
+            let intent_attempts = intent_sink.attempts.lock().unwrap();
+            assert_eq!(intent_attempts.len(), 1);
+            assert_released_payload_is_provider_neutral(
+                &intent_attempts[0].1,
+                &[topic, "api.tavily.com", "POST", "search_tavily"],
+            );
+        }
 
         let permit_sink = Arc::new(RecordingSink::default());
         let permit_auth = ExternalHttpAuthorizer {
