@@ -355,6 +355,12 @@ const INVENTORY: &[(&str, Surface)] = &[
     ("gui", CliOnly("launches the GUI itself")),
     ("memory", Gui("memory")),
     ("ctx", Gui("memory")),
+    (
+        "history",
+        CliOnly(
+            "private historical-export onboarding: interactive no-follow capture and the per-subject scan/preview/review/reject/purge workflow have no GUI dispatch authority; the GUI transcript switcher is read-only session history, not this import surface",
+        ),
+    ),
     ("skills", Gui("plugins")),
     ("mode", Gui("mode-registry")),
     ("glossary", Gui("wiki")),

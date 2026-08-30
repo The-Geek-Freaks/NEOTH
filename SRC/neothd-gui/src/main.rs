@@ -26905,9 +26905,19 @@ mod chat_subprocess_tests {
         assert!(!generic_overview.contains("set_ov_cost("));
         assert!(!generic_overview.contains("set_ov_tokens_in("));
 
+        // `include_str!` also contains the function name in this assertion's
+        // source literal. Require exactly that marker and the production
+        // helper before selecting the final occurrence, so a later comment or
+        // fixture cannot silently replace the implementation under test.
+        let budget_probe_signature = "fn probe_budget_via_subprocess(";
+        assert_eq!(
+            source.match_indices(budget_probe_signature).count(),
+            2,
+            "budget-probe tripwire requires exactly one test marker and one production helper"
+        );
         let budget_probe = source
-            .split("fn probe_budget_via_subprocess(")
-            .nth(1)
+            .rsplit_once(budget_probe_signature)
+            .map(|(_, tail)| tail)
             .and_then(|tail| tail.split("fn apply_active_preset_via_subprocess(").next())
             .unwrap();
         assert!(budget_probe.contains("run_bounded_dashboard_json_probe"));
