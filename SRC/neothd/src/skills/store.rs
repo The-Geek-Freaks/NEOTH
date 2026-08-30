@@ -138,8 +138,8 @@ static TEST_POST_COMMIT_FAILURE_GENERATION: std::sync::atomic::AtomicU64 =
 /// consume one another's failure.
 #[cfg(test)]
 pub(crate) fn fail_private_child_post_commit_validation_for_test(target: &Path) {
-    let generation = TEST_POST_COMMIT_FAILURE_GENERATION
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let generation =
+        TEST_POST_COMMIT_FAILURE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut targets = TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2844,11 +2844,8 @@ fn atomic_write_private_child_reported_core(
         let candidate =
             std::ffi::OsString::from(format!(".neoth-atomic-{}", uuid::Uuid::new_v4().simple()));
         #[cfg(windows)]
-        let opened = windows_private_atomic_stage::Stage::create_private(
-            parent,
-            &candidate,
-            display_path,
-        );
+        let opened =
+            windows_private_atomic_stage::Stage::create_private(parent, &candidate, display_path);
         #[cfg(not(windows))]
         let opened = {
             let mut options = OpenOptions::new();
@@ -2897,13 +2894,9 @@ fn atomic_write_private_child_reported_core(
             .with_context(|| format!("sync private atomic stage for {}", display_path.display()))?;
         #[cfg(windows)]
         let durability = windows_private_atomic_stage::durability_after_rename(
-            synced_stage.rename_observed(
-                parent,
-                name,
-                display_path,
-                replace_existing,
-                || committed = true,
-            )?,
+            synced_stage.rename_observed(parent, name, display_path, replace_existing, || {
+                committed = true
+            })?,
         );
         #[cfg(not(windows))]
         let durability = {
@@ -2960,12 +2953,8 @@ fn atomic_write_private_child_reported_core(
             #[cfg(windows)]
             let cleanup = stage.cleanup(&stage_display);
             #[cfg(not(windows))]
-            let cleanup = remove_named_file_if_same_open_object(
-                parent,
-                &stage_name,
-                &stage,
-                &stage_display,
-            );
+            let cleanup =
+                remove_named_file_if_same_open_object(parent, &stage_name, &stage, &stage_display);
             drop(stage);
             match cleanup {
                 Ok(()) => Err(error),
@@ -3111,12 +3100,8 @@ fn replace_existing_regular_file_report_inner(
         #[cfg(windows)]
         let cleanup = stage.cleanup(&stage_display);
         #[cfg(not(windows))]
-        let cleanup = remove_named_file_if_same_open_object(
-            parent,
-            &stage_name,
-            &stage,
-            &stage_display,
-        );
+        let cleanup =
+            remove_named_file_if_same_open_object(parent, &stage_name, &stage, &stage_display);
         drop(stage);
         return match cleanup {
             Ok(()) => Err(error),
@@ -3305,10 +3290,7 @@ mod windows_private_atomic_stage {
             let file = parent.open_with(name, &options)?;
             if protect_private_dacl {
                 if let Err(error) = protect_private_dacl(&file) {
-                    let stage_display = display_path
-                        .parent()
-                        .unwrap_or(display_path)
-                        .join(name);
+                    let stage_display = display_path.parent().unwrap_or(display_path).join(name);
                     let cleanup = super::windows_mark_delete(&file, &stage_display);
                     return Err(std::io::Error::other(match cleanup {
                         Ok(()) => format!(
@@ -3325,7 +3307,6 @@ mod windows_private_atomic_stage {
             let volume = qualify_exact_handle(&file);
             Ok(Self { file, volume })
         }
-
         pub(super) fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
             self.file.write_all(bytes)
         }
@@ -5286,10 +5267,12 @@ mod reported_commit_tests {
             b"must not replace the confirmed private record",
         )
         .expect_err("create-new must retain no-replace semantics after the durable rename");
-        assert!(error
-            .source
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists));
+        assert!(
+            error
+                .source
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists)
+        );
         assert_eq!(std::fs::read(&target).unwrap(), b"private state");
     }
 
@@ -5327,7 +5310,12 @@ mod reported_commit_tests {
             b"new",
         )
         .unwrap();
-        assert!(report.warnings.iter().any(|warning| warning.contains("unsupported")));
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unsupported"))
+        );
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
     }
 
@@ -5388,10 +5376,12 @@ mod reported_commit_tests {
             let stage = std::fs::read_dir(&directory)
                 .unwrap()
                 .filter_map(|entry| entry.ok())
-                .find(|entry| entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".neoth-atomic-"))
+                .find(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".neoth-atomic-")
+                })
                 .expect("exact open stage must still have its original name")
                 .path();
             std::fs::rename(&stage, &displaced_for_hook).unwrap();
@@ -5407,17 +5397,29 @@ mod reported_commit_tests {
         .expect_err("the injected target must make the no-replace rename fail");
 
         assert_eq!(std::fs::read(&target).unwrap(), b"rename collision");
-        assert!(!displaced.exists(), "the exact retained stage handle must be disposed");
+        assert!(
+            !displaced.exists(),
+            "the exact retained stage handle must be disposed"
+        );
         let substitutes: Vec<_> = std::fs::read_dir(temp.path())
             .unwrap()
             .filter_map(|entry| entry.ok())
-            .filter(|entry| entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".neoth-atomic-"))
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".neoth-atomic-")
+            })
             .collect();
-        assert_eq!(substitutes.len(), 1, "only the deliberate substitute survives");
-        assert_eq!(std::fs::read(substitutes[0].path()).unwrap(), b"name substitute");
+        assert_eq!(
+            substitutes.len(),
+            1,
+            "only the deliberate substitute survives"
+        );
+        assert_eq!(
+            std::fs::read(substitutes[0].path()).unwrap(),
+            b"name substitute"
+        );
     }
 
     #[cfg(windows)]
