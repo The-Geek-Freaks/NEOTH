@@ -2533,7 +2533,9 @@ mod tests {
             DailyArchiveStatus::Matching,
         );
         assert!(!lock_path.exists());
-        assert!(!crate::reflection::hygiene_store::daily_admission_state_path(home.path()).exists());
+        assert!(
+            !crate::reflection::hygiene_store::daily_admission_state_path(home.path()).exists()
+        );
     }
 
     #[test]

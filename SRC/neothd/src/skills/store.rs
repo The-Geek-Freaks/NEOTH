@@ -1010,7 +1010,6 @@ pub(crate) fn bind_retained_real_child_dir(
     Ok((child, binding))
 }
 
-
 /// Open one direct real-directory child if it exists. Absence is not an error;
 /// a file, symlink, junction, or other reparse point remains a hard refusal.
 ///
@@ -2102,9 +2101,11 @@ fn remove_real_directory_tree_with_budget(
     #[cfg(windows)]
     {
         let directory = open_real_child_dir(parent, name, display_path)?;
-        let expected_identity = child_identity_token(&directory.dir_metadata().with_context(|| {
-            format!("inspect removal target {}", display_path.display())
-        })?)?;
+        let expected_identity = child_identity_token(
+            &directory
+                .dir_metadata()
+                .with_context(|| format!("inspect removal target {}", display_path.display()))?,
+        )?;
         remove_directory_contents(&directory, display_path, 0, budget)?;
         drop(directory);
 
@@ -2270,9 +2271,10 @@ pub(crate) fn remove_empty_real_child_dir_if_present(
         let Some(directory) = open_real_child_dir_if_present(parent, name, display_path)? else {
             return Ok(false);
         };
-        let expected_identity = child_identity_token(&directory.dir_metadata().with_context(|| {
-            format!("inspect empty-directory target {}", display_path.display())
-        })?)?;
+        let expected_identity =
+            child_identity_token(&directory.dir_metadata().with_context(|| {
+                format!("inspect empty-directory target {}", display_path.display())
+            })?)?;
         ensure_directory_is_empty(&directory, display_path)?;
         drop(directory);
 
@@ -2433,9 +2435,10 @@ fn remove_directory_contents(
                 .with_context(|| format!("inspect removal child {}", child_display.display()))?;
             if metadata.is_dir() && !cap_metadata_is_link_like(&metadata) {
                 let child = open_real_child_dir(directory, &name, &child_display)?;
-                let expected_identity = child_identity_token(&child.dir_metadata().with_context(|| {
-                    format!("inspect removal child {}", child_display.display())
-                })?)?;
+                let expected_identity =
+                    child_identity_token(&child.dir_metadata().with_context(|| {
+                        format!("inspect removal child {}", child_display.display())
+                    })?)?;
                 remove_directory_contents(&child, &child_display, depth + 1, budget)?;
                 drop(child);
                 budget.charge_work(&child_display)?;
@@ -3567,12 +3570,9 @@ mod tests {
         let root = open_bound_directory(temp.path(), false, "test SafeStore")
             .unwrap()
             .unwrap();
-        let (_lock, _binding) = open_or_create_bound_lockfile(
-            &root.dir,
-            OsStr::new("state-v1.lock"),
-            &lock_path,
-        )
-        .expect("open and retain the SafeStore lock leaf");
+        let (_lock, _binding) =
+            open_or_create_bound_lockfile(&root.dir, OsStr::new("state-v1.lock"), &lock_path)
+                .expect("open and retain the SafeStore lock leaf");
 
         let error = atomic_write_private_child(
             &root.dir,
@@ -4247,8 +4247,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            remove_empty_real_child_dir_if_present(&root.dir, OsStr::new("empty"), &empty)
-                .unwrap()
+            remove_empty_real_child_dir_if_present(&root.dir, OsStr::new("empty"), &empty).unwrap()
         );
         assert!(!empty.exists());
 
