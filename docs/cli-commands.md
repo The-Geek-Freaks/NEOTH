@@ -1453,6 +1453,48 @@ Sanity-check the provider bound to a role. Default behaviour: build the adapter 
 - `--question <QUESTION>` — Optional question to send live to the bound provider. Without this flag the command is build-only
 - `--dry-run` — When set with `--question`, print what would be sent + resolved provider/model without making the LLM call
 
+## `neoth history`
+
+Review-only onboarding for historical ChatGPT, Claude, or OpenClaw exports. Historical text never enters recall or profile learning here
+
+### `neoth history preview`
+
+Show bounded neutral excerpts for one batch, including resolved rows
+
+- `<BATCH_ID>`
+- `--limit <LIMIT>`
+
+### `neoth history purge`
+
+Logically delete exactly one review batch. This does not sanitize media
+
+- `<BATCH_ID>`
+- `--yes` — Required acknowledgement for a logical journal-row deletion
+
+### `neoth history reject`
+
+Reject exactly one pending candidate in the caller's subject namespace
+
+- `<CANDIDATE_ID>`
+
+### `neoth history review`
+
+Show only pending candidates for a batch. This is read-only
+
+- `<BATCH_ID>`
+- `--limit <LIMIT>`
+
+### `neoth history scan`
+
+Explicit interactive authorization to capture one no-follow export
+
+- `<PATH>` — Export file; it is read as data only and never executed
+- `--source <FAMILY>` — `chatgpt_export`, `claude_export`, or `openclaw_history`
+
+### `neoth history status`
+
+Show the caller's own batches and privacy-exclusion counts
+
 ## `neoth hooks`
 
 Inspect TOML hooks loaded from `~/.neoth/hooks/*.toml` (Phase 29 R-15)

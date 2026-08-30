@@ -118,8 +118,19 @@ fn run_before_windows_recursive_leaf_delete_for_test() {
 }
 
 #[cfg(test)]
-static TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT: std::sync::Mutex<Vec<PathBuf>> =
-    std::sync::Mutex::new(Vec::new());
+#[derive(Clone)]
+struct TestPostCommitFailureRegistration {
+    target: PathBuf,
+    generation: u64,
+}
+
+#[cfg(test)]
+static TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT: std::sync::Mutex<
+    Vec<TestPostCommitFailureRegistration>,
+> = std::sync::Mutex::new(Vec::new());
+#[cfg(test)]
+static TEST_POST_COMMIT_FAILURE_GENERATION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
 
 /// Inject a failure after a private regular-file stage has been atomically
 /// renamed, but before the writer validates the committed target identity.
@@ -127,19 +138,30 @@ static TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT: std::sync::Mutex<Vec<P
 /// consume one another's failure.
 #[cfg(test)]
 pub(crate) fn fail_private_child_post_commit_validation_for_test(target: &Path) {
+    let generation = TEST_POST_COMMIT_FAILURE_GENERATION
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut targets = TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT
         .lock()
-        .expect("private-child post-commit validation test hook poisoned");
-    targets.retain(|candidate| candidate != target);
-    targets.push(target.to_path_buf());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    targets.retain(|candidate| candidate.target != target);
+    targets.push(TestPostCommitFailureRegistration {
+        target: target.to_path_buf(),
+        generation,
+    });
 }
 
 #[cfg(test)]
 fn inject_private_child_post_commit_validation_failure(target: &Path) -> Result<()> {
     let mut targets = TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT
         .lock()
-        .expect("private-child post-commit validation test hook poisoned");
-    if let Some(index) = targets.iter().position(|candidate| candidate == target) {
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(index) = targets
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| candidate.target == target)
+        .max_by_key(|(_, candidate)| candidate.generation)
+        .map(|(index, _)| index)
+    {
         targets.swap_remove(index);
         anyhow::bail!("injected private-child post-commit validation failure");
     }
@@ -1972,6 +1994,7 @@ fn named_regular_file_matches_open_object(
         && child_identity_token(&opened_metadata)? == child_identity_token(&named_metadata)?)
 }
 
+#[cfg(not(windows))]
 fn remove_named_file_if_same_open_object(
     parent: &Dir,
     name: &OsStr,
@@ -2820,40 +2843,28 @@ fn atomic_write_private_child_reported_core(
     for _ in 0..8 {
         let candidate =
             std::ffi::OsString::from(format!(".neoth-atomic-{}", uuid::Uuid::new_v4().simple()));
-        let mut options = OpenOptions::new();
-        options
-            .write(true)
-            .create_new(true)
-            .follow(FollowSymlinks::No);
-        #[cfg(unix)]
-        {
-            use cap_std::fs::OpenOptionsExt as _;
-            options.mode(0o600);
-        }
         #[cfg(windows)]
-        {
-            use cap_std::fs::OpenOptionsExt as _;
-            use windows_sys::Win32::Storage::FileSystem::{
-                DELETE, FILE_FLAG_WRITE_THROUGH, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-                FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
-            };
+        let opened = windows_private_atomic_stage::Stage::create_private(
+            parent,
+            &candidate,
+            display_path,
+        );
+        #[cfg(not(windows))]
+        let opened = {
+            let mut options = OpenOptions::new();
             options
-                .access_mode(
-                    FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | READ_CONTROL | WRITE_DAC,
-                )
-                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-                .custom_flags(FILE_FLAG_WRITE_THROUGH);
-        }
-        match parent.open_with(&candidate, &options) {
+                .write(true)
+                .create_new(true)
+                .follow(FollowSymlinks::No);
+            #[cfg(unix)]
+            {
+                use cap_std::fs::OpenOptionsExt as _;
+                options.mode(0o600);
+            }
+            parent.open_with(&candidate, &options)
+        };
+        match opened {
             Ok(file) => {
-                #[cfg(windows)]
-                crate::wal::win_native::set_private_current_user_file_handle_dacl(&file)
-                    .with_context(|| {
-                        format!(
-                            "protect capability-bound atomic stage for {}",
-                            display_path.display()
-                        )
-                    })?;
                 stage_name = Some(candidate);
                 stage = Some(file);
                 break;
@@ -2876,19 +2887,38 @@ fn atomic_write_private_child_reported_core(
         stage.write_all(bytes).with_context(|| {
             format!("write private atomic stage for {}", display_path.display())
         })?;
+        #[cfg(windows)]
+        let synced_stage = stage
+            .sync_all()
+            .with_context(|| format!("sync private atomic stage for {}", display_path.display()))?;
+        #[cfg(not(windows))]
         stage
             .sync_all()
             .with_context(|| format!("sync private atomic stage for {}", display_path.display()))?;
-        replace_staged_file_observed(
-            parent,
-            &stage,
-            &stage_name,
-            name,
-            display_path,
-            replace_existing,
-            || committed = true,
-        )?;
-        match sync_parent_directory(parent, display_path.parent().unwrap_or(display_path)) {
+        #[cfg(windows)]
+        let durability = windows_private_atomic_stage::durability_after_rename(
+            synced_stage.rename_observed(
+                parent,
+                name,
+                display_path,
+                replace_existing,
+                || committed = true,
+            )?,
+        );
+        #[cfg(not(windows))]
+        let durability = {
+            replace_staged_file_observed(
+                parent,
+                &stage,
+                &stage_name,
+                name,
+                display_path,
+                replace_existing,
+                || committed = true,
+            )?;
+            sync_parent_directory(parent, display_path.parent().unwrap_or(display_path))
+        };
+        match durability {
             Ok(DirectorySyncOutcome::Confirmed) => Ok(PrivateChildReportedCommit {
                 commit: PrivateChildCommit::PublishedAndSynced,
                 legacy_post_commit_error: None,
@@ -2927,8 +2957,15 @@ fn atomic_write_private_child_reported_core(
                 .parent()
                 .unwrap_or(display_path)
                 .join(&stage_name);
-            let cleanup =
-                remove_named_file_if_same_open_object(parent, &stage_name, &stage, &stage_display);
+            #[cfg(windows)]
+            let cleanup = stage.cleanup(&stage_display);
+            #[cfg(not(windows))]
+            let cleanup = remove_named_file_if_same_open_object(
+                parent,
+                &stage_name,
+                &stage,
+                &stage_display,
+            );
             drop(stage);
             match cleanup {
                 Ok(()) => Err(error),
@@ -2973,29 +3010,27 @@ fn replace_existing_regular_file_report_inner(
     for _ in 0..8 {
         let candidate =
             std::ffi::OsString::from(format!(".neoth-replace-{}", uuid::Uuid::new_v4().simple()));
-        let mut options = OpenOptions::new();
-        options
-            .write(true)
-            .create_new(true)
-            .follow(FollowSymlinks::No);
-        #[cfg(unix)]
-        {
-            use cap_std::fs::OpenOptionsExt as _;
-            options.mode(0o600);
-        }
         #[cfg(windows)]
-        {
-            use cap_std::fs::OpenOptionsExt as _;
-            use windows_sys::Win32::Storage::FileSystem::{
-                DELETE, FILE_FLAG_WRITE_THROUGH, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-                FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-            };
+        let opened = windows_private_atomic_stage::Stage::create_replacement(
+            parent,
+            &candidate,
+            display_path,
+        );
+        #[cfg(not(windows))]
+        let opened = {
+            let mut options = OpenOptions::new();
             options
-                .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE)
-                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-                .custom_flags(FILE_FLAG_WRITE_THROUGH);
-        }
-        match parent.open_with(&candidate, &options) {
+                .write(true)
+                .create_new(true)
+                .follow(FollowSymlinks::No);
+            #[cfg(unix)]
+            {
+                use cap_std::fs::OpenOptionsExt as _;
+                options.mode(0o600);
+            }
+            parent.open_with(&candidate, &options)
+        };
+        match opened {
             Ok(file) => {
                 stage_name = Some(candidate);
                 stage = Some(file);
@@ -3023,6 +3058,11 @@ fn replace_existing_regular_file_report_inner(
         stage
             .set_permissions(permissions)
             .with_context(|| format!("preserve permissions for {}", display_path.display()))?;
+        #[cfg(windows)]
+        let synced_stage = stage
+            .sync_all()
+            .with_context(|| format!("sync replacement for {}", display_path.display()))?;
+        #[cfg(not(windows))]
         stage
             .sync_all()
             .with_context(|| format!("sync replacement for {}", display_path.display()))?;
@@ -3036,11 +3076,23 @@ fn replace_existing_regular_file_report_inner(
         } else {
             drop(open_regular_file(parent, name, display_path)?);
         }
-        replace_staged_file(parent, &stage, &stage_name, name, display_path, true)?;
-        committed = true;
-        if let Err(error) =
+        #[cfg(windows)]
+        let durability = windows_private_atomic_stage::durability_after_rename(
+            synced_stage.rename_observed(parent, name, display_path, true, || committed = true)?,
+        );
+        #[cfg(not(windows))]
+        let durability = {
+            replace_staged_file(parent, &stage, &stage_name, name, display_path, true)?;
+            committed = true;
             sync_parent_directory(parent, display_path.parent().unwrap_or(display_path))
-        {
+        };
+        if matches!(durability, Ok(DirectorySyncOutcome::Unsupported)) {
+            warnings.push(
+                "replacement is committed, but parent-directory durability is unsupported"
+                    .to_string(),
+            );
+        }
+        if let Err(error) = durability {
             warnings.push(format!(
                 "replacement is committed, but parent-directory durability could not be confirmed: {error:#}"
             ));
@@ -3056,8 +3108,15 @@ fn replace_existing_regular_file_report_inner(
             .parent()
             .unwrap_or(display_path)
             .join(&stage_name);
-        let cleanup =
-            remove_named_file_if_same_open_object(parent, &stage_name, &stage, &stage_display);
+        #[cfg(windows)]
+        let cleanup = stage.cleanup(&stage_display);
+        #[cfg(not(windows))]
+        let cleanup = remove_named_file_if_same_open_object(
+            parent,
+            &stage_name,
+            &stage,
+            &stage_display,
+        );
         drop(stage);
         return match cleanup {
             Ok(()) => Err(error),
@@ -3167,39 +3226,422 @@ fn replace_staged_file_observed(
     }
 }
 
+/// Owns the proof required to claim a durable Windows private-stage commit.
+/// Keeping the stage and commit witness fields private prevents an arbitrary
+/// `File` or a successful ambient-path rename from manufacturing `Confirmed`.
 #[cfg(windows)]
-fn replace_staged_file(
-    parent: &Dir,
-    stage: &File,
-    stage_name: &OsStr,
-    target_name: &OsStr,
-    display_path: &Path,
-    replace_existing: bool,
-) -> Result<()> {
-    replace_staged_file_observed(
-        parent,
-        stage,
-        stage_name,
-        target_name,
-        display_path,
-        replace_existing,
-        || {},
-    )
-}
+mod windows_private_atomic_stage {
+    use super::*;
+    use std::marker::PhantomData;
 
-#[cfg(windows)]
-fn replace_staged_file_observed(
-    parent: &Dir,
-    stage: &File,
-    _stage_name: &OsStr,
-    target_name: &OsStr,
-    display_path: &Path,
-    replace_existing: bool,
-    on_commit: impl FnOnce(),
-) -> Result<()> {
-    windows_rename_open_handle(stage, parent, target_name, replace_existing, display_path)?;
-    on_commit();
-    Ok(())
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum VolumeQualification {
+        QualifiedLocalNtfs,
+        Unsupported,
+    }
+
+    pub(super) struct Stage {
+        file: File,
+        volume: VolumeQualification,
+    }
+
+    pub(super) struct SyncedStage<'stage> {
+        stage: &'stage Stage,
+        _private: (),
+    }
+
+    pub(super) enum RenameCommit<'stage> {
+        Qualified(QualifiedLocalNtfsRenameCommit<'stage>),
+        Unsupported,
+    }
+
+    pub(super) struct QualifiedLocalNtfsRenameCommit<'stage> {
+        _exact_stage: PhantomData<&'stage Stage>,
+        _private: (),
+    }
+
+    impl Stage {
+        pub(super) fn create_private(
+            parent: &Dir,
+            name: &OsStr,
+            display_path: &Path,
+        ) -> std::io::Result<Self> {
+            Self::create(parent, name, display_path, true)
+        }
+
+        pub(super) fn create_replacement(
+            parent: &Dir,
+            name: &OsStr,
+            display_path: &Path,
+        ) -> std::io::Result<Self> {
+            Self::create(parent, name, display_path, false)
+        }
+
+        fn create(
+            parent: &Dir,
+            name: &OsStr,
+            display_path: &Path,
+            protect_private_dacl: bool,
+        ) -> std::io::Result<Self> {
+            use cap_std::fs::OpenOptionsExt as _;
+            use windows_sys::Win32::Storage::FileSystem::{
+                DELETE, FILE_FLAG_WRITE_THROUGH, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+                FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
+            };
+
+            let mut options = OpenOptions::new();
+            let access = if protect_private_dacl {
+                FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | READ_CONTROL | WRITE_DAC
+            } else {
+                FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE
+            };
+            options
+                .write(true)
+                .create_new(true)
+                .follow(FollowSymlinks::No)
+                .access_mode(access)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                .custom_flags(FILE_FLAG_WRITE_THROUGH);
+            let file = parent.open_with(name, &options)?;
+            if protect_private_dacl {
+                if let Err(error) = protect_private_dacl(&file) {
+                    let stage_display = display_path
+                        .parent()
+                        .unwrap_or(display_path)
+                        .join(name);
+                    let cleanup = super::windows_mark_delete(&file, &stage_display);
+                    return Err(std::io::Error::other(match cleanup {
+                        Ok(()) => format!(
+                            "protect capability-bound atomic stage for {}: {error:#}",
+                            display_path.display()
+                        ),
+                        Err(cleanup_error) => format!(
+                            "protect capability-bound atomic stage for {}: {error:#}; capability-relative cleanup of exact stage also failed: {cleanup_error:#}",
+                            display_path.display()
+                        ),
+                    }));
+                }
+            }
+            let volume = qualify_exact_handle(&file);
+            Ok(Self { file, volume })
+        }
+
+        pub(super) fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+            self.file.write_all(bytes)
+        }
+
+        pub(super) fn sync_all(&self) -> std::io::Result<SyncedStage<'_>> {
+            self.file.sync_all()?;
+            Ok(SyncedStage {
+                stage: self,
+                _private: (),
+            })
+        }
+
+        pub(super) fn set_permissions(
+            &mut self,
+            permissions: cap_std::fs::Permissions,
+        ) -> std::io::Result<()> {
+            self.file.set_permissions(permissions)
+        }
+
+        pub(super) fn cleanup(&self, stage_display: &Path) -> Result<()> {
+            #[cfg(test)]
+            run_before_cleanup_for_test();
+            super::windows_mark_delete(&self.file, stage_display)
+        }
+    }
+
+    impl<'stage> SyncedStage<'stage> {
+        pub(super) fn rename_observed(
+            self,
+            parent: &Dir,
+            target_name: &OsStr,
+            display_path: &Path,
+            replace_existing: bool,
+            on_commit: impl FnOnce(),
+        ) -> Result<RenameCommit<'stage>> {
+            #[cfg(test)]
+            run_before_rename_for_test();
+            super::windows_rename_open_handle(
+                &self.stage.file,
+                parent,
+                target_name,
+                replace_existing,
+                display_path,
+            )?;
+            on_commit();
+            #[cfg(test)]
+            run_after_rename_for_test();
+            #[cfg(test)]
+            super::inject_private_child_post_commit_validation_failure(display_path)?;
+            anyhow::ensure!(
+                super::named_regular_file_matches_open_object(
+                    parent,
+                    target_name,
+                    &self.stage.file,
+                    display_path,
+                )?,
+                "committed private atomic target is not the exact open stage object: {}",
+                display_path.display()
+            );
+            Ok(match self.stage.volume {
+                VolumeQualification::QualifiedLocalNtfs => {
+                    RenameCommit::Qualified(QualifiedLocalNtfsRenameCommit {
+                        _exact_stage: PhantomData,
+                        _private: (),
+                    })
+                }
+                VolumeQualification::Unsupported => RenameCommit::Unsupported,
+            })
+        }
+
+    }
+
+    pub(super) fn durability_after_rename(
+        commit: RenameCommit<'_>,
+    ) -> Result<DirectorySyncOutcome> {
+        Ok(match commit {
+            RenameCommit::Qualified(witness) => {
+                let QualifiedLocalNtfsRenameCommit {
+                    _exact_stage: _,
+                    _private: (),
+                } = witness;
+                DirectorySyncOutcome::Confirmed
+            }
+            RenameCommit::Unsupported => DirectorySyncOutcome::Unsupported,
+        })
+    }
+
+    fn qualify_exact_handle(file: &File) -> VolumeQualification {
+        #[cfg(test)]
+        if let Some(qualification) = test_volume_qualification() {
+            return qualification;
+        }
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFinalPathNameByHandleW, GetVolumeInformationByHandleW, VOLUME_NAME_NT,
+        };
+
+        let handle = file.as_raw_handle() as HANDLE;
+        let mut filesystem = [0u16; 32];
+        // SAFETY: `handle` is the live stage handle and every optional output
+        // pointer is null. The filesystem buffer is valid for its stated size.
+        let volume_ok = unsafe {
+            GetVolumeInformationByHandleW(
+                handle,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                filesystem.as_mut_ptr(),
+                filesystem.len() as u32,
+            )
+        };
+        if volume_ok == 0 {
+            return VolumeQualification::Unsupported;
+        }
+        let fs_len = filesystem
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(filesystem.len());
+        let filesystem = String::from_utf16_lossy(&filesystem[..fs_len]);
+
+        let mut native_path = vec![0u16; 32_768];
+        // SAFETY: the same live stage handle is queried and the writable UTF-16
+        // buffer remains valid for the duration of the call.
+        let path_len = unsafe {
+            GetFinalPathNameByHandleW(
+                handle,
+                native_path.as_mut_ptr(),
+                native_path.len() as u32,
+                VOLUME_NAME_NT,
+            )
+        } as usize;
+        if path_len == 0 || path_len >= native_path.len() {
+            return VolumeQualification::Unsupported;
+        }
+        let native_path = String::from_utf16_lossy(&native_path[..path_len]);
+        classify_volume(&filesystem, &native_path)
+    }
+
+    fn classify_volume(filesystem: &str, native_path: &str) -> VolumeQualification {
+        let native_path = native_path.to_ascii_lowercase();
+        let suffix = native_path.strip_prefix(r"\device\harddiskvolume");
+        let qualified_device = suffix.is_some_and(|suffix| {
+            let digit_count = suffix.bytes().take_while(u8::is_ascii_digit).count();
+            digit_count > 0 && suffix.as_bytes().get(digit_count) == Some(&b'\\')
+        });
+        if filesystem.eq_ignore_ascii_case("NTFS") && qualified_device {
+            VolumeQualification::QualifiedLocalNtfs
+        } else {
+            VolumeQualification::Unsupported
+        }
+    }
+
+    fn protect_private_dacl(file: &File) -> Result<()> {
+        #[cfg(test)]
+        if TEST_FORCE_DACL_FAILURE.with(std::cell::Cell::get) {
+            anyhow::bail!("injected private-stage DACL failure");
+        }
+        crate::wal::win_native::set_private_current_user_file_handle_dacl(file)
+            .map_err(anyhow::Error::from)
+    }
+
+    #[cfg(test)]
+    thread_local! {
+        static TEST_VOLUME_QUALIFICATION: std::cell::Cell<Option<VolumeQualification>> =
+            const { std::cell::Cell::new(None) };
+        static TEST_BEFORE_RENAME: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+            const { std::cell::RefCell::new(None) };
+        static TEST_AFTER_RENAME: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+            const { std::cell::RefCell::new(None) };
+        static TEST_BEFORE_CLEANUP: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+            const { std::cell::RefCell::new(None) };
+        static TEST_FORCE_DACL_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    #[cfg(test)]
+    fn test_volume_qualification() -> Option<VolumeQualification> {
+        TEST_VOLUME_QUALIFICATION.with(std::cell::Cell::get)
+    }
+
+    #[cfg(test)]
+    pub(super) struct TestScope {
+        previous_volume: Option<VolumeQualification>,
+    }
+
+    #[cfg(test)]
+    impl Drop for TestScope {
+        fn drop(&mut self) {
+            TEST_VOLUME_QUALIFICATION.with(|slot| slot.set(self.previous_volume));
+            TEST_BEFORE_RENAME.with(|slot| slot.borrow_mut().take());
+            TEST_AFTER_RENAME.with(|slot| slot.borrow_mut().take());
+            TEST_BEFORE_CLEANUP.with(|slot| slot.borrow_mut().take());
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn qualified_local_ntfs_for_test() -> TestScope {
+        let previous_volume = TEST_VOLUME_QUALIFICATION
+            .with(|slot| slot.replace(Some(VolumeQualification::QualifiedLocalNtfs)));
+        TestScope { previous_volume }
+    }
+
+    #[cfg(test)]
+    pub(super) fn unsupported_volume_for_test() -> TestScope {
+        let previous_volume = TEST_VOLUME_QUALIFICATION
+            .with(|slot| slot.replace(Some(VolumeQualification::Unsupported)));
+        TestScope { previous_volume }
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_before_rename_for_test(hook: impl FnOnce() + 'static) {
+        TEST_BEFORE_RENAME.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_after_rename_for_test(hook: impl FnOnce() + 'static) {
+        TEST_AFTER_RENAME.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_before_cleanup_for_test(hook: impl FnOnce() + 'static) {
+        TEST_BEFORE_CLEANUP.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    #[cfg(test)]
+    struct DaclFailureScope;
+
+    #[cfg(test)]
+    impl Drop for DaclFailureScope {
+        fn drop(&mut self) {
+            TEST_FORCE_DACL_FAILURE.with(|slot| slot.set(false));
+        }
+    }
+
+    #[cfg(test)]
+    fn fail_dacl_for_test() -> DaclFailureScope {
+        TEST_FORCE_DACL_FAILURE.with(|slot| slot.set(true));
+        DaclFailureScope
+    }
+
+    #[cfg(test)]
+    fn run_before_rename_for_test() {
+        TEST_BEFORE_RENAME.with(|slot| {
+            if let Some(hook) = slot.borrow_mut().take() {
+                hook();
+            }
+        });
+    }
+
+    #[cfg(test)]
+    fn run_after_rename_for_test() {
+        TEST_AFTER_RENAME.with(|slot| {
+            if let Some(hook) = slot.borrow_mut().take() {
+                hook();
+            }
+        });
+    }
+
+    #[cfg(test)]
+    fn run_before_cleanup_for_test() {
+        TEST_BEFORE_CLEANUP.with(|slot| {
+            if let Some(hook) = slot.borrow_mut().take() {
+                hook();
+            }
+        });
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn only_local_ntfs_native_device_paths_are_qualified() {
+            assert_eq!(
+                classify_volume("NTFS", r"\Device\HarddiskVolume4\private.stage"),
+                VolumeQualification::QualifiedLocalNtfs
+            );
+            for (filesystem, path) in [
+                ("ReFS", r"\Device\HarddiskVolume4\private.stage"),
+                ("FAT32", r"\Device\HarddiskVolume4\private.stage"),
+                ("NTFS", r"\Device\Mup\server\share\private.stage"),
+                ("NTFS", r"\Device\CustomRedirector\private.stage"),
+                ("NTFS", r"\Device\HarddiskVolume\private.stage"),
+                ("NTFS", r"\Device\HarddiskVolumeRedirector\private.stage"),
+                ("NTFS", r"\Device\HarddiskVolumeShadow7\private.stage"),
+                ("NTFS", r"\Device\HarddiskVolume7Shadow\private.stage"),
+                ("NTFS", r"\Device\HarddiskVolume7"),
+                ("", ""),
+            ] {
+                assert_eq!(
+                    classify_volume(filesystem, path),
+                    VolumeQualification::Unsupported,
+                    "{filesystem} at {path} must remain fail-closed"
+                );
+            }
+        }
+
+        #[test]
+        fn failed_dacl_hardening_cleans_up_the_exact_created_stage() {
+            let temp = tempfile::tempdir().unwrap();
+            let target = temp.path().join("state.json");
+            let root = super::super::open_bound_directory(temp.path(), false, "test store")
+                .unwrap()
+                .unwrap();
+            let candidate = OsStr::new(".neoth-atomic-dacl-failure");
+            let _failure = fail_dacl_for_test();
+
+            Stage::create_private(&root.dir, candidate, &target)
+                .err()
+                .expect("injected DACL failure must abort stage creation");
+
+            assert!(!temp.path().join(".neoth-atomic-dacl-failure").exists());
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -3299,8 +3741,10 @@ fn windows_rename_open_handle(
 /// Result of attempting to make a parent-directory namespace change durable.
 ///
 /// Windows does not expose a supported equivalent of syncing an opened
-/// directory handle, so callers that surface durability must preserve the
-/// distinction instead of treating a successful no-op as confirmation.
+/// directory handle, so generic directory mutations must preserve the
+/// distinction instead of treating a successful no-op as confirmation. The
+/// private Windows stage module can confirm only a same-handle write-through
+/// rename whose exact handle was also qualified as residing on local NTFS.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DirectorySyncOutcome {
     /// The platform accepted a real directory sync operation.
@@ -3352,13 +3796,18 @@ pub(crate) fn cap_metadata_is_link_like(metadata: &cap_std::fs::Metadata) -> boo
     #[cfg(windows)]
     {
         use cap_std::fs::MetadataExt as _;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        windows_file_attributes_are_link_like(metadata.file_attributes())
     }
     #[cfg(not(windows))]
     {
         false
     }
+}
+
+#[cfg(windows)]
+fn windows_file_attributes_are_link_like(attributes: u32) -> bool {
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 fn read_bounded_observed(
@@ -4596,6 +5045,69 @@ mod reported_commit_tests {
     use tempfile::tempdir;
 
     #[test]
+    fn poisoned_post_commit_hook_recovers_without_cross_target_or_stale_state() {
+        struct ScopedHookCleanup(Vec<PathBuf>);
+
+        impl Drop for ScopedHookCleanup {
+            fn drop(&mut self) {
+                let mut targets = TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                targets.retain(|registration| !self.0.contains(&registration.target));
+                drop(targets);
+                TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT.clear_poison();
+            }
+        }
+
+        let unique = uuid::Uuid::new_v4().simple().to_string();
+        let exact = PathBuf::from(format!("poison-exact-{unique}"));
+        let second = PathBuf::from(format!("poison-second-{unique}"));
+        let unrelated = PathBuf::from(format!("poison-unrelated-{unique}"));
+        let never_registered = PathBuf::from(format!("poison-never-{unique}"));
+        let _cleanup = ScopedHookCleanup(vec![
+            exact.clone(),
+            second.clone(),
+            unrelated.clone(),
+            never_registered.clone(),
+        ]);
+
+        {
+            let mut targets = TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            targets.push(TestPostCommitFailureRegistration {
+                target: exact.clone(),
+                generation: 0,
+            });
+            targets.push(TestPostCommitFailureRegistration {
+                target: exact.clone(),
+                generation: 0,
+            });
+        }
+        fail_private_child_post_commit_validation_for_test(&unrelated);
+
+        std::thread::spawn(|| {
+            let _lock = TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            panic!("deterministically poison the private-child test-hook mutex");
+        })
+        .join()
+        .expect_err("the scoped poison worker must panic while holding the mutex");
+        assert!(TEST_FAIL_PRIVATE_CHILD_POST_COMMIT_VALIDATION_AT.is_poisoned());
+
+        fail_private_child_post_commit_validation_for_test(&exact);
+        fail_private_child_post_commit_validation_for_test(&second);
+        assert!(inject_private_child_post_commit_validation_failure(&never_registered).is_ok());
+        assert!(inject_private_child_post_commit_validation_failure(&exact).is_err());
+        assert!(inject_private_child_post_commit_validation_failure(&exact).is_ok());
+        assert!(inject_private_child_post_commit_validation_failure(&second).is_err());
+        assert!(inject_private_child_post_commit_validation_failure(&second).is_ok());
+        assert!(inject_private_child_post_commit_validation_failure(&unrelated).is_err());
+        assert!(inject_private_child_post_commit_validation_failure(&unrelated).is_ok());
+    }
+
+    #[test]
     fn reported_private_child_write_returns_a_published_commit() {
         let temp = tempdir().unwrap();
         let target = temp.path().join("state.json");
@@ -4644,7 +5156,6 @@ mod reported_commit_tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"private state");
     }
 
-    #[cfg(unix)]
     #[test]
     fn reported_create_new_observes_publication_before_post_commit_validation_failure() {
         let temp = tempdir().unwrap();
@@ -4683,7 +5194,6 @@ mod reported_commit_tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn reported_replacement_observes_publication_before_post_commit_validation_failure() {
         let temp = tempdir().unwrap();
@@ -4723,7 +5233,6 @@ mod reported_commit_tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn legacy_replacement_keeps_post_commit_validation_error() {
         let temp = tempdir().unwrap();
@@ -4751,7 +5260,43 @@ mod reported_commit_tests {
 
     #[cfg(windows)]
     #[test]
-    fn reported_private_child_write_preserves_windows_parent_sync_unknown() {
+    fn reported_private_child_write_confirms_windows_write_through_rename() {
+        let _scope = windows_private_atomic_stage::qualified_local_ntfs_for_test();
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("state.json");
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        let commit = atomic_write_private_child_reported(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+            b"private state",
+        )
+        .unwrap();
+
+        assert_eq!(commit, PrivateChildCommit::PublishedAndSynced);
+        assert_eq!(std::fs::read(&target).unwrap(), b"private state");
+
+        let error = atomic_write_private_child_create_new_reported(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+            b"must not replace the confirmed private record",
+        )
+        .expect_err("create-new must retain no-replace semantics after the durable rename");
+        assert!(error
+            .source
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists));
+        assert_eq!(std::fs::read(&target).unwrap(), b"private state");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unsupported_windows_volume_publishes_without_claiming_durability() {
+        let _scope = windows_private_atomic_stage::unsupported_volume_for_test();
         let temp = tempdir().unwrap();
         let target = temp.path().join("state.json");
         let root = open_bound_directory(temp.path(), false, "test store")
@@ -4773,5 +5318,149 @@ mod reported_commit_tests {
             )
         );
         assert_eq!(std::fs::read(&target).unwrap(), b"private state");
+
+        std::fs::write(&target, b"old").unwrap();
+        let report = replace_existing_regular_file_report(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+            b"new",
+        )
+        .unwrap();
+        assert!(report.warnings.iter().any(|warning| warning.contains("unsupported")));
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_no_replace_rename_cannot_obtain_a_commit_witness() {
+        let _scope = windows_private_atomic_stage::qualified_local_ntfs_for_test();
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("state.json");
+        let injected_target = target.clone();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        windows_private_atomic_stage::set_before_rename_for_test(move || {
+            std::fs::write(injected_target, b"racing writer").unwrap();
+        });
+
+        atomic_write_private_child_create_new_reported(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+            b"private state",
+        )
+        .expect_err("a colliding target must prevent the same-handle commit witness");
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"racing writer");
+        assert_eq!(
+            std::fs::read_dir(temp.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".neoth-atomic-"))
+                .count(),
+            0,
+            "a failed rename must clean up only its exact open stage"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cleanup_disposes_exact_stage_handle_without_deleting_name_substitute() {
+        let _scope = windows_private_atomic_stage::qualified_local_ntfs_for_test();
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("state.json");
+        let injected_target = target.clone();
+        let directory = temp.path().to_path_buf();
+        let displaced = temp.path().join("displaced-exact-stage");
+        let displaced_for_hook = displaced.clone();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        windows_private_atomic_stage::set_before_rename_for_test(move || {
+            std::fs::write(injected_target, b"rename collision").unwrap();
+        });
+        windows_private_atomic_stage::set_before_cleanup_for_test(move || {
+            let stage = std::fs::read_dir(&directory)
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .find(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".neoth-atomic-"))
+                .expect("exact open stage must still have its original name")
+                .path();
+            std::fs::rename(&stage, &displaced_for_hook).unwrap();
+            std::fs::write(&stage, b"name substitute").unwrap();
+        });
+
+        atomic_write_private_child_create_new_reported(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+            b"private state",
+        )
+        .expect_err("the injected target must make the no-replace rename fail");
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"rename collision");
+        assert!(!displaced.exists(), "the exact retained stage handle must be disposed");
+        let substitutes: Vec<_> = std::fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".neoth-atomic-"))
+            .collect();
+        assert_eq!(substitutes.len(), 1, "only the deliberate substitute survives");
+        assert_eq!(std::fs::read(substitutes[0].path()).unwrap(), b"name substitute");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn post_rename_name_substitution_cannot_obtain_a_commit_witness() {
+        let _scope = windows_private_atomic_stage::qualified_local_ntfs_for_test();
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("state.json");
+        let displaced = temp.path().join("displaced-stage.json");
+        let swapped_target = target.clone();
+        let swapped_displaced = displaced.clone();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        windows_private_atomic_stage::set_after_rename_for_test(move || {
+            std::fs::rename(&swapped_target, &swapped_displaced).unwrap();
+            std::fs::write(&swapped_target, b"substituted target").unwrap();
+        });
+
+        let commit = atomic_write_private_child_create_new_reported(
+            &root.dir,
+            OsStr::new("state.json"),
+            &target,
+            b"private state",
+        )
+        .expect("a completed rename with failed identity validation is a published outcome");
+
+        assert_eq!(
+            commit,
+            PrivateChildCommit::PublishedDurabilityUnknown(
+                PrivateChildDurabilityUnknown::PostCommitValidationFailed
+            )
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"substituted target");
+        assert_eq!(std::fs::read(&displaced).unwrap(), b"private state");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reparse_attribute_classification_is_deterministic_without_symlink_privilege() {
+        assert!(windows_file_attributes_are_link_like(0x400));
+        assert!(windows_file_attributes_are_link_like(0x400 | 0x20));
+        assert!(!windows_file_attributes_are_link_like(0));
+        assert!(!windows_file_attributes_are_link_like(0x20));
     }
 }
