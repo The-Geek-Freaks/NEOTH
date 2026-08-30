@@ -758,6 +758,11 @@ fn open_daily_admission_directory(
         &display_path,
     )
     .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
+    // A newly created Windows child inherits its parent's ACL instead of
+    // owning the explicit, protected TokenUser DACL required by the admission
+    // gate. Apply the same handle-bound legacy migration used for the archive
+    // namespace before its strict verification below.
+    tighten_legacy_private_directory(&display_path, &dir)?;
     verify_private_hygiene_directory(&dir)?;
     Ok(crate::skills::store::BoundDirectory { dir, display_path })
 }
@@ -1414,6 +1419,52 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_daily_gate_migrates_an_inherited_state_directory_before_locking() {
+        let home = test_home();
+        prepare_daily_admission_namespace(home.path()).unwrap();
+        let state_directory = home.path().join("reflections/daily-admission");
+
+        // `create_dir` inherits the private parent's ACL instead of creating
+        // the explicit protected DACL the gate requires. Confirm the exact
+        // handle-bound pre-lock rejection, not merely an ambient path result.
+        std::fs::create_dir(&state_directory).unwrap();
+        let home_directory = crate::skills::store::open_absolute_bound_directory(
+            home.path(),
+            false,
+            "daily admission inherited-directory test home",
+        )
+        .unwrap()
+        .unwrap();
+        let reflections = crate::skills::store::open_real_child_dir(
+            &home_directory.dir,
+            std::ffi::OsStr::new("reflections"),
+            &home.path().join("reflections"),
+        )
+        .unwrap();
+        let inherited_state_directory = crate::skills::store::open_real_child_dir(
+            &reflections,
+            std::ffi::OsStr::new("daily-admission"),
+            &state_directory,
+        )
+        .unwrap();
+        let pre_lock_error =
+            crate::wal::win_native::verify_private_directory_handle_dacl(&inherited_state_directory)
+                .unwrap_err();
+        assert!(
+            pre_lock_error
+                .to_string()
+                .contains("DACL is not protected from inherited ACEs")
+        );
+
+        let guard = lock_daily_admission(home.path())
+            .expect("daily gate hardens an inherited state directory before locking");
+        crate::wal::win_native::verify_private_directory_dacl(&state_directory)
+            .expect("daily gate state directory has an explicit protected DACL");
+        assert_eq!(guard.load().expect("read through the hardened gate"), None);
     }
 
     #[cfg(windows)]
