@@ -91,12 +91,12 @@ pub mod gui;
 pub mod gui_stream;
 pub mod hardware;
 pub mod hemispheres;
+/// GOLD history onboarding v1: private review journal for historical exports.
+pub mod history;
 pub mod hooks;
 pub mod hysteria;
 pub mod identity;
 pub mod import;
-/// GOLD history onboarding v1: private review journal for historical exports.
-pub mod history;
 pub mod ingest;
 pub mod init;
 pub mod installer;

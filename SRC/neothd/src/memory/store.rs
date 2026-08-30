@@ -853,17 +853,13 @@ fn open_private_history_with_hooks(
     after_identity_proof: impl FnOnce(),
 ) -> Result<PrivateHistoryConnection> {
     let prepared = prepare_private_history_target(path)?;
-    let namespace_fence = crate::connectors::local_import::approve_import_root(
-        private_history_parent(path)?,
-    )
-    .context("pin private history database namespace")?;
+    let namespace_fence =
+        crate::connectors::local_import::approve_import_root(private_history_parent(path)?)
+            .context("pin private history database namespace")?;
     verify_private_history_target(path, true)?;
     before_sqlite_open();
-    let mut connection = open_with_prepared_history_target_and_hook(
-        path,
-        &prepared,
-        after_identity_proof,
-    )?;
+    let mut connection =
+        open_with_prepared_history_target_and_hook(path, &prepared, after_identity_proof)?;
     let history_schema = connection
         .transaction()
         .context("begin isolated History schema transaction")?;
@@ -916,9 +912,13 @@ fn prepare_private_history_target(path: &Path) -> Result<PreparedHistoryTarget> 
     }
     if path.exists() {
         verify_private_history_file(path)?;
-        Ok(PreparedHistoryTarget::Existing(open_private_history_file(path)?))
+        Ok(PreparedHistoryTarget::Existing(open_private_history_file(
+            path,
+        )?))
     } else {
-        Ok(PreparedHistoryTarget::Fresh(create_private_history_file(path)?))
+        Ok(PreparedHistoryTarget::Fresh(create_private_history_file(
+            path,
+        )?))
     }
 }
 
@@ -964,7 +964,9 @@ fn create_private_history_file(path: &Path) -> Result<std::fs::File> {
 
         options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
     }
-    let file = options.open(path).context("create private history database file")?;
+    let file = options
+        .open(path)
+        .context("create private history database file")?;
     #[cfg(windows)]
     crate::wal::win_native::set_private_current_user_file_dacl_bound(path, &file)
         .context("set private history database DACL")?;
@@ -1005,7 +1007,10 @@ fn open_private_history_file(path: &Path) -> Result<std::fs::File> {
             metadata.uid() == unsafe { libc::geteuid() },
             "History database witness owner mismatch"
         );
-        anyhow::ensure!(metadata.nlink() == 1, "History database witness is hard-linked");
+        anyhow::ensure!(
+            metadata.nlink() == 1,
+            "History database witness is hard-linked"
+        );
         anyhow::ensure!(
             mode & 0o077 == 0 && mode & 0o600 == 0o600,
             "History database witness is not owner-private"
@@ -1030,13 +1035,17 @@ fn open_private_history_file(path: &Path) -> Result<std::fs::File> {
 }
 
 fn verify_fresh_history_path_identity(path: &Path, created: &std::fs::File) -> Result<()> {
-    let rebound = open_private_history_file(path)
-        .context("rebind prepared private History database")?;
+    let rebound =
+        open_private_history_file(path).context("rebind prepared private History database")?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        let created = created.metadata().context("identify created History database")?;
-        let rebound = rebound.metadata().context("identify rebound History database")?;
+        let created = created
+            .metadata()
+            .context("identify created History database")?;
+        let rebound = rebound
+            .metadata()
+            .context("identify rebound History database")?;
         anyhow::ensure!(
             created.dev() == rebound.dev() && created.ino() == rebound.ino(),
             "freshly prepared private History database identity changed"
@@ -1065,9 +1074,12 @@ fn make_private_history_directory(path: &Path) -> Result<()> {
 }
 
 fn verify_private_history_directory(path: &Path) -> Result<()> {
-    let metadata = std::fs::symlink_metadata(path)
-        .context("inspect private history database directory")?;
-    anyhow::ensure!(metadata.is_dir(), "history database parent is not a directory");
+    let metadata =
+        std::fs::symlink_metadata(path).context("inspect private history database directory")?;
+    anyhow::ensure!(
+        metadata.is_dir(),
+        "history database parent is not a directory"
+    );
     anyhow::ensure!(
         !metadata.file_type().is_symlink(),
         "history database parent cannot be a link"
@@ -1105,8 +1117,7 @@ fn verify_private_history_directory(path: &Path) -> Result<()> {
 }
 
 fn verify_private_history_file(path: &Path) -> Result<()> {
-    let metadata =
-        std::fs::symlink_metadata(path).context("inspect private history file")?;
+    let metadata = std::fs::symlink_metadata(path).context("inspect private history file")?;
     anyhow::ensure!(
         metadata.is_file(),
         "history database object is not a regular file"
@@ -1168,7 +1179,10 @@ fn harden_new_history_sidecars(path: &Path) -> Result<()> {
                 metadata.uid() == unsafe { libc::geteuid() },
                 "SQLite sidecar owner mismatch"
             );
-            anyhow::ensure!(metadata.nlink() == 1, "SQLite sidecar hard links are forbidden");
+            anyhow::ensure!(
+                metadata.nlink() == 1,
+                "SQLite sidecar hard links are forbidden"
+            );
             file.set_permissions(std::fs::Permissions::from_mode(0o600))
                 .context("set private SQLite sidecar mode")?;
         }
@@ -1218,7 +1232,10 @@ fn open_with_prepared_history_target_and_hook(
             "private History database witness is not a regular file"
         );
         if is_fresh {
-            anyhow::ensure!(metadata.len() == 0, "fresh History database is no longer empty");
+            anyhow::ensure!(
+                metadata.len() == 0,
+                "fresh History database is no longer empty"
+            );
         } else {
             anyhow::ensure!(metadata.len() > 0, "existing History database is empty");
         }
@@ -2911,16 +2928,18 @@ mod tests {
                 ["a".repeat(64)],
             )
             .unwrap();
-        assert!(connection
-            .execute(
-                "INSERT INTO history_onboarding_candidates
+        assert!(
+            connection
+                .execute(
+                    "INSERT INTO history_onboarding_candidates
                  (candidate_id,batch_id,operator_subject,conversation_id,turn_id,
                   position,content_sha256,excerpt,kind,created_at_unix)
                  VALUES (?1,?2,'intruder','c','t',0,zeroblob(32),'safe',
                          'operator_turn',1)",
-                ["b".repeat(64), "a".repeat(64)],
-            )
-            .is_err());
+                    ["b".repeat(64), "a".repeat(64)],
+                )
+                .is_err()
+        );
         verify_private_history_target(&path, true).unwrap();
     }
 
@@ -3032,8 +3051,7 @@ mod tests {
         });
         let error = result.err().expect("replacement must fail");
         assert!(
-            format!("{error:#}")
-                .contains("private History database identity changed"),
+            format!("{error:#}").contains("private History database identity changed"),
             "replacement must reach the exact identity boundary: {error:#}"
         );
     }
@@ -3050,10 +3068,7 @@ mod tests {
         let history = parent.join("history.db");
         let legacy = open(&history).unwrap();
         legacy
-            .execute(
-                "UPDATE meta SET value='36' WHERE key='schema_version'",
-                [],
-            )
+            .execute("UPDATE meta SET value='36' WHERE key='schema_version'", [])
             .unwrap();
         drop(legacy);
         let views = root.path().join("views.db");
@@ -3122,11 +3137,8 @@ mod tests {
             match attack {
                 "weak" => {
                     std::fs::write(&sidecar, b"weak-sidecar").unwrap();
-                    std::fs::set_permissions(
-                        &sidecar,
-                        std::fs::Permissions::from_mode(0o644),
-                    )
-                    .unwrap();
+                    std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o644))
+                        .unwrap();
                 }
                 "hardlink" => {
                     let anchor = parent.join("anchor");
@@ -3141,11 +3153,8 @@ mod tests {
                 "symlink" => {
                     let target = parent.join("target");
                     std::fs::write(&target, b"symlink-target").unwrap();
-                    std::fs::set_permissions(
-                        &target,
-                        std::fs::Permissions::from_mode(0o600),
-                    )
-                    .unwrap();
+                    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600))
+                        .unwrap();
                     symlink(target, &sidecar).unwrap();
                 }
                 _ => unreachable!(),
@@ -3167,7 +3176,10 @@ mod tests {
         let connection = open_private_history(&database).unwrap();
         let sidecars = sqlite_sidecar_paths(&database);
         let present: Vec<_> = sidecars.iter().filter(|path| path.exists()).collect();
-        assert!(!present.is_empty(), "fresh WAL history must create a sidecar");
+        assert!(
+            !present.is_empty(),
+            "fresh WAL history must create a sidecar"
+        );
         for sidecar in present {
             let mode = std::fs::metadata(sidecar).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);

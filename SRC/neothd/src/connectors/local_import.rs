@@ -126,10 +126,18 @@ pub(crate) struct VerifiedHistorySource {
 }
 
 impl VerifiedHistorySource {
-    pub(crate) fn bytes(&self) -> &[u8] { self.bytes.as_slice() }
-    pub(crate) const fn source_sha256(&self) -> &[u8; 32] { &self.source_sha256 }
-    pub(crate) const fn source_path_sha256(&self) -> &[u8; 32] { &self.source_path_sha256 }
-    pub(crate) const fn source_object_id(&self) -> &[u8; 32] { &self.source_object_id }
+    pub(crate) fn bytes(&self) -> &[u8] {
+        self.bytes.as_slice()
+    }
+    pub(crate) const fn source_sha256(&self) -> &[u8; 32] {
+        &self.source_sha256
+    }
+    pub(crate) const fn source_path_sha256(&self) -> &[u8; 32] {
+        &self.source_path_sha256
+    }
+    pub(crate) const fn source_object_id(&self) -> &[u8; 32] {
+        &self.source_object_id
+    }
 
     pub(crate) fn binds_subject(&self, operator_subject: &str) -> bool {
         let binding: [u8; 32] = Sha256::digest(operator_subject.as_bytes()).into();
@@ -183,17 +191,14 @@ pub(crate) fn capture_verified_history_source(
     )?;
     let root_identity = identity.root.encode();
     let file_identity = identity.source.encode();
-    let source_object_id = history_provenance_sha256(
-        b"source-object",
-        &[&root_identity, &file_identity],
-    );
-    let selected = capability.selected_relative_path
+    let source_object_id =
+        history_provenance_sha256(b"source-object", &[&root_identity, &file_identity]);
+    let selected = capability
+        .selected_relative_path
         .to_str()
         .ok_or(LocalImportError::OutsideApprovedRoot)?;
-    let source_path_sha256 = history_provenance_sha256(
-        b"selected-path",
-        &[&root_identity, selected.as_bytes()],
-    );
+    let source_path_sha256 =
+        history_provenance_sha256(b"selected-path", &[&root_identity, selected.as_bytes()]);
     Ok(VerifiedHistorySource {
         source_sha256: Sha256::digest(&bytes).into(),
         bytes: Zeroizing::new(bytes),
@@ -1938,15 +1943,17 @@ mod tests {
             Path::new("export.json."),
             nul_selector.as_path(),
         ] {
-            assert!(issue_interactive_history_import_capability(
-                approve_import_root(&root).unwrap(),
-                key(),
-                "operator-a",
-                "chatgpt_export",
-                invalid,
-                1024,
-            )
-            .is_err());
+            assert!(
+                issue_interactive_history_import_capability(
+                    approve_import_root(&root).unwrap(),
+                    key(),
+                    "operator-a",
+                    "chatgpt_export",
+                    invalid,
+                    1024,
+                )
+                .is_err()
+            );
         }
         let capability = issue_interactive_history_import_capability(
             approve_import_root(&root).unwrap(),
@@ -1978,20 +1985,24 @@ mod tests {
         fs::write(&selected, b"{\"messages\":[]}").unwrap();
         let replacement = root.join("replacement.json");
         fs::write(&replacement, b"{\"messages\":[]}").unwrap();
-        assert!(windows_source::read_bound_source_with_hook(
-            &authority,
-            Path::new("export.json"),
-            1024,
-            || assert!(fs::rename(&replacement, &selected).is_err()),
-        )
-        .is_ok());
-        assert!(windows_source::read_bound_source_with_hook(
-            &authority,
-            Path::new("export.json"),
-            1024,
-            || assert!(fs::remove_file(&selected).is_err()),
-        )
-        .is_ok());
+        assert!(
+            windows_source::read_bound_source_with_hook(
+                &authority,
+                Path::new("export.json"),
+                1024,
+                || assert!(fs::rename(&replacement, &selected).is_err()),
+            )
+            .is_ok()
+        );
+        assert!(
+            windows_source::read_bound_source_with_hook(
+                &authority,
+                Path::new("export.json"),
+                1024,
+                || assert!(fs::remove_file(&selected).is_err()),
+            )
+            .is_ok()
+        );
         let linked = root.join("linked-export.json");
         fs::hard_link(&selected, &linked).unwrap();
         assert_eq!(
@@ -2014,13 +2025,15 @@ mod tests {
         fs::write(nested.join("export.json"), b"{}").unwrap();
         let renamed = root.join("renamed-nested");
         let authority = approve_import_root(&root).unwrap();
-        assert!(windows_source::read_bound_source_with_hook(
-            &authority,
-            Path::new("nested/export.json"),
-            1024,
-            || assert!(fs::rename(&nested, &renamed).is_err()),
-        )
-        .is_ok());
+        assert!(
+            windows_source::read_bound_source_with_hook(
+                &authority,
+                Path::new("nested/export.json"),
+                1024,
+                || assert!(fs::rename(&nested, &renamed).is_err()),
+            )
+            .is_ok()
+        );
         drop(authority);
 
         let reparse_leaf = root.join("reparse-leaf.json");
@@ -2069,12 +2082,8 @@ mod tests {
         // The mandatory standard-CI contract is therefore fail-closed; the
         // privileged file-symlink fixture above proves exact leaf classification.
         assert!(
-            windows_source::read_bound_source(
-                &authority,
-                Path::new("junction-leaf"),
-                1024,
-            )
-            .is_err(),
+            windows_source::read_bound_source(&authority, Path::new("junction-leaf"), 1024,)
+                .is_err(),
             "a directory junction selected as a leaf must be rejected"
         );
         assert_eq!(

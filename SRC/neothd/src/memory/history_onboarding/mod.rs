@@ -159,12 +159,18 @@ pub(crate) fn scan_verified_source(
     now_unix: i64,
 ) -> Result<BatchStatus> {
     validate_subject(operator_subject)?;
-    ensure!(source.binds_subject(operator_subject), "history source subject binding mismatch");
+    ensure!(
+        source.binds_subject(operator_subject),
+        "history source subject binding mismatch"
+    );
     ensure!(
         source.binds_source_family(source_family.as_str()),
         "history source family binding mismatch"
     );
-    ensure!(source.bytes().len() <= MAX_SOURCE_BYTES, "history export exceeds its size bound");
+    ensure!(
+        source.bytes().len() <= MAX_SOURCE_BYTES,
+        "history export exceeds its size bound"
+    );
     ensure!(
         sha256(source.bytes()).as_slice() == source.source_sha256(),
         "history source digest mismatch"
@@ -196,7 +202,8 @@ pub(crate) fn scan_verified_source(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .context("begin history-onboarding scan transaction")?;
     if let Some(existing) = status_by_batch_tx(&tx, operator_subject, &batch_id)? {
-        tx.commit().context("commit idempotent history-onboarding scan")?;
+        tx.commit()
+            .context("commit idempotent history-onboarding scan")?;
         return Ok(existing);
     }
     tx.execute(
@@ -282,7 +289,10 @@ pub fn preview(
          ORDER BY position,candidate_id LIMIT ?3",
     )?;
     statement
-        .query_map(params![operator_subject, batch_id, limit as i64], row_to_preview)?
+        .query_map(
+            params![operator_subject, batch_id, limit as i64],
+            row_to_preview,
+        )?
         .context("read history-onboarding preview")?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("decode history-onboarding preview")
@@ -304,7 +314,10 @@ pub fn review(
          ORDER BY position,candidate_id LIMIT ?3",
     )?;
     statement
-        .query_map(params![operator_subject, batch_id, limit as i64], row_to_preview)?
+        .query_map(
+            params![operator_subject, batch_id, limit as i64],
+            row_to_preview,
+        )?
         .context("read pending history-onboarding review")?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("decode pending history-onboarding review")
@@ -366,8 +379,8 @@ fn status_by_batch_tx(
         params![operator_subject, batch_id],
         row_to_status,
     )
-        .optional()
-        .context("read history-onboarding batch status")
+    .optional()
+    .context("read history-onboarding batch status")
 }
 
 fn insert_candidate(
@@ -428,7 +441,10 @@ fn candidate_identity_sha256(
 }
 
 fn parse_source(family: SourceFamily, bytes: &[u8]) -> Result<ParseReport> {
-    ensure!(bytes.len() <= MAX_SOURCE_BYTES, "history export exceeds {MAX_SOURCE_BYTES} bytes");
+    ensure!(
+        bytes.len() <= MAX_SOURCE_BYTES,
+        "history export exceeds {MAX_SOURCE_BYTES} bytes"
+    );
     let value: Value = serde_json::from_slice(bytes).context("parse history export as JSON")?;
     let mut turns = Vec::new();
     let mut excluded_privacy_mode_count = 0;
@@ -443,9 +459,15 @@ fn parse_source(family: SourceFamily, bytes: &[u8]) -> Result<ParseReport> {
             skipped_structural_count += 1;
             return Ok(());
         };
-        ensure!(text.len() <= MAX_TURN_BYTES, "history turn exceeds {MAX_TURN_BYTES} bytes");
+        ensure!(
+            text.len() <= MAX_TURN_BYTES,
+            "history turn exceeds {MAX_TURN_BYTES} bytes"
+        );
         ensure!(!text.trim().is_empty(), "history turn text is empty");
-        ensure!(!neutral_excerpt(&text).is_empty(), "history turn excerpt is empty");
+        ensure!(
+            !neutral_excerpt(&text).is_empty(),
+            "history turn excerpt is empty"
+        );
         let kind = match role.as_str() {
             "user" | "operator" | "human" => "operator_turn",
             "assistant" => "assistant_turn",
@@ -526,15 +548,24 @@ fn extract_record(
 ) -> Result<Option<(String, String, String, String)>> {
     let message = record.get("message").unwrap_or(record);
     let role = field_string(message, &["role", "author.role", "sender.role"]);
-    let text = field_string(message, &["content.parts", "content.text", "content", "text"]);
+    let text = field_string(
+        message,
+        &["content.parts", "content.text", "content", "text"],
+    );
     if role.is_none() && text.is_none() {
         return Ok(None);
     }
     let role = role.ok_or_else(|| anyhow!("candidate-bearing history record lacks a role"))?;
     let text = text.ok_or_else(|| anyhow!("candidate-bearing history record lacks text"))?;
-    let conversation_id = field_string(record, &["conversation_id", "conversationId", "session_id"])
-        .or_else(|| field_string(message, &["conversation_id", "conversationId", "session_id"]))
-        .unwrap_or_else(|| format!("conversation-{position}"));
+    let conversation_id =
+        field_string(record, &["conversation_id", "conversationId", "session_id"])
+            .or_else(|| {
+                field_string(
+                    message,
+                    &["conversation_id", "conversationId", "session_id"],
+                )
+            })
+            .unwrap_or_else(|| format!("conversation-{position}"));
     let turn_id = field_string(record, &["id", "message_id", "uuid"])
         .or_else(|| field_string(message, &["id", "message_id", "uuid"]))
         .unwrap_or_else(|| format!("turn-{position}"));
@@ -558,7 +589,11 @@ fn field_string(value: &Value, paths: &[&str]) -> Option<String> {
         match current {
             Value::String(text) => return Some(text.clone()),
             Value::Array(parts) if path.ends_with("parts") => {
-                let joined = parts.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" ");
+                let joined = parts
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 if !joined.is_empty() {
                     return Some(joined);
                 }
@@ -571,12 +606,21 @@ fn field_string(value: &Value, paths: &[&str]) -> Option<String> {
 
 fn has_privacy_marker(value: &Value) -> bool {
     const KEYS: &[&str] = &[
-        "incognito", "is_incognito", "private", "is_private", "ephemeral",
-        "is_ephemeral", "temporary", "is_temporary", "temporary_chat", "privacy_mode",
+        "incognito",
+        "is_incognito",
+        "private",
+        "is_private",
+        "ephemeral",
+        "is_ephemeral",
+        "temporary",
+        "is_temporary",
+        "temporary_chat",
+        "privacy_mode",
     ];
     match value {
         Value::Object(object) => {
-            KEYS.iter().any(|key| object.get(*key).and_then(Value::as_bool) == Some(true))
+            KEYS.iter()
+                .any(|key| object.get(*key).and_then(Value::as_bool) == Some(true))
                 || object.values().any(has_privacy_marker)
         }
         Value::Array(values) => values.iter().any(has_privacy_marker),
@@ -586,16 +630,24 @@ fn has_privacy_marker(value: &Value) -> bool {
 
 fn row_to_preview(row: &rusqlite::Row<'_>) -> rusqlite::Result<CandidatePreview> {
     Ok(CandidatePreview {
-        candidate_id: row.get(0)?, batch_id: row.get(1)?, conversation_id: row.get(2)?,
-        turn_id: row.get(3)?, position: row.get(4)?, kind: row.get(5)?, state: row.get(6)?,
+        candidate_id: row.get(0)?,
+        batch_id: row.get(1)?,
+        conversation_id: row.get(2)?,
+        turn_id: row.get(3)?,
+        position: row.get(4)?,
+        kind: row.get(5)?,
+        state: row.get(6)?,
         excerpt: row.get(7)?,
     })
 }
 
 fn row_to_status(row: &rusqlite::Row<'_>) -> rusqlite::Result<BatchStatus> {
     Ok(BatchStatus {
-        batch_id: row.get(0)?, source_family: row.get(1)?, state: row.get(2)?,
-        candidate_count: row.get(3)?, excluded_privacy_mode_count: row.get(4)?,
+        batch_id: row.get(0)?,
+        source_family: row.get(1)?,
+        state: row.get(2)?,
+        candidate_count: row.get(3)?,
+        excluded_privacy_mode_count: row.get(4)?,
         skipped_structural_count: row.get(5)?,
     })
 }
@@ -646,19 +698,21 @@ fn validate_digest_id(value: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
-fn sha256(bytes: &[u8]) -> Vec<u8> { Sha256::digest(bytes).to_vec() }
+fn sha256(bytes: &[u8]) -> Vec<u8> {
+    Sha256::digest(bytes).to_vec()
+}
 
 #[cfg(test)]
 mod tests {
     #[cfg(any(unix, windows))]
     use std::{fs, path::Path};
 
+    use super::*;
     #[cfg(any(unix, windows))]
     use crate::connectors::local_import::{
         approve_import_root, capture_verified_history_source,
         issue_interactive_history_import_capability,
     };
-    use super::*;
 
     #[test]
     fn candidate_identity_is_unambiguous_across_backslash_zero_boundaries() {
@@ -695,25 +749,37 @@ mod tests {
             r#"{"mapping":{"n":{"id":"a","conversation_id":"c","message":{"author":{#,
             r#""role":"user"},"#,
             r#""content":{"parts":["hello"]}}}}}"#,
-        ).as_bytes();
+        )
+        .as_bytes();
         let claude = concat!(
             r#"{"messages":[{"id":"a","conversation_id":"c","role":"user",#,
             r#""text":"hello"}]}"#,
-        ).as_bytes();
+        )
+        .as_bytes();
         let openclaw = concat!(
             r#"{"messages":[{"id":"a","session_id":"c","role":"user",#,
             r#""content":"hello"}]}"#,
-        ).as_bytes();
+        )
+        .as_bytes();
         assert_eq!(
-            parse_source(SourceFamily::ChatgptExport, chatgpt).unwrap().turns.len(),
+            parse_source(SourceFamily::ChatgptExport, chatgpt)
+                .unwrap()
+                .turns
+                .len(),
             1
         );
         assert_eq!(
-            parse_source(SourceFamily::ClaudeExport, claude).unwrap().turns.len(),
+            parse_source(SourceFamily::ClaudeExport, claude)
+                .unwrap()
+                .turns
+                .len(),
             1
         );
         assert_eq!(
-            parse_source(SourceFamily::OpenclawHistory, openclaw).unwrap().turns.len(),
+            parse_source(SourceFamily::OpenclawHistory, openclaw)
+                .unwrap()
+                .turns
+                .len(),
             1
         );
     }
@@ -723,7 +789,8 @@ mod tests {
         let source = concat!(
             r#"{"messages":[{"id":"a","session_id":"c","role":"user",#,
             r#""content":"secret","metadata":{"incognito":true}}]}"#,
-        ).as_bytes();
+        )
+        .as_bytes();
         let report = parse_source(SourceFamily::OpenclawHistory, source).unwrap();
         assert!(report.turns.is_empty());
         assert_eq!(report.excluded_privacy_mode_count, 1);
@@ -743,7 +810,10 @@ mod tests {
                  \"content\":\"secret\",\"message\":{{\"{flag}\":true}}}}]}}"
             );
             let report = parse_source(SourceFamily::OpenclawHistory, source.as_bytes()).unwrap();
-            assert!(report.turns.is_empty(), "privacy alias {flag} admitted a candidate");
+            assert!(
+                report.turns.is_empty(),
+                "privacy alias {flag} admitted a candidate"
+            );
             assert_eq!(report.excluded_privacy_mode_count, 1);
         }
     }
@@ -783,15 +853,18 @@ mod tests {
             let status = scan_fixture(&mut conn, "operator-a", *family, &source_path, 1).unwrap();
             assert_eq!(status.candidate_count, 0);
             assert_eq!(status.excluded_privacy_mode_count, 1);
-            assert!(review(&conn, "operator-a", &status.batch_id, 1).unwrap().is_empty());
+            assert!(
+                review(&conn, "operator-a", &status.batch_id, 1)
+                    .unwrap()
+                    .is_empty()
+            );
         }
     }
 
     #[test]
     fn excerpt_is_inert_and_bounded() {
-        let excerpt = neutral_excerpt(
-            "<script>run()</script>\n[open](https://bad.invalid)\u{0000}",
-        );
+        let excerpt =
+            neutral_excerpt("<script>run()</script>\n[open](https://bad.invalid)\u{0000}");
         assert!(!excerpt.contains('\n'));
         assert!(!excerpt.contains('\0'));
         assert!(excerpt.len() <= MAX_EXCERPT_BYTES);
@@ -835,7 +908,8 @@ mod tests {
               skipped_structural_count) \
              VALUES (?1,'a','chatgpt_export',zeroblob(32),zeroblob(32),zeroblob(32),1,1,1,0,0)",
             [&batch],
-        ).unwrap();
+        )
+        .unwrap();
         let candidate = "b".repeat(64);
         conn.execute(
             "INSERT INTO history_onboarding_candidates \
@@ -843,7 +917,8 @@ mod tests {
               content_sha256,excerpt,kind,created_at_unix) \
              VALUES (?1,?2,'a','c','t',0,zeroblob(32),'safe','operator_turn',1)",
             params![candidate, batch],
-        ).unwrap();
+        )
+        .unwrap();
         assert!(!reject(&mut conn, "b", &candidate, 2).unwrap());
         assert!(reject(&mut conn, "a", &candidate, 2).unwrap());
     }
@@ -864,7 +939,8 @@ mod tests {
                  VALUES (?1,'a','chatgpt_export',zeroblob(32),zeroblob(32),zeroblob(32), \
                          1,1,0,0,0)",
                 [batch],
-            ).unwrap();
+            )
+            .unwrap();
         }
         assert!(!purge(&mut conn, "other", &one).unwrap());
         assert!(purge(&mut conn, "a", &one).unwrap());
@@ -888,22 +964,29 @@ mod tests {
              VALUES (?1,'owner','chatgpt_export',zeroblob(32),zeroblob(32),zeroblob(32), \
                      1,1,0,0,0)",
             [&batch],
-        ).unwrap();
-        assert!(conn.execute(
-            "INSERT INTO history_onboarding_candidates \
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO history_onboarding_candidates \
              (candidate_id,batch_id,operator_subject,conversation_id,turn_id,position, \
               content_sha256,excerpt,kind,created_at_unix) \
              VALUES (?1,?2,'other','c','t',0,zeroblob(32),'safe','operator_turn',1)",
-            params![candidate, batch],
-        ).is_err());
-        assert!(conn.execute(
-            "INSERT INTO history_onboarding_candidates \
+                params![candidate, batch],
+            )
+            .is_err()
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO history_onboarding_candidates \
              (candidate_id,batch_id,operator_subject,conversation_id,turn_id,position, \
               content_sha256,excerpt,kind,state,created_at_unix,resolved_at_unix) \
              VALUES (?1,?2,'owner','c','t',0,zeroblob(32),'safe','operator_turn', \
                      'attested',1,1)",
-            params![candidate, batch],
-        ).is_err());
+                params![candidate, batch],
+            )
+            .is_err()
+        );
         let valid = "c".repeat(64);
         conn.execute(
             "INSERT INTO history_onboarding_candidates \
@@ -911,11 +994,16 @@ mod tests {
               content_sha256,excerpt,kind,created_at_unix) \
              VALUES (?1,?2,'owner','c','t',0,zeroblob(32),'safe','operator_turn',1)",
             params![valid, batch],
-        ).unwrap();
+        )
+        .unwrap();
         assert!(purge(&mut conn, "owner", &batch).unwrap());
-        let children: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM history_onboarding_candidates", [], |row| row.get(0),
-        ).unwrap();
+        let children: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM history_onboarding_candidates",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(children, 0);
     }
 
@@ -930,7 +1018,8 @@ mod tests {
                 {"id":"a","session_id":"c","role":"user","content":"one"},
                 {"id":"b","session_id":"c","role":"user","content":"still pending"}
             ]}"#,
-        ).unwrap();
+        )
+        .unwrap();
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(HISTORY_ONBOARDING_V38_SQL).unwrap();
         let first = scan_fixture(
@@ -939,46 +1028,64 @@ mod tests {
             SourceFamily::OpenclawHistory,
             &source_path,
             1,
-        ).unwrap();
+        )
+        .unwrap();
         let repeated = scan_fixture(
             &mut conn,
             "operator-a",
             SourceFamily::OpenclawHistory,
             &source_path,
             2,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(first.batch_id, repeated.batch_id);
         assert_eq!(status(&conn, "operator-a").unwrap().len(), 1);
-        let resolved = review(&conn, "operator-a", &first.batch_id, 1).unwrap().pop().unwrap();
+        let resolved = review(&conn, "operator-a", &first.batch_id, 1)
+            .unwrap()
+            .pop()
+            .unwrap();
         assert!(reject(&mut conn, "operator-a", &resolved.candidate_id, 2).unwrap());
         fs::write(
             &source_path,
             r#"{"messages":[{"id":"b","session_id":"c","role":"user","content":"two"}]}"#,
-        ).unwrap();
+        )
+        .unwrap();
         let second = scan_fixture(
             &mut conn,
             "operator-a",
             SourceFamily::OpenclawHistory,
             &source_path,
             3,
-        ).unwrap();
+        )
+        .unwrap();
         assert_ne!(first.batch_id, second.batch_id);
-        let prior = status(&conn, "operator-a").unwrap().into_iter()
-            .find(|batch| batch.batch_id == first.batch_id).unwrap();
+        let prior = status(&conn, "operator-a")
+            .unwrap()
+            .into_iter()
+            .find(|batch| batch.batch_id == first.batch_id)
+            .unwrap();
         assert_eq!(prior.state, "invalidated");
-        assert!(review(&conn, "operator-a", &first.batch_id, 10).unwrap().is_empty());
-        let prior_state: String = conn.query_row(
-            "SELECT state FROM history_onboarding_candidates WHERE candidate_id=?1",
-            [&resolved.candidate_id],
-            |row| row.get(0),
-        ).unwrap();
+        assert!(
+            review(&conn, "operator-a", &first.batch_id, 10)
+                .unwrap()
+                .is_empty()
+        );
+        let prior_state: String = conn
+            .query_row(
+                "SELECT state FROM history_onboarding_candidates WHERE candidate_id=?1",
+                [&resolved.candidate_id],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(prior_state, "rejected");
-        let revoked: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM history_onboarding_candidates
+        let revoked: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM history_onboarding_candidates
              WHERE batch_id=?1 AND state='revoked'",
-            [&first.batch_id],
-            |row| row.get(0),
-        ).unwrap();
+                [&first.batch_id],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(revoked, 1);
     }
 
@@ -1054,7 +1161,11 @@ mod tests {
             .find(|batch| batch.batch_id == first.batch_id)
             .unwrap();
         assert_eq!(prior.state, "invalidated");
-        assert!(review(&conn, "operator-a", &first.batch_id, 10).unwrap().is_empty());
+        assert!(
+            review(&conn, "operator-a", &first.batch_id, 10)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[cfg(any(unix, windows))]
@@ -1106,7 +1217,11 @@ mod tests {
             .find(|batch| batch.batch_id == first.batch_id)
             .unwrap();
         assert_eq!(prior.state, "invalidated");
-        assert!(review(&conn, "operator-a", &first.batch_id, 10).unwrap().is_empty());
+        assert!(
+            review(&conn, "operator-a", &first.batch_id, 10)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[cfg(unix)]
@@ -1121,16 +1236,20 @@ mod tests {
                 r#"{{"messages":[{{"id":"a","session_id":"{oversized_id}","role":"user",#,
                 r#""content":"one"}}]}}"#,
             )),
-        ).unwrap();
+        )
+        .unwrap();
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(HISTORY_ONBOARDING_V38_SQL).unwrap();
-        assert!(scan_fixture(
-            &mut conn,
-            "operator-a",
-            SourceFamily::OpenclawHistory,
-            &source_path,
-            1,
-        ).is_err());
+        assert!(
+            scan_fixture(
+                &mut conn,
+                "operator-a",
+                SourceFamily::OpenclawHistory,
+                &source_path,
+                1,
+            )
+            .is_err()
+        );
         assert!(status(&conn, "operator-a").unwrap().is_empty());
     }
 
@@ -1155,24 +1274,30 @@ mod tests {
              BEGIN SELECT RAISE(ABORT, 'injected candidate failure'); END;",
         )
         .unwrap();
-        assert!(scan_fixture(
-            &mut conn,
-            "operator-a",
-            SourceFamily::OpenclawHistory,
-            &source_path,
-            1,
-        )
-        .is_err());
-        let batches: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM history_onboarding_batches",
-            [],
-            |row| row.get(0),
-        ).unwrap();
-        let candidates: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM history_onboarding_candidates",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        assert!(
+            scan_fixture(
+                &mut conn,
+                "operator-a",
+                SourceFamily::OpenclawHistory,
+                &source_path,
+                1,
+            )
+            .is_err()
+        );
+        let batches: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM history_onboarding_batches",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let candidates: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM history_onboarding_candidates",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!((batches, candidates), (0, 0));
     }
 
@@ -1199,14 +1324,10 @@ mod tests {
         let source = capture_verified_history_source(capability).unwrap();
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(HISTORY_ONBOARDING_V38_SQL).unwrap();
-        assert!(scan_verified_source(
-            &mut conn,
-            "other",
-            SourceFamily::OpenclawHistory,
-            source,
-            1,
-        )
-        .is_err());
+        assert!(
+            scan_verified_source(&mut conn, "other", SourceFamily::OpenclawHistory, source, 1,)
+                .is_err()
+        );
         assert!(status(&conn, "owner").unwrap().is_empty());
         assert!(status(&conn, "other").unwrap().is_empty());
     }
@@ -1216,11 +1337,7 @@ mod tests {
     fn captured_source_cannot_cross_source_families() {
         let home = tempfile::tempdir().unwrap();
         let source_path = home.path().join("export.json");
-        fs::write(
-            &source_path,
-            r#"{"mapping":{}}"#,
-        )
-        .unwrap();
+        fs::write(&source_path, r#"{"mapping":{}}"#).unwrap();
         let root = approve_import_root(home.path()).unwrap();
         let capability = issue_interactive_history_import_capability(
             root,
@@ -1234,14 +1351,10 @@ mod tests {
         let source = capture_verified_history_source(capability).unwrap();
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(HISTORY_ONBOARDING_V38_SQL).unwrap();
-        assert!(scan_verified_source(
-            &mut conn,
-            "owner",
-            SourceFamily::OpenclawHistory,
-            source,
-            1,
-        )
-        .is_err());
+        assert!(
+            scan_verified_source(&mut conn, "owner", SourceFamily::OpenclawHistory, source, 1,)
+                .is_err()
+        );
         assert!(status(&conn, "owner").unwrap().is_empty());
     }
 
@@ -1253,7 +1366,8 @@ mod tests {
         fs::write(
             &source_path,
             r#"{"messages":[{"id":"a","session_id":"c","role":"user","content":"one"}]}"#,
-        ).unwrap();
+        )
+        .unwrap();
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(HISTORY_ONBOARDING_V38_SQL).unwrap();
         conn.execute_batch(
@@ -1261,20 +1375,27 @@ mod tests {
              CREATE TABLE idx_groundtruth (statement TEXT); \
              CREATE TABLE raw_turns (text TEXT); \
              CREATE TABLE proactive_queue (payload TEXT);",
-        ).unwrap();
+        )
+        .unwrap();
         scan_fixture(
             &mut conn,
             "operator-a",
             SourceFamily::OpenclawHistory,
             &source_path,
             1,
-        ).unwrap();
-        for table in ["idx_profile", "idx_groundtruth", "raw_turns", "proactive_queue"] {
-            let count: i64 = conn.query_row(
-                &format!("SELECT COUNT(*) FROM {table}"),
-                [],
-                |row| row.get(0),
-            ).unwrap();
+        )
+        .unwrap();
+        for table in [
+            "idx_profile",
+            "idx_groundtruth",
+            "raw_turns",
+            "proactive_queue",
+        ] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
             assert_eq!(count, 0, "history onboarding touched {table}");
         }
     }

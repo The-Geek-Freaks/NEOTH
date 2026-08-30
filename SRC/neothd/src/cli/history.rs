@@ -93,12 +93,12 @@ fn run_history_for_subject(args: HistoryArgs, subject: &str) -> Result<()> {
     let captured_scan = match &args.action {
         HistoryAction::Scan { path, source } => {
             let family = history_onboarding::SourceFamily::parse(source)?;
-            let parent = path.parent().ok_or_else(|| {
-                anyhow::anyhow!("history scan requires a selected export file")
-            })?;
-            let leaf = path.file_name().ok_or_else(|| {
-                anyhow::anyhow!("history scan requires a selected export file")
-            })?;
+            let parent = path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("history scan requires a selected export file"))?;
+            let leaf = path
+                .file_name()
+                .ok_or_else(|| anyhow::anyhow!("history scan requires a selected export file"))?;
             let root = approve_import_root(parent)
                 .context("approve the selected history-export directory")?;
             let mut plan_key = [0_u8; 32];
@@ -114,7 +114,7 @@ fn run_history_for_subject(args: HistoryArgs, subject: &str) -> Result<()> {
             )
             .context("issue history import authority")?;
             let verified = capture_verified_history_source(capability)
-            .context("capture selected history export through the bound handle")?;
+                .context("capture selected history export through the bound handle")?;
             Some((family, verified))
         }
         _ => None,
@@ -123,8 +123,8 @@ fn run_history_for_subject(args: HistoryArgs, subject: &str) -> Result<()> {
     match args.action {
         #[cfg(any(target_os = "linux", target_os = "macos", windows))]
         HistoryAction::Scan { .. } => {
-            let (family, verified) = captured_scan
-                .ok_or_else(|| anyhow::anyhow!("missing history scan capture"))?;
+            let (family, verified) =
+                captured_scan.ok_or_else(|| anyhow::anyhow!("missing history scan capture"))?;
             let status = history_onboarding::scan_verified_source(
                 &mut conn,
                 subject,
@@ -141,10 +141,7 @@ fn run_history_for_subject(args: HistoryArgs, subject: &str) -> Result<()> {
             );
         }
         HistoryAction::Status => {
-            print_statuses(
-                args.output,
-                history_onboarding::status(&conn, subject)?,
-            );
+            print_statuses(args.output, history_onboarding::status(&conn, subject)?);
         }
         HistoryAction::Review { batch_id, limit } => {
             print_candidates(
@@ -159,7 +156,10 @@ fn run_history_for_subject(args: HistoryArgs, subject: &str) -> Result<()> {
                 &candidate_id,
                 crate::time::now_unix_i64(),
             )?;
-            ensure!(changed, "pending candidate not found for this operator subject");
+            ensure!(
+                changed,
+                "pending candidate not found for this operator subject"
+            );
             print_json_or_table(args.output, serde_json::json!({"rejected": candidate_id}));
         }
         HistoryAction::Purge { batch_id, yes } => {
@@ -203,28 +203,38 @@ fn print_status(output: OutputFormat, status: &history_onboarding::BatchStatus) 
 }
 
 fn print_statuses(output: OutputFormat, statuses: Vec<history_onboarding::BatchStatus>) {
-    let rows = statuses.into_iter().map(|status| serde_json::json!({
-        "batch_id": status.batch_id,
-        "source_family": status.source_family,
-        "state": status.state,
-        "candidate_count": status.candidate_count,
-        "excluded_privacy_mode_count": status.excluded_privacy_mode_count,
-        "skipped_structural_count": status.skipped_structural_count,
-    })).collect::<Vec<_>>();
+    let rows = statuses
+        .into_iter()
+        .map(|status| {
+            serde_json::json!({
+                "batch_id": status.batch_id,
+                "source_family": status.source_family,
+                "state": status.state,
+                "candidate_count": status.candidate_count,
+                "excluded_privacy_mode_count": status.excluded_privacy_mode_count,
+                "skipped_structural_count": status.skipped_structural_count,
+            })
+        })
+        .collect::<Vec<_>>();
     print_json_or_table(output, serde_json::Value::Array(rows));
 }
 
 fn print_candidates(output: OutputFormat, candidates: Vec<history_onboarding::CandidatePreview>) {
-    let rows = candidates.into_iter().map(|candidate| serde_json::json!({
-        "candidate_id": candidate.candidate_id,
-        "batch_id": candidate.batch_id,
-        "conversation_id": candidate.conversation_id,
-        "turn_id": candidate.turn_id,
-        "position": candidate.position,
-        "kind": candidate.kind,
-        "state": candidate.state,
-        "excerpt": candidate.excerpt,
-    })).collect::<Vec<_>>();
+    let rows = candidates
+        .into_iter()
+        .map(|candidate| {
+            serde_json::json!({
+                "candidate_id": candidate.candidate_id,
+                "batch_id": candidate.batch_id,
+                "conversation_id": candidate.conversation_id,
+                "turn_id": candidate.turn_id,
+                "position": candidate.position,
+                "kind": candidate.kind,
+                "state": candidate.state,
+                "excerpt": candidate.excerpt,
+            })
+        })
+        .collect::<Vec<_>>();
     print_json_or_table(output, serde_json::Value::Array(rows));
 }
 

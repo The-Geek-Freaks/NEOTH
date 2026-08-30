@@ -23,8 +23,8 @@ use windows_sys::Win32::{
     Storage::FileSystem::{
         DRIVE_FIXED, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
         FILE_ID_INFO, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TYPE_DISK,
-        FileBasicInfo, FileIdInfo, FileStandardInfo, GetDriveTypeW,
-        GetFileInformationByHandleEx, GetFileType,
+        FileBasicInfo, FileIdInfo, FileStandardInfo, GetDriveTypeW, GetFileInformationByHandleEx,
+        GetFileType,
     },
 };
 
@@ -144,7 +144,9 @@ pub(super) fn open_approved_root(path: &Path) -> Result<ApprovedImportRoot, Loca
     let mut current_identity = directory_snapshot(current)?.identity;
 
     for component in path.components() {
-        let Component::Normal(name) = component else { continue };
+        let Component::Normal(name) = component else {
+            continue;
+        };
         let parent = ancestors.last().ok_or(LocalImportError::Unavailable)?;
         let child = open_child_directory(parent, name)?;
         current_identity = directory_snapshot(&child)?.identity;
@@ -370,10 +372,16 @@ fn open_options(directory: bool) -> u32 {
     FILE_OPEN_REPARSE_POINT
         | FILE_SYNCHRONOUS_IO_NONALERT
         | FILE_OPEN_FOR_BACKUP_INTENT
-        | if directory { FILE_DIRECTORY_FILE } else { FILE_NON_DIRECTORY_FILE }
+        | if directory {
+            FILE_DIRECTORY_FILE
+        } else {
+            FILE_NON_DIRECTORY_FILE
+        }
 }
 
-fn share_mode() -> u32 { FILE_SHARE_READ | FILE_SHARE_WRITE }
+fn share_mode() -> u32 {
+    FILE_SHARE_READ | FILE_SHARE_WRITE
+}
 
 fn nt_result(status: i32, handle: HANDLE) -> Result<File, LocalImportError> {
     if status < 0 || native_handle_is_invalid(handle) {
@@ -463,7 +471,9 @@ fn file_information<T>(handle: HANDLE, class: i32) -> Result<T, LocalImportError
 
 fn reject_component(component: &[u16]) -> Result<(), LocalImportError> {
     if component.is_empty()
-        || component.iter().any(|value| *value == 0 || *value == b':' as u16)
+        || component
+            .iter()
+            .any(|value| *value == 0 || *value == b':' as u16)
         || component.last() == Some(&(b'.' as u16))
     {
         return Err(LocalImportError::OutsideApprovedRoot);
@@ -515,12 +525,21 @@ mod tests {
     #[test]
     fn selector_component_rejects_ads_nuls_and_trailing_dots() {
         for component in [
-            vec![b'e' as u16, b'x' as u16, b'p' as u16, b':' as u16, b'x' as u16],
+            vec![
+                b'e' as u16,
+                b'x' as u16,
+                b'p' as u16,
+                b':' as u16,
+                b'x' as u16,
+            ],
             vec![b'x' as u16, 0],
             vec![b'x' as u16, b'.' as u16],
             Vec::new(),
         ] {
-            assert_eq!(reject_component(&component), Err(LocalImportError::OutsideApprovedRoot));
+            assert_eq!(
+                reject_component(&component),
+                Err(LocalImportError::OutsideApprovedRoot)
+            );
         }
         assert!(reject_component(&[b'e' as u16, b'x' as u16, b'p' as u16]).is_ok());
     }
