@@ -907,9 +907,10 @@ mod tests {
             status: &str,
             result_count: usize,
         ) -> Result<()> {
-            self.calls.lock().unwrap().push(format!(
-                "complete:{release_id}:{status}:{result_count}"
-            ));
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("complete:{release_id}:{status}:{result_count}"));
             if self.fail_completion {
                 anyhow::bail!("completion path C:\\private\\wal leaked topic marker");
             }
@@ -1133,18 +1134,18 @@ mod tests {
             report.citations[0].url,
             "https://example.test/released-result"
         );
-        assert!(report.article.contains("Released external research results"));
+        assert!(
+            report
+                .article
+                .contains("Released external research results")
+        );
         assert!(report.article.contains("Bounded public evidence"));
         assert!(!report.article.contains(topic));
         assert_eq!(
             runtime.calls.lock().unwrap().as_slice(),
             [
                 "start:opaque-success-id".to_owned(),
-                format!(
-                    "search:{}:{}",
-                    topic.len(),
-                    MAX_RELEASED_RESEARCH_RESULTS
-                ),
+                format!("search:{}:{}", topic.len(), MAX_RELEASED_RESEARCH_RESULTS),
                 "complete:opaque-success-id:success:1".to_owned(),
             ]
         );

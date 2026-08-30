@@ -489,9 +489,7 @@ impl ExternalHttpAuthorizer {
         V: FnOnce(&ExternalHttpPermit, &ExternalHttpRequest) -> Result<()>,
     {
         let released = self.egress_provenance.released_research_id().is_some();
-        let outcome = self
-            .execute_inner(request, verify_permit, network)
-            .await;
+        let outcome = self.execute_inner(request, verify_permit, network).await;
         match outcome {
             Err(error) if released => match error.downcast_ref::<ReleasedExternalHttpFailure>() {
                 Some(_) => Err(error),
@@ -1483,7 +1481,13 @@ mod tests {
         let denied = denied.expect_err("denied released request must fail closed");
         assert_released_pretransport_error_is_coarse(
             &denied,
-            &[topic, "api.tavily.com", "POST", "search_tavily", "operator denied"],
+            &[
+                topic,
+                "api.tavily.com",
+                "POST",
+                "search_tavily",
+                "operator denied",
+            ],
         );
         assert!(denied_sink.attempts.lock().unwrap().is_empty());
 
@@ -1517,7 +1521,13 @@ mod tests {
         let intent = intent.expect_err("released intent failure must fail closed");
         assert_released_pretransport_error_is_coarse(
             &intent,
-            &[topic, "api.tavily.com", "POST", "search_tavily", "injected audit failure"],
+            &[
+                topic,
+                "api.tavily.com",
+                "POST",
+                "search_tavily",
+                "injected audit failure",
+            ],
         );
         let intent_attempts = intent_sink.attempts.lock().unwrap();
         assert_eq!(intent_attempts.len(), 1);
@@ -1561,7 +1571,13 @@ mod tests {
         let permit = permit.expect_err("released permit failure must fail closed");
         assert_released_pretransport_error_is_coarse(
             &permit,
-            &[topic, "api.tavily.com", "POST", "search_tavily", "permit mismatch"],
+            &[
+                topic,
+                "api.tavily.com",
+                "POST",
+                "search_tavily",
+                "permit mismatch",
+            ],
         );
         assert!(!called.load(Ordering::SeqCst));
         let permit_attempts = permit_sink.attempts.lock().unwrap();
@@ -1569,7 +1585,13 @@ mod tests {
         for (_, payload) in permit_attempts.iter() {
             assert_released_payload_is_provider_neutral(
                 payload,
-                &[topic, "api.tavily.com", "POST", "search_tavily", "permit mismatch"],
+                &[
+                    topic,
+                    "api.tavily.com",
+                    "POST",
+                    "search_tavily",
+                    "permit mismatch",
+                ],
             );
         }
     }

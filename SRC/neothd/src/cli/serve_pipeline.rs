@@ -6089,8 +6089,8 @@ mod tests {
         );
         let mut msg = msg;
         msg.human_uuid = Some("pinned-operator".to_owned());
-        let authority = pinned_channel_operator_proofs(&msg, Some("pinned-operator"))
-            .external_research_release;
+        let authority =
+            pinned_channel_operator_proofs(&msg, Some("pinned-operator")).external_research_release;
         let sender_hash = sender_hash_of("private-channel-recipient");
         let once_guard = crate::hooks::SessionOnceGuard::new();
         let runner_called = Arc::new(AtomicBool::new(false));
@@ -6149,7 +6149,11 @@ mod tests {
         assert_eq!(receipt["channel"], "telegram");
         assert_eq!(receipt["to_hash"], sender_hash);
         assert_eq!(sender_hash.len(), 16);
-        assert!(sender_hash.chars().all(|character| character.is_ascii_hexdigit()));
+        assert!(
+            sender_hash
+                .chars()
+                .all(|character| character.is_ascii_hexdigit())
+        );
         assert_eq!(
             receipt["reply_hash_xxh3"].as_u64(),
             Some(xxhash_rust::xxh3::xxh3_64(
@@ -6276,7 +6280,11 @@ mod tests {
             assert_eq!(receipt["channel"], "telegram");
             assert_eq!(receipt["to_hash"], sender_hash);
             assert_eq!(sender_hash.len(), 16);
-            assert!(sender_hash.chars().all(|character| character.is_ascii_hexdigit()));
+            assert!(
+                sender_hash
+                    .chars()
+                    .all(|character| character.is_ascii_hexdigit())
+            );
             assert_eq!(receipt["provider"], "local-system");
             assert_eq!(receipt["model"], "slash-research-result");
             assert_eq!(
