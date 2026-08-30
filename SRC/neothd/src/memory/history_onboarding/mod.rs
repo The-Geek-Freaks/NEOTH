@@ -909,16 +909,18 @@ mod tests {
         conn.execute_batch(HISTORY_ONBOARDING_V38_SQL).unwrap();
         let one = "a".repeat(64);
         let two = "b".repeat(64);
-        for batch in [&one, &two] {
+        for (batch, source_object_sha256) in
+            [(&one, vec![0_u8; 32]), (&two, vec![1_u8; 32])]
+        {
             conn.execute(
                 "INSERT INTO history_onboarding_batches \
                  (batch_id,operator_subject,source_family,source_sha256,source_object_sha256, \
                   source_path_sha256, \
                   parser_schema_version,scanned_at_unix,candidate_count, \
                   excluded_privacy_mode_count,skipped_structural_count) \
-                 VALUES (?1,'a','chatgpt_export',zeroblob(32),zeroblob(32),zeroblob(32), \
+                 VALUES (?1,'a','chatgpt_export',zeroblob(32),?2,zeroblob(32), \
                          1,1,0,0,0)",
-                [batch],
+                params![batch, source_object_sha256],
             )
             .unwrap();
         }

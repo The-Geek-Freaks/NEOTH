@@ -852,14 +852,22 @@ fn open_private_history_with_hooks(
     before_sqlite_open: impl FnOnce(),
     after_identity_proof: impl FnOnce(),
 ) -> Result<PrivateHistoryConnection> {
-    let prepared = prepare_private_history_target(path)?;
+    // The caller selects the History namespace, but it can legitimately be
+    // spelled through an OS-owned alias (macOS `/var` resolves to
+    // `/private/var`). Resolve that approved namespace exactly once before
+    // any database/sidecar operation, then use only the physical spelling.
+    // All descendants remain subject to the existing no-follow and identity
+    // checks below; a later alias swap cannot redirect SQLite into another
+    // database such as `views.db`.
+    let path = anchor_private_history_target(path)?;
+    let prepared = prepare_private_history_target(&path)?;
     let namespace_fence =
-        crate::connectors::local_import::approve_import_root(private_history_parent(path)?)
+        crate::connectors::local_import::approve_import_root(private_history_parent(&path)?)
             .context("pin private history database namespace")?;
-    verify_private_history_target(path, true)?;
+    verify_private_history_target(&path, true)?;
     before_sqlite_open();
     let mut connection =
-        open_with_prepared_history_target_and_hook(path, &prepared, after_identity_proof)?;
+        open_with_prepared_history_target_and_hook(&path, &prepared, after_identity_proof)?;
     let history_schema = connection
         .transaction()
         .context("begin isolated History schema transaction")?;
@@ -879,11 +887,11 @@ fn open_private_history_with_hooks(
     match &prepared {
         PreparedHistoryTarget::Generic => {}
         PreparedHistoryTarget::Existing(file) | PreparedHistoryTarget::Fresh(file) => {
-            verify_fresh_history_path_identity(path, file)?;
+            verify_fresh_history_path_identity(&path, file)?;
         }
     }
-    harden_new_history_sidecars(path)?;
-    verify_private_history_target(path, true)?;
+    harden_new_history_sidecars(&path)?;
+    verify_private_history_target(&path, true)?;
     Ok(PrivateHistoryConnection {
         connection,
         _file_fence: match prepared {
@@ -894,6 +902,30 @@ fn open_private_history_with_hooks(
         },
         _namespace_fence: namespace_fence,
     })
+}
+
+/// Anchor the caller-approved History namespace to one physical path before
+/// handling the database leaf. On macOS this admits platform-owned aliases
+/// above the namespace (for example `/var`) without carrying that mutable
+/// spelling into later file operations. Other platforms retain their existing
+/// no-link root policy, including Windows reparse-point defenses.
+fn anchor_private_history_target(path: &Path) -> Result<PathBuf> {
+    let parent = private_history_parent(path)?;
+    let file_name = path
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("history database requires a file name"))?;
+    if !parent.exists() {
+        std::fs::create_dir_all(parent).context("create private history database directory")?;
+        make_private_history_directory(parent)?;
+    }
+    #[cfg(target_os = "macos")]
+    let physical_parent = std::fs::canonicalize(parent)
+        .context("canonicalize private history database namespace")?;
+    #[cfg(not(target_os = "macos"))]
+    let physical_parent = parent.to_path_buf();
+    verify_private_history_directory(&physical_parent)?;
+    Ok(physical_parent.join(file_name))
 }
 
 fn prepare_private_history_target(path: &Path) -> Result<PreparedHistoryTarget> {
@@ -2941,6 +2973,40 @@ mod tests {
                 .is_err()
         );
         verify_private_history_target(&path, true).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn private_history_anchors_an_approved_namespace_alias_before_descendant_io() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir().unwrap();
+        let physical_parent = root.path().join("physical-history");
+        std::fs::create_dir(&physical_parent).unwrap();
+        make_private_history_directory(&physical_parent).unwrap();
+        let alias = root.path().join("namespace-alias");
+        symlink(&physical_parent, &alias).unwrap();
+        let database = alias.join("history.db");
+        let outside = root.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        make_private_history_directory(&outside).unwrap();
+
+        let connection = open_private_history_with_hook(&database, || {
+            std::fs::remove_file(&alias).unwrap();
+            symlink(&outside, &alias).unwrap();
+        })
+        .unwrap();
+
+        assert!(physical_parent.join("history.db").exists());
+        assert!(!outside.join("history.db").exists());
+        let version: String = connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='history_schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, "1");
     }
 
     #[test]
