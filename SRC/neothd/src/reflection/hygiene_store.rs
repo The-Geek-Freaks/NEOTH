@@ -41,20 +41,47 @@ static HYGIENE_STATE_LOCK: Mutex<()> = Mutex::new(());
 static DAILY_ADMISSION_STATE_LOCK: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
-thread_local! {
-    // A stale-CAS fixture belongs to the test that registered it. A process
-    // global flag lets concurrently scheduled tests consume one another's
-    // synthetic race, which turns an isolation aid into unrelated failures.
-    static TEST_DAILY_ADMISSION_STALE_CAS: std::cell::Cell<bool> = const {
-        std::cell::Cell::new(false)
-    };
+static TEST_DAILY_ADMISSION_STALE_CAS: Mutex<std::collections::BTreeSet<PathBuf>> =
+    Mutex::new(std::collections::BTreeSet::new());
+
+/// State-free, test-only authority for one synthetic stale Daily-admission
+/// CAS. The exact private home is the scope: it permits a test to hand the
+/// fault to a worker thread without allowing a concurrently scheduled test on
+/// another home to consume it. Production admission never observes this map.
+#[cfg(test)]
+#[must_use]
+pub(crate) struct DailyAdmissionStaleCasTestScope {
+    home: PathBuf,
+}
+
+#[cfg(test)]
+impl Drop for DailyAdmissionStaleCasTestScope {
+    fn drop(&mut self) {
+        let mut pending = TEST_DAILY_ADMISSION_STALE_CAS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        pending.remove(&self.home);
+    }
 }
 
 /// Test-only fault injection: model a competing writer winning between the
 /// caller's admission read and CAS without exposing any production seam.
 #[cfg(test)]
-pub(crate) fn fail_next_daily_admission_cas_as_stale_for_test() {
-    TEST_DAILY_ADMISSION_STALE_CAS.with(|pending| pending.set(true));
+pub(crate) fn fail_next_daily_admission_cas_as_stale_for_test(
+    neoth_home: &Path,
+) -> DailyAdmissionStaleCasTestScope {
+    let home = neoth_home.to_path_buf();
+    let already_armed = {
+        let mut pending = TEST_DAILY_ADMISSION_STALE_CAS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !pending.insert(home.clone())
+    };
+    assert!(
+        !already_armed,
+        "daily-admission stale-CAS test fault is already armed for this home"
+    );
+    DailyAdmissionStaleCasTestScope { home }
 }
 
 pub const DAILY_ADMISSION_STATE_FILE: &str = "state-v1.json";
@@ -88,10 +115,12 @@ pub struct DailyAdmissionState {
 }
 
 pub struct DailyAdmissionGuard {
-    _process_lock: std::sync::MutexGuard<'static, ()>,
+    process_lock: Option<std::sync::MutexGuard<'static, ()>>,
     store: crate::skills::store::BoundDirectory,
-    _os_lock: std::fs::File,
-    lock_binding: crate::skills::store::BoundChildObject,
+    os_lock: Option<std::fs::File>,
+    lock_binding: Option<crate::skills::store::BoundChildObject>,
+    #[cfg(test)]
+    test_home: PathBuf,
 }
 
 /// The durable snapshot. Its raw set is always the retained set of a freshly
@@ -309,11 +338,24 @@ pub fn lock_daily_admission(neoth_home: &Path) -> Result<DailyAdmissionGuard, Hy
     .map_err(|_| HygieneStoreError::LockUnavailable)?;
     acquire_bound_lock(&os_lock)?;
     Ok(DailyAdmissionGuard {
-        _process_lock: process_lock,
+        process_lock: Some(process_lock),
         store,
-        _os_lock: os_lock,
-        lock_binding,
+        os_lock: Some(os_lock),
+        lock_binding: Some(lock_binding),
+        #[cfg(test)]
+        test_home: neoth_home.to_path_buf(),
     })
+}
+
+impl Drop for DailyAdmissionGuard {
+    fn drop(&mut self) {
+        drop(self.release_os_lock_resources());
+        // This is deliberately last. `release_os_lock_resources` consumes and
+        // destroys both native lockfile handles even when explicit unlock
+        // reports an error, so another same-process contender cannot pass the
+        // mutex while either old handle is still alive.
+        drop(self.process_lock.take());
+    }
 }
 
 /// Safely migrate the historical public-ish daily namespace before any daily
@@ -349,6 +391,16 @@ pub fn prepare_daily_admission_namespace(neoth_home: &Path) -> Result<(), Hygien
 }
 
 impl DailyAdmissionGuard {
+    fn release_os_lock_resources(&mut self) -> Option<std::io::Result<()>> {
+        let unlock = self.os_lock.as_ref().map(std::fs::File::unlock);
+        // `lock_binding` retains a duplicate native identity handle. Destroy
+        // it before the locked File and both before `process_lock`; an unlock
+        // error therefore changes no teardown ordering assumption.
+        drop(self.lock_binding.take());
+        drop(self.os_lock.take());
+        unlock
+    }
+
     pub fn load(&self) -> Result<Option<DailyAdmissionState>, HygieneStoreError> {
         self.ensure_lock()?;
         let Some(bytes) = read_child_optional(&self.store, DAILY_ADMISSION_STATE_FILE)? else {
@@ -400,7 +452,11 @@ impl DailyAdmissionGuard {
         self.ensure_lock()?;
         #[cfg(test)]
         {
-            if TEST_DAILY_ADMISSION_STALE_CAS.with(|pending| pending.replace(false)) {
+            let injected = TEST_DAILY_ADMISSION_STALE_CAS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&self.test_home);
+            if injected {
                 return Err(HygieneStoreError::StaleRevision {
                     expected: expected_revision,
                     actual: expected_revision.saturating_add(1),
@@ -445,8 +501,11 @@ impl DailyAdmissionGuard {
     }
 
     fn ensure_lock(&self) -> Result<(), HygieneStoreError> {
-        if self
+        let lock_binding = self
             .lock_binding
+            .as_ref()
+            .ok_or(HygieneStoreError::LockUnavailable)?;
+        if lock_binding
             .matches_regular_file_child_readonly(
                 &self.store.dir,
                 OsStr::new("state-v1.lock"),
@@ -1140,20 +1199,43 @@ mod tests {
     const DAY: i64 = 86_400;
 
     #[test]
-    fn stale_daily_admission_cas_fixture_is_thread_local() {
-        fail_next_daily_admission_cas_as_stale_for_test();
+    fn stale_daily_admission_cas_fixture_is_home_scoped_and_cross_thread() {
+        let home = test_home();
+        let unrelated_home = test_home();
+        let _fault_scope = fail_next_daily_admission_cas_as_stale_for_test(home.path());
+        let home_path = home.path().to_path_buf();
 
-        let observed_by_other_test_worker =
-            std::thread::spawn(|| TEST_DAILY_ADMISSION_STALE_CAS.with(std::cell::Cell::get))
-                .join()
-                .expect("stale-CAS isolation worker must complete");
+        let observed_by_test_worker = std::thread::spawn(move || {
+            let guard = lock_daily_admission(&home_path)
+                .expect("worker must acquire its private daily-admission gate");
+            guard
+                .compare_and_set(0, "2026-08-27", DailyAdmissionOutcome::Suppressed, None)
+                .is_err()
+        })
+        .join()
+        .expect("stale-CAS worker must complete");
         assert!(
-            !observed_by_other_test_worker,
-            "a different test worker must not consume this test's synthetic CAS race"
+            observed_by_test_worker,
+            "the scoped synthetic race must reach the worker that settles this home"
         );
+        let unrelated_guard = lock_daily_admission(unrelated_home.path())
+            .expect("an unrelated private home must acquire its own gate");
+        assert!(matches!(
+            unrelated_guard.compare_and_set(
+                0,
+                "2026-08-27",
+                DailyAdmissionOutcome::Suppressed,
+                None,
+            ),
+            Ok(HygieneDurability::Confirmed | HygieneDurability::RecoveryReadRequired)
+        ));
+        drop(unrelated_guard);
         assert!(
-            TEST_DAILY_ADMISSION_STALE_CAS.with(|pending| pending.replace(false)),
-            "the registering test worker retains its own synthetic CAS race"
+            lock_daily_admission(home.path())
+                .expect("the worker's scope must not leave its gate locked")
+                .load()
+                .expect("the worker's empty state must remain readable")
+                .is_none()
         );
     }
 
@@ -1356,6 +1438,54 @@ mod tests {
         assert_eq!(state.revision, 1);
         assert_eq!(state.tag, "2026-08-27");
         assert_eq!(state.outcome, DailyAdmissionOutcome::Suppressed);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_daily_guard_destroys_lock_handles_before_process_gate_after_unlock_error() {
+        let home = test_home();
+        let mut guard =
+            lock_daily_admission(home.path()).expect("open private daily-admission guard");
+        guard
+            .os_lock
+            .as_ref()
+            .expect("guard retains its OS lock")
+            .unlock()
+            .expect("pre-unlock the Windows range lock");
+
+        let repeated_unlock = guard
+            .release_os_lock_resources()
+            .expect("the guard attempted its explicit unlock");
+        assert!(
+            repeated_unlock.is_err(),
+            "Windows must report the deliberately repeated unlock"
+        );
+        assert!(guard.os_lock.is_none());
+        assert!(guard.lock_binding.is_none());
+        assert!(
+            matches!(
+                DAILY_ADMISSION_STATE_LOCK.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ),
+            "the process gate must remain held after both OS handles are destroyed"
+        );
+
+        drop(guard);
+        let successor_home = home.path().to_path_buf();
+        let (send, receive) = std::sync::mpsc::channel();
+        let successor = std::thread::spawn(move || {
+            let opened = lock_daily_admission(&successor_home)
+                .and_then(|successor_guard| successor_guard.load())
+                .is_ok();
+            send.send(opened).expect("report successor gate result");
+        });
+        assert!(
+            receive
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("same-process successor must not remain behind a teardown handle"),
+            "same-process successor must acquire the Daily gate"
+        );
+        successor.join().expect("successor worker joins");
     }
 
     fn period(kind: &str, tag: &str, at: i64, body: &str) -> PeriodReflection {

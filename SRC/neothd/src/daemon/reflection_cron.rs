@@ -875,7 +875,7 @@ mod tests {
         )
         .unwrap();
         let state_before = std::fs::read(daily_admission_state_path(home.path())).unwrap();
-        fail_next_daily_admission_cas_as_stale_for_test();
+        let _stale_cas_scope = fail_next_daily_admission_cas_as_stale_for_test(home.path());
         assert!(run_daily_admission_tick(home.path(), &current, Some(&config), None).is_err());
         assert!(!periodic::jsonl_file(home.path(), PeriodKind::Daily, &current.tag).exists());
         assert_eq!(
