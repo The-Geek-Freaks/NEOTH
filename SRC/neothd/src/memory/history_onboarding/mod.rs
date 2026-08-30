@@ -745,22 +745,12 @@ mod tests {
 
     #[test]
     fn all_three_families_parse_neutral_review_candidates() {
-        let chatgpt = concat!(
-            r#"{"mapping":{"n":{"id":"a","conversation_id":"c","message":{"author":{#,
-            r#""role":"user"},"#,
-            r#""content":{"parts":["hello"]}}}}}"#,
-        )
-        .as_bytes();
-        let claude = concat!(
-            r#"{"messages":[{"id":"a","conversation_id":"c","role":"user",#,
-            r#""text":"hello"}]}"#,
-        )
-        .as_bytes();
-        let openclaw = concat!(
-            r#"{"messages":[{"id":"a","session_id":"c","role":"user",#,
-            r#""content":"hello"}]}"#,
-        )
-        .as_bytes();
+        let chatgpt = r#"{"mapping":{"n":{"id":"a","conversation_id":"c","message":{"author":{"role":"user"},"content":{"parts":["hello"]}}}}}"#
+            .as_bytes();
+        let claude = r#"{"messages":[{"id":"a","conversation_id":"c","role":"user","text":"hello"}]}"#
+            .as_bytes();
+        let openclaw = r#"{"messages":[{"id":"a","session_id":"c","role":"user","content":"hello"}]}"#
+            .as_bytes();
         assert_eq!(
             parse_source(SourceFamily::ChatgptExport, chatgpt)
                 .unwrap()
@@ -786,11 +776,8 @@ mod tests {
 
     #[test]
     fn privacy_records_produce_no_candidates() {
-        let source = concat!(
-            r#"{"messages":[{"id":"a","session_id":"c","role":"user",#,
-            r#""content":"secret","metadata":{"incognito":true}}]}"#,
-        )
-        .as_bytes();
+        let source = r#"{"messages":[{"id":"a","session_id":"c","role":"user","content":"secret","metadata":{"incognito":true}}]}"#
+            .as_bytes();
         let report = parse_source(SourceFamily::OpenclawHistory, source).unwrap();
         assert!(report.turns.is_empty());
         assert_eq!(report.excluded_privacy_mode_count, 1);
@@ -824,24 +811,15 @@ mod tests {
         let cases = [
             (
                 SourceFamily::ChatgptExport,
-                concat!(
-                    r#"{"metadata":{"is_incognito":true},"mapping":{"n":{"id":"a","message":{#,
-                    r#""author":{"role":"user"},"content":{"parts":["secret"]}}}}}"#,
-                ),
+                r#"{"metadata":{"is_incognito":true},"mapping":{"n":{"id":"a","message":{"author":{"role":"user"},"content":{"parts":["secret"]}}}}}"#,
             ),
             (
                 SourceFamily::ClaudeExport,
-                concat!(
-                    r#"{"messages":[{"id":"a","role":"user","text":"secret",#,
-                    r#""metadata":{"temporary_chat":true}}]}"#,
-                ),
+                r#"{"messages":[{"id":"a","role":"user","text":"secret","metadata":{"temporary_chat":true}}]}"#,
             ),
             (
                 SourceFamily::OpenclawHistory,
-                concat!(
-                    r#"{"messages":[{"id":"a","role":"user","content":"secret",#,
-                    r#""message":{"is_ephemeral":true}}]}"#,
-                ),
+                r#"{"messages":[{"id":"a","role":"user","content":"secret","message":{"is_ephemeral":true}}]}"#,
             ),
         ];
         for (position, (family, source)) in cases.iter().enumerate() {
@@ -1226,33 +1204,29 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn invalid_candidate_aborts_the_entire_scan_transaction() {
+    fn oversized_candidate_is_rejected_without_persisting_a_batch() {
         let home = tempfile::tempdir().unwrap();
         let source_path = home.path().join("export.json");
         let oversized_id = "x".repeat(MAX_CONVERSATION_ID_BYTES + 1);
         fs::write(
             &source_path,
             format!(
-                concat!(
-                    r#"{{"messages":[{{"id":"a","session_id":"{oversized_id}","role":"user",#,
-                    r#""content":"one"}}]}}"#,
-                ),
+                r#"{{"messages":[{{"id":"a","session_id":"{oversized_id}","role":"user","content":"one"}}]}}"#,
                 oversized_id = oversized_id
             ),
         )
         .unwrap();
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(HISTORY_ONBOARDING_V38_SQL).unwrap();
-        assert!(
-            scan_fixture(
-                &mut conn,
-                "operator-a",
-                SourceFamily::OpenclawHistory,
-                &source_path,
-                1,
-            )
-            .is_err()
-        );
+        let error = scan_fixture(
+            &mut conn,
+            "operator-a",
+            SourceFamily::OpenclawHistory,
+            &source_path,
+            1,
+        )
+        .expect_err("oversized conversation IDs must be rejected");
+        assert_eq!(error.to_string(), "conversation id out of bounds");
         assert!(status(&conn, "operator-a").unwrap().is_empty());
     }
 
