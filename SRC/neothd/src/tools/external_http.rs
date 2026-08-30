@@ -582,7 +582,7 @@ impl ExternalHttpAuthorizer {
         };
         if let Err(error) = verify_permit(&permit, &request) {
             if audit.is_operator_released_research() && requires_lifecycle_gate {
-                let verification: Result<()> = Err(error);
+                let verification: Result<T> = Err(error);
                 self.append_result(&audit, &verification).await?;
                 return verification;
             }
