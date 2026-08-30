@@ -25929,7 +25929,7 @@ mod chat_subprocess_tests {
                 .contains("settle_main_chat_request_ui(&w);")
         );
         assert!(production.contains("w.invoke_chat_send_clicked(text, m.incognito);"));
-        assert!(production.contains("if !incognito {\n            if let Ok(mut last)"));
+        assert!(production.contains("if !incognito && let Ok(mut last)"));
         assert!(production.contains("let request_incognito = rows"));
         assert!(production.contains("incognito: request_incognito,"));
 
@@ -26743,9 +26743,9 @@ mod chat_subprocess_tests {
     fn d2_usage_workers_are_owned_by_the_window_lifecycle() {
         let source = include_str!("main.rs");
         let periodic = source
-            .split("let usage_probe_worker = std::thread::Builder::new()")
-            .nth(1)
-            .and_then(|tail| tail.split("// GOLD-WIRE-10b").next())
+            .rsplit_once(concat!("let usage_probe_", "worker = std::thread::Builder::new()"))
+            .map(|(_, tail)| tail)
+            .and_then(|tail| tail.split(concat!("// GOLD-WIRE-", "10b")).next())
             .unwrap();
         for contract in [
             "D2_USAGE_WINDOW_LIVE.load",
@@ -26760,9 +26760,9 @@ mod chat_subprocess_tests {
         }
 
         let budget = source
-            .split("let budget_probe_worker = std::thread::Builder::new()")
-            .nth(1)
-            .and_then(|tail| tail.split("// QM-8 Phase 2").next())
+            .rsplit_once(concat!("let budget_probe_", "worker = std::thread::Builder::new()"))
+            .map(|(_, tail)| tail)
+            .and_then(|tail| tail.split(concat!("// QM-", "8 Phase 2")).next())
             .unwrap();
         for contract in [
             "D2_USAGE_WINDOW_LIVE.load",
@@ -31242,16 +31242,19 @@ mod tests {
         let overlay_retry_registration = ["overlay.on_stall_", "retry_clicked"].concat();
         let buddy_handler_call = ["handler(ChatStreamSurface::", "Buddy)"].concat();
         let main_handler_call = ["handler(ChatStreamSurface::", "Main)"].concat();
-        let buddy_redispatch = [
-            "overlay.invoke_send_clicked(",
-            "retry.body.as_str().into(),",
-            "retry.incognito",
-        ]
-        .concat();
+        let production = source.split("mod chat_subprocess_tests").next().unwrap();
+        let buddy_retry_block = production
+            .split_once("if let Some(retry) = watchdog_retry")
+            .map(|(_, tail)| tail)
+            .and_then(|tail| tail.split("\n            }\n        });").next())
+            .unwrap();
+        let compact_buddy_retry = buddy_retry_block.split_whitespace().collect::<String>();
         assert!(source.contains(&overlay_retry_registration));
         assert!(source.contains(&buddy_handler_call));
         assert!(source.contains(&main_handler_call));
-        assert!(source.contains(&buddy_redispatch));
+        assert!(compact_buddy_retry.contains("overlay.invoke_send_clicked("));
+        assert!(compact_buddy_retry.contains("retry.body.as_str().into(),"));
+        assert!(compact_buddy_retry.contains("retry.incognito"));
         let buddy_surface_binding = ["surface: ChatStreamSurface::", "Buddy"].concat();
         assert!(source.contains(&buddy_surface_binding));
         assert!(!chat.contains("Keep waiting"));
