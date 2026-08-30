@@ -215,10 +215,10 @@ pub(crate) fn capture_verified_history_source(
 fn history_provenance_sha256(domain: &[u8], fields: &[&[u8]]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"NEOTH\0HISTORY_IMPORT\0SHA256\0V1");
-    hasher.update(&(domain.len() as u64).to_be_bytes());
+    hasher.update((domain.len() as u64).to_be_bytes());
     hasher.update(domain);
     for field in fields {
-        hasher.update(&(field.len() as u64).to_be_bytes());
+        hasher.update((field.len() as u64).to_be_bytes());
         hasher.update(field);
     }
     hasher.finalize().into()

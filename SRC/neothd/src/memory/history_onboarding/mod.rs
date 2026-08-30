@@ -434,7 +434,7 @@ fn candidate_identity_sha256(
         turn_id.as_bytes(),
         position.as_slice(),
     ] {
-        hasher.update(&(field.len() as u64).to_be_bytes());
+        hasher.update((field.len() as u64).to_be_bytes());
         hasher.update(field);
     }
     hasher.finalize().into()
@@ -1232,10 +1232,13 @@ mod tests {
         let oversized_id = "x".repeat(MAX_CONVERSATION_ID_BYTES + 1);
         fs::write(
             &source_path,
-            format!(concat!(
-                r#"{{"messages":[{{"id":"a","session_id":"{oversized_id}","role":"user",#,
-                r#""content":"one"}}]}}"#,
-            )),
+            format!(
+                concat!(
+                    r#"{{"messages":[{{"id":"a","session_id":"{oversized_id}","role":"user",#,
+                    r#""content":"one"}}]}}"#,
+                ),
+                oversized_id = oversized_id
+            ),
         )
         .unwrap();
         let mut conn = Connection::open_in_memory().unwrap();
