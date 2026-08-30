@@ -920,8 +920,8 @@ fn anchor_private_history_target(path: &Path) -> Result<PathBuf> {
         make_private_history_directory(parent)?;
     }
     #[cfg(target_os = "macos")]
-    let physical_parent = std::fs::canonicalize(parent)
-        .context("canonicalize private history database namespace")?;
+    let physical_parent =
+        std::fs::canonicalize(parent).context("canonicalize private history database namespace")?;
     #[cfg(not(target_os = "macos"))]
     let physical_parent = parent.to_path_buf();
     verify_private_history_directory(&physical_parent)?;

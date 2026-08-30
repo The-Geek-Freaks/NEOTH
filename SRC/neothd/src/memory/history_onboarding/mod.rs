@@ -909,9 +909,7 @@ mod tests {
         conn.execute_batch(HISTORY_ONBOARDING_V38_SQL).unwrap();
         let one = "a".repeat(64);
         let two = "b".repeat(64);
-        for (batch, source_object_sha256) in
-            [(&one, vec![0_u8; 32]), (&two, vec![1_u8; 32])]
-        {
+        for (batch, source_object_sha256) in [(&one, vec![0_u8; 32]), (&two, vec![1_u8; 32])] {
             conn.execute(
                 "INSERT INTO history_onboarding_batches \
                  (batch_id,operator_subject,source_family,source_sha256,source_object_sha256, \

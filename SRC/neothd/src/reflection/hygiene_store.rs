@@ -1143,11 +1143,10 @@ mod tests {
     fn stale_daily_admission_cas_fixture_is_thread_local() {
         fail_next_daily_admission_cas_as_stale_for_test();
 
-        let observed_by_other_test_worker = std::thread::spawn(|| {
-            TEST_DAILY_ADMISSION_STALE_CAS.with(std::cell::Cell::get)
-        })
-        .join()
-        .expect("stale-CAS isolation worker must complete");
+        let observed_by_other_test_worker =
+            std::thread::spawn(|| TEST_DAILY_ADMISSION_STALE_CAS.with(std::cell::Cell::get))
+                .join()
+                .expect("stale-CAS isolation worker must complete");
         assert!(
             !observed_by_other_test_worker,
             "a different test worker must not consume this test's synthetic CAS race"

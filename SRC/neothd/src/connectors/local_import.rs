@@ -1902,7 +1902,10 @@ mod tests {
                 .expect("the fixture remains below the Darwin system alias target"),
         );
         let parked_root = replacement.path().with_extension("parked-root");
-        assert!(!parked_root.exists(), "the deterministic parking path must be free");
+        assert!(
+            !parked_root.exists(),
+            "the deterministic parking path must be free"
+        );
 
         let original_bytes = b"{\"root\":\"operator-approved\"}";
         let replacement_bytes = b"{\"root\":\"replacement\"}";
@@ -1915,16 +1918,14 @@ mod tests {
         )
         .identity;
 
-        let authority = approve_import_root_with_macos_canonicalization_hook(
-            &alias_root,
-            |resolved_root| {
+        let authority =
+            approve_import_root_with_macos_canonicalization_hook(&alias_root, |resolved_root| {
                 assert_eq!(resolved_root, canonical_root.as_path());
                 fs::rename(resolved_root, &parked_root).expect("park original canonical root");
                 fs::rename(replacement.path(), resolved_root)
                     .expect("install controlled replacement at canonical root");
-            },
-        )
-        .expect("bind the directory object present at the canonical path after the hook");
+            })
+            .expect("bind the directory object present at the canonical path after the hook");
         assert_eq!(authority.identity, replacement_identity);
 
         let (bytes, binding) = read_bound_source(&authority, Path::new("export.json"), 1024)

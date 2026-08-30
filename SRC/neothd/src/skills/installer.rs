@@ -54,10 +54,10 @@ use sha2::{Digest as _, Sha256};
 use super::schema::SkillManifest;
 use super::store::{
     BoundChildObject, BoundDirectory, BoundDirectoryChild, bind_child_object, bind_real_child_dir,
-    cap_metadata_is_link_like,
-    open_bound_directory, open_bound_directory_from_trusted_anchor, open_real_child_dir,
-    open_regular_file, read_regular_file_bounded, read_regular_file_bounded_observed,
-    remove_child_file, remove_real_directory_tree, rename_child, valid_child_identity_token,
+    cap_metadata_is_link_like, open_bound_directory, open_bound_directory_from_trusted_anchor,
+    open_real_child_dir, open_regular_file, read_regular_file_bounded,
+    read_regular_file_bounded_observed, remove_child_file, remove_real_directory_tree,
+    rename_child, valid_child_identity_token,
 };
 
 const MAX_SKILL_MANIFEST_BYTES: usize = 1024 * 1024;
