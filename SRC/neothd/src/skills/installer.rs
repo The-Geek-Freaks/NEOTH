@@ -56,8 +56,8 @@ use super::store::{
     BoundChildObject, BoundDirectory, BoundDirectoryChild, bind_child_object, bind_real_child_dir,
     cap_metadata_is_link_like, open_bound_directory, open_bound_directory_from_trusted_anchor,
     open_real_child_dir, open_regular_file, read_regular_file_bounded,
-    read_regular_file_bounded_observed, remove_child_file, remove_real_directory_tree,
-    rename_child, valid_child_identity_token,
+    read_regular_file_bounded_observed, remove_bound_real_directory_tree, remove_child_file,
+    remove_real_directory_tree, rename_child, valid_child_identity_token,
 };
 
 const MAX_SKILL_MANIFEST_BYTES: usize = 1024 * 1024;
@@ -1181,7 +1181,7 @@ impl PreparedSkillInstall {
                 self.journal.phase.as_str()
             );
         }
-        remove_transaction_artifact_if_present(&self.target_root, &self.stage_name)
+        remove_transaction_artifact_if_present(&self.target_root, &self.stage_name, None)
             .context("remove uncommitted prepared skill install")?;
         clear_skill_mutation_journal(&self.target_root)
     }
@@ -3533,7 +3533,7 @@ impl PendingSkillMutationReconciliation {
             }
             if self.record.kind.is_install() {
                 let stage = mutation_install_stage_name(&self.record);
-                remove_transaction_artifact_if_present(&self.root, &stage)?;
+                remove_transaction_artifact_if_present(&self.root, &stage, None)?;
             }
             clear_skill_mutation_journal(&self.root)?;
             return Ok(None);
@@ -3812,6 +3812,7 @@ impl PendingSkillMutationReconciliation {
                             self.record.operation_id
                         );
                     }
+                    drop(bound_backup);
                     cleanup_transaction_artifact_restartable(
                         &self.root,
                         &mut self.record,
@@ -3871,6 +3872,7 @@ impl PendingSkillMutationReconciliation {
                             self.record.operation_id
                         );
                     }
+                    drop(bound_tombstone);
                     cleanup_transaction_artifact_restartable(
                         &self.root,
                         &mut self.record,
@@ -3919,35 +3921,43 @@ fn cleanup_transaction_artifact_restartable(
     };
 
     if exists {
-        let bound = bind_child_object(&root.dir, name, &display)?;
-        if let Some(active) = record.cleanup_started.as_ref() {
-            if bound.identity_token() != active.object_identity
-                || !bound.matches_child(&root.dir, name, &display)?
-            {
-                anyhow::bail!(
-                    "skill mutation {} cleanup artifact `{name_text}` changed identity",
-                    record.operation_id
-                );
-            }
-        } else {
-            if expected_identity.is_some_and(|expected| expected != bound.identity_token()) {
+        // The binding can carry a native Windows handle. Persist only its
+        // verified identity before recursive cleanup; the deletion helper
+        // reacquires a short-lived no-follow directory capability and proves
+        // that identity again before its final destructive operation.
+        let bound_identity = {
+            let bound = bind_child_object(&root.dir, name, &display)?;
+            let identity = bound.identity_token().to_string();
+            if let Some(active) = record.cleanup_started.as_ref() {
+                if identity != active.object_identity
+                    || !bound.matches_child(&root.dir, name, &display)?
+                {
+                    anyhow::bail!(
+                        "skill mutation {} cleanup artifact `{name_text}` changed identity",
+                        record.operation_id
+                    );
+                }
+            } else if expected_identity.is_some_and(|expected| expected != identity.as_str()) {
                 anyhow::bail!(
                     "skill mutation {} cleanup artifact `{name_text}` is not the authorized object",
                     record.operation_id
                 );
             }
+            identity
+        };
+        if record.cleanup_started.is_none() {
             let prior = record.clone();
             record.cleanup_started = Some(SkillCleanupState {
                 artifact_name: name_text.to_string(),
                 artifact_kind: kind,
-                object_identity: bound.identity_token().to_string(),
+                object_identity: bound_identity.clone(),
             });
             if let Err(error) = persist_skill_mutation_journal(root, record) {
                 *record = prior;
                 return Err(error).context("persist restartable Skill cleanup boundary");
             }
         }
-        remove_transaction_artifact_if_present(root, name)?;
+        remove_transaction_artifact_if_present(root, name, Some(&bound_identity))?;
     } else if record.cleanup_started.is_none() {
         return Ok(());
     }
@@ -5520,10 +5530,10 @@ pub(crate) fn recover_pending_transactions_locked(root: &BoundDirectory) -> Resu
         sync_directory(&root.dir, &root.display_path)?;
     }
     for stage in &creator_directory_stages {
-        remove_transaction_directory(root, stage)?;
+        remove_transaction_directory(root, stage, None)?;
     }
     for tombstone in &delete_tombstones {
-        remove_transaction_directory(root, tombstone)?;
+        remove_transaction_directory(root, tombstone, None)?;
     }
     if !creator_directory_stages.is_empty() || !delete_tombstones.is_empty() {
         sync_directory(&root.dir, &root.display_path)?;
@@ -5567,7 +5577,7 @@ pub(crate) fn recover_pending_transactions_locked(root: &BoundDirectory) -> Resu
             sync_directory(&root.dir, &root.display_path)?;
         }
         for artifact in transaction.stages.iter().chain(transaction.backups.iter()) {
-            remove_transaction_directory(root, artifact)?;
+            remove_transaction_directory(root, artifact, None)?;
         }
         if !transaction.stages.is_empty() || !transaction.backups.is_empty() {
             sync_directory(&root.dir, &root.display_path)?;
@@ -5749,31 +5759,51 @@ fn parse_transaction_artifact(name: &OsStr) -> Result<Option<(TransactionArtifac
     Ok(Some((kind, id.to_string())))
 }
 
-fn remove_transaction_directory(root: &BoundDirectory, name: &OsStr) -> Result<()> {
+fn remove_transaction_directory(
+    root: &BoundDirectory,
+    name: &OsStr,
+    expected_identity: Option<&str>,
+) -> Result<()> {
     let display_path = root.display_path.join(name);
-    drop(
-        open_real_child_dir(&root.dir, name, &display_path).with_context(|| {
-            format!(
-                "refuse to remove unsafe pending skill transaction {}",
-                display_path.display()
-            )
-        })?,
-    );
-    remove_real_directory_tree(&root.dir, name, &display_path).with_context(|| {
+    let observed = bind_real_child_dir(&root.dir, name, &display_path).with_context(|| {
         format!(
-            "remove pending skill transaction {}",
+            "refuse to remove unsafe pending skill transaction {}",
             display_path.display()
         )
-    })
+    })?;
+    if let Some(expected_identity) = expected_identity {
+        anyhow::ensure!(
+            observed.identity_token() == expected_identity,
+            "refuse to remove pending skill transaction whose identity changed: {}",
+            display_path.display()
+        );
+    }
+    let observed_identity = observed.identity_token().to_string();
+    drop(observed);
+    remove_bound_real_directory_tree(&root.dir, name, &display_path, &observed_identity)
+        .with_context(|| {
+            format!(
+                "remove pending skill transaction {}",
+                display_path.display()
+            )
+        })
 }
 
-fn remove_transaction_artifact_if_present(root: &BoundDirectory, name: &OsStr) -> Result<()> {
+fn remove_transaction_artifact_if_present(
+    root: &BoundDirectory,
+    name: &OsStr,
+    expected_identity: Option<&str>,
+) -> Result<()> {
     let display = root.display_path.join(name);
     match root.dir.symlink_metadata(name) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Ok(metadata) if metadata.is_dir() && !cap_metadata_is_link_like(&metadata) => {
-            remove_transaction_directory(root, name)
+            remove_transaction_directory(root, name, expected_identity)
         }
+        Ok(_) if expected_identity.is_some() => anyhow::bail!(
+            "refuse to remove pending skill transaction whose bound directory changed type: {}",
+            display.display()
+        ),
         Ok(_) => remove_child_file(&root.dir, name, &display)
             .with_context(|| format!("remove private skill artifact {}", display.display())),
         Err(error) => Err(error)
@@ -6416,6 +6446,36 @@ mod tests {
 
         assert!(!stage.exists());
         assert!(!dest.path().join("abort_me").exists());
+    }
+
+    #[test]
+    fn bound_pending_stage_cleanup_rejects_a_same_name_swap_before_delete() {
+        let dest = temp_skills_root();
+        let operation_id = "20202020202020202020202020202020";
+        let stage_name = OsString::from(format!(
+            "{INSTALL_TRANSACTION_PREFIX}swap_cleanup-{operation_id}"
+        ));
+        let stage = dest.path().join(&stage_name);
+        let displaced = dest.path().join("displaced-private-stage");
+        write_skill(&stage, "swap_cleanup", &good_yaml("swap_cleanup"));
+
+        let root = open_bound_directory(dest.path(), false, "test skills root")
+            .unwrap()
+            .unwrap();
+        let _guard = lock_skill_mutations(&root).unwrap();
+        let expected_identity = bind_real_child_dir(&root.dir, &stage_name, &stage)
+            .unwrap()
+            .identity_token()
+            .to_string();
+
+        std::fs::rename(&stage, &displaced).unwrap();
+        write_skill(&stage, "swap_cleanup", &good_yaml("swap_cleanup"));
+
+        let error = remove_transaction_directory(&root, &stage_name, Some(&expected_identity))
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("identity changed"));
+        assert!(stage.exists(), "same-name replacement must never be deleted");
+        assert!(displaced.exists(), "original private evidence must be retained");
     }
 
     #[test]

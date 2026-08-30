@@ -2054,7 +2054,40 @@ pub(crate) fn remove_real_directory_tree(
     const MAX_DELETE_WORK_UNITS: usize = MAX_DELETE_ENTRIES * 3 + 1;
 
     let mut budget = DeleteBudget::new(MAX_DELETE_ENTRIES, MAX_DELETE_WORK_UNITS);
-    remove_real_directory_tree_with_budget(parent, name, display_path, &mut budget)
+    remove_real_directory_tree_with_budget(parent, name, display_path, None, &mut budget)
+}
+
+/// Remove one exact real direct-child directory after a caller has retained
+/// its no-follow identity as recovery evidence.
+///
+/// The supplied identity is checked before traversal and again when Windows
+/// acquires its native delete handle. The capability used for each check is
+/// deliberately short-lived: a retained `Dir` with cap-std's no-delete-share
+/// would block the cleanup it authorized. On Windows, a same-name replacement
+/// in the hand-off window remains fail-closed, and deletion stays
+/// handle-relative.
+pub(crate) fn remove_bound_real_directory_tree(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+    expected_identity: &str,
+) -> Result<()> {
+    anyhow::ensure!(
+        valid_child_identity_token(expected_identity),
+        "invalid bound directory identity for deletion: {}",
+        display_path.display()
+    );
+    const MAX_DELETE_ENTRIES: usize = 4096;
+    const MAX_DELETE_WORK_UNITS: usize = MAX_DELETE_ENTRIES * 3 + 1;
+
+    let mut budget = DeleteBudget::new(MAX_DELETE_ENTRIES, MAX_DELETE_WORK_UNITS);
+    remove_real_directory_tree_with_budget(
+        parent,
+        name,
+        display_path,
+        Some(expected_identity),
+        &mut budget,
+    )
 }
 
 #[derive(Debug)]
@@ -2124,12 +2157,22 @@ fn remove_real_directory_tree_with_budget(
     parent: &Dir,
     name: &OsStr,
     display_path: &Path,
+    expected_identity: Option<&str>,
     budget: &mut DeleteBudget,
 ) -> Result<()> {
     validate_child_name(name)?;
     #[cfg(unix)]
     {
         let directory = open_real_child_dir(parent, name, display_path)?;
+        if let Some(expected_identity) = expected_identity {
+            anyhow::ensure!(
+                child_identity_token(&directory.dir_metadata().with_context(|| {
+                    format!("inspect bound removal target {}", display_path.display())
+                })?)? == expected_identity,
+                "directory changed before bound deletion traversal: {}",
+                display_path.display()
+            );
+        }
         remove_directory_contents(&directory, display_path, 0, budget)?;
         drop(directory);
 
@@ -2143,11 +2186,18 @@ fn remove_real_directory_tree_with_budget(
     #[cfg(windows)]
     {
         let directory = open_real_child_dir(parent, name, display_path)?;
-        let expected_identity = child_identity_token(
+        let opened_identity = child_identity_token(
             &directory
                 .dir_metadata()
                 .with_context(|| format!("inspect removal target {}", display_path.display()))?,
         )?;
+        if let Some(expected_identity) = expected_identity {
+            anyhow::ensure!(
+                opened_identity == expected_identity,
+                "directory changed before bound deletion traversal: {}",
+                display_path.display()
+            );
+        }
         remove_directory_contents(&directory, display_path, 0, budget)?;
         drop(directory);
 
@@ -2159,7 +2209,7 @@ fn remove_real_directory_tree_with_budget(
             parent,
             name,
             display_path,
-            &expected_identity,
+            expected_identity.unwrap_or(&opened_identity),
         )?;
         windows_mark_delete(&handle, display_path)?;
     }
@@ -4975,6 +5025,7 @@ mod tests {
             &root.dir,
             OsStr::new("victim"),
             &victim,
+            None,
             &mut budget,
         )
         .unwrap_err();
@@ -5017,6 +5068,7 @@ mod tests {
             &root.dir,
             OsStr::new("victim"),
             &victim,
+            None,
             &mut budget,
         )
         .unwrap_err();
