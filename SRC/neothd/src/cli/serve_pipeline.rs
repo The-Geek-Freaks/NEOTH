@@ -11,6 +11,7 @@
 //! (it is also used by the daemon-side `handle_reload_sentinel`) and is reached
 //! here via `crate::cli::serve::emit_required_audit`.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -255,6 +256,90 @@ struct ExplicitExternalResearchTopic {
 }
 
 const EXTERNAL_RESEARCH_RELEASE_USAGE: &str = "External research requires a pinned operator and the exact syntax: /research --release-external <topic>";
+const RELEASED_RESEARCH_FAILURE_REPLY: &str =
+    "[NEOTH] Released external research failed safely. No internal details were disclosed.";
+
+fn released_research_channel_reply(
+    result: Result<crate::tools::deep_research::ResearchReport>,
+) -> String {
+    match result {
+        Ok(report) => {
+            let mut out = report.article;
+            if !report.citations.is_empty() {
+                out.push_str("\n\n---\nSources:\n");
+                for (index, citation) in report.citations.iter().enumerate() {
+                    out.push_str(&format!(
+                        "[{}] {} — {}\n",
+                        index + 1,
+                        citation.title,
+                        citation.url
+                    ));
+                }
+            }
+            out
+        }
+        Err(_) => RELEASED_RESEARCH_FAILURE_REPLY.to_owned(),
+    }
+}
+
+struct ReleasedResearchChannelRoute<'a, P> {
+    writer: &'a WalWriterHandle,
+    neoth_home: &'a std::path::Path,
+    hooks: &'a [crate::hooks::schema::HookDef],
+    autonomy_policy: P,
+    inbound: &'a InboundMessage,
+    channel: &'a str,
+    sender_hash: &'a str,
+    channel_asker: Option<Arc<dyn crate::permissions::gate::ChannelAsker>>,
+    once_guard: &'a crate::hooks::SessionOnceGuard,
+}
+
+async fn route_operator_released_research<P, R, Fut>(
+    release_authority: Option<PinnedChannelExternalResearchReleaseAuthority>,
+    args: &str,
+    route: ReleasedResearchChannelRoute<'_, P>,
+    runner: R,
+) -> Result<Option<OutboundMessage>>
+where
+    P: crate::permissions::PolicyArgument + Copy,
+    R: FnOnce(ExplicitExternalResearchTopic) -> Fut,
+    Fut: Future<Output = Result<crate::tools::deep_research::ResearchReport>>,
+{
+    let released = match operator_released_external_research_topic(release_authority, args) {
+        Ok(released) => released,
+        Err(guidance) => {
+            return release_local_channel_notice(
+                route.writer,
+                route.neoth_home,
+                route.hooks,
+                route.autonomy_policy,
+                route.inbound,
+                route.channel,
+                route.sender_hash,
+                guidance,
+                "slash-research-result",
+                route.channel_asker,
+                route.once_guard,
+            )
+            .await;
+        }
+    };
+    let reply = released_research_channel_reply(runner(released).await);
+    release_local_channel_notice(
+        route.writer,
+        route.neoth_home,
+        route.hooks,
+        route.autonomy_policy,
+        route.inbound,
+        route.channel,
+        route.sender_hash,
+        &reply,
+        "slash-research-result",
+        route.channel_asker,
+        route.once_guard,
+    )
+    .await
+}
 
 /// Parse the explicit external-release grammar without accepting lookalike
 /// flags or an empty topic. This is intentionally independent of model/config
@@ -2521,80 +2606,55 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     // declassifies a topic; both proofs are required before even
                     // constructing the authorizer (including local SearXNG).
                     if name == "research" {
-                        let release = operator_released_external_research_topic(
+                        let research_writer = writer.clone();
+                        let research_asker = channel_asker.as_ref().map(Arc::clone);
+                        let research_config = Arc::clone(&config_for_handler);
+                        let research_channel = channel_str.to_owned();
+                        return route_operator_released_research(
                             pinned_operator_proofs.external_research_release.take(),
                             &args,
-                        );
-                        let reply_text = match release {
-                            Err(guidance) => guidance.to_string(),
-                            Ok(ExplicitExternalResearchTopic { topic, release }) => {
+                            ReleasedResearchChannelRoute {
+                                writer: &writer,
+                                neoth_home: &neoth_home,
+                                hooks: &hooks,
+                                autonomy_policy: &autonomy_policy,
+                                inbound: &inbound,
+                                channel: channel_str,
+                                sender_hash: &sender_hash,
+                                channel_asker: channel_asker.as_ref().map(Arc::clone),
+                                once_guard: &session_fired_once,
+                            },
+                            move |ExplicitExternalResearchTopic { topic, release }| async move {
                                 let search_provider =
                                     crate::tools::deep_research::resolve_search_provider();
-                                match crate::tools::deep_research::resolve_search_key(
+                                let search_key = crate::tools::deep_research::resolve_search_key(
                                     search_provider,
-                                ) {
-                                    Err(e) => format!("deep-research: {e}"),
-                                    Ok(search_key) => {
-                                        info!(
-                                            channel = channel_str,
-                                            topic_len = topic.len(),
-                                            "slash /research: starting bounded operator-released search"
-                                        );
-                                        // C7: only the exact parser-minted release
-                                        // reaches this constructor. The released path
-                                        // performs one exact-topic search with compiled-in
-                                        // caps; it never exposes a public authorizer to
-                                        // model-planned queries or follow-up page fetches.
-                                        let http =
-                                            crate::tools::external_http::ExternalHttpAuthorizer::
-                                                with_operator_released_channel_research_writer(
-                                                    config_for_handler.autonomy_policy(),
-                                                    writer.clone(),
-                                                    channel_asker.as_ref().map(Arc::clone),
-                                                    release,
-                                                );
-                                        match crate::tools::deep_research::run_operator_released_channel_research(
-                                            &topic,
-                                            &search_key,
-                                            search_provider,
-                                            &writer,
-                                            &http,
-                                        )
-                                        .await
-                                        {
-                                            Ok(report) => {
-                                                let mut out = report.article.clone();
-                                                if !report.citations.is_empty() {
-                                                    out.push_str("\n\n---\nSources:\n");
-                                                    for (i, c) in report.citations.iter().enumerate() {
-                                                        out.push_str(&format!(
-                                                            "[{}] {} — {}\n",
-                                                            i + 1,
-                                                            c.title,
-                                                            c.url
-                                                        ));
-                                                    }
-                                                }
-                                                out
-                                            }
-                                            Err(e) => format!("deep-research error: {e:#}"),
-                                        }
-                                    }
-                                }
-                            }
-                        };
-                        return release_local_channel_notice(
-                            &writer,
-                            &neoth_home,
-                            &hooks,
-                            &autonomy_policy,
-                            &inbound,
-                            channel_str,
-                            &sender_hash,
-                            &reply_text,
-                            "slash-research-result",
-                            channel_asker.as_ref().map(Arc::clone),
-                            &session_fired_once,
+                                )?;
+                                info!(
+                                    channel = research_channel,
+                                    topic_len = topic.len(),
+                                    "slash /research: starting bounded operator-released search"
+                                );
+                                // C7: only the exact parser-minted release reaches this
+                                // constructor. The released path performs one exact-topic
+                                // search with compiled-in caps; it never exposes a public
+                                // authorizer to model-planned queries or page fetches.
+                                let http = crate::tools::external_http::ExternalHttpAuthorizer::
+                                    with_operator_released_channel_research_writer(
+                                        research_config.autonomy_policy(),
+                                        research_writer.clone(),
+                                        research_asker,
+                                        release,
+                                    );
+                                crate::tools::deep_research::run_operator_released_channel_research(
+                                    &topic,
+                                    &search_key,
+                                    search_provider,
+                                    &research_writer,
+                                    &http,
+                                )
+                                .await
+                            },
                         )
                         .await;
                     }
@@ -5283,7 +5343,7 @@ mod tests {
         assert_eq!(current_user_message(&bundle), "operator caption");
     }
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     struct ChannelDefaultAliasProvider;
 
@@ -5547,6 +5607,26 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn released_research_failure_reply_never_formats_internal_error_chain() {
+        let leaked = anyhow::anyhow!(
+            "POST https://api.tavily.com/search search_tavily private channel topic \
+             C:\\private\\wal: lower audit failure"
+        );
+        let reply = released_research_channel_reply(Err(leaked));
+        assert_eq!(reply, RELEASED_RESEARCH_FAILURE_REPLY);
+        for marker in [
+            "POST",
+            "api.tavily.com",
+            "search_tavily",
+            "private channel topic",
+            "C:\\private\\wal",
+            "lower audit failure",
+        ] {
+            assert!(!reply.contains(marker));
+        }
     }
 
     #[test]
@@ -5995,6 +6075,242 @@ mod tests {
             saw_recall,
             "egress frame attests the local-recall provenance (no provider call)"
         );
+    }
+
+    #[tokio::test]
+    async fn released_research_failure_notice_emits_only_fixed_reply_and_opaque_receipt() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let topic = "private channel research topic";
+        let msg = inbound(
+            Some("/research --release-external private channel research topic"),
+            None,
+        );
+        let mut msg = msg;
+        msg.human_uuid = Some("pinned-operator".to_owned());
+        let authority = pinned_channel_operator_proofs(&msg, Some("pinned-operator"))
+            .external_research_release;
+        let sender_hash = sender_hash_of("private-channel-recipient");
+        let once_guard = crate::hooks::SessionOnceGuard::new();
+        let runner_called = Arc::new(AtomicBool::new(false));
+        let runner_called_in_route = Arc::clone(&runner_called);
+
+        let outbound = route_operator_released_research(
+            authority,
+            "--release-external private channel research topic",
+            ReleasedResearchChannelRoute {
+                writer: &writer,
+                neoth_home: dir.path(),
+                hooks: &[],
+                autonomy_policy: crate::permissions::AutonomyLevel::Standard,
+                inbound: &msg,
+                channel: "telegram",
+                sender_hash: &sender_hash,
+                channel_asker: None,
+                once_guard: &once_guard,
+            },
+            move |released| async move {
+                runner_called_in_route.store(true, Ordering::SeqCst);
+                assert_eq!(released.topic, "private channel research topic");
+                let _release = released.release;
+                anyhow::bail!(
+                    "POST https://api.tavily.com/search search_tavily \
+                     private channel research topic C:\\private\\wal: lower audit failure"
+                )
+            },
+        )
+        .await
+        .expect("released research failure notice passes the standard channel gate")
+        .expect("final-only channel receives one outbound reply");
+
+        assert!(runner_called.load(Ordering::SeqCst));
+        assert_eq!(outbound.recipient_id, msg.chat_id);
+        assert_eq!(outbound.text, RELEASED_RESEARCH_FAILURE_REPLY);
+        drop(writer);
+        let _ = join.await;
+
+        let bytes = std::fs::read(&seg).unwrap();
+        let mut receipts = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
+            if decoded.header.event_type == EVENT_TYPE_CHANNEL_EGRESS {
+                receipts.push(
+                    serde_json::from_slice::<serde_json::Value>(decoded.payload)
+                        .expect("valid CHANNEL_EGRESS receipt"),
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(receipts.len(), 1);
+        let receipt = &receipts[0];
+        let object = receipt.as_object().expect("CHANNEL_EGRESS receipt object");
+        assert_eq!(object.len(), 9);
+        assert_eq!(receipt["channel"], "telegram");
+        assert_eq!(receipt["to_hash"], sender_hash);
+        assert_eq!(sender_hash.len(), 16);
+        assert!(sender_hash.chars().all(|character| character.is_ascii_hexdigit()));
+        assert_eq!(
+            receipt["reply_hash_xxh3"].as_u64(),
+            Some(xxhash_rust::xxh3::xxh3_64(
+                RELEASED_RESEARCH_FAILURE_REPLY.as_bytes()
+            ))
+        );
+        assert_eq!(
+            receipt["reply_bytes"].as_u64(),
+            Some(u64::try_from(RELEASED_RESEARCH_FAILURE_REPLY.len()).unwrap())
+        );
+        assert_eq!(receipt["provider"], "local-system");
+        assert_eq!(receipt["model"], "slash-research-result");
+        assert_eq!(receipt["latency_ns"], 0);
+        assert!(receipt["input_tokens"].is_null());
+        assert!(receipt["output_tokens"].is_null());
+        assert!(object.get("reply").is_none());
+        assert!(object.get("text").is_none());
+        assert!(object.get("topic").is_none());
+
+        let encoded = serde_json::to_string(receipt).unwrap();
+        for marker in [
+            topic,
+            "/research --release-external",
+            "POST",
+            "api.tavily.com",
+            "tavily",
+            "search_tavily",
+            "C:\\private\\wal",
+            "lower audit failure",
+            "private-channel-recipient",
+            RELEASED_RESEARCH_FAILURE_REPLY,
+        ] {
+            assert!(!encoded.contains(marker));
+        }
+    }
+
+    #[tokio::test]
+    async fn released_research_route_returns_usage_without_running_untrusted_requests() {
+        let runner_calls = Arc::new(AtomicUsize::new(0));
+        for pinned_sender in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let seg = dir.path().join("000001.wal");
+            let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+            let sender_plaintext = if pinned_sender {
+                "wrong-syntax-recipient"
+            } else {
+                "unpinned-recipient"
+            };
+            let sender_hash = sender_hash_of(sender_plaintext);
+            let once_guard = crate::hooks::SessionOnceGuard::new();
+            let (message, args, forbidden_input) = if pinned_sender {
+                (
+                    "/research lookalike syntax",
+                    "lookalike syntax",
+                    "lookalike syntax",
+                )
+            } else {
+                (
+                    "/research --release-external private negative topic",
+                    "--release-external private negative topic",
+                    "private negative topic",
+                )
+            };
+            let mut message_inbound = inbound(Some(message), None);
+            message_inbound.human_uuid = Some(if pinned_sender {
+                "pinned-operator".to_owned()
+            } else {
+                "different-human".to_owned()
+            });
+            let authority =
+                pinned_channel_operator_proofs(&message_inbound, Some("pinned-operator"))
+                    .external_research_release;
+            let calls_in_route = Arc::clone(&runner_calls);
+
+            let outbound = route_operator_released_research(
+                authority,
+                args,
+                ReleasedResearchChannelRoute {
+                    writer: &writer,
+                    neoth_home: dir.path(),
+                    hooks: &[],
+                    autonomy_policy: crate::permissions::AutonomyLevel::Standard,
+                    inbound: &message_inbound,
+                    channel: "telegram",
+                    sender_hash: &sender_hash,
+                    channel_asker: None,
+                    once_guard: &once_guard,
+                },
+                move |_released| async move {
+                    calls_in_route.fetch_add(1, Ordering::SeqCst);
+                    Ok(crate::tools::deep_research::ResearchReport {
+                        article: "must not run".to_owned(),
+                        citations: Vec::new(),
+                    })
+                },
+            )
+            .await
+            .expect("usage notice passes the standard channel gate")
+            .expect("usage notice returns to the origin chat");
+            assert_eq!(outbound.recipient_id, message_inbound.chat_id);
+            assert_eq!(outbound.text, EXTERNAL_RESEARCH_RELEASE_USAGE);
+            assert_eq!(runner_calls.load(Ordering::SeqCst), 0);
+
+            drop(writer);
+            let _ = join.await;
+            let bytes = std::fs::read(&seg).unwrap();
+            let mut receipts = Vec::new();
+            crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
+                if decoded.header.event_type == EVENT_TYPE_CHANNEL_EGRESS {
+                    receipts.push(
+                        serde_json::from_slice::<serde_json::Value>(decoded.payload)
+                            .expect("valid research usage CHANNEL_EGRESS receipt"),
+                    );
+                }
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(receipts.len(), 1);
+            let receipt = &receipts[0];
+            let object = receipt
+                .as_object()
+                .expect("research usage CHANNEL_EGRESS receipt object");
+            assert_eq!(object.len(), 9);
+            assert_eq!(receipt["channel"], "telegram");
+            assert_eq!(receipt["to_hash"], sender_hash);
+            assert_eq!(sender_hash.len(), 16);
+            assert!(sender_hash.chars().all(|character| character.is_ascii_hexdigit()));
+            assert_eq!(receipt["provider"], "local-system");
+            assert_eq!(receipt["model"], "slash-research-result");
+            assert_eq!(
+                receipt["reply_hash_xxh3"].as_u64(),
+                Some(xxhash_rust::xxh3::xxh3_64(
+                    EXTERNAL_RESEARCH_RELEASE_USAGE.as_bytes()
+                ))
+            );
+            assert_eq!(
+                receipt["reply_bytes"].as_u64(),
+                Some(u64::try_from(EXTERNAL_RESEARCH_RELEASE_USAGE.len()).unwrap())
+            );
+            assert_eq!(receipt["latency_ns"], 0);
+            assert!(receipt["input_tokens"].is_null());
+            assert!(receipt["output_tokens"].is_null());
+            assert!(object.get("reply").is_none());
+            assert!(object.get("text").is_none());
+            assert!(object.get("topic").is_none());
+            let encoded = serde_json::to_string(receipt).unwrap();
+            for marker in [
+                forbidden_input,
+                "/research",
+                "--release-external",
+                "api.tavily.com",
+                "POST",
+                "search_tavily",
+                "C:\\private\\wal",
+                "lower audit failure",
+                sender_plaintext,
+                EXTERNAL_RESEARCH_RELEASE_USAGE,
+            ] {
+                assert!(!encoded.contains(marker));
+            }
+        }
     }
 
     // GOLD-WIRE-02b — at Strict, ChannelSend (FailClosed, no lease for this

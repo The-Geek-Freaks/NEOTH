@@ -237,6 +237,66 @@ enum ExternalHttpPolicySource {
     Reload(Arc<crate::config::reload::ReloadController>),
 }
 
+/// Immutable metadata shared by the matching external-HTTP intent and result.
+///
+/// Constructing this only after URL validation binds the terminal frame to the
+/// exact request that passed the autonomy gate. Keeping the lifecycle fields
+/// together makes it impossible for a call site to accidentally pair a result
+/// with another request's correlation, binding, destination, or release ID.
+struct ExternalHttpAuditContext {
+    request_id: String,
+    request_binding_sha256: String,
+    method: &'static str,
+    destination: String,
+    surface: ExternalHttpSurface,
+    egress_provenance_tag: &'static str,
+    research_release_id: Option<String>,
+}
+
+const RELEASED_RESEARCH_AUDIT_LABEL: &str = "released_research_search";
+
+impl ExternalHttpAuditContext {
+    fn is_operator_released_research(&self) -> bool {
+        self.research_release_id.is_some()
+    }
+
+    fn persisted_destination(&self) -> &str {
+        if self.is_operator_released_research() {
+            RELEASED_RESEARCH_AUDIT_LABEL
+        } else {
+            &self.destination
+        }
+    }
+
+    fn persisted_method(&self) -> &str {
+        if self.is_operator_released_research() {
+            RELEASED_RESEARCH_AUDIT_LABEL
+        } else {
+            self.method
+        }
+    }
+
+    fn persisted_surface(&self) -> &str {
+        if self.is_operator_released_research() {
+            RELEASED_RESEARCH_AUDIT_LABEL
+        } else {
+            self.surface.as_str()
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ReleasedExternalHttpFailure {
+    #[error("released external HTTP request failed before transport")]
+    PreTransport,
+    #[error("released external HTTP request failed")]
+    Transport,
+    #[error("released external HTTP terminal audit failed")]
+    TerminalAudit,
+    #[error("released external HTTP request and terminal audit failed")]
+    TransportAndTerminalAudit,
+}
+
 impl ExternalHttpPolicySource {
     fn current(&self) -> AutonomyPolicySnapshot {
         match self {
@@ -400,10 +460,57 @@ impl ExternalHttpAuthorizer {
         )
     }
 
+    /// Gate and audit an external request before returning its outcome.
+    ///
+    /// The permit is cryptographically bound to the exact request, but the
+    /// supplied transport closure must still call [`ExternalHttpPermit::require`]
+    /// before it performs an effect. Rust's type system does not prevent that
+    /// closure from contacting another destination or acting before it verifies
+    /// the permit. Compiler-enforced non-substitution requires moving transport
+    /// execution behind this boundary; that larger C7 refactor remains open.
     pub async fn execute<F, Fut, T>(&self, request: ExternalHttpRequest, network: F) -> Result<T>
     where
         F: FnOnce(ExternalHttpPermit) -> Fut,
         Fut: Future<Output = Result<T>>,
+    {
+        self.execute_with_permit_verifier(request, ExternalHttpPermit::require, network)
+            .await
+    }
+
+    async fn execute_with_permit_verifier<F, Fut, T, V>(
+        &self,
+        request: ExternalHttpRequest,
+        verify_permit: V,
+        network: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(ExternalHttpPermit) -> Fut,
+        Fut: Future<Output = Result<T>>,
+        V: FnOnce(&ExternalHttpPermit, &ExternalHttpRequest) -> Result<()>,
+    {
+        let released = self.egress_provenance.released_research_id().is_some();
+        let outcome = self
+            .execute_inner(request, verify_permit, network)
+            .await;
+        match outcome {
+            Err(error) if released => match error.downcast_ref::<ReleasedExternalHttpFailure>() {
+                Some(_) => Err(error),
+                None => Err(ReleasedExternalHttpFailure::PreTransport.into()),
+            },
+            outcome => outcome,
+        }
+    }
+
+    async fn execute_inner<F, Fut, T, V>(
+        &self,
+        request: ExternalHttpRequest,
+        verify_permit: V,
+        network: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(ExternalHttpPermit) -> Fut,
+        Fut: Future<Output = Result<T>>,
+        V: FnOnce(&ExternalHttpPermit, &ExternalHttpRequest) -> Result<()>,
     {
         // C7 boundary: trusted provenance must satisfy IFC before the
         // confirmer, permission/audit intent, permit, or transport can run.
@@ -437,7 +544,15 @@ impl ExternalHttpAuthorizer {
         } else {
             permit_binding_sha256.clone()
         };
-        let destination = origin_without_credentials(&parsed)?;
+        let audit = ExternalHttpAuditContext {
+            request_id,
+            request_binding_sha256,
+            method: request.method,
+            destination: origin_without_credentials(&parsed)?,
+            surface: request.surface,
+            egress_provenance_tag,
+            research_release_id: research_release_id.map(str::to_owned),
+        };
         // Legacy local SearXNG keeps its historical direct-local contract.
         // Explicitly released research never takes that shortcut: private/LAN
         // address space is not a trust boundary, so confirmation and both WAL
@@ -446,11 +561,11 @@ impl ExternalHttpAuthorizer {
 
         if requires_lifecycle_gate {
             let action = Action::ExternalHttpRequest {
-                method: request.method.to_string(),
-                destination: destination.clone(),
-                surface: request.surface.as_str().to_string(),
-                request_id: request_id.clone(),
-                request_binding_sha256: request_binding_sha256.clone(),
+                method: audit.method.to_string(),
+                destination: audit.destination.clone(),
+                surface: audit.surface.as_str().to_string(),
+                request_id: audit.request_id.clone(),
+                request_binding_sha256: audit.request_binding_sha256.clone(),
             };
             let mut gate = Gate::for_policy(self.policy.current()).with_confirm(self.confirm);
             if let Some(asker) = &self.channel_asker {
@@ -459,41 +574,38 @@ impl ExternalHttpAuthorizer {
             gate.check(&action, None)
                 .await
                 .context("external HTTP autonomy gate denied request")?;
-            self.append_intent(
-                &request_id,
-                &request_binding_sha256,
-                request.method,
-                &destination,
-                request.surface,
-                egress_provenance_tag,
-                research_release_id,
-            )
-            .await?;
+            self.append_intent(&audit).await?;
         }
 
         let permit = ExternalHttpPermit {
-            request_id: request_id.clone(),
+            request_id: audit.request_id.clone(),
             permit_binding_sha256,
             egress_provenance_binding,
         };
-        permit.require(&request)?;
+        if let Err(error) = verify_permit(&permit, &request) {
+            if audit.is_operator_released_research() && requires_lifecycle_gate {
+                let verification: Result<()> = Err(error);
+                self.append_result(&audit, &verification).await?;
+                return verification;
+            }
+            return Err(error);
+        }
         let outcome = network(permit).await;
         if !requires_lifecycle_gate {
             return outcome;
         }
 
-        let terminal = self
-            .append_result(
-                &request_id,
-                &request_binding_sha256,
-                request.method,
-                &destination,
-                request.surface,
-                egress_provenance_tag,
-                research_release_id,
-                &outcome,
-            )
-            .await;
+        let terminal = self.append_result(&audit, &outcome).await;
+        if audit.is_operator_released_research() {
+            return match (outcome, terminal) {
+                (Ok(value), Ok(())) => Ok(value),
+                (Err(_), Ok(())) => Err(ReleasedExternalHttpFailure::Transport.into()),
+                (Ok(_), Err(_)) => Err(ReleasedExternalHttpFailure::TerminalAudit.into()),
+                (Err(_), Err(_)) => {
+                    Err(ReleasedExternalHttpFailure::TransportAndTerminalAudit.into())
+                }
+            };
+        }
         match (outcome, terminal) {
             (Ok(value), Ok(())) => Ok(value),
             (Err(error), Ok(())) => Err(error),
@@ -504,24 +616,15 @@ impl ExternalHttpAuthorizer {
         }
     }
 
-    async fn append_intent(
-        &self,
-        request_id: &str,
-        binding: &str,
-        method: &str,
-        destination: &str,
-        surface: ExternalHttpSurface,
-        egress_provenance_tag: &str,
-        research_release_id: Option<&str>,
-    ) -> Result<()> {
+    async fn append_intent(&self, audit: &ExternalHttpAuditContext) -> Result<()> {
         let payload = serde_json::to_vec(&serde_json::json!({
-            "request_id": request_id,
-            "request_binding_sha256": binding,
-            "method": method,
-            "destination": destination,
-            "surface": surface.as_str(),
-            "egress_provenance": egress_provenance_tag,
-            "research_release_id": research_release_id,
+            "request_id": audit.request_id,
+            "request_binding_sha256": audit.request_binding_sha256,
+            "method": audit.persisted_method(),
+            "destination": audit.persisted_destination(),
+            "surface": audit.persisted_surface(),
+            "egress_provenance": audit.egress_provenance_tag,
+            "research_release_id": audit.research_release_id,
             "status": "intent",
             "ts_unix": crate::time::now_unix_secs(),
         }))?;
@@ -533,13 +636,7 @@ impl ExternalHttpAuthorizer {
 
     async fn append_result<T>(
         &self,
-        request_id: &str,
-        binding: &str,
-        method: &str,
-        destination: &str,
-        surface: ExternalHttpSurface,
-        egress_provenance_tag: &str,
-        research_release_id: Option<&str>,
+        audit: &ExternalHttpAuditContext,
         outcome: &Result<T>,
     ) -> Result<()> {
         // A released-research error can repeat the exact search URL.  Its
@@ -549,7 +646,7 @@ impl ExternalHttpAuthorizer {
         // audit contract for unscoped callers.
         let (status, error_sha256, released_error_code) = match outcome {
             Ok(_) => ("success", None, None),
-            Err(_) if research_release_id.is_some() => {
+            Err(_) if audit.research_release_id.is_some() => {
                 ("failure", None, Some("external_http_request_failed"))
             }
             Err(error) => (
@@ -559,13 +656,13 @@ impl ExternalHttpAuthorizer {
             ),
         };
         let mut payload = serde_json::json!({
-            "request_id": request_id,
-            "request_binding_sha256": binding,
-            "method": method,
-            "destination": destination,
-            "surface": surface.as_str(),
-            "egress_provenance": egress_provenance_tag,
-            "research_release_id": research_release_id,
+            "request_id": audit.request_id,
+            "request_binding_sha256": audit.request_binding_sha256,
+            "method": audit.persisted_method(),
+            "destination": audit.persisted_destination(),
+            "surface": audit.persisted_surface(),
+            "egress_provenance": audit.egress_provenance_tag,
+            "research_release_id": audit.research_release_id,
             "status": status,
             "error_sha256": error_sha256,
             "ts_unix": crate::time::now_unix_secs(),
@@ -754,6 +851,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingSink {
         events: Mutex<Vec<(ExtendedSubtype, serde_json::Value)>>,
+        attempts: Mutex<Vec<(ExtendedSubtype, serde_json::Value)>>,
         fail: Option<ExtendedSubtype>,
         sequence: Option<Arc<Mutex<Vec<&'static str>>>>,
     }
@@ -765,6 +863,11 @@ mod tests {
             subtype: ExtendedSubtype,
             payload: Vec<u8>,
         ) -> Result<()> {
+            let decoded = serde_json::from_slice(&payload)?;
+            self.attempts
+                .lock()
+                .unwrap()
+                .push((subtype, decoded.clone()));
             if self.fail == Some(subtype) {
                 anyhow::bail!("injected audit failure");
             }
@@ -775,10 +878,7 @@ mod tests {
                     _ => "other",
                 });
             }
-            self.events
-                .lock()
-                .unwrap()
-                .push((subtype, serde_json::from_slice(&payload)?));
+            self.events.lock().unwrap().push((subtype, decoded));
             Ok(())
         }
     }
@@ -792,6 +892,37 @@ mod tests {
             channel_asker: None,
             sink,
             egress_provenance: EgressProvenance::LegacyUnscoped,
+        }
+    }
+
+    fn assert_released_payload_is_provider_neutral(
+        payload: &serde_json::Value,
+        forbidden: &[&str],
+    ) {
+        assert_eq!(payload["destination"], RELEASED_RESEARCH_AUDIT_LABEL);
+        assert_eq!(payload["method"], RELEASED_RESEARCH_AUDIT_LABEL);
+        assert_eq!(payload["surface"], RELEASED_RESEARCH_AUDIT_LABEL);
+        let encoded = serde_json::to_string(payload).unwrap();
+        for marker in forbidden {
+            assert!(
+                !encoded.contains(marker),
+                "released audit payload leaked marker {marker:?}: {encoded}"
+            );
+        }
+    }
+
+    fn assert_released_pretransport_error_is_coarse(error: &anyhow::Error, forbidden: &[&str]) {
+        assert!(matches!(
+            error.downcast_ref::<ReleasedExternalHttpFailure>(),
+            Some(ReleasedExternalHttpFailure::PreTransport)
+        ));
+        assert_eq!(
+            error.to_string(),
+            "released external HTTP request failed before transport"
+        );
+        let returned = format!("{error:#}");
+        for marker in forbidden {
+            assert!(!returned.contains(marker));
         }
     }
 
@@ -839,6 +970,8 @@ mod tests {
             assert_eq!(events.len(), 2);
             assert_eq!(events[0].0, ExtendedSubtype::ExternalHttpIntent);
             assert_eq!(events[1].0, ExtendedSubtype::ExternalHttpResult);
+            assert_eq!(events[0].1["method"], "GET");
+            assert_eq!(events[1].1["method"], "GET");
             assert_eq!(events[0].1["request_id"], events[1].1["request_id"]);
             assert_eq!(
                 events[0].1["request_binding_sha256"],
@@ -969,6 +1102,7 @@ mod tests {
         asked: AtomicBool,
         approve: bool,
         sequence: Option<Arc<Mutex<Vec<&'static str>>>>,
+        reasons: Mutex<Vec<String>>,
     }
 
     impl CountingAsker {
@@ -977,6 +1111,7 @@ mod tests {
                 asked: AtomicBool::new(false),
                 approve: true,
                 sequence: None,
+                reasons: Mutex::new(Vec::new()),
             }
         }
 
@@ -985,6 +1120,7 @@ mod tests {
                 asked: AtomicBool::new(false),
                 approve: false,
                 sequence: None,
+                reasons: Mutex::new(Vec::new()),
             }
         }
 
@@ -993,14 +1129,16 @@ mod tests {
                 asked: AtomicBool::new(false),
                 approve: true,
                 sequence: Some(sequence),
+                reasons: Mutex::new(Vec::new()),
             }
         }
     }
 
     #[async_trait::async_trait]
     impl ChannelAsker for CountingAsker {
-        async fn ask(&self, _reason: &str) -> Option<bool> {
+        async fn ask(&self, reason: &str) -> Option<bool> {
             self.asked.store(true, Ordering::SeqCst);
+            self.reasons.lock().unwrap().push(reason.to_owned());
             if let Some(sequence) = &self.sequence {
                 sequence.lock().unwrap().push("confirm");
             }
@@ -1177,6 +1315,11 @@ mod tests {
         .unwrap();
 
         assert!(asked.asked.load(Ordering::SeqCst));
+        let reasons = asked.reasons.lock().unwrap();
+        assert_eq!(reasons.len(), 1);
+        assert!(reasons[0].contains("https://api.search.brave.com"));
+        assert!(reasons[0].contains("search_brave"));
+        drop(reasons);
         assert!(called.load(Ordering::SeqCst));
         assert_eq!(
             sequence.lock().unwrap().as_slice(),
@@ -1184,6 +1327,12 @@ mod tests {
         );
         let events = sink.events.lock().unwrap();
         assert_eq!(events.len(), 2);
+        for (_, payload) in events.iter() {
+            assert_released_payload_is_provider_neutral(
+                payload,
+                &["api.search.brave.com", "search_brave", "approved topic"],
+            );
+        }
         assert_eq!(
             events[0].1["egress_provenance"],
             "operator_released_channel_research"
@@ -1218,6 +1367,214 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn released_tavily_post_is_real_at_gate_and_provider_neutral_in_wal() {
+        let topic = "private tavily topic";
+        let body = br#"{"query":"private tavily topic"}"#;
+        let asked = Arc::new(CountingAsker::approving());
+        let sink = Arc::new(RecordingSink::default());
+        let auth = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Standard,
+            )),
+            confirm: ConfirmStrategy::Channel,
+            channel_asker: Some(asked.clone()),
+            sink: sink.clone(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(topic)
+                .into_egress_provenance(),
+        };
+        auth.arm_operator_released_exact_topic(topic).unwrap();
+
+        auth.execute(
+            ExternalHttpRequest::post(
+                "https://api.tavily.com/search",
+                ExternalHttpSurface::SearchTavily,
+                body,
+            ),
+            |_permit| async { Ok(()) },
+        )
+        .await
+        .unwrap();
+
+        let reasons = asked.reasons.lock().unwrap();
+        assert_eq!(reasons.len(), 1);
+        assert!(reasons[0].contains("POST"));
+        assert!(reasons[0].contains("https://api.tavily.com"));
+        assert!(reasons[0].contains("search_tavily"));
+        drop(reasons);
+
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        for (_, payload) in events.iter() {
+            assert_released_payload_is_provider_neutral(
+                payload,
+                &[
+                    "POST",
+                    "tavily",
+                    "api.tavily.com",
+                    "search_tavily",
+                    topic,
+                    &hex::encode(Sha256::digest(topic.as_bytes())),
+                ],
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn released_pretransport_failures_are_coarse_and_data_free() {
+        let topic = "c7 pretransport private topic";
+        let body = br#"{"query":"c7 pretransport private topic"}"#;
+
+        let invalid_sink = Arc::new(RecordingSink::default());
+        let invalid_auth = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Standard,
+            )),
+            confirm: ConfirmStrategy::AlwaysAllow,
+            channel_asker: None,
+            sink: invalid_sink.clone(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(topic)
+                .into_egress_provenance(),
+        };
+        invalid_auth
+            .arm_operator_released_exact_topic(topic)
+            .unwrap();
+        let invalid: Result<()> = invalid_auth
+            .execute(
+                ExternalHttpRequest::post(
+                    "not-a-url/c7-pretransport-private-topic",
+                    ExternalHttpSurface::SearchTavily,
+                    body,
+                ),
+                |_permit| async { Ok(()) },
+            )
+            .await;
+        let invalid = invalid.expect_err("invalid released URL must fail closed");
+        assert_released_pretransport_error_is_coarse(
+            &invalid,
+            &[topic, "not-a-url", "SearchTavily", "invalid HTTP URL"],
+        );
+        assert!(invalid_sink.attempts.lock().unwrap().is_empty());
+
+        let denying_asker = Arc::new(CountingAsker::rejecting());
+        let denied_sink = Arc::new(RecordingSink::default());
+        let denied_auth = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Standard,
+            )),
+            confirm: ConfirmStrategy::Channel,
+            channel_asker: Some(denying_asker),
+            sink: denied_sink.clone(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(topic)
+                .into_egress_provenance(),
+        };
+        denied_auth
+            .arm_operator_released_exact_topic(topic)
+            .unwrap();
+        let denied: Result<()> = denied_auth
+            .execute(
+                ExternalHttpRequest::post(
+                    "https://api.tavily.com/search",
+                    ExternalHttpSurface::SearchTavily,
+                    body,
+                ),
+                |_permit| async { Ok(()) },
+            )
+            .await;
+        let denied = denied.expect_err("denied released request must fail closed");
+        assert_released_pretransport_error_is_coarse(
+            &denied,
+            &[topic, "api.tavily.com", "POST", "search_tavily", "operator denied"],
+        );
+        assert!(denied_sink.attempts.lock().unwrap().is_empty());
+
+        let intent_sink = Arc::new(RecordingSink {
+            fail: Some(ExtendedSubtype::ExternalHttpIntent),
+            ..RecordingSink::default()
+        });
+        let intent_auth = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Standard,
+            )),
+            confirm: ConfirmStrategy::AlwaysAllow,
+            channel_asker: None,
+            sink: intent_sink.clone(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(topic)
+                .into_egress_provenance(),
+        };
+        intent_auth
+            .arm_operator_released_exact_topic(topic)
+            .unwrap();
+        let intent: Result<()> = intent_auth
+            .execute(
+                ExternalHttpRequest::post(
+                    "https://api.tavily.com/search",
+                    ExternalHttpSurface::SearchTavily,
+                    body,
+                ),
+                |_permit| async { Ok(()) },
+            )
+            .await;
+        let intent = intent.expect_err("released intent failure must fail closed");
+        assert_released_pretransport_error_is_coarse(
+            &intent,
+            &[topic, "api.tavily.com", "POST", "search_tavily", "injected audit failure"],
+        );
+        let intent_attempts = intent_sink.attempts.lock().unwrap();
+        assert_eq!(intent_attempts.len(), 1);
+        assert_released_payload_is_provider_neutral(
+            &intent_attempts[0].1,
+            &[topic, "api.tavily.com", "POST", "search_tavily"],
+        );
+        drop(intent_attempts);
+
+        let permit_sink = Arc::new(RecordingSink::default());
+        let permit_auth = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Standard,
+            )),
+            confirm: ConfirmStrategy::AlwaysAllow,
+            channel_asker: None,
+            sink: permit_sink.clone(),
+            egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(topic)
+                .into_egress_provenance(),
+        };
+        permit_auth
+            .arm_operator_released_exact_topic(topic)
+            .unwrap();
+        let called = AtomicBool::new(false);
+        let permit: Result<()> = permit_auth
+            .execute_with_permit_verifier(
+                ExternalHttpRequest::post(
+                    "https://api.tavily.com/search",
+                    ExternalHttpSurface::SearchTavily,
+                    body,
+                ),
+                |_permit, _request| {
+                    anyhow::bail!("permit mismatch for c7 pretransport private topic")
+                },
+                |_permit| async {
+                    called.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .await;
+        let permit = permit.expect_err("released permit failure must fail closed");
+        assert_released_pretransport_error_is_coarse(
+            &permit,
+            &[topic, "api.tavily.com", "POST", "search_tavily", "permit mismatch"],
+        );
+        assert!(!called.load(Ordering::SeqCst));
+        let permit_attempts = permit_sink.attempts.lock().unwrap();
+        assert_eq!(permit_attempts.len(), 2);
+        for (_, payload) in permit_attempts.iter() {
+            assert_released_payload_is_provider_neutral(
+                payload,
+                &[topic, "api.tavily.com", "POST", "search_tavily", "permit mismatch"],
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn released_research_failure_never_hashes_or_persists_topic_bearing_error() {
         let topic = "c7 private topic 2026";
         let request_url =
@@ -1226,6 +1583,7 @@ mod tests {
             "https://failed.example.invalid/retry?q=c7%20private%20topic%202026";
         let error_text = format!("upstream retry failed for {topic_bearing_error_url}");
         let topic_bearing_error = anyhow::anyhow!(error_text.clone());
+        let topic_sha256 = hex::encode(Sha256::digest(topic.as_bytes()));
         let legacy_error_sha256 = hex::encode(Sha256::digest(
             format!("{topic_bearing_error:#}").as_bytes(),
         ));
@@ -1248,7 +1606,24 @@ mod tests {
                 move |_permit| async move { Err(anyhow::anyhow!(error_text)) },
             )
             .await;
-        assert!(result.is_err());
+        let error = result.expect_err("released transport failure must remain fail-closed");
+        assert!(matches!(
+            error.downcast_ref::<ReleasedExternalHttpFailure>(),
+            Some(ReleasedExternalHttpFailure::Transport)
+        ));
+        assert_eq!(error.to_string(), "released external HTTP request failed");
+        let returned = format!("{error:#}");
+        for marker in [
+            topic,
+            request_url,
+            "api.search.brave.com",
+            "search_brave",
+            topic_bearing_error_url,
+            &legacy_error_sha256,
+            &topic_sha256,
+        ] {
+            assert!(!returned.contains(marker));
+        }
 
         let events = sink.events.lock().unwrap();
         assert_eq!(events.len(), 2);
@@ -1270,11 +1645,114 @@ mod tests {
         assert_eq!(events[1].1["error_code"], "external_http_request_failed");
 
         for (_, payload) in events.iter() {
-            let persisted = serde_json::to_string(payload).unwrap();
-            assert!(!persisted.contains(topic));
-            assert!(!persisted.contains(topic_bearing_error_url));
-            assert!(!persisted.contains(&legacy_error_sha256));
+            assert_released_payload_is_provider_neutral(
+                payload,
+                &[
+                    topic,
+                    request_url,
+                    "api.search.brave.com",
+                    "search_brave",
+                    topic_bearing_error_url,
+                    &legacy_error_sha256,
+                    &topic_sha256,
+                ],
+            );
             assert!(payload.get("released_topic_sha256").is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn released_terminal_audit_failures_are_coarse_and_provider_neutral() {
+        let topic = "c7 terminal audit topic";
+        let request_url =
+            "https://api.search.brave.com/res/v1/web/search?q=c7%20terminal%20audit%20topic";
+        let upstream_error =
+            "provider failure https://api.search.brave.com/?q=c7%20terminal%20audit%20topic";
+        let topic_sha256 = hex::encode(Sha256::digest(topic.as_bytes()));
+        let error_sha256 = hex::encode(Sha256::digest(upstream_error.as_bytes()));
+
+        for transport_fails in [false, true] {
+            let sink = Arc::new(RecordingSink {
+                fail: Some(ExtendedSubtype::ExternalHttpResult),
+                ..RecordingSink::default()
+            });
+            let auth = ExternalHttpAuthorizer {
+                policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                    crate::permissions::AutonomyLevel::Standard,
+                )),
+                confirm: ConfirmStrategy::AlwaysAllow,
+                channel_asker: None,
+                sink: sink.clone(),
+                egress_provenance: ExplicitExternalResearchRelease::test_for_exact_topic(topic)
+                    .into_egress_provenance(),
+            };
+            auth.arm_operator_released_exact_topic(topic).unwrap();
+
+            let result: Result<()> = auth
+                .execute(
+                    ExternalHttpRequest::get(request_url, ExternalHttpSurface::SearchBrave),
+                    |_permit| async move {
+                        if transport_fails {
+                            anyhow::bail!(upstream_error);
+                        }
+                        Ok(())
+                    },
+                )
+                .await;
+            let error = result.expect_err("terminal audit failure must remain fail-closed");
+            if transport_fails {
+                assert!(matches!(
+                    error.downcast_ref::<ReleasedExternalHttpFailure>(),
+                    Some(ReleasedExternalHttpFailure::TransportAndTerminalAudit)
+                ));
+                assert_eq!(
+                    error.to_string(),
+                    "released external HTTP request and terminal audit failed"
+                );
+            } else {
+                assert!(matches!(
+                    error.downcast_ref::<ReleasedExternalHttpFailure>(),
+                    Some(ReleasedExternalHttpFailure::TerminalAudit)
+                ));
+                assert_eq!(
+                    error.to_string(),
+                    "released external HTTP terminal audit failed"
+                );
+            }
+
+            let returned = format!("{error:#}");
+            for marker in [
+                topic,
+                request_url,
+                "api.search.brave.com",
+                "search_brave",
+                upstream_error,
+                &topic_sha256,
+                &error_sha256,
+                "injected audit failure",
+            ] {
+                assert!(!returned.contains(marker));
+            }
+
+            assert_eq!(sink.events.lock().unwrap().len(), 1);
+            let attempts = sink.attempts.lock().unwrap();
+            assert_eq!(attempts.len(), 2);
+            assert_eq!(attempts[0].0, ExtendedSubtype::ExternalHttpIntent);
+            assert_eq!(attempts[1].0, ExtendedSubtype::ExternalHttpResult);
+            for (_, payload) in attempts.iter() {
+                assert_released_payload_is_provider_neutral(
+                    payload,
+                    &[
+                        topic,
+                        request_url,
+                        "api.search.brave.com",
+                        "search_brave",
+                        upstream_error,
+                        &topic_sha256,
+                        &error_sha256,
+                    ],
+                );
+            }
         }
     }
 

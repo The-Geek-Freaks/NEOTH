@@ -95,6 +95,66 @@ struct ReleasedChannelResearchPlan {
     max_results: usize,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ReleasedResearchFailure {
+    #[error("released research request preparation failed")]
+    Preparation,
+    #[error("released research start audit failed")]
+    StartAudit,
+    #[error("released research search failed")]
+    Search,
+    #[error("released research search and completion audit failed")]
+    SearchAndCompletionAudit,
+    #[error("released research completion audit failed")]
+    CompletionAudit,
+}
+
+#[async_trait::async_trait]
+trait ReleasedResearchRuntime: Sync {
+    async fn emit_started(&self, release_id: &str) -> Result<()>;
+    async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchHit>>;
+    async fn emit_completed(
+        &self,
+        release_id: &str,
+        status: &str,
+        result_count: usize,
+    ) -> Result<()>;
+}
+
+struct LiveReleasedResearchRuntime<'a> {
+    search_key: &'a SecretString,
+    search_provider: SearchProvider,
+    writer: &'a WalWriterHandle,
+    http: &'a crate::tools::external_http::ExternalHttpAuthorizer,
+}
+
+#[async_trait::async_trait]
+impl ReleasedResearchRuntime for LiveReleasedResearchRuntime<'_> {
+    async fn emit_started(&self, release_id: &str) -> Result<()> {
+        emit_released_research_started(self.writer, release_id).await
+    }
+
+    async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchHit>> {
+        web_search::search_authorized(
+            self.search_provider,
+            self.search_key,
+            query,
+            max_results,
+            self.http,
+        )
+        .await
+    }
+
+    async fn emit_completed(
+        &self,
+        release_id: &str,
+        status: &str,
+        result_count: usize,
+    ) -> Result<()> {
+        emit_released_research_completed(self.writer, release_id, status, result_count).await
+    }
+}
+
 impl ReleasedChannelResearchPlan {
     fn for_exact_topic(topic: &str) -> Result<Self> {
         let topic = topic.trim();
@@ -131,14 +191,29 @@ pub async fn run_operator_released_channel_research(
     writer: &WalWriterHandle,
     http: &crate::tools::external_http::ExternalHttpAuthorizer,
 ) -> Result<ResearchReport> {
-    let plan = ReleasedChannelResearchPlan::for_exact_topic(topic)?;
+    let plan = ReleasedChannelResearchPlan::for_exact_topic(topic)
+        .map_err(|_| ReleasedResearchFailure::Preparation)?;
     let release_id = http
         .arm_operator_released_exact_topic(&plan.query)
-        .context("released channel research requires an unused exact-topic release")?;
+        .map_err(|_| ReleasedResearchFailure::Preparation)?;
+    let runtime = LiveReleasedResearchRuntime {
+        search_key,
+        search_provider,
+        writer,
+        http,
+    };
+    run_released_research_plan(plan, &release_id, &runtime).await
+}
 
-    emit_released_research_started(writer, &release_id)
+async fn run_released_research_plan(
+    plan: ReleasedChannelResearchPlan,
+    release_id: &str,
+    runtime: &dyn ReleasedResearchRuntime,
+) -> Result<ResearchReport> {
+    runtime
+        .emit_started(release_id)
         .await
-        .context("append mandatory released research start frame")?;
+        .map_err(|_| ReleasedResearchFailure::StartAudit)?;
     info!(
         research_release_id = %release_id,
         topic_len = plan.query.len(),
@@ -146,32 +221,25 @@ pub async fn run_operator_released_channel_research(
         "released channel research: starting bounded exact-topic search"
     );
 
-    let hits = match web_search::search_authorized(
-        search_provider,
-        search_key,
-        &plan.query,
-        plan.max_results,
-        http,
-    )
-    .await
-    {
+    let hits = match runtime.search(&plan.query, plan.max_results).await {
         Ok(hits) => hits,
-        Err(error) => {
-            if let Err(audit) =
-                emit_released_research_completed(writer, &release_id, "failure", 0).await
+        Err(_) => {
+            if runtime
+                .emit_completed(release_id, "failure", 0)
+                .await
+                .is_err()
             {
-                return Err(anyhow::anyhow!(
-                    "released channel research search failed: {error:#}; terminal audit also failed: {audit:#}"
-                ));
+                return Err(ReleasedResearchFailure::SearchAndCompletionAudit.into());
             }
-            return Err(error).context("released channel research exact-topic search failed");
+            return Err(ReleasedResearchFailure::Search.into());
         }
     };
 
     let report = render_released_search_report(hits);
-    emit_released_research_completed(writer, &release_id, "success", report.citations.len())
+    runtime
+        .emit_completed(release_id, "success", report.citations.len())
         .await
-        .context("append mandatory released research completion frame")?;
+        .map_err(|_| ReleasedResearchFailure::CompletionAudit)?;
     info!(
         research_release_id = %release_id,
         result_count = report.citations.len(),
@@ -799,6 +867,56 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    struct FakeReleasedResearchRuntime {
+        fail_start: bool,
+        fail_search: bool,
+        fail_completion: bool,
+        search_hits: Vec<SearchHit>,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl ReleasedResearchRuntime for FakeReleasedResearchRuntime {
+        async fn emit_started(&self, release_id: &str) -> Result<()> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("start:{release_id}"));
+            if self.fail_start {
+                anyhow::bail!("start path /private/wal leaked topic marker");
+            }
+            Ok(())
+        }
+
+        async fn search(&self, query: &str, max_results: usize) -> Result<Vec<SearchHit>> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("search:{}:{max_results}", query.len()));
+            if self.fail_search {
+                anyhow::bail!(
+                    "POST https://api.tavily.com/search search_tavily private lifecycle topic"
+                );
+            }
+            Ok(self.search_hits.clone())
+        }
+
+        async fn emit_completed(
+            &self,
+            release_id: &str,
+            status: &str,
+            result_count: usize,
+        ) -> Result<()> {
+            self.calls.lock().unwrap().push(format!(
+                "complete:{release_id}:{status}:{result_count}"
+            ));
+            if self.fail_completion {
+                anyhow::bail!("completion path C:\\private\\wal leaked topic marker");
+            }
+            Ok(())
+        }
+    }
+
     /// Deterministic provider that cycles through a list of canned responses.
     struct CycleProvider {
         responses: Vec<String>,
@@ -896,6 +1014,139 @@ mod tests {
                 )
             )
             .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn released_research_lifecycle_failures_are_typed_and_data_free() {
+        let cases = [
+            (
+                true,
+                false,
+                false,
+                "released research start audit failed",
+                "StartAudit",
+            ),
+            (
+                false,
+                true,
+                false,
+                "released research search failed",
+                "Search",
+            ),
+            (
+                false,
+                false,
+                true,
+                "released research completion audit failed",
+                "CompletionAudit",
+            ),
+            (
+                false,
+                true,
+                true,
+                "released research search and completion audit failed",
+                "SearchAndCompletionAudit",
+            ),
+        ];
+
+        for (fail_start, fail_search, fail_completion, expected, variant) in cases {
+            let runtime = FakeReleasedResearchRuntime {
+                fail_start,
+                fail_search,
+                fail_completion,
+                search_hits: Vec::new(),
+                calls: Mutex::new(Vec::new()),
+            };
+            let plan = ReleasedChannelResearchPlan {
+                query: "private lifecycle topic".to_owned(),
+                max_results: MAX_RELEASED_RESEARCH_RESULTS,
+            };
+            let result = run_released_research_plan(plan, "opaque-release-id", &runtime).await;
+            let error = result.expect_err("injected released lifecycle failure must fail closed");
+            assert_eq!(error.to_string(), expected);
+            let typed = error
+                .downcast_ref::<ReleasedResearchFailure>()
+                .expect("released lifecycle error retains its coarse type");
+            assert!(format!("{typed:?}").contains(variant));
+            let returned = format!("{error:#}");
+            for marker in [
+                "private lifecycle topic",
+                "api.tavily.com",
+                "POST",
+                "search_tavily",
+                "/private/wal",
+                "C:\\private\\wal",
+                "leaked topic marker",
+            ] {
+                assert!(!returned.contains(marker));
+            }
+            let query_len = "private lifecycle topic".len();
+            let expected_calls = if fail_start {
+                vec!["start:opaque-release-id".to_owned()]
+            } else if fail_search {
+                vec![
+                    "start:opaque-release-id".to_owned(),
+                    format!("search:{query_len}:{}", MAX_RELEASED_RESEARCH_RESULTS),
+                    "complete:opaque-release-id:failure:0".to_owned(),
+                ]
+            } else {
+                vec![
+                    "start:opaque-release-id".to_owned(),
+                    format!("search:{query_len}:{}", MAX_RELEASED_RESEARCH_RESULTS),
+                    "complete:opaque-release-id:success:0".to_owned(),
+                ]
+            };
+            assert_eq!(
+                runtime.calls.lock().unwrap().as_slice(),
+                expected_calls.as_slice()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn released_research_success_has_exact_lifecycle_and_report() {
+        let runtime = FakeReleasedResearchRuntime {
+            fail_start: false,
+            fail_search: false,
+            fail_completion: false,
+            search_hits: vec![SearchHit {
+                title: "Verified public source".to_owned(),
+                url: "https://example.test/released-result".to_owned(),
+                snippet: "Bounded public evidence".to_owned(),
+            }],
+            calls: Mutex::new(Vec::new()),
+        };
+        let topic = "successful released topic";
+        let plan = ReleasedChannelResearchPlan {
+            query: topic.to_owned(),
+            max_results: MAX_RELEASED_RESEARCH_RESULTS,
+        };
+
+        let report = run_released_research_plan(plan, "opaque-success-id", &runtime)
+            .await
+            .expect("released research success");
+
+        assert_eq!(report.citations.len(), 1);
+        assert_eq!(report.citations[0].title, "Verified public source");
+        assert_eq!(
+            report.citations[0].url,
+            "https://example.test/released-result"
+        );
+        assert!(report.article.contains("Released external research results"));
+        assert!(report.article.contains("Bounded public evidence"));
+        assert!(!report.article.contains(topic));
+        assert_eq!(
+            runtime.calls.lock().unwrap().as_slice(),
+            [
+                "start:opaque-success-id".to_owned(),
+                format!(
+                    "search:{}:{}",
+                    topic.len(),
+                    MAX_RELEASED_RESEARCH_RESULTS
+                ),
+                "complete:opaque-success-id:success:1".to_owned(),
+            ]
         );
     }
 

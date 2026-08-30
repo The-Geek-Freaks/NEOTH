@@ -204,10 +204,11 @@ impl fmt::Debug for EgressProvenance {
     }
 }
 
-/// Private payload makes direct construction of the public-release variant
-/// impossible outside this module. Only [`ExplicitExternalResearchRelease`]
-/// can create it after consuming the single-use release authority.
-struct OperatorReleasedChannelResearchProvenance {
+/// Crate-visible only to match [`EgressProvenance`]'s reachable variant type.
+/// Its fields and constructors remain private, so sibling modules cannot mint
+/// this payload; only [`ExplicitExternalResearchRelease`] can create it after
+/// consuming the single-use release authority.
+pub(crate) struct OperatorReleasedChannelResearchProvenance {
     sources: SourceLabels,
     research_release_id: String,
     released_topic_sha256: String,
