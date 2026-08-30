@@ -41,15 +41,20 @@ static HYGIENE_STATE_LOCK: Mutex<()> = Mutex::new(());
 static DAILY_ADMISSION_STATE_LOCK: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
-static TEST_DAILY_ADMISSION_STALE_CAS: Mutex<bool> = Mutex::new(false);
+thread_local! {
+    // A stale-CAS fixture belongs to the test that registered it. A process
+    // global flag lets concurrently scheduled tests consume one another's
+    // synthetic race, which turns an isolation aid into unrelated failures.
+    static TEST_DAILY_ADMISSION_STALE_CAS: std::cell::Cell<bool> = const {
+        std::cell::Cell::new(false)
+    };
+}
 
 /// Test-only fault injection: model a competing writer winning between the
 /// caller's admission read and CAS without exposing any production seam.
 #[cfg(test)]
 pub(crate) fn fail_next_daily_admission_cas_as_stale_for_test() {
-    *TEST_DAILY_ADMISSION_STALE_CAS
-        .lock()
-        .expect("daily admission stale-CAS test hook poisoned") = true;
+    TEST_DAILY_ADMISSION_STALE_CAS.with(|pending| pending.set(true));
 }
 
 pub const DAILY_ADMISSION_STATE_FILE: &str = "state-v1.json";
@@ -286,9 +291,14 @@ pub fn daily_admission_state_path(neoth_home: &Path) -> PathBuf {
 /// returned guard intentionally spans archive inspection, append/recovery,
 /// state CAS, and marker publication so two daemons cannot interleave them.
 pub fn lock_daily_admission(neoth_home: &Path) -> Result<DailyAdmissionGuard, HygieneStoreError> {
+    // This mutex carries no state; it is only same-process serialization
+    // ahead of the authenticated file lock. A panic while it is held cannot
+    // corrupt durable admission state, which remains protected by the OS
+    // lock and validated private snapshot below. Do not map poison to a
+    // persistent availability outage for every later Daily operation.
     let process_lock = DAILY_ADMISSION_STATE_LOCK
         .lock()
-        .map_err(|_| HygieneStoreError::LockPoisoned)?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     prepare_daily_admission_namespace(neoth_home)?;
     let store = open_daily_admission_directory(neoth_home)?;
     let (os_lock, lock_binding) = crate::skills::store::open_or_create_bound_lockfile(
@@ -390,10 +400,7 @@ impl DailyAdmissionGuard {
         self.ensure_lock()?;
         #[cfg(test)]
         {
-            let mut injected = TEST_DAILY_ADMISSION_STALE_CAS
-                .lock()
-                .expect("daily admission stale-CAS test hook poisoned");
-            if std::mem::take(&mut *injected) {
+            if TEST_DAILY_ADMISSION_STALE_CAS.with(|pending| pending.replace(false)) {
                 return Err(HygieneStoreError::StaleRevision {
                     expected: expected_revision,
                     actual: expected_revision.saturating_add(1),
@@ -1131,6 +1138,25 @@ mod tests {
     use std::error::Error as _;
 
     const DAY: i64 = 86_400;
+
+    #[test]
+    fn stale_daily_admission_cas_fixture_is_thread_local() {
+        fail_next_daily_admission_cas_as_stale_for_test();
+
+        let observed_by_other_test_worker = std::thread::spawn(|| {
+            TEST_DAILY_ADMISSION_STALE_CAS.with(std::cell::Cell::get)
+        })
+        .join()
+        .expect("stale-CAS isolation worker must complete");
+        assert!(
+            !observed_by_other_test_worker,
+            "a different test worker must not consume this test's synthetic CAS race"
+        );
+        assert!(
+            TEST_DAILY_ADMISSION_STALE_CAS.with(|pending| pending.replace(false)),
+            "the registering test worker retains its own synthetic CAS race"
+        );
+    }
 
     struct TestHome {
         _root: crate::test_env::CanonicalTempDir,

@@ -197,6 +197,11 @@ pub(crate) struct BoundDirectoryChild {
 }
 
 impl BoundDirectoryChild {
+    #[must_use]
+    pub(crate) fn identity_token(&self) -> &str {
+        &self.identity_token
+    }
+
     /// Re-check a direct real-directory child through a cap-std-compliant
     /// no-follow capability and compare its stable identity.
     pub(crate) fn matches_directory_child(
@@ -560,6 +565,20 @@ fn bind_directory_child(
     Ok(BoundDirectoryChild {
         identity_token: readonly_real_directory_identity(parent, name, display_path)?,
     })
+}
+
+/// Bind one direct real-directory child without retaining a Windows mutation
+/// handle. Directory callers need an exact identity fence, but retaining a
+/// `Dir`/directory handle would withhold delete sharing and can block later
+/// no-follow traversal or cleanup of that same private transaction. Every
+/// check re-opens through the parent capability and keeps the reparse-point
+/// defense intact.
+pub(crate) fn bind_real_child_dir(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<BoundDirectoryChild> {
+    bind_directory_child(parent, name, display_path)
 }
 
 /// Open `path` as a stable directory capability. The grandparent is the
@@ -3380,6 +3399,15 @@ mod windows_private_atomic_stage {
     pub(super) fn durability_after_rename(
         commit: RenameCommit<'_>,
     ) -> Result<DirectorySyncOutcome> {
+        // The Windows same-handle witness replaces generic parent-directory
+        // fsync. Keep the test-only parent-durability fault at this equivalent
+        // decision point too; otherwise Windows can incorrectly report a
+        // qualified publication as confirmed while the shared test requests
+        // an indeterminate parent-durability outcome.
+        #[cfg(test)]
+        if FORCE_PARENT_SYNC_FAILURE.with(std::cell::Cell::get) {
+            anyhow::bail!("injected parent-directory sync failure")
+        }
         Ok(match commit {
             RenameCommit::Qualified(witness) => {
                 let QualifiedLocalNtfsRenameCommit {

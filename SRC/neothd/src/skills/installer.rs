@@ -53,7 +53,8 @@ use sha2::{Digest as _, Sha256};
 
 use super::schema::SkillManifest;
 use super::store::{
-    BoundChildObject, BoundDirectory, bind_child_object, cap_metadata_is_link_like,
+    BoundChildObject, BoundDirectory, BoundDirectoryChild, bind_child_object, bind_real_child_dir,
+    cap_metadata_is_link_like,
     open_bound_directory, open_bound_directory_from_trusted_anchor, open_real_child_dir,
     open_regular_file, read_regular_file_bounded, read_regular_file_bounded_observed,
     remove_child_file, remove_real_directory_tree, rename_child, valid_child_identity_token,
@@ -1041,8 +1042,8 @@ pub(crate) struct PreparedSkillInstall {
     target_root: BoundDirectory,
     _mutation_guard: SkillMutationGuard,
     journal: SkillMutationJournal,
-    target_identity: Option<BoundChildObject>,
-    stage_identity: BoundChildObject,
+    target_identity: Option<BoundDirectoryChild>,
+    stage_identity: BoundDirectoryChild,
     id: String,
     manifest_sha256: String,
     generation_sha256: String,
@@ -1859,7 +1860,7 @@ pub(crate) fn prepare_install_from_local_with_expectation_and_origin(
         SkillMutationKind::Install
     };
     let target_identity = if replacing {
-        Some(bind_child_object(
+        Some(bind_real_child_dir(
             &target_root.dir,
             OsStr::new(&manifest.id),
             &target_dir,
@@ -1929,7 +1930,7 @@ pub(crate) fn prepare_install_from_local_with_expectation_and_origin(
             "partial skill staging directory",
         ));
     }
-    let stage_identity = match bind_child_object(&target_root.dir, &stage_name, &stage_display) {
+    let stage_identity = match bind_real_child_dir(&target_root.dir, &stage_name, &stage_display) {
         Ok(identity) => identity,
         Err(error) => {
             return Err(cleanup_after_failed_operation(
@@ -2076,7 +2077,7 @@ pub(crate) fn prepare_skill_document_mutation(
     }
 
     let target_identity = match replaced_generation_sha256.as_ref() {
-        Some(_) => Some(bind_child_object(
+        Some(_) => Some(bind_real_child_dir(
             &target_root.dir,
             OsStr::new(&request.id),
             &target_display,
@@ -2247,7 +2248,7 @@ pub(crate) fn prepare_skill_document_mutation(
         }
     };
     let manifest_sha256 = hex::encode(Sha256::digest(&manifest_bytes));
-    let stage_identity = match bind_child_object(&target_root.dir, &stage_name, &stage_display) {
+    let stage_identity = match bind_real_child_dir(&target_root.dir, &stage_name, &stage_display) {
         Ok(identity) => identity,
         Err(error) => {
             return Err(cleanup_after_failed_operation(
@@ -2387,7 +2388,7 @@ impl PreparedSkillInstall {
                     .target_identity
                     .as_ref()
                     .context("prepared replacement is missing its bound target identity")?;
-                if !target_identity.matches_child(
+                if !target_identity.matches_directory_child(
                     &self.target_root.dir,
                     OsStr::new(&self.id),
                     &target_dir,
@@ -2405,7 +2406,7 @@ impl PreparedSkillInstall {
                         self.id
                     );
                 }
-                if !target_identity.matches_child(
+                if !target_identity.matches_directory_child(
                     &self.target_root.dir,
                     OsStr::new(&self.id),
                     &target_dir,
@@ -2446,7 +2447,7 @@ impl PreparedSkillInstall {
                     .as_ref()
                     .context("prepared replacement is missing its bound target identity")?;
                 let backup_display = self.target_root.display_path.join(&self.backup_candidate);
-                if !target_identity.matches_child(
+                if !target_identity.matches_directory_child(
                     &self.target_root.dir,
                     &self.backup_candidate,
                     &backup_display,
@@ -2530,7 +2531,7 @@ impl PreparedSkillInstall {
         }
 
         let publish_result = (|| -> Result<()> {
-            if !self.stage_identity.matches_child(
+            if !self.stage_identity.matches_directory_child(
                 &self.target_root.dir,
                 &self.stage_name,
                 &stage_display,
@@ -2546,7 +2547,7 @@ impl PreparedSkillInstall {
             {
                 anyhow::bail!("prepared Skill staging generation changed before publication");
             }
-            if !self.stage_identity.matches_child(
+            if !self.stage_identity.matches_directory_child(
                 &self.target_root.dir,
                 &self.stage_name,
                 &stage_display,
@@ -2565,7 +2566,7 @@ impl PreparedSkillInstall {
                 &target_dir,
             )
             .with_context(|| format!("commit staged skill at {}", target_dir.display()))?;
-            if !self.stage_identity.matches_child(
+            if !self.stage_identity.matches_directory_child(
                 &self.target_root.dir,
                 OsStr::new(&self.id),
                 &target_dir,
@@ -2606,7 +2607,7 @@ impl PreparedSkillInstall {
                         .as_ref()
                         .context("replacement rollback lacks its bound prior identity")?;
                     let backup_display = self.target_root.display_path.join(backup);
-                    if !target_identity.matches_child(
+                    if !target_identity.matches_directory_child(
                         &self.target_root.dir,
                         backup,
                         &backup_display,
@@ -2637,7 +2638,7 @@ impl PreparedSkillInstall {
                         &backup_display,
                         &target_dir,
                     )?;
-                    if !target_identity.matches_child(
+                    if !target_identity.matches_directory_child(
                         &self.target_root.dir,
                         OsStr::new(&self.id),
                         &target_dir,
