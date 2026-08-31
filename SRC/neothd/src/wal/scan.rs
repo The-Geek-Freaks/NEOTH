@@ -387,6 +387,12 @@ fn remove_proven_unused_hmac_archive(
             display.display()
         )
     })?;
+    // The read handles permit DELETE sharing, but they still keep the original
+    // object alive on Windows. Close both after all content and identity proofs
+    // (including the removal-authority binding) and before that authority
+    // performs its terminal post-close absence check.
+    drop(file);
+    drop(read_binding);
     removal_binding
         .remove_bound_file(&root.dir, name, &display)
         .with_context(|| format!("remove exact HMAC archive {}", display.display()))
@@ -3020,6 +3026,28 @@ mod tests {
             load_home_hmac_keys(home.path()).unwrap(),
             vec![vec![0x55; 32]]
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn archive_retention_windows_closes_read_handle_before_terminal_absence_proof() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        fs::create_dir_all(&wal).unwrap();
+        fs::write(wal.join("hmac.key"), [0x55; 32]).unwrap();
+        let archive = wal.join("hmac.key.0000000001.archive");
+        fs::write(&archive, [0x44; 32]).unwrap();
+
+        // No retry or delay is allowed: success requires the removal helper's
+        // post-close absence proof while this function's read handle is gone.
+        assert_eq!(
+            reconcile_hmac_archive_capacity_for_rotation_with_limit(home.path(), 1)
+                .expect("unused archive must satisfy terminal Windows absence proof"),
+            1
+        );
+        let error = fs::symlink_metadata(&archive)
+            .expect_err("successful retention must leave no archive namespace entry");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
     }
 
     #[test]

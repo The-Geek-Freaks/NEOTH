@@ -46,6 +46,12 @@ thread_local! {
     static TEST_BEFORE_WINDOWS_RECURSIVE_LEAF_DELETE:
         std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    static TEST_BEFORE_WINDOWS_FINAL_NON_DIRECTORY_DELETE:
+        std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+    static TEST_BEFORE_WINDOWS_FINAL_FILE_DELETE:
+        std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -111,6 +117,38 @@ fn set_before_windows_recursive_leaf_delete_for_test(hook: impl FnOnce() + 'stat
 #[cfg(all(test, windows))]
 fn run_before_windows_recursive_leaf_delete_for_test() {
     TEST_BEFORE_WINDOWS_RECURSIVE_LEAF_DELETE.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(all(test, windows))]
+fn set_before_windows_final_non_directory_delete_for_test(hook: impl FnOnce() + 'static) {
+    TEST_BEFORE_WINDOWS_FINAL_NON_DIRECTORY_DELETE.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(all(test, windows))]
+fn run_before_windows_final_non_directory_delete_for_test() {
+    TEST_BEFORE_WINDOWS_FINAL_NON_DIRECTORY_DELETE.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(all(test, windows))]
+fn set_before_windows_final_file_delete_for_test(hook: impl FnOnce() + 'static) {
+    TEST_BEFORE_WINDOWS_FINAL_FILE_DELETE.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(all(test, windows))]
+fn run_before_windows_final_file_delete_for_test() {
+    TEST_BEFORE_WINDOWS_FINAL_FILE_DELETE.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
             hook();
         }
@@ -264,8 +302,10 @@ impl BoundChildObject {
 
     /// Remove the exact regular file retained by this binding.
     ///
-    /// Windows commits through the retained `DELETE`-capable handle, so a
-    /// same-name replacement cannot redirect the deletion. Unix has no
+    /// Windows rebinds the retained identity through a final no-delete-share
+    /// `DELETE` handle, marks that exact handle for deletion, closes it, and
+    /// then proves through a no-follow lookup that the journal name is absent.
+    /// Unix has no
     /// portable unlink-by-handle primitive; it therefore quarantines the name,
     /// proves the atomic rename moved the retained inode, and only then unlinks
     /// the unpredictable capability-relative tombstone.
@@ -276,6 +316,7 @@ impl BoundChildObject {
         display_path: &Path,
     ) -> Result<()> {
         validate_child_name(name)?;
+        let expected_identity = self.identity_token;
         let handle = self._handle.with_context(|| {
             format!(
                 "bound regular-file removal has no retained handle: {}",
@@ -294,20 +335,46 @@ impl BoundChildObject {
             display_path.display()
         );
         anyhow::ensure!(
-            child_identity_token(&metadata)? == self.identity_token,
+            child_identity_token(&metadata)? == expected_identity,
             "retained regular-file removal identity changed: {}",
             display_path.display()
         );
 
         #[cfg(windows)]
         {
-            windows_mark_delete(&handle, display_path)?;
+            // Reopen the direct child with delete sharing denied for the final
+            // commit. The retained mutation handle intentionally permits
+            // composition with rename operations, so it cannot close this
+            // final namespace-replacement window by itself.
+            drop(handle);
+            let final_handle = open_windows_final_delete_handle(_parent, name, display_path)?;
+            let final_metadata = final_handle.metadata().with_context(|| {
+                format!(
+                    "inspect final regular-file deletion authority {}",
+                    display_path.display()
+                )
+            })?;
+            anyhow::ensure!(
+                final_metadata.is_file() && !cap_metadata_is_link_like(&final_metadata),
+                "regular-file removal target changed before final delete authority: {}",
+                display_path.display()
+            );
+            anyhow::ensure!(
+                child_identity_token(&final_metadata)? == expected_identity,
+                "regular-file removal target changed before final delete authority: {}",
+                display_path.display()
+            );
+            #[cfg(test)]
+            run_before_windows_final_file_delete_for_test();
+            windows_mark_delete(&final_handle, display_path)?;
+            drop(final_handle);
+            ensure_windows_deleted_name_is_absent(_parent, name, display_path)?;
             Ok(())
         }
         #[cfg(unix)]
         {
             anyhow::ensure!(
-                readonly_regular_file_identity(_parent, name, display_path)? == self.identity_token,
+                readonly_regular_file_identity(_parent, name, display_path)? == expected_identity,
                 "regular-file removal target changed before commit: {}",
                 display_path.display()
             );
@@ -348,7 +415,7 @@ impl BoundChildObject {
             let moved_identity =
                 readonly_regular_file_identity(_parent, &tombstone, &tombstone_display);
             match moved_identity {
-                Ok(identity) if identity == self.identity_token => {}
+                Ok(identity) if identity == expected_identity => {}
                 Ok(_) => {
                     let restore = rename_child(
                         _parent,
@@ -428,6 +495,74 @@ impl BoundChildObject {
             let _ = (_parent, handle);
             anyhow::bail!(
                 "exact bound regular-file removal is unsupported on this platform: {}",
+                display_path.display()
+            )
+        }
+    }
+
+    /// Remove the exact non-directory leaf retained by this binding without
+    /// following a link. This is deliberately distinct from
+    /// [`Self::remove_bound_file`]: transaction recovery can encounter a
+    /// broken symlink or another non-directory object that was itself the
+    /// journal-bound artifact. It must remove that exact namespace object,
+    /// while still rejecting a same-name replacement or a real-directory type
+    /// swap.
+    pub(crate) fn remove_bound_non_directory(
+        self,
+        parent: &Dir,
+        name: &OsStr,
+        display_path: &Path,
+    ) -> Result<()> {
+        validate_child_name(name)?;
+
+        #[cfg(windows)]
+        {
+            // The ordinary mutation binding permits delete sharing so rename
+            // operations can compose. Release it before acquiring the final
+            // no-delete-share handle: this closes the last same-name swap
+            // window instead of merely deleting the original object while a
+            // replacement silently remains at the journal-bound name.
+            let expected_identity = self.identity_token;
+            drop(self._handle);
+            let handle = open_windows_final_delete_handle(parent, name, display_path)?;
+            let metadata = handle.metadata().with_context(|| {
+                format!(
+                    "inspect final non-directory removal handle {}",
+                    display_path.display()
+                )
+            })?;
+            anyhow::ensure!(
+                !(metadata.is_dir() && !cap_metadata_is_link_like(&metadata)),
+                "bound removal target changed into a real directory: {}",
+                display_path.display()
+            );
+            anyhow::ensure!(
+                child_identity_token(&metadata)? == expected_identity,
+                "non-directory removal target changed before final delete authority: {}",
+                display_path.display()
+            );
+            #[cfg(test)]
+            run_before_windows_final_non_directory_delete_for_test();
+            windows_mark_delete(&handle, display_path)?;
+            drop(handle);
+            ensure_windows_deleted_name_is_absent(parent, name, display_path)?;
+            Ok(())
+        }
+
+        #[cfg(unix)]
+        {
+            let _ = (parent, name);
+            anyhow::bail!(
+                "automatic exact non-directory removal is unsupported on Unix without unlink-by-handle: {}",
+                display_path.display()
+            )
+        }
+
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (parent, name);
+            anyhow::bail!(
+                "exact bound non-directory removal is unsupported on this platform: {}",
                 display_path.display()
             )
         }
@@ -2444,6 +2579,65 @@ fn open_windows_mutation_handle(parent: &Dir, name: &OsStr, display_path: &Path)
     })
 }
 
+/// Acquire the last Windows delete handle without `FILE_SHARE_DELETE`. The
+/// caller has already persisted and checked an identity binding; this final
+/// no-follow open rechecks it while preventing a same-name rename/replacement
+/// until `windows_mark_delete` commits the exact handle's deletion.
+#[cfg(windows)]
+fn open_windows_final_delete_handle(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<File> {
+    use cap_std::fs::OpenOptionsExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        DELETE, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH,
+        FILE_GENERIC_READ, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .follow(FollowSymlinks::No)
+        .access_mode(FILE_GENERIC_READ | DELETE)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_WRITE_THROUGH,
+        );
+    parent.open_with(name, &options).with_context(|| {
+        format!(
+            "open final Windows deletion authority without following links {}",
+            display_path.display()
+        )
+    })
+}
+
+/// A successful handle delete is not terminal until the exact direct-child
+/// namespace is absent after the handle closes. A pre-existing foreign DELETE
+/// handle can delay deletion or replace the name; either state is retained as
+/// an explicit conflict so callers keep their durable cleanup journal.
+#[cfg(windows)]
+fn ensure_windows_deleted_name_is_absent(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<()> {
+    match parent.symlink_metadata(name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(metadata) => anyhow::bail!(
+            "exact Windows deletion left a namespace occupant ({}) at {}; cleanup journal retained",
+            child_kind(&metadata),
+            display_path.display()
+        ),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "verify exact Windows deletion namespace {}",
+                display_path.display()
+            )
+        }),
+    }
+}
+
 /// Acquire exact-object directory deletion authority only after every
 /// cap-std directory traversal handle for that object has closed. The caller
 /// supplies the identity observed through the preceding no-follow traversal;
@@ -4108,10 +4302,12 @@ mod tests {
         let (file, binding) =
             open_bound_regular_file_for_removal(&root.dir, OsStr::new("claim.json"), &target)
                 .unwrap();
+        // The final Windows deletion receipt is truthful only after every
+        // caller-owned deletion-capable handle has been released.
+        drop(file);
         binding
             .remove_bound_file(&root.dir, OsStr::new("claim.json"), &target)
             .unwrap();
-        drop(file);
 
         assert!(!target.exists());
     }
@@ -4150,6 +4346,154 @@ mod tests {
                 "fail-closed removal must retain the original object"
             ),
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bound_non_directory_removal_unlinks_a_link_without_following_its_target() {
+        let temp = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let sentinel = outside.path().join("keep.txt");
+        std::fs::write(&sentinel, b"keep").unwrap();
+        let target = temp.path().join("pending-artifact");
+        try_link_dir(outside.path(), &target).expect("create no-follow link fixture");
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        let binding = bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target)
+            .unwrap();
+        binding
+            .remove_bound_non_directory(&root.dir, OsStr::new("pending-artifact"), &target)
+            .unwrap();
+
+        assert!(std::fs::symlink_metadata(&target).is_err());
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bound_non_directory_final_delete_denies_a_same_name_swap() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("pending-artifact");
+        let displaced = temp.path().join("displaced-pending-artifact");
+        std::fs::write(&target, b"authorized private artifact").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        let binding = bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target)
+            .unwrap();
+
+        let hook_target = target.clone();
+        let hook_displaced = displaced.clone();
+        set_before_windows_final_non_directory_delete_for_test(move || {
+            assert!(
+                std::fs::rename(&hook_target, &hook_displaced).is_err(),
+                "the final DELETE handle must deny a same-name replacement"
+            );
+        });
+        binding
+            .remove_bound_non_directory(&root.dir, OsStr::new("pending-artifact"), &target)
+            .unwrap();
+
+        assert!(std::fs::symlink_metadata(&target).is_err());
+        assert!(std::fs::symlink_metadata(&displaced).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bound_non_directory_prior_delete_handle_replacement_keeps_journal_path_fail_closed() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("pending-artifact");
+        let displaced = temp.path().join("displaced-pending-artifact");
+        std::fs::write(&target, b"authorized private artifact").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        let mut prior = bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target)
+            .unwrap();
+        let prior_handle = prior
+            ._handle
+            .take()
+            .expect("Windows binding must retain a DELETE-capable handle");
+        let prior_parent = root.dir.try_clone().unwrap();
+        let hook_target = target.clone();
+        let hook_displaced = displaced.clone();
+        set_before_windows_final_non_directory_delete_for_test(move || {
+            windows_rename_open_handle(
+                &prior_handle,
+                &prior_parent,
+                OsStr::new("displaced-pending-artifact"),
+                false,
+                &hook_target,
+            )
+            .unwrap();
+            std::fs::write(&hook_target, b"same-name replacement sentinel").unwrap();
+            assert!(hook_displaced.exists());
+        });
+        let binding = bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target)
+            .unwrap();
+
+        let error = binding
+            .remove_bound_non_directory(&root.dir, OsStr::new("pending-artifact"), &target)
+            .unwrap_err();
+
+        assert!(format!("{error:#}").contains("namespace occupant"));
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"same-name replacement sentinel"
+        );
+        assert!(
+            std::fs::symlink_metadata(&displaced).is_err(),
+            "the exact old object is deleted through the final bound handle"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bound_regular_file_prior_delete_handle_replacement_keeps_name_fail_closed() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("claim.json");
+        let displaced = temp.path().join("displaced-claim.json");
+        std::fs::write(&target, b"authenticated claim").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        let mut prior = bind_child_object(&root.dir, OsStr::new("claim.json"), &target).unwrap();
+        let prior_handle = prior
+            ._handle
+            .take()
+            .expect("Windows binding must retain a DELETE-capable handle");
+        let prior_parent = root.dir.try_clone().unwrap();
+        let hook_target = target.clone();
+        let hook_displaced = displaced.clone();
+        set_before_windows_final_file_delete_for_test(move || {
+            windows_rename_open_handle(
+                &prior_handle,
+                &prior_parent,
+                OsStr::new("displaced-claim.json"),
+                false,
+                &hook_target,
+            )
+            .unwrap();
+            std::fs::write(&hook_target, b"same-name replacement sentinel").unwrap();
+            assert!(hook_displaced.exists());
+        });
+        let binding = bind_child_object(&root.dir, OsStr::new("claim.json"), &target).unwrap();
+
+        let error = binding
+            .remove_bound_file(&root.dir, OsStr::new("claim.json"), &target)
+            .unwrap_err();
+
+        assert!(format!("{error:#}").contains("namespace occupant"));
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"same-name replacement sentinel"
+        );
+        assert!(
+            std::fs::symlink_metadata(&displaced).is_err(),
+            "the exact old object is deleted through the final bound handle"
+        );
     }
 
     #[cfg(unix)]

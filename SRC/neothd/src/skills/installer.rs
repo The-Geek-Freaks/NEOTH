@@ -72,6 +72,13 @@ const SKILL_MUTATION_JOURNAL_FILE: &str = ".neoth-skill-mutation.json";
 const SKILL_MUTATION_JOURNAL_STAGE_PREFIX: &str = ".neoth-skill-mutation-write-";
 const SKILL_MUTATION_JOURNAL_VERSION: u32 = 2;
 const MAX_SKILL_MUTATION_JOURNAL_BYTES: usize = 16 * 1024;
+/// Private, capability-relative evidence for Unix cleanups which cannot be
+/// safely reclaimed without a portable unlink-by-handle primitive.
+const SKILL_RETENTION_REGISTRY_FILE: &str = ".neoth-skill-retention.json";
+const SKILL_RETENTION_REGISTRY_STAGE_PREFIX: &str = ".neoth-skill-retention-write-";
+const SKILL_RETENTION_REGISTRY_VERSION: u32 = 1;
+const MAX_SKILL_RETENTION_REGISTRY_BYTES: usize = 128 * 1024;
+const MAX_SKILL_RETENTION_RECORDS: usize = 256;
 const INSTALL_TRANSACTION_PREFIX: &str = ".neoth-install-";
 const BACKUP_TRANSACTION_PREFIX: &str = ".neoth-backup-";
 const DELETE_TRANSACTION_PREFIX: &str = ".neoth-delete-";
@@ -380,7 +387,7 @@ enum SkillTerminalDeliveryState {
     Durable,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum SkillCleanupArtifactKind {
     InstallStage,
@@ -394,6 +401,68 @@ struct SkillCleanupState {
     artifact_name: String,
     artifact_kind: SkillCleanupArtifactKind,
     object_identity: String,
+    #[serde(default)]
+    quarantine_name: Option<String>,
+}
+
+/// Durable, metadata-only evidence that a terminal mutation intentionally
+/// retained an exact non-directory private artifact on Unix. This is separate
+/// from the one-operation mutation journal so completing a receipt never
+/// turns permanent retention into a global mutation lock.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SkillRetentionRegistry {
+    version: u32,
+    records: Vec<SkillRetentionRecord>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SkillRetentionRecord {
+    operation_id: String,
+    artifact_kind: SkillCleanupArtifactKind,
+    artifact_name: String,
+    quarantine_name: String,
+    object_identity: String,
+    reason: SkillRetentionReason,
+    state: SkillRetentionState,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SkillRetentionReason {
+    UnixNoFollowReclamationUnsupported,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SkillRetentionState {
+    Quarantined,
+}
+
+/// Operator diagnostics for the private retention registry. Reclamation is
+/// deliberately unsupported until there is an explicit, identity-bound
+/// operator authority with exclusive mutation ownership.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct SkillRetentionStatus {
+    pub(crate) retained_records: usize,
+    pub(crate) max_records: usize,
+    pub(crate) registry_bytes: usize,
+    pub(crate) max_registry_bytes: usize,
+    pub(crate) reclamation_supported: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct RetainedSkillCleanup {
+    pub(crate) operation_id: String,
+    pub(crate) artifact_kind: String,
+    pub(crate) artifact_name: String,
+    pub(crate) quarantine_name: String,
+    pub(crate) object_identity: String,
+    pub(crate) reason: String,
+    pub(crate) state: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -805,6 +874,11 @@ fn validate_skill_mutation_journal(record: &SkillMutationJournal) -> Result<()> 
         if expected != OsStr::new(&cleanup.artifact_name) {
             anyhow::bail!("skill mutation cleanup-started artifact is not operation-bound");
         }
+        if let Some(quarantine_name) = cleanup.quarantine_name.as_deref()
+            && quarantine_name != cleanup_quarantine_name(record, cleanup.artifact_kind)
+        {
+            anyhow::bail!("skill mutation cleanup quarantine is not operation-bound");
+        }
     }
     if !record.phase.is_terminal()
         && (record.observed_generation_sha256.is_some() || record.error_sha256.is_some())
@@ -957,6 +1031,258 @@ fn clear_skill_mutation_journal(root: &BoundDirectory) -> Result<()> {
     }
     sync_directory(&root.dir, &root.display_path)
         .context("sync acknowledged skill mutation journal removal")
+}
+
+fn retention_record_from_cleanup(
+    record: &SkillMutationJournal,
+    cleanup: &SkillCleanupState,
+) -> Result<SkillRetentionRecord> {
+    let quarantine_name = cleanup
+        .quarantine_name
+        .as_deref()
+        .context("retained cleanup is missing its deterministic quarantine name")?;
+    anyhow::ensure!(
+        quarantine_name == cleanup_quarantine_name(record, cleanup.artifact_kind),
+        "retained cleanup quarantine is not operation-bound"
+    );
+    anyhow::ensure!(
+        valid_child_identity_token(&cleanup.object_identity),
+        "retained cleanup has an invalid object identity"
+    );
+    Ok(SkillRetentionRecord {
+        operation_id: record.operation_id.clone(),
+        artifact_kind: cleanup.artifact_kind,
+        artifact_name: cleanup.artifact_name.clone(),
+        quarantine_name: quarantine_name.to_string(),
+        object_identity: cleanup.object_identity.clone(),
+        reason: SkillRetentionReason::UnixNoFollowReclamationUnsupported,
+        state: SkillRetentionState::Quarantined,
+    })
+}
+
+fn validate_skill_retention_record(record: &SkillRetentionRecord) -> Result<()> {
+    if record.operation_id.len() != 32
+        || !record
+            .operation_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || record.artifact_name.is_empty()
+        || record.artifact_name.contains(['\0', '/', '\\'])
+        || record.quarantine_name.is_empty()
+        || record.quarantine_name.contains(['\0', '/', '\\'])
+        || !valid_child_identity_token(&record.object_identity)
+    {
+        anyhow::bail!("private Skill retention record is structurally invalid");
+    }
+    let artifact_prefix = match record.artifact_kind {
+        SkillCleanupArtifactKind::InstallStage => INSTALL_TRANSACTION_PREFIX,
+        SkillCleanupArtifactKind::ReplacementBackup => BACKUP_TRANSACTION_PREFIX,
+        SkillCleanupArtifactKind::RemovalTombstone => DELETE_TRANSACTION_PREFIX,
+    };
+    let (artifact_skill_id, artifact_operation_id) = record
+        .artifact_name
+        .strip_prefix(artifact_prefix)
+        .and_then(|body| body.rsplit_once('-'))
+        .context("private Skill retention artifact is not operation-bound")?;
+    anyhow::ensure!(
+        artifact_operation_id == record.operation_id,
+        "private Skill retention artifact is not operation-bound"
+    );
+    match record.artifact_kind {
+        SkillCleanupArtifactKind::RemovalTombstone => validate_installed_skill_dir_name(artifact_skill_id),
+        SkillCleanupArtifactKind::InstallStage | SkillCleanupArtifactKind::ReplacementBackup => {
+            super::creator::validate_skill_id(artifact_skill_id)
+        }
+    }
+    .context("private Skill retention artifact has an invalid bound skill id")?;
+    let expected_quarantine = format!(
+        ".neoth-cleanup-{}-{}",
+        record.operation_id,
+        match record.artifact_kind {
+            SkillCleanupArtifactKind::InstallStage => "stage",
+            SkillCleanupArtifactKind::ReplacementBackup => "backup",
+            SkillCleanupArtifactKind::RemovalTombstone => "remove",
+        }
+    );
+    anyhow::ensure!(
+        record.quarantine_name == expected_quarantine,
+        "private Skill retention quarantine is not operation-bound"
+    );
+    Ok(())
+}
+
+fn validate_skill_retention_registry(registry: &SkillRetentionRegistry) -> Result<()> {
+    anyhow::ensure!(
+        registry.version == SKILL_RETENTION_REGISTRY_VERSION,
+        "unsupported private Skill retention registry version {}",
+        registry.version
+    );
+    anyhow::ensure!(
+        registry.records.len() <= MAX_SKILL_RETENTION_RECORDS,
+        "private Skill retention registry exceeds the {MAX_SKILL_RETENTION_RECORDS}-record limit"
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    for record in &registry.records {
+        validate_skill_retention_record(record)?;
+        anyhow::ensure!(
+            seen.insert((record.operation_id.as_str(), record.artifact_kind)),
+            "private Skill retention registry has duplicate operation evidence"
+        );
+    }
+    Ok(())
+}
+
+fn read_skill_retention_registry(root: &BoundDirectory) -> Result<SkillRetentionRegistry> {
+    let display = root.display_path.join(SKILL_RETENTION_REGISTRY_FILE);
+    let bytes = match read_regular_file_bounded(
+        &root.dir,
+        OsStr::new(SKILL_RETENTION_REGISTRY_FILE),
+        &display,
+        MAX_SKILL_RETENTION_REGISTRY_BYTES,
+    ) {
+        Ok(bytes) => bytes,
+        Err(error)
+            if error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            return Ok(SkillRetentionRegistry {
+                version: SKILL_RETENTION_REGISTRY_VERSION,
+                records: Vec::new(),
+            });
+        }
+        Err(error) => return Err(error).context("read private Skill retention registry"),
+    };
+    let registry: SkillRetentionRegistry = serde_json::from_slice(&bytes)
+        .with_context(|| format!("parse private Skill retention registry {}", display.display()))?;
+    validate_skill_retention_registry(&registry)
+        .with_context(|| format!("validate private Skill retention registry {}", display.display()))?;
+    Ok(registry)
+}
+
+fn persist_skill_retention_registry(
+    root: &BoundDirectory,
+    registry: &SkillRetentionRegistry,
+    operation_id: &str,
+) -> Result<()> {
+    validate_skill_retention_registry(registry)?;
+    let bytes = serialize_skill_retention_registry(registry)?;
+    anyhow::ensure!(
+        bytes.len() <= MAX_SKILL_RETENTION_REGISTRY_BYTES,
+        "private Skill retention registry is {} bytes, exceeding the {}-byte limit",
+        bytes.len(),
+        MAX_SKILL_RETENTION_REGISTRY_BYTES
+    );
+    let stage_name = OsString::from(format!("{SKILL_RETENTION_REGISTRY_STAGE_PREFIX}{operation_id}"));
+    let stage_display = root.display_path.join(&stage_name);
+    remove_private_metadata_stage_if_present(root, &stage_name)?;
+    write_private_metadata_file_create_new(&root.dir, &stage_name, &stage_display, &bytes)?;
+    if let Err(error) = rename_child(
+        &root.dir,
+        &stage_name,
+        &root.dir,
+        OsStr::new(SKILL_RETENTION_REGISTRY_FILE),
+        true,
+        &stage_display,
+        &root.display_path.join(SKILL_RETENTION_REGISTRY_FILE),
+    ) {
+        let _ = remove_private_metadata_stage_if_present(root, &stage_name);
+        return Err(error).context("atomically replace private Skill retention registry");
+    }
+    sync_directory(&root.dir, &root.display_path)
+        .context("sync durable private Skill retention registry")
+}
+
+fn serialize_skill_retention_registry(registry: &SkillRetentionRegistry) -> Result<Vec<u8>> {
+    let mut bytes =
+        serde_json::to_vec_pretty(registry).context("serialize private Skill retention registry")?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+/// List retained cleanup evidence. The registry contains no ambient paths and
+/// never grants reclamation authority.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn list_retained_skill_cleanups(
+    target_skills_dir: &Path,
+) -> Result<Vec<RetainedSkillCleanup>> {
+    let Some(root) = open_bound_directory(target_skills_dir, false, "skills root")? else {
+        return Ok(Vec::new());
+    };
+    let _mutation_guard = lock_skill_mutations(&root)?;
+    let registry = read_skill_retention_registry(&root)?;
+    Ok(registry
+        .records
+        .into_iter()
+        .map(|record| RetainedSkillCleanup {
+            operation_id: record.operation_id,
+            artifact_kind: match record.artifact_kind {
+                SkillCleanupArtifactKind::InstallStage => "install_stage",
+                SkillCleanupArtifactKind::ReplacementBackup => "replacement_backup",
+                SkillCleanupArtifactKind::RemovalTombstone => "removal_tombstone",
+            }
+            .to_string(),
+            artifact_name: record.artifact_name,
+            quarantine_name: record.quarantine_name,
+            object_identity: record.object_identity,
+            reason: "unix_no_follow_reclamation_unsupported".to_string(),
+            state: "quarantined".to_string(),
+        })
+        .collect())
+}
+
+/// Report bounded registry use and the deliberate absence of automatic or
+/// operator reclamation. A future reclaimer must prove exact retained identity
+/// and hold this same mutation lock; name-based deletion is never authority.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn skill_retention_status(target_skills_dir: &Path) -> Result<SkillRetentionStatus> {
+    let Some(root) = open_bound_directory(target_skills_dir, false, "skills root")? else {
+        return Ok(SkillRetentionStatus {
+            retained_records: 0,
+            max_records: MAX_SKILL_RETENTION_RECORDS,
+            registry_bytes: 0,
+            max_registry_bytes: MAX_SKILL_RETENTION_REGISTRY_BYTES,
+            reclamation_supported: false,
+        });
+    };
+    let _mutation_guard = lock_skill_mutations(&root)?;
+    let registry = read_skill_retention_registry(&root)?;
+    let bytes = serialize_skill_retention_registry(&registry)
+        .context("measure private Skill retention registry")?
+        .len();
+    Ok(SkillRetentionStatus {
+        retained_records: registry.records.len(),
+        max_records: MAX_SKILL_RETENTION_RECORDS,
+        registry_bytes: bytes,
+        max_registry_bytes: MAX_SKILL_RETENTION_REGISTRY_BYTES,
+        reclamation_supported: false,
+    })
+}
+
+fn retain_quarantined_cleanup(
+    root: &BoundDirectory,
+    record: &SkillMutationJournal,
+    cleanup: &SkillCleanupState,
+) -> Result<()> {
+    let retention = retention_record_from_cleanup(record, cleanup)?;
+    let mut registry = read_skill_retention_registry(root)?;
+    if let Some(existing) = registry.records.iter().find(|existing| {
+        existing.operation_id == retention.operation_id
+            && existing.artifact_kind == retention.artifact_kind
+    }) {
+        anyhow::ensure!(
+            existing == &retention,
+            "private Skill retention evidence conflicts with its journal-bound cleanup"
+        );
+        return Ok(());
+    }
+    anyhow::ensure!(
+        registry.records.len() < MAX_SKILL_RETENTION_RECORDS,
+        "private Skill retention registry is full; automatic reclamation is unsupported and no record may be evicted"
+    );
+    registry.records.push(retention);
+    persist_skill_retention_registry(root, &registry, &record.operation_id)
 }
 
 fn transition_skill_mutation_phase(
@@ -3891,6 +4217,18 @@ fn recovery_error_sha256(message: &str) -> String {
     hex::encode(Sha256::digest(message.as_bytes()))
 }
 
+fn cleanup_quarantine_name(
+    record: &SkillMutationJournal,
+    kind: SkillCleanupArtifactKind,
+) -> String {
+    let kind = match kind {
+        SkillCleanupArtifactKind::InstallStage => "stage",
+        SkillCleanupArtifactKind::ReplacementBackup => "backup",
+        SkillCleanupArtifactKind::RemovalTombstone => "remove",
+    };
+    format!(".neoth-cleanup-{}-{kind}", record.operation_id)
+}
+
 fn cleanup_transaction_artifact_restartable(
     root: &BoundDirectory,
     record: &mut SkillMutationJournal,
@@ -3911,59 +4249,173 @@ fn cleanup_transaction_artifact_restartable(
         );
     }
     let display = root.display_path.join(name);
-    let exists = match root.dir.symlink_metadata(name) {
-        Ok(_) => true,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+    let metadata = match root.dir.symlink_metadata(name) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => {
             return Err(error)
                 .with_context(|| format!("inspect cleanup artifact {}", display.display()));
         }
     };
 
-    if exists {
-        // The binding can carry a native Windows handle. Persist only its
-        // verified identity before recursive cleanup; the deletion helper
-        // reacquires a short-lived no-follow directory capability and proves
-        // that identity again before its final destructive operation.
-        let bound_identity = {
-            let bound = bind_child_object(&root.dir, name, &display)?;
-            let identity = bound.identity_token().to_string();
-            if let Some(active) = record.cleanup_started.as_ref() {
-                if identity != active.object_identity
-                    || !bound.matches_child(&root.dir, name, &display)?
-                {
-                    anyhow::bail!(
-                        "skill mutation {} cleanup artifact `{name_text}` changed identity",
-                        record.operation_id
-                    );
+    // A crash after the durable rename but before the registry publish is
+    // replayed here. Both names, neither name, or a mismatched identity are
+    // ambiguous evidence and deliberately retain the journal fail-closed.
+    if let Some(active) = record.cleanup_started.as_ref()
+        && let Some(quarantine_name) = active.quarantine_name.as_deref()
+    {
+        let quarantine = OsStr::new(quarantine_name);
+        let quarantine_display = root.display_path.join(quarantine);
+        match root.dir.symlink_metadata(quarantine) {
+            Ok(_) if metadata.is_some() => anyhow::bail!(
+                "skill mutation {} has both cleanup artifact and quarantine; evidence retained",
+                record.operation_id
+            ),
+            Ok(_) => {
+                let bound = bind_child_object(&root.dir, quarantine, &quarantine_display)?;
+                anyhow::ensure!(
+                    bound.identity_token() == active.object_identity
+                        && bound.matches_child(&root.dir, quarantine, &quarantine_display)?,
+                    "skill mutation {} cleanup quarantine identity changed; evidence retained",
+                    record.operation_id
+                );
+                retain_quarantined_cleanup(root, record, active)?;
+                let prior = record.clone();
+                record.cleanup_started = None;
+                if let Err(error) = persist_skill_mutation_journal(root, record) {
+                    *record = prior;
+                    return Err(error).context("complete retained Skill cleanup journal boundary");
                 }
-            } else if expected_identity.is_some_and(|expected| expected != identity.as_str()) {
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && metadata.is_none() => {
                 anyhow::bail!(
-                    "skill mutation {} cleanup artifact `{name_text}` is not the authorized object",
+                    "skill mutation {} cleanup artifact and durable quarantine are both missing; journal retained",
                     record.operation_id
                 );
             }
-            identity
-        };
-        if record.cleanup_started.is_none() {
-            let prior = record.clone();
-            record.cleanup_started = Some(SkillCleanupState {
-                artifact_name: name_text.to_string(),
-                artifact_kind: kind,
-                object_identity: bound_identity.clone(),
-            });
-            if let Err(error) = persist_skill_mutation_journal(root, record) {
-                *record = prior;
-                return Err(error).context("persist restartable Skill cleanup boundary");
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).with_context(|| {
+                format!("inspect cleanup quarantine {}", quarantine_display.display())
+            }),
         }
-        remove_transaction_artifact_if_present(root, name, Some(&bound_identity))?;
-    } else if record.cleanup_started.is_none() {
+    }
+
+    let Some(metadata) = metadata else {
+        if record.cleanup_started.is_none() {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "skill mutation {} cleanup artifact `{name_text}` is missing before cleanup proof; journal retained",
+            record.operation_id
+        );
+    };
+    let bound_identity = {
+        let bound = bind_child_object(&root.dir, name, &display)?;
+        let identity = bound.identity_token().to_string();
+        if let Some(active) = record.cleanup_started.as_ref() {
+            if identity != active.object_identity || !bound.matches_child(&root.dir, name, &display)? {
+                anyhow::bail!(
+                    "skill mutation {} cleanup artifact `{name_text}` changed identity",
+                    record.operation_id
+                );
+            }
+        } else if expected_identity.is_some_and(|expected| expected != identity.as_str()) {
+            anyhow::bail!(
+                "skill mutation {} cleanup artifact `{name_text}` is not the authorized object",
+                record.operation_id
+            );
+        }
+        identity
+    };
+
+    // v2 journals predate `quarantine_name`. Upgrade their identity-bound
+    // cleanup state before the first rename; otherwise a restart would have no
+    // deterministic destination to authenticate.
+    let needs_quarantine = {
+        #[cfg(unix)]
+        {
+            !metadata.is_dir() || cap_metadata_is_link_like(&metadata)
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    };
+    let migrate_legacy_quarantine = record
+        .cleanup_started
+        .as_ref()
+        .is_some_and(|active| active.quarantine_name.is_none() && needs_quarantine);
+    if record.cleanup_started.is_none() || migrate_legacy_quarantine {
+        let prior = record.clone();
+        record.cleanup_started = Some(SkillCleanupState {
+            artifact_name: name_text.to_string(),
+            artifact_kind: kind,
+            object_identity: bound_identity.clone(),
+            quarantine_name: needs_quarantine.then(|| cleanup_quarantine_name(record, kind)),
+        });
+        if let Err(error) = persist_skill_mutation_journal(root, record) {
+            *record = prior;
+            return Err(error).context("persist restartable Skill cleanup boundary");
+        }
+    }
+
+    #[cfg(unix)]
+    if let Some(active) = record.cleanup_started.as_ref()
+        && let Some(quarantine_name) = active.quarantine_name.as_deref()
+    {
+        let quarantine = OsStr::new(quarantine_name);
+        let quarantine_display = root.display_path.join(quarantine);
+        match root.dir.symlink_metadata(quarantine) {
+            Ok(_) => anyhow::bail!(
+                "skill mutation {} cleanup quarantine already exists; journal retained",
+                record.operation_id
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).with_context(|| {
+                format!("inspect cleanup quarantine {}", quarantine_display.display())
+            }),
+        }
+        rename_child(
+            &root.dir,
+            name,
+            &root.dir,
+            quarantine,
+            false,
+            &display,
+            &quarantine_display,
+        )
+        .context("durably quarantine bound non-directory cleanup artifact")?;
+        sync_directory(&root.dir, &root.display_path)
+            .context("sync durable cleanup quarantine rename")?;
+        let quarantined = bind_child_object(&root.dir, quarantine, &quarantine_display)?;
+        anyhow::ensure!(
+            quarantined.identity_token() == bound_identity
+                && quarantined.matches_child(&root.dir, quarantine, &quarantine_display)?,
+            "skill mutation {} cleanup quarantine moved a replacement; evidence retained",
+            record.operation_id
+        );
+        #[cfg(test)]
+        if take_cleanup_quarantine_rebind_failure_for_test() {
+            anyhow::bail!(
+                "injected crash cut after durable Skill cleanup quarantine rebind"
+            );
+        }
+        let active = record
+            .cleanup_started
+            .as_ref()
+            .context("durable cleanup state disappeared before retention publish")?;
+        retain_quarantined_cleanup(root, record, active)?;
+        let prior = record.clone();
+        record.cleanup_started = None;
+        if let Err(error) = persist_skill_mutation_journal(root, record) {
+            *record = prior;
+            return Err(error).context("complete retained Skill cleanup journal boundary");
+        }
         return Ok(());
     }
 
-    // The top-level object is now absent through the bound parent capability.
-    // Make that namespace change durable before clearing CleanupStarted.
+    remove_transaction_artifact_if_present(root, name, Some(&bound_identity))?;
     sync_directory(&root.dir, &root.display_path)
         .context("sync restartable Skill cleanup parent")?;
     let prior = record.clone();
@@ -5800,12 +6252,64 @@ fn remove_transaction_artifact_if_present(
         Ok(metadata) if metadata.is_dir() && !cap_metadata_is_link_like(&metadata) => {
             remove_transaction_directory(root, name, expected_identity)
         }
-        Ok(_) if expected_identity.is_some() => anyhow::bail!(
-            "refuse to remove pending skill transaction whose bound directory changed type: {}",
-            display.display()
-        ),
-        Ok(_) => remove_child_file(&root.dir, name, &display)
-            .with_context(|| format!("remove private skill artifact {}", display.display())),
+        Ok(_) if expected_identity.is_some() => {
+            #[cfg(unix)]
+            {
+                let expected_identity = expected_identity
+                    .context("bound pending skill transaction identity is unexpectedly absent")?;
+                let bound = bind_child_object(&root.dir, name, &display)?;
+                anyhow::ensure!(
+                    bound.identity_token() == expected_identity,
+                    "refuse to remove pending skill transaction whose identity changed: {}",
+                    display.display()
+                );
+                anyhow::bail!(
+                    "refuse to unlink a bound non-directory pending skill transaction on Unix; durable cleanup quarantine is required: {}",
+                    display.display()
+                );
+            }
+            #[cfg(windows)]
+            {
+            // Recovery may legitimately resume after a broken install/uninstall
+            // entry has been replaced by a file or no-follow link. Bind that
+            // exact leaf again and let the bound removal primitive prove its
+            // persisted identity through the final destructive operation.
+            // This is intentionally not a path-based unlink: an attacker who
+            // swaps the same name, including to a real directory, remains
+            // fail-closed and no replacement inherits deletion authority.
+            let expected_identity = expected_identity
+                .context("bound pending skill transaction identity is unexpectedly absent")?;
+            let bound = bind_child_object(&root.dir, name, &display)?;
+            anyhow::ensure!(
+                bound.identity_token() == expected_identity,
+                "refuse to remove pending skill transaction whose identity changed: {}",
+                display.display()
+            );
+            bound
+                .remove_bound_non_directory(&root.dir, name, &display)
+                .with_context(|| {
+                    format!(
+                        "remove exact non-directory pending skill transaction {}",
+                        display.display()
+                    )
+                })
+            }
+            #[cfg(not(any(unix, windows)))]
+            anyhow::bail!(
+                "bound non-directory pending skill transaction cleanup is unsupported on this platform: {}",
+                display.display()
+            )
+        }
+        Ok(_) => {
+            #[cfg(unix)]
+            anyhow::bail!(
+                "refuse automatic name-based cleanup of a non-directory pending skill artifact on Unix: {}",
+                display.display()
+            );
+            #[cfg(not(unix))]
+            remove_child_file(&root.dir, name, &display)
+                .with_context(|| format!("remove private skill artifact {}", display.display()))
+        }
         Err(error) => Err(error)
             .with_context(|| format!("inspect private skill artifact {}", display.display())),
     }
@@ -5867,6 +6371,8 @@ thread_local! {
     static TEST_SYNC_FAILURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static TEST_SYNC_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static TEST_SYNC_FAIL_AT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static TEST_FAIL_AFTER_CLEANUP_QUARANTINE_REBIND: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -5885,6 +6391,20 @@ fn clear_directory_sync_failure() {
     TEST_SYNC_FAILURES.with(|remaining| remaining.set(0));
     TEST_SYNC_CALLS.with(|calls| calls.set(0));
     TEST_SYNC_FAIL_AT.with(|target| target.set(None));
+}
+
+#[cfg(test)]
+fn fail_after_cleanup_quarantine_rebind_for_test() {
+    TEST_FAIL_AFTER_CLEANUP_QUARANTINE_REBIND.with(|fail| fail.set(true));
+}
+
+#[cfg(test)]
+fn take_cleanup_quarantine_rebind_failure_for_test() -> bool {
+    TEST_FAIL_AFTER_CLEANUP_QUARANTINE_REBIND.with(|fail| {
+        let injected = fail.get();
+        fail.set(false);
+        injected
+    })
 }
 
 fn cleanup_after_failed_operation(
@@ -6148,6 +6668,48 @@ mod tests {
             cleanup_started: None,
             created_at_unix: 0,
         }
+    }
+
+    #[test]
+    fn retention_registry_refuses_capacity_overflow_without_eviction() {
+        let identity = {
+            #[cfg(unix)]
+            {
+                "unix:0000000000000001:0000000000000001:file"
+            }
+            #[cfg(windows)]
+            {
+                "windows:00000001:0000000000000001:file"
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                "unix:0000000000000001:0000000000000001:file"
+            }
+        };
+        let mut registry = SkillRetentionRegistry {
+            version: SKILL_RETENTION_REGISTRY_VERSION,
+            records: Vec::new(),
+        };
+        for sequence in 0..=MAX_SKILL_RETENTION_RECORDS {
+            let operation_id = format!("{sequence:032x}");
+            registry.records.push(SkillRetentionRecord {
+                operation_id: operation_id.clone(),
+                artifact_kind: SkillCleanupArtifactKind::InstallStage,
+                artifact_name: format!("{INSTALL_TRANSACTION_PREFIX}bounded-{operation_id}"),
+                quarantine_name: format!(".neoth-cleanup-{operation_id}-stage"),
+                object_identity: identity.to_string(),
+                reason: SkillRetentionReason::UnixNoFollowReclamationUnsupported,
+                state: SkillRetentionState::Quarantined,
+            });
+        }
+
+        let error = validate_skill_retention_registry(&registry).unwrap_err();
+        assert!(format!("{error:#}").contains("record limit"));
+        assert_eq!(
+            registry.records.len(),
+            MAX_SKILL_RETENTION_RECORDS + 1,
+            "validation must never evict old retention evidence"
+        );
     }
 
     #[test]
@@ -6482,6 +7044,114 @@ mod tests {
             displaced.exists(),
             "original private evidence must be retained"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bound_pending_non_directory_artifacts_are_removed_without_following_links() {
+        let dest = temp_skills_root();
+        let (file_name, link_name) = transaction_names("broken_cleanup");
+        let file = dest.path().join(&file_name);
+        std::fs::write(&file, b"broken private transaction file").unwrap();
+
+        let outside = tempdir().unwrap();
+        let sentinel = outside.path().join("keep.txt");
+        std::fs::write(&sentinel, b"keep").unwrap();
+        let linked = dest.path().join(&link_name);
+        try_symlink_dir(outside.path(), &linked)
+            .expect("create linked pending-transaction fixture");
+
+        let root = open_bound_directory(dest.path(), false, "test skills root")
+            .unwrap()
+            .unwrap();
+        let _guard = lock_skill_mutations(&root).unwrap();
+
+        for (name, path) in [
+            (OsStr::new(file_name.as_str()), file.as_path()),
+            (OsStr::new(link_name.as_str()), linked.as_path()),
+        ] {
+            let expected_identity = bind_child_object(&root.dir, name, path)
+                .unwrap()
+                .identity_token()
+                .to_string();
+            remove_transaction_artifact_if_present(&root, name, Some(&expected_identity)).unwrap();
+            assert!(
+                std::fs::symlink_metadata(path).is_err(),
+                "bound non-directory artifact must be removed"
+            );
+        }
+
+        assert_eq!(std::fs::read(sentinel).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn bound_pending_non_directory_cleanup_rejects_a_same_name_file_replacement() {
+        let dest = temp_skills_root();
+        let (artifact_name, _) = transaction_names("leaf_swap");
+        let artifact = dest.path().join(&artifact_name);
+        let displaced = dest.path().join("displaced-private-leaf");
+        std::fs::write(&artifact, b"authorized private artifact").unwrap();
+
+        let root = open_bound_directory(dest.path(), false, "test skills root")
+            .unwrap()
+            .unwrap();
+        let _guard = lock_skill_mutations(&root).unwrap();
+        let expected_identity = bind_child_object(
+            &root.dir,
+            OsStr::new(artifact_name.as_str()),
+            &artifact,
+        )
+        .unwrap()
+        .identity_token()
+        .to_string();
+
+        std::fs::rename(&artifact, &displaced).unwrap();
+        std::fs::write(&artifact, b"replacement private artifact").unwrap();
+
+        let error = remove_transaction_artifact_if_present(
+            &root,
+            OsStr::new(artifact_name.as_str()),
+            Some(&expected_identity),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("identity changed"));
+        assert_eq!(std::fs::read(&artifact).unwrap(), b"replacement private artifact");
+        assert_eq!(std::fs::read(&displaced).unwrap(), b"authorized private artifact");
+    }
+
+    #[test]
+    fn bound_pending_non_directory_cleanup_rejects_a_real_directory_type_swap() {
+        let dest = temp_skills_root();
+        let (artifact_name, _) = transaction_names("leaf_type_swap");
+        let artifact = dest.path().join(&artifact_name);
+        let displaced = dest.path().join("displaced-private-leaf");
+        std::fs::write(&artifact, b"authorized private artifact").unwrap();
+
+        let root = open_bound_directory(dest.path(), false, "test skills root")
+            .unwrap()
+            .unwrap();
+        let _guard = lock_skill_mutations(&root).unwrap();
+        let expected_identity = bind_child_object(
+            &root.dir,
+            OsStr::new(artifact_name.as_str()),
+            &artifact,
+        )
+        .unwrap()
+        .identity_token()
+        .to_string();
+
+        std::fs::rename(&artifact, &displaced).unwrap();
+        std::fs::create_dir(&artifact).unwrap();
+
+        let error = remove_transaction_artifact_if_present(
+            &root,
+            OsStr::new(artifact_name.as_str()),
+            Some(&expected_identity),
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("identity changed"));
+        assert!(artifact.is_dir(), "replacement directory must never be deleted");
+        assert_eq!(std::fs::read(&displaced).unwrap(), b"authorized private artifact");
     }
 
     #[test]
@@ -8243,11 +8913,23 @@ mod tests {
         let linked = dest.path().join("linked-skill");
         try_symlink_dir(outside.path(), &linked).expect("create directory link test fixture");
 
-        let report = uninstall_with_report(dest.path(), "linked-skill").unwrap();
-
-        assert!(report.removed);
+        assert!(uninstall_with_report(dest.path(), "linked-skill").unwrap().removed);
         assert_eq!(std::fs::read(sentinel).unwrap(), b"keep");
         assert!(std::fs::symlink_metadata(linked).is_err());
+        #[cfg(unix)]
+        assert!(!dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+        #[cfg(unix)]
+        {
+            let retained = list_retained_skill_cleanups(dest.path()).unwrap();
+            assert_eq!(retained.len(), 1);
+            assert_eq!(retained[0].state, "quarantined");
+            assert_eq!(retained[0].reason, "unix_no_follow_reclamation_unsupported");
+            assert!(dest.path().join(&retained[0].quarantine_name).exists());
+            let status = skill_retention_status(dest.path()).unwrap();
+            assert_eq!(status.retained_records, 1);
+            assert!(status.registry_bytes > 0);
+            assert!(!status.reclamation_supported);
+        }
     }
 
     #[test]
@@ -8264,9 +8946,45 @@ mod tests {
         assert_eq!(row.error.as_deref(), Some("skill entry is not a directory"));
         assert_eq!(row.repairability, Some(SkillRepairability::RemoveOnly));
 
-        let report = uninstall_with_report(dest.path(), "broken-file").unwrap();
-        assert!(report.removed);
+        assert!(uninstall_with_report(dest.path(), "broken-file").unwrap().removed);
         assert!(!broken.exists());
+        #[cfg(unix)]
+        assert!(!dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+        #[cfg(unix)]
+        assert_eq!(list_retained_skill_cleanups(dest.path()).unwrap().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restart_after_quarantine_rebind_publishes_retention_then_closes_journal() {
+        let dest = temp_skills_root();
+        let broken = dest.path().join("restart-broken-file");
+        std::fs::write(&broken, b"broken private skill entry").unwrap();
+
+        // This is the crash cut after rename+parent fsync+identity rebind and
+        // before the separate registry can be published. The original
+        // mutation receipt is already terminal, but no later mutation may be
+        // blocked once the exact retained identity can be recovered.
+        fail_after_cleanup_quarantine_rebind_for_test();
+        let error = uninstall_with_report(dest.path(), "restart-broken-file").unwrap_err();
+        assert!(format!("{error:#}").contains("after durable Skill cleanup quarantine rebind"));
+        assert!(dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+        assert_eq!(
+            std::fs::read_dir(dest.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".neoth-cleanup-"))
+                .count(),
+            1
+        );
+
+        acknowledge_test_skill_mutation(dest.path()).unwrap();
+        assert!(!dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+        assert_eq!(list_retained_skill_cleanups(dest.path()).unwrap().len(), 1);
+        assert!(!broken.exists(), "only the journal-bound quarantine remains");
     }
 
     #[test]
