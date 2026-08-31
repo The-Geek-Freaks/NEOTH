@@ -868,10 +868,8 @@ fn open_private_history_with_hooks(
         crate::connectors::local_import::approve_import_root(private_history_parent(&path)?)
             .context("pin private history database namespace")?;
     #[cfg(windows)]
-    let parent_fence = open_private_history_parent_delete_fence(
-        private_history_parent(&path)?,
-        &namespace_fence,
-    )?;
+    let parent_fence =
+        open_private_history_parent_delete_fence(private_history_parent(&path)?, &namespace_fence)?;
     verify_private_history_target(&path, true)?;
     before_sqlite_open();
     let mut connection =
@@ -925,8 +923,8 @@ fn open_private_history_parent_delete_fence(
 ) -> Result<std::fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
-        FILE_SHARE_WRITE, FILE_READ_ATTRIBUTES, READ_CONTROL,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL,
     };
 
     let directory = OpenOptions::new()
@@ -3050,8 +3048,7 @@ mod tests {
         make_private_history_directory(&parent).unwrap();
         let database = parent.join("history.db");
         std::fs::write(&database, b"legacy-history-database").unwrap();
-        crate::wal::win_native::set_unprotected_current_user_file_dacl_for_test(&database)
-            .unwrap();
+        crate::wal::win_native::set_unprotected_current_user_file_dacl_for_test(&database).unwrap();
 
         let sidecars = sqlite_sidecar_paths(&database);
         for sidecar in &sidecars[..2] {

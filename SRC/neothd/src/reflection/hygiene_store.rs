@@ -1451,9 +1451,10 @@ mod tests {
             &state_directory,
         )
         .unwrap();
-        let pre_lock_error =
-            crate::wal::win_native::verify_private_directory_handle_dacl(&inherited_state_directory)
-                .unwrap_err();
+        let pre_lock_error = crate::wal::win_native::verify_private_directory_handle_dacl(
+            &inherited_state_directory,
+        )
+        .unwrap_err();
         assert!(
             pre_lock_error
                 .to_string()

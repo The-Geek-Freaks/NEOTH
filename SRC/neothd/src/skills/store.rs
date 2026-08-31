@@ -4361,8 +4361,8 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let binding = bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target)
-            .unwrap();
+        let binding =
+            bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target).unwrap();
         binding
             .remove_bound_non_directory(&root.dir, OsStr::new("pending-artifact"), &target)
             .unwrap();
@@ -4381,8 +4381,8 @@ mod tests {
         let root = open_bound_directory(temp.path(), false, "test store")
             .unwrap()
             .unwrap();
-        let binding = bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target)
-            .unwrap();
+        let binding =
+            bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target).unwrap();
 
         let hook_target = target.clone();
         let hook_displaced = displaced.clone();
@@ -4410,8 +4410,8 @@ mod tests {
         let root = open_bound_directory(temp.path(), false, "test store")
             .unwrap()
             .unwrap();
-        let mut prior = bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target)
-            .unwrap();
+        let mut prior =
+            bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target).unwrap();
         let prior_handle = prior
             ._handle
             .take()
@@ -4431,8 +4431,8 @@ mod tests {
             std::fs::write(&hook_target, b"same-name replacement sentinel").unwrap();
             assert!(hook_displaced.exists());
         });
-        let binding = bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target)
-            .unwrap();
+        let binding =
+            bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target).unwrap();
 
         let error = binding
             .remove_bound_non_directory(&root.dir, OsStr::new("pending-artifact"), &target)

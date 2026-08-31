@@ -1089,7 +1089,9 @@ fn validate_skill_retention_record(record: &SkillRetentionRecord) -> Result<()> 
         "private Skill retention artifact is not operation-bound"
     );
     match record.artifact_kind {
-        SkillCleanupArtifactKind::RemovalTombstone => validate_installed_skill_dir_name(artifact_skill_id),
+        SkillCleanupArtifactKind::RemovalTombstone => {
+            validate_installed_skill_dir_name(artifact_skill_id)
+        }
         SkillCleanupArtifactKind::InstallStage | SkillCleanupArtifactKind::ReplacementBackup => {
             super::creator::validate_skill_id(artifact_skill_id)
         }
@@ -1154,10 +1156,18 @@ fn read_skill_retention_registry(root: &BoundDirectory) -> Result<SkillRetention
         }
         Err(error) => return Err(error).context("read private Skill retention registry"),
     };
-    let registry: SkillRetentionRegistry = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse private Skill retention registry {}", display.display()))?;
-    validate_skill_retention_registry(&registry)
-        .with_context(|| format!("validate private Skill retention registry {}", display.display()))?;
+    let registry: SkillRetentionRegistry = serde_json::from_slice(&bytes).with_context(|| {
+        format!(
+            "parse private Skill retention registry {}",
+            display.display()
+        )
+    })?;
+    validate_skill_retention_registry(&registry).with_context(|| {
+        format!(
+            "validate private Skill retention registry {}",
+            display.display()
+        )
+    })?;
     Ok(registry)
 }
 
@@ -1174,7 +1184,9 @@ fn persist_skill_retention_registry(
         bytes.len(),
         MAX_SKILL_RETENTION_REGISTRY_BYTES
     );
-    let stage_name = OsString::from(format!("{SKILL_RETENTION_REGISTRY_STAGE_PREFIX}{operation_id}"));
+    let stage_name = OsString::from(format!(
+        "{SKILL_RETENTION_REGISTRY_STAGE_PREFIX}{operation_id}"
+    ));
     let stage_display = root.display_path.join(&stage_name);
     remove_private_metadata_stage_if_present(root, &stage_name)?;
     write_private_metadata_file_create_new(&root.dir, &stage_name, &stage_display, &bytes)?;
@@ -1195,8 +1207,8 @@ fn persist_skill_retention_registry(
 }
 
 fn serialize_skill_retention_registry(registry: &SkillRetentionRegistry) -> Result<Vec<u8>> {
-    let mut bytes =
-        serde_json::to_vec_pretty(registry).context("serialize private Skill retention registry")?;
+    let mut bytes = serde_json::to_vec_pretty(registry)
+        .context("serialize private Skill retention registry")?;
     bytes.push(b'\n');
     Ok(bytes)
 }
@@ -4295,9 +4307,14 @@ fn cleanup_transaction_artifact_restartable(
                 );
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error).with_context(|| {
-                format!("inspect cleanup quarantine {}", quarantine_display.display())
-            }),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "inspect cleanup quarantine {}",
+                        quarantine_display.display()
+                    )
+                });
+            }
         }
     }
 
@@ -4314,7 +4331,9 @@ fn cleanup_transaction_artifact_restartable(
         let bound = bind_child_object(&root.dir, name, &display)?;
         let identity = bound.identity_token().to_string();
         if let Some(active) = record.cleanup_started.as_ref() {
-            if identity != active.object_identity || !bound.matches_child(&root.dir, name, &display)? {
+            if identity != active.object_identity
+                || !bound.matches_child(&root.dir, name, &display)?
+            {
                 anyhow::bail!(
                     "skill mutation {} cleanup artifact `{name_text}` changed identity",
                     record.operation_id
@@ -4372,9 +4391,14 @@ fn cleanup_transaction_artifact_restartable(
                 record.operation_id
             ),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error).with_context(|| {
-                format!("inspect cleanup quarantine {}", quarantine_display.display())
-            }),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "inspect cleanup quarantine {}",
+                        quarantine_display.display()
+                    )
+                });
+            }
         }
         rename_child(
             &root.dir,
@@ -4397,9 +4421,7 @@ fn cleanup_transaction_artifact_restartable(
         );
         #[cfg(test)]
         if take_cleanup_quarantine_rebind_failure_for_test() {
-            anyhow::bail!(
-                "injected crash cut after durable Skill cleanup quarantine rebind"
-            );
+            anyhow::bail!("injected crash cut after durable Skill cleanup quarantine rebind");
         }
         let active = record
             .cleanup_started
@@ -6270,29 +6292,29 @@ fn remove_transaction_artifact_if_present(
             }
             #[cfg(windows)]
             {
-            // Recovery may legitimately resume after a broken install/uninstall
-            // entry has been replaced by a file or no-follow link. Bind that
-            // exact leaf again and let the bound removal primitive prove its
-            // persisted identity through the final destructive operation.
-            // This is intentionally not a path-based unlink: an attacker who
-            // swaps the same name, including to a real directory, remains
-            // fail-closed and no replacement inherits deletion authority.
-            let expected_identity = expected_identity
-                .context("bound pending skill transaction identity is unexpectedly absent")?;
-            let bound = bind_child_object(&root.dir, name, &display)?;
-            anyhow::ensure!(
-                bound.identity_token() == expected_identity,
-                "refuse to remove pending skill transaction whose identity changed: {}",
-                display.display()
-            );
-            bound
-                .remove_bound_non_directory(&root.dir, name, &display)
-                .with_context(|| {
-                    format!(
-                        "remove exact non-directory pending skill transaction {}",
-                        display.display()
-                    )
-                })
+                // Recovery may legitimately resume after a broken install/uninstall
+                // entry has been replaced by a file or no-follow link. Bind that
+                // exact leaf again and let the bound removal primitive prove its
+                // persisted identity through the final destructive operation.
+                // This is intentionally not a path-based unlink: an attacker who
+                // swaps the same name, including to a real directory, remains
+                // fail-closed and no replacement inherits deletion authority.
+                let expected_identity = expected_identity
+                    .context("bound pending skill transaction identity is unexpectedly absent")?;
+                let bound = bind_child_object(&root.dir, name, &display)?;
+                anyhow::ensure!(
+                    bound.identity_token() == expected_identity,
+                    "refuse to remove pending skill transaction whose identity changed: {}",
+                    display.display()
+                );
+                bound
+                    .remove_bound_non_directory(&root.dir, name, &display)
+                    .with_context(|| {
+                        format!(
+                            "remove exact non-directory pending skill transaction {}",
+                            display.display()
+                        )
+                    })
             }
             #[cfg(not(any(unix, windows)))]
             anyhow::bail!(
@@ -7096,14 +7118,11 @@ mod tests {
             .unwrap()
             .unwrap();
         let _guard = lock_skill_mutations(&root).unwrap();
-        let expected_identity = bind_child_object(
-            &root.dir,
-            OsStr::new(artifact_name.as_str()),
-            &artifact,
-        )
-        .unwrap()
-        .identity_token()
-        .to_string();
+        let expected_identity =
+            bind_child_object(&root.dir, OsStr::new(artifact_name.as_str()), &artifact)
+                .unwrap()
+                .identity_token()
+                .to_string();
 
         std::fs::rename(&artifact, &displaced).unwrap();
         std::fs::write(&artifact, b"replacement private artifact").unwrap();
@@ -7115,8 +7134,14 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("identity changed"));
-        assert_eq!(std::fs::read(&artifact).unwrap(), b"replacement private artifact");
-        assert_eq!(std::fs::read(&displaced).unwrap(), b"authorized private artifact");
+        assert_eq!(
+            std::fs::read(&artifact).unwrap(),
+            b"replacement private artifact"
+        );
+        assert_eq!(
+            std::fs::read(&displaced).unwrap(),
+            b"authorized private artifact"
+        );
     }
 
     #[test]
@@ -7131,14 +7156,11 @@ mod tests {
             .unwrap()
             .unwrap();
         let _guard = lock_skill_mutations(&root).unwrap();
-        let expected_identity = bind_child_object(
-            &root.dir,
-            OsStr::new(artifact_name.as_str()),
-            &artifact,
-        )
-        .unwrap()
-        .identity_token()
-        .to_string();
+        let expected_identity =
+            bind_child_object(&root.dir, OsStr::new(artifact_name.as_str()), &artifact)
+                .unwrap()
+                .identity_token()
+                .to_string();
 
         std::fs::rename(&artifact, &displaced).unwrap();
         std::fs::create_dir(&artifact).unwrap();
@@ -7150,8 +7172,14 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("identity changed"));
-        assert!(artifact.is_dir(), "replacement directory must never be deleted");
-        assert_eq!(std::fs::read(&displaced).unwrap(), b"authorized private artifact");
+        assert!(
+            artifact.is_dir(),
+            "replacement directory must never be deleted"
+        );
+        assert_eq!(
+            std::fs::read(&displaced).unwrap(),
+            b"authorized private artifact"
+        );
     }
 
     #[test]
@@ -8913,7 +8941,11 @@ mod tests {
         let linked = dest.path().join("linked-skill");
         try_symlink_dir(outside.path(), &linked).expect("create directory link test fixture");
 
-        assert!(uninstall_with_report(dest.path(), "linked-skill").unwrap().removed);
+        assert!(
+            uninstall_with_report(dest.path(), "linked-skill")
+                .unwrap()
+                .removed
+        );
         assert_eq!(std::fs::read(sentinel).unwrap(), b"keep");
         assert!(std::fs::symlink_metadata(linked).is_err());
         #[cfg(unix)]
@@ -8946,7 +8978,11 @@ mod tests {
         assert_eq!(row.error.as_deref(), Some("skill entry is not a directory"));
         assert_eq!(row.repairability, Some(SkillRepairability::RemoveOnly));
 
-        assert!(uninstall_with_report(dest.path(), "broken-file").unwrap().removed);
+        assert!(
+            uninstall_with_report(dest.path(), "broken-file")
+                .unwrap()
+                .removed
+        );
         assert!(!broken.exists());
         #[cfg(unix)]
         assert!(!dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
@@ -8984,7 +9020,10 @@ mod tests {
         acknowledge_test_skill_mutation(dest.path()).unwrap();
         assert!(!dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
         assert_eq!(list_retained_skill_cleanups(dest.path()).unwrap().len(), 1);
-        assert!(!broken.exists(), "only the journal-bound quarantine remains");
+        assert!(
+            !broken.exists(),
+            "only the journal-bound quarantine remains"
+        );
     }
 
     #[test]
