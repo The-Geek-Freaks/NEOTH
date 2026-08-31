@@ -990,11 +990,15 @@ fn prepare_private_history_target(path: &Path) -> Result<PreparedHistoryTarget> 
 /// is hardened through an identity-bound, no-reparse handle before SQLite sees
 /// it; empty or foreign-owned database files remain rejected.
 fn prepare_existing_private_history_file(path: &Path) -> Result<std::fs::File> {
-    match open_private_history_file(path) {
-        Ok(file) => Ok(file),
-        Err(_strict_error) => {
-            #[cfg(windows)]
-            {
+    #[cfg(not(windows))]
+    {
+        open_private_history_file(path)
+    }
+    #[cfg(windows)]
+    {
+        match open_private_history_file(path) {
+            Ok(file) => Ok(file),
+            Err(_strict_error) => {
                 let file = open_private_history_file_witness(path)?;
                 anyhow::ensure!(
                     file.metadata()
@@ -1007,10 +1011,6 @@ fn prepare_existing_private_history_file(path: &Path) -> Result<std::fs::File> {
                     .context("harden owner-bound legacy private History database DACL")?;
                 verify_private_history_file(path)?;
                 Ok(file)
-            }
-            #[cfg(not(windows))]
-            {
-                Err(_strict_error)
             }
         }
     }

@@ -507,6 +507,7 @@ impl BoundChildObject {
     /// journal-bound artifact. It must remove that exact namespace object,
     /// while still rejecting a same-name replacement or a real-directory type
     /// swap.
+    #[cfg(windows)]
     pub(crate) fn remove_bound_non_directory(
         self,
         parent: &Dir,
