@@ -462,9 +462,9 @@ pub struct InferenceTopology {
     /// Ouro O-5a (Session 22): post-load weight quantisation mode for
     /// `LocalOuroAdapter`. Default `None` (load native BF16/F32 from
     /// safetensors). `Q8` is the operator opt-in for ~50% peak-memory
-    /// reduction at the cost of ~30-60 s extra cold-start; O-5a wires
-    /// the knob, O-5b ships the QTensor forward-pass swap (until then
-    /// `Q8` falls through to `None` with a tracing-warn).
+    /// reduction at the cost of ~30-60 s extra cold-start. `Q8` dispatches
+    /// the parallel quantized Ouro forward path and never falls through to
+    /// native precision.
     #[serde(default)]
     pub ouro_quant_mode: crate::providers::ouro::model::OuroQuantMode,
     /// Fallback slot used when `mode = single` or when a hemisphere is

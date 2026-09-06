@@ -1617,8 +1617,9 @@ mod tests {
         // synthesis_cron, skill_curator, auto_skill_extract) = 52;
         // + OMI runtime config/credential/ledger/supervisor posture = 53;
         // + canonical TTS runtime/provider readiness = 54;
-        // + ppt_master, graphify and officecli readiness = 57.
-        assert_eq!(outs.len(), 57);
+        // + ppt_master, graphify and officecli readiness = 57;
+        // + code-map lifecycle state/repair diagnostic = 58.
+        assert_eq!(outs.len(), 58);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }

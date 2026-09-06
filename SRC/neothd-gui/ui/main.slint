@@ -20,7 +20,7 @@
 import { AboutSlint, Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette, ContextMenu, MenuItem, ConfirmDialog } from "components.slint";
-import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, CodeMapHitRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow, PermRow } from "settings.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, CodeMapHitRow, CodeMapManagedRootRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow, PermRow } from "settings.slint";
 import { ChatView, ChatMessage, ChatChannelRow, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
@@ -1350,6 +1350,37 @@ export component MainWindow inherits Window {
     in property <[CodeMapHitRow]> code-map-hits: [];
     callback code-map-browse-clicked;
     callback code-map-search-clicked(string, string);
+    in property <bool> code-map-lifecycle-running: false;
+    in property <bool> code-map-lifecycle-refresh-active: false;
+    in property <bool> code-map-lifecycle-cancel-pending: false;
+    in property <bool> code-map-lifecycle-error: false;
+    in property <bool> code-map-lifecycle-can-setup: false;
+    in property <bool> code-map-lifecycle-can-refresh: false;
+    in property <bool> code-map-lifecycle-can-force-rebuild: false;
+    in property <bool> code-map-lifecycle-can-repair: false;
+    in property <string> code-map-lifecycle-operation: "";
+    in property <string> code-map-lifecycle-state: "Choose a repository root to inspect its index.";
+    in property <string> code-map-lifecycle-detail: "";
+    in property <string> code-map-lifecycle-runtime: "Daemon watcher status has not been read.";
+    in property <string> code-map-lifecycle-canonical-root: "";
+    in property <string> code-map-lifecycle-root-identity: "";
+    in property <string> code-map-lifecycle-index-generation: "";
+    in property <string> code-map-lifecycle-graph-generation: "";
+    in-out property <bool> code-map-lifecycle-config-enabled: false;
+    in-out property <string> code-map-lifecycle-debounce-millis: "500";
+    in-out property <string> code-map-lifecycle-reconciliation-secs: "300";
+    in property <bool> code-map-lifecycle-config-running: false;
+    in property <string> code-map-lifecycle-config-status: "No lifecycle configuration has been applied this session.";
+    in property <[CodeMapManagedRootRow]> code-map-lifecycle-managed-roots: [];
+    callback code-map-lifecycle-inspect-clicked(string);
+    callback code-map-lifecycle-refresh-clicked(string, bool, bool);
+    callback code-map-lifecycle-cancel-clicked;
+    callback code-map-lifecycle-config-apply-clicked(bool, string, string);
+    callback code-map-lifecycle-managed-root-remove-clicked(string);
+    callback buddy-code-map-status;
+    callback buddy-code-map-setup;
+    callback buddy-code-map-rebuild;
+    callback buddy-code-map-cancel;
     callback channels-refresh-clicked;
     callback channel-test(string);
     callback channel-remove(string);
@@ -3580,6 +3611,37 @@ export component MainWindow inherits Window {
             code-map-hits: root.code-map-hits;
             code-map-browse-clicked => { root.code-map-browse-clicked(); }
             code-map-search-clicked(repo-root, query) => { root.code-map-search-clicked(repo-root, query); }
+            code-map-lifecycle-running: root.code-map-lifecycle-running;
+            code-map-lifecycle-refresh-active: root.code-map-lifecycle-refresh-active;
+            code-map-lifecycle-cancel-pending: root.code-map-lifecycle-cancel-pending;
+            code-map-lifecycle-error: root.code-map-lifecycle-error;
+            code-map-lifecycle-can-setup: root.code-map-lifecycle-can-setup;
+            code-map-lifecycle-can-refresh: root.code-map-lifecycle-can-refresh;
+            code-map-lifecycle-can-force-rebuild: root.code-map-lifecycle-can-force-rebuild;
+            code-map-lifecycle-can-repair: root.code-map-lifecycle-can-repair;
+            code-map-lifecycle-operation: root.code-map-lifecycle-operation;
+            code-map-lifecycle-state: root.code-map-lifecycle-state;
+            code-map-lifecycle-detail: root.code-map-lifecycle-detail;
+            code-map-lifecycle-runtime: root.code-map-lifecycle-runtime;
+            code-map-lifecycle-canonical-root: root.code-map-lifecycle-canonical-root;
+            code-map-lifecycle-root-identity: root.code-map-lifecycle-root-identity;
+            code-map-lifecycle-index-generation: root.code-map-lifecycle-index-generation;
+            code-map-lifecycle-graph-generation: root.code-map-lifecycle-graph-generation;
+            code-map-lifecycle-config-enabled <=> root.code-map-lifecycle-config-enabled;
+            code-map-lifecycle-debounce-millis <=> root.code-map-lifecycle-debounce-millis;
+            code-map-lifecycle-reconciliation-secs <=> root.code-map-lifecycle-reconciliation-secs;
+            code-map-lifecycle-config-running: root.code-map-lifecycle-config-running;
+            code-map-lifecycle-config-status: root.code-map-lifecycle-config-status;
+            code-map-lifecycle-managed-roots: root.code-map-lifecycle-managed-roots;
+            code-map-lifecycle-inspect-clicked(repo-root) => { root.code-map-lifecycle-inspect-clicked(repo-root); }
+            code-map-lifecycle-refresh-clicked(repo-root, force, repair-corrupt) => { root.code-map-lifecycle-refresh-clicked(repo-root, force, repair-corrupt); }
+            code-map-lifecycle-cancel-clicked => { root.code-map-lifecycle-cancel-clicked(); }
+            code-map-lifecycle-config-apply-clicked(enabled, debounce-millis, reconciliation-secs) => {
+                root.code-map-lifecycle-config-apply-clicked(enabled, debounce-millis, reconciliation-secs);
+            }
+            code-map-lifecycle-managed-root-remove-clicked(path) => {
+                root.code-map-lifecycle-managed-root-remove-clicked(path);
+            }
             // A3 — session selector.
             kanban-sessions: root.kanban-sessions;
             kanban-session-idx <=> root.kanban-session-idx;
@@ -4988,12 +5050,16 @@ export component MainWindow inherits Window {
     if root.buddy-menu-open: ContextMenu {
         width: 100%; height: 100%;
         menu-x: root.width - 250px;
-        menu-y: root.height - 290px;
+        menu-y: root.height - 410px;
         items: [
             { label: "Open chat", glyph: "💬", danger: false },
             { label: "Minimize to companion", glyph: "⊟", danger: false },
             { label: root.cfg-quiet-hours-enabled ? "Quiet hours: on — disable" : "Quiet hours: off — enable", glyph: "☾", danger: false },
             { label: "Buddy settings", glyph: "⊙", danger: false },
+            { label: root.code-map-root == "" ? "Select a repository root first" : "Inspect repository index", glyph: "⌕", danger: false },
+            { label: root.code-map-lifecycle-refresh-active ? "Index refresh is active" : "Set up or refresh index", glyph: "↻", danger: false },
+            { label: root.code-map-root == "" ? "Select a repository root first" : "Force rebuild index", glyph: "↺", danger: root.code-map-root != "" },
+            { label: root.code-map-lifecycle-refresh-active ? "Cancel index refresh" : "No index refresh active", glyph: "×", danger: root.code-map-lifecycle-refresh-active },
         ];
         picked(i) => {
             root.buddy-menu-open = false;
@@ -5005,6 +5071,10 @@ export component MainWindow inherits Window {
                     root.cfg-quiet-hours-start, root.cfg-quiet-hours-end);
             }
             if (i == 3) { root.nav-active = "buddyconfig"; root.step = WizardStep.settings; }
+            if (i == 4) { root.buddy-code-map-status(); }
+            if (i == 5) { root.buddy-code-map-setup(); }
+            if (i == 6) { root.buddy-code-map-rebuild(); }
+            if (i == 7) { root.buddy-code-map-cancel(); }
         }
         dismissed => { root.buddy-menu-open = false; }
     }

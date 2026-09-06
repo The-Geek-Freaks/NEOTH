@@ -842,7 +842,7 @@ pub(crate) fn open_private_history(path: &Path) -> Result<PrivateHistoryConnecti
     open_private_history_with_hooks(path, || {}, || {})
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn open_private_history_with_hook(
     path: &Path,
     before_sqlite_open: impl FnOnce(),

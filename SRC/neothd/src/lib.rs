@@ -91,12 +91,6 @@ pub(crate) mod test_env {
         pub(crate) fn path(&self) -> &Path {
             &self.path
         }
-
-        /// Retain the exact fixture directory after consuming its cleanup guard.
-        pub(crate) fn keep(mut self) -> PathBuf {
-            self.keep = true;
-            self.path.clone()
-        }
     }
 
     #[cfg(windows)]
@@ -355,6 +349,11 @@ pub mod wasm_plugin;
 /// GOLD-FEAT-03 — NEOTH self-wiki: render the `PLAN/` design corpus into an
 /// interlinked Obsidian vault (`neoth obsidian wiki-build`).
 pub mod wiki;
+/// Canonical Windows NT file-open ABI declarations shared by handle-relative
+/// filesystem operations. Kept crate-private so callers cannot bypass their
+/// respective ownership and no-follow policy layers.
+#[cfg(windows)]
+pub(crate) mod windows_nt;
 pub mod wizard;
 
 pub const BANNER: &str = "Neoth ready. Sup.";

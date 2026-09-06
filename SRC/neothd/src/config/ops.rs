@@ -1,5 +1,7 @@
 //! Operational, plugin, updater, supervisor, and profile configuration.
 
+use std::path::PathBuf;
+
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -647,6 +649,151 @@ pub struct CodeMapConfig {
         deserialize_with = "deserialize_coding_summary_token_budget"
     )]
     pub coding_summary_token_budget: u32,
+    /// Default-off daemon ownership for explicitly selected repository roots.
+    /// It is separate from both automatic chat context and one-shot coding
+    /// recall limits.
+    #[serde(default)]
+    pub lifecycle: CodeMapLifecycleConfig,
+}
+
+/// Bounded daemon lifecycle controls for native code-map refreshes.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CodeMapLifecycleConfig {
+    /// The daemon never infers a managed repository from its service CWD.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Operator-selected absolute repository roots. Canonical physical identity
+    /// is verified during config validation before any watcher is started.
+    #[serde(default, deserialize_with = "deserialize_code_map_managed_roots")]
+    pub managed_roots: Vec<PathBuf>,
+    /// Coalesce filesystem invalidations for this bounded interval before a
+    /// lifecycle refresh. Watcher events are dirty signals, never freshness
+    /// proof.
+    #[serde(
+        default = "default_code_map_debounce_millis",
+        deserialize_with = "deserialize_code_map_debounce_millis"
+    )]
+    pub debounce_millis: u64,
+    /// Strong freshness reconciliation cadence, used to discover missed watcher
+    /// events. It does not derive a freshness claim from watcher quietness.
+    #[serde(
+        default = "default_code_map_reconciliation_interval_secs",
+        deserialize_with = "deserialize_code_map_reconciliation_interval_secs"
+    )]
+    pub reconciliation_interval_secs: u64,
+}
+
+impl CodeMapLifecycleConfig {
+    pub const MAX_MANAGED_ROOTS: usize = 8;
+    pub const MIN_DEBOUNCE_MILLIS: u64 = 50;
+    pub const MAX_DEBOUNCE_MILLIS: u64 = 60_000;
+    pub const MIN_RECONCILIATION_INTERVAL_SECS: u64 = 30;
+    pub const MAX_RECONCILIATION_INTERVAL_SECS: u64 = 3_600;
+
+    /// Resolve the configured roots to canonical physical identities. A
+    /// managed root cannot alias, duplicate, contain, or be contained by a
+    /// second managed root, because that would produce overlapping recursive
+    /// watchers and ambiguous refresh authority.
+    pub fn canonical_managed_roots(
+        &self,
+    ) -> anyhow::Result<Vec<crate::code_map::CanonicalRepoRoot>> {
+        self.validate_shape()?;
+        let roots: Vec<_> = self
+            .managed_roots
+            .iter()
+            .map(|root| crate::code_map::CanonicalRepoRoot::discover(root))
+            .collect::<anyhow::Result<_>>()?;
+        Self::validate_root_conflicts(&roots)?;
+        Ok(roots)
+    }
+
+    fn validate_shape(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.managed_roots.len() <= Self::MAX_MANAGED_ROOTS,
+            "code_map.lifecycle.managed_roots supports at most {} roots",
+            Self::MAX_MANAGED_ROOTS
+        );
+        anyhow::ensure!(
+            !self.enabled || !self.managed_roots.is_empty(),
+            "code_map.lifecycle.managed_roots must contain at least one root when enabled"
+        );
+        anyhow::ensure!(
+            self.managed_roots.iter().all(|root| root.is_absolute()),
+            "code_map.lifecycle.managed_roots entries must be absolute paths"
+        );
+        anyhow::ensure!(
+            (Self::MIN_DEBOUNCE_MILLIS..=Self::MAX_DEBOUNCE_MILLIS).contains(&self.debounce_millis),
+            "code_map.lifecycle.debounce_millis must be between {} and {}",
+            Self::MIN_DEBOUNCE_MILLIS,
+            Self::MAX_DEBOUNCE_MILLIS
+        );
+        anyhow::ensure!(
+            (Self::MIN_RECONCILIATION_INTERVAL_SECS..=Self::MAX_RECONCILIATION_INTERVAL_SECS)
+                .contains(&self.reconciliation_interval_secs),
+            "code_map.lifecycle.reconciliation_interval_secs must be between {} and {}",
+            Self::MIN_RECONCILIATION_INTERVAL_SECS,
+            Self::MAX_RECONCILIATION_INTERVAL_SECS
+        );
+        Ok(())
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        self.validate_shape()?;
+        // Exact duplicate spellings are always structurally invalid, even if
+        // the directory was moved or deleted while the daemon was stopped.
+        for (index, root) in self.managed_roots.iter().enumerate() {
+            anyhow::ensure!(
+                !self
+                    .managed_roots
+                    .iter()
+                    .skip(index + 1)
+                    .any(|other| other == root),
+                "code_map.lifecycle.managed_roots contains the same root twice: {}",
+                root.display()
+            );
+        }
+        // Config loading must preserve a formerly valid root that is currently
+        // absent, so Doctor/GUI can expose and remove it. Physical aliases and
+        // overlap remain rejected for every root that is available now; the
+        // strict `canonical_managed_roots` path remains the runtime gate.
+        let available = self
+            .managed_roots
+            .iter()
+            .filter_map(|root| crate::code_map::CanonicalRepoRoot::discover(root).ok())
+            .collect::<Vec<_>>();
+        Self::validate_root_conflicts(&available)
+    }
+
+    fn validate_root_conflicts(roots: &[crate::code_map::CanonicalRepoRoot]) -> anyhow::Result<()> {
+        for (index, root) in roots.iter().enumerate() {
+            for other in roots.iter().skip(index + 1) {
+                anyhow::ensure!(
+                    root != other,
+                    "code_map.lifecycle.managed_roots contains the same physical root twice: {}",
+                    root.display()
+                );
+                anyhow::ensure!(
+                    !root.path().starts_with(other.path())
+                        && !other.path().starts_with(root.path()),
+                    "code_map.lifecycle.managed_roots must not overlap: {} and {}",
+                    root.display(),
+                    other.display()
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for CodeMapLifecycleConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            managed_roots: Vec::new(),
+            debounce_millis: default_code_map_debounce_millis(),
+            reconciliation_interval_secs: default_code_map_reconciliation_interval_secs(),
+        }
+    }
 }
 
 fn default_auto_context_max_files() -> u32 {
@@ -665,6 +812,14 @@ fn default_coding_summary_token_budget() -> u32 {
     2_048
 }
 
+fn default_code_map_debounce_millis() -> u64 {
+    500
+}
+
+fn default_code_map_reconciliation_interval_secs() -> u64 {
+    300
+}
+
 fn deserialize_code_map_u32_in_range<'de, D>(
     deserializer: D,
     field: &str,
@@ -675,6 +830,24 @@ where
     D: Deserializer<'de>,
 {
     let value = u32::deserialize(deserializer)?;
+    if !(minimum..=maximum).contains(&value) {
+        return Err(D::Error::custom(format!(
+            "{field} must be between {minimum} and {maximum}"
+        )));
+    }
+    Ok(value)
+}
+
+fn deserialize_code_map_u64_in_range<'de, D>(
+    deserializer: D,
+    field: &str,
+    minimum: u64,
+    maximum: u64,
+) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u64::deserialize(deserializer)?;
     if !(minimum..=maximum).contains(&value) {
         return Err(D::Error::custom(format!(
             "{field} must be between {minimum} and {maximum}"
@@ -711,6 +884,51 @@ where
     deserialize_code_map_u32_in_range(deserializer, "coding_summary_token_budget", 128, 12_000)
 }
 
+fn deserialize_code_map_managed_roots<'de, D>(deserializer: D) -> Result<Vec<PathBuf>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let roots = Vec::<PathBuf>::deserialize(deserializer)?;
+    if roots.len() > CodeMapLifecycleConfig::MAX_MANAGED_ROOTS {
+        return Err(D::Error::custom(format!(
+            "code_map.lifecycle.managed_roots supports at most {} roots",
+            CodeMapLifecycleConfig::MAX_MANAGED_ROOTS
+        )));
+    }
+    if roots.iter().any(|root| !root.is_absolute()) {
+        return Err(D::Error::custom(
+            "code_map.lifecycle.managed_roots entries must be absolute paths",
+        ));
+    }
+    Ok(roots)
+}
+
+fn deserialize_code_map_debounce_millis<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_code_map_u64_in_range(
+        deserializer,
+        "code_map.lifecycle.debounce_millis",
+        CodeMapLifecycleConfig::MIN_DEBOUNCE_MILLIS,
+        CodeMapLifecycleConfig::MAX_DEBOUNCE_MILLIS,
+    )
+}
+
+fn deserialize_code_map_reconciliation_interval_secs<'de, D>(
+    deserializer: D,
+) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_code_map_u64_in_range(
+        deserializer,
+        "code_map.lifecycle.reconciliation_interval_secs",
+        CodeMapLifecycleConfig::MIN_RECONCILIATION_INTERVAL_SECS,
+        CodeMapLifecycleConfig::MAX_RECONCILIATION_INTERVAL_SECS,
+    )
+}
+
 impl Default for CodeMapConfig {
     fn default() -> Self {
         Self {
@@ -718,6 +936,7 @@ impl Default for CodeMapConfig {
             coding_recall_max_files: default_coding_recall_max_files(),
             coding_callers_per_symbol: default_coding_callers_per_symbol(),
             coding_summary_token_budget: default_coding_summary_token_budget(),
+            lifecycle: CodeMapLifecycleConfig::default(),
         }
     }
 }
@@ -738,6 +957,7 @@ impl CodeMapConfig {
         if !(128..=12_000).contains(&self.coding_summary_token_budget) {
             anyhow::bail!("coding_summary_token_budget must be between 128 and 12000");
         }
+        self.lifecycle.validate()?;
         Ok(())
     }
 }

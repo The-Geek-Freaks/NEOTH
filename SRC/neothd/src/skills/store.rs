@@ -533,7 +533,7 @@ impl BoundChildObject {
                 )
             })?;
             anyhow::ensure!(
-                !(metadata.is_dir() && !cap_metadata_is_link_like(&metadata)),
+                !metadata.is_dir() || cap_metadata_is_link_like(&metadata),
                 "bound removal target changed into a real directory: {}",
                 display_path.display()
             );
@@ -3552,21 +3552,19 @@ mod windows_private_atomic_stage {
                 .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
                 .custom_flags(FILE_FLAG_WRITE_THROUGH);
             let file = parent.open_with(name, &options)?;
-            if protect_private_dacl_enabled {
-                if let Err(error) = protect_private_dacl(&file) {
-                    let stage_display = display_path.parent().unwrap_or(display_path).join(name);
-                    let cleanup = super::windows_mark_delete(&file, &stage_display);
-                    return Err(std::io::Error::other(match cleanup {
-                        Ok(()) => format!(
-                            "protect capability-bound atomic stage for {}: {error:#}",
-                            display_path.display()
-                        ),
-                        Err(cleanup_error) => format!(
-                            "protect capability-bound atomic stage for {}: {error:#}; capability-relative cleanup of exact stage also failed: {cleanup_error:#}",
-                            display_path.display()
-                        ),
-                    }));
-                }
+            if protect_private_dacl_enabled && let Err(error) = protect_private_dacl(&file) {
+                let stage_display = display_path.parent().unwrap_or(display_path).join(name);
+                let cleanup = super::windows_mark_delete(&file, &stage_display);
+                return Err(std::io::Error::other(match cleanup {
+                    Ok(()) => format!(
+                        "protect capability-bound atomic stage for {}: {error:#}",
+                        display_path.display()
+                    ),
+                    Err(cleanup_error) => format!(
+                        "protect capability-bound atomic stage for {}: {error:#}; capability-relative cleanup of exact stage also failed: {cleanup_error:#}",
+                        display_path.display()
+                    ),
+                }));
             }
             let volume = qualify_exact_handle(&file);
             Ok(Self { file, volume })

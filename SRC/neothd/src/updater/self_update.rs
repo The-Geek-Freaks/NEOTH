@@ -29,6 +29,8 @@ use crate::updater::authority::{
     UpdaterLeafOutcomeCode, UpdaterLeafRequest, UpdaterLeafSuccess, UpdaterStageCompletion,
 };
 use crate::wal::writer::WalWriterHandle;
+#[cfg(windows)]
+use crate::windows_nt::{NtCreateFile, NtIoStatusBlock, NtObjectAttributes, NtUnicodeString};
 
 /// One GitHub Release as returned by
 /// `/repos/{owner}/{repo}/releases/latest`. We only care about the
@@ -3146,57 +3148,6 @@ fn open_directory_nofollow(path: &Path, label: &str) -> Result<std::fs::File> {
     Ok(directory)
 }
 
-#[cfg(windows)]
-#[repr(C)]
-struct NtUnicodeString {
-    length: u16,
-    maximum_length: u16,
-    buffer: *mut u16,
-}
-
-#[cfg(windows)]
-#[repr(C)]
-struct NtObjectAttributes {
-    length: u32,
-    root_directory: *mut std::ffi::c_void,
-    object_name: *const NtUnicodeString,
-    attributes: u32,
-    security_descriptor: *const std::ffi::c_void,
-    security_quality_of_service: *const std::ffi::c_void,
-}
-
-#[cfg(windows)]
-#[repr(C)]
-union NtIoStatusValue {
-    status: i32,
-    pointer: *mut std::ffi::c_void,
-}
-
-#[cfg(windows)]
-#[repr(C)]
-struct NtIoStatusBlock {
-    value: NtIoStatusValue,
-    information: usize,
-}
-
-#[cfg(windows)]
-#[link(name = "ntdll")]
-unsafe extern "system" {
-    fn NtCreateFile(
-        file_handle: *mut *mut std::ffi::c_void,
-        desired_access: u32,
-        object_attributes: *const NtObjectAttributes,
-        io_status_block: *mut NtIoStatusBlock,
-        allocation_size: *const i64,
-        file_attributes: u32,
-        share_access: u32,
-        create_disposition: u32,
-        create_options: u32,
-        ea_buffer: *const std::ffi::c_void,
-        ea_length: u32,
-    ) -> i32;
-}
-
 fn open_relative_nofollow(
     parent: &std::fs::File,
     component: &std::ffi::OsStr,
@@ -3260,7 +3211,7 @@ fn open_relative_nofollow(
             .checked_mul(std::mem::size_of::<u16>())
             .and_then(|length| u16::try_from(length).ok())
             .ok_or_else(|| anyhow::anyhow!("{label} path component is too long"))?;
-        let name = NtUnicodeString {
+        let mut name = NtUnicodeString {
             length: byte_length,
             maximum_length: byte_length,
             buffer: wide.as_ptr().cast_mut(),
@@ -3274,17 +3225,12 @@ fn open_relative_nofollow(
                 std::mem::size_of::<NtObjectAttributes>() as u32
             },
             root_directory: parent.as_raw_handle(),
-            object_name: &name,
+            object_name: &mut name,
             attributes: OBJ_CASE_INSENSITIVE,
-            security_descriptor: std::ptr::null(),
-            security_quality_of_service: std::ptr::null(),
+            security_descriptor: std::ptr::null_mut(),
+            security_quality_of_service: std::ptr::null_mut(),
         };
-        let mut io_status = NtIoStatusBlock {
-            value: NtIoStatusValue {
-                pointer: std::ptr::null_mut(),
-            },
-            information: 0,
-        };
+        let mut io_status = NtIoStatusBlock::zeroed();
         let mut handle = std::ptr::null_mut();
         let desired_access = if directory {
             FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE

@@ -56,6 +56,20 @@ pub enum GuiActivity {
     AgentDeploy,
     /// Explicit repository-root code-map recall in the Coding panel.
     CodeMapRecall,
+    /// Native, read-only inspection of the selected repository index.
+    CodeMapLifecycleInspect,
+    /// Lifecycle status was read from typed core evidence.
+    CodeMapLifecycleStatus,
+    /// A native refresh/rebuild worker owns the selected repository root.
+    CodeMapLifecycleRefreshing,
+    /// Cancellation was requested; the worker has not returned its receipt yet.
+    CodeMapLifecycleCancelling,
+    /// The native lifecycle worker returned a successful terminal receipt.
+    CodeMapLifecycleComplete,
+    /// Typed lifecycle configuration was persisted and its reload request was receipted.
+    CodeMapLifecycleConfigSaved,
+    /// Lifecycle inspection or refresh failed, or returned a failure receipt.
+    CodeMapLifecycleFailed,
 
     // ── Daemon lifecycle (WAL-driven, fired by the events follower) ──
     /// Dreaming pass composing a journal entry (WAL 0xF4).
@@ -111,6 +125,13 @@ impl GuiActivity {
             GuiActivity::AgentParallel => ("parallel", "parallel workers"),
             GuiActivity::AgentDeploy => ("agents", "agents deployed"),
             GuiActivity::CodeMapRecall => ("searching", "searching repository…"),
+            GuiActivity::CodeMapLifecycleInspect => ("audit", "inspecting index…"),
+            GuiActivity::CodeMapLifecycleStatus => ("audit", "index status ready"),
+            GuiActivity::CodeMapLifecycleRefreshing => ("working", "refreshing index…"),
+            GuiActivity::CodeMapLifecycleCancelling => ("alert", "cancelling index…"),
+            GuiActivity::CodeMapLifecycleComplete => ("success", "index receipt ready"),
+            GuiActivity::CodeMapLifecycleConfigSaved => ("success", "lifecycle config saved"),
+            GuiActivity::CodeMapLifecycleFailed => ("error", "index action failed"),
 
             GuiActivity::Dreaming => ("sleeping", "dreaming…"),
             GuiActivity::CouncilDeliberating => ("parallel", "council in session"),
@@ -197,6 +218,13 @@ mod tests {
         GuiActivity::AgentParallel,
         GuiActivity::AgentDeploy,
         GuiActivity::CodeMapRecall,
+        GuiActivity::CodeMapLifecycleInspect,
+        GuiActivity::CodeMapLifecycleStatus,
+        GuiActivity::CodeMapLifecycleRefreshing,
+        GuiActivity::CodeMapLifecycleCancelling,
+        GuiActivity::CodeMapLifecycleComplete,
+        GuiActivity::CodeMapLifecycleConfigSaved,
+        GuiActivity::CodeMapLifecycleFailed,
         GuiActivity::Dreaming,
         GuiActivity::CouncilDeliberating,
         GuiActivity::SelfImproving,
@@ -238,6 +266,34 @@ mod tests {
         assert_eq!(
             GuiActivity::CodeMapRecall.mood(),
             ("searching", "searching repository…")
+        );
+    }
+
+    #[test]
+    fn code_map_lifecycle_uses_rendered_truthful_moods() {
+        assert_eq!(
+            GuiActivity::CodeMapLifecycleInspect.mood(),
+            ("audit", "inspecting index…")
+        );
+        assert_eq!(
+            GuiActivity::CodeMapLifecycleRefreshing.mood(),
+            ("working", "refreshing index…")
+        );
+        assert_eq!(
+            GuiActivity::CodeMapLifecycleCancelling.mood(),
+            ("alert", "cancelling index…")
+        );
+        assert_eq!(
+            GuiActivity::CodeMapLifecycleComplete.mood(),
+            ("success", "index receipt ready")
+        );
+        assert_eq!(
+            GuiActivity::CodeMapLifecycleConfigSaved.mood(),
+            ("success", "lifecycle config saved")
+        );
+        assert_eq!(
+            GuiActivity::CodeMapLifecycleFailed.mood(),
+            ("error", "index action failed")
         );
     }
 

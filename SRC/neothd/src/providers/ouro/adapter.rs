@@ -13,7 +13,7 @@
 //!     router downstreams shipped Day-14b Phase 2-4
 //!
 //! Default checkpoint: `ByteDance/Ouro-1.4B-Thinking` — small
-//! footprint (~3 GB BF16, ~2 GB Q8 when O-1c Q8 path lands),
+//! footprint (~3 GB BF16, ~2 GB after the Q8 conversion),
 //! reasoning-friendly via the -Thinking SFT pre-training.
 
 use std::path::PathBuf;
@@ -35,6 +35,7 @@ use crate::providers::{
     ProviderDispatchPermit, ProviderRequestControls, Request,
 };
 
+use super::artifacts::{self, OuroLoadLease, OuroLoadReceipt};
 use super::forward::OuroModel;
 use super::model::{OuroConfig, OuroQuantMode};
 
@@ -59,6 +60,22 @@ pub const OURO_DOWNLOAD_MIN_FREE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 enum LoadedOuroModel {
     Native(OuroModel),
     Quantized(super::quantized_forward::QuantizedOuroModel),
+}
+
+/// Dispatch decision deliberately separated from model construction so Q8 has
+/// one testable, exhaustive route and cannot accidentally inherit the native
+/// branch during a future loader refactor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OuroLoadPath {
+    Native,
+    Quantized,
+}
+
+fn load_path_for(mode: OuroQuantMode) -> OuroLoadPath {
+    match mode {
+        OuroQuantMode::None => OuroLoadPath::Native,
+        OuroQuantMode::Q8 => OuroLoadPath::Quantized,
+    }
 }
 
 impl LoadedOuroModel {
@@ -133,6 +150,12 @@ struct LoadedOuro {
     /// Lives behind the same model lock; cleared on daemon restart with the rest of
     /// `LoadedOuro`, so no stale KV survives a tokenizer/model swap.
     prefix_kv_cache: super::kv_offload::KvOffloadCache,
+    /// Exact runtime inputs and dispatch identity that built `model`.  A warm
+    /// cache is usable only while this equals a freshly validated receipt.
+    receipt: OuroLoadReceipt,
+    /// Keeps retained opened files + the weight mmap alive for every tensor
+    /// built through the bound-handle Candle backend.
+    _lease: OuroLoadLease,
 }
 
 /// `LocalOuroAdapter` — operator-facing chat + embed provider
@@ -148,9 +171,8 @@ pub struct LocalOuroAdapter {
     accelerator: Option<crate::daemon::accelerator::Accelerator>,
     sampling: SamplingConfig,
     max_new_tokens: u32,
-    /// O-5a — operator-picked quant mode. `None` (default) loads
-    /// native BF16/F32. `Q8` is wired but falls through to None at
-    /// load time until O-5b ships the QTensor forward-pass swap.
+    /// Operator-picked quant mode. `Q8` always constructs the parallel
+    /// `QuantizedOuroModel`; it never falls through to native precision.
     quant_mode: OuroQuantMode,
     loaded: Arc<Mutex<Option<LoadedOuro>>>,
 }
@@ -192,12 +214,16 @@ impl LocalOuroAdapter {
         Ok(adapter)
     }
 
-    /// O-5a — operator-picked quant mode override. Returns a new
-    /// adapter (builder-style) so the existing construction sites
-    /// don't need to change. `Q8` is accepted today + plumbed
-    /// through `ensure_ouro_loaded` but falls through to native
-    /// load with a tracing-warn until O-5b lands.
+    /// Operator-picked quant mode override. Changing dispatch identity clears
+    /// a previously loaded model before this adapter can be used again.
     pub fn with_quant_mode(mut self, mode: OuroQuantMode) -> Self {
+        if self.quant_mode != mode {
+            let mut loaded = self
+                .loaded
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *loaded = None;
+        }
         self.quant_mode = mode;
         self
     }
@@ -260,23 +286,38 @@ impl LocalOuroAdapter {
     async fn ensure_artifacts(&mut self) -> Result<()> {
         use hf_hub::api::tokio::Api;
 
+        if let Some(generation) = artifacts::resolve_existing_generation(&self.cache_dir)
+            .context("inspect or recover Ouro immutable generation")?
+        {
+            self.set_runtime_paths(&generation);
+            info!(repo = %self.repo, generation = %generation.display(), "Ouro immutable generation already cached");
+            return Ok(());
+        }
         let pending = crate::media::model_manager::has_pending_download(&self.cache_dir)
             .context("inspect pending Ouro download lifecycle")?;
         let artifacts_ready =
-            self.tokenizer_path.exists() && self.config_path.exists() && self.weights_path.exists();
+            artifacts::validate_runtime_artifacts_at(&self.cache_dir, false).is_ok();
         if artifacts_ready && !pending {
             info!(repo = %self.repo, cache = %self.cache_dir.display(), "Ouro artifacts already cached");
+            let generation = artifacts::resolve_or_promote_generation(&self.cache_dir)
+                .context("promote cached Ouro artifacts into immutable generation")?;
+            self.set_runtime_paths(&generation);
             return Ok(());
         }
         let audit_cache_dir = self.cache_dir.clone();
         let audit_model_id = self.repo.clone();
+        let download_cache_dir = self.cache_dir.clone();
+        let download_repo = self.repo.clone();
+        let download_tokenizer_path = self.tokenizer_path.clone();
+        let download_config_path = self.config_path.clone();
+        let download_weights_path = self.weights_path.clone();
         crate::daemon::model_download_audit::run_implicit_model_download(
             &audit_cache_dir,
             &audit_model_id,
             crate::daemon::model_download_audit::ImplicitModelDownloadSource::Ouro,
             artifacts_ready,
             |permit| async move {
-                permit.require(&self.cache_dir, &self.repo)?;
+                permit.require(&download_cache_dir, &download_repo)?;
                 let allow_hf = crate::config::FreedomConfig::load_from_default_path_or_default()
                     .context("load Ouro download policy from freedom.yaml")?
                     .updater
@@ -288,8 +329,8 @@ impl LocalOuroAdapter {
                          local_ouro provider needs to fetch its weights from {}. Set it to true, \
                          pre-place the artifacts under {}, or run `neoth model pull` on a \
                          connected machine.",
-                        self.repo,
-                        self.cache_dir.display(),
+                        download_repo,
+                        download_cache_dir.display(),
                     );
                 }
                 if std::env::var("NEOTH_OURO_SKIP_DISK_PREFLIGHT")
@@ -297,19 +338,19 @@ impl LocalOuroAdapter {
                     .as_deref()
                     != Some("1")
                 {
-                    preflight_disk_space(&self.cache_dir, OURO_DOWNLOAD_MIN_FREE_BYTES)
+                    preflight_disk_space(&download_cache_dir, OURO_DOWNLOAD_MIN_FREE_BYTES)
                         .context("disk-space pre-flight before Ouro download")?;
                 }
                 info!(
-                    repo = %self.repo,
+                    repo = %download_repo,
                     "downloading Ouro artifacts from Hugging Face (one-time, ~3 GB)"
                 );
                 let api = Api::new().context("init HF Hub API")?;
-                let repo_handle = api.model(self.repo.clone());
+                let repo_handle = api.model(download_repo.clone());
                 for (filename, target) in [
-                    (TOKENIZER_FILE, &self.tokenizer_path),
-                    (CONFIG_FILE, &self.config_path),
-                    (SAFETENSORS_FILE, &self.weights_path),
+                    (TOKENIZER_FILE, &download_tokenizer_path),
+                    (CONFIG_FILE, &download_config_path),
+                    (SAFETENSORS_FILE, &download_weights_path),
                 ] {
                     let downloaded = tokio::time::timeout(
                         Duration::from_secs(900),
@@ -333,10 +374,21 @@ impl LocalOuroAdapter {
                         "cached"
                     );
                 }
+                artifacts::validate_runtime_artifacts_at(&download_cache_dir, true)
+                    .context("validate downloaded Ouro runtime artifacts")?;
                 Ok(())
             },
         )
-        .await
+        .await?;
+        // The audit lifecycle has now cleared its pending marker. Validate one
+        // final time in ordinary runtime mode; a download is never reported as
+        // a cache hit while it is pending or structurally corrupt.
+        artifacts::validate_runtime_artifacts_at(&self.cache_dir, false)
+            .context("validate committed Ouro runtime artifacts")?;
+        let generation = artifacts::resolve_or_promote_generation(&self.cache_dir)
+            .context("promote committed Ouro artifacts into immutable generation")?;
+        self.set_runtime_paths(&generation);
+        Ok(())
     }
 
     /// Read-only view — operator status surface uses this for
@@ -356,6 +408,17 @@ impl LocalOuroAdapter {
     /// every inference tensor lands on the exact same device instance.
     fn resolved_device(&self) -> candle_core::Device {
         device_for(self.accelerator)
+    }
+
+    fn configured_accelerator(&self) -> &'static str {
+        self.accelerator
+            .map_or("auto", |accelerator| accelerator.as_str())
+    }
+
+    fn set_runtime_paths(&mut self, generation: &std::path::Path) {
+        self.tokenizer_path = generation.join(TOKENIZER_FILE);
+        self.config_path = generation.join(CONFIG_FILE);
+        self.weights_path = generation.join(SAFETENSORS_FILE);
     }
 }
 
@@ -394,51 +457,68 @@ fn effective_max_new_tokens(configured: u32, req: &Request) -> u32 {
 /// calls return immediately.
 fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
     use candle_core::DType;
-    use candle_nn::VarBuilder;
-    use tokenizers::Tokenizer;
 
+    // Serialize this check + mmap/build with the same model-cache lock the
+    // download lifecycle uses.  The receipt is made under that lock and again
+    // after construction, so a changed cache cannot become a warm hit.
+    let _cache_guard = crate::media::model_manager::lock_model_cache_blocking(&adapter.cache_dir)
+        .context("lock Ouro model cache for load receipt")?;
+    let generation = artifacts::resolve_or_promote_generation_locked(&adapter.cache_dir)
+        .context("resolve immutable Ouro generation for load")?;
+    let device = adapter.resolved_device();
+    let receipt = artifacts::receipt_for(
+        &adapter.repo,
+        &generation,
+        adapter.quant_mode,
+        adapter.configured_accelerator(),
+        format!("{:?}", device.location()),
+    )
+    .context("validate Ouro runtime artifact receipt before load/cache hit")?;
     let mut slot = adapter
         .loaded
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if slot.is_some() {
-        return Ok(());
+    if let Some(loaded) = slot.as_ref() {
+        if loaded.receipt == receipt {
+            return Ok(());
+        }
+        info!(
+            old_receipt = %loaded.receipt.summary(),
+            new_receipt = %receipt.summary(),
+            "local_ouro: runtime artifact/load identity changed; discarding loaded model"
+        );
+        *slot = None;
     }
     let started = Instant::now();
-    // O-5c — quant mode dispatch. None → native OuroModel.
-    // Q8 → parallel QuantizedOuroModel via the swap that lands
-    // below. The defer-warn from O-5a/b is gone since
-    // `is_quant_active()` now flips true for Q8.
+    // Quant-mode dispatch is exact: native and Q8 have separate constructors.
     eprintln!(
         "→ loading Ouro weights from {} (first call only, quant={})",
-        adapter.weights_path.display(),
+        generation.join(SAFETENSORS_FILE).display(),
         adapter.quant_mode.as_str()
     );
-    let device = adapter.resolved_device();
     let dtype = DType::F32;
-    let tokenizer = Tokenizer::from_file(&adapter.tokenizer_path)
-        .map_err(|e| anyhow::anyhow!("load tokenizer.json: {e}"))?;
-    let config: OuroConfig = {
-        let body = std::fs::read_to_string(&adapter.config_path)
-            .with_context(|| format!("read {}", adapter.config_path.display()))?;
-        serde_json::from_str(&body).context("parse Ouro config.json")?
-    };
-    // SAFETY: weights file is operator-owned + opened R/O.
-    let vb = unsafe {
-        VarBuilder::from_mmaped_safetensors(&[&adapter.weights_path], dtype, &device)
-            .with_context(|| format!("mmap safetensors {}", adapter.weights_path.display()))?
-    };
+    let lease = OuroLoadLease::open(&generation, &receipt)
+        .context("open exact-file Ouro artifact load lease")?;
+    let tokenizer = lease.tokenizer()?;
+    let config: OuroConfig = lease.config()?;
+    let vb = lease.var_builder(dtype, &device);
     // O-5c — dispatch on operator's quant_mode. Q8 → parallel
     // QuantizedOuroModel (Q8 matmuls inside attention + MLP);
     // None → native OuroModel (BF16/F32 forward pass).
-    let model = if adapter.quant_mode.is_quant_active() {
-        let m = super::quantized_forward::QuantizedOuroModel::new(&config, vb)
-            .context("build QuantizedOuroModel (Q8 path)")?;
-        LoadedOuroModel::Quantized(m)
-    } else {
-        let m = OuroModel::new(&config, vb).context("build OuroModel")?;
-        LoadedOuroModel::Native(m)
+    let model = match load_path_for(adapter.quant_mode) {
+        OuroLoadPath::Quantized => {
+            let m = super::quantized_forward::QuantizedOuroModel::new(&config, vb)
+                .context("build QuantizedOuroModel (Q8 path)")?;
+            LoadedOuroModel::Quantized(m)
+        }
+        OuroLoadPath::Native => {
+            let m = OuroModel::new(&config, vb).context("build OuroModel")?;
+            LoadedOuroModel::Native(m)
+        }
     };
+    lease
+        .ensure_matches_receipt(&receipt)
+        .context("revalidate retained Ouro load lease after model construction")?;
     let eos_id = resolve_eos_id(&tokenizer);
     info!(
         repo = %adapter.repo,
@@ -446,6 +526,7 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
         eos = ?eos_id,
         loop_steps = model.loop_steps(),
         quant_mode = %adapter.quant_mode.as_str(),
+        receipt = %receipt.summary(),
         "local_ouro: model loaded into cache",
     );
     eprintln!(
@@ -491,6 +572,8 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
                 };
             super::kv_offload::KvOffloadCache::new(hot_cap, cold_cap, device, disk_dir)
         },
+        receipt,
+        _lease: lease,
     });
     Ok(())
 }
@@ -1311,6 +1394,12 @@ mod tests {
         let adapter = synthetic_adapter_with_config(dir.path().to_path_buf())
             .with_quant_mode(OuroQuantMode::Q8);
         assert_eq!(adapter.quant_mode(), OuroQuantMode::Q8);
+    }
+
+    #[test]
+    fn q8_dispatches_only_to_the_quantized_load_path() {
+        assert_eq!(load_path_for(OuroQuantMode::None), OuroLoadPath::Native);
+        assert_eq!(load_path_for(OuroQuantMode::Q8), OuroLoadPath::Quantized);
     }
 
     #[test]

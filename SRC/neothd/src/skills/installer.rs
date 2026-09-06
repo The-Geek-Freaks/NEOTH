@@ -444,7 +444,7 @@ enum SkillRetentionState {
 /// deliberately unsupported until there is an explicit, identity-bound
 /// operator authority with exclusive mutation ownership.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(all(test, unix))]
 pub(crate) struct SkillRetentionStatus {
     pub(crate) retained_records: usize,
     pub(crate) max_records: usize,
@@ -454,7 +454,7 @@ pub(crate) struct SkillRetentionStatus {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(all(test, unix))]
 pub(crate) struct RetainedSkillCleanup {
     pub(crate) operation_id: String,
     pub(crate) artifact_kind: String,
@@ -1215,7 +1215,7 @@ fn serialize_skill_retention_registry(registry: &SkillRetentionRegistry) -> Resu
 
 /// List retained cleanup evidence. The registry contains no ambient paths and
 /// never grants reclamation authority.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(all(test, unix))]
 pub(crate) fn list_retained_skill_cleanups(
     target_skills_dir: &Path,
 ) -> Result<Vec<RetainedSkillCleanup>> {
@@ -1247,7 +1247,7 @@ pub(crate) fn list_retained_skill_cleanups(
 /// Report bounded registry use and the deliberate absence of automatic or
 /// operator reclamation. A future reclaimer must prove exact retained identity
 /// and hold this same mutation lock; name-based deletion is never authority.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(all(test, unix))]
 pub(crate) fn skill_retention_status(target_skills_dir: &Path) -> Result<SkillRetentionStatus> {
     let Some(root) = open_bound_directory(target_skills_dir, false, "skills root")? else {
         return Ok(SkillRetentionStatus {
@@ -4318,7 +4318,7 @@ fn cleanup_transaction_artifact_restartable(
         }
     }
 
-    let Some(metadata) = metadata else {
+    let Some(_metadata) = metadata else {
         if record.cleanup_started.is_none() {
             return Ok(());
         }
@@ -4354,7 +4354,7 @@ fn cleanup_transaction_artifact_restartable(
     let needs_quarantine = {
         #[cfg(unix)]
         {
-            !metadata.is_dir() || cap_metadata_is_link_like(&metadata)
+            !_metadata.is_dir() || cap_metadata_is_link_like(&_metadata)
         }
         #[cfg(not(unix))]
         {
@@ -4419,7 +4419,7 @@ fn cleanup_transaction_artifact_restartable(
             "skill mutation {} cleanup quarantine moved a replacement; evidence retained",
             record.operation_id
         );
-        #[cfg(test)]
+        #[cfg(all(test, unix))]
         if take_cleanup_quarantine_rebind_failure_for_test() {
             anyhow::bail!("injected crash cut after durable Skill cleanup quarantine rebind");
         }
@@ -6393,6 +6393,7 @@ thread_local! {
     static TEST_SYNC_FAILURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static TEST_SYNC_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static TEST_SYNC_FAIL_AT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    #[cfg(all(test, unix))]
     static TEST_FAIL_AFTER_CLEANUP_QUARANTINE_REBIND: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
 }
@@ -6415,12 +6416,12 @@ fn clear_directory_sync_failure() {
     TEST_SYNC_FAIL_AT.with(|target| target.set(None));
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn fail_after_cleanup_quarantine_rebind_for_test() {
     TEST_FAIL_AFTER_CLEANUP_QUARANTINE_REBIND.with(|fail| fail.set(true));
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn take_cleanup_quarantine_rebind_failure_for_test() -> bool {
     TEST_FAIL_AFTER_CLEANUP_QUARANTINE_REBIND.with(|fail| {
         let injected = fail.get();

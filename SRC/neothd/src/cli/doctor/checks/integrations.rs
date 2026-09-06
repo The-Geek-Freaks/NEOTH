@@ -100,6 +100,174 @@ pub(crate) fn check_vector_index_snapshot(home: &Path) -> CheckOutcome {
     }
 }
 
+/// CRG-01 lifecycle diagnostic. This deliberately reads `freedom.yaml` and an
+/// existing code-map store without using a config migration or `persist::open`:
+/// Doctor must describe a missing or corrupt store, never create or repair it.
+pub(crate) fn check_code_map_lifecycle(home: &Path) -> CheckOutcome {
+    const NAME: &str = "code-map lifecycle";
+    let config_path = home.join("freedom.yaml");
+    let config = match std::fs::read(&config_path) {
+        Ok(bytes) => match serde_yaml::from_slice::<crate::config::FreedomConfig>(&bytes) {
+            Ok(config) if config.code_map.validate().is_ok() => config,
+            _ => {
+                return CheckOutcome {
+                    name: NAME,
+                    status: CheckStatus::Pass,
+                    detail: "freedom.yaml is unavailable or invalid; the config check owns that diagnostic".into(),
+                };
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            crate::config::FreedomConfig::default()
+        }
+        Err(_) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Pass,
+                detail:
+                    "freedom.yaml is unavailable or invalid; the config check owns that diagnostic"
+                        .into(),
+            };
+        }
+    };
+    let lifecycle = &config.code_map.lifecycle;
+    if !lifecycle.enabled {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "disabled by freedom.yaml — no managed repository watchers are expected".into(),
+        };
+    }
+    if lifecycle.managed_roots.is_empty() {
+        // Accepted configuration forbids this, but retain a precise defensive
+        // result for programmatic or future configuration construction.
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Fail,
+            detail: "enabled with no managed roots — set code_map.lifecycle.managed_roots before starting neoth serve".into(),
+        };
+    }
+
+    let database_path = home.join("code_map.db");
+    let mut aggregate = CheckStatus::Pass;
+    let mut details = Vec::with_capacity(lifecycle.managed_roots.len());
+    for root in &lifecycle.managed_roots {
+        let status = crate::code_map::lifecycle::inspect(&database_path, root);
+        // Prefer the lifecycle service's canonical physical display when it
+        // could establish one. An unmapped/nonexistent configured path falls
+        // back to the exact configured string so its repair instruction still
+        // tells the operator what needs correction.
+        let inspected_root = status.root.as_deref().map(Path::new).unwrap_or(root);
+        let (severity, detail) = code_map_lifecycle_detail(inspected_root, &status.state);
+        aggregate = more_severe(aggregate, severity);
+        details.push(detail);
+    }
+    CheckOutcome {
+        name: NAME,
+        status: aggregate,
+        detail: details.join("; "),
+    }
+}
+
+fn more_severe(current: CheckStatus, candidate: CheckStatus) -> CheckStatus {
+    match (current, candidate) {
+        (CheckStatus::Fail, _) | (_, CheckStatus::Fail) => CheckStatus::Fail,
+        (CheckStatus::Warn, _) | (_, CheckStatus::Warn) => CheckStatus::Warn,
+        _ => CheckStatus::Pass,
+    }
+}
+
+fn code_map_lifecycle_detail(
+    root: &Path,
+    state: &crate::code_map::lifecycle::CodeMapLifecycleState,
+) -> (CheckStatus, String) {
+    let command_root = quote_code_map_command_path(root);
+    let refresh = format!("neoth code-map refresh {command_root}");
+    match state {
+        crate::code_map::lifecycle::CodeMapLifecycleState::Disabled => {
+            (CheckStatus::Pass, format!("{}: disabled", root.display()))
+        }
+        crate::code_map::lifecycle::CodeMapLifecycleState::Fresh { snapshot } => (
+            CheckStatus::Pass,
+            format!(
+                "{}: fresh (index={} graph={})",
+                root.display(),
+                snapshot.index_generation,
+                snapshot.graph_generation
+            ),
+        ),
+        crate::code_map::lifecycle::CodeMapLifecycleState::Absent => (
+            CheckStatus::Warn,
+            format!("{}: no index exists — run `{refresh}`", root.display()),
+        ),
+        crate::code_map::lifecycle::CodeMapLifecycleState::Unmapped => (
+            CheckStatus::Warn,
+            format!(
+                "{}: root is not mapped to a verified snapshot — run `{refresh}`",
+                root.display()
+            ),
+        ),
+        crate::code_map::lifecycle::CodeMapLifecycleState::Incomplete { snapshot } => (
+            CheckStatus::Warn,
+            format!(
+                "{}: incomplete index={} graph={} — run `{refresh}`",
+                root.display(),
+                snapshot.index_generation,
+                snapshot.graph_generation
+            ),
+        ),
+        crate::code_map::lifecycle::CodeMapLifecycleState::Stale { snapshot } => (
+            CheckStatus::Warn,
+            format!(
+                "{}: stale index={} graph={} — run `{refresh}`",
+                root.display(),
+                snapshot.index_generation,
+                snapshot.graph_generation
+            ),
+        ),
+        crate::code_map::lifecycle::CodeMapLifecycleState::Refreshing { attempt_id, .. } => (
+            CheckStatus::Warn,
+            format!(
+                "{}: refresh attempt {attempt_id} is active — re-run `neoth code-map status {}` after it completes",
+                root.display(),
+                command_root
+            ),
+        ),
+        crate::code_map::lifecycle::CodeMapLifecycleState::Recovering { attempt_id, .. } => (
+            CheckStatus::Warn,
+            format!(
+                "{}: interrupted refresh attempt {attempt_id} needs recovery — run `{refresh}`",
+                root.display()
+            ),
+        ),
+        crate::code_map::lifecycle::CodeMapLifecycleState::Corrupt { diagnostic } => (
+            CheckStatus::Fail,
+            format!(
+                "{}: code-map database is corrupt ({diagnostic}) — preserve and rebuild with `neoth code-map refresh {} --repair-corrupt`",
+                root.display(),
+                command_root
+            ),
+        ),
+    }
+}
+
+/// Render an operator-selected filesystem path as one PowerShell-safe command
+/// argument. Bare paths remain readable; whitespace and shell-significant
+/// characters use a single-quoted literal, with embedded apostrophes doubled.
+fn quote_code_map_command_path(path: &Path) -> String {
+    let raw = path.display().to_string();
+    if !raw.is_empty()
+        && raw.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '.' | '_' | '-' | '/' | '\\' | ':')
+        })
+    {
+        raw
+    } else {
+        format!("'{}'", raw.replace('\'', "''"))
+    }
+}
+
 /// OMI-MULTIMODAL-01 — verify the full cross-file credential/config contract
 /// plus the durable ledger/halt posture without creating or mutating the DB.
 pub(crate) fn check_omi_runtime(home: &Path) -> CheckOutcome {
@@ -693,6 +861,7 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_mcp_servers,
     check_channels_wiring,
     check_vector_index_snapshot,
+    check_code_map_lifecycle,
     check_omi_runtime,
 ];
 
@@ -798,11 +967,116 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               always-fresh O(N) scan. (Automatic snapshot freshness via a \
               daemon warm index is GOLD-WIRE-07b.)",
     },
+    CheckDoc {
+        name: "code-map lifecycle",
+        purpose: "Read-only status for every explicitly managed repository in \
+                  `freedom.yaml::code_map.lifecycle.managed_roots`. Doctor \
+                  verifies the selected physical root against the existing \
+                  `code_map.db` and reports absent, unmapped, incomplete, stale, \
+                  recovering, and corrupt snapshots without creating, migrating, \
+                  refreshing, or repairing that database.",
+        common_failures: "The lifecycle is enabled before a first index exists; \
+                  repository files changed since the published generation; a root \
+                  was replaced or no longer resolves to its persisted physical \
+                  identity; an earlier refresh was interrupted; or SQLite cannot \
+                  read the database.",
+        fix: "First index or stale/incomplete root: run `neoth code-map refresh \
+                  <absolute-root>`. Inspect any root without mutation using \
+                  `neoth code-map status <absolute-root>`. A corrupt database is \
+                  never replaced automatically: run `neoth code-map refresh \
+                  <absolute-root> --repair-corrupt` to preserve its forensic copy \
+                  and create a replacement. Ensure lifecycle roots are explicit, \
+                  absolute, non-overlapping paths in freedom.yaml.",
+    },
 ];
 
 #[cfg(test)]
 mod omi_tests {
     use super::*;
+
+    fn write_enabled_code_map_lifecycle(home: &Path, root: &Path) {
+        let mut config = crate::config::FreedomConfig::default();
+        config.code_map.lifecycle.enabled = true;
+        config.code_map.lifecycle.managed_roots = vec![root.to_path_buf()];
+        std::fs::write(
+            home.join("freedom.yaml"),
+            serde_yaml::to_string(&config).expect("serialize lifecycle fixture config"),
+        )
+        .expect("write lifecycle fixture config");
+    }
+
+    #[test]
+    fn code_map_lifecycle_absent_index_warns_without_creating_the_store() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        std::fs::write(
+            repository.path().join("lib.rs"),
+            "pub fn first_index() {}\n",
+        )
+        .unwrap();
+        write_enabled_code_map_lifecycle(home.path(), repository.path());
+        let store = home.path().join("code_map.db");
+
+        let outcome = check_code_map_lifecycle(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("no index exists"), "{outcome:?}");
+        assert!(
+            outcome.detail.contains("neoth code-map refresh"),
+            "{outcome:?}"
+        );
+        assert!(
+            !store.exists(),
+            "Doctor must not create or migrate an absent code-map store"
+        );
+    }
+
+    #[test]
+    fn code_map_lifecycle_corrupt_store_fails_without_repairing_it() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        std::fs::write(
+            repository.path().join("lib.rs"),
+            "pub fn corrupt_fixture() {}\n",
+        )
+        .unwrap();
+        write_enabled_code_map_lifecycle(home.path(), repository.path());
+        let store = home.path().join("code_map.db");
+        let original = b"this is not a sqlite database";
+        std::fs::write(&store, original).unwrap();
+
+        let outcome = check_code_map_lifecycle(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("--repair-corrupt"), "{outcome:?}");
+        assert_eq!(
+            std::fs::read(&store).unwrap(),
+            original,
+            "Doctor must leave corrupt forensic evidence untouched"
+        );
+    }
+
+    #[test]
+    fn code_map_lifecycle_quotes_canonical_root_with_whitespace_in_repair_command() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = home.path().join("repository with spaces");
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::write(repository.join("lib.rs"), "pub fn quoted_root() {}\n").unwrap();
+        write_enabled_code_map_lifecycle(home.path(), &repository);
+
+        let outcome = check_code_map_lifecycle(home.path());
+        let canonical = std::fs::canonicalize(&repository).unwrap();
+        let quoted = quote_code_map_command_path(&canonical);
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(
+            outcome
+                .detail
+                .contains(&format!("neoth code-map refresh {quoted}")),
+            "Doctor must preserve the canonical root as one command argument: {outcome:?}"
+        );
+        assert!(quoted.starts_with('\'') && quoted.ends_with('\''));
+    }
 
     #[test]
     fn pending_audits_warn_even_when_runtime_is_healthy() {

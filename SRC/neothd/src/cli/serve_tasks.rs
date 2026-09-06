@@ -7,11 +7,12 @@
 //! the writer. Construction and teardown therefore stay wired in one place
 //! instead of drifting across wrapper tasks in `run_serve`.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::channels::{Channel, ChannelKind, PipelineHandler};
 use crate::cli::serve_pipeline::{PipelineHandlerDeps, build_pipeline_handler};
@@ -4615,6 +4616,235 @@ pub(crate) fn spawn_snapshot_refresh(
     Some(handle)
 }
 
+/// Owner for every managed code-map watcher derived from the accepted config.
+/// Its stop signal is cooperative: the supervisor cancels each real blocking
+/// refresh and joins it before this task completes.
+pub(crate) struct CodeMapLifecycleSupervisor {
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    task: JoinHandle<()>,
+}
+
+/// Start default-disabled, explicitly-rooted code-map lifecycle ownership.
+/// The instance-owned database path comes from [`InstancePaths`], never from a
+/// service CWD or an inferred persisted root. Each accepted reload replaces the
+/// whole bounded watcher set, which joins removed roots before a replacement
+/// can observe new events.
+pub(crate) fn spawn_code_map_lifecycle_supervisor(
+    paths: crate::config::InstancePaths,
+    reload_controller: Arc<ReloadController>,
+) -> CodeMapLifecycleSupervisor {
+    let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        let mut generation = reload_controller.subscribe_generation();
+        let database_path = paths.code_map.clone();
+        let initial = reload_controller.latest().code_map.lifecycle.clone();
+        let initial_generation = *generation.borrow();
+        let status = crate::code_map::lifecycle_watcher::CodeMapLifecycleStatusWriter::new(
+            &paths.home,
+            &initial,
+            initial_generation,
+        );
+        status.publish_requested(&initial, initial_generation);
+        let mut watchers = start_code_map_lifecycle_watchers(
+            &database_path,
+            initial,
+            status.clone(),
+            initial_generation,
+        )
+        .await;
+
+        loop {
+            tokio::select! {
+                _ = &mut stop_rx => break,
+                changed = generation.changed() => {
+                    if changed.is_err() {
+                        debug!("code-map lifecycle reload-generation sender closed; stopping supervisor");
+                        break;
+                    }
+                    let next = reload_controller.latest().code_map.lifecycle.clone();
+                    let next_generation = *generation.borrow();
+                    status.publish_requested(&next, next_generation);
+                    match validate_code_map_lifecycle_runtime_config(next.clone()).await {
+                        Ok(()) => {
+                            watchers = replace_code_map_lifecycle_watchers(
+                                watchers,
+                                &database_path,
+                                next,
+                                status.clone(),
+                                next_generation,
+                            ).await;
+                        }
+                        Err(error) => {
+                            // The saved snapshot is structurally valid, but
+                            // an enabled runtime root is unavailable. Keep
+                            // the already active watcher set running; status
+                            // explicitly distinguishes requested from active.
+                            status.record_requested_activation_diagnostic(&error);
+                            warn!(error = %error, generation = next_generation, "code-map lifecycle requested generation is unavailable; retaining prior active watchers");
+                        }
+                    }
+                }
+            }
+        }
+
+        status.publish_stopping();
+        let database_path = database_path.clone();
+        match tokio::task::spawn_blocking(move || {
+            let mut watchers = watchers;
+            watchers.shutdown()
+        })
+        .await
+        {
+            Ok(Ok(())) => {
+                debug!(database = %database_path.display(), "code-map lifecycle watchers stopped")
+            }
+            Ok(Err(error)) => {
+                warn!(database = %database_path.display(), error = %error, "code-map lifecycle watcher shutdown failed")
+            }
+            Err(error) => {
+                warn!(database = %database_path.display(), error = %error, "code-map lifecycle watcher shutdown join failed")
+            }
+        }
+        status.publish_stopped();
+    });
+    CodeMapLifecycleSupervisor {
+        stop: Some(stop_tx),
+        task,
+    }
+}
+
+async fn validate_code_map_lifecycle_runtime_config(
+    config: crate::config::CodeMapLifecycleConfig,
+) -> std::result::Result<(), String> {
+    if !config.enabled {
+        return Ok(());
+    }
+    match tokio::task::spawn_blocking(move || config.canonical_managed_roots().map(|_| ())).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(format!("{error:#}")),
+        Err(error) => Err(format!("runtime root validation worker failed: {error}")),
+    }
+}
+
+async fn start_code_map_lifecycle_watchers(
+    database_path: &std::path::Path,
+    config: crate::config::CodeMapLifecycleConfig,
+    status: crate::code_map::lifecycle_watcher::CodeMapLifecycleStatusWriter,
+    generation: u64,
+) -> crate::code_map::lifecycle_watcher::CodeMapLifecycleWatchers {
+    let database_path = database_path.to_path_buf();
+    let database_path_for_start = database_path.clone();
+    let status_for_start = status.clone();
+    status.activate_generation(generation);
+    match tokio::task::spawn_blocking(move || {
+        crate::code_map::lifecycle_watcher::CodeMapLifecycleWatchers::start_with_status(
+            &database_path_for_start,
+            &config,
+            Some(status_for_start),
+            generation,
+        )
+    })
+    .await
+    {
+        Ok(Ok(watchers)) => {
+            if watchers.is_disabled() {
+                info!(database = %database_path.display(), "code-map lifecycle disabled by accepted config");
+            } else {
+                let roots: Vec<_> = watchers
+                    .roots()
+                    .map(|root| root.display().to_string())
+                    .collect();
+                status.publish_active_roots(
+                    generation,
+                    watchers.roots().map(Path::to_path_buf).collect(),
+                );
+                info!(database = %database_path.display(), ?roots, "code-map lifecycle watchers started");
+            }
+            watchers
+        }
+        Ok(Err(error)) => {
+            status.record_error_for(generation, &error);
+            warn!(database = %database_path.display(), error = %error, "code-map lifecycle watcher startup failed; lifecycle remains stopped until a later accepted reload");
+            crate::code_map::lifecycle_watcher::CodeMapLifecycleWatchers::disabled()
+        }
+        Err(error) => {
+            status.record_error_for(generation, &error);
+            warn!(database = %database_path.display(), error = %error, "code-map lifecycle watcher startup join failed; lifecycle remains stopped until a later accepted reload");
+            crate::code_map::lifecycle_watcher::CodeMapLifecycleWatchers::disabled()
+        }
+    }
+}
+
+async fn replace_code_map_lifecycle_watchers(
+    watchers: crate::code_map::lifecycle_watcher::CodeMapLifecycleWatchers,
+    database_path: &std::path::Path,
+    config: crate::config::CodeMapLifecycleConfig,
+    status: crate::code_map::lifecycle_watcher::CodeMapLifecycleStatusWriter,
+    generation: u64,
+) -> crate::code_map::lifecycle_watcher::CodeMapLifecycleWatchers {
+    let database_path = database_path.to_path_buf();
+    let database_path_for_start = database_path.clone();
+    let status_for_start = status.clone();
+    match tokio::task::spawn_blocking(move || {
+        let mut watchers = watchers;
+        // Stop first so an accepted root removal or disablement can never leave
+        // a former root refreshing under stale authority. `shutdown` cancels
+        // and joins the actual lifecycle worker before this closure returns.
+        // `shutdown` clears the entire old set even if one worker panicked.
+        // Advance the durable active-generation marker in either outcome so a
+        // failure cannot leave old roots falsely reported as live. The caller
+        // records that failure against the newly active generation below.
+        let shutdown_result = watchers.shutdown();
+        status_for_start.activate_generation(generation);
+        shutdown_result?;
+        crate::code_map::lifecycle_watcher::CodeMapLifecycleWatchers::start_with_status(
+            &database_path_for_start,
+            &config,
+            Some(status_for_start),
+            generation,
+        )
+    })
+    .await
+    {
+        Ok(Ok(watchers)) => {
+            let roots: Vec<_> = watchers
+                .roots()
+                .map(|root| root.display().to_string())
+                .collect();
+            status.publish_active_roots(
+                generation,
+                watchers.roots().map(Path::to_path_buf).collect(),
+            );
+            info!(database = %database_path.display(), ?roots, "code-map lifecycle watchers replaced after accepted reload");
+            watchers
+        }
+        Ok(Err(error)) => {
+            status.record_error_for(generation, &error);
+            warn!(database = %database_path.display(), error = %error, "code-map lifecycle reconfiguration failed after prior watchers joined; lifecycle remains stopped until a later accepted reload");
+            crate::code_map::lifecycle_watcher::CodeMapLifecycleWatchers::disabled()
+        }
+        Err(error) => {
+            status.record_error_for(generation, &error);
+            warn!(database = %database_path.display(), error = %error, "code-map lifecycle reconfiguration join failed; lifecycle remains stopped until a later accepted reload");
+            crate::code_map::lifecycle_watcher::CodeMapLifecycleWatchers::disabled()
+        }
+    }
+}
+
+pub(crate) async fn shutdown_code_map_lifecycle_supervisor(
+    mut supervisor: Option<CodeMapLifecycleSupervisor>,
+) {
+    let Some(mut supervisor) = supervisor.take() else {
+        return;
+    };
+    if let Some(stop) = supervisor.stop.take() {
+        let _ = stop.send(());
+    }
+    if let Err(error) = supervisor.task.await {
+        warn!(%error, "code-map lifecycle supervisor panicked while joining shutdown");
+    }
+}
+
 /// Self-dev outbox drain (P-04 follow-on). The `neoth self-dev
 /// accept/decline/propose` CLI runs without a WAL writer (the daemon owns the
 /// segment), so it enqueues pending events in
@@ -6898,6 +7128,10 @@ pub(crate) struct BackgroundHandles {
     pub consent_outbox_task: JoinHandle<()>,
     pub indexer_task: Option<JoinHandle<()>>,
     pub reload_task: JoinHandle<()>,
+    /// Explicitly-rooted code-map lifecycle watcher set. This is joined before
+    /// the reload poller and writer drain so no blocking refresh outlives the
+    /// daemon's accepted authority.
+    pub code_map_lifecycle_supervisor: Option<CodeMapLifecycleSupervisor>,
     pub audit_rpc_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub connector_control_rpc_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub healthz_task: Option<JoinHandle<anyhow::Result<()>>>,
@@ -7018,6 +7252,7 @@ pub(crate) async fn shutdown_background_tasks(
         consent_outbox_task,
         indexer_task,
         reload_task,
+        code_map_lifecycle_supervisor,
         audit_rpc_task,
         connector_control_rpc_task,
         healthz_task,
@@ -7243,6 +7478,11 @@ pub(crate) async fn shutdown_background_tasks(
     // Abort the indexer next. It may have been mid-pass; the next `neoth serve`
     // start picks up from `wal_cursor`.
     crate::cli::serve_tasks::abort_optional(indexer_task).await;
+
+    // Cancel every actual blocking code-map refresh and join its worker before
+    // the config authority or WAL writer can be retired. This never detaches a
+    // `spawn_blocking` refresh on shutdown.
+    shutdown_code_map_lifecycle_supervisor(code_map_lifecycle_supervisor).await;
 
     // Pick #37 (Session 14): abort the hot-reload poll task. The
     // controller is dropped along with `reload_controller`. A
@@ -7996,6 +8236,156 @@ mod tests {
         converged.unwrap_or_else(|_| {
             panic!("OMI runtime status did not converge; last observed status: {last_status:?}")
         })
+    }
+
+    #[tokio::test]
+    async fn unavailable_requested_code_map_generation_retains_prior_active_watchers() {
+        let home = tempfile::tempdir().unwrap();
+        let g1_root = home.path().join("g1-repository");
+        std::fs::create_dir_all(&g1_root).unwrap();
+        std::fs::write(g1_root.join("lib.rs"), "pub fn generation_one() {}\n").unwrap();
+        let canonical_g1_root = std::fs::canonicalize(&g1_root).unwrap();
+        let config_path = home.path().join("freedom.yaml");
+        let mut g1 = FreedomConfig::default();
+        g1.code_map.lifecycle = crate::config::CodeMapLifecycleConfig {
+            enabled: true,
+            managed_roots: vec![canonical_g1_root.clone()],
+            debounce_millis: crate::config::CodeMapLifecycleConfig::MIN_DEBOUNCE_MILLIS,
+            reconciliation_interval_secs:
+                crate::config::CodeMapLifecycleConfig::MIN_RECONCILIATION_INTERVAL_SECS,
+        };
+        std::fs::write(&config_path, serde_yaml::to_string(&g1).unwrap()).unwrap();
+        let _pid_guard = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
+        let controller = Arc::new(ReloadController::new(g1.clone(), config_path.clone()));
+        let supervisor = spawn_code_map_lifecycle_supervisor(
+            crate::config::InstancePaths::new(home.path(), &config_path),
+            Arc::clone(&controller),
+        );
+        // Keep the supervisor ownership outside the fallible test body so a
+        // timeout or assertion failure cannot leave its real blocking worker
+        // running in the shared test process.
+        let test_result: anyhow::Result<()> = async {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            let g1_status = loop {
+                if let Ok(Some(status)) =
+                    crate::code_map::read_active_code_map_lifecycle_status(home.path())
+                    && status.config_generation == 0
+                    && status.active_config_generation == Some(0)
+                    && status.active_roots == vec![canonical_g1_root.clone()]
+                    && status.active_config_fingerprint_sha256.is_some()
+                {
+                    break status;
+                }
+                anyhow::ensure!(
+                    std::time::Instant::now() < deadline,
+                    "G1 code-map lifecycle supervisor never published active watchers"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            };
+            let g1_active_fingerprint = g1_status
+                .active_config_fingerprint_sha256
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("G1 active status must carry its config fingerprint"))?;
+
+            let g1_generation = loop {
+                let state = crate::code_map::inspect(
+                    &home.path().join("code_map.db"),
+                    &canonical_g1_root,
+                )
+                .state;
+                match state {
+                    crate::code_map::CodeMapLifecycleState::Fresh { snapshot }
+                    | crate::code_map::CodeMapLifecycleState::Stale { snapshot }
+                    | crate::code_map::CodeMapLifecycleState::Incomplete { snapshot }
+                        if snapshot.index_generation > 0 =>
+                    {
+                        break snapshot.index_generation;
+                    }
+                    _ => {}
+                }
+                anyhow::ensure!(
+                    std::time::Instant::now() < deadline,
+                    "G1 active watcher never published a durable code-map generation"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            };
+
+            // The saved G2 is structurally valid so the reload is accepted,
+            // but its enabled root is absent. Runtime validation must retain
+            // G1's joined-and-active watcher set and record the requested
+            // boundary.
+            let missing_g2_root = home.path().join("unavailable-g2-repository");
+            let mut g2 = g1;
+            g2.code_map.lifecycle.managed_roots = vec![missing_g2_root.clone()];
+            std::fs::write(&config_path, serde_yaml::to_string(&g2)?)?;
+            let reload = controller.try_reload()?;
+            anyhow::ensure!(
+                matches!(&reload, crate::config::reload::ReloadResult::Reloaded { .. }),
+                "G2 lifecycle candidate must be accepted structurally, got {reload:?}"
+            );
+
+            let g2_status = loop {
+                if let Ok(Some(status)) =
+                    crate::code_map::read_active_code_map_lifecycle_status(home.path())
+                    && status.config_generation == 1
+                    && status.requested_enabled
+                    && status.requested_roots == vec![missing_g2_root.clone()]
+                    && status.active_config_generation == Some(0)
+                    && status.active_roots == vec![canonical_g1_root.clone()]
+                    && status.active_config_fingerprint_sha256.as_deref()
+                        == Some(g1_active_fingerprint.as_str())
+                    && status.requested_config_fingerprint_sha256 != g1_active_fingerprint
+                    && status.requested_activation_diagnostic.is_some()
+                {
+                    break status;
+                }
+                anyhow::ensure!(
+                    std::time::Instant::now() < deadline,
+                    "unavailable G2 request did not retain G1 active lifecycle status"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            };
+            anyhow::ensure!(
+                g2_status
+                    .requested_activation_diagnostic
+                    .as_deref()
+                    .is_some_and(|diagnostic| diagnostic.contains("canonicalize repository root")),
+                "G2 must expose why its requested root could not activate: {g2_status:?}"
+            );
+
+            // Status alone is intentionally not treated as freshness proof.
+            // A G1 write after rejected G2 activation must still lead the
+            // original worker to publish a newer durable generation.
+            std::fs::write(g1_root.join("lib.rs"), "pub fn generation_two() {}\n")?;
+            let refresh_deadline =
+                std::time::Instant::now() + std::time::Duration::from_secs(15);
+            loop {
+                let state = crate::code_map::inspect(
+                    &home.path().join("code_map.db"),
+                    &canonical_g1_root,
+                )
+                .state;
+                match state {
+                    crate::code_map::CodeMapLifecycleState::Fresh { snapshot }
+                    | crate::code_map::CodeMapLifecycleState::Stale { snapshot }
+                    | crate::code_map::CodeMapLifecycleState::Incomplete { snapshot }
+                        if snapshot.index_generation > g1_generation =>
+                    {
+                        break;
+                    }
+                    _ => {}
+                }
+                anyhow::ensure!(
+                    std::time::Instant::now() < refresh_deadline,
+                    "G1 watcher stopped after unavailable G2 activation; durable index generation did not advance past {g1_generation}"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            Ok(())
+        }
+        .await;
+        shutdown_code_map_lifecycle_supervisor(Some(supervisor)).await;
+        test_result.unwrap();
     }
 
     // macOS recycles just-freed ephemeral ports to the next bind(:0) almost

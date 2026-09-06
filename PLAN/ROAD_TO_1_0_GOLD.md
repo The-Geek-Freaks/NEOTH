@@ -445,6 +445,17 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     `docs/coding-code-map-receipts.md`; local audit:
     `REVIEWS/_gold_audit/2026-09-06-coding-context-batch.md`.
 
+    **2026-09-06 lifecycle integration checkpoint (behavior gates pending):**
+    shared root-bound refresh/recovery/cancellation, daemon watcher ownership,
+    transactional lifecycle configuration, CLI/Doctor and GUI/Buddy lifecycle
+    controls are implemented. Strict core Clippy including tests is now green;
+    the small `gui_code_map_controller` core test target imports the production
+    controller without linking the Slint test monolith. Runtime tests, native GUI
+    and packaged acceptance are still pending. The incremental-refresh leaf
+    remains open: unchanged file/symbol rows are retained, but a stale refresh
+    still parses the complete root and replaces all root edges. Native coding
+    parity and the remaining cross-surface consumers are also still required.
+
   - [ ] **CRG-02 — structural blast radius:
     NATIVE SERVICE + CLI/MCP WIRED / PRODUCT CONSUMERS PARTIAL / OPEN for
     v1.0.**

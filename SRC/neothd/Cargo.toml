@@ -605,6 +605,11 @@ tokenizers   = { version = "0.20", default-features = false, features = ["onig"]
 candle-core         = { version = "0.8", default-features = false }
 candle-nn           = { version = "0.8", default-features = false }
 candle-transformers = { version = "0.8", default-features = false }
+# Ouro artifact-load lease: direct use of Candle's resolved safetensors 0.4
+# parser over a retained memmap2 0.9 file mapping. Both versions are already
+# present in the workspace lock graph; lockfile resolution remains serialized.
+memmap2             = "0.9.11"
+safetensors         = "0.4.5"
 
 # R-9 Multimodal Phase 2: pure-Rust PDF text extraction. pdf-extract is
 # more limited than pdfium (no form fields, no OCR) but ships without a

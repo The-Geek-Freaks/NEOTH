@@ -3,6 +3,19 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-06
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Lifecycle integration checkpoint 2026-09-06 (behavior gates pending):**
+> the shared index lifecycle, bounded daemon watchers, transactional managed-root
+> configuration, CLI/Doctor and typed GUI/Buddy controls are implemented. Core
+> strict Clippy including tests passes on the integrated source; the small core
+> integration target imports the actual GUI controller without a Slint test link.
+> Canonical recalled-memory/Dream prompt framing and retained Ouro artifact
+> generations are included. No current-wave behavior, GUI runtime, packaged or
+> release gate is claimed complete yet. CRG-01 remains open: stale refresh still
+> parses/rebuilds the complete root, despite reusing unchanged database rows.
+> Delta-aware refresh, native coding parity and Windows ContextConnector remain
+> required. Roadmap counts stay unchanged at 1,324 total / 1,002 complete /
+> 320 open / 2 partial (322 raw and 321 pre-tag blockers).
+>
 > **Coding-context batch checkpoint 2026-09-06:** continued directly in AGENTER
 > from `6c869dc4`. The two completed CRG-01 portions are recorded below; the
 > remaining cross-surface contracts stay open in ROAD. The final package check,

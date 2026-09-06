@@ -69,6 +69,13 @@ export struct CodeMapHitRow {
     score: string,
 }
 
+/// Canonical daemon-managed repository root rendered from a typed config
+/// readback receipt. The row is deliberately separate from recall hits.
+export struct CodeMapManagedRootRow {
+    path: string,
+    availability: string,
+}
+
 // GR-10 — one row in the Safety Rails panel, from `neoth security safe-mode --json`.
 export struct SafeRailRow {
     name: string,
@@ -935,6 +942,35 @@ export component SettingsView inherits Rectangle {
     in property <[CodeMapHitRow]> code-map-hits: [];
     callback code-map-browse-clicked();
     callback code-map-search-clicked(string, string);
+    // Native lifecycle state is separate from recall output. Rust obtains it
+    // from the typed core service; it is never inferred from command text.
+    in property <bool> code-map-lifecycle-running: false;
+    in property <bool> code-map-lifecycle-refresh-active: false;
+    in property <bool> code-map-lifecycle-cancel-pending: false;
+    in property <bool> code-map-lifecycle-error: false;
+    in property <bool> code-map-lifecycle-can-setup: false;
+    in property <bool> code-map-lifecycle-can-refresh: false;
+    in property <bool> code-map-lifecycle-can-force-rebuild: false;
+    in property <bool> code-map-lifecycle-can-repair: false;
+    in property <string> code-map-lifecycle-operation: "";
+    in property <string> code-map-lifecycle-state: "Choose a repository root to inspect its index.";
+    in property <string> code-map-lifecycle-detail: "";
+    in property <string> code-map-lifecycle-runtime: "Daemon watcher status has not been read.";
+    in property <string> code-map-lifecycle-canonical-root: "";
+    in property <string> code-map-lifecycle-root-identity: "";
+    in property <string> code-map-lifecycle-index-generation: "";
+    in property <string> code-map-lifecycle-graph-generation: "";
+    in-out property <bool> code-map-lifecycle-config-enabled: false;
+    in-out property <string> code-map-lifecycle-debounce-millis: "500";
+    in-out property <string> code-map-lifecycle-reconciliation-secs: "300";
+    in property <bool> code-map-lifecycle-config-running: false;
+    in property <string> code-map-lifecycle-config-status: "No lifecycle configuration has been applied this session.";
+    in property <[CodeMapManagedRootRow]> code-map-lifecycle-managed-roots: [];
+    callback code-map-lifecycle-inspect-clicked(string);
+    callback code-map-lifecycle-refresh-clicked(string, bool, bool);
+    callback code-map-lifecycle-cancel-clicked();
+    callback code-map-lifecycle-config-apply-clicked(bool, string, string);
+    callback code-map-lifecycle-managed-root-remove-clicked(string);
     /// One-line summary above the board: which session is showing,
     /// when it was opened, what the operator's prompt was. Empty
     /// string means "no sessions yet — operator has not run `neoth
@@ -4507,13 +4543,13 @@ export component SettingsView inherits Rectangle {
                             NeothLineEdit {
                                 text <=> root.code-map-root;
                                 placeholder-text: "Repository root (required; never inferred from GUI CWD)";
-                                enabled: !root.code-map-running;
+                                enabled: !root.code-map-running && !root.code-map-lifecycle-running;
                                 horizontal-stretch: 1;
                             }
                             NeothButton {
                                 label: "Browse…";
                                 size: "sm";
-                                enabled: !root.code-map-running;
+                                enabled: !root.code-map-running && !root.code-map-lifecycle-running;
                                 clicked => { root.code-map-browse-clicked(); }
                             }
                         }
@@ -4593,6 +4629,197 @@ export component SettingsView inherits Rectangle {
                                     color: Theme.text-muted;
                                 }
                             }
+                        }
+                    }
+                }
+
+                Card {
+                    shimmer: root.code-map-lifecycle-running;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: "REPOSITORY INDEX";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-medium;
+                                letter-spacing: Theme.letter-spacing-tight;
+                                color: Theme.accent-cyan;
+                                horizontal-stretch: 1;
+                                vertical-alignment: center;
+                            }
+                            if root.code-map-lifecycle-running: Text {
+                                text: root.code-map-lifecycle-cancel-pending ? "CANCELLING…"
+                                    : root.code-map-lifecycle-operation == "inspect" ? "INSPECTING…"
+                                    : "REFRESHING…";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.accent-amber;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            text: root.code-map-lifecycle-state;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: root.code-map-lifecycle-error ? Theme.accent-pink
+                                 : root.code-map-lifecycle-running ? Theme.accent-amber
+                                 : Theme.text-primary;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: root.code-map-lifecycle-detail;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: root.code-map-lifecycle-error ? Theme.accent-pink : Theme.text-secondary;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: root.code-map-lifecycle-runtime;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        if root.code-map-lifecycle-canonical-root != "": Text {
+                            text: "root  " + root.code-map-lifecycle-canonical-root
+                                + "\nidentity  " + root.code-map-lifecycle-root-identity
+                                + "   index " + root.code-map-lifecycle-index-generation
+                                + "   graph " + root.code-map-lifecycle-graph-generation;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            NeothButton {
+                                label: "Inspect";
+                                size: "sm";
+                                enabled: !root.code-map-lifecycle-running && root.code-map-root != "";
+                                clicked => { root.code-map-lifecycle-inspect-clicked(root.code-map-root); }
+                            }
+                            NeothButton {
+                                label: "Set up";
+                                size: "sm";
+                                primary: true;
+                                enabled: !root.code-map-lifecycle-running && root.code-map-lifecycle-can-setup;
+                                clicked => { root.code-map-lifecycle-refresh-clicked(root.code-map-root, false, false); }
+                            }
+                            NeothButton {
+                                label: "Refresh";
+                                size: "sm";
+                                primary: true;
+                                enabled: !root.code-map-lifecycle-running && root.code-map-lifecycle-can-refresh;
+                                clicked => { root.code-map-lifecycle-refresh-clicked(root.code-map-root, false, false); }
+                            }
+                            NeothButton {
+                                label: "Force rebuild";
+                                size: "sm";
+                                enabled: !root.code-map-lifecycle-running && root.code-map-lifecycle-can-force-rebuild;
+                                clicked => { root.code-map-lifecycle-refresh-clicked(root.code-map-root, true, false); }
+                            }
+                            NeothButton {
+                                label: "Repair corrupt index";
+                                size: "sm";
+                                danger: true;
+                                enabled: !root.code-map-lifecycle-running && root.code-map-lifecycle-can-repair;
+                                clicked => { root.code-map-lifecycle-refresh-clicked(root.code-map-root, true, true); }
+                            }
+                            NeothButton {
+                                label: root.code-map-lifecycle-cancel-pending ? "Cancelling…" : "Cancel";
+                                size: "sm";
+                                danger: true;
+                                enabled: root.code-map-lifecycle-refresh-active && !root.code-map-lifecycle-cancel-pending;
+                                clicked => { root.code-map-lifecycle-cancel-clicked(); }
+                            }
+                        }
+                    }
+                }
+
+                Card {
+                    shimmer: root.code-map-lifecycle-config-running;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "DAEMON LIFECYCLE CONFIGURATION";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.accent-cyan;
+                        }
+                        NeothCheckBox {
+                            text: "Enable daemon lifecycle for persisted managed roots";
+                            checked <=> root.code-map-lifecycle-config-enabled;
+                            enabled: !root.code-map-lifecycle-config-running && !root.code-map-lifecycle-running;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            NeothLineEdit {
+                                text <=> root.code-map-lifecycle-debounce-millis;
+                                placeholder-text: "Debounce milliseconds";
+                                enabled: !root.code-map-lifecycle-config-running && !root.code-map-lifecycle-running;
+                                horizontal-stretch: 1;
+                            }
+                            NeothLineEdit {
+                                text <=> root.code-map-lifecycle-reconciliation-secs;
+                                placeholder-text: "Reconcile seconds";
+                                enabled: !root.code-map-lifecycle-config-running && !root.code-map-lifecycle-running;
+                                horizontal-stretch: 1;
+                            }
+                            NeothButton {
+                                label: root.code-map-lifecycle-config-running ? "Applying…" : "Apply config / add selected root";
+                                size: "sm";
+                                primary: true;
+                                enabled: !root.code-map-lifecycle-config-running && !root.code-map-lifecycle-running
+                                    && (!root.code-map-lifecycle-config-enabled || root.code-map-root != "");
+                                clicked => {
+                                    root.code-map-lifecycle-config-apply-clicked(
+                                        root.code-map-lifecycle-config-enabled,
+                                        root.code-map-lifecycle-debounce-millis,
+                                        root.code-map-lifecycle-reconciliation-secs,
+                                    );
+                                }
+                            }
+                        }
+                        Text {
+                            text: root.code-map-lifecycle-config-status;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        if root.code-map-lifecycle-managed-roots.length == 0: Text {
+                            text: "No managed repository roots are persisted.";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.text-muted;
+                        }
+                        for managed-root in root.code-map-lifecycle-managed-roots: HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            Text {
+                                text: managed-root.path + (managed-root.availability == "" ? "" : "  ·  " + managed-root.availability);
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.text-secondary;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+                            NeothButton {
+                                label: "Remove root";
+                                size: "sm";
+                                danger: true;
+                                enabled: !root.code-map-lifecycle-config-running && !root.code-map-lifecycle-running;
+                                clicked => { root.code-map-lifecycle-managed-root-remove-clicked(managed-root.path); }
+                            }
+                        }
+                        if root.code-map-lifecycle-config-enabled && root.code-map-lifecycle-managed-roots.length == 1: Text {
+                            text: "Removing the final root safely disables lifecycle in the same configuration transaction.";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.accent-amber;
                         }
                     }
                 }

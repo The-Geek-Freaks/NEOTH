@@ -226,6 +226,12 @@ fn run_status(output: &OutputFormat) -> Result<()> {
         .inference
         .max_new_tokens
         .unwrap_or(crate::providers::ouro::adapter::DEFAULT_MAX_NEW_TOKENS);
+    let cache_dir = crate::providers::local_qwen::default_cache_dir(&configured_model);
+    // Shared bounded status contract: no surprise multi-gigabyte digest pass,
+    // and no corrupt, partial, or pending cache is called ready.
+    let cache_status = crate::providers::ouro::artifacts::runtime_cache_status(&cache_dir);
+    let cache_state = cache_status.state;
+    let cache_error = cache_status.detail;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -235,6 +241,9 @@ fn run_status(output: &OutputFormat) -> Result<()> {
                 "accelerator_override": accelerator_override,
                 "max_new_tokens": max_new_tokens,
                 "default_model": crate::providers::ouro::adapter::DEFAULT_OURO_REPO,
+                "cache_state": cache_state,
+                "cache_dir": cache_dir,
+                "cache_error": cache_error,
             });
             println!("{}", serde_json::to_string_pretty(&body)?);
         }
@@ -245,6 +254,11 @@ fn run_status(output: &OutputFormat) -> Result<()> {
             println!("  configured model      : {configured_model}");
             println!("  accelerator override  : {accelerator_override}");
             println!("  max new tokens        : {max_new_tokens}");
+            println!("  cache state           : {cache_state}");
+            println!("  cache dir             : {}", cache_dir.display());
+            if let Some(error) = cache_error {
+                println!("  cache detail          : {error}");
+            }
             println!(
                 "  default checkpoint    : {}",
                 crate::providers::ouro::adapter::DEFAULT_OURO_REPO

@@ -596,10 +596,10 @@ pub use features::{
 };
 pub use memory::{MemoryConfig, VectorBackend, VectorIndexConfig};
 pub use ops::{
-    AutoUpdateConfig, CodeMapConfig, CodingConfig, CommunicationProfileConfig,
-    CommunicationPromptExport, DoctorConfig, PluginsConfig, ProfileConfig, RefusalRecoveryConfig,
-    ReleaseChannel, SupervisorConfig, SupervisorKind, TaskEngineConfig, UpdaterConfig,
-    WasmPluginsConfig,
+    AutoUpdateConfig, CodeMapConfig, CodeMapLifecycleConfig, CodingConfig,
+    CommunicationProfileConfig, CommunicationPromptExport, DoctorConfig, PluginsConfig,
+    ProfileConfig, RefusalRecoveryConfig, ReleaseChannel, SupervisorConfig, SupervisorKind,
+    TaskEngineConfig, UpdaterConfig, WasmPluginsConfig,
 };
 pub use policy::{
     CompactionConfig, CompressionConfig, DangerousPolicy, EgressMode, EgressPolicy, FeedEntry,
@@ -1786,75 +1786,6 @@ pub struct DeepResearchConfig {
 #[cfg(test)]
 mod inline_tests;
 
-#[cfg(test)]
-mod code_map_config_tests {
-    use super::{CodeMapConfig, FreedomConfig};
-
-    #[test]
-    fn code_map_serde_defaults_preserve_auto_context_opt_in() {
-        let config: FreedomConfig = serde_yaml::from_str("operator_id: sam\n")
-            .expect("legacy freedom.yaml must deserialize");
-
-        assert_eq!(config.code_map.auto_context_max_files, 0);
-        assert_eq!(config.code_map.coding_recall_max_files, 8);
-        assert_eq!(config.code_map.coding_callers_per_symbol, 3);
-        assert_eq!(config.code_map.coding_summary_token_budget, 2_048);
-        config
-            .code_map
-            .validate()
-            .expect("serde defaults must remain valid");
-    }
-
-    #[test]
-    fn code_map_serde_rejects_malformed_negative_and_oversized_limits() {
-        for source in [
-            "code_map:\n  coding_recall_max_files: nope\n",
-            "code_map:\n  coding_recall_max_files: -1\n",
-            "code_map:\n  coding_recall_max_files: 0\n",
-            "code_map:\n  auto_context_max_files: 201\n",
-            "code_map:\n  coding_recall_max_files: 51\n",
-            "code_map:\n  coding_callers_per_symbol: 21\n",
-            "code_map:\n  coding_summary_token_budget: 12001\n",
-        ] {
-            assert!(
-                serde_yaml::from_str::<FreedomConfig>(source).is_err(),
-                "invalid code_map config unexpectedly deserialized: {source}"
-            );
-        }
-    }
-
-    #[test]
-    fn code_map_accepts_valid_bounds_and_programmatic_validation() {
-        let config: FreedomConfig = serde_yaml::from_str(
-            "code_map:\n  auto_context_max_files: 200\n  coding_recall_max_files: 50\n  coding_callers_per_symbol: 0\n  coding_summary_token_budget: 128\n",
-        )
-        .expect("inclusive code_map bounds must deserialize");
-        config
-            .code_map
-            .validate()
-            .expect("inclusive code_map bounds must validate");
-
-        let maximum = CodeMapConfig {
-            auto_context_max_files: 200,
-            coding_recall_max_files: 50,
-            coding_callers_per_symbol: 20,
-            coding_summary_token_budget: 12_000,
-        };
-        maximum
-            .validate()
-            .expect("inclusive maximum code_map bounds must validate");
-
-        let invalid = CodeMapConfig {
-            coding_summary_token_budget: 12_001,
-            ..CodeMapConfig::default()
-        };
-        assert!(
-            invalid.validate().is_err(),
-            "programmatic callers must not bypass code_map validation"
-        );
-    }
-}
-
 /// A parsed freedom.yaml may still carry pre-split inline credentials and
 /// extension-owned secrets. `serde_yaml::Value` does not zeroize strings on
 /// drop, so the lossless merge owns an explicit recursive wipe.
@@ -2466,5 +2397,158 @@ fn warn_if_world_readable(path: &Path) {
                 path.display()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod code_map_config_tests {
+    use std::path::PathBuf;
+
+    use super::{CodeMapConfig, CodeMapLifecycleConfig, FreedomConfig};
+
+    #[test]
+    fn code_map_serde_defaults_preserve_auto_context_opt_in() {
+        let config: FreedomConfig = serde_yaml::from_str("operator_id: sam\n")
+            .expect("legacy freedom.yaml must deserialize");
+
+        assert_eq!(config.code_map.auto_context_max_files, 0);
+        assert_eq!(config.code_map.coding_recall_max_files, 8);
+        assert_eq!(config.code_map.coding_callers_per_symbol, 3);
+        assert_eq!(config.code_map.coding_summary_token_budget, 2_048);
+        config
+            .code_map
+            .validate()
+            .expect("serde defaults must remain valid");
+    }
+
+    #[test]
+    fn code_map_serde_rejects_malformed_negative_and_oversized_limits() {
+        for source in [
+            "code_map:\n  coding_recall_max_files: nope\n",
+            "code_map:\n  coding_recall_max_files: -1\n",
+            "code_map:\n  coding_recall_max_files: 0\n",
+            "code_map:\n  auto_context_max_files: 201\n",
+            "code_map:\n  coding_recall_max_files: 51\n",
+            "code_map:\n  coding_callers_per_symbol: 21\n",
+            "code_map:\n  coding_summary_token_budget: 12001\n",
+        ] {
+            assert!(
+                serde_yaml::from_str::<FreedomConfig>(source).is_err(),
+                "invalid code_map config unexpectedly deserialized: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn code_map_accepts_valid_bounds_and_programmatic_validation() {
+        let config: FreedomConfig = serde_yaml::from_str(
+            "code_map:\n  auto_context_max_files: 200\n  coding_recall_max_files: 50\n  coding_callers_per_symbol: 0\n  coding_summary_token_budget: 128\n",
+        )
+        .expect("inclusive code_map bounds must deserialize");
+        config
+            .code_map
+            .validate()
+            .expect("inclusive code_map bounds must validate");
+
+        let maximum = CodeMapConfig {
+            auto_context_max_files: 200,
+            coding_recall_max_files: 50,
+            coding_callers_per_symbol: 20,
+            coding_summary_token_budget: 12_000,
+            lifecycle: CodeMapLifecycleConfig::default(),
+        };
+        maximum
+            .validate()
+            .expect("inclusive maximum code_map bounds must validate");
+
+        let invalid = CodeMapConfig {
+            coding_summary_token_budget: 12_001,
+            ..CodeMapConfig::default()
+        };
+        assert!(
+            invalid.validate().is_err(),
+            "programmatic callers must not bypass code_map validation"
+        );
+    }
+
+    #[test]
+    fn code_map_lifecycle_defaults_disabled_and_requires_explicit_roots() {
+        let defaults = CodeMapLifecycleConfig::default();
+        assert!(!defaults.enabled);
+        assert!(defaults.managed_roots.is_empty());
+        defaults
+            .validate()
+            .expect("disabled lifecycle defaults must be valid");
+
+        let enabled_without_roots = CodeMapLifecycleConfig {
+            enabled: true,
+            ..CodeMapLifecycleConfig::default()
+        };
+        assert!(enabled_without_roots.validate().is_err());
+    }
+
+    #[test]
+    fn code_map_lifecycle_rejects_relative_and_out_of_range_yaml() {
+        for source in [
+            "code_map:\n  lifecycle:\n    managed_roots: [relative/repo]\n",
+            "code_map:\n  lifecycle:\n    debounce_millis: 49\n",
+            "code_map:\n  lifecycle:\n    reconciliation_interval_secs: 29\n",
+        ] {
+            assert!(
+                serde_yaml::from_str::<FreedomConfig>(source).is_err(),
+                "invalid lifecycle config unexpectedly deserialized: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn code_map_lifecycle_rejects_duplicate_and_overlapping_physical_roots() {
+        let workspace = tempfile::tempdir().unwrap();
+        let parent = workspace.path().join("repo");
+        let nested = parent.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        for roots in [
+            vec![parent.clone(), parent.clone()],
+            vec![parent.clone(), nested],
+        ] {
+            let config = CodeMapLifecycleConfig {
+                enabled: true,
+                managed_roots: roots,
+                ..CodeMapLifecycleConfig::default()
+            };
+            assert!(
+                config.validate().is_err(),
+                "overlapping physical roots must be rejected"
+            );
+        }
+
+        let isolated = workspace.path().join("other-repo");
+        std::fs::create_dir(&isolated).unwrap();
+        let config = CodeMapLifecycleConfig {
+            enabled: true,
+            managed_roots: vec![parent, isolated],
+            ..CodeMapLifecycleConfig::default()
+        };
+        config
+            .validate()
+            .expect("distinct canonical roots must be accepted");
+    }
+
+    #[test]
+    fn code_map_lifecycle_programmatic_validation_rejects_bounds() {
+        let invalid = CodeMapLifecycleConfig {
+            debounce_millis: CodeMapLifecycleConfig::MAX_DEBOUNCE_MILLIS + 1,
+            ..CodeMapLifecycleConfig::default()
+        };
+        assert!(invalid.validate().is_err());
+
+        let invalid = CodeMapLifecycleConfig {
+            reconciliation_interval_secs: CodeMapLifecycleConfig::MAX_RECONCILIATION_INTERVAL_SECS
+                + 1,
+            managed_roots: vec![PathBuf::from("relative/repo")],
+            ..CodeMapLifecycleConfig::default()
+        };
+        assert!(invalid.validate().is_err());
     }
 }

@@ -15,7 +15,7 @@ use super::graph::{CallGraph, DEFAULT_MAX_GRAPH_EDGES, FileInput};
 use super::persist::PersistStats;
 use super::root_identity::CanonicalRepoRoot;
 use super::walker::{
-    DEFAULT_MAX_FILE_BYTES, Language, RepoMap, RepoMapBuilder, ScanReport,
+    DEFAULT_MAX_FILE_BYTES, Language, RepoMap, RepoMapBuilder, ScanCancellation, ScanReport,
     normalize_relative_scope_paths, read_file_bounded,
 };
 
@@ -23,6 +23,8 @@ use super::walker::{
 /// CallGraph construction is linear after token indexing, but retaining an
 /// entire multi-gigabyte corpus would still make completion vulnerable to OOM.
 const MAX_GRAPH_SOURCE_BYTES: usize = 128 * 1024 * 1024;
+const MAX_PERSISTED_RECOVERY_ROW_TEXT_BYTES: i64 = 64 * 1024;
+const MAX_PERSISTED_RECOVERY_TEXT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Bounded filesystem options for one native snapshot rebuild.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -201,11 +203,19 @@ pub(crate) fn attest_existing_persisted_snapshot(
     connection.pragma_update(None, "query_only", "ON")?;
     let display = root.display();
     let row: Option<(Option<String>, i64, i64, bool)> = connection.query_row(
-        "SELECT root_identity, index_generation, graph_generation, oversize_skipped = 0 AND truncated_at IS NULL FROM code_map_roots WHERE root = ?1",
-        rusqlite::params![display],
+        "SELECT root_identity, index_generation, graph_generation, oversize_skipped = 0 AND truncated_at IS NULL FROM code_map_roots WHERE root = ?1 AND (root_identity IS NULL OR length(CAST(root_identity AS BLOB)) <= ?2)",
+        rusqlite::params![display, MAX_PERSISTED_RECOVERY_ROW_TEXT_BYTES],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     ).optional().context("read persisted native generation for recovery")?;
     let Some((stored_identity, index_generation, graph_generation, complete)) = row else {
+        let oversized: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM code_map_roots WHERE root = ?1 AND root_identity IS NOT NULL AND length(CAST(root_identity AS BLOB)) > ?2)",
+            rusqlite::params![display, MAX_PERSISTED_RECOVERY_ROW_TEXT_BYTES],
+            |row| row.get(0),
+        )?;
+        if oversized {
+            bail!("persisted native root identity exceeds recovery read bound");
+        }
         bail!("persisted native code-map snapshot is absent for recovery root")
     };
     ensure!(
@@ -246,20 +256,39 @@ fn persisted_source_fingerprint(
     root: &CanonicalRepoRoot,
 ) -> Result<String> {
     let mut stmt = connection.prepare(
-        "SELECT path, bytes, sha256 FROM code_map_files WHERE root = ?1 ORDER BY path ASC",
+        "SELECT path, bytes, sha256, length(CAST(path AS BLOB)) + length(CAST(sha256 AS BLOB)) \
+         FROM code_map_files WHERE root = ?1 ORDER BY path ASC LIMIT ?2",
     )?;
-    let rows = stmt.query_map(rusqlite::params![root.display()], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-        ))
-    })?;
+    let mut rows = stmt.query(rusqlite::params![
+        root.display(),
+        i64::try_from(super::persist::MAX_FRESHNESS_FILES.saturating_add(1))?,
+    ])?;
     let mut digest = Sha256::new();
     digest.update(b"neoth.code-map.source-snapshot.v2\0");
     digest.update(root.identity().as_str().as_bytes());
-    for row in rows {
-        let (path, bytes, sha256) = row?;
+    let mut count = 0usize;
+    let mut total_text = 0usize;
+    while let Some(row) = rows.next()? {
+        count += 1;
+        ensure!(
+            count <= super::persist::MAX_FRESHNESS_FILES,
+            "persisted native recovery source exceeds file-count read bound"
+        );
+        let row_text: i64 = row.get(3)?;
+        let row_text = usize::try_from(row_text)
+            .context("persisted native recovery source row text is negative")?;
+        ensure!(
+            row_text <= MAX_PERSISTED_RECOVERY_ROW_TEXT_BYTES as usize,
+            "persisted native recovery source row exceeds text read bound"
+        );
+        total_text = total_text.saturating_add(row_text);
+        ensure!(
+            total_text <= MAX_PERSISTED_RECOVERY_TEXT_BYTES,
+            "persisted native recovery source exceeds total text read bound"
+        );
+        let path: String = row.get(0)?;
+        let bytes: i64 = row.get(1)?;
+        let sha256: String = row.get(2)?;
         let bytes =
             u64::try_from(bytes).context("persisted native source byte count is negative")?;
         digest.update(b"\0");
@@ -364,6 +393,35 @@ pub fn rebuild_snapshot(
     options: RebuildOptions,
 ) -> Result<RebuildSnapshot> {
     rebuild_snapshot_excluding(root, db_path, options, &[])
+}
+
+/// Rebuild with cooperative cancellation through scan, source re-read, graph
+/// preparation, and the pre-publication fence. A cancellation before commit
+/// leaves the prior published generation untouched. Callers must inspect the
+/// returned snapshot before interpreting a cancellation observed afterwards.
+pub fn rebuild_snapshot_cancellable(
+    root: &CanonicalRepoRoot,
+    db_path: &Path,
+    options: RebuildOptions,
+    cancellation: &ScanCancellation,
+) -> Result<RebuildSnapshot> {
+    let max_file_bytes = options.max_file_bytes.unwrap_or(DEFAULT_MAX_FILE_BYTES);
+    rebuild_snapshot_with_reader_controlled(
+        root,
+        db_path,
+        options,
+        &[],
+        &[],
+        move |path| {
+            read_file_bounded(path, max_file_bytes)?.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("file grew beyond the {max_file_bytes}-byte snapshot limit"),
+                )
+            })
+        },
+        cancellation,
+    )
 }
 
 /// Rebuild a snapshot while excluding an explicit, fingerprint-bound set of
@@ -549,11 +607,35 @@ fn rebuild_snapshot_with_reader<F>(
     options: RebuildOptions,
     included_relative_paths: &[PathBuf],
     excluded_relative_paths: &[PathBuf],
-    mut read_file: F,
+    read_file: F,
 ) -> Result<RebuildSnapshot>
 where
     F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
 {
+    rebuild_snapshot_with_reader_controlled(
+        root,
+        db_path,
+        options,
+        included_relative_paths,
+        excluded_relative_paths,
+        read_file,
+        &ScanCancellation::default(),
+    )
+}
+
+fn rebuild_snapshot_with_reader_controlled<F>(
+    root: &CanonicalRepoRoot,
+    db_path: &Path,
+    options: RebuildOptions,
+    included_relative_paths: &[PathBuf],
+    excluded_relative_paths: &[PathBuf],
+    mut read_file: F,
+    cancellation: &ScanCancellation,
+) -> Result<RebuildSnapshot>
+where
+    F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
+{
+    cancellation.checkpoint()?;
     let mut builder = RepoMapBuilder::new(root.path())
         .with_symbols(true)
         .strict_errors(options.require_complete)
@@ -570,7 +652,9 @@ where
     if options.include_hidden {
         builder = builder.include_hidden(true);
     }
-    let map = builder.scan().context("scan native code-map snapshot")?;
+    let map = builder
+        .scan_with_cancellation(cancellation)
+        .context("scan native code-map snapshot")?;
     if options.require_complete {
         ensure!(
             map.report.truncated_at.is_none(),
@@ -585,11 +669,11 @@ where
     }
     ensure_root_unchanged(root, &map)?;
 
-    let graph = build_graph_from_scan_snapshot(&map, &mut read_file)?;
+    let graph = build_graph_from_scan_snapshot_controlled(&map, &mut read_file, cancellation)?;
     // A file validated early during graph construction can still change while
     // later files are read. Revalidate the complete corpus immediately before
     // entering the publication transaction.
-    validate_scan_fingerprint(&map, &mut read_file)?;
+    validate_scan_fingerprint_controlled(&map, &mut read_file, cancellation)?;
     let mut verification_builder = RepoMapBuilder::new(root.path())
         .with_symbols(false)
         .strict_errors(options.require_complete)
@@ -608,17 +692,19 @@ where
         verification_builder = verification_builder.include_hidden(true);
     }
     let verification_map = verification_builder
-        .scan()
+        .scan_with_cancellation(cancellation)
         .context("final rescan of native code-map corpus")?;
     ensure_same_scanned_corpus(&map, &verification_map)?;
     // Close a directory-replacement race between the scan/reread and publish.
     ensure_root_unchanged(root, &map)?;
+    cancellation.checkpoint()?;
     let cycles = graph
         .find_cycles(50)
         .context("run bounded call-cycle analysis before snapshot publication")?;
     let source_fingerprint_sha256 =
         source_fingerprint_digest(root, &map, included_relative_paths, excluded_relative_paths);
 
+    cancellation.checkpoint()?;
     let mut conn = super::persist::open(db_path)
         .with_context(|| format!("open code-map database at {}", db_path.display()))?;
     let publication =
@@ -653,13 +739,24 @@ fn ensure_root_unchanged(expected: &CanonicalRepoRoot, map: &RepoMap) -> Result<
     Ok(())
 }
 
-fn build_graph_from_scan_snapshot<F>(map: &RepoMap, mut read_file: F) -> Result<CallGraph>
+fn build_graph_from_scan_snapshot_controlled<F>(
+    map: &RepoMap,
+    mut read_file: F,
+    cancellation: &ScanCancellation,
+) -> Result<CallGraph>
 where
     F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
 {
-    build_graph_from_scan_snapshot_with_limit(map, &mut read_file, MAX_GRAPH_SOURCE_BYTES)
+    cancellation.checkpoint()?;
+    build_graph_from_scan_snapshot_with_limit_controlled(
+        map,
+        &mut read_file,
+        MAX_GRAPH_SOURCE_BYTES,
+        cancellation,
+    )
 }
 
+#[cfg(test)]
 fn build_graph_from_scan_snapshot_with_limit<F>(
     map: &RepoMap,
     mut read_file: F,
@@ -668,10 +765,28 @@ fn build_graph_from_scan_snapshot_with_limit<F>(
 where
     F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
 {
+    build_graph_from_scan_snapshot_with_limit_controlled(
+        map,
+        &mut read_file,
+        max_graph_source_bytes,
+        &ScanCancellation::default(),
+    )
+}
+
+fn build_graph_from_scan_snapshot_with_limit_controlled<F>(
+    map: &RepoMap,
+    mut read_file: F,
+    max_graph_source_bytes: usize,
+    cancellation: &ScanCancellation,
+) -> Result<CallGraph>
+where
+    F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
+{
     let root_dir = PathBuf::from(&map.root);
     let mut inputs = Vec::with_capacity(map.files.len());
     let mut retained_source_bytes = 0usize;
     for file in &map.files {
+        cancellation.checkpoint()?;
         let absolute = root_dir.join(&file.path);
         let raw = read_file(&absolute)
             .with_context(|| format!("re-read scanned code-map file {}", absolute.display()))?;
@@ -724,6 +839,7 @@ where
         };
         inputs.push(input);
     }
+    cancellation.checkpoint()?;
     CallGraph::build_bounded(&inputs, DEFAULT_MAX_GRAPH_EDGES)
 }
 
@@ -731,8 +847,20 @@ fn validate_scan_fingerprint<F>(map: &RepoMap, mut read_file: F) -> Result<()>
 where
     F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
 {
+    validate_scan_fingerprint_controlled(map, &mut read_file, &ScanCancellation::default())
+}
+
+fn validate_scan_fingerprint_controlled<F>(
+    map: &RepoMap,
+    mut read_file: F,
+    cancellation: &ScanCancellation,
+) -> Result<()>
+where
+    F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
+{
     let root_dir = PathBuf::from(&map.root);
     for file in &map.files {
+        cancellation.checkpoint()?;
         let absolute = root_dir.join(&file.path);
         let raw = read_file(&absolute).with_context(|| {
             format!(
@@ -876,6 +1004,44 @@ mod tests {
         assert_eq!(rebuilt.stats.files_inserted, 1);
         assert!(rebuilt.stats.symbols_inserted >= 2);
         assert!(rebuilt.edges_inserted >= 1);
+    }
+
+    #[test]
+    fn cancellation_from_the_graph_reader_never_publishes_a_new_generation() {
+        let repo = tempdir().unwrap();
+        let source = repo.path().join("lib.rs");
+        std::fs::write(&source, "pub fn alpha() { beta(); }\npub fn beta() {}\n").unwrap();
+        let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let db_dir = tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
+        let baseline = rebuild_snapshot(&root, &db, RebuildOptions::default()).unwrap();
+        std::fs::write(&source, "pub fn alpha() { gamma(); }\npub fn gamma() {}\n").unwrap();
+
+        let cancellation = ScanCancellation::new();
+        let cancellation_from_reader = cancellation.clone();
+        let result = rebuild_snapshot_with_reader_controlled(
+            &root,
+            &db,
+            RebuildOptions::default(),
+            &[],
+            &[],
+            move |path| {
+                let bytes = std::fs::read(path)?;
+                cancellation_from_reader.cancel();
+                Ok(bytes)
+            },
+            &cancellation,
+        );
+        assert!(result.is_err());
+        let connection = super::super::persist::open_read_only(&db).unwrap();
+        assert_eq!(
+            super::super::persist::root_index_generation(&connection, root.display()).unwrap(),
+            Some(baseline.index_generation)
+        );
+        assert_eq!(
+            super::super::persist::root_graph_generation(&connection, root.display()).unwrap(),
+            Some(baseline.graph_generation)
+        );
     }
 
     #[test]

@@ -122,7 +122,7 @@ impl AccountContext {
     /// layer must not manufacture an account capability from a request field;
     /// authenticated-session wiring is intentionally deferred until it can
     /// pass a verified principal rather than an arbitrary string.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn from_authenticated_identity(principal: &str, connector_instance: &str) -> Result<Self> {
         validate_identifier("authenticated principal", principal)?;
         Ok(Self {
@@ -261,6 +261,8 @@ pub(crate) struct ContextImportApplyKey {
 }
 
 impl ContextImportApplyKey {
+    // The current connector-control transport and its store tests are Unix-only.
+    #[cfg(unix)]
     pub(crate) const fn new(operation_key: [u8; 32], confirmation_nonce: [u8; 32]) -> Self {
         Self {
             operation_key,
@@ -283,10 +285,12 @@ pub(crate) struct ContextImportApplyOutcome {
 }
 
 impl ContextImportApplyOutcome {
+    #[cfg(unix)]
     pub(crate) const fn accepted(self) -> bool {
         self.accepted
     }
 
+    #[cfg(unix)]
     pub(crate) const fn audit_pending(self) -> bool {
         self.audit_pending
     }

@@ -61,6 +61,11 @@ static DREAM_CRON_OPERATION_ACTIVE: std::sync::atomic::AtomicBool =
 static CODE_MAP_RECALL_ACTIVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+// Startup config reads and explicit lifecycle config receipts share this
+// revision so a delayed read cannot repaint a newer, receipt-backed change.
+static CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 // Multiple background-job refreshes can overlap (manual refresh, route entry,
 // and the automatic refresh after a successful spawn). Only the newest request
 // may publish its list or clear the loading state.
@@ -1095,6 +1100,7 @@ mod win_private {
 mod buddy_activity;
 mod chat_child_supervisor;
 mod chat_stream_phase;
+mod code_map_controller;
 mod gui_action;
 mod gui_stream;
 mod panel_logic;
@@ -13650,6 +13656,119 @@ fn main() -> Result<()> {
         });
     });
 
+    // Native typed lifecycle ownership is shared by Settings and Buddy.  It
+    // deliberately bypasses the legacy recall subprocess path below.
+    let code_map_lifecycle_controller =
+        std::sync::Arc::new(code_map_controller::CodeMapLifecycleController::new(
+            neothd::code_map::persist::default_path(),
+        ));
+
+    let weak_code_map_lifecycle_inspect = window.as_weak();
+    let inspect_controller = std::sync::Arc::clone(&code_map_lifecycle_controller);
+    window.on_code_map_lifecycle_inspect_clicked(move |root| {
+        start_code_map_lifecycle_inspection(
+            weak_code_map_lifecycle_inspect.clone(),
+            std::sync::Arc::clone(&inspect_controller),
+            root.to_string(),
+        );
+    });
+
+    let weak_code_map_lifecycle_refresh = window.as_weak();
+    let refresh_controller = std::sync::Arc::clone(&code_map_lifecycle_controller);
+    window.on_code_map_lifecycle_refresh_clicked(move |root, force, repair_corrupt| {
+        start_code_map_lifecycle_refresh(
+            weak_code_map_lifecycle_refresh.clone(),
+            std::sync::Arc::clone(&refresh_controller),
+            root.to_string(),
+            force,
+            repair_corrupt,
+        );
+    });
+
+    let weak_code_map_lifecycle_cancel = window.as_weak();
+    let cancel_controller = std::sync::Arc::clone(&code_map_lifecycle_controller);
+    window.on_code_map_lifecycle_cancel_clicked(move || {
+        request_code_map_lifecycle_cancel(
+            weak_code_map_lifecycle_cancel.clone(),
+            std::sync::Arc::clone(&cancel_controller),
+        );
+    });
+
+    let weak_code_map_lifecycle_config = window.as_weak();
+    window.on_code_map_lifecycle_config_apply_clicked(move |enabled, debounce, reconciliation| {
+        start_code_map_lifecycle_config_apply(
+            weak_code_map_lifecycle_config.clone(),
+            enabled,
+            debounce.to_string(),
+            reconciliation.to_string(),
+        );
+    });
+    let weak_code_map_lifecycle_root_remove = window.as_weak();
+    window.on_code_map_lifecycle_managed_root_remove_clicked(move |path| {
+        let Some(window) = weak_code_map_lifecycle_root_remove.upgrade() else {
+            return;
+        };
+        start_code_map_lifecycle_root_remove(
+            weak_code_map_lifecycle_root_remove.clone(),
+            path.to_string(),
+        );
+    });
+    load_code_map_lifecycle_config_view(window.as_weak());
+
+    // Buddy commands intentionally enter the exact same typed controller as
+    // Settings. The selected root is still explicit UI state; no CWD fallback.
+    let weak_buddy_code_map_status = window.as_weak();
+    let buddy_status_controller = std::sync::Arc::clone(&code_map_lifecycle_controller);
+    window.on_buddy_code_map_status(move || {
+        let Some(window) = weak_buddy_code_map_status.upgrade() else {
+            return;
+        };
+        window.set_nav_active("coding".into());
+        start_code_map_lifecycle_inspection(
+            weak_buddy_code_map_status.clone(),
+            std::sync::Arc::clone(&buddy_status_controller),
+            window.get_code_map_root().to_string(),
+        );
+    });
+    let weak_buddy_code_map_setup = window.as_weak();
+    let buddy_setup_controller = std::sync::Arc::clone(&code_map_lifecycle_controller);
+    window.on_buddy_code_map_setup(move || {
+        let Some(window) = weak_buddy_code_map_setup.upgrade() else {
+            return;
+        };
+        window.set_nav_active("coding".into());
+        start_code_map_lifecycle_refresh(
+            weak_buddy_code_map_setup.clone(),
+            std::sync::Arc::clone(&buddy_setup_controller),
+            window.get_code_map_root().to_string(),
+            false,
+            false,
+        );
+    });
+    let weak_buddy_code_map_rebuild = window.as_weak();
+    let buddy_rebuild_controller = std::sync::Arc::clone(&code_map_lifecycle_controller);
+    window.on_buddy_code_map_rebuild(move || {
+        let Some(window) = weak_buddy_code_map_rebuild.upgrade() else {
+            return;
+        };
+        window.set_nav_active("coding".into());
+        start_code_map_lifecycle_refresh(
+            weak_buddy_code_map_rebuild.clone(),
+            std::sync::Arc::clone(&buddy_rebuild_controller),
+            window.get_code_map_root().to_string(),
+            true,
+            false,
+        );
+    });
+    let weak_buddy_code_map_cancel = window.as_weak();
+    let buddy_cancel_controller = std::sync::Arc::clone(&code_map_lifecycle_controller);
+    window.on_buddy_code_map_cancel(move || {
+        request_code_map_lifecycle_cancel(
+            weak_buddy_code_map_cancel.clone(),
+            std::sync::Arc::clone(&buddy_cancel_controller),
+        );
+    });
+
     // GOLD-R3-13 — repository-local code-map recall. Root selection is an
     // explicit operator input; this path never consults the GUI process CWD.
     let weak_code_map_browse = window.as_weak();
@@ -13774,7 +13893,7 @@ fn main() -> Result<()> {
                                 envelope
                                     .note
                                     .unwrap_or_else(|| {
-                                        "Repository is not mapped. Run `neoth code-map persist <root>`."
+                                        "Repository is not mapped. Inspect or set up its index in Repository Index."
                                             .into()
                                     })
                                     .into(),
@@ -19366,6 +19485,605 @@ fn publish_buddy_cluster_result(
         };
         apply_buddy_cluster_result(&window, result);
     });
+}
+
+fn load_code_map_lifecycle_config_view(weak: slint::Weak<MainWindow>) {
+    let revision = CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+        .saturating_add(1);
+    std::thread::spawn(move || {
+        let result = neothd::config::FreedomConfig::load_from_default_path()
+            .map(|config| config.code_map.lifecycle);
+        let runtime = code_map_lifecycle_runtime_summary();
+        let _ = slint::invoke_from_event_loop(move || {
+            if CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
+                != revision
+            {
+                return;
+            }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            match result {
+                Ok(config) => {
+                    let roots = config
+                        .managed_roots
+                        .iter()
+                        .map(|root| root.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    window.set_code_map_lifecycle_config_enabled(config.enabled);
+                    window.set_code_map_lifecycle_debounce_millis(
+                        config.debounce_millis.to_string().into(),
+                    );
+                    window.set_code_map_lifecycle_reconciliation_secs(
+                        config.reconciliation_interval_secs.to_string().into(),
+                    );
+                    window.set_code_map_lifecycle_config_status(
+                        format!(
+                            "Persisted lifecycle config (enabled: {}; managed roots: {}). Daemon ownership is shown separately below.",
+                            config.enabled,
+                            if roots.is_empty() { "none" } else { &roots },
+                        )
+                        .into(),
+                    );
+                    set_code_map_lifecycle_managed_roots_from_paths(&window, &config.managed_roots);
+                }
+                Err(error) => window.set_code_map_lifecycle_config_status(
+                    format!("Lifecycle configuration could not be read: {error:#}").into(),
+                ),
+            }
+            window.set_code_map_lifecycle_runtime(runtime.into());
+        });
+    });
+}
+
+fn start_code_map_lifecycle_config_apply(
+    weak: slint::Weak<MainWindow>,
+    enabled: bool,
+    debounce: String,
+    reconciliation: String,
+) {
+    let Some(window) = weak.upgrade() else {
+        return;
+    };
+    let debounce_millis = match debounce.trim().parse::<u64>() {
+        Ok(value) => value,
+        Err(_) => {
+            window.set_code_map_lifecycle_config_status(
+                "Debounce must be a whole number of milliseconds.".into(),
+            );
+            return;
+        }
+    };
+    let reconciliation_interval_secs = match reconciliation.trim().parse::<u64>() {
+        Ok(value) => value,
+        Err(_) => {
+            window.set_code_map_lifecycle_config_status(
+                "Reconciliation interval must be a whole number of seconds.".into(),
+            );
+            return;
+        }
+    };
+    let root = window.get_code_map_root().trim().to_owned();
+    if enabled && root.is_empty() {
+        window.set_code_map_lifecycle_config_status(
+            "Choose a repository root before enabling its daemon lifecycle.".into(),
+        );
+        return;
+    }
+    let revision = CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+        .saturating_add(1);
+    window.set_code_map_lifecycle_config_running(true);
+    window.set_code_map_lifecycle_config_status(
+        "Persisting lifecycle configuration and requesting daemon reload…".into(),
+    );
+
+    std::thread::spawn(move || {
+        let result = (|| -> Result<neothd::code_map::CodeMapLifecycleConfigApplyReceipt> {
+            let patch = neothd::code_map::CodeMapLifecycleConfigPatch {
+                enabled: Some(enabled),
+                debounce_millis: Some(debounce_millis),
+                reconciliation_interval_secs: Some(reconciliation_interval_secs),
+                add_managed_roots: if enabled {
+                    vec![PathBuf::from(&root)]
+                } else {
+                    Vec::new()
+                },
+                remove_managed_roots: Vec::new(),
+                disable_if_no_managed_roots: false,
+            };
+            let home = neothd::config::FreedomConfig::default_neoth_home();
+            neothd::code_map::apply_code_map_lifecycle_config_patch(&home, patch)
+        })();
+        let _ = slint::invoke_from_event_loop(move || {
+            if CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
+                != revision
+            {
+                return;
+            }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            window.set_code_map_lifecycle_config_running(false);
+            match result {
+                Ok(receipt) => {
+                    window.set_code_map_lifecycle_config_enabled(receipt.persisted_config.enabled);
+                    window.set_code_map_lifecycle_debounce_millis(
+                        receipt.persisted_config.debounce_millis.to_string().into(),
+                    );
+                    window.set_code_map_lifecycle_reconciliation_secs(
+                        receipt
+                            .persisted_config
+                            .reconciliation_interval_secs
+                            .to_string()
+                            .into(),
+                    );
+                    let roots = receipt
+                        .managed_root_observations
+                        .iter()
+                        .map(|root| root.persisted_path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let reload = if receipt.reload_requested {
+                        "Reload requested; daemon acceptance remains pending."
+                    } else {
+                        "Configuration persisted, but daemon reload could not be requested."
+                    };
+                    let diagnostic = receipt
+                        .reload_diagnostic
+                        .as_deref()
+                        .map(|diagnostic| format!(" {diagnostic}"))
+                        .unwrap_or_default();
+                    window.set_code_map_lifecycle_config_status(
+                        format!(
+                            "Lifecycle configuration saved (enabled: {}; managed roots: {}). {reload}{diagnostic}",
+                            receipt.persisted_config.enabled,
+                            if roots.is_empty() { "none" } else { &roots },
+                        )
+                        .into(),
+                    );
+                    set_code_map_lifecycle_managed_roots_from_observations(
+                        &window,
+                        &receipt.managed_root_observations,
+                    );
+                    let runtime = receipt.active_observed.as_ref().map_or_else(
+                        || receipt.active_observation_diagnostic.unwrap_or_else(|| {
+                            "No lock-proven active daemon watcher was observed after the configuration write."
+                                .into()
+                        }),
+                        code_map_lifecycle_runtime_summary_from,
+                    );
+                    window.set_code_map_lifecycle_runtime(runtime.into());
+                    buddy(&window, GuiActivity::CodeMapLifecycleConfigSaved);
+                }
+                Err(error) => {
+                    window.set_code_map_lifecycle_config_status(
+                        format!("Lifecycle configuration was not changed: {error:#}").into(),
+                    );
+                    buddy(&window, GuiActivity::CodeMapLifecycleFailed);
+                }
+            }
+        });
+    });
+}
+
+fn start_code_map_lifecycle_inspection(
+    weak: slint::Weak<MainWindow>,
+    controller: std::sync::Arc<code_map_controller::CodeMapLifecycleController>,
+    root: String,
+) {
+    let root = root.trim().to_owned();
+    let Some(window) = weak.upgrade() else {
+        return;
+    };
+    if controller.has_active_refresh() {
+        window.set_code_map_lifecycle_detail(
+            "A repository index refresh is already active. Wait for its terminal receipt or cancel it."
+                .into(),
+        );
+        return;
+    }
+    if root.is_empty() {
+        set_code_map_lifecycle_error(
+            &window,
+            "Choose a repository root before inspecting its index.",
+        );
+        buddy(&window, GuiActivity::CodeMapLifecycleFailed);
+        return;
+    }
+    window.set_code_map_lifecycle_running(true);
+    window.set_code_map_lifecycle_refresh_active(false);
+    window.set_code_map_lifecycle_operation("inspect".into());
+    window.set_code_map_lifecycle_cancel_pending(false);
+    window.set_code_map_lifecycle_error(false);
+    window.set_code_map_lifecycle_state("Inspecting repository index…".into());
+    window.set_code_map_lifecycle_detail(
+        "Reading lifecycle evidence without creating or repairing the database.".into(),
+    );
+    buddy(&window, GuiActivity::CodeMapLifecycleInspect);
+
+    std::thread::spawn(move || {
+        let result = controller.inspect(Path::new(&root));
+        let runtime = code_map_lifecycle_runtime_summary();
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            match result {
+                Ok((revision, canonical_root, status)) => {
+                    if !controller.is_current_view(revision, &canonical_root) {
+                        return;
+                    }
+                    window.set_code_map_lifecycle_running(false);
+                    window.set_code_map_lifecycle_refresh_active(false);
+                    window.set_code_map_lifecycle_operation("".into());
+                    apply_code_map_lifecycle_presentation(
+                        &window,
+                        panel_logic::present_code_map_lifecycle_status(&status),
+                    );
+                    window.set_code_map_lifecycle_runtime(runtime.into());
+                    buddy(&window, GuiActivity::CodeMapLifecycleStatus);
+                }
+                Err(error) => {
+                    if controller.has_active_refresh() {
+                        return;
+                    }
+                    window.set_code_map_lifecycle_running(false);
+                    set_code_map_lifecycle_error(
+                        &window,
+                        &format!("Could not inspect repository index: {error:#}"),
+                    );
+                    buddy(&window, GuiActivity::CodeMapLifecycleFailed);
+                }
+            }
+        });
+    });
+}
+
+fn start_code_map_lifecycle_root_remove(weak: slint::Weak<MainWindow>, root: String) {
+    let revision = CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+        .saturating_add(1);
+    let Some(window) = weak.upgrade() else {
+        return;
+    };
+    window.set_code_map_lifecycle_config_running(true);
+    window.set_code_map_lifecycle_config_status(
+        "Removing managed root and requesting daemon reload…".into(),
+    );
+    std::thread::spawn(move || {
+        let patch = neothd::code_map::CodeMapLifecycleConfigPatch {
+            enabled: None,
+            debounce_millis: None,
+            reconciliation_interval_secs: None,
+            add_managed_roots: Vec::new(),
+            remove_managed_roots: vec![PathBuf::from(root)],
+            disable_if_no_managed_roots: true,
+        };
+        let home = neothd::config::FreedomConfig::default_neoth_home();
+        let result = neothd::code_map::apply_code_map_lifecycle_config_patch(&home, patch);
+        let _ = slint::invoke_from_event_loop(move || {
+            if CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
+                != revision
+            {
+                return;
+            }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            window.set_code_map_lifecycle_config_running(false);
+            match result {
+                Ok(receipt) => {
+                    window.set_code_map_lifecycle_config_enabled(receipt.persisted_config.enabled);
+                    window.set_code_map_lifecycle_config_status(
+                        if receipt.reload_requested {
+                            "Managed root removed; daemon reload requested."
+                        } else {
+                            "Managed root removed, but daemon reload could not be requested."
+                        }
+                        .into(),
+                    );
+                    set_code_map_lifecycle_managed_roots_from_observations(
+                        &window,
+                        &receipt.managed_root_observations,
+                    );
+                    let runtime = receipt.active_observed.as_ref().map_or_else(
+                        || {
+                            receipt.active_observation_diagnostic.unwrap_or_else(|| {
+                            "No lock-proven active daemon watcher was observed after root removal."
+                                .into()
+                        })
+                        },
+                        code_map_lifecycle_runtime_summary_from,
+                    );
+                    window.set_code_map_lifecycle_runtime(runtime.into());
+                    buddy(&window, GuiActivity::CodeMapLifecycleConfigSaved);
+                }
+                Err(error) => {
+                    window.set_code_map_lifecycle_config_status(
+                        format!("Managed root was not removed: {error:#}").into(),
+                    );
+                    buddy(&window, GuiActivity::CodeMapLifecycleFailed);
+                }
+            }
+        });
+    });
+}
+
+fn set_code_map_lifecycle_managed_roots_from_paths(window: &MainWindow, roots: &[PathBuf]) {
+    let rows = roots
+        .iter()
+        .map(|root| CodeMapManagedRootRow {
+            path: root.display().to_string().into(),
+            availability: "availability has not been rechecked".into(),
+        })
+        .collect::<Vec<_>>();
+    window.set_code_map_lifecycle_managed_roots(slint::ModelRc::new(slint::VecModel::from(rows)));
+}
+
+fn set_code_map_lifecycle_managed_roots_from_observations(
+    window: &MainWindow,
+    observations: &[neothd::code_map::CodeMapLifecycleManagedRootObservation],
+) {
+    let rows = observations
+        .iter()
+        .map(|observation| CodeMapManagedRootRow {
+            path: observation.persisted_path.display().to_string().into(),
+            availability: observation
+                .availability_diagnostic
+                .clone()
+                .unwrap_or_else(|| {
+                    if observation.canonical_path.is_some() {
+                        "available".into()
+                    } else {
+                        "unavailable".into()
+                    }
+                }),
+        })
+        .collect::<Vec<_>>();
+    window.set_code_map_lifecycle_managed_roots(slint::ModelRc::new(slint::VecModel::from(rows)));
+}
+
+fn start_code_map_lifecycle_refresh(
+    weak: slint::Weak<MainWindow>,
+    controller: std::sync::Arc<code_map_controller::CodeMapLifecycleController>,
+    root: String,
+    force: bool,
+    repair_corrupt: bool,
+) {
+    let root = root.trim().to_owned();
+    let Some(window) = weak.upgrade() else {
+        return;
+    };
+    if controller.has_active_refresh() {
+        window.set_code_map_lifecycle_detail(
+            "A repository index refresh is already active. Wait for its terminal receipt or cancel it."
+                .into(),
+        );
+        return;
+    }
+    if root.is_empty() {
+        set_code_map_lifecycle_error(
+            &window,
+            "Choose a repository root before changing its index.",
+        );
+        buddy(&window, GuiActivity::CodeMapLifecycleFailed);
+        return;
+    }
+    let operation = match controller.begin_refresh(Path::new(&root)) {
+        Ok(operation) => operation,
+        Err(error) => {
+            if controller.has_active_refresh() {
+                window.set_code_map_lifecycle_detail(
+                    "A repository index refresh is already active. Wait for its terminal receipt or cancel it."
+                        .into(),
+                );
+                return;
+            }
+            set_code_map_lifecycle_error(
+                &window,
+                &format!("Could not start repository index operation: {error:#}"),
+            );
+            buddy(&window, GuiActivity::CodeMapLifecycleFailed);
+            return;
+        }
+    };
+    window.set_code_map_lifecycle_running(true);
+    window.set_code_map_lifecycle_refresh_active(true);
+    window.set_code_map_lifecycle_operation("refresh".into());
+    window.set_code_map_lifecycle_cancel_pending(false);
+    window.set_code_map_lifecycle_error(false);
+    window.set_code_map_lifecycle_state(
+        if repair_corrupt {
+            "Repairing corrupt repository index…"
+        } else if force {
+            "Force rebuilding repository index…"
+        } else {
+            "Refreshing repository index…"
+        }
+        .into(),
+    );
+    window.set_code_map_lifecycle_detail(
+        if repair_corrupt {
+            "The core service preserves corrupt evidence before an explicit repair rebuild."
+        } else {
+            "The core service owns this refresh and returns a terminal receipt after it settles."
+        }
+        .into(),
+    );
+    buddy(&window, GuiActivity::CodeMapLifecycleRefreshing);
+
+    let cause = if repair_corrupt {
+        neothd::code_map::RefreshCause::ExplicitCorruptStoreRepair
+    } else if force {
+        neothd::code_map::RefreshCause::ManualForce
+    } else {
+        neothd::code_map::RefreshCause::ManualIfNeeded
+    };
+    let options = neothd::code_map::LifecycleRefreshOptions {
+        force,
+        repair_corrupt,
+        cause,
+    };
+    std::thread::spawn(move || {
+        let result = controller.refresh(&operation, options);
+        let accepted = controller.finish(&operation);
+        let runtime = code_map_lifecycle_runtime_summary();
+        let _ = slint::invoke_from_event_loop(move || {
+            if !accepted || !controller.is_current_view(operation.revision(), operation.root()) {
+                return;
+            }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            window.set_code_map_lifecycle_running(false);
+            window.set_code_map_lifecycle_refresh_active(false);
+            window.set_code_map_lifecycle_operation("".into());
+            window.set_code_map_lifecycle_cancel_pending(false);
+            match result {
+                Ok(receipt) => {
+                    let presentation = panel_logic::present_code_map_lifecycle_receipt(&receipt);
+                    let completed = !presentation.is_error;
+                    apply_code_map_lifecycle_presentation(&window, presentation);
+                    window.set_code_map_lifecycle_runtime(runtime.into());
+                    buddy(
+                        &window,
+                        if completed {
+                            GuiActivity::CodeMapLifecycleComplete
+                        } else {
+                            GuiActivity::CodeMapLifecycleFailed
+                        },
+                    );
+                }
+                Err(error) => {
+                    set_code_map_lifecycle_error(
+                        &window,
+                        &format!("Repository index operation failed: {error:#}"),
+                    );
+                    buddy(&window, GuiActivity::CodeMapLifecycleFailed);
+                }
+            }
+        });
+    });
+}
+
+fn request_code_map_lifecycle_cancel(
+    weak: slint::Weak<MainWindow>,
+    controller: std::sync::Arc<code_map_controller::CodeMapLifecycleController>,
+) {
+    let Some(window) = weak.upgrade() else {
+        return;
+    };
+    if controller.request_cancel().is_some() {
+        window.set_code_map_lifecycle_cancel_pending(true);
+        window.set_code_map_lifecycle_state("Cancelling repository index operation…".into());
+        window.set_code_map_lifecycle_detail("Cancellation was requested. The operation remains active until the core worker returns a terminal receipt.".into());
+        buddy(&window, GuiActivity::CodeMapLifecycleCancelling);
+    } else {
+        set_code_map_lifecycle_error(&window, "There is no repository index operation to cancel.");
+        buddy(&window, GuiActivity::CodeMapLifecycleFailed);
+    }
+}
+
+fn apply_code_map_lifecycle_presentation(
+    window: &MainWindow,
+    presentation: panel_logic::CodeMapLifecyclePresentation,
+) {
+    window.set_code_map_lifecycle_state(presentation.state.into());
+    window.set_code_map_lifecycle_detail(presentation.detail.into());
+    window.set_code_map_lifecycle_error(presentation.is_error);
+    window.set_code_map_lifecycle_can_setup(presentation.can_setup);
+    window.set_code_map_lifecycle_can_refresh(presentation.can_refresh);
+    window.set_code_map_lifecycle_can_force_rebuild(presentation.can_force_rebuild);
+    window.set_code_map_lifecycle_can_repair(presentation.can_repair);
+    window.set_code_map_lifecycle_canonical_root(presentation.canonical_root.into());
+    window.set_code_map_lifecycle_root_identity(presentation.root_identity.into());
+    window.set_code_map_lifecycle_index_generation(presentation.index_generation.into());
+    window.set_code_map_lifecycle_graph_generation(presentation.graph_generation.into());
+}
+
+fn code_map_lifecycle_runtime_summary() -> String {
+    let home = neothd::config::FreedomConfig::default_neoth_home();
+    match neothd::code_map::read_active_code_map_lifecycle_status(&home) {
+        Ok(Some(status)) => code_map_lifecycle_runtime_summary_from(&status),
+        Ok(None) => {
+            "No lock-proven active daemon watcher was found for this NEOTH instance.".into()
+        }
+        Err(error) => format!("Daemon watcher status could not be read: {error:#}"),
+    }
+}
+
+fn code_map_lifecycle_runtime_summary_from(
+    status: &neothd::code_map::CodeMapLifecycleRuntimeStatus,
+) -> String {
+    if !status.requested_enabled {
+        return format!(
+            "Live daemon PID {} accepted lifecycle disabled; no repository roots are watched.",
+            status.daemon_pid
+        );
+    }
+    let active_roots = status
+        .active_roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let requested_roots = status
+        .requested_roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let activated = status.active_config_generation == Some(status.config_generation)
+        && !status.active_roots.is_empty();
+    let activation_diagnostic = status
+        .requested_activation_diagnostic
+        .as_deref()
+        .map(|diagnostic| format!("; requested activation: {diagnostic}"))
+        .unwrap_or_default();
+    let error = status
+        .last_error
+        .as_deref()
+        .map(|error| format!("; last watcher error: {error}"))
+        .unwrap_or_default();
+    if activated {
+        format!(
+            "Live daemon PID {} is watching {} (generation {}; refresh attempts: {}).",
+            status.daemon_pid,
+            active_roots,
+            status.config_generation,
+            status.active_refresh_attempts,
+        )
+    } else {
+        format!(
+            "Live daemon PID {} accepted lifecycle generation {}, but no watcher is active yet (requested roots: {}){}",
+            status.daemon_pid,
+            status.config_generation,
+            if requested_roots.is_empty() {
+                "none"
+            } else {
+                &requested_roots
+            },
+            activation_diagnostic,
+            error,
+        )
+    }
+}
+
+fn set_code_map_lifecycle_error(window: &MainWindow, message: &str) {
+    window.set_code_map_lifecycle_running(false);
+    window.set_code_map_lifecycle_refresh_active(false);
+    window.set_code_map_lifecycle_operation("".into());
+    window.set_code_map_lifecycle_cancel_pending(false);
+    window.set_code_map_lifecycle_error(true);
+    window.set_code_map_lifecycle_state("Repository index action failed".into());
+    window.set_code_map_lifecycle_detail(message.into());
+    window.set_code_map_lifecycle_can_setup(false);
+    window.set_code_map_lifecycle_can_refresh(false);
+    window.set_code_map_lifecycle_can_force_rebuild(false);
+    window.set_code_map_lifecycle_can_repair(false);
 }
 
 fn run_code_map_recall(

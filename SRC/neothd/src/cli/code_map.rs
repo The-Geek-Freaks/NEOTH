@@ -8,6 +8,10 @@
 //!                    or full JSON map.
 //!   - `persist [PATH]`  Re-scan and atomically replace that root's
 //!                       snapshot in `~/.neoth/code_map.db`.
+//!   - `status [PATH]`   Read the lifecycle state without creating or
+//!                       migrating the code-map database.
+//!   - `refresh [PATH]`  Create or refresh the selected root's complete
+//!                       snapshot; `--force` is the manual rebuild escape hatch.
 //!   - `load [PATH]`     Inspect a persisted snapshot without rescanning.
 //!   - `search <NAME>`   Find exact persisted symbol declarations.
 //!   - `relevant <PROMPT>` Rank files for the same repo-context engine
@@ -118,6 +122,32 @@ pub enum CodeMapAction {
         /// evidence cannot be resolved safely without them.
         #[arg(long, hide = true)]
         symbols: bool,
+    },
+
+    /// Inspect the selected repository's code-map lifecycle state without
+    /// creating, migrating, rebuilding, or repairing the database.
+    Status {
+        /// Root directory to inspect. Defaults to the current working directory.
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+    },
+
+    /// Create the first complete snapshot for PATH or refresh it when the
+    /// current generation is stale or incomplete. Ctrl-C requests cooperative
+    /// cancellation and waits for the owned blocking refresh to finish.
+    Refresh {
+        /// Root directory to refresh. Defaults to the current working directory.
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+
+        /// Rebuild even when the current snapshot is fresh.
+        #[arg(long)]
+        force: bool,
+
+        /// Explicitly preserve a corrupt database and create a replacement.
+        /// Normal status and refresh calls never alter a corrupt store.
+        #[arg(long)]
+        repair_corrupt: bool,
     },
 
     /// Phase 3a — read a previously persisted snapshot back from
@@ -250,6 +280,12 @@ pub async fn run_code_map(args: CodeMapArgs) -> Result<()> {
             symbols,
             args.output,
         ),
+        CodeMapAction::Status { path } => run_lifecycle_status(path, args.output),
+        CodeMapAction::Refresh {
+            path,
+            force,
+            repair_corrupt,
+        } => run_lifecycle_refresh(path, force, repair_corrupt, args.output).await,
         CodeMapAction::Load { path, full } => run_load(path, full, args.output),
         CodeMapAction::Search { name } => run_search(name, args.output),
         CodeMapAction::Relevant {
@@ -274,6 +310,145 @@ pub async fn run_code_map(args: CodeMapArgs) -> Result<()> {
             allow_stale,
             args.output,
         ),
+    }
+}
+
+fn lifecycle_root(path: Option<PathBuf>) -> Result<PathBuf> {
+    path.or_else(|| std::env::current_dir().ok())
+        .ok_or_else(|| anyhow::anyhow!("cannot resolve code-map root: no path given + no cwd"))
+}
+
+fn render_lifecycle_value<T: serde::Serialize>(
+    heading: &str,
+    value: &T,
+    output: OutputFormat,
+) -> Result<()> {
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(value)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(value)?),
+        OutputFormat::Table => {
+            // The lifecycle record is deliberately rendered from the same typed
+            // contract as JSON/JSONL. This keeps all state and repair evidence
+            // visible while the core state vocabulary evolves.
+            println!("# {heading}");
+            println!("{}", serde_json::to_string_pretty(value)?);
+        }
+    }
+    Ok(())
+}
+
+fn run_lifecycle_status(path: Option<PathBuf>, output: OutputFormat) -> Result<()> {
+    let root = lifecycle_root(path)?;
+    let db_path = crate::code_map::persist::default_path();
+    // `inspect` intentionally opens an existing store read-only. Do not
+    // replace this with persist::open: a diagnostic must not create, migrate,
+    // repair, or otherwise alter a missing/corrupt operator store.
+    let status = crate::code_map::lifecycle::inspect(&db_path, &root);
+    render_lifecycle_value("code-map lifecycle status", &status, output)
+}
+
+async fn run_lifecycle_refresh(
+    path: Option<PathBuf>,
+    force: bool,
+    repair_corrupt: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    run_lifecycle_refresh_with_signal(path, force, repair_corrupt, output, tokio::signal::ctrl_c())
+        .await
+}
+
+async fn run_lifecycle_refresh_with_signal<S>(
+    path: Option<PathBuf>,
+    force: bool,
+    repair_corrupt: bool,
+    output: OutputFormat,
+    signal: S,
+) -> Result<()>
+where
+    S: std::future::Future<Output = std::io::Result<()>>,
+{
+    let root = lifecycle_root(path)?;
+    let db_path = crate::code_map::persist::default_path();
+    let cancellation = crate::code_map::lifecycle::LifecycleCancellation::new();
+    let worker_cancellation = cancellation.clone();
+    let options = crate::code_map::lifecycle::LifecycleRefreshOptions {
+        force,
+        repair_corrupt,
+        cause: if repair_corrupt {
+            crate::code_map::lifecycle::RefreshCause::ExplicitCorruptStoreRepair
+        } else if force {
+            crate::code_map::lifecycle::RefreshCause::ManualForce
+        } else {
+            crate::code_map::lifecycle::RefreshCause::ManualIfNeeded
+        },
+    };
+
+    // The synchronous rebuild owns filesystem traversal and SQLite publication.
+    // Ctrl-C signals its shared cancellation token but never aborts/detaches the
+    // worker: we always await the real terminal receipt before returning.
+    let worker = tokio::task::spawn_blocking(move || {
+        crate::code_map::lifecycle::refresh(&db_path, &root, options, &worker_cancellation)
+    });
+
+    let (receipt, signal_error) =
+        await_owned_lifecycle_refresh(worker, cancellation, signal).await?;
+    let terminal_error = match &receipt.outcome {
+        crate::code_map::lifecycle::RefreshOutcome::Cancelled => {
+            Some("code-map refresh cancelled before publication")
+        }
+        crate::code_map::lifecycle::RefreshOutcome::CorruptRepairRequired => Some(
+            "code-map database is corrupt; rerun with --repair-corrupt to preserve it and rebuild",
+        ),
+        crate::code_map::lifecycle::RefreshOutcome::Failed => {
+            Some("code-map refresh failed before publication")
+        }
+        _ => None,
+    };
+    // Render the terminal receipt before returning a nonzero outcome so JSON
+    // automation has the same forensic state a human operator sees.
+    render_lifecycle_value("code-map lifecycle refresh", &receipt, output)?;
+    if let Some(error) = signal_error {
+        return Err(error.context("wait for code-map refresh Ctrl-C"));
+    }
+    if let Some(error) = terminal_error {
+        anyhow::bail!(error);
+    }
+    Ok(())
+}
+
+/// Wait for either a completed owned refresh or the terminal-control future.
+/// A signal registration failure is still a terminal-control failure: cancel
+/// the shared worker and join it before surfacing the error, so no blocking
+/// publisher survives the CLI command that owns it.
+async fn await_owned_lifecycle_refresh<T, S>(
+    mut worker: tokio::task::JoinHandle<Result<T>>,
+    cancellation: crate::code_map::lifecycle::LifecycleCancellation,
+    signal: S,
+) -> Result<(T, Option<anyhow::Error>)>
+where
+    S: std::future::Future<Output = std::io::Result<()>>,
+{
+    tokio::pin!(signal);
+    tokio::select! {
+        biased;
+        signal_result = &mut signal => {
+            cancellation.cancel();
+            eprintln!("code-map refresh cancellation requested; waiting for the active rebuild to finish...");
+            let signal_error = signal_result.err().map(anyhow::Error::from);
+            match worker.await.context("join cancelled code-map lifecycle refresh worker")? {
+                Ok(value) => Ok((value, signal_error)),
+                Err(worker_error) => match signal_error {
+                    Some(signal_error) => Err(signal_error.context(format!(
+                        "code-map lifecycle refresh also failed while joining after terminal-control failure: {worker_error:#}"
+                    ))),
+                    None => Err(worker_error),
+                },
+            }
+        }
+        result = &mut worker => Ok((
+            result.context("code-map lifecycle refresh worker panicked")??,
+            None,
+        )),
     }
 }
 
@@ -865,6 +1040,7 @@ fn human_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
     use tempfile::tempdir;
 
     #[test]
@@ -891,6 +1067,41 @@ mod tests {
         );
         assert!(parse_impact_seeds(Vec::new(), vec!["missing-separator".into()]).is_err());
         assert!(parse_impact_seeds(Vec::new(), vec!["::empty".into()]).is_err());
+    }
+
+    #[test]
+    fn lifecycle_status_and_refresh_flags_parse_through_the_real_cli() {
+        let status =
+            crate::cli::Cli::try_parse_from(["neoth", "code-map", "status", "C:/work/repository"])
+                .expect("status command must parse");
+        let crate::cli::Commands::CodeMap(status) = status.command else {
+            panic!("expected code-map command");
+        };
+        assert!(matches!(
+            status.action,
+            CodeMapAction::Status { path: Some(path) } if path == std::path::Path::new("C:/work/repository")
+        ));
+
+        let refresh = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "code-map",
+            "refresh",
+            "C:/work/repository",
+            "--force",
+            "--repair-corrupt",
+        ])
+        .expect("refresh command and explicit repair flags must parse");
+        let crate::cli::Commands::CodeMap(refresh) = refresh.command else {
+            panic!("expected code-map command");
+        };
+        assert!(matches!(
+            refresh.action,
+            CodeMapAction::Refresh {
+                path: Some(path),
+                force: true,
+                repair_corrupt: true,
+            } if path == std::path::Path::new("C:/work/repository")
+        ));
     }
 
     #[test]
@@ -1046,6 +1257,126 @@ mod tests {
             run_load(Some(dir.path().to_path_buf()), false, OutputFormat::Json)
                 .expect("load on missing snapshot must Ok");
         });
+    }
+
+    #[test]
+    fn lifecycle_status_uses_the_real_read_only_service_for_an_absent_store() {
+        with_temp_home(|| {
+            let repo = tempdir().unwrap();
+            std::fs::write(repo.path().join("lib.rs"), "pub fn first_index() {}\n").unwrap();
+            let db_path = crate::code_map::persist::default_path();
+            assert!(
+                !db_path.exists(),
+                "the fixture must begin without a code-map database"
+            );
+
+            run_lifecycle_status(Some(repo.path().to_path_buf()), OutputFormat::Json)
+                .expect("absent lifecycle status must remain an operator-visible success");
+
+            assert!(
+                !db_path.exists(),
+                "status must not create or migrate a missing code-map database"
+            );
+        });
+    }
+
+    #[test]
+    fn lifecycle_refresh_runs_the_real_service_and_publishes_a_store() {
+        with_temp_home(|| {
+            let repo = tempdir().unwrap();
+            std::fs::write(repo.path().join("lib.rs"), "pub fn first_index() {}\n").unwrap();
+            let db_path = crate::code_map::persist::default_path();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build CLI refresh fixture runtime");
+
+            runtime
+                .block_on(run_lifecycle_refresh(
+                    Some(repo.path().to_path_buf()),
+                    false,
+                    false,
+                    OutputFormat::Json,
+                ))
+                .expect("first lifecycle refresh must return its success receipt");
+
+            assert!(
+                db_path.exists(),
+                "the CLI refresh adapter must invoke the publishing lifecycle service"
+            );
+        });
+    }
+
+    #[test]
+    fn terminal_control_registration_failure_cancels_and_joins_the_owned_worker() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build cancellation fixture runtime");
+        let cancellation = crate::code_map::lifecycle::LifecycleCancellation::new();
+        let worker_cancellation = cancellation.clone();
+        let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_completed = std::sync::Arc::clone(&completed);
+        let (terminal, signal_error) = runtime
+            .block_on(async move {
+                let worker = tokio::task::spawn_blocking(move || {
+                    while !worker_cancellation.is_cancelled() {
+                        std::thread::yield_now();
+                    }
+                    worker_completed.store(true, std::sync::atomic::Ordering::Release);
+                    Ok::<_, anyhow::Error>("joined terminal worker")
+                });
+                await_owned_lifecycle_refresh(
+                    worker,
+                    cancellation,
+                    std::future::ready(Err(std::io::Error::other("signal registration failed"))),
+                )
+                .await
+            })
+            .expect("signal registration failure must still join the worker");
+
+        assert_eq!(terminal, "joined terminal worker");
+        assert!(
+            completed.load(std::sync::atomic::Ordering::Acquire),
+            "the refresh worker must finish before its signal failure returns"
+        );
+        assert!(
+            signal_error
+                .expect("terminal-control failure must be retained")
+                .to_string()
+                .contains("signal registration failed")
+        );
+    }
+
+    #[test]
+    fn ready_terminal_control_failure_wins_over_an_already_completed_worker() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build ready-terminal-control fixture runtime");
+        let cancellation = crate::code_map::lifecycle::LifecycleCancellation::new();
+        let (terminal, signal_error) = runtime
+            .block_on(async move {
+                let worker = tokio::spawn(async { Ok::<_, anyhow::Error>("already completed") });
+                // Ensure the worker reaches its terminal state before the
+                // helper races it with the immediately ready signal error.
+                tokio::task::yield_now().await;
+                await_owned_lifecycle_refresh(
+                    worker,
+                    cancellation,
+                    std::future::ready(Err(std::io::Error::other("signal setup failed"))),
+                )
+                .await
+            })
+            .expect("the completed worker must still be joined");
+
+        assert_eq!(terminal, "already completed");
+        assert!(
+            signal_error
+                .expect("the ready terminal-control failure must not be swallowed")
+                .to_string()
+                .contains("signal setup failed")
+        );
     }
 
     #[test]

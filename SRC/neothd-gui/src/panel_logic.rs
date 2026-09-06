@@ -15,6 +15,203 @@
 
 use zeroize::Zeroizing;
 
+// ── Native code-map lifecycle presentation ──────────────────────────────────
+
+/// Slint-safe policy projection of a typed lifecycle status.  The GUI never
+/// derives freshness from watcher quietness or from configuration YAML.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeMapLifecyclePresentation {
+    pub state: &'static str,
+    pub detail: String,
+    pub canonical_root: String,
+    pub root_identity: String,
+    pub index_generation: String,
+    pub graph_generation: String,
+    pub can_setup: bool,
+    pub can_refresh: bool,
+    pub can_force_rebuild: bool,
+    pub can_repair: bool,
+    pub is_error: bool,
+}
+
+pub fn present_code_map_lifecycle_status(
+    status: &neothd::code_map::CodeMapLifecycleStatus,
+) -> CodeMapLifecyclePresentation {
+    use neothd::code_map::CodeMapLifecycleState;
+
+    let canonical_root = status.root.clone().unwrap_or_default();
+    let root_identity = status.root_identity_sha256.clone().unwrap_or_default();
+    let mut presentation = CodeMapLifecyclePresentation {
+        state: "Unknown",
+        detail: String::new(),
+        canonical_root,
+        root_identity,
+        index_generation: String::new(),
+        graph_generation: String::new(),
+        can_setup: false,
+        can_refresh: false,
+        can_force_rebuild: false,
+        can_repair: false,
+        is_error: false,
+    };
+
+    match &status.state {
+        CodeMapLifecycleState::Disabled => {
+            presentation.state = "Lifecycle disabled";
+            presentation.detail = "Lifecycle configuration is disabled. Persisted configuration does not prove a daemon watcher is active.".into();
+        }
+        CodeMapLifecycleState::Absent => {
+            presentation.state = "Index absent";
+            presentation.detail = "No code-map database exists for this NEOTH instance. Set up the index to create one.".into();
+            presentation.can_setup = true;
+        }
+        CodeMapLifecycleState::Unmapped => {
+            if status.root.is_some() {
+                presentation.state = "Index not mapped";
+                presentation.detail = "This physical repository has no compatible stored generation. Set up an index for it.".into();
+                presentation.can_setup = true;
+            } else {
+                presentation.state = "Root unavailable";
+                presentation.detail =
+                    "The selected repository root could not be resolved to a physical directory."
+                        .into();
+            }
+        }
+        CodeMapLifecycleState::Incomplete { snapshot } => {
+            presentation.state = "Index incomplete";
+            presentation.detail = "The stored generation is incomplete and must be refreshed before recall can rely on it.".into();
+            apply_generation(&mut presentation, snapshot);
+            presentation.can_refresh = true;
+            presentation.can_force_rebuild = true;
+        }
+        CodeMapLifecycleState::Fresh { snapshot } => {
+            presentation.state = "Index fresh";
+            presentation.detail =
+                "The stored generation matches the current repository fingerprint.".into();
+            apply_generation(&mut presentation, snapshot);
+            presentation.can_force_rebuild = true;
+        }
+        CodeMapLifecycleState::Stale { snapshot } => {
+            presentation.state = "Index stale";
+            presentation.detail = "The repository changed after this generation was published. Refresh before relying on recall.".into();
+            apply_generation(&mut presentation, snapshot);
+            presentation.can_refresh = true;
+            presentation.can_force_rebuild = true;
+        }
+        CodeMapLifecycleState::Refreshing {
+            attempt_id, prior, ..
+        } => {
+            presentation.state = "Refreshing";
+            presentation.detail = format!(
+                "Refresh attempt {attempt_id} owns this root. Cancellation waits for its terminal receipt."
+            );
+            if let Some(snapshot) = prior {
+                apply_generation(&mut presentation, snapshot);
+            }
+        }
+        CodeMapLifecycleState::Recovering { attempt_id, prior } => {
+            presentation.state = "Recovering";
+            presentation.detail = format!("Recovering journaled refresh attempt {attempt_id}.");
+            if let Some(snapshot) = prior {
+                apply_generation(&mut presentation, snapshot);
+            }
+            presentation.can_refresh = true;
+        }
+        CodeMapLifecycleState::Corrupt { diagnostic } => {
+            presentation.state = "Index needs repair";
+            presentation.detail = diagnostic.clone();
+            presentation.can_repair = true;
+            presentation.is_error = true;
+        }
+    }
+    presentation
+}
+
+pub fn present_code_map_lifecycle_receipt(
+    receipt: &neothd::code_map::CodeMapLifecycleReceipt,
+) -> CodeMapLifecyclePresentation {
+    use neothd::code_map::RefreshOutcome;
+
+    let mut presentation = CodeMapLifecyclePresentation {
+        state: "Refresh complete",
+        detail: String::new(),
+        canonical_root: receipt.root.clone(),
+        root_identity: receipt.root_identity_sha256.clone(),
+        index_generation: String::new(),
+        graph_generation: String::new(),
+        can_setup: false,
+        can_refresh: false,
+        can_force_rebuild: true,
+        can_repair: false,
+        is_error: false,
+    };
+    if let Some(snapshot) = &receipt.published_generation {
+        apply_generation(&mut presentation, snapshot);
+    } else if let Some(snapshot) = &receipt.prior_generation {
+        apply_generation(&mut presentation, snapshot);
+    }
+    match &receipt.outcome {
+        RefreshOutcome::ReusedFresh => {
+            presentation.detail =
+                "The current generation was already fresh; no rebuild was needed.".into()
+        }
+        RefreshOutcome::IndexedFirstTime => {
+            presentation.detail = "Initial repository index published.".into()
+        }
+        RefreshOutcome::RefreshedStale => {
+            presentation.detail = "Stale repository generation refreshed and published.".into()
+        }
+        RefreshOutcome::RebuiltForced => {
+            presentation.detail = "Forced repository rebuild published.".into()
+        }
+        RefreshOutcome::RecoveredPublishedAttempt => {
+            presentation.detail =
+                "A previously journaled refresh was recovered and published.".into()
+        }
+        RefreshOutcome::Cancelled => {
+            presentation.state = "Refresh cancelled";
+            presentation.detail =
+                "Refresh stopped before publication; the prior generation remains authoritative."
+                    .into();
+            presentation.can_refresh = true;
+        }
+        RefreshOutcome::CommittedAfterCancellation => {
+            presentation.state = "Refresh completed";
+            presentation.detail =
+                "Cancellation arrived after publication; the new generation is authoritative."
+                    .into();
+        }
+        RefreshOutcome::CorruptRepairRequired => {
+            presentation.state = "Index needs repair";
+            presentation.detail = receipt.failure_diagnostic.clone().unwrap_or_else(|| {
+                "The database is corrupt; choose explicit repair to preserve and rebuild it.".into()
+            });
+            presentation.can_force_rebuild = false;
+            presentation.can_repair = true;
+            presentation.is_error = true;
+        }
+        RefreshOutcome::Failed => {
+            presentation.state = "Refresh failed";
+            presentation.detail = receipt.failure_diagnostic.clone().unwrap_or_else(|| {
+                "The refresh failed before a new generation was published.".into()
+            });
+            presentation.can_refresh = true;
+            presentation.is_error = true;
+        }
+    }
+    presentation
+}
+
+fn apply_generation(
+    presentation: &mut CodeMapLifecyclePresentation,
+    generation: &neothd::code_map::LifecycleGeneration,
+) {
+    presentation.canonical_root = generation.root.clone();
+    presentation.root_identity = generation.root_identity_sha256.clone();
+    presentation.index_generation = generation.index_generation.to_string();
+    presentation.graph_generation = generation.graph_generation.to_string();
+}
+
 // ── GOLD-R3-13 — repository-local code-map recall ───────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7033,6 +7230,75 @@ pub fn parse_cron_jobs(json: &str) -> Vec<CronJobRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_presentation_requires_explicit_repair_for_corruption() {
+        let status = neothd::code_map::CodeMapLifecycleStatus {
+            database_path: std::path::PathBuf::from("C:/neoth/code_map.db"),
+            root: Some("C:/repo".into()),
+            root_identity_sha256: Some("identity".into()),
+            state: neothd::code_map::CodeMapLifecycleState::Corrupt {
+                diagnostic: "database evidence is corrupt".into(),
+            },
+        };
+
+        let presentation = present_code_map_lifecycle_status(&status);
+        assert!(presentation.is_error);
+        assert!(presentation.can_repair);
+        assert!(!presentation.can_refresh);
+        assert!(!presentation.can_force_rebuild);
+    }
+
+    #[test]
+    fn lifecycle_presentation_allows_setup_for_a_physical_unmapped_root_and_recovery() {
+        let unmapped = neothd::code_map::CodeMapLifecycleStatus {
+            database_path: std::path::PathBuf::from("C:/neoth/code_map.db"),
+            root: Some("C:/repo".into()),
+            root_identity_sha256: Some("identity".into()),
+            state: neothd::code_map::CodeMapLifecycleState::Unmapped,
+        };
+        let presentation = present_code_map_lifecycle_status(&unmapped);
+        assert_eq!(presentation.state, "Index not mapped");
+        assert!(presentation.can_setup);
+
+        let recovering = neothd::code_map::CodeMapLifecycleStatus {
+            database_path: std::path::PathBuf::from("C:/neoth/code_map.db"),
+            root: Some("C:/repo".into()),
+            root_identity_sha256: Some("identity".into()),
+            state: neothd::code_map::CodeMapLifecycleState::Recovering {
+                attempt_id: "attempt".into(),
+                prior: None,
+            },
+        };
+        assert!(present_code_map_lifecycle_status(&recovering).can_refresh);
+    }
+
+    #[test]
+    fn lifecycle_receipt_preserves_post_commit_cancellation_truth() {
+        let receipt = neothd::code_map::CodeMapLifecycleReceipt {
+            root: "C:/repo".into(),
+            root_identity_sha256: "identity".into(),
+            database_path: std::path::PathBuf::from("C:/neoth/code_map.db"),
+            cause: neothd::code_map::RefreshCause::ManualIfNeeded,
+            outcome: neothd::code_map::RefreshOutcome::CommittedAfterCancellation,
+            prior_generation: None,
+            published_generation: Some(neothd::code_map::LifecycleGeneration {
+                root: "C:/repo".into(),
+                root_identity_sha256: "identity".into(),
+                index_generation: 9,
+                graph_generation: 10,
+            }),
+            source_fingerprint_sha256: Some("fingerprint".into()),
+            journal_attempt_id: "attempt".into(),
+            failure_diagnostic: None,
+        };
+
+        let presentation = present_code_map_lifecycle_receipt(&receipt);
+        assert_eq!(presentation.state, "Refresh completed");
+        assert!(!presentation.is_error);
+        assert_eq!(presentation.index_generation, "9");
+        assert!(presentation.detail.contains("after publication"));
+    }
 
     #[test]
     fn code_map_recall_argv_always_carries_explicit_root_and_json_contract() {

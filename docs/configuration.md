@@ -156,6 +156,41 @@ when its next invocation begins; an invocation already in progress keeps its
 own snapshot. Inspect the retained selection, generation, redaction and
 truncation evidence through the [coding code-map receipt contract](coding-code-map-receipts.md).
 
+#### Managed code-map lifecycle
+
+The daemon-managed lifecycle is separate from the Chat/Channel opt-in above and
+is disabled by default. It needs an explicit list of existing, absolute
+repository roots; the daemon never infers a root from its service working
+directory. On validation, NEOTH canonicalizes every root to its physical
+identity and rejects aliases, duplicate roots, parent/child overlap, more than
+eight roots, or `enabled: true` without a root.
+
+```yaml
+code_map:
+  lifecycle:
+    enabled: false
+    managed_roots:
+      # - C:/work/my-repository
+    debounce_millis: 500              # 50..60000
+    reconciliation_interval_secs: 300 # 30..3600
+```
+
+`debounce_millis` coalesces a burst of filesystem changes into one refresh.
+An event only marks its own managed root dirty; it never proves the snapshot is
+fresh. `reconciliation_interval_secs` runs the bounded strong freshness check
+so missed filesystem notifications cannot become a false-fresh result. At
+startup, a managed root reconciles its durable in-flight refresh before its
+watcher accepts events. Disabling the lifecycle or removing a root during an
+accepted reload cancels and joins its active refresh before that watcher stops.
+The daemon atomically publishes its observed ownership at
+`<instance-home>/code_map_lifecycle_status.json`. That snapshot distinguishes
+the requested configuration from active roots, records the reload generation
+and recent reconciliation/failure state, and is accepted by readers only while
+the matching daemon PID still owns the instance lock. A retained file after a
+crash therefore is not evidence that a watcher remains active.
+See the [code-map lifecycle runbook](code-map-lifecycle.md) for `status`,
+manual refresh, and explicit corrupt-store repair.
+
 ### Communication adaptation
 
 `profile.communication` is separate from the optional LLM-backed fact
@@ -646,7 +681,7 @@ Common environment variables:
 | Change | Reload |
 | :-- | :-- |
 | Skills | Hot-reloaded automatically (file watcher); `neoth reload` re-reads tunable config. |
-| Code-map context | Hot-reloadable. Each subsequent Chat/Channel message gets the accepted snapshot; the next one-shot `neoth code` invocation gets the new coding limits. An invalid YAML candidate is rejected before publication, leaving the prior snapshot active. |
+| Code-map context and lifecycle | Hot-reloadable. Each subsequent Chat/Channel message gets the accepted snapshot; the next one-shot `neoth code` invocation gets the new coding limits. Managed-root changes cancel and join removed/disabled watchers before applying replacements. An invalid YAML candidate is rejected before publication, leaving the prior snapshot and lifecycle owner active. |
 | Recurring updater discovery | Reload-owned and fail-closed: enabling it arms the supervisor/status lane, but current v1 emits `SkippedByGate` before unattended GitHub/npm/Git network, process, staging, handoff, or replacement effects. `auto_apply` records future verified-staging intent only. Manual signed update commands are unaffected. |
 | Provider config | Restart-bound. `neoth reload` rejects changes to the constructed provider runtime (kind, binary, key reference, endpoint, model/aliases, region/API version, inference and recursive-subslot topology, fallback chain, Claude CLI runtime, transport settings and provider decorators such as history compaction). The running provider graph remains on its previous generation until the supervised daemon restarts. |
 | Channels | The running daemon watches effective file/keychain credentials, validates the new generation, and stop-then-starts only the changed adapter. A malformed credential store stops the channel fleet fail-closed instead of retaining stale secrets. If a mutation reports that its reload request failed, run `neoth reload`; a full daemon restart is not the normal path. |

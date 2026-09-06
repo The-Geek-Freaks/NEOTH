@@ -6,10 +6,10 @@
 //! with delete sharing withheld and `FILE_OPEN_REPARSE_POINT` set.
 
 use std::{
-    ffi::{OsStr, c_void},
+    ffi::OsStr,
     fs::File,
     io::Read,
-    mem::{MaybeUninit, size_of, zeroed},
+    mem::{MaybeUninit, size_of},
     os::windows::{
         ffi::OsStrExt,
         io::{AsRawHandle, FromRawHandle},
@@ -34,6 +34,9 @@ use super::{
     ApprovedImportRoot, BoundSourceIdentity, LocalImportError, PhysicalFileId, checked_len,
     validate_relative_selection,
 };
+use crate::windows_nt::{
+    NtCreateFile, NtIoStatusBlock, NtObjectAttributes, NtOpenFile, NtUnicodeString,
+};
 
 // Win32 GetDriveTypeW returns DRIVE_FIXED (3) for a fixed disk:
 // https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getdrivetypew
@@ -48,54 +51,6 @@ const FILE_OPEN_FOR_BACKUP_INTENT: u32 = 0x0000_4000;
 const FILE_READ_DATA: u32 = 0x0000_0001;
 const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
 const SYNCHRONIZE: u32 = 0x0010_0000;
-
-#[repr(C)]
-struct UnicodeString {
-    length: u16,
-    maximum_length: u16,
-    buffer: *mut u16,
-}
-
-#[repr(C)]
-struct ObjectAttributes {
-    length: u32,
-    root_directory: HANDLE,
-    object_name: *mut UnicodeString,
-    attributes: u32,
-    security_descriptor: *mut c_void,
-    security_quality_of_service: *mut c_void,
-}
-
-#[repr(C)]
-struct IoStatusBlock {
-    status: isize,
-    information: usize,
-}
-
-#[link(name = "ntdll")]
-unsafe extern "system" {
-    fn NtCreateFile(
-        file_handle: *mut HANDLE,
-        desired_access: u32,
-        object_attributes: *const ObjectAttributes,
-        io_status_block: *mut IoStatusBlock,
-        allocation_size: *const i64,
-        file_attributes: u32,
-        share_access: u32,
-        create_disposition: u32,
-        create_options: u32,
-        ea_buffer: *const c_void,
-        ea_length: u32,
-    ) -> i32;
-    fn NtOpenFile(
-        file_handle: *mut HANDLE,
-        desired_access: u32,
-        object_attributes: *const ObjectAttributes,
-        io_status_block: *mut IoStatusBlock,
-        share_access: u32,
-        open_options: u32,
-    ) -> i32;
-}
 
 /// Retains every component of an approved root. These are deliberate delete
 /// fences: no handle includes `FILE_SHARE_DELETE`, so a rename/delete cannot
@@ -307,9 +262,9 @@ fn open_child_file(parent: &File, name: &OsStr) -> Result<File, LocalImportError
 
 fn nt_create(name: &[u16], root: HANDLE, directory: bool) -> Result<File, LocalImportError> {
     let mut unicode = unicode_string(name)?;
-    let mut attributes = object_attributes(&mut unicode, root);
+    let attributes = object_attributes(&mut unicode, root);
     let mut handle: HANDLE = null_mut();
-    let mut status = unsafe { zeroed::<IoStatusBlock>() };
+    let mut status = NtIoStatusBlock::zeroed();
     let options = open_options(directory);
     // SAFETY: the UTF-16 backing slice and all output buffers stay alive for
     // the call. A successful HANDLE is transferred immediately to `File`.
@@ -317,7 +272,7 @@ fn nt_create(name: &[u16], root: HANDLE, directory: bool) -> Result<File, LocalI
         NtCreateFile(
             &mut handle,
             desired_access(directory),
-            &mut attributes,
+            &attributes,
             &mut status,
             null(),
             0,
@@ -335,16 +290,16 @@ fn nt_open(name: &OsStr, root: HANDLE, directory: bool) -> Result<File, LocalImp
     let wide: Vec<u16> = name.encode_wide().collect();
     reject_component(&wide)?;
     let mut unicode = unicode_string(&wide)?;
-    let mut attributes = object_attributes(&mut unicode, root);
+    let attributes = object_attributes(&mut unicode, root);
     let mut handle: HANDLE = null_mut();
-    let mut status = unsafe { zeroed::<IoStatusBlock>() };
+    let mut status = NtIoStatusBlock::zeroed();
     // SAFETY: see `nt_create`; this is only a relative, single-component
     // open rooted in a retained, already-validated handle.
     let result = unsafe {
         NtOpenFile(
             &mut handle,
             desired_access(directory),
-            &mut attributes,
+            &attributes,
             &mut status,
             share_mode(),
             open_options(directory),
@@ -353,22 +308,22 @@ fn nt_open(name: &OsStr, root: HANDLE, directory: bool) -> Result<File, LocalImp
     nt_result(result, handle)
 }
 
-fn unicode_string(name: &[u16]) -> Result<UnicodeString, LocalImportError> {
+fn unicode_string(name: &[u16]) -> Result<NtUnicodeString, LocalImportError> {
     let byte_length = name
         .len()
         .checked_mul(size_of::<u16>())
         .and_then(|value| u16::try_from(value).ok())
         .ok_or(LocalImportError::OutsideApprovedRoot)?;
-    Ok(UnicodeString {
+    Ok(NtUnicodeString {
         length: byte_length,
         maximum_length: byte_length,
         buffer: name.as_ptr().cast_mut(),
     })
 }
 
-fn object_attributes(unicode: &mut UnicodeString, root: HANDLE) -> ObjectAttributes {
-    ObjectAttributes {
-        length: u32::try_from(size_of::<ObjectAttributes>()).unwrap_or(u32::MAX),
+fn object_attributes(unicode: &mut NtUnicodeString, root: HANDLE) -> NtObjectAttributes {
+    NtObjectAttributes {
+        length: u32::try_from(size_of::<NtObjectAttributes>()).unwrap_or(u32::MAX),
         root_directory: root,
         object_name: unicode,
         attributes: OBJ_CASE_INSENSITIVE,
@@ -445,12 +400,12 @@ fn raw_snapshot(handle: &File) -> Result<WindowsSnapshot, LocalImportError> {
     let standard = file_information::<FILE_STANDARD_INFO>(raw, FileStandardInfo)?;
     let identifier = file_information::<FILE_ID_INFO>(raw, FileIdInfo)?;
     let object = identifier.FileId.Identifier;
-    if !valid_identity(identifier.VolumeSerialNumber as u64, &object) {
+    if !valid_identity(identifier.VolumeSerialNumber, &object) {
         return Err(LocalImportError::Unavailable);
     }
     Ok(WindowsSnapshot {
         identity: PhysicalFileId {
-            volume: identifier.VolumeSerialNumber as u64,
+            volume: identifier.VolumeSerialNumber,
             object,
         },
         creation_time: basic.CreationTime,

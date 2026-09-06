@@ -32,6 +32,8 @@
 //! `PLAN/SPEC_ouro_thinking_provider_2026-05-23.md`.
 
 pub mod adapter;
+/// Runtime cache integrity and load-identity receipt for the exact Ouro files.
+pub mod artifacts;
 pub mod forward;
 /// GOLD-ADAPT-KV-03 — CPU-RAM LRU cold tier behind the hot prefix-KV map.
 /// Wraps `PrefixKvEntry`/`KvSnapshot` from `prefix_kv_cache` in a two-tier

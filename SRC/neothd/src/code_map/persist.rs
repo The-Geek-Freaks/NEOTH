@@ -96,7 +96,7 @@ use super::walker::{Language, RepoFile, RepoMap, ScanReport};
 /// Unreachable legacy roots remain NULL and cannot produce typed receipts until
 /// a successful rebuild adopts their identity; reachable roots are adopted by
 /// the migration itself.
-pub const CODE_MAP_SCHEMA_VERSION: i64 = 5;
+pub const CODE_MAP_SCHEMA_VERSION: i64 = 7;
 
 /// Hard ceiling for one filesystem freshness receipt. The count gate runs
 /// before row materialisation and every SELECT still carries `LIMIT cap + 1`
@@ -116,6 +116,26 @@ pub fn default_path() -> PathBuf {
 /// touch; preserves existing rows on reopen.
 pub fn open(path: &Path) -> Result<Connection> {
     open_with_migration_hooks(path, |_| {}, || {}, || {}, || {})
+}
+
+/// Open an existing code-map database without creating directories, SQLite
+/// sidecars, schema tables, or migrations. Status/Doctor paths must use this
+/// instead of [`open`].
+pub(crate) fn open_read_only(path: &Path) -> Result<Connection> {
+    ensure!(path.exists(), "code-map database is absent");
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("inspect code-map database {}", path.display()))?;
+    ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink(),
+        "code-map database is not a regular file"
+    );
+    let connection = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("open code-map database read-only {}", path.display()))?;
+    connection.pragma_update(None, "query_only", "ON")?;
+    Ok(connection)
 }
 
 fn open_with_migration_hooks<
@@ -312,6 +332,43 @@ where
         .context("v4→v5: stamp schema_version=5")?;
     }
 
+    if v < 6 {
+        tx.execute_batch(
+            "CREATE TABLE code_map_lifecycle_attempts (
+                root_identity TEXT PRIMARY KEY NOT NULL,
+                root_display TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                prior_index_generation INTEGER,
+                prior_graph_generation INTEGER,
+                published_index_generation INTEGER,
+                published_graph_generation INTEGER,
+                source_fingerprint_sha256 TEXT,
+                started_at_ms INTEGER NOT NULL,
+                completed_at_ms INTEGER
+             );",
+        )
+        .context("v5→v6: create code-map lifecycle attempt journal")?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '6')",
+            [],
+        )
+        .context("v5→v6: stamp schema_version=6")?;
+    }
+
+    if v < 7 {
+        tx.execute(
+            "ALTER TABLE code_map_lifecycle_attempts ADD COLUMN owner_id TEXT",
+            [],
+        )
+        .context("v6→v7: add lifecycle refresh owner identity")?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '7')",
+            [],
+        )
+        .context("v6→v7: stamp schema_version=7")?;
+    }
+
     tx.commit().context("commit locked code-map migration")?;
     Ok(())
 }
@@ -496,6 +553,21 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             ON code_map_edges(to_name);
         CREATE INDEX IF NOT EXISTS idx_code_map_edges_source
             ON code_map_edges(from_file, from_symbol);
+
+        CREATE TABLE IF NOT EXISTS code_map_lifecycle_attempts (
+            root_identity TEXT PRIMARY KEY NOT NULL,
+            root_display TEXT NOT NULL,
+            attempt_id TEXT NOT NULL,
+            phase TEXT NOT NULL,
+            prior_index_generation INTEGER,
+            prior_graph_generation INTEGER,
+            published_index_generation INTEGER,
+            published_graph_generation INTEGER,
+            source_fingerprint_sha256 TEXT,
+            owner_id TEXT,
+            started_at_ms INTEGER NOT NULL,
+            completed_at_ms INTEGER
+        );
 
         -- K-Repo-Map FTS5 (Session 19, 2026-05-21) — fuzzy + prefix-
         -- match symbol lookup. Shadows code_map_symbols.name with
@@ -3671,7 +3743,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "5");
+        assert_eq!(version, "7");
         let graph_columns: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('code_map_roots') \
@@ -3816,11 +3888,11 @@ mod tests {
     }
 
     #[test]
-    fn open_migrates_v1_to_v5_on_existing_db() {
+    fn open_migrates_v1_to_v7_on_existing_db() {
         // Build a v1 DB manually (apply_schema with version stamped as 1,
         // without sha256/mtime_ns columns), then call open() and verify the
-        // migration chain fires: schema_version advances to "5"
-        // (v1→v2→v3→v4→v5), the v2 file columns exist, both generation
+        // migration chain fires: schema_version advances to "7"
+        // (v1→v2→v3→v4→v5→v6→v7), the v2 file columns exist, both generation
         // columns exist, and physical identity is nullable for legacy roots.
         let dir = tempdir().unwrap();
         let path = dir.path().join("v1.db");
@@ -3905,7 +3977,7 @@ mod tests {
         // Open via the public API — should trigger v1→v2 migration.
         let mut conn = open(&path).expect("open must succeed on a v1 DB");
 
-        // schema_version must now be "5" (v1→v2→v3→v4→v5 chain).
+        // schema_version must now be "7" (v1→v2→v3→v4→v5→v6→v7 chain).
         let version: String = conn
             .query_row(
                 "SELECT value FROM meta WHERE key='schema_version'",
@@ -3914,8 +3986,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            version, "5",
-            "schema_version must advance to 5 after migration"
+            version, "7",
+            "schema_version must advance to 7 after migration"
         );
 
         // v3 column: code_map_roots.index_generation exists, and the migrated

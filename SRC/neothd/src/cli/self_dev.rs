@@ -659,7 +659,7 @@ fn ensure_source_edit_single_hard_link(file: &std::fs::File) -> Result<()> {
             "source-edit leaf has {} hard links; exactly one is required",
             information.nNumberOfLinks
         );
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(any(unix, windows)))]
     {

@@ -400,7 +400,8 @@ function Get-MotionAllowlist {
         throw "GUI motion allowlist is not valid JSON: $AllowlistPath"
     }
     $topLevelNames = @($document.PSObject.Properties.Name | Sort-Object)
-    if (@(Compare-Object @('entries', 'schema_version') $topLevelNames).Count -ne 0 -or $document.schema_version -isnot [long] -or $document.schema_version -ne 1 -or $document.entries -isnot [System.Array]) {
+    $schemaVersionIsInteger = $document.schema_version -is [int] -or $document.schema_version -is [long]
+    if (@(Compare-Object @('entries', 'schema_version') $topLevelNames).Count -ne 0 -or -not $schemaVersionIsInteger -or $document.schema_version -ne 1 -or $document.entries -isnot [System.Array]) {
         throw "GUI motion allowlist has an invalid schema: $AllowlistPath"
     }
     $entries = [System.Collections.Generic.List[object]]::new()

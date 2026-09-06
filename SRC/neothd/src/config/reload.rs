@@ -1491,6 +1491,28 @@ mod tests {
     }
 
     #[test]
+    fn invalid_code_map_lifecycle_reload_preserves_the_accepted_snapshot() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let initial = fresh_config();
+        write_yaml(
+            &yaml_path,
+            "code_map:\n  lifecycle:\n    enabled: true\n    managed_roots: []\n",
+        );
+        let ctrl = ReloadController::new(initial, yaml_path);
+        let generation = ctrl.subscribe_generation();
+
+        let error = format!(
+            "{:#}",
+            ctrl.try_reload()
+                .expect_err("enabled lifecycle without roots must fail")
+        );
+        assert!(error.contains("managed_roots"), "{error}");
+        assert!(!ctrl.latest().code_map.lifecycle.enabled);
+        assert_eq!(*generation.borrow(), 0);
+    }
+
+    #[test]
     fn custom_policy_reload_swaps_atomically_and_old_snapshot_stays_immutable() {
         use crate::permissions::{Action, ActionKind, AutonomyLevel, CustomDecision, evaluate};
 

@@ -674,6 +674,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     let reload_task =
         crate::cli::serve_tasks::spawn_reload_poller(&reload_controller, &writer, &neoth_home);
+    // Code-map lifecycle never guesses a repository from the daemon CWD. It
+    // receives only this selected instance's code-map database and the
+    // accepted, explicitly-rooted config snapshots from the reload controller.
+    let code_map_lifecycle_supervisor = (!args.one_shot).then(|| {
+        crate::cli::serve_tasks::spawn_code_map_lifecycle_supervisor(
+            crate::config::InstancePaths::new(neoth_home.clone(), config_path.clone()),
+            Arc::clone(&reload_controller),
+        )
+    });
 
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     // GR-164: hand the indexer the WAL writer so a tamper-suspect segment emits
@@ -2469,6 +2478,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         consent_outbox_task,
         indexer_task,
         reload_task,
+        code_map_lifecycle_supervisor,
         audit_rpc_task,
         connector_control_rpc_task,
         healthz_task,

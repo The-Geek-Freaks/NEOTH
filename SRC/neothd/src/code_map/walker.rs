@@ -18,6 +18,10 @@
 //!     the caller's choice.
 
 use std::path::{Path, PathBuf};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::UNIX_EPOCH;
 use std::{fs::File, io::Read};
 
@@ -27,6 +31,30 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::symbols::{Symbol, extract_symbols};
+
+/// Shared cooperative stop signal for long-running native code-map scans.
+/// Cancelling this signal never discards or mutates an already-published map.
+#[derive(Clone, Debug, Default)]
+pub struct ScanCancellation(Arc<AtomicBool>);
+
+impl ScanCancellation {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn checkpoint(&self) -> Result<()> {
+        anyhow::ensure!(!self.is_cancelled(), "code-map lifecycle refresh cancelled");
+        Ok(())
+    }
+}
 
 /// Languages NEOTH currently recognises via extension or shebang.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -347,6 +375,12 @@ impl RepoMapBuilder {
     /// repos up to ~50k files. Phase 2 may switch to parallel walking
     /// via `ignore::WalkBuilder::threads(N)`.
     pub fn scan(self) -> Result<RepoMap> {
+        self.scan_with_cancellation(&ScanCancellation::default())
+    }
+
+    /// Scan with cooperative cancellation checkpoints before each filesystem
+    /// entry and before each bounded file read.
+    pub fn scan_with_cancellation(self, cancellation: &ScanCancellation) -> Result<RepoMap> {
         // A raw-path fallback poisons every downstream containment and cache
         // key: the same directory can then be persisted under aliases, or a
         // missing root can masquerade as an empty successful scan. Resolve the
@@ -414,6 +448,7 @@ impl RepoMapBuilder {
                     .any(|excluded| relative.starts_with(excluded))
         });
         for entry in builder.build() {
+            cancellation.checkpoint()?;
             let entry = match entry {
                 Ok(e) => e,
                 Err(error) if self.strict_errors => {
@@ -435,6 +470,7 @@ impl RepoMapBuilder {
             // stat/read walk.
             visited_files += 1;
             let path = entry.path();
+            cancellation.checkpoint()?;
             let meta = match path.metadata() {
                 Ok(m) => m,
                 Err(error) if self.strict_errors => {
@@ -452,6 +488,7 @@ impl RepoMapBuilder {
             // Single bounded read — used for LOC, hash, and (if with_symbols)
             // symbol extraction. The actual byte count is authoritative: a
             // file may grow after metadata or report a synthetic length.
+            cancellation.checkpoint()?;
             let raw = match read_file_bounded(path, self.max_file_bytes) {
                 Ok(Some(bytes)) => bytes,
                 Ok(None) => {

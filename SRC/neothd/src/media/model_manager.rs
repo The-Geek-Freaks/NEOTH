@@ -15,7 +15,13 @@ use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const COPY_BUFFER_BYTES: usize = 256 * 1024;
-const MAX_SAFETENSORS_HEADER_BYTES: u64 = 100_000_000;
+/// These limits are far above ordinary transformer checkpoints (thousands of
+/// tensors with ranks below eight), while bounding untrusted header allocation
+/// and metadata bookkeeping before a runtime cache can become ready.
+const MAX_SAFETENSORS_HEADER_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_SAFETENSORS_METADATA_ENTRIES: usize = 256;
+const MAX_SAFETENSORS_TENSORS: usize = 10_000;
+const MAX_SAFETENSORS_TENSOR_RANK: usize = 32;
 const INSTALLING_MARKER: &str = ".neoth-installing";
 const DOWNLOAD_PENDING_SUFFIX: &str = "download.pending.json";
 const MODEL_LOCK_RETRY: std::time::Duration = std::time::Duration::from_millis(50);
@@ -844,7 +850,34 @@ fn validate_safetensors(path: &Path) -> Result<()> {
     let tensors = value
         .as_object()
         .context("safetensors header is not a JSON object")?;
-    let mut spans = Vec::new();
+    if let Some(metadata) = tensors.get("__metadata__") {
+        let metadata = metadata
+            .as_object()
+            .context("safetensors __metadata__ is not an object")?;
+        if metadata.len() > MAX_SAFETENSORS_METADATA_ENTRIES {
+            bail!(
+                "safetensors metadata has {} entries, exceeding {} entry limit",
+                metadata.len(),
+                MAX_SAFETENSORS_METADATA_ENTRIES
+            );
+        }
+        for (key, value) in metadata {
+            if !value.is_string() {
+                bail!("safetensors metadata `{key}` is not a string");
+            }
+        }
+    }
+    let tensor_count = tensors
+        .len()
+        .checked_sub(usize::from(tensors.contains_key("__metadata__")))
+        .context("safetensors tensor count underflow")?;
+    if tensor_count > MAX_SAFETENSORS_TENSORS {
+        bail!(
+            "safetensors has {tensor_count} tensors, exceeding {} tensor limit",
+            MAX_SAFETENSORS_TENSORS
+        );
+    }
+    let mut spans = Vec::with_capacity(tensor_count);
     let mut tensor_count = 0_usize;
     for (name, tensor) in tensors {
         if name == "__metadata__" {
@@ -853,6 +886,31 @@ fn validate_safetensors(path: &Path) -> Result<()> {
         let tensor = tensor
             .as_object()
             .with_context(|| format!("tensor `{name}` metadata is not an object"))?;
+        let dtype = tensor
+            .get("dtype")
+            .and_then(serde_json::Value::as_str)
+            .with_context(|| format!("tensor `{name}` has no dtype"))?;
+        let width = safetensors_dtype_width(dtype)
+            .with_context(|| format!("tensor `{name}` has unsupported dtype `{dtype}`"))?;
+        let shape = tensor
+            .get("shape")
+            .and_then(serde_json::Value::as_array)
+            .with_context(|| format!("tensor `{name}` has no shape"))?;
+        if shape.len() > MAX_SAFETENSORS_TENSOR_RANK {
+            bail!(
+                "tensor `{name}` rank {} exceeds {} rank limit",
+                shape.len(),
+                MAX_SAFETENSORS_TENSOR_RANK
+            );
+        }
+        let elements = shape.iter().try_fold(1_u64, |product, dimension| {
+            let dimension = dimension
+                .as_u64()
+                .with_context(|| format!("tensor `{name}` has invalid shape dimension"))?;
+            product
+                .checked_mul(dimension)
+                .context("safetensors shape element count overflow")
+        })?;
         let offsets = tensor
             .get("data_offsets")
             .and_then(serde_json::Value::as_array)
@@ -868,6 +926,15 @@ fn validate_safetensors(path: &Path) -> Result<()> {
             .with_context(|| format!("tensor `{name}` end offset is invalid"))?;
         if start > end {
             bail!("tensor `{name}` has reversed offsets");
+        }
+        let declared_bytes = end - start;
+        let expected_bytes = elements
+            .checked_mul(width)
+            .context("safetensors tensor byte length overflow")?;
+        if declared_bytes != expected_bytes {
+            bail!(
+                "tensor `{name}` data span {declared_bytes} does not match shape/dtype byte length {expected_bytes}"
+            );
         }
         spans.push((start, end, name.as_str()));
         tensor_count += 1;
@@ -904,6 +971,16 @@ fn validate_safetensors(path: &Path) -> Result<()> {
         bail!("safetensors header cursor mismatch");
     }
     Ok(())
+}
+
+fn safetensors_dtype_width(dtype: &str) -> Result<u64> {
+    match dtype {
+        "BOOL" | "U8" | "I8" | "F8_E4M3FN" | "F8_E5M2" => Ok(1),
+        "U16" | "I16" | "F16" | "BF16" => Ok(2),
+        "U32" | "I32" | "F32" => Ok(4),
+        "U64" | "I64" | "F64" => Ok(8),
+        _ => anyhow::bail!("unknown safetensors dtype"),
+    }
 }
 
 /// Materialise an artifact already committed by `hf-hub` into NEOTH's runtime
@@ -1275,6 +1352,123 @@ mod tests {
         bytes.extend_from_slice(header);
         bytes.extend_from_slice(&[0_u8; 4]);
         std::fs::write(path, bytes).unwrap();
+    }
+
+    fn write_safetensors_with_header(path: &Path, header: &[u8], payload_len: usize) {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(header.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(header);
+        bytes.extend_from_slice(&vec![0_u8; payload_len]);
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn cache_health_rejects_safetensors_dtype_or_shape_span_lies() {
+        let dir = tempfile::tempdir().unwrap();
+        let weights = dir.path().join("model.safetensors");
+        let required = [RequiredArtifact {
+            filename: "model.safetensors",
+            kind: ArtifactKind::Safetensors,
+            expected: None,
+        }];
+
+        write_safetensors_with_header(
+            &weights,
+            br#"{"tensor":{"dtype":"NOT_A_DTYPE","shape":[1],"data_offsets":[0,1]}}"#,
+            1,
+        );
+        assert!(matches!(
+            cache_health(dir.path(), &required),
+            CacheHealth::Corrupt { .. }
+        ));
+
+        // F32[2] needs eight bytes, even though the offsets and final file
+        // length are internally contiguous.
+        write_safetensors_with_header(
+            &weights,
+            br#"{"tensor":{"dtype":"F32","shape":[2],"data_offsets":[0,4]}}"#,
+            4,
+        );
+        assert!(matches!(
+            cache_health(dir.path(), &required),
+            CacheHealth::Corrupt { .. }
+        ));
+
+        // Checked arithmetic rejects dimensions whose byte count would wrap.
+        write_safetensors_with_header(
+            &weights,
+            br#"{"tensor":{"dtype":"F64","shape":[18446744073709551615,2],"data_offsets":[0,0]}}"#,
+            0,
+        );
+        assert!(matches!(
+            cache_health(dir.path(), &required),
+            CacheHealth::Corrupt { .. }
+        ));
+    }
+
+    #[test]
+    fn cache_health_rejects_safetensors_header_metadata_tensor_and_rank_caps() {
+        let dir = tempfile::tempdir().unwrap();
+        let weights = dir.path().join("model.safetensors");
+        let required = [RequiredArtifact {
+            filename: "model.safetensors",
+            kind: ArtifactKind::Safetensors,
+            expected: None,
+        }];
+
+        // The declared maximum is rejected before allocating or reading a
+        // header-sized buffer.
+        std::fs::write(&weights, (MAX_SAFETENSORS_HEADER_BYTES + 1).to_le_bytes()).unwrap();
+        assert!(matches!(
+            cache_health(dir.path(), &required),
+            CacheHealth::Corrupt { .. }
+        ));
+
+        let mut metadata = serde_json::Map::new();
+        for index in 0..=MAX_SAFETENSORS_METADATA_ENTRIES {
+            metadata.insert(
+                format!("key-{index}"),
+                serde_json::Value::String("x".into()),
+            );
+        }
+        let metadata_header = serde_json::json!({
+            "__metadata__": metadata,
+            "tensor": {"dtype":"F32", "shape":[0], "data_offsets":[0,0]}
+        });
+        let metadata_header = serde_json::to_vec(&metadata_header).unwrap();
+        write_safetensors_with_header(&weights, &metadata_header, 0);
+        assert!(matches!(
+            cache_health(dir.path(), &required),
+            CacheHealth::Corrupt { .. }
+        ));
+
+        let mut tensors = serde_json::Map::new();
+        for index in 0..=MAX_SAFETENSORS_TENSORS {
+            tensors.insert(
+                format!("tensor-{index}"),
+                serde_json::json!({"dtype":"F32", "shape":[0], "data_offsets":[0,0]}),
+            );
+        }
+        let tensor_header = serde_json::to_vec(&serde_json::Value::Object(tensors)).unwrap();
+        write_safetensors_with_header(&weights, &tensor_header, 0);
+        assert!(matches!(
+            cache_health(dir.path(), &required),
+            CacheHealth::Corrupt { .. }
+        ));
+
+        let rank_header = serde_json::json!({
+            "tensor": {
+                "dtype":"F32",
+                "shape": vec![0_u64; MAX_SAFETENSORS_TENSOR_RANK + 1],
+                "data_offsets":[0,0]
+            }
+        });
+        let rank_header = serde_json::to_vec(&rank_header).unwrap();
+        write_safetensors_with_header(&weights, &rank_header, 0);
+        assert!(matches!(
+            cache_health(dir.path(), &required),
+            CacheHealth::Corrupt { .. }
+        ));
     }
 
     #[test]

@@ -152,6 +152,22 @@ proactive:
 #   coding_recall_max_files: 8      # valid: 1..50
 #   coding_callers_per_symbol: 3    # valid: 0..20; 0 disables enrichment only
 #   coding_summary_token_budget: 2048 # valid: 128..12000
+#
+#   # Default OFF: the daemon never guesses a managed repository from its
+#   # process working directory. When enabled, each root must be an existing,
+#   # absolute physical repository root. Aliases, duplicates, and overlapping
+#   # roots are rejected before watchers begin. At most eight roots are allowed.
+#   lifecycle:
+#     enabled: false
+#     managed_roots:
+#       # - C:/work/my-repository
+#     debounce_millis: 500              # valid: 50..60000
+#     reconciliation_interval_secs: 300 # valid: 30..3600; catches missed events
+#
+# Watcher events only mark a root dirty. They do not establish freshness. The
+# lifecycle verifies source fingerprints before reuse or publication, reconciles
+# any durable in-flight attempt before watching at next startup, and signals
+# cancellation then joins active refresh work when disabled or reconfigured.
 
 
 # ── 5. Cluster transport + LAN privacy ──────────────────────────────────────

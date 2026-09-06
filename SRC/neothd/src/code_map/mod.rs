@@ -20,6 +20,12 @@ pub mod co_change;
 pub mod diff;
 pub mod graph;
 pub mod impact;
+pub mod lifecycle;
+pub mod lifecycle_config;
+pub(crate) mod lifecycle_repair;
+pub mod lifecycle_watcher;
+#[cfg(test)]
+mod lifecycle_watcher_tests;
 pub mod outline;
 pub mod ownership;
 pub mod persist;
@@ -40,6 +46,21 @@ pub use impact::{
     ImpactDirection, ImpactEdgeEvidence, ImpactNodeId, ImpactOptions, ImpactResult, ImpactSeed,
     ImpactedFile, ImpactedNode, UnresolvedEdge, UnresolvedEdgeEndpoint, UnresolvedEdgeReason,
     UnresolvedSeed, UnresolvedSeedReason, impact_radius, impact_radius_for_path,
+};
+#[allow(unused_imports)]
+pub use lifecycle::{
+    CodeMapLifecycleReceipt, CodeMapLifecycleState, CodeMapLifecycleStatus, LifecycleCancellation,
+    LifecycleGeneration, LifecycleRefreshOptions, RefreshCause, RefreshOutcome, inspect, reconcile,
+    refresh,
+};
+pub use lifecycle_config::{
+    CodeMapLifecycleConfigApplyReceipt, CodeMapLifecycleConfigPatch,
+    CodeMapLifecycleManagedRootObservation, apply_code_map_lifecycle_config,
+    apply_code_map_lifecycle_config_patch,
+};
+pub use lifecycle_watcher::{
+    CodeMapLifecycleRuntimeState, CodeMapLifecycleRuntimeStatus,
+    read_active_code_map_lifecycle_status,
 };
 #[allow(unused_imports)]
 pub use outline::{OutlineEntry, outline_file, outline_source};
