@@ -1,8 +1,32 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-08-13
+**Created:** 2026-05-24  **Last updated:** 2026-09-06
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Coding-context batch checkpoint 2026-09-06:** continued directly in AGENTER
+> from `6c869dc4`. The two completed CRG-01 portions are recorded below; the
+> remaining cross-surface contracts stay open in ROAD. The final package check,
+> scoped Rustfmt and independent reviews pass. Focused tests: code-map
+> **309/309**, coding **550/550**, coding CLI **32/32**, kanban **26/26**, config
+> **448/448**, with overlap between groups. Strict Clippy remains blocked by
+> **15 existing diagnostics in seven unchanged baseline files**; no warning
+> suppression, real-provider, GUI/Buddy, packaging or release success is claimed.
+> Current machine count: **1,324 total / 1,002 complete / 320 open / 2 partial =
+> 322 raw blockers and 321 pre-tag blockers**. The unchanged blocker total
+> reflects splitting completed coding work from the still-required remainder.
+>
+- [x] **CRG-01 coding configuration:** independently validated one-shot
+  file/caller/summary settings, shared 64-KiB rendered-context budget,
+  deterministic 56-KiB source-metadata bounds, exact selection truncation,
+  legacy defaults, rejected-reload preservation and documented next-invocation
+  semantics. Automatic Chat/Channel context retains its opt-in default.
+- [x] **CRG-01 coding context provenance:** root/generation/selection evidence
+  and exact input hashes persisted before both logical decomposer attempts;
+  redacted metadata, compact source-once storage, bounded corrupt-state reads,
+  migration/archive/delete lifecycle, kanban inspection and plan-review digest.
+  All generated tasks commit together after provider awaits. The public
+  contract is in `docs/coding-code-map-receipts.md`.
+
 > **Current Context-Connector adoption checkpoint 2026-08-13:** the reviewed
 > `PLAN/NEOTH_CONTEXT_CONNECTORS.md` is now the binding architecture/source
 > contract, backed by the SHA-256-identical immutable operator snapshot

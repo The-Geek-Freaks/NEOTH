@@ -125,6 +125,37 @@ normal recovery and recorded outcome path then determines the queue state.
 Changing this setting cannot turn on proactive messaging: `enabled: true` is a
 separate, explicit opt-in.
 
+### Code-map context
+
+`code_map.auto_context_max_files` is an explicit opt-in for automatic repository
+context. Its default is `0`, so normal `neoth chat` and Channel messages do not
+read the code map or receive a `<repo-context>` prompt block. Set it above zero
+only for bounded automatic context; valid values are `0..=200`.
+
+One-shot `neoth code` uses separate bounds:
+
+```yaml
+code_map:
+  auto_context_max_files: 0       # Chat/Channel auto-context; valid: 0..200
+  coding_recall_max_files: 8      # recalled files per code invocation; 1..50
+  coding_callers_per_symbol: 3    # depth-one callers per symbol; 0..20
+  coding_summary_token_budget: 2048 # generic repo-map summary; 128..12000
+```
+
+`coding_callers_per_symbol: 0` disables only caller enrichment. It does
+not disable targeted recall. `coding_summary_token_budget` is a local heuristic
+for the generic repo-map summary, not a provider billing meter and not a cap on
+the full combined coding context. The graph-memory caps and decomposer's 12k
+input guard remain in force. The targeted selection and generic summary share
+a 64-KiB rendered-context ceiling and bounded metadata storage; their receipt
+reports source selection limits and later decomposer truncation separately.
+
+After an accepted reload, each daemon Chat or Channel message resolves a fresh
+configuration snapshot. A one-shot `neoth code` command resolves these limits
+when its next invocation begins; an invocation already in progress keeps its
+own snapshot. Inspect the retained selection, generation, redaction and
+truncation evidence through the [coding code-map receipt contract](coding-code-map-receipts.md).
+
 ### Communication adaptation
 
 `profile.communication` is separate from the optional LLM-backed fact
@@ -615,6 +646,7 @@ Common environment variables:
 | Change | Reload |
 | :-- | :-- |
 | Skills | Hot-reloaded automatically (file watcher); `neoth reload` re-reads tunable config. |
+| Code-map context | Hot-reloadable. Each subsequent Chat/Channel message gets the accepted snapshot; the next one-shot `neoth code` invocation gets the new coding limits. An invalid YAML candidate is rejected before publication, leaving the prior snapshot active. |
 | Recurring updater discovery | Reload-owned and fail-closed: enabling it arms the supervisor/status lane, but current v1 emits `SkippedByGate` before unattended GitHub/npm/Git network, process, staging, handoff, or replacement effects. `auto_apply` records future verified-staging intent only. Manual signed update commands are unaffected. |
 | Provider config | Restart-bound. `neoth reload` rejects changes to the constructed provider runtime (kind, binary, key reference, endpoint, model/aliases, region/API version, inference and recursive-subslot topology, fallback chain, Claude CLI runtime, transport settings and provider decorators such as history compaction). The running provider graph remains on its previous generation until the supervised daemon restarts. |
 | Channels | The running daemon watches effective file/keychain credentials, validates the new generation, and stop-then-starts only the changed adapter. A malformed credential store stops the channel fleet fail-closed instead of retaining stale secrets. If a mutation reports that its reload request failed, run `neoth reload`; a full daemon restart is not the normal path. |

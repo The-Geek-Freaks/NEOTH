@@ -38,6 +38,9 @@ pub mod brainstorm;
 pub mod cargo_check;
 pub mod cerebellum_provider;
 pub mod classifier;
+/// GOLD code-map context provenance: typed original-selection metadata plus
+/// hash-only receipts persisted on the kanban session row.
+pub mod code_map_receipt;
 pub mod decomposer;
 pub mod dispatcher;
 /// QU-01 EarlyStopDetector — pure-fn detectors of degenerate worker
@@ -92,6 +95,10 @@ pub mod worktree;
 // (removed 2026-07-03, GOLD-ADAPT-G-02 sweep). Callers may use either
 // the re-export or the direct sub-module path.
 pub use classifier::{Complexity, classify_heuristic};
+pub use code_map_receipt::{
+    CODING_CODE_MAP_RECEIPT_SCHEMA, CodeMapCaller, CodeMapContextKind, CodeMapContextSource,
+    CodeMapSelectedFile, CodingCodeMapReceipt, PreparedCodeMapContext,
+};
 pub use decomposer::{
     CHARS_PER_TOKEN, DecomposerError, DecomposerLlm, DecomposerResponse, DecompositionResult,
     MAX_INPUT_TOKENS, SessionComplexity, TaskType, build_prompt, build_repair_prompt,

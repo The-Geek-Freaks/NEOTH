@@ -1786,6 +1786,75 @@ pub struct DeepResearchConfig {
 #[cfg(test)]
 mod inline_tests;
 
+#[cfg(test)]
+mod code_map_config_tests {
+    use super::{CodeMapConfig, FreedomConfig};
+
+    #[test]
+    fn code_map_serde_defaults_preserve_auto_context_opt_in() {
+        let config: FreedomConfig = serde_yaml::from_str("operator_id: sam\n")
+            .expect("legacy freedom.yaml must deserialize");
+
+        assert_eq!(config.code_map.auto_context_max_files, 0);
+        assert_eq!(config.code_map.coding_recall_max_files, 8);
+        assert_eq!(config.code_map.coding_callers_per_symbol, 3);
+        assert_eq!(config.code_map.coding_summary_token_budget, 2_048);
+        config
+            .code_map
+            .validate()
+            .expect("serde defaults must remain valid");
+    }
+
+    #[test]
+    fn code_map_serde_rejects_malformed_negative_and_oversized_limits() {
+        for source in [
+            "code_map:\n  coding_recall_max_files: nope\n",
+            "code_map:\n  coding_recall_max_files: -1\n",
+            "code_map:\n  coding_recall_max_files: 0\n",
+            "code_map:\n  auto_context_max_files: 201\n",
+            "code_map:\n  coding_recall_max_files: 51\n",
+            "code_map:\n  coding_callers_per_symbol: 21\n",
+            "code_map:\n  coding_summary_token_budget: 12001\n",
+        ] {
+            assert!(
+                serde_yaml::from_str::<FreedomConfig>(source).is_err(),
+                "invalid code_map config unexpectedly deserialized: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn code_map_accepts_valid_bounds_and_programmatic_validation() {
+        let config: FreedomConfig = serde_yaml::from_str(
+            "code_map:\n  auto_context_max_files: 200\n  coding_recall_max_files: 50\n  coding_callers_per_symbol: 0\n  coding_summary_token_budget: 128\n",
+        )
+        .expect("inclusive code_map bounds must deserialize");
+        config
+            .code_map
+            .validate()
+            .expect("inclusive code_map bounds must validate");
+
+        let maximum = CodeMapConfig {
+            auto_context_max_files: 200,
+            coding_recall_max_files: 50,
+            coding_callers_per_symbol: 20,
+            coding_summary_token_budget: 12_000,
+        };
+        maximum
+            .validate()
+            .expect("inclusive maximum code_map bounds must validate");
+
+        let invalid = CodeMapConfig {
+            coding_summary_token_budget: 12_001,
+            ..CodeMapConfig::default()
+        };
+        assert!(
+            invalid.validate().is_err(),
+            "programmatic callers must not bypass code_map validation"
+        );
+    }
+}
+
 /// A parsed freedom.yaml may still carry pre-split inline credentials and
 /// extension-owned secrets. `serde_yaml::Value` does not zeroize strings on
 /// drop, so the lossless merge owns an explicit recursive wipe.
@@ -2281,6 +2350,9 @@ impl FreedomConfig {
         self.companion
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid companion config: {error}"))?;
+        self.code_map
+            .validate()
+            .context("invalid code_map config")?;
         self.swarm
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid swarm config: {error}"))?;

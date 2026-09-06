@@ -130,6 +130,30 @@ proactive:
   delivery_attempt_timeout_secs: 60
 
 
+# ── 4b. Code-map context for chat, channels, and `neoth code` ───────────────
+#
+# Automatic repo context is OFF by default. Set `auto_context_max_files` above
+# zero only when `neoth chat` and inbound Channel messages should receive a
+# bounded `<repo-context>` block. The daemon resolves this setting from the
+# fresh accepted config snapshot for each message.
+#
+# The remaining values tune only the NEXT one-shot `neoth code` invocation.
+# `coding_recall_max_files` bounds recalled files. `coding_callers_per_symbol`
+# bounds depth-one caller enrichment per symbol; 0 disables that enrichment only,
+# not targeted recall. `coding_summary_token_budget` is a heuristic budget for
+# a generic repo-map summary, not provider billing and not the full combined
+# coding-context cap. Hard graph memory caps and the decomposer 12k input guard
+# remain in force. Targeted recall and summary share a 64-KiB rendered-context
+# ceiling and bounded metadata storage; receipts report source-selection and
+# later decomposer truncation separately.
+#
+# code_map:
+#   auto_context_max_files: 0       # valid: 0..200; 0 keeps Chat/Channel off
+#   coding_recall_max_files: 8      # valid: 1..50
+#   coding_callers_per_symbol: 3    # valid: 0..20; 0 disables enrichment only
+#   coding_summary_token_budget: 2048 # valid: 128..12000
+
+
 # ── 5. Cluster transport + LAN privacy ──────────────────────────────────────
 
 # The cluster master switch is OFF by default. A public `name`, a shared

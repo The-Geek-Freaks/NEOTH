@@ -43,6 +43,7 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result, ensure};
 use regex::Regex;
 use rusqlite::{Connection, Transaction};
+use serde::{Deserialize, Serialize};
 
 use super::root_identity::CanonicalRepoRoot;
 
@@ -85,6 +86,16 @@ pub struct RelevantFile {
     /// path components. Tie-break signal — a prompt mentioning "auth"
     /// pushes `src/auth/middleware.rs` above unrelated symbol-only hits.
     pub path_keyword_overlap: u32,
+}
+
+/// One direct caller selected for coding-context rendering. This preserves the
+/// unsanitized indexed names so a coding-plan receipt can describe exactly the
+/// context that was selected before prompt-output sanitization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectedCaller {
+    pub target_symbol: String,
+    pub caller_symbol: String,
+    pub caller_path: String,
 }
 
 /// Canonical root and generations observed from one SQLite snapshot.
@@ -856,6 +867,43 @@ pub fn render_context_block(files: &[RelevantFile]) -> String {
     crate::security::redact::sanitize_tool_output(&out)
 }
 
+/// Select depth-1 callers of the symbols the prompt matched. The ordering and
+/// deduplication are intentionally shared with [`render_callers_block`] so a
+/// receipt records the exact caller context that entered the prompt.
+///
+/// `per_symbol_cap` bounds selected callers for each matched symbol. Target
+/// symbols are deduplicated across files in their first-seen order; each
+/// target's direct callers are ordered by caller symbol, then source path.
+pub fn select_callers(
+    graph: &crate::code_map::graph::CallGraph,
+    files: &[RelevantFile],
+    per_symbol_cap: usize,
+) -> Vec<SelectedCaller> {
+    if per_symbol_cap == 0 {
+        return Vec::new();
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut selected = Vec::new();
+    for file in files {
+        for symbol in &file.matched_symbols {
+            if !seen.insert(symbol.clone()) {
+                continue;
+            }
+            let mut callers = graph.callers_of(symbol, 1);
+            callers.sort_by(|a, b| a.symbol.cmp(&b.symbol).then(a.file_path.cmp(&b.file_path)));
+            callers.truncate(per_symbol_cap);
+            for caller in callers {
+                selected.push(SelectedCaller {
+                    target_symbol: symbol.clone(),
+                    caller_symbol: caller.symbol,
+                    caller_path: caller.file_path,
+                });
+            }
+        }
+    }
+    selected
+}
+
 /// CRG-01 — render depth-1 callers of the symbols the prompt matched, so the
 /// decomposer sees the structural blast radius without a grep round-trip.
 /// `per_symbol_cap` bounds the lines per matched symbol; symbols are
@@ -867,31 +915,26 @@ pub fn render_callers_block(
     files: &[RelevantFile],
     per_symbol_cap: usize,
 ) -> String {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut lines: Vec<String> = Vec::new();
-    for file in files {
-        for symbol in &file.matched_symbols {
-            if !seen.insert(symbol.clone()) {
-                continue;
-            }
-            let mut callers = graph.callers_of(symbol, 1);
-            callers.sort_by(|a, b| a.symbol.cmp(&b.symbol).then(a.file_path.cmp(&b.file_path)));
-            callers.truncate(per_symbol_cap);
-            for caller in callers {
-                lines.push(format!(
-                    "  - {symbol} <- {} ({})",
-                    caller.symbol, caller.file_path
-                ));
-            }
-        }
-    }
-    if lines.is_empty() {
+    let selected = select_callers(graph, files, per_symbol_cap);
+    render_selected_callers_block(&selected)
+}
+
+/// Render an already-selected caller list for prompt context. This is kept
+/// separate from [`select_callers`] so a caller can persist the same selection
+/// in a receipt and render it without repeating call-graph traversal.
+///
+/// The input originated from persisted graph data and remains untrusted until
+/// the existing tool-output sanitizer is applied to the complete block.
+pub fn render_selected_callers_block(callers: &[SelectedCaller]) -> String {
+    if callers.is_empty() {
         return String::new();
     }
     let mut out = String::from("# callers of matched symbols (depth 1, NEOTH code-map)\n");
-    for line in lines {
-        out.push_str(&line);
-        out.push('\n');
+    for caller in callers {
+        out.push_str(&format!(
+            "  - {} <- {} ({})\n",
+            caller.target_symbol, caller.caller_symbol, caller.caller_path
+        ));
     }
     crate::security::redact::sanitize_tool_output(&out)
 }
@@ -1909,13 +1952,94 @@ mod tests {
                 path_keyword_overlap: 0,
             },
         ];
+        let selected = select_callers(&graph, &files, 2);
+        assert_eq!(
+            selected,
+            vec![
+                SelectedCaller {
+                    target_symbol: "verify_token".into(),
+                    caller_symbol: "alpha".into(),
+                    caller_path: "src/a.rs".into(),
+                },
+                SelectedCaller {
+                    target_symbol: "verify_token".into(),
+                    caller_symbol: "beta".into(),
+                    caller_path: "src/b.rs".into(),
+                },
+            ],
+            "the receipt selection must be the same capped, sorted records rendered below"
+        );
         let block = render_callers_block(&graph, &files, 2);
+        assert_eq!(render_selected_callers_block(&selected), block);
         assert!(block.starts_with("# callers of matched symbols"));
         // Cap 2 keeps alpha+beta (sorted), drops gamma; dedupe keeps one set.
         assert_eq!(block.matches("verify_token <-").count(), 2);
         assert!(block.contains("verify_token <- alpha (src/a.rs)"));
         assert!(block.contains("verify_token <- beta (src/b.rs)"));
         assert!(!block.contains("gamma"));
+    }
+
+    #[test]
+    fn select_callers_is_deterministic_for_duplicate_names_and_zero_cap() {
+        let graph = crate::code_map::graph::CallGraph::from_edges(vec![
+            CodeEdge {
+                from_file: "src/z.rs".into(),
+                from_symbol: "same_name".into(),
+                to_name: "first_target".into(),
+                kind: EdgeKind::Calls,
+            },
+            CodeEdge {
+                from_file: "src/a.rs".into(),
+                from_symbol: "same_name".into(),
+                to_name: "first_target".into(),
+                kind: EdgeKind::Calls,
+            },
+            CodeEdge {
+                from_file: "src/b.rs".into(),
+                from_symbol: "other_name".into(),
+                to_name: "second_target".into(),
+                kind: EdgeKind::Calls,
+            },
+        ]);
+        let files = vec![
+            RelevantFile {
+                root: "/repo/a".into(),
+                path: "src/one.rs".into(),
+                identifier_hits: 2,
+                matched_symbols: vec!["first_target".into(), "second_target".into()],
+                path_keyword_overlap: 0,
+            },
+            RelevantFile {
+                root: "/repo/a".into(),
+                path: "src/two.rs".into(),
+                identifier_hits: 1,
+                matched_symbols: vec!["first_target".into()],
+                path_keyword_overlap: 0,
+            },
+        ];
+
+        assert_eq!(
+            select_callers(&graph, &files, 2),
+            vec![
+                SelectedCaller {
+                    target_symbol: "first_target".into(),
+                    caller_symbol: "same_name".into(),
+                    caller_path: "src/a.rs".into(),
+                },
+                SelectedCaller {
+                    target_symbol: "first_target".into(),
+                    caller_symbol: "same_name".into(),
+                    caller_path: "src/z.rs".into(),
+                },
+                SelectedCaller {
+                    target_symbol: "second_target".into(),
+                    caller_symbol: "other_name".into(),
+                    caller_path: "src/b.rs".into(),
+                },
+            ]
+        );
+        assert!(select_callers(&graph, &files, 0).is_empty());
+        assert!(render_callers_block(&graph, &files, 0).is_empty());
     }
 
     #[test]

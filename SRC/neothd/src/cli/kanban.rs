@@ -315,25 +315,48 @@ fn run_list(conn: &Connection, all: bool, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn run_show(conn: &Connection, session_id: KanbanSessionId, output: OutputFormat) -> Result<()> {
+#[derive(serde::Serialize)]
+struct SessionInspection {
+    session: KanbanSession,
+    tasks: Vec<KanbanTask>,
+    code_map_receipts: Vec<crate::coding::code_map_receipt::CodingCodeMapReceipt>,
+}
+
+fn load_session_inspection(
+    conn: &Connection,
+    session_id: KanbanSessionId,
+) -> Result<SessionInspection> {
     let session = store::get_session(conn, session_id)?
         .ok_or_else(|| anyhow!("session {} not found", session_id.raw()))?;
     let tasks = store::list_tasks_for_session(conn, session_id)?;
+    let code_map_receipts = store::load_code_map_receipts(conn, session_id)
+        .context("read coding-session code-map evidence")?;
+    Ok(SessionInspection {
+        session,
+        tasks,
+        code_map_receipts,
+    })
+}
+
+fn run_show(conn: &Connection, session_id: KanbanSessionId, output: OutputFormat) -> Result<()> {
+    let inspection = load_session_inspection(conn, session_id)?;
 
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
         // Combined envelope so `neothd-gui` gets the full board state in
-        // one subprocess call. Schema:
-        //   { "session": KanbanSession, "tasks": [KanbanTask] }
-        let body = serde_json::json!({
-            "session": session,
-            "tasks": tasks,
-        });
+        // one subprocess call. The additive receipt list contains metadata
+        // and hashes of prepared provider inputs, never the raw context.
         println!(
             "{}",
-            serde_json::to_string(&body).context("serialise session+tasks")?
+            serde_json::to_string(&inspection)
+                .context("serialise session+tasks+code-map receipts")?
         );
         return Ok(());
     }
+    let SessionInspection {
+        session,
+        tasks,
+        code_map_receipts,
+    } = inspection;
 
     println!(
         "Session #{}  ({})",
@@ -349,6 +372,19 @@ fn run_show(conn: &Connection, session_id: KanbanSessionId, output: OutputFormat
     println!("  Prompt   : {}", session.prompt);
     if let Some(summary) = session.summary.as_ref() {
         println!("  Summary  : {summary}");
+    }
+    if let Some(receipt) = code_map_receipts.last() {
+        println!(
+            "  Code map : {} prepared input receipt(s); latest context SHA-256 {}{}",
+            code_map_receipts.len(),
+            receipt.submitted_context_sha256,
+            if receipt.context_truncated {
+                " (context was truncated)"
+            } else {
+                ""
+            },
+        );
+        println!("             Use --output json for source generations and selection metadata.");
     }
     println!();
 
@@ -1372,6 +1408,73 @@ mod tests {
         let conn = memstore::open(&path).expect("open views.db");
         store::ensure_schema(&conn).expect("ensure schema");
         (dir, conn)
+    }
+
+    #[test]
+    fn show_loads_validated_context_evidence_and_rejects_corruption() {
+        use crate::coding::code_map_receipt::{
+            CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile, PreparedCodeMapContext,
+        };
+        let (dir, conn) = fresh_db();
+        let session = store::insert_session(&conn, 1, "build", "h", "cli", None).unwrap();
+        let before = load_session_inspection(&conn, session).unwrap();
+        assert!(before.code_map_receipts.is_empty());
+        let sensitive_name = concat!("sk-", "FAKE_TEST_OPENAI_AAAAAAAAAAAAAA");
+        let source = CodeMapContextSource {
+            kind: CodeMapContextKind::TargetedRecall,
+            root: dir.path().canonicalize().unwrap().display().to_string(),
+            root_identity: "test-physical-root".into(),
+            index_generation: 7,
+            graph_generation: 7,
+            stale: false,
+            selection_truncated: false,
+            metadata_redacted: false,
+            selected_files: vec![CodeMapSelectedFile {
+                path: format!("src/{sensitive_name}.rs"),
+                symbols: vec!["verify_token".into()],
+            }],
+            callers: Vec::new(),
+        };
+        let prepared =
+            PreparedCodeMapContext::new("PRIVATE_CONTEXT_NOT_FOR_INSPECTION".into(), vec![source])
+                .unwrap();
+        let receipt = prepared
+            .receipt(
+                session,
+                1,
+                "build",
+                prepared.text(),
+                "PRIVATE_PROVIDER_PROMPT",
+            )
+            .unwrap();
+        store::record_code_map_receipt(&conn, session, &receipt).unwrap();
+        let inspection = load_session_inspection(&conn, session).unwrap();
+        let json = serde_json::to_value(&inspection).unwrap();
+        assert_eq!(json["session"]["session_id"], session.raw());
+        assert!(json["tasks"].is_array());
+        assert!(!json.to_string().contains(sensitive_name));
+        assert_eq!(
+            json["code_map_receipts"][0]["sources"][0]["metadata_redacted"],
+            true
+        );
+        assert_eq!(
+            json["code_map_receipts"][0]["sources"][0]["index_generation"],
+            7
+        );
+        assert_eq!(
+            json["code_map_receipts"][0]["submitted_context_sha256"],
+            receipt.submitted_context_sha256
+        );
+        let serialized = json.to_string();
+        assert!(!serialized.contains("PRIVATE_CONTEXT_NOT_FOR_INSPECTION"));
+        assert!(!serialized.contains("PRIVATE_PROVIDER_PROMPT"));
+
+        conn.execute(
+            "UPDATE idx_kanban_session SET code_map_receipts = ?1 WHERE session_id = ?2",
+            rusqlite::params!["not-json", session.raw()],
+        )
+        .unwrap();
+        assert!(load_session_inspection(&conn, session).is_err());
     }
 
     // GOLD-ADAPT-AOS-06 — direct task creation.

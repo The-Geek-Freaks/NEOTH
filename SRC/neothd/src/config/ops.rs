@@ -613,14 +613,133 @@ impl Default for AutoUpdateConfig {
 /// policy. Lives on `FreedomConfig::code_map`. Independent from
 /// `CouncilConfig::max_calls_per_user_message` because code-map
 /// reads are local SQLite — no LLM cost — and need their own knob.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CodeMapConfig {
     /// Max files to surface in the auto-injected `<repo-context>`
     /// block. `0` (default) disables auto-injection. Recommended
     /// production value: 3-5 — large enough to surface the obvious
     /// hits, small enough to keep the system prompt tight.
-    #[serde(default)]
+    #[serde(
+        default = "default_auto_context_max_files",
+        deserialize_with = "deserialize_auto_context_max_files"
+    )]
     pub auto_context_max_files: u32,
+    /// Maximum code-map files recalled for one `neoth code` invocation.
+    /// This is independent from `auto_context_max_files`: the latter controls
+    /// continuous chat/channel injection and remains disabled at zero.
+    #[serde(
+        default = "default_coding_recall_max_files",
+        deserialize_with = "deserialize_coding_recall_max_files"
+    )]
+    pub coding_recall_max_files: u32,
+    /// Maximum depth-one caller entries included for each recalled symbol during
+    /// a one-shot coding invocation. `0` disables this enrichment only.
+    #[serde(
+        default = "default_coding_callers_per_symbol",
+        deserialize_with = "deserialize_coding_callers_per_symbol"
+    )]
+    pub coding_callers_per_symbol: u32,
+    /// Heuristic budget for a generic repo-map summary in a one-shot coding
+    /// invocation. It is not a provider billing limit or the full combined
+    /// coding-context cap.
+    #[serde(
+        default = "default_coding_summary_token_budget",
+        deserialize_with = "deserialize_coding_summary_token_budget"
+    )]
+    pub coding_summary_token_budget: u32,
+}
+
+fn default_auto_context_max_files() -> u32 {
+    0
+}
+
+fn default_coding_recall_max_files() -> u32 {
+    8
+}
+
+fn default_coding_callers_per_symbol() -> u32 {
+    3
+}
+
+fn default_coding_summary_token_budget() -> u32 {
+    2_048
+}
+
+fn deserialize_code_map_u32_in_range<'de, D>(
+    deserializer: D,
+    field: &str,
+    minimum: u32,
+    maximum: u32,
+) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u32::deserialize(deserializer)?;
+    if !(minimum..=maximum).contains(&value) {
+        return Err(D::Error::custom(format!(
+            "{field} must be between {minimum} and {maximum}"
+        )));
+    }
+    Ok(value)
+}
+
+fn deserialize_auto_context_max_files<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_code_map_u32_in_range(deserializer, "auto_context_max_files", 0, 200)
+}
+
+fn deserialize_coding_recall_max_files<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_code_map_u32_in_range(deserializer, "coding_recall_max_files", 1, 50)
+}
+
+fn deserialize_coding_callers_per_symbol<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_code_map_u32_in_range(deserializer, "coding_callers_per_symbol", 0, 20)
+}
+
+fn deserialize_coding_summary_token_budget<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_code_map_u32_in_range(deserializer, "coding_summary_token_budget", 128, 12_000)
+}
+
+impl Default for CodeMapConfig {
+    fn default() -> Self {
+        Self {
+            auto_context_max_files: default_auto_context_max_files(),
+            coding_recall_max_files: default_coding_recall_max_files(),
+            coding_callers_per_symbol: default_coding_callers_per_symbol(),
+            coding_summary_token_budget: default_coding_summary_token_budget(),
+        }
+    }
+}
+
+impl CodeMapConfig {
+    /// Reject invalid programmatically-built values that bypassed the
+    /// YAML field deserializers. Call this before a caller performs IO.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.auto_context_max_files > 200 {
+            anyhow::bail!("auto_context_max_files must be between 0 and 200");
+        }
+        if !(1..=50).contains(&self.coding_recall_max_files) {
+            anyhow::bail!("coding_recall_max_files must be between 1 and 50");
+        }
+        if self.coding_callers_per_symbol > 20 {
+            anyhow::bail!("coding_callers_per_symbol must be between 0 and 20");
+        }
+        if !(128..=12_000).contains(&self.coding_summary_token_budget) {
+            anyhow::bail!("coding_summary_token_budget must be between 128 and 12000");
+        }
+        Ok(())
+    }
 }
 
 /// R-04 2026-05-17: refusal-recovery policy. Operators can disable

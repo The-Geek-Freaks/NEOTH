@@ -49,8 +49,16 @@ use super::walker::{Language, RepoMap};
 /// we match that as the out-of-the-box bound.
 pub const DEFAULT_TOKEN_BUDGET: usize = 2_048;
 
-/// Approximate characters per token (GPT-4 / Claude heuristic).
+/// Approximate output bytes per token (GPT-4 / Claude heuristic).
 const CHARS_PER_TOKEN: usize = 4;
+
+/// Source-level file and symbol names selected for a compact repo-map. This
+/// retains the exact indexed names before any downstream prompt formatting.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoMapSelectedFile {
+    pub path: String,
+    pub symbols: Vec<String>,
+}
 
 /// A bounded compact summary of a [`RepoMap`] ready to inject into a
 /// prompt. The primary consumer is `coding::dispatcher` which prepends
@@ -66,6 +74,15 @@ pub struct RepoMapSummary {
     pub files_truncated: usize,
     /// Approximate token count of `text` (char count / 4).
     pub approx_tokens: usize,
+    /// Whether the byte budget omitted any header, file, or symbol content.
+    /// This includes a partially rendered file even when no whole files were
+    /// omitted and `files_truncated` is therefore zero.
+    #[serde(default)]
+    pub truncated: bool,
+    /// Source-level files and symbols actually written to `text`, in rendered
+    /// selection order. Defaults empty when deserializing older summaries.
+    #[serde(default)]
+    pub selected_files: Vec<RepoMapSelectedFile>,
 }
 
 impl RepoMapSummary {
@@ -85,27 +102,8 @@ impl RepoMapSummary {
 /// a non-trivial symbol table; if no files carry symbols the summary
 /// degrades to a header-only stat block (still useful for orientation).
 pub fn build_summary(map: &RepoMap, token_budget: usize) -> RepoMapSummary {
-    let char_budget = token_budget.saturating_mul(CHARS_PER_TOKEN);
-    let mut buf = String::with_capacity(char_budget.min(8_192));
-
-    // ── Header ────────────────────────────────────────────────────────
-    let lang_list = format_lang_breakdown(&map.report.by_language, 5);
-    let header = format!(
-        "# repo-map  root={}  files={}  LOC={}{}\n",
-        map.root,
-        map.report.total_files,
-        map.report.total_loc,
-        if lang_list.is_empty() {
-            String::new()
-        } else {
-            format!("  langs=[{lang_list}]")
-        }
-    );
-    buf.push_str(&header);
-
-    if buf.len() >= char_budget {
-        return finish(buf, 0, 0);
-    }
+    let byte_budget = token_budget.saturating_mul(CHARS_PER_TOKEN);
+    let mut buf = String::with_capacity(byte_budget.min(8_192));
 
     // ── Per-file symbol table ─────────────────────────────────────────
     // Only files that have at least one symbol; ranked by symbol count.
@@ -117,18 +115,42 @@ pub fn build_summary(map: &RepoMap, token_budget: usize) -> RepoMapSummary {
             .cmp(&a.symbols.len())
             .then_with(|| a.path.cmp(&b.path))
     });
-
     let total_files_with_syms = files_with_syms.len();
+
+    // ── Header ────────────────────────────────────────────────────────
+    let lang_list = format_lang_breakdown(&map.report.by_language, 5);
+    // The root comes from an operator-selected filesystem path and is prompt
+    // input. Redact the complete header before byte truncation: redacting a
+    // clipped secret prefix can miss its signature and leak it into context.
+    let header = crate::security::redact::sanitize_tool_output(&format!(
+        "# repo-map  root={}  files={}  LOC={}{}\n",
+        map.root,
+        map.report.total_files,
+        map.report.total_loc,
+        if lang_list.is_empty() {
+            String::new()
+        } else {
+            format!("  langs=[{lang_list}]")
+        }
+    ));
+    if !push_if_fits(&mut buf, &header, byte_budget) {
+        push_utf8_prefix(&mut buf, &header, byte_budget);
+        return finish(buf, 0, total_files_with_syms, true, Vec::new());
+    }
+
     let mut symbols_included = 0usize;
     let mut files_included = 0usize;
     let mut files_truncated = 0usize;
+    let mut truncated = false;
+    let mut selected_files = Vec::new();
 
     for file in files_with_syms {
         // Check budget BEFORE rendering the file block so we don't
         // emit a partial file and waste the budget on a header line
         // with no following symbols.
-        if buf.len() >= char_budget {
+        if buf.len() >= byte_budget {
             files_truncated += 1;
+            truncated = true;
             continue;
         }
 
@@ -146,50 +168,102 @@ pub fn build_summary(map: &RepoMap, token_budget: usize) -> RepoMapSummary {
             file.language.label(),
             file.loc
         );
-        if buf.len() + file_line.len() >= char_budget {
+        if !push_before_limit(&mut buf, &file_line, byte_budget) {
             files_truncated += 1;
+            truncated = true;
             continue;
         }
-        buf.push_str(&file_line);
         files_included += 1;
+        selected_files.push(RepoMapSelectedFile {
+            path: file.path.clone(),
+            symbols: Vec::new(),
+        });
 
         for sym in &syms_sorted {
             let sym_line = format!("  {} {}\n", sym.kind.label(), sym.name);
-            if buf.len() + sym_line.len() >= char_budget {
+            if !push_before_limit(&mut buf, &sym_line, byte_budget) {
                 // Partial file — add a note and stop this file.
-                buf.push_str("  … (truncated)\n");
+                append_truncation_marker(&mut buf, byte_budget);
                 files_truncated = total_files_with_syms - files_included;
-                // Signal that we ran out of budget.
-                let approx = buf.len() / CHARS_PER_TOKEN;
-                return RepoMapSummary {
-                    text: buf,
-                    symbols_included,
-                    files_truncated,
-                    approx_tokens: approx,
-                };
+                return finish(buf, symbols_included, files_truncated, true, selected_files);
             }
-            buf.push_str(&sym_line);
             symbols_included += 1;
+            selected_files
+                .last_mut()
+                .expect("selected file exists after rendering its header")
+                .symbols
+                .push(sym.name.clone());
         }
     }
 
     // Truncation footer when budget cut off whole files.
     if files_truncated > 0 {
         let footer = format!("# … {files_truncated} more file(s) omitted (budget)\n");
-        buf.push_str(&footer);
+        push_if_fits(&mut buf, &footer, byte_budget);
     }
 
-    finish(buf, symbols_included, files_truncated)
+    finish(
+        buf,
+        symbols_included,
+        files_truncated,
+        truncated,
+        selected_files,
+    )
+}
+
+/// Append `text` only when the complete UTF-8 string fits the byte budget.
+fn push_if_fits(buf: &mut String, text: &str, byte_budget: usize) -> bool {
+    if text.len() > byte_budget.saturating_sub(buf.len()) {
+        return false;
+    }
+    buf.push_str(text);
+    true
+}
+
+/// Preserve the historical file/symbol boundary: a line that would exactly
+/// fill the budget is treated as omitted, leaving room for a truncation marker.
+fn push_before_limit(buf: &mut String, text: &str, byte_budget: usize) -> bool {
+    if text.len() >= byte_budget.saturating_sub(buf.len()) {
+        return false;
+    }
+    buf.push_str(text);
+    true
+}
+
+/// Append the largest UTF-8-safe prefix that fits the remaining byte budget.
+fn push_utf8_prefix(buf: &mut String, text: &str, byte_budget: usize) {
+    let remaining = byte_budget.saturating_sub(buf.len());
+    let mut end = text.len().min(remaining);
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    buf.push_str(&text[..end]);
+}
+
+/// Keep the existing detailed marker when it fits; otherwise use one complete
+/// UTF-8 ellipsis rather than overrunning the output or writing invalid bytes.
+fn append_truncation_marker(buf: &mut String, byte_budget: usize) {
+    if !push_if_fits(buf, "  … (truncated)\n", byte_budget) {
+        let _ = push_if_fits(buf, "…", byte_budget);
+    }
 }
 
 /// Finish and build the summary from the accumulated buffer.
-fn finish(text: String, symbols_included: usize, files_truncated: usize) -> RepoMapSummary {
+fn finish(
+    text: String,
+    symbols_included: usize,
+    files_truncated: usize,
+    truncated: bool,
+    selected_files: Vec<RepoMapSelectedFile>,
+) -> RepoMapSummary {
     let approx_tokens = text.len() / CHARS_PER_TOKEN;
     RepoMapSummary {
         text,
         symbols_included,
         files_truncated,
         approx_tokens,
+        truncated,
+        selected_files,
     }
 }
 
@@ -371,6 +445,196 @@ mod tests {
             s.symbols_included, s.text
         );
         assert_eq!(s.files_truncated, 0);
+        assert!(!s.truncated);
+    }
+
+    #[test]
+    fn selected_files_follow_rendered_order_and_exclude_skipped_content() {
+        let map = fixture_map();
+        let s = build_summary(&map, DEFAULT_TOKEN_BUDGET);
+        assert_eq!(
+            s.selected_files,
+            vec![
+                RepoMapSelectedFile {
+                    path: "src/auth.rs".into(),
+                    symbols: vec![
+                        "AuthError".into(),
+                        "verify_token".into(),
+                        "authenticate".into(),
+                    ],
+                },
+                RepoMapSelectedFile {
+                    path: "src/config.rs".into(),
+                    symbols: vec!["Config".into()],
+                },
+            ]
+        );
+        assert!(
+            !s.selected_files.iter().any(|file| file.path == "README.md"),
+            "files without rendered symbols must not appear in receipt selection"
+        );
+    }
+
+    #[test]
+    fn selected_files_record_only_symbols_written_before_budget_truncation() {
+        let map = fixture_map();
+        let s = build_summary(&map, 40);
+        assert_eq!(
+            s.selected_files,
+            vec![RepoMapSelectedFile {
+                path: "src/auth.rs".into(),
+                symbols: vec!["AuthError".into(), "verify_token".into()],
+            }]
+        );
+        assert!(!s.text.contains("authenticate"));
+        assert!(!s.text.contains("src/config.rs"));
+        assert!(s.truncated);
+    }
+
+    #[test]
+    fn single_file_partial_selection_marks_truncated_without_omitted_files() {
+        let map = RepoMap {
+            root: "/r".into(),
+            files: vec![RepoFile {
+                path: "a.rs".into(),
+                language: Language::Rust,
+                bytes: 100,
+                loc: 2,
+                sha256: String::new(),
+                mtime_ns: 0,
+                symbols: vec![
+                    Symbol {
+                        name: "A".into(),
+                        kind: SymbolKind::Struct,
+                        line: 1,
+                    },
+                    Symbol {
+                        name: "this_function_name_does_not_fit".into(),
+                        kind: SymbolKind::Function,
+                        line: 2,
+                    },
+                ],
+            }],
+            report: ScanReport {
+                total_files: 1,
+                total_bytes: 100,
+                total_loc: 2,
+                by_language: Vec::new(),
+                oversize_skipped: 0,
+                truncated_at: None,
+            },
+        };
+
+        let s = build_summary(&map, 20);
+        assert!(s.truncated);
+        assert_eq!(s.files_truncated, 0);
+        assert_eq!(s.symbols_included, 1);
+        assert_eq!(
+            s.selected_files,
+            vec![RepoMapSelectedFile {
+                path: "a.rs".into(),
+                symbols: vec!["A".into()],
+            }]
+        );
+        assert!(s.text.contains("struct A"));
+        assert!(!s.text.contains("this_function_name_does_not_fit"));
+        assert!(s.text.contains('…'));
+        assert!(s.text.len() <= 80);
+    }
+
+    #[test]
+    fn long_utf8_header_is_safely_trimmed_to_the_exact_byte_budget() {
+        let map = RepoMap {
+            root: "€€€€".into(),
+            files: Vec::new(),
+            report: ScanReport::default(),
+        };
+
+        let s = build_summary(&map, 6);
+        assert_eq!(s.text, "# repo-map  root=€€");
+        assert!(s.truncated);
+        assert_eq!(s.files_truncated, 0);
+        assert!(s.selected_files.is_empty());
+        assert!(s.text.len() <= 24);
+    }
+
+    #[test]
+    fn header_redacts_complete_secret_before_each_budgeted_prefix() {
+        let secret = concat!("sk-", "FAKE_TEST_OPENAI_AAAAAAAAAAAAAA");
+        let map = RepoMap {
+            root: format!("/repo/{secret}"),
+            files: Vec::new(),
+            report: ScanReport::default(),
+        };
+
+        for token_budget in 0..=32 {
+            let s = build_summary(&map, token_budget);
+            assert!(
+                !s.text.contains(secret),
+                "raw secret survived token budget {token_budget}"
+            );
+            assert!(
+                !s.text.contains("sk-") && !s.text.contains("FAKE_TEST_OPENAI"),
+                "raw secret prefix survived token budget {token_budget}"
+            );
+            assert!(s.text.len() <= token_budget * CHARS_PER_TOKEN);
+        }
+    }
+
+    #[test]
+    fn footer_and_utf8_marker_are_accounted_within_the_byte_budget() {
+        let map = RepoMap {
+            root: "/r".into(),
+            files: vec![
+                RepoFile {
+                    path: "a.rs".into(),
+                    language: Language::Rust,
+                    bytes: 100,
+                    loc: 1,
+                    sha256: String::new(),
+                    mtime_ns: 0,
+                    symbols: vec![Symbol {
+                        name: "A".into(),
+                        kind: SymbolKind::Struct,
+                        line: 1,
+                    }],
+                },
+                RepoFile {
+                    path: format!("{}.rs", "b".repeat(70)),
+                    language: Language::Rust,
+                    bytes: 100,
+                    loc: 1,
+                    sha256: String::new(),
+                    mtime_ns: 0,
+                    symbols: vec![Symbol {
+                        name: "B".into(),
+                        kind: SymbolKind::Struct,
+                        line: 1,
+                    }],
+                },
+            ],
+            report: ScanReport {
+                total_files: 2,
+                total_bytes: 200,
+                total_loc: 2,
+                by_language: Vec::new(),
+                oversize_skipped: 0,
+                truncated_at: None,
+            },
+        };
+
+        let s = build_summary(&map, 30);
+        assert!(s.truncated);
+        assert_eq!(s.files_truncated, 1);
+        assert_eq!(
+            s.selected_files,
+            vec![RepoMapSelectedFile {
+                path: "a.rs".into(),
+                symbols: vec!["A".into()],
+            }]
+        );
+        assert!(s.text.contains("# … 1 more file(s) omitted (budget)"));
+        assert!(s.text.len() <= 120);
     }
 
     #[test]
@@ -388,14 +652,15 @@ mod tests {
     #[test]
     fn tiny_budget_produces_header_only_or_partial() {
         let map = fixture_map();
-        // Budget of 10 tokens = 40 chars — barely enough for the header.
+        // Budget of 10 tokens = 40 bytes — smaller than the full header.
         let s = build_summary(&map, 10);
-        // Must not panic; text must not exceed ~40 chars + some slack.
+        // The bound includes the header and uses no overflow allowance.
         assert!(
-            s.text.len() <= 80,
+            s.text.len() <= 40,
             "tiny budget must hard-cap output: len={}",
             s.text.len()
         );
+        assert!(s.truncated);
     }
 
     #[test]
@@ -433,10 +698,11 @@ mod tests {
             s.files_truncated
         );
         assert!(
-            s.text.len() <= 400 + 60, // budget chars + a small truncation-note slack
-            "output must stay near budget: len={}",
+            s.text.len() <= 400,
+            "output must stay within the byte budget: len={}",
             s.text.len()
         );
+        assert!(s.truncated);
     }
 
     #[test]

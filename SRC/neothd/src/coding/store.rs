@@ -21,14 +21,104 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OptionalExtension, params};
 use tokio::sync::broadcast;
 
+use super::CodingCodeMapReceipt;
 use super::types::{
     Hemisphere, KanbanComment, KanbanSession, KanbanSessionId, KanbanTask, KanbanTaskId,
     SessionStatus, TaskDep, TaskEvent, TaskStatus, TestSummary,
 };
 use crate::coding::feed::FeedEntry;
+
+const CODE_MAP_RECEIPT_STORAGE_SCHEMA: &str = "neoth.coding.code_map_receipt_storage.v1";
+
+/// On-disk receipt form. Sources occur once in `first`; a repair differs only
+/// in its attempt number and provider-prompt commitment, so duplicating the
+/// full provenance would waste most of the bounded session column.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedCodeMapReceiptHistory {
+    schema: String,
+    first: CodingCodeMapReceipt,
+    repair: Option<CompactRepairCodeMapReceipt>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompactRepairCodeMapReceipt {
+    attempt: u8,
+    provider_prompt_sha256: String,
+}
+
+impl PersistedCodeMapReceiptHistory {
+    fn first(receipt: CodingCodeMapReceipt) -> Self {
+        Self {
+            schema: CODE_MAP_RECEIPT_STORAGE_SCHEMA.to_owned(),
+            first: receipt,
+            repair: None,
+        }
+    }
+
+    fn receipts(&self) -> Result<Vec<CodingCodeMapReceipt>> {
+        self.validate()?;
+        let mut receipts = vec![self.first.clone()];
+        if let Some(repair) = &self.repair {
+            let mut reconstructed = self.first.clone();
+            reconstructed.attempt = repair.attempt;
+            reconstructed.provider_prompt_sha256 = repair.provider_prompt_sha256.clone();
+            reconstructed
+                .validate()
+                .context("validate reconstructed repair receipt")?;
+            ensure_repair_basis_matches(&self.first, &reconstructed)?;
+            receipts.push(reconstructed);
+        }
+        Ok(receipts)
+    }
+
+    fn append_repair(&mut self, repair: &CodingCodeMapReceipt) -> Result<()> {
+        anyhow::ensure!(
+            self.repair.is_none(),
+            "code-map receipt history already has its repair attempt"
+        );
+        ensure_repair_basis_matches(&self.first, repair)?;
+        anyhow::ensure!(
+            repair.attempt == 2,
+            "second code-map receipt must be attempt two"
+        );
+        self.repair = Some(CompactRepairCodeMapReceipt {
+            attempt: repair.attempt,
+            provider_prompt_sha256: repair.provider_prompt_sha256.clone(),
+        });
+        self.validate()
+    }
+
+    fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.schema == CODE_MAP_RECEIPT_STORAGE_SCHEMA,
+            "unsupported code-map receipt storage schema"
+        );
+        self.first
+            .validate()
+            .context("validate first stored code-map receipt")?;
+        anyhow::ensure!(
+            self.first.attempt == 1,
+            "stored first code-map receipt must be attempt one"
+        );
+        if let Some(repair) = &self.repair {
+            anyhow::ensure!(
+                repair.attempt == 2,
+                "stored compact repair must be attempt two"
+            );
+            anyhow::ensure!(
+                is_lowercase_sha256(&repair.provider_prompt_sha256),
+                "stored compact repair provider-prompt digest is not lowercase SHA-256"
+            );
+        }
+        Ok(())
+    }
+}
 
 /// Create (if missing) the three coding-workflow tables in `views.db`:
 /// `idx_kanban_session`, `idx_kanban_task`, `idx_kanban_comment`.
@@ -42,7 +132,243 @@ use crate::coding::feed::FeedEntry;
 pub fn ensure_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(SCHEMA_SQL)
         .context("create idx_kanban_* tables in views.db")?;
+    ensure_code_map_receipts_column(conn)?;
     Ok(())
+}
+
+/// Upgrade installations created before code-map receipt persistence. The
+/// receipt array belongs to its session, so deleting a session automatically
+/// erases its receipt history and archival cannot orphan it.
+fn ensure_code_map_receipts_column(conn: &Connection) -> Result<()> {
+    if has_code_map_receipts_column(conn)? {
+        return Ok(());
+    }
+
+    // SQLite has no `ADD COLUMN IF NOT EXISTS`. A concurrent startup can win
+    // the small check/alter race; re-read the schema and only accept that exact
+    // already-applied migration, never an arbitrary ALTER failure.
+    match conn.execute(
+        "ALTER TABLE idx_kanban_session ADD COLUMN code_map_receipts TEXT",
+        [],
+    ) {
+        Ok(_) => Ok(()),
+        Err(_error) if has_code_map_receipts_column(conn)? => Ok(()),
+        Err(error) => Err(error).context("add idx_kanban_session.code_map_receipts"),
+    }
+}
+
+fn has_code_map_receipts_column(conn: &Connection) -> Result<bool> {
+    let mut columns = conn
+        .prepare("PRAGMA table_info(idx_kanban_session)")
+        .context("inspect idx_kanban_session columns")?;
+    columns
+        .query_map([], |row| row.get::<_, String>(1))
+        .context("query idx_kanban_session columns")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect idx_kanban_session columns")
+        .map(|columns| columns.iter().any(|name| name == "code_map_receipts"))
+}
+
+/// Persist an immutable first/repair pair of code-map receipts on a session.
+///
+/// Attempt one is the only legal first write. Attempt two is the only legal
+/// continuation and must use the exact same original selection and submitted
+/// context basis as attempt one; only its provider-prompt commitment differs.
+/// The compare-and-swap update protects that rule even if another connection
+/// writes the row after our read.
+pub fn record_code_map_receipt(
+    conn: &Connection,
+    session_id: KanbanSessionId,
+    receipt: &CodingCodeMapReceipt,
+) -> Result<()> {
+    receipt
+        .validate()
+        .context("validate incoming code-map receipt")?;
+    anyhow::ensure!(
+        receipt.session_id == session_id.raw(),
+        "code-map receipt session_id does not match target session"
+    );
+
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin code-map receipt transaction")?;
+    let prior = read_bounded_code_map_receipt_column(&tx, session_id, "load existing")?;
+
+    let persisted = match prior.as_deref() {
+        None => {
+            validate_next_code_map_receipt(&[], receipt)?;
+            PersistedCodeMapReceiptHistory::first(receipt.clone())
+        }
+        Some(raw) => {
+            let mut persisted = decode_code_map_receipt_history(raw, session_id)?;
+            let receipts = persisted.receipts()?;
+            validate_next_code_map_receipt(&receipts, receipt)?;
+            persisted.append_repair(receipt)?;
+            persisted
+        }
+    };
+    persisted.validate()?;
+    let receipts = persisted.receipts()?;
+    let encoded =
+        serde_json::to_string(&persisted).context("serialize code-map receipt history")?;
+    anyhow::ensure!(
+        encoded.len() <= super::code_map_receipt::MAX_CODE_MAP_RECEIPT_BYTES,
+        "serialized code-map receipt array exceeds persistence bound"
+    );
+
+    let changed = match prior.as_deref() {
+        None => tx.execute(
+            "UPDATE idx_kanban_session SET code_map_receipts = ?1 \
+             WHERE session_id = ?2 AND code_map_receipts IS NULL",
+            params![encoded, session_id.raw()],
+        ),
+        Some(raw) => tx.execute(
+            "UPDATE idx_kanban_session SET code_map_receipts = ?1 \
+             WHERE session_id = ?2 AND code_map_receipts = ?3",
+            params![encoded, session_id.raw(), raw],
+        ),
+    }
+    .context("compare-and-swap code-map receipt array")?;
+    anyhow::ensure!(
+        changed == 1,
+        "code-map receipt write lost compare-and-swap race"
+    );
+
+    let readback = read_bounded_code_map_receipt_column(&tx, session_id, "read back")?
+        .ok_or_else(|| anyhow::anyhow!("code-map receipt readback unexpectedly became NULL"))?;
+    anyhow::ensure!(readback == encoded, "code-map receipt readback mismatch");
+    let decoded = decode_code_map_receipt_history(&readback, session_id)?.receipts()?;
+    anyhow::ensure!(
+        decoded == receipts,
+        "code-map receipt decoded readback mismatch"
+    );
+    tx.commit().context("commit code-map receipt transaction")?;
+    Ok(())
+}
+
+/// Load the complete immutable receipt history for an existing session.
+/// Corrupt JSON and semantically invalid records are explicit errors; callers
+/// never receive an empty list as a fallback for corrupted persisted state.
+pub fn load_code_map_receipts(
+    conn: &Connection,
+    session_id: KanbanSessionId,
+) -> Result<Vec<CodingCodeMapReceipt>> {
+    let stored = read_bounded_code_map_receipt_column(conn, session_id, "load")?;
+    match stored {
+        None => Ok(Vec::new()),
+        Some(raw) => decode_code_map_receipt_history(&raw, session_id)?.receipts(),
+    }
+}
+
+/// Read the receipt column without letting rusqlite eagerly materialize an
+/// arbitrary SQLite value into a Rust `String`. SQLite can store a BLOB in a
+/// TEXT-affinity column, and a corrupt database can hold an arbitrarily large
+/// value; both are rejected while still borrowed from SQLite.
+fn read_bounded_code_map_receipt_column(
+    conn: &Connection,
+    session_id: KanbanSessionId,
+    operation: &str,
+) -> Result<Option<String>> {
+    let mut statement = conn
+        .prepare("SELECT code_map_receipts FROM idx_kanban_session WHERE session_id = ?1")
+        .with_context(|| format!("{operation} code-map receipt column"))?;
+    let mut rows = statement
+        .query(params![session_id.raw()])
+        .with_context(|| format!("{operation} code-map receipt query"))?;
+    let row = rows
+        .next()
+        .with_context(|| format!("{operation} code-map receipt row"))?;
+    let row = row.ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}: no row for session_id={}",
+            if operation == "load" {
+                "load_code_map_receipts"
+            } else {
+                "record_code_map_receipt"
+            },
+            session_id.raw()
+        )
+    })?;
+    match row
+        .get_ref(0)
+        .with_context(|| format!("{operation} code-map receipt value"))?
+    {
+        ValueRef::Null => Ok(None),
+        ValueRef::Text(bytes) => {
+            anyhow::ensure!(
+                !bytes.is_empty()
+                    && bytes.len() <= super::code_map_receipt::MAX_CODE_MAP_RECEIPT_BYTES,
+                "stored code-map receipt array has invalid byte length"
+            );
+            let value = std::str::from_utf8(bytes)
+                .context("stored code-map receipt text is not valid UTF-8")?;
+            Ok(Some(value.to_owned()))
+        }
+        _ => anyhow::bail!("stored code-map receipt column must be TEXT or NULL"),
+    }
+}
+
+fn decode_code_map_receipt_history(
+    raw: &str,
+    session_id: KanbanSessionId,
+) -> Result<PersistedCodeMapReceiptHistory> {
+    anyhow::ensure!(
+        !raw.is_empty() && raw.len() <= super::code_map_receipt::MAX_CODE_MAP_RECEIPT_BYTES,
+        "stored code-map receipt array has invalid byte length"
+    );
+    let history: PersistedCodeMapReceiptHistory =
+        serde_json::from_str(raw).context("decode stored code-map receipt history")?;
+    history.validate()?;
+    anyhow::ensure!(
+        history.first.session_id == session_id.raw(),
+        "stored code-map receipt belongs to another session"
+    );
+    Ok(history)
+}
+
+fn validate_next_code_map_receipt(
+    prior: &[CodingCodeMapReceipt],
+    next: &CodingCodeMapReceipt,
+) -> Result<()> {
+    match prior {
+        [] => anyhow::ensure!(
+            next.attempt == 1,
+            "first code-map receipt must be attempt one"
+        ),
+        [first] => {
+            anyhow::ensure!(
+                next.attempt == 2,
+                "second code-map receipt must be attempt two"
+            );
+            ensure_repair_basis_matches(first, next)?;
+        }
+        _ => anyhow::bail!("code-map receipt history already has its repair attempt"),
+    }
+    Ok(())
+}
+
+fn ensure_repair_basis_matches(
+    first: &CodingCodeMapReceipt,
+    repair: &CodingCodeMapReceipt,
+) -> Result<()> {
+    anyhow::ensure!(
+        first.session_id == repair.session_id
+            && first.operator_prompt_sha256 == repair.operator_prompt_sha256
+            && first.assembled_context_sha256 == repair.assembled_context_sha256
+            && first.submitted_context_sha256 == repair.submitted_context_sha256
+            && first.submitted_context_bytes == repair.submitted_context_bytes
+            && first.context_truncated == repair.context_truncated
+            && first.sources == repair.sources,
+        "repair code-map receipt changed its original context basis"
+    );
+    Ok(())
+}
+
+fn is_lowercase_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value.bytes().all(|byte| {
+            byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte.is_ascii_hexdigit())
+        })
 }
 
 /// Schema-DDL string. Held as a `pub(crate)` constant so tests can
@@ -57,7 +383,8 @@ CREATE TABLE IF NOT EXISTS idx_kanban_session (
     operator_id    TEXT,
     status         TEXT NOT NULL,
     artifact_path  TEXT,
-    summary        TEXT
+    summary        TEXT,
+    code_map_receipts TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_kanban_session_created
     ON idx_kanban_session (created_ns DESC);
@@ -804,9 +1131,85 @@ fn row_to_comment(row: &rusqlite::Row<'_>) -> rusqlite::Result<KanbanComment> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coding::code_map_receipt::{
+        CodeMapCaller, CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile,
+        MAX_CODE_MAP_RECEIPT_BYTES, MAX_CODE_MAP_SOURCE_BYTES, PreparedCodeMapContext,
+    };
 
     fn open_memory_db() -> Connection {
         Connection::open_in_memory().expect("open in-memory sqlite")
+    }
+
+    fn receipt_context() -> PreparedCodeMapContext {
+        PreparedCodeMapContext::new(
+            "file: src/lib.rs\nsymbol: entrypoint".to_owned(),
+            vec![CodeMapContextSource {
+                kind: CodeMapContextKind::TargetedRecall,
+                root: "C:/repo".to_owned(),
+                root_identity: "volume:repo".to_owned(),
+                index_generation: 9,
+                graph_generation: 9,
+                stale: false,
+                selection_truncated: false,
+                metadata_redacted: false,
+                selected_files: vec![CodeMapSelectedFile {
+                    path: "src/lib.rs".to_owned(),
+                    symbols: vec!["entrypoint".to_owned()],
+                }],
+                callers: vec![CodeMapCaller {
+                    target_symbol: "entrypoint".to_owned(),
+                    caller_symbol: "main".to_owned(),
+                    caller_path: "src/main.rs".to_owned(),
+                }],
+            }],
+        )
+        .unwrap()
+    }
+
+    fn receipt(
+        context: &PreparedCodeMapContext,
+        session_id: KanbanSessionId,
+        attempt: u8,
+        provider_prompt: &str,
+    ) -> CodingCodeMapReceipt {
+        context
+            .receipt(
+                session_id,
+                attempt,
+                "operator request",
+                context.text(),
+                provider_prompt,
+            )
+            .unwrap()
+    }
+
+    fn near_source_budget_context() -> PreparedCodeMapContext {
+        let mut source = CodeMapContextSource {
+            kind: CodeMapContextKind::TargetedRecall,
+            root: "C:/repo".to_owned(),
+            root_identity: "volume:repo".to_owned(),
+            index_generation: 9,
+            graph_generation: 9,
+            stale: false,
+            selection_truncated: false,
+            metadata_redacted: false,
+            selected_files: vec![CodeMapSelectedFile {
+                path: "src/lib.rs".to_owned(),
+                symbols: Vec::new(),
+            }],
+            callers: Vec::new(),
+        };
+        let target = MAX_CODE_MAP_SOURCE_BYTES - 1_024;
+        while serde_json::to_vec(&source).unwrap().len() < target {
+            let ordinal = source.selected_files[0].symbols.len();
+            source.selected_files[0]
+                .symbols
+                .push(format!("selected_symbol_{ordinal}_{}", "a".repeat(480)));
+        }
+        let encoded = serde_json::to_vec(&source).unwrap();
+        assert!(encoded.len() >= target);
+        assert!(encoded.len() <= MAX_CODE_MAP_SOURCE_BYTES);
+        PreparedCodeMapContext::new("context".to_owned(), vec![source]).unwrap()
     }
 
     #[test]
@@ -851,6 +1254,174 @@ mod tests {
         ensure_schema(&conn).expect("first apply");
         ensure_schema(&conn).expect("second apply MUST succeed (idempotent)");
         ensure_schema(&conn).expect("third apply MUST succeed");
+    }
+
+    #[test]
+    fn ensure_schema_migrates_old_session_table_with_nullable_receipt_column() {
+        let conn = open_memory_db();
+        conn.execute_batch(
+            "CREATE TABLE idx_kanban_session (
+                session_id INTEGER PRIMARY KEY,
+                created_ns INTEGER NOT NULL,
+                prompt TEXT NOT NULL,
+                prompt_hash TEXT NOT NULL,
+                source_channel TEXT NOT NULL,
+                operator_id TEXT,
+                status TEXT NOT NULL,
+                artifact_path TEXT,
+                summary TEXT
+            );",
+        )
+        .unwrap();
+
+        ensure_schema(&conn).unwrap();
+        assert!(has_code_map_receipts_column(&conn).unwrap());
+        let nullable: i64 = conn
+            .query_row(
+                "SELECT \"notnull\" FROM pragma_table_info('idx_kanban_session') \
+                 WHERE name = 'code_map_receipts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            nullable, 0,
+            "old sessions must migrate with a NULL receipt field"
+        );
+    }
+
+    #[test]
+    fn receipts_survive_archive_and_require_matching_repair_basis() {
+        let conn = prepared_db();
+        let session_id = insert_session(&conn, 1, "prompt", "hash", "cli", None).unwrap();
+        let context = receipt_context();
+        let first = receipt(&context, session_id, 1, "provider first");
+        record_code_map_receipt(&conn, session_id, &first).unwrap();
+        archive_session(&conn, session_id, SessionStatus::Done, Some("done"), None).unwrap();
+        assert_eq!(
+            load_code_map_receipts(&conn, session_id).unwrap(),
+            vec![first.clone()]
+        );
+
+        let altered =
+            PreparedCodeMapContext::new("different context".to_owned(), context.sources().to_vec())
+                .unwrap();
+        let mismatch = receipt(&altered, session_id, 2, "provider mismatch");
+        assert!(record_code_map_receipt(&conn, session_id, &mismatch).is_err());
+
+        let repair = receipt(
+            &context,
+            session_id,
+            2,
+            "provider repair includes bad output",
+        );
+        record_code_map_receipt(&conn, session_id, &repair).unwrap();
+        assert_eq!(
+            load_code_map_receipts(&conn, session_id).unwrap(),
+            vec![first, repair]
+        );
+    }
+
+    #[test]
+    fn near_source_budget_is_stored_once_and_reconstructs_repair() {
+        let conn = prepared_db();
+        let session_id = insert_session(&conn, 1, "prompt", "hash", "cli", None).unwrap();
+        let context = near_source_budget_context();
+        let source_bytes = serde_json::to_vec(&context.sources()[0]).unwrap().len();
+        assert!(source_bytes >= MAX_CODE_MAP_SOURCE_BYTES - 1_024);
+
+        let first = receipt(&context, session_id, 1, "provider first");
+        record_code_map_receipt(&conn, session_id, &first).unwrap();
+        let repair = receipt(&context, session_id, 2, "provider repair");
+        record_code_map_receipt(&conn, session_id, &repair).unwrap();
+
+        let stored: String = conn
+            .query_row(
+                "SELECT code_map_receipts FROM idx_kanban_session WHERE session_id = ?1",
+                params![session_id.raw()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(stored.len() <= MAX_CODE_MAP_RECEIPT_BYTES);
+        assert_eq!(
+            stored.match_indices("\"sources\"").count(),
+            1,
+            "compact repair storage must not duplicate selected-source evidence"
+        );
+        let persisted: serde_json::Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(persisted["schema"], CODE_MAP_RECEIPT_STORAGE_SCHEMA);
+        assert_eq!(persisted["first"]["sources"].as_array().unwrap().len(), 1);
+        assert!(
+            persisted["repair"].get("sources").is_none(),
+            "repair stores only changing commitments"
+        );
+        assert_eq!(
+            load_code_map_receipts(&conn, session_id).unwrap(),
+            vec![first, repair]
+        );
+    }
+
+    #[test]
+    fn receipt_store_rejects_missing_session_and_corruption_without_fallback() {
+        let conn = prepared_db();
+        let context = receipt_context();
+        let missing = KanbanSessionId(404);
+        assert!(
+            record_code_map_receipt(&conn, missing, &receipt(&context, missing, 1, "p")).is_err()
+        );
+        assert!(load_code_map_receipts(&conn, missing).is_err());
+
+        let session_id = insert_session(&conn, 1, "prompt", "hash", "cli", None).unwrap();
+        conn.execute(
+            "UPDATE idx_kanban_session SET code_map_receipts = 'not-json' WHERE session_id = ?1",
+            params![session_id.raw()],
+        )
+        .unwrap();
+        assert!(load_code_map_receipts(&conn, session_id).is_err());
+        assert!(
+            record_code_map_receipt(&conn, session_id, &receipt(&context, session_id, 1, "p"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn receipt_store_rejects_oversized_blob_and_nul_text_before_copying_values() {
+        let conn = prepared_db();
+        let context = receipt_context();
+
+        let oversized = insert_session(&conn, 1, "prompt", "hash", "cli", None).unwrap();
+        conn.execute(
+            "UPDATE idx_kanban_session \
+             SET code_map_receipts = CAST(zeroblob(?1) AS TEXT) WHERE session_id = ?2",
+            params![MAX_CODE_MAP_RECEIPT_BYTES as i64 + 1, oversized.raw()],
+        )
+        .unwrap();
+        assert!(load_code_map_receipts(&conn, oversized).is_err());
+        assert!(
+            record_code_map_receipt(&conn, oversized, &receipt(&context, oversized, 1, "p"))
+                .is_err()
+        );
+
+        let blob = insert_session(&conn, 2, "prompt", "hash", "cli", None).unwrap();
+        conn.execute(
+            "UPDATE idx_kanban_session SET code_map_receipts = zeroblob(4) WHERE session_id = ?1",
+            params![blob.raw()],
+        )
+        .unwrap();
+        assert!(load_code_map_receipts(&conn, blob).is_err());
+        assert!(record_code_map_receipt(&conn, blob, &receipt(&context, blob, 1, "p")).is_err());
+
+        let nul_text = insert_session(&conn, 3, "prompt", "hash", "cli", None).unwrap();
+        conn.execute(
+            "UPDATE idx_kanban_session \
+             SET code_map_receipts = CAST(zeroblob(4) AS TEXT) WHERE session_id = ?1",
+            params![nul_text.raw()],
+        )
+        .unwrap();
+        assert!(load_code_map_receipts(&conn, nul_text).is_err());
+        assert!(
+            record_code_map_receipt(&conn, nul_text, &receipt(&context, nul_text, 1, "p")).is_err()
+        );
     }
 
     #[test]

@@ -28,7 +28,13 @@ use rusqlite::Connection;
 use crate::cli::OutputFormat;
 use crate::coding::cerebellum_provider::CerebellumDecomposer;
 use crate::coding::classifier::{Complexity, classify_heuristic};
-use crate::coding::decomposer::{DecomposerLlm, DecompositionResult, decompose};
+use crate::coding::code_map_receipt::{
+    CodeMapCaller, CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile,
+    MAX_CODE_MAP_SOURCE_BYTES, PreparedCodeMapContext,
+};
+use crate::coding::decomposer::{
+    DecomposerLlm, DecompositionResult, decompose_with_code_map_context,
+};
 use crate::coding::store;
 use crate::coding::types::{Hemisphere, KanbanSessionId, KanbanTaskId, SessionStatus};
 use crate::config::FreedomConfig;
@@ -92,11 +98,17 @@ pub struct CodeArgs {
     pub output: OutputFormat,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct BoundCodeMapContext {
     text: String,
     snapshot: crate::code_map::recall::RootGenerationSnapshot,
+    source: CodeMapContextSource,
 }
+
+/// One prepared code-map context must stay below the receipt constructor's
+/// hard text limit. This is deliberately a byte ceiling: both provider input
+/// and persisted selection metadata use UTF-8 byte commitments.
+const MAX_PREPARED_CODE_MAP_CONTEXT_BYTES: usize = 64 * 1024;
 
 /// GOLD-ADAPT-AWE-AIDER-01 — generation-bound repo-map context for the coding-intent
 /// decomposer. Loads the indexed `code_map` for the current working directory
@@ -105,12 +117,36 @@ struct BoundCodeMapContext {
 /// `project_context`. A genuinely unindexed root or empty summary returns
 /// `Ok(None)`; DB, identity, completeness and freshness failures remain visible
 /// and block the explicit coding command instead of silently dropping context.
-fn repo_map_context() -> Result<Option<BoundCodeMapContext>> {
+fn repo_map_context(
+    config: &crate::config::CodeMapConfig,
+    max_text_bytes: usize,
+) -> Result<Option<BoundCodeMapContext>> {
+    config.validate()?;
     let db_path = crate::code_map::persist::default_path();
     let conn = crate::code_map::persist::open(&db_path)
         .with_context(|| format!("open code-map database at {}", db_path.display()))?;
     let cwd = std::env::current_dir().context("resolve current directory for repo-map context")?;
-    let Some(before) = crate::code_map::recall::resolve_active_root_snapshot(&conn, &cwd)? else {
+    repo_map_context_at_bounded(&conn, &cwd, config, max_text_bytes)
+}
+
+/// Existing test/utility entry point with the full prepared-context budget.
+#[cfg(test)]
+fn repo_map_context_at(
+    conn: &Connection,
+    cwd: &std::path::Path,
+    config: &crate::config::CodeMapConfig,
+) -> Result<Option<BoundCodeMapContext>> {
+    repo_map_context_at_bounded(conn, cwd, config, MAX_PREPARED_CODE_MAP_CONTEXT_BYTES)
+}
+
+fn repo_map_context_at_bounded(
+    conn: &Connection,
+    cwd: &std::path::Path,
+    config: &crate::config::CodeMapConfig,
+    max_text_bytes: usize,
+) -> Result<Option<BoundCodeMapContext>> {
+    config.validate()?;
+    let Some(before) = crate::code_map::recall::resolve_active_root_snapshot(conn, cwd)? else {
         return Ok(None);
     };
     anyhow::ensure!(
@@ -120,39 +156,90 @@ fn repo_map_context() -> Result<Option<BoundCodeMapContext>> {
         "active code-map root has no complete map/graph generation; run `neoth code-map persist`"
     );
     anyhow::ensure!(
-        crate::code_map::persist::root_snapshot_complete(&conn, before.root.display())?,
+        crate::code_map::persist::root_snapshot_complete(conn, before.root.display())?,
         "active code-map root was published from a partial scan; rebuild it without custom limits"
     );
     let initial_freshness =
-        crate::code_map::persist::index_freshness_receipt(&conn, before.root.display())?;
+        crate::code_map::persist::index_freshness_receipt(conn, before.root.display())?;
     anyhow::ensure!(
         !initial_freshness.stale,
         "active code-map snapshot is stale; run `neoth code-map persist`"
     );
-    let Some(map) = crate::code_map::persist::load_map(&conn, before.root.display())? else {
+    let Some(map) = crate::code_map::persist::load_map(conn, before.root.display())? else {
         return Ok(None);
     };
-    let summary = crate::code_map::build_summary(&map, crate::code_map::DEFAULT_TOKEN_BUDGET);
-    let context = summary.text.trim().to_string();
-    if context.is_empty() {
+    // `build_summary` takes a token heuristic, whereas the prepared context
+    // is bounded in exact UTF-8 bytes. Retry deterministically with a smaller
+    // summary budget until both the rendered text and receipt source fit.
+    let max_tokens = (max_text_bytes / 4).min(config.coding_summary_token_budget as usize);
+    if max_tokens == 0 {
         return Ok(None);
     }
+    let mut lower = 1usize;
+    let mut upper = max_tokens;
+    let mut chosen: Option<(String, CodeMapContextSource)> = None;
+    while lower <= upper {
+        let candidate_tokens = lower + (upper - lower) / 2;
+        let summary = crate::code_map::build_summary(&map, candidate_tokens);
+        // Repo-map metadata is untrusted indexed text just like targeted
+        // recall. Normalize it before both byte accounting and receipt
+        // preparation so a secret-shaped path cannot survive in prepared
+        // context while its receipt source is redacted.
+        let context = crate::security::redact::sanitize_tool_output(summary.text.trim());
+        let mut source = source_from_snapshot(
+            &before,
+            CodeMapContextKind::RepoMapSummary,
+            summary
+                .selected_files
+                .iter()
+                .cloned()
+                .map(|file| CodeMapSelectedFile {
+                    path: file.path,
+                    symbols: file.symbols,
+                })
+                .collect(),
+            Vec::new(),
+            summary.truncated,
+        );
+        let fits = !context.is_empty()
+            && context.len() <= max_text_bytes
+            && source_fits_receipt(&mut source)?;
+        if fits {
+            chosen = Some((context, source));
+            lower = candidate_tokens.saturating_add(1);
+        } else {
+            upper = candidate_tokens.saturating_sub(1);
+        }
+    }
+    let Some((context, source)) = chosen else {
+        return Ok(None);
+    };
     let final_freshness =
-        crate::code_map::persist::index_freshness_receipt(&conn, before.root.display())?;
+        crate::code_map::persist::index_freshness_receipt(conn, before.root.display())?;
     anyhow::ensure!(
         !final_freshness.stale
             && final_freshness.filesystem_fingerprint == initial_freshness.filesystem_fingerprint,
         "active code-map snapshot changed while repo context was assembled; retry"
     );
-    let after = crate::code_map::recall::resolve_active_root_snapshot(&conn, before.root.path())?
+    let after = crate::code_map::recall::resolve_active_root_snapshot(conn, before.root.path())?
         .context("active code-map root disappeared while repo context was assembled")?;
     anyhow::ensure!(
         before == after,
         "active code-map generation changed while repo context was assembled; retry"
     );
+    // The selected source was formed from the same snapshot checked above;
+    // only swap its snapshot identity after proving that generation remained
+    // unchanged through the final freshness read.
+    let mut source = source;
+    source.root = after.root.display().to_owned();
+    source.root_identity = after.root.identity().as_str().to_owned();
+    source.index_generation = after.index_generation;
+    source.graph_generation = after.graph_generation;
+    source_fits_receipt(&mut source)?;
     Ok(Some(BoundCodeMapContext {
         text: context,
         snapshot: after,
+        source,
     }))
 }
 
@@ -169,8 +256,10 @@ fn repo_map_context_from(conn: &rusqlite::Connection, root: &str) -> Option<Stri
 /// CRG-01 — cap on the prompt-targeted recall files. Small on purpose: the
 /// block is a targeting hint, not a file dump; `truncate_to_budget` still
 /// hard-clamps the merged context.
+#[cfg(test)]
 const RECALL_CONTEXT_MAX_FILES: usize = 8;
 /// CRG-01 — depth-1 caller lines per matched symbol.
+#[cfg(test)]
 const RECALL_CALLERS_PER_SYMBOL: usize = 3;
 const RECALL_EDGE_CAP: usize = 250_000;
 const RECALL_EDGE_TEXT_BYTE_CAP: usize = 32 * 1024 * 1024;
@@ -178,16 +267,49 @@ const RECALL_EDGE_TEXT_BYTE_CAP: usize = 32 * 1024 * 1024;
 /// CRG-01 — prompt-targeted code-map context: the files whose symbols the
 /// prompt names, plus depth-1 callers of those symbols. Missing matches remain
 /// optional; integrity and freshness errors are explicit.
-fn prompt_recall_context(prompt: &str) -> Result<Option<BoundCodeMapContext>> {
+fn prompt_recall_context(
+    prompt: &str,
+    config: &crate::config::CodeMapConfig,
+    max_text_bytes: usize,
+) -> Result<Option<BoundCodeMapContext>> {
+    config.validate()?;
     let db_path = crate::code_map::persist::default_path();
     let conn = crate::code_map::persist::open(&db_path)
         .with_context(|| format!("open code-map database at {}", db_path.display()))?;
     let cwd = std::env::current_dir().context("resolve current directory for targeted recall")?;
-    let receipt = crate::code_map::recall::recall_receipt_for_prompt(
-        &conn,
-        &cwd,
+    prompt_recall_context_at_bounded(&conn, &cwd, prompt, config, max_text_bytes)
+}
+
+/// Existing test/utility entry point with the full prepared-context budget.
+#[cfg(test)]
+fn prompt_recall_context_at(
+    conn: &Connection,
+    cwd: &std::path::Path,
+    prompt: &str,
+    config: &crate::config::CodeMapConfig,
+) -> Result<Option<BoundCodeMapContext>> {
+    prompt_recall_context_at_bounded(
+        conn,
+        cwd,
         prompt,
-        RECALL_CONTEXT_MAX_FILES,
+        config,
+        MAX_PREPARED_CODE_MAP_CONTEXT_BYTES,
+    )
+}
+
+fn prompt_recall_context_at_bounded(
+    conn: &Connection,
+    cwd: &std::path::Path,
+    prompt: &str,
+    config: &crate::config::CodeMapConfig,
+    max_text_bytes: usize,
+) -> Result<Option<BoundCodeMapContext>> {
+    config.validate()?;
+    let receipt = crate::code_map::recall::recall_receipt_for_prompt(
+        conn,
+        cwd,
+        prompt,
+        config.coding_recall_max_files as usize,
         crate::code_map::recall::RecallStaleness::Check,
     )?;
     let Some(receipt) = receipt else {
@@ -197,19 +319,20 @@ fn prompt_recall_context(prompt: &str) -> Result<Option<BoundCodeMapContext>> {
         receipt.stale == Some(false),
         "active code-map snapshot is stale or unverifiable; run `neoth code-map persist`"
     );
-    let Some(text) = prompt_recall_context_from_receipt(&conn, &receipt)? else {
-        return Ok(None);
-    };
-    Ok(Some(BoundCodeMapContext {
-        text,
-        snapshot: receipt.snapshot.clone(),
-    }))
+    prompt_recall_context_from_receipt(
+        conn,
+        &receipt,
+        config.coding_callers_per_symbol as usize,
+        max_text_bytes,
+    )
 }
 
 fn prompt_recall_context_from_receipt(
     conn: &rusqlite::Connection,
     receipt: &crate::code_map::recall::RecallReceipt,
-) -> Result<Option<String>> {
+    callers_per_symbol: usize,
+    max_text_bytes: usize,
+) -> Result<Option<BoundCodeMapContext>> {
     if receipt.ranked_files.is_empty() {
         return Ok(None);
     }
@@ -246,7 +369,22 @@ fn prompt_recall_context_from_receipt(
         after == receipt.snapshot,
         "active code-map generation changed while targeted context was assembled; retry"
     );
-    Ok(render_prompt_recall_context(&receipt.ranked_files, edges))
+    let Some(rendered) = render_bounded_prompt_recall_context(
+        &receipt.ranked_files,
+        edges,
+        callers_per_symbol,
+        &receipt.snapshot,
+        receipt.truncated,
+        max_text_bytes,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(BoundCodeMapContext {
+        text: rendered.text,
+        snapshot: receipt.snapshot.clone(),
+        source: rendered.source,
+    }))
 }
 
 /// Testable core (mirrors [`repo_map_context_from`]). `root` is the canonical
@@ -276,25 +414,245 @@ fn prompt_recall_context_from(
     .ok()
     .and_then(|(edges, truncated, _)| (!truncated).then_some(edges))
     .unwrap_or_default();
-    render_prompt_recall_context(&files, edges)
+    render_prompt_recall_context(&files, edges, RECALL_CALLERS_PER_SYMBOL)
 }
 
+struct BoundedRenderedRecallContext {
+    text: String,
+    source: CodeMapContextSource,
+}
+
+#[cfg(test)]
 fn render_prompt_recall_context(
     files: &[crate::code_map::recall::RelevantFile],
     edges: Vec<crate::code_map::graph::CodeEdge>,
+    callers_per_symbol: usize,
 ) -> Option<String> {
     if files.is_empty() {
         return None;
     }
     let files_block = crate::code_map::recall::render_context_block(files);
     let graph = crate::code_map::graph::CallGraph::from_edges(edges);
-    let callers_block =
-        crate::code_map::recall::render_callers_block(&graph, files, RECALL_CALLERS_PER_SYMBOL);
-    if callers_block.is_empty() {
-        Some(files_block)
+    let selected_callers =
+        crate::code_map::recall::select_callers(&graph, files, callers_per_symbol);
+    let callers_block = crate::code_map::recall::render_selected_callers_block(&selected_callers);
+    let text = if callers_block.is_empty() {
+        files_block
     } else {
-        Some(format!("{files_block}\n{callers_block}"))
+        format!("{files_block}\n{callers_block}")
+    };
+    Some(text)
+}
+
+/// Render prompt-targeted selection in the existing ranked-file and caller
+/// order, stopping at the first source item that cannot fit the shared text or
+/// receipt-metadata budget. This keeps the persisted selection identical to
+/// the rendered context without inventing a separate cardinality cap.
+fn render_bounded_prompt_recall_context(
+    files: &[crate::code_map::recall::RelevantFile],
+    edges: Vec<crate::code_map::graph::CodeEdge>,
+    callers_per_symbol: usize,
+    snapshot: &crate::code_map::recall::RootGenerationSnapshot,
+    receipt_truncated: bool,
+    max_text_bytes: usize,
+) -> Result<Option<BoundedRenderedRecallContext>> {
+    if files.is_empty() || max_text_bytes == 0 {
+        return Ok(None);
     }
+
+    let mut retained_files = Vec::new();
+    let mut retained_callers = Vec::new();
+    let mut selection_truncated = receipt_truncated;
+
+    'files: for file in files {
+        // Preserve the existing file ordering while retaining symbols one at a
+        // time. A file with only a path-keyword match still has a meaningful
+        // renderable file line and can be retained with an empty symbol list.
+        let mut retained_file = file.clone();
+        retained_file.matched_symbols.clear();
+        let mut candidate_files = retained_files.clone();
+        candidate_files.push(retained_file.clone());
+        if !targeted_selection_fits(
+            snapshot,
+            &candidate_files,
+            &retained_callers,
+            selection_truncated,
+            max_text_bytes,
+        )? {
+            selection_truncated = true;
+            break;
+        }
+        retained_files.push(retained_file);
+
+        for symbol in &file.matched_symbols {
+            let mut candidate_files = retained_files.clone();
+            candidate_files
+                .last_mut()
+                .expect("candidate retains the current file")
+                .matched_symbols
+                .push(symbol.clone());
+            if !targeted_selection_fits(
+                snapshot,
+                &candidate_files,
+                &retained_callers,
+                selection_truncated,
+                max_text_bytes,
+            )? {
+                selection_truncated = true;
+                break 'files;
+            }
+            retained_files = candidate_files;
+        }
+    }
+
+    if retained_files.is_empty() {
+        return Ok(None);
+    }
+
+    let graph = crate::code_map::graph::CallGraph::from_edges(edges);
+    for caller in
+        crate::code_map::recall::select_callers(&graph, &retained_files, callers_per_symbol)
+    {
+        let mut candidate_callers = retained_callers.clone();
+        candidate_callers.push(caller);
+        if !targeted_selection_fits(
+            snapshot,
+            &retained_files,
+            &candidate_callers,
+            selection_truncated,
+            max_text_bytes,
+        )? {
+            selection_truncated = true;
+            break;
+        }
+        retained_callers = candidate_callers;
+    }
+
+    let (text, source) = targeted_selection(
+        snapshot,
+        &retained_files,
+        &retained_callers,
+        selection_truncated,
+    )?
+    .context("retained targeted code-map selection became empty")?;
+    Ok(Some(BoundedRenderedRecallContext { text, source }))
+}
+
+fn targeted_selection_fits(
+    snapshot: &crate::code_map::recall::RootGenerationSnapshot,
+    files: &[crate::code_map::recall::RelevantFile],
+    callers: &[crate::code_map::recall::SelectedCaller],
+    selection_truncated: bool,
+    max_text_bytes: usize,
+) -> Result<bool> {
+    Ok(
+        targeted_selection(snapshot, files, callers, selection_truncated)?
+            .is_some_and(|(text, _source)| text.len() <= max_text_bytes),
+    )
+}
+
+fn targeted_selection(
+    snapshot: &crate::code_map::recall::RootGenerationSnapshot,
+    files: &[crate::code_map::recall::RelevantFile],
+    callers: &[crate::code_map::recall::SelectedCaller],
+    selection_truncated: bool,
+) -> Result<Option<(String, CodeMapContextSource)>> {
+    let files_block = crate::code_map::recall::render_context_block(files);
+    if files_block.is_empty() {
+        return Ok(None);
+    }
+    let callers_block = crate::code_map::recall::render_selected_callers_block(callers);
+    let text = if callers_block.is_empty() {
+        files_block
+    } else {
+        format!("{files_block}\n{callers_block}")
+    };
+    let mut source = source_from_snapshot(
+        snapshot,
+        CodeMapContextKind::TargetedRecall,
+        files
+            .iter()
+            .map(|file| CodeMapSelectedFile {
+                path: file.path.clone(),
+                symbols: file.matched_symbols.clone(),
+            })
+            .collect(),
+        callers
+            .iter()
+            .cloned()
+            .map(|caller| CodeMapCaller {
+                target_symbol: caller.target_symbol,
+                caller_symbol: caller.caller_symbol,
+                caller_path: caller.caller_path,
+            })
+            .collect(),
+        selection_truncated,
+    );
+    if !source_fits_receipt(&mut source)? {
+        return Ok(None);
+    }
+    Ok(Some((text, source)))
+}
+
+fn source_from_snapshot(
+    snapshot: &crate::code_map::recall::RootGenerationSnapshot,
+    kind: CodeMapContextKind,
+    selected_files: Vec<CodeMapSelectedFile>,
+    callers: Vec<CodeMapCaller>,
+    selection_truncated: bool,
+) -> CodeMapContextSource {
+    CodeMapContextSource {
+        kind,
+        root: snapshot.root.display().to_owned(),
+        root_identity: snapshot.root.identity().as_str().to_owned(),
+        index_generation: snapshot.index_generation,
+        graph_generation: snapshot.graph_generation,
+        stale: false,
+        selection_truncated,
+        metadata_redacted: false,
+        selected_files,
+        callers,
+    }
+}
+
+/// Normalize receipt metadata before measuring its actual serialized UTF-8
+/// size. The selected text remains the renderer's exact output; this only
+/// protects durable metadata and lets selection stop before a source exceeds
+/// its independently enforced receipt budget.
+fn source_fits_receipt(source: &mut CodeMapContextSource) -> Result<bool> {
+    source.sanitize_metadata_for_receipt()?;
+    let encoded = serde_json::to_vec(source).context("serialize code-map source for size check")?;
+    Ok(encoded.len() <= MAX_CODE_MAP_SOURCE_BYTES)
+}
+
+/// Keep the exact sources that produced the merged text. A concurrently
+/// replaced generic snapshot never replaces or relabels targeted evidence.
+fn assemble_code_map_context(
+    recall: Option<BoundCodeMapContext>,
+    repo: Option<BoundCodeMapContext>,
+) -> Result<Option<PreparedCodeMapContext>> {
+    let (text, sources) = match (recall, repo) {
+        (Some(recall), Some(repo)) if recall.snapshot == repo.snapshot => (
+            format!("{}\n\n{}", recall.text, repo.text),
+            vec![recall.source, repo.source],
+        ),
+        (Some(recall), Some(_)) => {
+            eprintln!(
+                "[neoth:code-map] generic repo map changed while targeted recall was assembled; \
+                 using only the generation-bound targeted context"
+            );
+            (recall.text, vec![recall.source])
+        }
+        (Some(recall), None) => (recall.text, vec![recall.source]),
+        (None, Some(repo)) => (repo.text, vec![repo.source]),
+        (None, None) => return Ok(None),
+    };
+    anyhow::ensure!(
+        text.len() <= MAX_PREPARED_CODE_MAP_CONTEXT_BYTES,
+        "assembled code-map context exceeds {} bytes",
+        MAX_PREPARED_CODE_MAP_CONTEXT_BYTES
+    );
+    PreparedCodeMapContext::new(text, sources).map(Some)
 }
 
 pub async fn run_code(args: CodeArgs) -> Result<()> {
@@ -356,6 +714,42 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
         println!("{}", preflight.checklist);
     }
 
+    // Freeze source metadata and rendered context before opening a coding
+    // session or provider audit. Filesystem/SQLite errors must not bypass
+    // audit finalization, and blocking index reads must not occupy Tokio.
+    let context_prompt = prompt.clone();
+    let context_config = cfg.code_map.clone();
+    let project_ctx = tokio::task::spawn_blocking(move || {
+        let recall = prompt_recall_context(
+            &context_prompt,
+            &context_config,
+            MAX_PREPARED_CODE_MAP_CONTEXT_BYTES,
+        )
+        .context("resolve targeted code-map context")?;
+        // Targeted recall has precedence. Its exact rendered text consumes the
+        // shared budget first; a generic summary may only use the remaining
+        // bytes after the two-byte join separator.
+        let remaining_repo_bytes =
+            recall
+                .as_ref()
+                .map_or(MAX_PREPARED_CODE_MAP_CONTEXT_BYTES, |ctx| {
+                    MAX_PREPARED_CODE_MAP_CONTEXT_BYTES
+                        .saturating_sub(ctx.text.len().saturating_add(2))
+                });
+        let repo = if remaining_repo_bytes < 4 {
+            eprintln!(
+                "[neoth:code-map] no shared byte budget remains for generic repo map; omitting it"
+            );
+            None
+        } else {
+            repo_map_context(&context_config, remaining_repo_bytes)
+                .context("resolve repo-map context")?
+        };
+        assemble_code_map_context(recall, repo)
+    })
+    .await
+    .context("coding code-map context worker panicked")??;
+
     let db_path = args.db.clone().unwrap_or_else(memstore::default_path);
     let conn = memstore::open(&db_path).context("open views.db")?;
     store::ensure_schema(&conn).context("ensure kanban schema")?;
@@ -396,43 +790,16 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     println!("cerebellum bound to: {}", llm.provider_name());
     println!("decomposing prompt …");
 
-    // GOLD-ADAPT-AWE-AIDER-01 — feed the aider-style repo-map summary as the
-    // decomposer's project_context (best-effort: None when the repo isn't indexed).
-    // CRG-01 — prepend the prompt-targeted recall block (matched files +
-    // depth-1 callers): `truncate_to_budget` keeps the context head when
-    // space binds, so the targeted block survives over the generic summary.
-    let recall_ctx = prompt_recall_context(&prompt).context("resolve targeted code-map context")?;
-    let repo_ctx = repo_map_context().context("resolve repo-map context")?;
-    let project_ctx = match (recall_ctx, repo_ctx) {
-        (Some(recall), Some(repo)) if recall.snapshot == repo.snapshot => {
-            println!("injecting prompt-targeted and repo-map code context …");
-            Some(format!("{}\n\n{}", recall.text, repo.text))
-        }
-        (Some(recall), Some(repo)) => {
-            eprintln!(
-                "[neoth:code-map] generic repo map changed while targeted recall was assembled; \
-                 using only the generation-bound targeted context"
-            );
-            debug_assert_ne!(recall.snapshot, repo.snapshot);
-            Some(recall.text)
-        }
-        (Some(recall), None) => {
-            println!("injecting prompt-targeted code-map context …");
-            Some(recall.text)
-        }
-        (None, Some(repo)) => {
-            println!("injecting repo-map context (code_map summary) …");
-            Some(repo.text)
-        }
-        (None, None) => None,
-    };
+    if project_ctx.is_some() {
+        println!("injecting generation-bound code context …");
+    }
     let llm_phase: Result<Option<DecompositionResult>> = async {
-        let result = decompose(
+        let result = decompose_with_code_map_context(
             &llm,
             &conn,
             session_id,
             &prompt,
-            project_ctx.as_deref(),
+            project_ctx.as_ref(),
             now_ns,
         )
         .await
@@ -1061,7 +1428,8 @@ fn render_plan_text(
         let _ = writeln!(out, "## Out-of-Scope\n{}\n", s.out_of_scope.join("\n"));
     }
     out.push_str("## Decomposed tasks\n");
-    for task in collect_tasks(conn, &result.task_ids)? {
+    let tasks = collect_tasks(conn, &result.task_ids)?;
+    for task in &tasks {
         let _ = writeln!(
             out,
             "- [{}] {} ({})",
@@ -1071,6 +1439,30 @@ fn render_plan_text(
         );
         if let Some(d) = &task.description {
             let _ = writeln!(out, "  {d}");
+        }
+    }
+    if let Some(task) = tasks.first() {
+        let receipts = store::load_code_map_receipts(conn, task.session_id)
+            .context("load code-map evidence for plan review")?;
+        if let Some(receipt) = receipts.last() {
+            out.push_str("\n## Code-map input evidence\n");
+            let _ = writeln!(
+                out,
+                "Prepared input attempt {}; context SHA-256 {}; context truncated: {}.",
+                receipt.attempt, receipt.submitted_context_sha256, receipt.context_truncated,
+            );
+            for source in &receipt.sources {
+                let _ = writeln!(
+                    out,
+                    "- {:?}: index/graph generation {}/{}; \
+                     {} selected files, {} caller edges (selection before input truncation).",
+                    source.kind,
+                    source.index_generation,
+                    source.graph_generation,
+                    source.selected_files.len(),
+                    source.callers.len(),
+                );
+            }
         }
     }
     // Review H-3 — operator/LLM-derived text must not be able to close the
@@ -1222,6 +1614,269 @@ fn now_unix_ns() -> u64 {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    fn real_code_map_fixture() -> (tempfile::TempDir, PathBuf, Connection) {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(
+            repo.join("src/auth.rs"),
+            "pub fn verify_token() -> bool { true }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("src/routes.rs"),
+            "pub fn handle_request() { verify_token(); }\n",
+        )
+        .unwrap();
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        let db = dir.path().join("code_map.db");
+        crate::code_map::rebuild_snapshot(&root, &db, Default::default()).unwrap();
+        let conn = crate::code_map::persist::open(&db).unwrap();
+        (dir, repo, conn)
+    }
+
+    #[tokio::test]
+    async fn coding_code_map_selection_survives_decomposition_and_plan_inspection() {
+        struct PlanLlm;
+        #[async_trait::async_trait]
+        impl DecomposerLlm for PlanLlm {
+            async fn complete(&self, _: &str) -> Result<String> {
+                Ok(
+                    r#"{"tasks":[{"title":"Repair token verification","task_type":"tests"}]}"#
+                        .into(),
+                )
+            }
+        }
+
+        let (dir, repo, code_map) = real_code_map_fixture();
+        let config = crate::config::CodeMapConfig::default();
+        let recall = prompt_recall_context_at(&code_map, &repo, "fix verify_token", &config)
+            .unwrap()
+            .unwrap();
+        let selected = recall.source.clone();
+        let summary = repo_map_context_at(&code_map, &repo, &config).unwrap();
+        let prepared = assemble_code_map_context(Some(recall), summary)
+            .unwrap()
+            .unwrap();
+        assert_eq!(prepared.sources()[0], selected);
+        assert_eq!(prepared.sources().len(), 2);
+        assert!(selected.selected_files.iter().any(|file| {
+            file.path == "src/auth.rs" && file.symbols.iter().any(|s| s == "verify_token")
+        }));
+        assert!(
+            selected
+                .callers
+                .iter()
+                .any(|caller| caller.caller_symbol == "handle_request")
+        );
+
+        let views = memstore::open(&dir.path().join("views.db")).unwrap();
+        store::ensure_schema(&views).unwrap();
+        let session =
+            store::insert_session(&views, 1, "fix verify_token", "h", "cli", None).unwrap();
+        let result = decompose_with_code_map_context(
+            &PlanLlm,
+            &views,
+            session,
+            "fix verify_token",
+            Some(&prepared),
+            2,
+        )
+        .await
+        .unwrap();
+        let receipts = store::load_code_map_receipts(&views, session).unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].sources, prepared.sources());
+        assert!(!receipts[0].context_truncated);
+        assert_eq!(result.task_ids.len(), 1);
+        let plan = render_plan_text(None, "fix verify_token", &views, &result).unwrap();
+        assert!(plan.contains(&receipts[0].submitted_context_sha256));
+        assert!(!plan.contains(&selected.root_identity));
+        assert_eq!(receipts[0].sources[0].root_identity, selected.root_identity);
+        assert!(plan.contains(&format!(
+            "generation {}/{}",
+            selected.index_generation, selected.graph_generation
+        )));
+    }
+
+    #[test]
+    fn coding_code_map_default_summary_accepts_more_than_128_symbols() {
+        let (dir, repo, conn) = real_code_map_fixture();
+        let source = (0..129)
+            .map(|index| format!("pub fn f_{index:03}() {{}}\n"))
+            .collect::<String>();
+        std::fs::write(repo.join("src/many.rs"), source).unwrap();
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        crate::code_map::rebuild_snapshot(
+            &root,
+            &dir.path().join("code_map.db"),
+            Default::default(),
+        )
+        .unwrap();
+        let summary = repo_map_context_at(&conn, &repo, &Default::default())
+            .unwrap()
+            .unwrap();
+        let selected = summary
+            .source
+            .selected_files
+            .iter()
+            .find(|file| file.path == "src/many.rs")
+            .unwrap();
+        assert_eq!(selected.symbols.len(), 129);
+        let prepared = assemble_code_map_context(None, Some(summary))
+            .unwrap()
+            .unwrap();
+        let receipt = prepared
+            .receipt(KanbanSessionId(1), 1, "review", prepared.text(), "provider")
+            .unwrap();
+        let views = memstore::open(&dir.path().join("views.db")).unwrap();
+        store::ensure_schema(&views).unwrap();
+        let session = store::insert_session(&views, 1, "review", "h", "cli", None).unwrap();
+        assert_eq!(session, KanbanSessionId(1));
+        store::record_code_map_receipt(&views, session, &receipt).unwrap();
+        let repair = prepared
+            .receipt(session, 2, "review", prepared.text(), "repair")
+            .unwrap();
+        store::record_code_map_receipt(&views, session, &repair).unwrap();
+        assert_eq!(
+            store::load_code_map_receipts(&views, session)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn coding_code_map_receipts_redact_indexed_secret_shaped_names() {
+        struct PlanLlm;
+        #[async_trait::async_trait]
+        impl DecomposerLlm for PlanLlm {
+            async fn complete(&self, prompt: &str) -> Result<String> {
+                assert!(!prompt.contains("FAKE_TEST_OPENAI_AAAAAAAAAAAAAA"));
+                Ok(r#"{"tasks":[{"title":"Review auth","task_type":"tests"}]}"#.into())
+            }
+        }
+
+        let (dir, repo, conn) = real_code_map_fixture();
+        let secret = concat!("sk-", "FAKE_TEST_OPENAI_AAAAAAAAAAAAAA");
+        std::fs::rename(
+            repo.join("src/auth.rs"),
+            repo.join(format!("src/{secret}.rs")),
+        )
+        .unwrap();
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        crate::code_map::rebuild_snapshot(
+            &root,
+            &dir.path().join("code_map.db"),
+            Default::default(),
+        )
+        .unwrap();
+        let config = crate::config::CodeMapConfig::default();
+        let recall = prompt_recall_context_at(&conn, &repo, "verify_token", &config).unwrap();
+        let summary = repo_map_context_at(&conn, &repo, &config).unwrap();
+        let prepared = assemble_code_map_context(recall, summary).unwrap().unwrap();
+        assert!(!prepared.text().contains(secret));
+        assert!(
+            prepared
+                .sources()
+                .iter()
+                .all(|source| source.metadata_redacted)
+        );
+        let views = memstore::open(&dir.path().join("views.db")).unwrap();
+        store::ensure_schema(&views).unwrap();
+        let session = store::insert_session(&views, 1, "verify_token", "h", "cli", None).unwrap();
+        decompose_with_code_map_context(
+            &PlanLlm,
+            &views,
+            session,
+            "verify_token",
+            Some(&prepared),
+            2,
+        )
+        .await
+        .unwrap();
+        let receipts = store::load_code_map_receipts(&views, session).unwrap();
+        let json = serde_json::to_string(&receipts).unwrap();
+        assert!(!json.contains(secret));
+        assert!(!json.contains("FAKE_TEST_OPENAI"));
+        assert!(json.contains("REDACTED"));
+        use sha2::{Digest, Sha256};
+        assert_eq!(
+            receipts[0].submitted_context_sha256,
+            format!("{:x}", Sha256::digest(prepared.text().as_bytes()))
+        );
+    }
+
+    #[test]
+    fn coding_code_map_config_applies_to_real_recall_and_summary() {
+        let (_dir, repo, conn) = real_code_map_fixture();
+        let config = crate::config::CodeMapConfig {
+            coding_recall_max_files: 1,
+            coding_callers_per_symbol: 0,
+            coding_summary_token_budget: 128,
+            ..Default::default()
+        };
+        let recall = prompt_recall_context_at(
+            &conn,
+            &repo.join("src").join(".."),
+            "verify_token handle_request",
+            &config,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(recall.source.selected_files.len(), 1);
+        assert!(recall.source.callers.is_empty());
+        assert!(!recall.text.contains("<-"));
+        let summary = repo_map_context_at(&conn, &repo, &config).unwrap().unwrap();
+        assert_eq!(summary.snapshot, recall.snapshot);
+        assert!(!summary.source.selected_files.is_empty());
+
+        let invalid = crate::config::CodeMapConfig {
+            coding_recall_max_files: 0,
+            ..config
+        };
+        assert!(prompt_recall_context_at(&conn, &repo, "verify_token", &invalid).is_err());
+    }
+
+    #[test]
+    fn coding_code_map_generation_race_keeps_only_original_targeted_evidence() {
+        let (dir, repo, conn) = real_code_map_fixture();
+        let config = crate::config::CodeMapConfig::default();
+        let recall = prompt_recall_context_at(&conn, &repo, "verify_token", &config)
+            .unwrap()
+            .unwrap();
+        let previous_source = recall.source.clone();
+        std::fs::write(
+            repo.join("src/new_generation.rs"),
+            "pub fn new_generation_only() {}\n",
+        )
+        .unwrap();
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        crate::code_map::rebuild_snapshot(
+            &root,
+            &dir.path().join("code_map.db"),
+            Default::default(),
+        )
+        .unwrap();
+        let summary = repo_map_context_at(&conn, &repo, &config).unwrap().unwrap();
+        assert_ne!(summary.snapshot, recall.snapshot);
+        let prepared = assemble_code_map_context(Some(recall), Some(summary))
+            .unwrap()
+            .unwrap();
+        assert_eq!(prepared.sources(), &[previous_source]);
+        assert!(!prepared.text().contains("new_generation_only"));
+        assert!(assemble_code_map_context(None, None).unwrap().is_none());
+    }
+
+    #[test]
+    fn coding_code_map_stale_input_is_rejected_before_context_assembly() {
+        let (_dir, repo, conn) = real_code_map_fixture();
+        std::fs::write(repo.join("src/auth.rs"), "pub fn changed_token() {}\n").unwrap();
+        let config = crate::config::CodeMapConfig::default();
+        assert!(prompt_recall_context_at(&conn, &repo, "verify_token", &config).is_err());
+        assert!(repo_map_context_at(&conn, &repo, &config).is_err());
+    }
 
     #[test]
     fn session_summary_enqueue_preserves_existing_queue_state() {
@@ -1724,5 +2379,183 @@ mod tests {
             !text.contains("</"),
             "every closing-tag attempt must be broken: {text}"
         );
+    }
+
+    fn synthetic_targeted_context(
+        snapshot: &crate::code_map::recall::RootGenerationSnapshot,
+        target_count: usize,
+        callers_per_target: usize,
+    ) -> BoundedRenderedRecallContext {
+        let files = (0..target_count)
+            .map(|target| crate::code_map::recall::RelevantFile {
+                root: snapshot.root.display().to_owned(),
+                path: format!("src/target_{target:02}.rs"),
+                identifier_hits: 1,
+                matched_symbols: vec![format!("target_{target:02}")],
+                path_keyword_overlap: 0,
+            })
+            .collect::<Vec<_>>();
+        let edges = (0..target_count)
+            .flat_map(|target| {
+                (0..callers_per_target).map(move |caller| crate::code_map::graph::CodeEdge {
+                    from_file: format!("src/caller_{target:02}_{caller:02}.rs"),
+                    from_symbol: format!("caller_{target:02}_{caller:02}"),
+                    to_name: format!("target_{target:02}"),
+                    kind: crate::code_map::graph::EdgeKind::Calls,
+                })
+            })
+            .collect::<Vec<_>>();
+        render_bounded_prompt_recall_context(
+            &files,
+            edges,
+            callers_per_target,
+            snapshot,
+            false,
+            MAX_PREPARED_CODE_MAP_CONTEXT_BYTES,
+        )
+        .unwrap()
+        .unwrap()
+    }
+
+    #[test]
+    fn coding_code_map_four_hundred_callers_fit_and_persist_two_attempts() {
+        let (dir, repo, conn) = real_code_map_fixture();
+        let seed = prompt_recall_context_at(&conn, &repo, "verify_token", &Default::default())
+            .unwrap()
+            .unwrap();
+        let bounded = synthetic_targeted_context(&seed.snapshot, 20, 20);
+        assert_eq!(bounded.source.callers.len(), 400);
+        assert!(!bounded.source.selection_truncated);
+        for caller in &bounded.source.callers {
+            assert!(bounded.text.contains(&caller.target_symbol));
+            assert!(bounded.text.contains(&caller.caller_symbol));
+            assert!(bounded.text.contains(&caller.caller_path));
+        }
+
+        let prepared = PreparedCodeMapContext::new(bounded.text, vec![bounded.source]).unwrap();
+        let views = memstore::open(&dir.path().join("views.db")).unwrap();
+        store::ensure_schema(&views).unwrap();
+        let session = store::insert_session(&views, 1, "review", "h", "cli", None).unwrap();
+        let first = prepared
+            .receipt(session, 1, "review", prepared.text(), "provider")
+            .unwrap();
+        let repair = prepared
+            .receipt(session, 2, "review", prepared.text(), "repair")
+            .unwrap();
+        store::record_code_map_receipt(&views, session, &first).unwrap();
+        store::record_code_map_receipt(&views, session, &repair).unwrap();
+        assert_eq!(
+            store::load_code_map_receipts(&views, session)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn coding_code_map_max_configured_callers_truncate_by_real_budget() {
+        let (_dir, repo, conn) = real_code_map_fixture();
+        let seed = prompt_recall_context_at(&conn, &repo, "verify_token", &Default::default())
+            .unwrap()
+            .unwrap();
+        let first = synthetic_targeted_context(&seed.snapshot, 64, 20);
+        let second = synthetic_targeted_context(&seed.snapshot, 64, 20);
+        assert!(first.source.selection_truncated);
+        assert!(first.source.callers.len() < 64 * 20);
+        assert_eq!(first.text, second.text);
+        assert_eq!(first.source, second.source);
+        for caller in &first.source.callers {
+            assert!(first.text.contains(&caller.target_symbol));
+            assert!(first.text.contains(&caller.caller_symbol));
+            assert!(first.text.contains(&caller.caller_path));
+        }
+    }
+
+    #[test]
+    fn coding_code_map_summary_with_more_than_128_files_remains_receiptable() {
+        let (dir, repo, conn) = real_code_map_fixture();
+        for index in 0..129 {
+            std::fs::write(
+                repo.join(format!("src/file_{index:03}.rs")),
+                format!("pub fn file_symbol_{index:03}() {{}}\n"),
+            )
+            .unwrap();
+        }
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        crate::code_map::rebuild_snapshot(
+            &root,
+            &dir.path().join("code_map.db"),
+            Default::default(),
+        )
+        .unwrap();
+        let config = crate::config::CodeMapConfig {
+            coding_summary_token_budget: 12_000,
+            ..Default::default()
+        };
+        let summary = repo_map_context_at(&conn, &repo, &config).unwrap().unwrap();
+        assert!(summary.source.selected_files.len() > 128);
+        let prepared = assemble_code_map_context(None, Some(summary))
+            .unwrap()
+            .unwrap();
+        assert!(prepared.text().len() <= MAX_PREPARED_CODE_MAP_CONTEXT_BYTES);
+        assert!(
+            serde_json::to_vec(&prepared.sources()[0]).unwrap().len() <= MAX_CODE_MAP_SOURCE_BYTES
+        );
+    }
+
+    #[test]
+    fn coding_code_map_assembled_context_obeys_shared_64kib_boundary() {
+        let (_dir, repo, conn) = real_code_map_fixture();
+        let seed = prompt_recall_context_at(&conn, &repo, "verify_token", &Default::default())
+            .unwrap()
+            .unwrap();
+        let mut recall_source = source_from_snapshot(
+            &seed.snapshot,
+            CodeMapContextKind::TargetedRecall,
+            Vec::new(),
+            Vec::new(),
+            false,
+        );
+        let mut repo_source = source_from_snapshot(
+            &seed.snapshot,
+            CodeMapContextKind::RepoMapSummary,
+            Vec::new(),
+            Vec::new(),
+            false,
+        );
+        assert!(source_fits_receipt(&mut recall_source).unwrap());
+        assert!(source_fits_receipt(&mut repo_source).unwrap());
+        let recall = BoundCodeMapContext {
+            text: "r".repeat(MAX_PREPARED_CODE_MAP_CONTEXT_BYTES - 3),
+            snapshot: seed.snapshot.clone(),
+            source: recall_source,
+        };
+        let repo = BoundCodeMapContext {
+            text: "g".to_string(),
+            snapshot: seed.snapshot.clone(),
+            source: repo_source.clone(),
+        };
+        let prepared = assemble_code_map_context(Some(recall), Some(repo))
+            .unwrap()
+            .unwrap();
+        assert_eq!(prepared.text().len(), MAX_PREPARED_CODE_MAP_CONTEXT_BYTES);
+
+        let overflow_recall = BoundCodeMapContext {
+            text: "r".repeat(MAX_PREPARED_CODE_MAP_CONTEXT_BYTES - 3),
+            snapshot: seed.snapshot.clone(),
+            source: source_from_snapshot(
+                &seed.snapshot,
+                CodeMapContextKind::TargetedRecall,
+                Vec::new(),
+                Vec::new(),
+                false,
+            ),
+        };
+        let overflow_repo = BoundCodeMapContext {
+            text: "gg".to_string(),
+            snapshot: seed.snapshot,
+            source: repo_source,
+        };
+        assert!(assemble_code_map_context(Some(overflow_recall), Some(overflow_repo)).is_err());
     }
 }

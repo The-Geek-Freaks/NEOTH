@@ -1442,6 +1442,55 @@ mod tests {
     }
 
     #[test]
+    fn code_map_tunables_reload_into_the_next_snapshot() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let initial = fresh_config();
+        let mut changed = initial.clone();
+        changed.code_map.auto_context_max_files = 5;
+        changed.code_map.coding_recall_max_files = 12;
+        changed.code_map.coding_callers_per_symbol = 0;
+        changed.code_map.coding_summary_token_budget = 4_096;
+        write_yaml(&yaml_path, &serde_yaml::to_string(&changed).unwrap());
+
+        let ctrl = ReloadController::new(initial, yaml_path);
+        match ctrl.try_reload().expect("code-map reload must succeed") {
+            ReloadResult::Reloaded { changed_fields } => assert!(
+                changed_fields.contains(&"code_map".to_string()),
+                "diff should name the changed code-map settings: {changed_fields:?}"
+            ),
+            other => panic!("expected Reloaded, got {other:?}"),
+        }
+
+        let latest = ctrl.latest();
+        assert_eq!(latest.code_map.auto_context_max_files, 5);
+        assert_eq!(latest.code_map.coding_recall_max_files, 12);
+        assert_eq!(latest.code_map.coding_callers_per_symbol, 0);
+        assert_eq!(latest.code_map.coding_summary_token_budget, 4_096);
+    }
+
+    #[test]
+    fn invalid_code_map_reload_never_publishes_a_candidate_snapshot() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let initial = fresh_config();
+        write_yaml(
+            &yaml_path,
+            "code_map:\n  coding_summary_token_budget: 12001\n",
+        );
+        let ctrl = ReloadController::new(initial, yaml_path);
+        let generation = ctrl.subscribe_generation();
+
+        let error = format!(
+            "{:#}",
+            ctrl.try_reload().expect_err("invalid YAML must fail")
+        );
+        assert!(error.contains("coding_summary_token_budget"), "{error}");
+        assert_eq!(ctrl.latest().code_map.coding_summary_token_budget, 2_048);
+        assert_eq!(*generation.borrow(), 0);
+    }
+
+    #[test]
     fn custom_policy_reload_swaps_atomically_and_old_snapshot_stays_immutable() {
         use crate::permissions::{Action, ActionKind, AutonomyLevel, CustomDecision, evaluate};
 

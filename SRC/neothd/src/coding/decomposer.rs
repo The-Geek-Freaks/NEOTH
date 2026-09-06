@@ -628,6 +628,54 @@ pub async fn decompose(
     project_context: Option<&str>,
     now_ns: u64,
 ) -> Result<DecompositionResult> {
+    decompose_inner(
+        llm,
+        conn,
+        session_id,
+        operator_prompt,
+        project_context,
+        None,
+        now_ns,
+    )
+    .await
+}
+
+/// End-to-end decomposition with optional prepared code-map context. When
+/// supplied, it persists a durable prepared-input receipt before each provider
+/// request. The receipt records what was submitted; it deliberately does not
+/// claim that a provider call succeeded or produced a particular response.
+pub async fn decompose_with_code_map_context(
+    llm: &dyn DecomposerLlm,
+    conn: &rusqlite::Connection,
+    session_id: KanbanSessionId,
+    operator_prompt: &str,
+    project_context: Option<&super::code_map_receipt::PreparedCodeMapContext>,
+    now_ns: u64,
+) -> Result<DecompositionResult> {
+    decompose_inner(
+        llm,
+        conn,
+        session_id,
+        operator_prompt,
+        project_context.map(super::code_map_receipt::PreparedCodeMapContext::text),
+        project_context,
+        now_ns,
+    )
+    .await
+}
+
+/// Shared orchestration for the legacy plain-context API and the prepared
+/// code-map API. `prepared_code_map_context` is only set by the latter, so
+/// existing callers intentionally continue without receipt persistence.
+async fn decompose_inner(
+    llm: &dyn DecomposerLlm,
+    conn: &rusqlite::Connection,
+    session_id: KanbanSessionId,
+    operator_prompt: &str,
+    project_context: Option<&str>,
+    prepared_code_map_context: Option<&super::code_map_receipt::PreparedCodeMapContext>,
+    now_ns: u64,
+) -> Result<DecompositionResult> {
     if operator_prompt.trim().is_empty() {
         bail!(DecomposerError::EmptyPrompt);
     }
@@ -657,6 +705,16 @@ pub async fn decompose(
         .map_err(anyhow::Error::new)
         .context("decomposer prompt rejected")?;
 
+    record_prepared_code_map_receipt(
+        conn,
+        prepared_code_map_context,
+        session_id,
+        1,
+        operator_prompt,
+        ctx_clamped.as_deref().unwrap_or_default(),
+        &prompt,
+    )?;
+
     let raw_response = llm
         .complete(&prompt)
         .await
@@ -670,6 +728,15 @@ pub async fn decompose(
                 build_repair_prompt(operator_prompt, ctx_clamped.as_deref(), &raw_response)
                     .map_err(anyhow::Error::new)
                     .context("decomposer repair prompt rejected")?;
+            record_prepared_code_map_receipt(
+                conn,
+                prepared_code_map_context,
+                session_id,
+                2,
+                operator_prompt,
+                ctx_clamped.as_deref().unwrap_or_default(),
+                &repair_prompt,
+            )?;
             let retry = llm
                 .complete(&repair_prompt)
                 .await
@@ -715,6 +782,12 @@ pub async fn decompose(
     // Pick #2 store has FK enforcement when PRAGMA foreign_keys=ON,
     // so a later task pointing at a not-yet-inserted parent index
     // would be rejected — order matters here.
+    // There are no await points below this line. Keep all task rows in one
+    // SQLite transaction so a later parent/dependency insert failure rolls
+    // every earlier row back rather than leaving a partial graph on the board.
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin atomic decomposer task insertion")?;
     let mut inserted: Vec<KanbanTaskId> = Vec::with_capacity(parsed.tasks.len());
     for task in &parsed.tasks {
         let (task_type, was_clamped) = clamp_task_type(&task.task_type);
@@ -734,7 +807,7 @@ pub async fn decompose(
             .and_then(|i| inserted.get(*i))
             .copied();
         let id = super::store::insert_task(
-            conn,
+            &tx,
             session_id,
             now_ns,
             &task.title,
@@ -748,6 +821,8 @@ pub async fn decompose(
         )?;
         inserted.push(id);
     }
+    tx.commit()
+        .context("commit atomic decomposer task insertion")?;
 
     Ok(DecompositionResult {
         task_ids: inserted,
@@ -755,6 +830,34 @@ pub async fn decompose(
         session_complexity: parsed.estimated_session_complexity,
         input_truncated: was_truncated,
     })
+}
+
+/// Persist the prepared-input evidence before its matching provider request.
+/// A persistence failure is deliberately terminal: proceeding would create an
+/// unreceipted external call that cannot later be proven from the session.
+fn record_prepared_code_map_receipt(
+    conn: &rusqlite::Connection,
+    prepared_code_map_context: Option<&super::code_map_receipt::PreparedCodeMapContext>,
+    session_id: KanbanSessionId,
+    attempt: u8,
+    operator_prompt: &str,
+    submitted_context: &str,
+    provider_prompt: &str,
+) -> Result<()> {
+    let Some(prepared_code_map_context) = prepared_code_map_context else {
+        return Ok(());
+    };
+    let receipt = prepared_code_map_context
+        .receipt(
+            session_id,
+            attempt,
+            operator_prompt,
+            submitted_context,
+            provider_prompt,
+        )
+        .context("prepare code-map decomposition input receipt")?;
+    super::store::record_code_map_receipt(conn, session_id, &receipt)
+        .context("persist code-map decomposition input receipt")
 }
 
 #[cfg(test)]
@@ -834,6 +937,54 @@ mod tests {
                 concat!("AKIA", "IOSFODNN7EXAMPLE")
             ))
         }
+    }
+
+    fn prepared_session() -> (rusqlite::Connection, KanbanSessionId) {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::coding::store::ensure_schema(&conn).unwrap();
+        let session_id = crate::coding::store::insert_session(
+            &conn,
+            1,
+            "operator request",
+            "prompt-hash",
+            "test",
+            None,
+        )
+        .unwrap();
+        (conn, session_id)
+    }
+
+    fn prepared_code_map_context(
+        text: String,
+    ) -> super::super::code_map_receipt::PreparedCodeMapContext {
+        use super::super::code_map_receipt::{
+            CodeMapCaller, CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile,
+            PreparedCodeMapContext,
+        };
+
+        PreparedCodeMapContext::new(
+            text,
+            vec![CodeMapContextSource {
+                kind: CodeMapContextKind::TargetedRecall,
+                root: "C:/repo".to_string(),
+                root_identity: "volume-serial:repo-id".to_string(),
+                index_generation: 7,
+                graph_generation: 7,
+                stale: false,
+                selection_truncated: false,
+                metadata_redacted: false,
+                selected_files: vec![CodeMapSelectedFile {
+                    path: "src/lib.rs".to_string(),
+                    symbols: vec!["entrypoint".to_string()],
+                }],
+                callers: vec![CodeMapCaller {
+                    target_symbol: "entrypoint".to_string(),
+                    caller_symbol: "main".to_string(),
+                    caller_path: "src/main.rs".to_string(),
+                }],
+            }],
+        )
+        .unwrap()
     }
 
     // ── Prompt builder ─────────────────────────────────────────────────────
@@ -1073,6 +1224,231 @@ mod tests {
 
         assert!(error.contains("round 1"));
         assert!(!error.contains("AKIAIOSFODNN7EXAMPLE"));
+    }
+
+    #[tokio::test]
+    async fn code_map_receipts_bind_clamped_context_across_two_malformed_attempts() {
+        let (conn, session_id) = prepared_session();
+        let operator_prompt = "implement the selected code-map change";
+        let prepared = prepared_code_map_context("x".repeat(MAX_INPUT_TOKENS * CHARS_PER_TOKEN));
+        let (submitted_context, was_truncated) =
+            truncate_to_budget(operator_prompt, Some(prepared.text())).unwrap();
+        let submitted_context = submitted_context.unwrap();
+        assert!(was_truncated, "fixture must exercise context truncation");
+
+        let llm = CapturingLlm::new(vec!["not JSON".to_string(), "still not JSON".to_string()]);
+        let result = decompose_with_code_map_context(
+            &llm,
+            &conn,
+            session_id,
+            operator_prompt,
+            Some(&prepared),
+            42,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.task_ids.is_empty());
+        assert!(result.clarifying_question.is_some());
+        assert!(result.input_truncated);
+        let prompts = llm.captured_prompts();
+        assert_eq!(prompts.len(), 2, "one initial and one repair call");
+        for prompt in &prompts {
+            assert_eq!(
+                envelope_field(prompt, "decomposer_project_context"),
+                submitted_context,
+                "each provider prompt must carry exactly the clamped context"
+            );
+        }
+
+        let receipts = crate::coding::store::load_code_map_receipts(&conn, session_id).unwrap();
+        assert_eq!(receipts.len(), 2, "both prepared provider inputs persist");
+        assert_eq!(
+            receipts[0],
+            prepared
+                .receipt(
+                    session_id,
+                    1,
+                    operator_prompt,
+                    &submitted_context,
+                    &prompts[0],
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            receipts[1],
+            prepared
+                .receipt(
+                    session_id,
+                    2,
+                    operator_prompt,
+                    &submitted_context,
+                    &prompts[1],
+                )
+                .unwrap()
+        );
+        assert_eq!(receipts[0].sources.as_slice(), prepared.sources());
+        assert_eq!(receipts[1].sources.as_slice(), prepared.sources());
+        let task_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_kanban_task", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(task_count, 0, "malformed attempts must not create tasks");
+    }
+
+    #[tokio::test]
+    async fn code_map_receipt_store_failure_blocks_provider_call() {
+        let (conn, session_id) = prepared_session();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_code_map_receipt_write \
+             BEFORE UPDATE OF code_map_receipts ON idx_kanban_session \
+             BEGIN SELECT RAISE(ABORT, 'forced receipt write failure'); END;",
+        )
+        .unwrap();
+        let prepared = prepared_code_map_context("selected context".to_string());
+        let llm = CapturingLlm::new(vec![
+            r#"{"tasks":[],"clarifying_question":"unused","estimated_session_complexity":"fast"}"#
+                .to_string(),
+        ]);
+
+        let error = decompose_with_code_map_context(
+            &llm,
+            &conn,
+            session_id,
+            "implement the selected change",
+            Some(&prepared),
+            42,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("persist code-map decomposition input receipt"));
+        assert_eq!(llm.calls(), 0, "no unreceipted provider call is allowed");
+        assert!(
+            crate::coding::store::load_code_map_receipts(&conn, session_id)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn code_map_repair_receipt_failure_blocks_second_provider_call() {
+        let (conn, session_id) = prepared_session();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_second_code_map_receipt_write \
+             BEFORE UPDATE OF code_map_receipts ON idx_kanban_session \
+             WHEN NEW.code_map_receipts LIKE '%\"attempt\":2%' \
+             BEGIN SELECT RAISE(ABORT, 'forced second receipt write failure'); END;",
+        )
+        .unwrap();
+        let prepared = prepared_code_map_context("selected context".to_string());
+        let llm = CapturingLlm::new(vec![
+            "not JSON".to_string(),
+            r#"{"tasks":[],"clarifying_question":"must not be called","estimated_session_complexity":"fast"}"#
+                .to_string(),
+        ]);
+
+        let error = decompose_with_code_map_context(
+            &llm,
+            &conn,
+            session_id,
+            "implement the selected change",
+            Some(&prepared),
+            42,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("persist code-map decomposition input receipt"));
+        assert_eq!(llm.calls(), 1, "the repair provider call must be blocked");
+        let receipts = crate::coding::store::load_code_map_receipts(&conn, session_id).unwrap();
+        assert_eq!(receipts.len(), 1, "only the first prepared input persisted");
+        assert_eq!(receipts[0].attempt, 1);
+    }
+
+    #[tokio::test]
+    async fn code_map_context_valid_output_persists_receipt_and_session_tasks() {
+        let (conn, session_id) = prepared_session();
+        let operator_prompt = "implement the selected change";
+        let prepared = prepared_code_map_context("selected context".to_string());
+        let llm = CapturingLlm::new(vec![
+            r#"{
+                "tasks":[{"title":"Implement selected change","description":"Change the selected source.","task_type":"store","depends_on":[]}],
+                "clarifying_question":null,
+                "estimated_session_complexity":"fast"
+            }"#
+            .to_string(),
+        ]);
+
+        let result = decompose_with_code_map_context(
+            &llm,
+            &conn,
+            session_id,
+            operator_prompt,
+            Some(&prepared),
+            42,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(llm.calls(), 1);
+        assert_eq!(result.task_ids.len(), 1);
+        let prompts = llm.captured_prompts();
+        let receipts = crate::coding::store::load_code_map_receipts(&conn, session_id).unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(
+            receipts[0],
+            prepared
+                .receipt(session_id, 1, operator_prompt, prepared.text(), &prompts[0],)
+                .unwrap()
+        );
+        let persisted_session: i64 = conn
+            .query_row(
+                "SELECT session_id FROM idx_kanban_task WHERE task_id = ?1",
+                [result.task_ids[0].raw()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(persisted_session, session_id.raw());
+    }
+
+    #[tokio::test]
+    async fn decomposer_task_insertion_rolls_back_every_task_on_later_failure() {
+        let (conn, session_id) = prepared_session();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_second_decomposer_task \
+             BEFORE INSERT ON idx_kanban_task \
+             WHEN NEW.title = 'Second task fails' \
+             BEGIN SELECT RAISE(ABORT, 'forced task insert failure'); END;",
+        )
+        .unwrap();
+        let llm = CapturingLlm::new(vec![
+            r#"{
+                "tasks": [
+                    {"title":"First task", "task_type":"ui", "depends_on":[]},
+                    {"title":"Second task fails", "task_type":"store", "depends_on":[0]}
+                ],
+                "clarifying_question": null,
+                "estimated_session_complexity": "fast"
+            }"#
+            .to_string(),
+        ]);
+
+        let error = decompose(&llm, &conn, session_id, "implement both tasks", None, 42)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("insert idx_kanban_task row"));
+        let task_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_kanban_task WHERE session_id = ?1",
+                [session_id.raw()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(task_count, 0, "the transaction must roll every task back");
     }
 
     // ── Budget guard ───────────────────────────────────────────────────────
