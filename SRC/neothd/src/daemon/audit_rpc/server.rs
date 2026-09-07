@@ -670,7 +670,10 @@ async fn handle_one(
             | "/jobs-run-token/mint"
             | "/jobs-run-token/consume"
     );
-    let internal_route = matches!(req_path.as_str(), "/health" | "/skill-mutation-audit");
+    let internal_route = matches!(
+        req_path.as_str(),
+        "/health" | "/skill-mutation-audit" | "/trust-decision-once"
+    );
     if req.method != "POST"
         || !(membership_route || internal_route || state.audit_routes_enabled && audit_route)
     {
@@ -713,6 +716,13 @@ async fn handle_one(
         let _ = stream
             .write_all(http_response_json(200, "{\"ok\":true}").as_bytes())
             .await;
+        let _ = stream.shutdown().await;
+        return Ok(());
+    }
+
+    if req_path == "/trust-decision-once" {
+        let response = handle_trust_decision_once(state, home, &req.body).await;
+        let _ = stream.write_all(response.as_bytes()).await;
         let _ = stream.shutdown().await;
         return Ok(());
     }
@@ -935,6 +945,26 @@ async fn handle_one(
         return Ok(());
     }
 
+    // Version-two decisions have a durable operation identity. Only the
+    // writer-owned once transaction may append them; generic /audit cannot
+    // race that transaction or bypass its exact-descriptor conflict check.
+    if event_type == EVENT_TYPE_EXTENDED && event_subtype == ExtendedSubtype::TrustDecision as u8 {
+        let legacy =
+            crate::permissions::trust_ledger::TrustEvent::decode(&payload).is_ok_and(|event| {
+                event.schema_version == crate::permissions::trust_ledger::TRUST_EVENT_SCHEMA_VERSION
+            });
+        if !legacy {
+            emit_reject(state, "trust_decision_requires_typed_once_route").await;
+            let _ = stream
+                .write_all(
+                    http_response(422, "trust_decision_requires_typed_once_route").as_bytes(),
+                )
+                .await;
+            let _ = stream.shutdown().await;
+            return Ok(());
+        }
+    }
+
     // Authority frames are scanned globally and authenticated before their
     // Skill id is inspected. Reject malformed or unauthenticated ingress
     // before append so one local request cannot poison unrelated Skills.
@@ -1117,6 +1147,54 @@ fn process_membership_request(
             )?)?)
         }
         _ => unreachable!("membership route allowlisted"),
+    }
+}
+
+async fn handle_trust_decision_once(state: &AuditRpcState, home: &Path, body: &[u8]) -> String {
+    use crate::permissions::trust_ledger::{TrustDecisionOnceError, TrustDecisionOnceOutcome};
+
+    let request = match serde_json::from_slice::<super::TrustDecisionOnceRequest>(body) {
+        Ok(request) if request.schema_version == 1 && request.descriptor.validate().is_ok() => {
+            request
+        }
+        _ => return http_response(422, "invalid_trust_admission_descriptor"),
+    };
+    // The writer owns accepted work after this connection's timeout or loss.
+    // Its reply is released only after lookup or a marker-covered append has
+    // reached a terminal result; never emit ACCEPT for an unknown outcome.
+    let outcome = state
+        .writer
+        .append_trust_decision_once(home, request.descriptor)
+        .await;
+    let outcome = match outcome {
+        Ok(TrustDecisionOnceOutcome::AppendedExact) => {
+            emit_accept(
+                state,
+                EVENT_TYPE_EXTENDED,
+                ExtendedSubtype::TrustDecision as u8,
+            )
+            .await;
+            super::TrustDecisionOnceWireOutcome::AppendedExact
+        }
+        Ok(TrustDecisionOnceOutcome::ExistingExact) => {
+            super::TrustDecisionOnceWireOutcome::ExistingExact
+        }
+        Err(TrustDecisionOnceError::Conflict) => {
+            return http_response(409, "trust_admission_conflict");
+        }
+        Err(TrustDecisionOnceError::Duplicate) => {
+            return http_response(409, "trust_admission_duplicate");
+        }
+        Err(TrustDecisionOnceError::Indeterminate) => {
+            return http_response(503, "trust_admission_indeterminate");
+        }
+    };
+    match serde_json::to_string(&super::TrustDecisionOnceResponse {
+        schema_version: 1,
+        outcome,
+    }) {
+        Ok(body) => http_response_json(200, &body),
+        Err(_) => http_response(503, "trust_admission_response_unavailable"),
     }
 }
 

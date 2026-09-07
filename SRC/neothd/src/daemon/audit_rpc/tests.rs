@@ -105,6 +105,301 @@ async fn raw_post_path(
     (status, response_body)
 }
 
+async fn durable_trust_descriptor(
+    operation: &str,
+    binding: &str,
+) -> crate::permissions::trust_ledger::TrustAdmissionDescriptor {
+    let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+        crate::permissions::AutonomyLevel::Full,
+    )
+    .unwrap();
+    crate::permissions::gate::Gate::for_policy(policy)
+        .with_confirm(crate::permissions::gate::ConfirmStrategy::FailClosed)
+        .resolve_trust_admission(&crate::permissions::Action::ChannelSend, operation, binding)
+        .await
+        .expect("resolve bound durable channel admission")
+}
+
+#[tokio::test]
+async fn durable_trust_rpc_reconciles_once_and_rejects_generic_bypass() {
+    use crate::permissions::trust_ledger::TrustDecisionOnceOutcome;
+
+    let home = tempdir().unwrap();
+    let segment = canonical_test_wal(home.path(), "trust-once");
+    let (writer, wal_join, ready) =
+        crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+            .unwrap();
+    ready.wait().await.unwrap();
+    let token = init_rpc_token(home.path()).unwrap();
+    let nonce = test_endpoint_nonce();
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
+    };
+    let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
+    let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+    let descriptor = durable_trust_descriptor(&"1".repeat(64), &"2".repeat(64)).await;
+
+    let unrelated_home = tempdir().unwrap();
+    let before_mismatch = std::fs::read(&segment).unwrap();
+    assert_eq!(
+        crate::permissions::trust_ledger::audit_trust_admission_once(
+            crate::permissions::gate::PermissionAuditSink::DaemonRpc(home.path()),
+            unrelated_home.path(),
+            &descriptor,
+        )
+        .await,
+        Err(crate::permissions::trust_ledger::TrustDecisionOnceError::Indeterminate)
+    );
+    assert_eq!(std::fs::read(&segment).unwrap(), before_mismatch);
+
+    assert_eq!(
+        crate::permissions::trust_ledger::audit_trust_admission_once(
+            crate::permissions::gate::PermissionAuditSink::DaemonRpc(home.path()),
+            &home.path().join("."),
+            &descriptor,
+        )
+        .await
+        .unwrap(),
+        TrustDecisionOnceOutcome::AppendedExact
+    );
+    assert_eq!(
+        try_post_trust_decision_once(home.path(), &descriptor)
+            .await
+            .unwrap(),
+        TrustDecisionOnceOutcome::ExistingExact
+    );
+    let conflicting = durable_trust_descriptor(&"1".repeat(64), &"3".repeat(64)).await;
+    assert!(matches!(
+        try_post_trust_decision_once(home.path(), &conflicting).await,
+        Err(crate::permissions::trust_ledger::TrustDecisionOnceError::Conflict)
+    ));
+    let event = descriptor.to_schema2_event(1).unwrap();
+    assert!(matches!(
+        try_post_audit_frame_with_subtype(
+            home.path(),
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            crate::wal::events::ExtendedSubtype::TrustDecision as u8,
+            &event.encode().unwrap(),
+        )
+        .await,
+        Err(AuditRpcClientError::Refused(422))
+    ));
+    listener.abort();
+    let _ = listener.await;
+    drop(writer);
+    wal_join.await.unwrap().unwrap();
+    let ledger =
+        crate::permissions::TrustLedger::replay_subject_at_home(home.path(), "local").unwrap();
+    assert_eq!(ledger.entries.len(), 1);
+    assert_eq!(ledger.entries[0].event.schema_version, 2);
+    assert_eq!(
+        ledger.completeness,
+        crate::permissions::TrustLedgerCompleteness::Complete
+    );
+}
+
+#[tokio::test]
+async fn durable_trust_rpc_is_authenticated_and_available_when_optional_audit_is_disabled() {
+    let home = tempdir().unwrap();
+    let segment = canonical_test_wal(home.path(), "trust-internal");
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
+    let token = init_rpc_token(home.path()).unwrap();
+    let nonce = test_endpoint_nonce();
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: false,
+    };
+    let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
+    let descriptor = durable_trust_descriptor(&"4".repeat(64), &"5".repeat(64)).await;
+    let body = serde_json::to_string(&super::TrustDecisionOnceRequest {
+        schema_version: 1,
+        descriptor,
+    })
+    .unwrap();
+    assert_eq!(
+        raw_post_path(&endpoint, "/trust-decision-once", None, &body)
+            .await
+            .0,
+        401
+    );
+    let mut invalid: serde_json::Value = serde_json::from_str(&body).unwrap();
+    invalid["schema_version"] = serde_json::json!(2);
+    assert_eq!(
+        raw_post_path(
+            &endpoint,
+            "/trust-decision-once",
+            Some(&token),
+            &invalid.to_string()
+        )
+        .await
+        .0,
+        422
+    );
+    invalid["schema_version"] = serde_json::json!(1);
+    invalid["unknown"] = serde_json::json!(true);
+    assert_eq!(
+        raw_post_path(
+            &endpoint,
+            "/trust-decision-once",
+            Some(&token),
+            &invalid.to_string()
+        )
+        .await
+        .0,
+        422
+    );
+    let before =
+        crate::permissions::TrustLedger::replay_subject_at_home(home.path(), "local").unwrap();
+    assert!(before.entries.is_empty());
+    let (status, response) =
+        raw_post_path(&endpoint, "/trust-decision-once", Some(&token), &body).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        response,
+        "{\"schema_version\":1,\"outcome\":\"appended_exact\"}"
+    );
+    assert_eq!(raw_post(&endpoint, Some(&token), "{}").await, 404);
+    listener.abort();
+    let _ = listener.await;
+    drop(writer);
+    wal_join.await.unwrap();
+    assert_eq!(
+        crate::permissions::TrustLedger::replay_subject_at_home(home.path(), "local")
+            .unwrap()
+            .entries
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn durable_trust_rpc_reuses_receipt_after_response_is_not_consumed() {
+    let home = tempdir().unwrap();
+    let segment = canonical_test_wal(home.path(), "trust-lost-response");
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
+    let token = init_rpc_token(home.path()).unwrap();
+    let nonce = test_endpoint_nonce();
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
+    };
+    let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
+    let descriptor = durable_trust_descriptor(&"6".repeat(64), &"7".repeat(64)).await;
+    let body = serde_json::to_string(&super::TrustDecisionOnceRequest {
+        schema_version: 1,
+        descriptor: descriptor.clone(),
+    })
+    .unwrap();
+    let mut stream = super::transport::connect(&endpoint).await.unwrap();
+    let request = format!(
+        "POST /trust-decision-once HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    // Read only the first byte, never a status or typed receipt. The server
+    // starts its response after the writer's terminal ACK, so dropping here
+    // deterministically loses the application-level result after durability.
+    let mut first_byte = [0u8; 1];
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        stream.read_exact(&mut first_byte),
+    )
+    .await
+    .expect("writer must finish before the response deadline")
+    .unwrap();
+    assert_eq!(first_byte, [b'H']);
+    drop(stream);
+    let (status, response) =
+        raw_post_path(&endpoint, "/trust-decision-once", Some(&token), &body).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        response,
+        "{\"schema_version\":1,\"outcome\":\"existing_exact\"}"
+    );
+    listener.abort();
+    let _ = listener.await;
+    drop(writer);
+    wal_join.await.unwrap();
+    assert_eq!(
+        crate::permissions::TrustLedger::replay_subject_at_home(home.path(), "local")
+            .unwrap()
+            .entries
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn durable_trust_rpc_home_binding_uses_endpoint_identity() {
+    let first = tempdir().unwrap();
+    let second = tempdir().unwrap();
+    assert!(homes_same_identity(first.path(), &first.path().join(".")).unwrap());
+    assert!(!homes_same_identity(first.path(), second.path()).unwrap());
+    assert!(homes_same_identity(first.path(), &first.path().join("missing")).is_err());
+}
+
+#[test]
+fn durable_trust_rpc_response_is_closed_and_versioned() {
+    use crate::permissions::trust_ledger::TrustDecisionOnceOutcome;
+    let parse = super::client::parse_trust_decision_response;
+    assert_eq!(
+        parse(r#"{"schema_version":1,"outcome":"existing_exact"}"#).unwrap(),
+        TrustDecisionOnceOutcome::ExistingExact
+    );
+    for invalid in [
+        r#"{"schema_version":2,"outcome":"existing_exact"}"#,
+        r#"{"outcome":"existing_exact"}"#,
+        r#"{"schema_version":1,"outcome":"existing_exact","extra":true}"#,
+        r#"{"schema_version":1,"outcome":"future_state"}"#,
+        "{",
+    ] {
+        assert!(matches!(
+            parse(invalid),
+            Err(AuditRpcClientError::Unavailable(_))
+        ));
+    }
+}
+
+#[test]
+fn durable_trust_rpc_preserves_closed_conflict_and_duplicate_errors() {
+    use crate::permissions::trust_ledger::TrustDecisionOnceError;
+    let parse = super::client::parse_trust_decision_refusal;
+    assert_eq!(
+        parse(409, r#"{"error":"trust_admission_conflict"}"#),
+        TrustDecisionOnceError::Conflict
+    );
+    assert_eq!(
+        parse(409, r#"{"error":"trust_admission_duplicate"}"#),
+        TrustDecisionOnceError::Duplicate
+    );
+    for (status, body) in [
+        (503, r#"{"error":"trust_admission_duplicate"}"#),
+        (409, r#"{"error":"unknown"}"#),
+        (409, r#"{"error":"trust_admission_duplicate","extra":true}"#),
+        (409, "{"),
+    ] {
+        assert_eq!(parse(status, body), TrustDecisionOnceError::Indeterminate);
+    }
+}
+
 async fn recv_runtime_transition_for_home(
     subscriber: &mut crate::skills::registry::RuntimeAuthorityTransitionTestSubscriber,
     home: &std::path::Path,

@@ -660,8 +660,9 @@ fn armed_claim_lease_and_registration_cover_admission_transport_and_terminalizat
     assert!(
         post_admission.starts_with(
             "let mut transport = OwnedTransportAttempt::start(\n        registration,"
-        ) && post_admission.contains("        armed_claim_lease,\n    );"),
-        "only the post-unlock owned attempt may receive admission's registration and Armed lease"
+        ) && post_admission
+            .contains("        armed_claim_lease,\n        generation_effect_lease,\n    );"),
+        "only the post-unlock owned attempt may receive admission's registration, Armed lease and accepted-generation lease"
     );
 
     let owned = between(

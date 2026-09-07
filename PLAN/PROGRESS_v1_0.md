@@ -3,6 +3,22 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-07
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 6 durable-egress checkpoint 2026-09-07:** proactive claims and webhook
+> outboxes now require a bound local-subject authenticated decision before
+> transport. Writer/RPC reconciliation reuses an exact receipt after retry,
+> restart or a lost response; stable file authority prevents competing once
+> admissions. Accepted-config effect leases fence reload and retain real I/O
+> ownership across cancellation. The 17-input manifest and selected runtime
+> matrix are `docs/verification/gold-wave6-source-manifest.json` and
+> `docs/verification/gold-wave6-test-matrix.json`; the report is
+> `docs/gold-wave6-verification.md`. **9/9 groups and 1,055 parent-harness
+> executions pass**, with zero failures. This is bounded local evidence;
+> physical provider delivery is not claimed exactly once. The native GUI/Buddy
+> apply-confirmation flow and overall boundary inventory remain open under
+> P1-05. No checkbox closes: **1,324 total / 1,006 complete / 316 open / 2 partial
+> = 318 raw blockers and 317 pre-tag blockers**. Publication targets GitHub
+> `main`; Wave 5 is already published there at `3fb7082c`.
+>
 > **Wave 5 daemon/cluster checkpoint 2026-09-07:** required authenticated
 > admission now precedes upstream channel reply release, configured Obsidian
 > preload and paired cluster-task queue acceptance. Preload binds WAL, state

@@ -367,10 +367,6 @@ async fn deliver_live_route(
     target_channel: &str,
     route: DeliveryRoute,
 ) -> Result<Option<ProactiveStatus>, LiveRouteError> {
-    let home = egress.home();
-    let wal_segment_path = egress.wal_segment_path();
-    let writer = egress.writer();
-    let now_unix = egress.now_unix();
     macro_rules! execute {
         ($recipient:expr, $channel:expr) => {
             crate::daemon::proactive_egress::execute_claimed_once(
@@ -389,25 +385,19 @@ async fn deliver_live_route(
     match route {
         DeliveryRoute::Suppressed => {
             crate::daemon::proactive_egress::record_policy_suppressed_once(
-                home,
-                wal_segment_path,
-                writer,
+                egress,
                 item,
                 queue_generation,
                 target_channel,
-                now_unix,
             )
             .await
             .map_err(LiveRouteError::Durability)
         }
         DeliveryRoute::SidecarOnly => crate::daemon::proactive_egress::record_sidecar_only_once(
-            home,
-            wal_segment_path,
-            writer,
+            egress,
             item,
             queue_generation,
             target_channel,
-            now_unix,
         )
         .await
         .map_err(LiveRouteError::Durability),
@@ -498,7 +488,9 @@ async fn deliver_live_route(
                     token,
                     senders,
                     credentials.whatsapp_baileys_allowed_groups.as_deref(),
-                    home.join("channel-state/whatsapp-baileys-cursor.json"),
+                    egress
+                        .home()
+                        .join("channel-state/whatsapp-baileys-cursor.json"),
                 )
                 .map_err(|_| {
                     LiveRouteError::AdapterConfiguration(
@@ -539,7 +531,9 @@ async fn deliver_live_route(
                     token,
                     topic_capability,
                     allowed_senders,
-                    home.join(crate::channels::keet::DEFAULT_CURSOR_FILE),
+                    egress
+                        .home()
+                        .join(crate::channels::keet::DEFAULT_CURSOR_FILE),
                 )
                 .map_err(|_| {
                     LiveRouteError::AdapterConfiguration(
@@ -653,7 +647,7 @@ async fn deliver_live_route(
                     credentials.matrix_allowed_user_id.clone(),
                     credentials.matrix_allowed_room_ids.clone(),
                     credentials.matrix_requires_encryption(),
-                    writer.clone(),
+                    egress.writer().clone(),
                 ),
             );
             execute!(&room_id, channel)
@@ -712,7 +706,7 @@ async fn deliver_live_route(
                             "construct Google Chat proactive adapter: rejected".to_string(),
                         )
                     })?
-                    .with_allowlist(Some(allowed_sender), writer.clone()),
+                    .with_allowlist(Some(allowed_sender), egress.writer().clone()),
             );
             execute!(&space, channel)
         }
@@ -743,9 +737,19 @@ async fn run_proactive_sidecar_tick(
     home: &Path,
     wal_segment_path: &Path,
     writer: &WalWriterHandle,
+    accepted_config: Arc<crate::config::reload::AcceptedConfigSnapshot>,
     now_unix: i64,
 ) -> Result<usize, String> {
     use crate::proactive::ProactiveQueue;
+
+    let egress = crate::daemon::proactive_egress::ProactiveEgressContext::new(
+        home,
+        wal_segment_path,
+        writer,
+        accepted_config,
+        now_unix,
+        Duration::ZERO,
+    );
 
     crate::daemon::proactive_egress::recover_pending_claims(
         home,
@@ -775,13 +779,10 @@ async fn run_proactive_sidecar_tick(
             format!("validated proactive item produced an oversized {bytes}-byte target channel")
         })?;
         if crate::daemon::proactive_egress::record_sidecar_only_once(
-            home,
-            wal_segment_path,
-            writer,
+            &egress,
             item,
             &queue_generation,
             &target_channel,
-            now_unix,
         )
         .await?
         .is_some()
@@ -802,7 +803,32 @@ pub async fn run_proactive_delivery_tick(
     writer: &WalWriterHandle,
     now_unix: i64,
 ) -> Result<usize, String> {
+    let test_controller =
+        crate::config::reload::ReloadController::new(config.clone(), home.join("freedom.yaml"));
+    run_proactive_delivery_tick_with_accepted(
+        home,
+        wal_segment_path,
+        test_controller.accepted_snapshot(),
+        credentials,
+        writer,
+        now_unix,
+    )
+    .await
+}
+
+/// Production tick bound to one atomically accepted config generation.
+pub async fn run_proactive_delivery_tick_with_accepted(
+    home: &Path,
+    wal_segment_path: &Path,
+    accepted_config: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+    credentials: &Credentials,
+    writer: &WalWriterHandle,
+    now_unix: i64,
+) -> Result<usize, String> {
     use crate::proactive::ProactiveQueue;
+
+    let config = accepted_config.config();
+    let config = config.as_ref();
 
     // Recovery is deliberately first. No malformed config, disabled switch,
     // quiet-hours, idle policy or routing failure may strand an Armed claim.
@@ -893,6 +919,7 @@ pub async fn run_proactive_delivery_tick(
         home,
         wal_segment_path,
         writer,
+        Arc::clone(&accepted_config),
         now_unix,
         Duration::from_secs(config.proactive.delivery_attempt_timeout_secs),
     );
@@ -911,13 +938,10 @@ pub async fn run_proactive_delivery_tick(
                 );
                 let status =
                     crate::daemon::proactive_egress::record_adapter_configuration_error_once(
-                        home,
-                        wal_segment_path,
-                        writer,
+                        &egress,
                         item,
                         &queue_generation,
                         LOCAL_INBOX_CHANNEL,
-                        now_unix,
                     )
                     .await?;
                 if let Some(status) = status {
@@ -953,13 +977,10 @@ pub async fn run_proactive_delivery_tick(
                     "proactive adapter configuration rejected; settling this item as failed"
                 );
                 crate::daemon::proactive_egress::record_adapter_configuration_error_once(
-                    home,
-                    wal_segment_path,
-                    writer,
+                    &egress,
                     item_for_configuration_failure,
                     &queue_generation,
                     &target_channel,
-                    now_unix,
                 )
                 .await?
             }
@@ -974,16 +995,18 @@ pub async fn run_proactive_delivery_tick(
 /// reflection_cron pattern. Returns the JoinHandle the daemon's
 /// shutdown path can `.abort()`.
 ///
-/// Each tick reads `FreedomConfig` fresh so a mid-run `proactive.enabled` flip
-/// or autonomy change takes effect without a daemon restart. Recovery always
-/// runs first. Enabled items use the resolved live route; disabled items settle
-/// through the same WAL transaction as `SidecarOnly`, visible in the private
-/// CLI/GUI operator inbox without invoking external transport.
+/// Each tick captures the daemon `ReloadController`'s accepted configuration
+/// generation, so a completed reload changes `proactive.enabled` and autonomy
+/// without a restart while an unaccepted raw file edit has no effect authority.
+/// Recovery always runs first. Enabled items use the resolved live route;
+/// disabled items settle through the same WAL transaction as `SidecarOnly`,
+/// visible in the private CLI/GUI operator inbox without invoking transport.
 pub fn spawn_proactive_drain_loop(
     home: PathBuf,
     wal_segment_path: PathBuf,
     interval_secs: u64,
     writer: WalWriterHandle,
+    reload_controller: Arc<crate::config::reload::ReloadController>,
 ) -> JoinHandle<()> {
     let interval = Duration::from_secs(interval_secs.max(30));
     tokio::spawn(async move {
@@ -1012,27 +1035,49 @@ pub fn spawn_proactive_drain_loop(
                 );
                 continue;
             }
-            // One strict fresh snapshot per tick — honours mid-run changes
-            // without letting malformed policy masquerade as disabled defaults.
+            // The controller's atomically accepted generation, rather than a
+            // raw file poll, is the policy authority for every new egress.
+            let accepted_config = reload_controller.accepted_snapshot();
+            let accepted = accepted_config.config();
             let runtime = match crate::config::load_runtime_config_pair_from_path_or_default(
-                &home.join("freedom.yaml"),
+                reload_controller.source_path(),
             ) {
                 Ok(runtime) => runtime,
                 Err(error) => {
                     warn!(
                         error = %error,
-                        "proactive tick: config/credential snapshot invalid; delivery blocked fail-closed"
+                        "proactive tick: coherent config/credential pair invalid; delivery blocked fail-closed"
                     );
                     continue;
                 }
             };
-            let config = runtime.config;
+            // The pair supplies destinations and credentials together, but it
+            // has no authority until it exactly matches the controller's
+            // accepted configuration. Compare the serde-visible graph as the
+            // reloader does, then its serde-skipped runtime secret authority.
+            let accepted_yaml = serde_yaml::to_string(accepted.as_ref());
+            let loaded_yaml = serde_yaml::to_string(&runtime.config);
+            let pair_matches_accepted = matches!(
+                (accepted_yaml, loaded_yaml),
+                (Ok(accepted_yaml), Ok(loaded_yaml))
+                    if accepted_yaml == loaded_yaml
+                        && accepted.ssh_tunnels == runtime.config.ssh_tunnels
+            );
+            if !pair_matches_accepted {
+                warn!(
+                    accepted_epoch = accepted_config.epoch(),
+                    "proactive tick: coherent pair is not the accepted config generation; delivery blocked"
+                );
+                continue;
+            }
+            let config = accepted;
+            let credentials = runtime.credentials;
             if config.proactive.enabled {
-                match run_proactive_delivery_tick(
+                match run_proactive_delivery_tick_with_accepted(
                     &home,
                     &wal_segment_path,
-                    &config,
-                    &runtime.credentials,
+                    Arc::clone(&accepted_config),
+                    &credentials,
                     &writer,
                     now_unix,
                 )
@@ -1046,7 +1091,14 @@ pub fn spawn_proactive_drain_loop(
                 }
             } else {
                 // Gate off — sidecar-only drain (no channel send).
-                match run_proactive_sidecar_tick(&home, &wal_segment_path, &writer, now_unix).await
+                match run_proactive_sidecar_tick(
+                    &home,
+                    &wal_segment_path,
+                    &writer,
+                    Arc::clone(&accepted_config),
+                    now_unix,
+                )
+                .await
                 {
                     Ok(0) => tracing::debug!("proactive drain tick: nothing to deliver"),
                     Ok(n) => info!(
@@ -1342,6 +1394,7 @@ mod tests {
         ready.wait().await.unwrap();
         let mut config = FreedomConfig::default();
         config.proactive.enabled = true;
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
 
         assert_eq!(
             run_proactive_delivery_tick(

@@ -29,14 +29,17 @@ use crate::wal::writer::WalWriterHandle;
 pub const PROACTIVE_INFLIGHT_DIR: &str = "proactive_inflight";
 pub const PROACTIVE_DELIVERY_LOCK_FILE: &str = "proactive_delivery.lock";
 
-/// Claim/WAL v2 binds an absolute retry budget into the durable authority.
+/// Claim/WAL v3 binds an absolute retry budget and a durable final-admission
+/// receipt into the private recovery authority.
 ///
 /// Version one is deliberately still accepted for recovery: it cannot prove a
 /// bounded live attempt, so an Armed v1 claim without a terminal result is
 /// immediately settled as `CrashUnknown` rather than replayed.
-const CLAIM_VERSION: u8 = 2;
+const CLAIM_VERSION: u8 = 3;
+const PREVIOUS_CLAIM_VERSION: u8 = 2;
 const LEGACY_CLAIM_VERSION: u8 = 1;
-const WAL_BINDING_VERSION: u8 = 2;
+const WAL_BINDING_VERSION: u8 = 3;
+const PREVIOUS_WAL_BINDING_VERSION: u8 = 2;
 const LEGACY_WAL_BINDING_VERSION: u8 = 1;
 const MAX_CLAIMS: usize = 1_024;
 const MAX_CLAIM_DIRECTORY_ENTRIES: usize = 2_048;
@@ -341,8 +344,9 @@ impl ArmedClaimLease {
         claim: &ProactiveEgressClaim,
     ) -> Result<ArmedClaimLeaseProbe> {
         anyhow::ensure!(
-            claim.version == CLAIM_VERSION && claim.phase == ProactiveEgressPhase::Armed,
-            "only an Armed v2 proactive claim may acquire a transport lease"
+            matches!(claim.version, PREVIOUS_CLAIM_VERSION | CLAIM_VERSION)
+                && claim.phase == ProactiveEgressPhase::Armed,
+            "only an Armed v2/v3 proactive claim may acquire a transport lease"
         );
         let expected_name = claim_name(claim);
         anyhow::ensure!(
@@ -418,7 +422,7 @@ impl ArmedClaimLease {
     /// adapter data into a durable error path.
     fn validate_claim(&self, claim: &ProactiveEgressClaim) -> Result<()> {
         anyhow::ensure!(
-            claim.version == CLAIM_VERSION
+            matches!(claim.version, PREVIOUS_CLAIM_VERSION | CLAIM_VERSION)
                 && claim.phase == ProactiveEgressPhase::Armed
                 && claim.intent_id == self.intent_id
                 && claim.binding_sha256 == self.binding_sha256
@@ -450,6 +454,20 @@ pub(crate) enum ProactiveEgressPhase {
     Armed,
 }
 
+/// Private progress cache for the final local egress admission.  The cache is
+/// deliberately never authority: `ReceiptObserved` is revalidated against the
+/// authenticated primary-WAL prefix before any Intent, Armed transition, or
+/// provider call.  Only v3 claims carry this state; v1/v2 recovery preserves
+/// the historical pre-effect / CrashUnknown behaviour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TrustAdmissionState {
+    #[default]
+    NeverSubmitted,
+    AwaitingAuthenticatedReceipt,
+    ReceiptObserved,
+}
+
 /// Private recovery state. Raw body data is confined to current-user-only claim
 /// and operator-history files and never enters the WAL. Recipients, provider
 /// receipts and error evidence are never persisted there in cleartext.
@@ -479,6 +497,14 @@ pub(crate) struct ProactiveEgressClaim {
     /// frame, so a crash cannot extend an already-admitted transport budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt_deadline_unix: Option<i64>,
+    /// v3-only immutable final local authorization.  It binds the operation
+    /// id plus the exact channel/recipient/body/item/dedup/generation effect
+    /// identity without putting raw recipient or body material in the WAL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_admission: Option<crate::permissions::trust_ledger::TrustAdmissionDescriptor>,
+    /// v3 receipt cache; never a substitute for an authenticated WAL lookup.
+    #[serde(default)]
+    pub trust_admission_state: TrustAdmissionState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -491,6 +517,7 @@ pub enum ProactiveEgressOutcome {
     AdapterConfigurationError,
     SidecarOnly,
     PolicySuppressed,
+    PolicyChangedBeforeEffect,
     CrashUnknown,
     NotAttempted,
 }
@@ -500,7 +527,7 @@ impl ProactiveEgressOutcome {
         match self {
             Self::Delivered => ProactiveStatus::Delivered,
             Self::SidecarOnly => ProactiveStatus::SidecarOnly,
-            Self::PolicySuppressed => ProactiveStatus::Suppressed,
+            Self::PolicySuppressed | Self::PolicyChangedBeforeEffect => ProactiveStatus::Suppressed,
             Self::NotAttempted => ProactiveStatus::Suppressed,
             Self::TransportError
             | Self::AuthError
@@ -520,6 +547,7 @@ impl ProactiveEgressOutcome {
             Self::AdapterConfigurationError => "configuration_error",
             Self::SidecarOnly => "sidecar_only",
             Self::PolicySuppressed => "suppressed",
+            Self::PolicyChangedBeforeEffect => "policy_changed_before_effect",
             Self::CrashUnknown => "crash_unknown",
             Self::NotAttempted => "not_attempted",
         }
@@ -536,6 +564,7 @@ impl ProactiveEgressOutcome {
             }
             "sidecar_only" => Some(Self::SidecarOnly),
             "policy_suppressed" => Some(Self::PolicySuppressed),
+            "policy_changed_before_effect" => Some(Self::PolicyChangedBeforeEffect),
             "crash_unknown" => Some(Self::CrashUnknown),
             "not_attempted" => Some(Self::NotAttempted),
             _ => None,
@@ -548,7 +577,10 @@ impl ProactiveEgressOutcome {
             Self::TransportError | Self::AuthError | Self::RateLimited => "error",
             Self::AdapterConfigurationError => "error",
             Self::SidecarOnly => "notification",
-            Self::PolicySuppressed | Self::CrashUnknown | Self::NotAttempted => "alert",
+            Self::PolicySuppressed
+            | Self::PolicyChangedBeforeEffect
+            | Self::CrashUnknown
+            | Self::NotAttempted => "alert",
         }
     }
 
@@ -559,6 +591,7 @@ impl ProactiveEgressOutcome {
             Self::AdapterConfigurationError => "adapter configuration error",
             Self::SidecarOnly => "saved locally",
             Self::PolicySuppressed => "proactive suppressed",
+            Self::PolicyChangedBeforeEffect => "policy changed before effect",
             Self::CrashUnknown => "delivery unknown",
             Self::NotAttempted => "delivery not attempted",
         }
@@ -901,9 +934,9 @@ fn binding_hash(claim: &ProactiveEgressClaim) -> String {
     bytes.extend_from_slice(&claim.created_at_unix.to_be_bytes());
     match claim.version {
         LEGACY_CLAIM_VERSION => effect_hash(b"proactive-egress-binding-v1", &bytes),
-        CLAIM_VERSION => {
+        PREVIOUS_CLAIM_VERSION => {
             // Do not change the v1 preimage: existing persistent claims must
-            // continue to authenticate byte-for-byte.  The deadline is a
+            // continue to authenticate byte-for-byte. The deadline is a
             // mandatory v2 binding element and has no mutable recovery path.
             let Some(deadline) = claim.attempt_deadline_unix else {
                 // Validation rejects this state; keep hashing total so a
@@ -913,6 +946,28 @@ fn binding_hash(claim: &ProactiveEgressClaim) -> String {
             };
             bytes.extend_from_slice(&deadline.to_be_bytes());
             effect_hash(b"proactive-egress-binding-v2", &bytes)
+        }
+        CLAIM_VERSION => {
+            let Some(deadline) = claim.attempt_deadline_unix else {
+                return effect_hash(b"proactive-egress-binding-v3-invalid", &bytes);
+            };
+            bytes.extend_from_slice(&deadline.to_be_bytes());
+            bytes.push(match claim.trust_admission_state {
+                TrustAdmissionState::NeverSubmitted => 0,
+                TrustAdmissionState::AwaitingAuthenticatedReceipt => 1,
+                TrustAdmissionState::ReceiptObserved => 2,
+            });
+            match &claim.trust_admission {
+                Some(descriptor) => match serde_json::to_vec(descriptor) {
+                    Ok(encoded) => {
+                        bytes.extend_from_slice(&(encoded.len() as u64).to_be_bytes());
+                        bytes.extend_from_slice(&encoded);
+                    }
+                    Err(_) => return effect_hash(b"proactive-egress-binding-v3-invalid", &bytes),
+                },
+                None => bytes.extend_from_slice(&0u64.to_be_bytes()),
+            }
+            effect_hash(b"proactive-egress-binding-v3", &bytes)
         }
         _ => effect_hash(b"proactive-egress-binding-invalid", &bytes),
     }
@@ -990,15 +1045,25 @@ fn validate_claim(claim: &ProactiveEgressClaim, file_name: &str) -> Result<()> {
         "serialized proactive claim exceeds size limit"
     );
     anyhow::ensure!(
-        matches!(claim.version, LEGACY_CLAIM_VERSION | CLAIM_VERSION),
+        matches!(
+            claim.version,
+            LEGACY_CLAIM_VERSION | PREVIOUS_CLAIM_VERSION | CLAIM_VERSION
+        ),
         "unsupported proactive claim version"
     );
     match claim.version {
-        LEGACY_CLAIM_VERSION => anyhow::ensure!(
-            claim.attempt_deadline_unix.is_none(),
-            "legacy proactive claim unexpectedly carries an attempt deadline"
-        ),
-        CLAIM_VERSION => {
+        LEGACY_CLAIM_VERSION => {
+            anyhow::ensure!(
+                claim.attempt_deadline_unix.is_none(),
+                "legacy proactive claim unexpectedly carries an attempt deadline"
+            );
+            anyhow::ensure!(
+                claim.trust_admission.is_none()
+                    && claim.trust_admission_state == TrustAdmissionState::NeverSubmitted,
+                "legacy proactive claim unexpectedly carries a durable admission"
+            );
+        }
+        PREVIOUS_CLAIM_VERSION => {
             let deadline = claim
                 .attempt_deadline_unix
                 .context("v2 proactive claim is missing its attempt deadline")?;
@@ -1006,6 +1071,36 @@ fn validate_claim(claim: &ProactiveEgressClaim, file_name: &str) -> Result<()> {
                 deadline > claim.created_at_unix,
                 "proactive attempt deadline must be after claim creation"
             );
+            anyhow::ensure!(
+                claim.trust_admission.is_none()
+                    && claim.trust_admission_state == TrustAdmissionState::NeverSubmitted,
+                "v2 proactive claim unexpectedly carries a durable admission"
+            );
+        }
+        CLAIM_VERSION => {
+            let deadline = claim
+                .attempt_deadline_unix
+                .context("v3 proactive claim is missing its attempt deadline")?;
+            anyhow::ensure!(
+                deadline > claim.created_at_unix,
+                "proactive attempt deadline must be after claim creation"
+            );
+            match (&claim.trust_admission, claim.trust_admission_state) {
+                (None, TrustAdmissionState::NeverSubmitted) => {}
+                (Some(descriptor), TrustAdmissionState::AwaitingAuthenticatedReceipt)
+                | (Some(descriptor), TrustAdmissionState::ReceiptObserved) => descriptor
+                    .validate()
+                    .context("validate proactive durable trust admission")?,
+                (None, _) => {
+                    anyhow::bail!("v3 proactive admission state requires an immutable descriptor")
+                }
+                (Some(_), TrustAdmissionState::NeverSubmitted) => anyhow::bail!(
+                    "v3 proactive NeverSubmitted claim unexpectedly carries a descriptor"
+                ),
+            }
+            if let Some(descriptor) = claim.trust_admission.as_ref() {
+                validate_claim_trust_admission_binding(claim, descriptor)?;
+            }
         }
         _ => unreachable!("version was checked above"),
     }
@@ -1075,6 +1170,44 @@ fn validate_claim(claim: &ProactiveEgressClaim, file_name: &str) -> Result<()> {
     anyhow::ensure!(
         file_name == claim_name(claim),
         "proactive claim filename binding mismatch"
+    );
+    Ok(())
+}
+
+/// A v3 descriptor may have valid syntax and even an authenticated primary-WAL
+/// receipt while still belonging to a different local effect.  Do not let the
+/// mutable private claim hash turn such a copied receipt into authority: bind
+/// every consumer-owned field back to the immutable claim material here, at
+/// the common read/persist/effect validation boundary.
+fn validate_claim_trust_admission_binding(
+    claim: &ProactiveEgressClaim,
+    descriptor: &crate::permissions::trust_ledger::TrustAdmissionDescriptor,
+) -> Result<()> {
+    descriptor
+        .validate()
+        .context("validate proactive trust descriptor syntax")?;
+    anyhow::ensure!(
+        descriptor.subject() == crate::permissions::trust_ledger::LOCAL_SUBJECT,
+        "proactive trust descriptor subject is not local"
+    );
+    anyhow::ensure!(
+        descriptor.action() == crate::permissions::ActionKind::ProactiveChannelSend,
+        "proactive trust descriptor action is not ProactiveChannelSend"
+    );
+    anyhow::ensure!(
+        descriptor.operation_id_sha256() == trust_operation_id_sha256(claim),
+        "proactive trust descriptor operation does not bind this intent"
+    );
+    anyhow::ensure!(
+        descriptor.request_binding_sha256() == trust_request_binding_sha256(claim),
+        "proactive trust descriptor request binding does not bind this exact effect"
+    );
+    // This action has no lease scope. A descriptor carrying one could have
+    // been copied from a different action/context and must not authorize the
+    // first-party unsolicited egress path.
+    anyhow::ensure!(
+        descriptor.lease_id().is_none(),
+        "proactive trust descriptor unexpectedly carries a capability lease"
     );
     Ok(())
 }
@@ -1369,6 +1502,11 @@ where
                     };
                     let mut converted =
                         new_claim(item, &queue_generation, &target_channel, "", now_unix)?;
+                    // Raw pre-contract files carry no immutable final
+                    // admission descriptor. Preserve them as v2 recovery
+                    // data so the historical Armed -> CrashUnknown path
+                    // remains authoritative; never fabricate a v3 Allow.
+                    converted.version = PREVIOUS_CLAIM_VERSION;
                     converted.legacy_claim_sha256 = Some(legacy_digest);
                     // The old implementation may already have called transport.
                     // Conversion therefore starts pessimistically Armed and is
@@ -1476,7 +1614,7 @@ fn validate_intent_frame(intent: &ProactiveIntentFrame) -> Result<()> {
     anyhow::ensure!(
         matches!(
             intent.proactive_binding_version,
-            LEGACY_WAL_BINDING_VERSION | WAL_BINDING_VERSION
+            LEGACY_WAL_BINDING_VERSION | PREVIOUS_WAL_BINDING_VERSION | WAL_BINDING_VERSION
         ),
         "unsupported proactive intent binding version"
     );
@@ -1485,7 +1623,7 @@ fn validate_intent_frame(intent: &ProactiveIntentFrame) -> Result<()> {
             intent.attempt_deadline_unix.is_none(),
             "legacy proactive intent unexpectedly carries an attempt deadline"
         ),
-        WAL_BINDING_VERSION => anyhow::ensure!(
+        PREVIOUS_WAL_BINDING_VERSION | WAL_BINDING_VERSION => anyhow::ensure!(
             intent
                 .attempt_deadline_unix
                 .is_some_and(|deadline| deadline > intent.created_at_unix),
@@ -1526,7 +1664,7 @@ fn validate_armed_frame(armed: &ProactiveArmedFrame) -> Result<()> {
     anyhow::ensure!(
         matches!(
             armed.proactive_binding_version,
-            LEGACY_WAL_BINDING_VERSION | WAL_BINDING_VERSION
+            LEGACY_WAL_BINDING_VERSION | PREVIOUS_WAL_BINDING_VERSION | WAL_BINDING_VERSION
         ),
         "unsupported proactive Armed binding version"
     );
@@ -1571,7 +1709,7 @@ fn validate_result_frame(result: &ProactiveResultFrame) -> Result<()> {
     anyhow::ensure!(
         matches!(
             result.proactive_binding_version,
-            LEGACY_WAL_BINDING_VERSION | WAL_BINDING_VERSION
+            LEGACY_WAL_BINDING_VERSION | PREVIOUS_WAL_BINDING_VERSION | WAL_BINDING_VERSION
         ),
         "unsupported proactive result binding version"
     );
@@ -1641,6 +1779,7 @@ fn validate_result_frame(result: &ProactiveResultFrame) -> Result<()> {
         ),
         ProactiveEgressOutcome::AdapterConfigurationError
         | ProactiveEgressOutcome::PolicySuppressed
+        | ProactiveEgressOutcome::PolicyChangedBeforeEffect
         | ProactiveEgressOutcome::CrashUnknown
         | ProactiveEgressOutcome::NotAttempted => {
             anyhow::ensure!(
@@ -1710,6 +1849,7 @@ fn scan_wal_evidence(
                     .and_then(serde_json::Value::as_u64)
                     .is_some_and(|version| {
                         version == u64::from(LEGACY_WAL_BINDING_VERSION)
+                            || version == u64::from(PREVIOUS_WAL_BINDING_VERSION)
                             || version == u64::from(WAL_BINDING_VERSION)
                     }),
                 "unsupported proactive WAL binding version"
@@ -1849,6 +1989,13 @@ async fn append_intent(
     writer: &WalWriterHandle,
     claim: &ProactiveEgressClaim,
 ) -> Result<()> {
+    if claim.version == CLAIM_VERSION {
+        anyhow::ensure!(
+            claim.trust_admission_state == TrustAdmissionState::ReceiptObserved
+                && claim.trust_admission.is_some(),
+            "v3 proactive Intent requires an authenticated durable trust receipt"
+        );
+    }
     let intent = intent_frame(claim);
     validate_intent_frame(&intent)?;
     let payload = serde_json::to_vec(&intent).context("encode proactive intent")?;
@@ -1866,6 +2013,15 @@ async fn append_armed(
     writer: &WalWriterHandle,
     claim: &ProactiveEgressClaim,
 ) -> Result<()> {
+    if claim.version == CLAIM_VERSION {
+        anyhow::ensure!(
+            claim.trust_admission_state == TrustAdmissionState::ReceiptObserved
+                && claim.trust_admission.as_ref().is_some_and(|descriptor| {
+                    descriptor.outcome() == crate::permissions::trust_ledger::TrustOutcome::Allowed
+                }),
+            "v3 proactive Armed transition requires an authenticated allowed trust receipt"
+        );
+    }
     let armed = armed_frame(claim)?;
     validate_armed_frame(&armed)?;
     let payload = serde_json::to_vec(&armed).context("encode proactive Armed transition")?;
@@ -2511,6 +2667,7 @@ fn verify_delivery_record_against_wal(
         | ProactiveEgressOutcome::CrashUnknown => true,
         ProactiveEgressOutcome::AdapterConfigurationError
         | ProactiveEgressOutcome::PolicySuppressed
+        | ProactiveEgressOutcome::PolicyChangedBeforeEffect
         | ProactiveEgressOutcome::NotAttempted => false,
         ProactiveEgressOutcome::SidecarOnly => result.error_kind.is_some(),
     };
@@ -2912,7 +3069,10 @@ fn cron_status(outcome: ProactiveEgressOutcome) -> crate::cron::state::DeliveryS
     match outcome {
         ProactiveEgressOutcome::Delivered => crate::cron::state::DeliveryStatus::Delivered,
         ProactiveEgressOutcome::SidecarOnly => crate::cron::state::DeliveryStatus::SidecarOnly,
-        ProactiveEgressOutcome::PolicySuppressed => crate::cron::state::DeliveryStatus::Skipped,
+        ProactiveEgressOutcome::PolicySuppressed
+        | ProactiveEgressOutcome::PolicyChangedBeforeEffect => {
+            crate::cron::state::DeliveryStatus::Skipped
+        }
         ProactiveEgressOutcome::NotAttempted => crate::cron::state::DeliveryStatus::Skipped,
         ProactiveEgressOutcome::CrashUnknown => crate::cron::state::DeliveryStatus::CrashUnknown,
         ProactiveEgressOutcome::TransportError
@@ -3034,9 +3194,22 @@ async fn persist_armed_claim(
     claim_file: &BoundClaimFile,
     claim: &ProactiveEgressClaim,
 ) -> Result<()> {
+    persist_claim_update(delivery_lock, claim_file, claim, "Armed").await
+}
+
+/// Atomically replace one already-bound private claim generation.  Every v3
+/// durable-admission transition uses this same identity-preserving path: the
+/// descriptor and `AwaitingAuthenticatedReceipt` state therefore become
+/// durable together before the writer-owned once operation is submitted.
+async fn persist_claim_update(
+    delivery_lock: &std::fs::File,
+    claim_file: &BoundClaimFile,
+    claim: &ProactiveEgressClaim,
+    label: &'static str,
+) -> Result<()> {
     let cancellation_lock = delivery_lock
         .try_clone()
-        .context("clone proactive delivery lock for Armed claim")?;
+        .with_context(|| format!("clone proactive delivery lock for {label} claim"))?;
     let claim = claim.clone();
     let root = Arc::clone(&claim_file.root);
     let name = claim_file.name.clone();
@@ -3044,25 +3217,31 @@ async fn persist_armed_claim(
     #[cfg(windows)]
     claim_file
         .release_current_for_atomic_replace()
-        .context("release revalidated Prepared proactive claim before arming")?;
+        .with_context(|| format!("release revalidated proactive claim before {label}"))?;
     #[cfg(not(windows))]
     claim_file
         .ensure_current()
-        .context("revalidate Prepared proactive claim before arming")?;
+        .with_context(|| format!("revalidate proactive claim before {label}"))?;
     tokio::task::spawn_blocking(move || {
         let _cancellation_lock = cancellation_lock;
-        let armed = serde_json::to_vec(&claim).context("encode Armed proactive claim")?;
-        crate::skills::store::atomic_write_private_child(&root.dir, &name, &display_path, &armed)
-            .context("durably arm capability-bound proactive claim")?;
-        let rebound = bind_written_claim(root, name, &armed)?;
+        let claim_name_text = name
+            .to_str()
+            .context("updated proactive claim name is not UTF-8")?;
+        validate_claim(&claim, claim_name_text)
+            .with_context(|| format!("validate {label} proactive claim before publication"))?;
+        let encoded = serde_json::to_vec(&claim)
+            .with_context(|| format!("encode {label} proactive claim"))?;
+        crate::skills::store::atomic_write_private_child(&root.dir, &name, &display_path, &encoded)
+            .with_context(|| format!("durably publish {label} proactive claim"))?;
+        let rebound = bind_written_claim(root, name, &encoded)?;
         rebound
             .removal_binding
             .into_inner()
             .map_err(|_| anyhow::anyhow!("proactive claim removal binding lock poisoned"))?
-            .context("Armed proactive claim binding missing")
+            .with_context(|| format!("{label} proactive claim binding missing"))
     })
     .await
-    .context("join Armed proactive claim persistence")?
+    .with_context(|| format!("join {label} proactive claim persistence"))?
     .and_then(|binding| claim_file.replace_binding(binding))
 }
 
@@ -3111,7 +3290,7 @@ async fn has_unexpired_inflight_dedup(
         for (claim_file, claim) in read_claims(&home, now_unix)? {
             if claim.dedup_sha256 != dedup_sha256
                 || claim.phase != ProactiveEgressPhase::Armed
-                || claim.version != CLAIM_VERSION
+                || !matches!(claim.version, PREVIOUS_CLAIM_VERSION | CLAIM_VERSION)
             {
                 continue;
             }
@@ -3245,9 +3424,201 @@ fn new_claim_with_deadline(
         target_channel: target_channel.to_string(),
         created_at_unix: now_unix,
         attempt_deadline_unix: Some(attempt_deadline_unix),
+        trust_admission: None,
+        trust_admission_state: TrustAdmissionState::NeverSubmitted,
     };
     claim.binding_sha256 = binding_hash(&claim);
     Ok(claim)
+}
+
+fn trust_operation_id_sha256(claim: &ProactiveEgressClaim) -> String {
+    effect_hash(b"proactive-trust-operation-v1", claim.intent_id.as_bytes())
+}
+
+/// Complete immutable local effect identity for the final trust decision. The
+/// raw provider recipient and body remain in the private claim; the WAL and
+/// TrustDecision retain only this domain-separated digest.
+fn trust_request_binding_sha256(claim: &ProactiveEgressClaim) -> String {
+    let mut bytes = Vec::with_capacity(512);
+    for value in [
+        claim.target_channel.as_bytes(),
+        claim.recipient_sha256.as_bytes(),
+        claim.message_sha256.as_bytes(),
+        claim.item_sha256.as_bytes(),
+        claim.dedup_sha256.as_bytes(),
+        claim.queue_generation.as_bytes(),
+    ] {
+        bytes.extend_from_slice(&(value.len() as u64).to_be_bytes());
+        bytes.extend_from_slice(value);
+    }
+    effect_hash(b"proactive-trust-binding-v1", &bytes)
+}
+
+/// Persist the immutable Gate result before the writer-owned once operation,
+/// then treat an authenticated receipt as the only authority for following
+/// Intent/Armed/provider boundaries.  `Awaiting...` retries the exact old
+/// descriptor and never calls Gate again.
+async fn ensure_trust_admission_receipt(
+    delivery_lock: &std::fs::File,
+    home: &Path,
+    writer: &WalWriterHandle,
+    policy: &crate::permissions::AutonomyPolicySnapshot,
+    claim_file: &BoundClaimFile,
+    claim: &mut ProactiveEgressClaim,
+) -> Result<crate::permissions::trust_ledger::TrustOutcome> {
+    anyhow::ensure!(
+        claim.version == CLAIM_VERSION,
+        "durable trust admission requires a v3 proactive claim"
+    );
+    validate_claim(claim, &claim_name(claim))
+        .context("validate proactive claim before durable admission")?;
+    let descriptor = match claim.trust_admission_state {
+        TrustAdmissionState::NeverSubmitted => {
+            anyhow::ensure!(
+                claim.trust_admission.is_none(),
+                "NeverSubmitted proactive claim already has a descriptor"
+            );
+            let action = crate::permissions::Action::ProactiveChannelSend {
+                channel: claim.target_channel.clone(),
+            };
+            let descriptor = crate::permissions::Gate::for_policy(policy.clone())
+                .with_confirm(crate::permissions::ConfirmStrategy::FailClosed)
+                .resolve_trust_admission(
+                    &action,
+                    &trust_operation_id_sha256(claim),
+                    &trust_request_binding_sha256(claim),
+                )
+                .await
+                .context("resolve durable proactive trust admission")?;
+            claim.trust_admission = Some(descriptor);
+            claim.trust_admission_state = TrustAdmissionState::AwaitingAuthenticatedReceipt;
+            claim.binding_sha256 = binding_hash(claim);
+            persist_claim_update(
+                delivery_lock,
+                claim_file,
+                claim,
+                "AwaitingAuthenticatedReceipt",
+            )
+            .await
+            .context("persist proactive durable trust descriptor")?;
+            claim
+                .trust_admission
+                .as_ref()
+                .expect("persisted descriptor is present")
+                .clone()
+        }
+        TrustAdmissionState::AwaitingAuthenticatedReceipt
+        | TrustAdmissionState::ReceiptObserved => claim
+            .trust_admission
+            .as_ref()
+            .context("proactive durable trust state has no descriptor")?
+            .clone(),
+    };
+    descriptor
+        .validate()
+        .context("validate proactive durable trust descriptor before receipt")?;
+    if claim.trust_admission_state == TrustAdmissionState::ReceiptObserved {
+        if matches!(
+            crate::permissions::find_authenticated_decision_at_home(home, &descriptor)?,
+            crate::permissions::AuthenticatedDecisionLookup::Exact { .. }
+        ) {
+            return Ok(descriptor.outcome());
+        }
+        // A private cache is never receipt authority. Preserve the descriptor,
+        // clear the optimistic cache atomically, and block this invocation;
+        // only a later Awaiting reconciliation may submit the old descriptor
+        // to the writer-owned once operation.
+        claim.trust_admission_state = TrustAdmissionState::AwaitingAuthenticatedReceipt;
+        claim.binding_sha256 = binding_hash(claim);
+        persist_claim_update(
+            delivery_lock,
+            claim_file,
+            claim,
+            "AwaitingAuthenticatedReceipt",
+        )
+        .await
+        .context("clear stale proactive trust receipt cache")?;
+        anyhow::bail!("proactive cached trust receipt is not an exact authenticated WAL receipt");
+    }
+    crate::permissions::audit_trust_admission_once(
+        crate::permissions::PermissionAuditSink::Writer(writer),
+        home,
+        &descriptor,
+    )
+    .await
+    .map_err(|error| {
+        anyhow::anyhow!("durable proactive trust receipt is indeterminate: {error:?}")
+    })?;
+    if claim.trust_admission_state != TrustAdmissionState::ReceiptObserved {
+        claim.trust_admission_state = TrustAdmissionState::ReceiptObserved;
+        claim.binding_sha256 = binding_hash(claim);
+        persist_claim_update(delivery_lock, claim_file, claim, "ReceiptObserved")
+            .await
+            .context("persist proactive authenticated trust receipt cache")?;
+    }
+    Ok(descriptor.outcome())
+}
+
+/// Recovery-only half of durable admission. It never resolves a fresh Gate
+/// decision: an old queued writer request may still own this exact operation,
+/// so reconciliation is confined to the writer-owned once primitive.
+async fn reconcile_persisted_trust_admission(
+    delivery_lock: &std::fs::File,
+    home: &Path,
+    writer: &WalWriterHandle,
+    claim_file: &BoundClaimFile,
+    claim: &mut ProactiveEgressClaim,
+) -> Result<crate::permissions::trust_ledger::TrustOutcome> {
+    anyhow::ensure!(
+        claim.version == CLAIM_VERSION
+            && matches!(
+                claim.trust_admission_state,
+                TrustAdmissionState::AwaitingAuthenticatedReceipt
+                    | TrustAdmissionState::ReceiptObserved
+            ),
+        "recovery may reconcile only an already-persisted v3 trust descriptor"
+    );
+    validate_claim(claim, &claim_name(claim))
+        .context("validate recovered proactive claim before receipt reconciliation")?;
+    let descriptor = claim
+        .trust_admission
+        .as_ref()
+        .context("persisted proactive trust state has no descriptor")?
+        .clone();
+    if claim.trust_admission_state == TrustAdmissionState::ReceiptObserved {
+        if matches!(
+            crate::permissions::find_authenticated_decision_at_home(home, &descriptor)?,
+            crate::permissions::AuthenticatedDecisionLookup::Exact { .. }
+        ) {
+            return Ok(descriptor.outcome());
+        }
+        claim.trust_admission_state = TrustAdmissionState::AwaitingAuthenticatedReceipt;
+        claim.binding_sha256 = binding_hash(claim);
+        persist_claim_update(
+            delivery_lock,
+            claim_file,
+            claim,
+            "AwaitingAuthenticatedReceipt",
+        )
+        .await
+        .context("clear stale recovered proactive trust receipt cache")?;
+        anyhow::bail!("recovered proactive trust receipt cache is not exact in authenticated WAL");
+    }
+    crate::permissions::audit_trust_admission_once(
+        crate::permissions::PermissionAuditSink::Writer(writer),
+        home,
+        &descriptor,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("reconcile proactive trust receipt: {error:?}"))?;
+    if claim.trust_admission_state != TrustAdmissionState::ReceiptObserved {
+        claim.trust_admission_state = TrustAdmissionState::ReceiptObserved;
+        claim.binding_sha256 = binding_hash(claim);
+        persist_claim_update(delivery_lock, claim_file, claim, "ReceiptObserved")
+            .await
+            .context("persist recovered proactive trust receipt cache")?;
+    }
+    Ok(descriptor.outcome())
 }
 
 async fn acquire_delivery_lock(home: &Path) -> Result<std::fs::File> {
@@ -3302,7 +3673,7 @@ async fn recover_pending_claims_locked(
         return Ok(0);
     }
     let mut recovered = 0usize;
-    for (claim_file, claim) in claims {
+    for (claim_file, mut claim) in claims {
         let intent = evidence.intents.get(&claim.intent_id);
         let armed = evidence.armed.get(&claim.intent_id);
         let result = evidence.results.get(&claim.intent_id);
@@ -3364,6 +3735,49 @@ async fn recover_pending_claims_locked(
                 continue;
             }
         }
+        // v3 has persisted a complete final-local descriptor before it can
+        // hand work to the once writer.  Recover that descriptor through the
+        // same writer-owned operation, never through a fresh Gate call. There
+        // is no configured adapter/context here, so a recovered pre-effect
+        // allow is settled as NotAttempted and its queue generation may enter
+        // later as a brand-new v3 operation; it is never silently resent.
+        if claim.version == CLAIM_VERSION
+            && claim.phase == ProactiveEgressPhase::Prepared
+            && intent.is_none()
+            && matches!(
+                claim.trust_admission_state,
+                TrustAdmissionState::AwaitingAuthenticatedReceipt
+                    | TrustAdmissionState::ReceiptObserved
+            )
+        {
+            let outcome = reconcile_persisted_trust_admission(
+                delivery_lock,
+                home,
+                writer,
+                &claim_file,
+                &mut claim,
+            )
+            .await?;
+            append_intent(delivery_lock, writer, &claim).await?;
+            let outcome = if outcome == crate::permissions::trust_ledger::TrustOutcome::Allowed {
+                ProactiveEgressOutcome::NotAttempted
+            } else {
+                ProactiveEgressOutcome::PolicySuppressed
+            };
+            let terminal = terminal_result(&claim, outcome, None, None, now_unix);
+            append_result(delivery_lock, writer, &terminal).await?;
+            apply_projections_blocking(
+                delivery_lock,
+                home,
+                wal_segment_path,
+                claim_file,
+                &claim,
+                &terminal,
+            )
+            .await?;
+            recovered += 1;
+            continue;
+        }
         claim_file
             .ensure_current()
             .context("revalidate recovered proactive claim before WAL reconciliation")?;
@@ -3391,7 +3805,7 @@ async fn recover_pending_claims_locked(
         // this process observes a wall-clock jump. Probe the exact, bound
         // Armed inode before applying any v2 expiry rule: Busy means that
         // process still owns the attempt, regardless of `now_unix`.
-        let armed_claim_lease = if claim.version == CLAIM_VERSION
+        let armed_claim_lease = if matches!(claim.version, PREVIOUS_CLAIM_VERSION | CLAIM_VERSION)
             && claim.phase == ProactiveEgressPhase::Armed
             && intent.is_some()
             && armed.is_some()
@@ -3453,7 +3867,7 @@ async fn recover_pending_claims_locked(
                 .await?;
             }
             (Some(_), Some(_), None)
-                if claim.version == CLAIM_VERSION
+                if matches!(claim.version, PREVIOUS_CLAIM_VERSION | CLAIM_VERSION)
                     && claim
                         .attempt_deadline_unix
                         .is_some_and(|deadline| now_unix < deadline) =>
@@ -3545,6 +3959,12 @@ pub(crate) struct ProactiveEgressContext<'a> {
     home: &'a Path,
     wal_segment_path: &'a Path,
     writer: &'a WalWriterHandle,
+    /// Dispatcher-owned immutable policy from the coherent config/credential
+    /// snapshot selected for this tick. It is only used for the one durable
+    /// Gate resolution; transport re-reads the actual home config before its
+    /// first effect and refuses a changed fingerprint.
+    policy: crate::permissions::AutonomyPolicySnapshot,
+    accepted_config: Arc<crate::config::reload::AcceptedConfigSnapshot>,
     now_unix: i64,
     /// Dispatcher-provided, configuration-bounded duration for one live
     /// provider attempt. The durable claim receives its absolute UTC deadline
@@ -3557,6 +3977,7 @@ impl<'a> ProactiveEgressContext<'a> {
         home: &'a Path,
         wal_segment_path: &'a Path,
         writer: &'a WalWriterHandle,
+        accepted_config: Arc<crate::config::reload::AcceptedConfigSnapshot>,
         now_unix: i64,
         delivery_attempt_timeout: Duration,
     ) -> Self {
@@ -3564,6 +3985,8 @@ impl<'a> ProactiveEgressContext<'a> {
             home,
             wal_segment_path,
             writer,
+            policy: accepted_config.config().autonomy_policy(),
+            accepted_config,
             now_unix,
             delivery_attempt_timeout,
         }
@@ -3579,6 +4002,14 @@ impl<'a> ProactiveEgressContext<'a> {
 
     pub(crate) fn writer(&self) -> &'a WalWriterHandle {
         self.writer
+    }
+
+    pub(crate) fn policy(&self) -> &crate::permissions::AutonomyPolicySnapshot {
+        &self.policy
+    }
+
+    pub(crate) fn accepted_config(&self) -> &crate::config::reload::AcceptedConfigSnapshot {
+        self.accepted_config.as_ref()
     }
 
     pub(crate) fn now_unix(&self) -> i64 {
@@ -3631,6 +4062,7 @@ struct OwnedTransportAttempt {
     // cross-process authority exactly when that future actually stops—not
     // when an asynchronous JoinHandle happens to be reaped later.
     armed_claim_lease: Option<Arc<ArmedClaimLease>>,
+    generation_effect_lease: Option<Arc<crate::config::reload::GenerationEffectLease>>,
 }
 
 enum OwnedTransportOutcome {
@@ -3647,9 +4079,11 @@ impl OwnedTransportAttempt {
         body: String,
         deadline: tokio::time::Instant,
         armed_claim_lease: Arc<ArmedClaimLease>,
+        generation_effect_lease: Arc<crate::config::reload::GenerationEffectLease>,
     ) -> Self {
         let runtime = tokio::runtime::Handle::current();
         let task_lease = Arc::clone(&armed_claim_lease);
+        let task_generation_lease = Arc::clone(&generation_effect_lease);
         Self {
             handle: Some(runtime.spawn(async move {
                 // The post-admission caller has a fast-path check too, but
@@ -3670,10 +4104,16 @@ impl OwnedTransportAttempt {
                 // Keep the Arc observable across the await rather than
                 // relying on compiler liveness after its last validation use.
                 drop(task_lease);
+                // This clone is the live-effect authority.  On outer
+                // cancellation it remains held until Tokio has actually
+                // destroyed this provider future, independently of when the
+                // cancellation reaper later joins its handle.
+                drop(task_generation_lease);
                 result
             })),
             registration: Some(registration),
             armed_claim_lease: Some(armed_claim_lease),
+            generation_effect_lease: Some(generation_effect_lease),
         }
     }
 
@@ -3685,6 +4125,7 @@ impl OwnedTransportAttempt {
         // Do not release early: a second process can observe a forward wall
         // clock while this task is waiting for its Result WAL ACK.
         drop(self.armed_claim_lease.take());
+        drop(self.generation_effect_lease.take());
         drop(self.registration.take());
     }
 
@@ -3739,6 +4180,11 @@ impl Drop for OwnedTransportAttempt {
                 .registration
                 .take()
                 .expect("live transport must retain its local intent registration");
+            // Do not move the owner clone into the passive reaper. The task
+            // clone is retained across provider I/O and drops only when
+            // cancellation teardown has stopped that future; retaining this
+            // clone would make a last-task abort wait for a future tick.
+            drop(self.generation_effect_lease.take());
             match CANCELLED_TRANSPORT_REAP_QUEUE.lock() {
                 Ok(mut queue) => queue.push(CancelledTransportHandle {
                     handle,
@@ -3853,7 +4299,14 @@ pub(crate) async fn execute_claimed_once(
     // generation validation and all irreversible durable pre-transport ACKs;
     // provider I/O happens after the lock is dropped so unrelated deliveries
     // can make progress.
-    let (claim, claim_file, transport_deadline, armed_claim_lease, registration) = {
+    let (
+        claim,
+        claim_file,
+        transport_deadline,
+        armed_claim_lease,
+        registration,
+        generation_effect_lease,
+    ) = {
         let delivery_lock = acquire_delivery_lock(home)
             .await
             .map_err(|error| format!("acquire proactive delivery lock: {error:#}"))?;
@@ -3911,6 +4364,79 @@ pub(crate) async fn execute_claimed_once(
         let claim_file = persist_prepared_claim(&delivery_lock, home, &claim)
             .await
             .map_err(|error| format!("persist Prepared proactive claim: {error:#}"))?;
+        let trust_outcome = ensure_trust_admission_receipt(
+            &delivery_lock,
+            home,
+            writer,
+            context.policy(),
+            &claim_file,
+            &mut claim,
+        )
+        .await
+        .map_err(|error| format!("persist proactive durable trust admission: {error:#}"))?;
+        if trust_outcome != crate::permissions::trust_ledger::TrustOutcome::Allowed {
+            append_intent(&delivery_lock, writer, &claim)
+                .await
+                .map_err(|error| format!("append denied proactive intent: {error:#}"))?;
+            let result = terminal_result(
+                &claim,
+                ProactiveEgressOutcome::PolicySuppressed,
+                None,
+                None,
+                admission_now_unix,
+            );
+            append_result(&delivery_lock, writer, &result)
+                .await
+                .map_err(|error| format!("append denied proactive result: {error:#}"))?;
+            apply_projections_blocking(
+                &delivery_lock,
+                home,
+                wal_segment_path,
+                claim_file,
+                &claim,
+                &result,
+            )
+            .await
+            .map_err(|error| format!("project denied proactive result: {error:#}"))?;
+            return Ok(Some(ProactiveStatus::Suppressed));
+        }
+        // The generation gate is the live policy authority.  A raw config
+        // file read cannot prove that a concurrent reload accepted that value.
+        // Retiring the captured generation closes this admission before the
+        // replacement policy is published.
+        let generation_effect_lease = match context.accepted_config().acquire_egress_leaf() {
+            Ok(lease) => Arc::new(lease),
+            Err(_) => {
+                append_intent(&delivery_lock, writer, &claim)
+                    .await
+                    .map_err(|error| {
+                        format!("append retired-generation proactive intent: {error:#}")
+                    })?;
+                let result = terminal_result(
+                    &claim,
+                    ProactiveEgressOutcome::PolicyChangedBeforeEffect,
+                    None,
+                    None,
+                    admission_now_unix,
+                );
+                append_result(&delivery_lock, writer, &result)
+                    .await
+                    .map_err(|error| {
+                        format!("append policy-changed proactive result: {error:#}")
+                    })?;
+                apply_projections_blocking(
+                    &delivery_lock,
+                    home,
+                    wal_segment_path,
+                    claim_file,
+                    &claim,
+                    &result,
+                )
+                .await
+                .map_err(|error| format!("project policy-changed proactive result: {error:#}"))?;
+                return Ok(Some(ProactiveStatus::Suppressed));
+            }
+        };
         append_intent(&delivery_lock, writer, &claim)
             .await
             .map_err(|error| format!("append proactive intent: {error:#}"))?;
@@ -3947,6 +4473,7 @@ pub(crate) async fn execute_claimed_once(
             transport_deadline,
             armed_claim_lease,
             registration,
+            generation_effect_lease,
         )
     };
     if tokio::time::Instant::now() >= transport_deadline {
@@ -3960,6 +4487,7 @@ pub(crate) async fn execute_claimed_once(
         claim.item.body.clone(),
         transport_deadline,
         armed_claim_lease,
+        generation_effect_lease,
     );
     let completed = transport.finish_before(transport_deadline).await;
     // Capture this only after the transport task either returned or was
@@ -4039,15 +4567,18 @@ pub(crate) async fn execute_claimed_once(
 /// Settle a configured-but-unavailable route through the same durable
 /// intent/result/projection chain without invoking a transport.
 async fn record_without_transport_once(
-    home: &Path,
-    wal_segment_path: &Path,
-    writer: &WalWriterHandle,
+    context: &ProactiveEgressContext<'_>,
     item: ProactiveItem,
     queue_generation: &str,
     target_channel: &str,
     outcome: ProactiveEgressOutcome,
-    now_unix: i64,
 ) -> Result<Option<ProactiveStatus>, String> {
+    let home = context.home();
+    let wal_segment_path = context.wal_segment_path();
+    let writer = context.writer();
+    let policy = context.policy();
+    let accepted_config = context.accepted_config();
+    let now_unix = context.now_unix();
     let delivery_lock = acquire_delivery_lock(home)
         .await
         .map_err(|error| format!("acquire proactive sidecar lock: {error:#}"))?;
@@ -4063,14 +4594,55 @@ async fn record_without_transport_once(
     if !generation_matches {
         return Ok(None);
     }
-    let claim = new_claim(item, queue_generation, target_channel, "", now_unix)
+    let mut claim = new_claim(item, queue_generation, target_channel, "", now_unix)
         .map_err(|error| format!("bind sidecar proactive claim: {error:#}"))?;
     let claim_file = persist_prepared_claim(&delivery_lock, home, &claim)
         .await
         .map_err(|error| format!("persist sidecar proactive claim: {error:#}"))?;
+    let trust_outcome = ensure_trust_admission_receipt(
+        &delivery_lock,
+        home,
+        writer,
+        policy,
+        &claim_file,
+        &mut claim,
+    )
+    .await
+    .map_err(|error| format!("persist no-effect proactive trust admission: {error:#}"))?;
+    let outcome = if trust_outcome == crate::permissions::trust_ledger::TrustOutcome::Allowed {
+        match accepted_config.acquire_egress_leaf() {
+            Ok(lease) => {
+                // A no-effect route holds the same generation authority until
+                // its Result ACK is durable, then releases it at this scope's
+                // terminal boundary.
+                append_intent(&delivery_lock, writer, &claim)
+                    .await
+                    .map_err(|error| format!("append sidecar proactive intent: {error:#}"))?;
+                let result = terminal_result(&claim, outcome, None, None, now_unix);
+                append_result(&delivery_lock, writer, &result)
+                    .await
+                    .map_err(|error| format!("append sidecar proactive result: {error:#}"))?;
+                apply_projections_blocking(
+                    &delivery_lock,
+                    home,
+                    wal_segment_path,
+                    claim_file,
+                    &claim,
+                    &result,
+                )
+                .await
+                .map_err(|error| format!("project sidecar proactive result: {error:#}"))?;
+                drop(lease);
+                return Ok(Some(outcome.status()));
+            }
+            Err(_) => ProactiveEgressOutcome::PolicyChangedBeforeEffect,
+        }
+    } else {
+        ProactiveEgressOutcome::PolicySuppressed
+    };
     append_intent(&delivery_lock, writer, &claim)
         .await
-        .map_err(|error| format!("append sidecar proactive intent: {error:#}"))?;
+        .map_err(|error| format!("append no-effect proactive intent: {error:#}"))?;
     let result = terminal_result(&claim, outcome, None, None, now_unix);
     append_result(&delivery_lock, writer, &result)
         .await
@@ -4092,23 +4664,17 @@ async fn record_without_transport_once(
 /// configured live adapter. This is a first-class terminal outcome, not a
 /// transport failure.
 pub(crate) async fn record_sidecar_only_once(
-    home: &Path,
-    wal_segment_path: &Path,
-    writer: &WalWriterHandle,
+    context: &ProactiveEgressContext<'_>,
     item: ProactiveItem,
     queue_generation: &str,
     target_channel: &str,
-    now_unix: i64,
 ) -> Result<Option<ProactiveStatus>, String> {
     record_without_transport_once(
-        home,
-        wal_segment_path,
-        writer,
+        context,
         item,
         queue_generation,
         target_channel,
         ProactiveEgressOutcome::SidecarOnly,
-        now_unix,
     )
     .await
 }
@@ -4117,23 +4683,17 @@ pub(crate) async fn record_sidecar_only_once(
 /// projection. It must not be confused with a pre-dispatch crash, which is
 /// retryable and uses `NotAttempted`.
 pub(crate) async fn record_policy_suppressed_once(
-    home: &Path,
-    wal_segment_path: &Path,
-    writer: &WalWriterHandle,
+    context: &ProactiveEgressContext<'_>,
     item: ProactiveItem,
     queue_generation: &str,
     target_channel: &str,
-    now_unix: i64,
 ) -> Result<Option<ProactiveStatus>, String> {
     record_without_transport_once(
-        home,
-        wal_segment_path,
-        writer,
+        context,
         item,
         queue_generation,
         target_channel,
         ProactiveEgressOutcome::PolicySuppressed,
-        now_unix,
     )
     .await
 }
@@ -4142,23 +4702,17 @@ pub(crate) async fn record_policy_suppressed_once(
 /// before transport admission. The failure remains item-specific and visible,
 /// while claim/WAL/projection failures still stop the dispatcher globally.
 pub(crate) async fn record_adapter_configuration_error_once(
-    home: &Path,
-    wal_segment_path: &Path,
-    writer: &WalWriterHandle,
+    context: &ProactiveEgressContext<'_>,
     item: ProactiveItem,
     queue_generation: &str,
     target_channel: &str,
-    now_unix: i64,
 ) -> Result<Option<ProactiveStatus>, String> {
     record_without_transport_once(
-        home,
-        wal_segment_path,
-        writer,
+        context,
         item,
         queue_generation,
         target_channel,
         ProactiveEgressOutcome::AdapterConfigurationError,
-        now_unix,
     )
     .await
 }
@@ -4177,6 +4731,9 @@ pub(crate) fn delivery_record_for_gui_test() -> ProactiveDeliveryRecord {
     };
     let mut claim = new_claim(item, "gui-generation", "telegram", "123456", 1_700_000_000)
         .expect("build GUI proactive delivery fixture");
+    // GUI contract fixture models the historical authenticated projection;
+    // it intentionally has no writer-owned durable admission receipt.
+    claim.version = PREVIOUS_CLAIM_VERSION;
     claim.phase = ProactiveEgressPhase::Armed;
     claim.binding_sha256 = binding_hash(&claim);
     let receipt = MessageId("provider-receipt".to_string());
@@ -4195,6 +4752,34 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn test_full_policy() -> crate::permissions::AutonomyPolicySnapshot {
+        crate::permissions::AutonomyPolicySnapshot::builtin(crate::permissions::AutonomyLevel::Full)
+            .expect("Full has a builtin policy")
+    }
+
+    fn test_accepted_config(home: &Path) -> Arc<crate::config::reload::AcceptedConfigSnapshot> {
+        let mut config = crate::config::FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
+        crate::config::reload::ReloadController::new(config, home.join("freedom.yaml"))
+            .accepted_snapshot()
+    }
+
+    fn test_egress_context<'a>(
+        home: &'a Path,
+        segment: &'a Path,
+        writer: &'a WalWriterHandle,
+        now_unix: i64,
+    ) -> ProactiveEgressContext<'a> {
+        ProactiveEgressContext::new(
+            home,
+            segment,
+            writer,
+            test_accepted_config(home),
+            now_unix,
+            Duration::ZERO,
+        )
+    }
 
     struct CountingChannel {
         sends: AtomicUsize,
@@ -4273,6 +4858,11 @@ mod tests {
         WalWriterHandle,
         tokio::task::JoinHandle<std::result::Result<(), String>>,
     ) {
+        // Live egress tests deliberately use the same on-disk authority that
+        // production re-reads immediately before transport. The test context
+        // uses Full, so a missing default Standard config would correctly
+        // suppress instead of exercising the admitted provider seam.
+        std::fs::write(home.join("freedom.yaml"), "autonomy: full\n").unwrap();
         let wal_dir = home.join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
         let segment = wal_dir.join("000001.wal");
@@ -4301,7 +4891,9 @@ mod tests {
         now_unix: i64,
     ) -> (std::fs::File, BoundClaimFile, ProactiveEgressClaim) {
         let delivery_lock = acquire_delivery_lock(home).await.unwrap();
-        let claim = new_claim(queued, generation, "telegram", "operator", now_unix).unwrap();
+        let mut claim = new_claim(queued, generation, "telegram", "operator", now_unix).unwrap();
+        claim.version = PREVIOUS_CLAIM_VERSION;
+        claim.binding_sha256 = binding_hash(&claim);
         let claim_path = persist_prepared_claim(&delivery_lock, home, &claim)
             .await
             .unwrap();
@@ -4318,7 +4910,7 @@ mod tests {
         attempt_deadline_unix: i64,
     ) -> (BoundClaimFile, ProactiveEgressClaim) {
         let delivery_lock = acquire_delivery_lock(home).await.unwrap();
-        let prepared = new_claim_with_deadline(
+        let mut prepared = new_claim_with_deadline(
             queued,
             generation,
             "telegram",
@@ -4327,6 +4919,8 @@ mod tests {
             attempt_deadline_unix,
         )
         .unwrap();
+        prepared.version = PREVIOUS_CLAIM_VERSION;
+        prepared.binding_sha256 = binding_hash(&prepared);
         let claim_file = persist_prepared_claim(&delivery_lock, home, &prepared)
             .await
             .unwrap();
@@ -4396,7 +4990,7 @@ mod tests {
 
     #[test]
     fn claim_binding_is_uuidv7_secret_safe_and_self_verifying() {
-        let claim = new_claim(
+        let mut claim = new_claim(
             item("private-dedup"),
             "queue-generation",
             "keet",
@@ -4404,6 +4998,8 @@ mod tests {
             7,
         )
         .unwrap();
+        claim.version = PREVIOUS_CLAIM_VERSION;
+        claim.binding_sha256 = binding_hash(&claim);
         assert_eq!(
             claim
                 .intent_id
@@ -4429,19 +5025,12 @@ mod tests {
         assert!(encoded_item.len() <= MAX_PROACTIVE_ITEM_ENCODED_BYTES);
         let generation = seed_queue(home.path(), queued.clone());
         let (segment, writer, join) = ready_writer(home.path()).await;
+        let context = test_egress_context(home.path(), &segment, &writer, 7);
 
         assert_eq!(
-            record_sidecar_only_once(
-                home.path(),
-                &segment,
-                &writer,
-                queued.clone(),
-                &generation,
-                "local_inbox",
-                7,
-            )
-            .await
-            .unwrap(),
+            record_sidecar_only_once(&context, queued.clone(), &generation, "local_inbox",)
+                .await
+                .unwrap(),
             Some(ProactiveStatus::SidecarOnly)
         );
         let sidecar = std::fs::read(home.path().join(PROACTIVE_DELIVERED_SIDECAR)).unwrap();
@@ -4585,9 +5174,11 @@ mod tests {
         let (segment, writer, join) = ready_writer(home.path()).await;
         let delivery_lock = acquire_delivery_lock(home.path()).await.unwrap();
         let claim = new_claim(queued, &generation, "telegram", "operator", 10).unwrap();
-        let claim_path = persist_prepared_claim(&delivery_lock, home.path(), &claim)
+        let claim_file = persist_prepared_claim(&delivery_lock, home.path(), &claim)
             .await
             .unwrap();
+        let claim_path = claim_file.display_path.clone();
+        drop(claim_file);
         drop(delivery_lock);
 
         assert_eq!(
@@ -4615,8 +5206,10 @@ mod tests {
         let queued = item("intent-only");
         let generation = seed_queue(home.path(), queued.clone());
         let (segment, writer, join) = ready_writer(home.path()).await;
-        let (delivery_lock, claim_path, _claim) =
+        let (delivery_lock, claim_file, _claim) =
             prepared_claim_with_intent(home.path(), &writer, queued, &generation, 20).await;
+        let claim_path = claim_file.display_path.clone();
+        drop(claim_file);
         drop(delivery_lock);
 
         recover_pending_claims(home.path(), &segment, &writer, 21)
@@ -4742,23 +5335,30 @@ mod tests {
         );
 
         // Move the rebound Armed object away and publish an attacker-controlled
-        // same-name sentinel. Exact-handle deletion must remove only the Armed
-        // object, never follow the public name to the replacement.
+        // same-name sentinel. The final Windows delete capability is bound to
+        // the public name as well as the retained identity, so this namespace
+        // mismatch must refuse rather than deleting either object.
         let public_path = claim_file.display_path.clone();
         let displaced = home.path().join("displaced-armed.claim");
         std::fs::rename(&public_path, &displaced).unwrap();
         std::fs::write(&public_path, b"same-name replacement sentinel").unwrap();
-        claim_file
+        let error = claim_file
             .remove()
-            .expect("rebound claim authority must delete its exact Armed object");
+            .expect_err("same-name replacement must fail closed before final delete authority");
+        assert!(
+            format!("{error:#}")
+                .contains("regular-file removal target changed before final delete authority"),
+            "{error:#}"
+        );
 
         assert_eq!(
             std::fs::read(&public_path).unwrap(),
             b"same-name replacement sentinel"
         );
-        assert!(
-            !displaced.exists(),
-            "exact deletion must settle only the handle-bound Armed object"
+        assert_eq!(
+            std::fs::read(&displaced).unwrap(),
+            armed_bytes,
+            "a changed public name must retain the exact Armed object"
         );
     }
 
@@ -4800,16 +5400,22 @@ mod tests {
         let displaced = claim_root.display_path.join("displaced-legacy.claim");
         std::fs::rename(&claim_path, &displaced).unwrap();
         std::fs::write(&claim_path, b"same-name replacement sentinel").unwrap();
-        claim_file
+        let error = claim_file
             .remove()
-            .expect("rebound authority must delete only the converted generation");
+            .expect_err("same-name replacement must fail closed before final delete authority");
+        assert!(
+            format!("{error:#}")
+                .contains("regular-file removal target changed before final delete authority"),
+            "{error:#}"
+        );
         assert_eq!(
             std::fs::read(&claim_path).unwrap(),
             b"same-name replacement sentinel"
         );
-        assert!(
-            !displaced.exists(),
-            "exact removal must settle the converted generation only"
+        assert_eq!(
+            std::fs::read(&displaced).unwrap(),
+            serde_json::to_vec(&converted).unwrap(),
+            "a changed public name must retain the converted generation"
         );
     }
 
@@ -4819,10 +5425,10 @@ mod tests {
         let queued = item("result-replay");
         let generation = seed_queue(home.path(), queued.clone());
         let (segment, writer, join) = ready_writer(home.path()).await;
-        let (delivery_lock, claim_path, prepared) =
+        let (delivery_lock, claim_file, prepared) =
             prepared_claim_with_intent(home.path(), &writer, queued, &generation, 40).await;
         let armed = claim_in_phase(&prepared, ProactiveEgressPhase::Armed);
-        persist_armed_claim(&delivery_lock, &claim_path, &armed)
+        persist_armed_claim(&delivery_lock, &claim_file, &armed)
             .await
             .unwrap();
         append_armed(&delivery_lock, &writer, &armed).await.unwrap();
@@ -4870,6 +5476,8 @@ mod tests {
             (true, changed)
         })
         .unwrap();
+        let claim_path = claim_file.display_path.clone();
+        drop(claim_file);
         drop(delivery_lock);
 
         recover_pending_claims(home.path(), &segment, &writer, 42)
@@ -4895,6 +5503,7 @@ mod tests {
             home.path(),
             &segment,
             &writer,
+            test_accepted_config(home.path()),
             50,
             DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
         );
@@ -4931,11 +5540,152 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn policy_change_after_receipt_suppresses_before_fake_transport() {
+        let home = tempfile::tempdir().unwrap();
+        let queued = item("policy-changed-before-effect");
+        let generation = seed_queue(home.path(), queued.clone());
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let mut full_config = crate::config::FreedomConfig::default();
+        full_config.autonomy = crate::permissions::AutonomyLevel::Full;
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            full_config,
+            home.path().join("freedom.yaml"),
+        ));
+        let context = ProactiveEgressContext::new(
+            home.path(),
+            &segment,
+            &writer,
+            controller.accepted_snapshot(),
+            55,
+            DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
+        );
+        // The old accepted snapshot is Full, then the controller publishes a
+        // Standard generation before this claim can acquire its egress leaf.
+        // The retired snapshot must terminalize without provider I/O.
+        std::fs::write(home.path().join("freedom.yaml"), "autonomy: standard\n").unwrap();
+        controller.try_reload().unwrap();
+        let channel = Arc::new(CountingChannel::new());
+        assert_eq!(
+            execute_claimed_once(
+                &context,
+                queued,
+                &generation,
+                "telegram",
+                "operator",
+                channel.clone(),
+            )
+            .await
+            .unwrap(),
+            Some(ProactiveStatus::Suppressed)
+        );
+        assert_eq!(channel.sends.load(Ordering::SeqCst), 0);
+        let history = read_delivery_history(home.path()).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history[0].outcome(),
+            ProactiveEgressOutcome::PolicyChangedBeforeEffect
+        );
+        let ids = HashSet::from([history[0].intent_id().to_string()]);
+        let evidence = scan_authenticated_wal(home.path(), &segment, &ids).unwrap();
+        assert_eq!(evidence.intents.len(), 1, "suppression remains auditable");
+        assert!(
+            evidence.armed.is_empty(),
+            "retired generation must not append Armed"
+        );
+        assert_eq!(
+            evidence
+                .results
+                .get(history[0].intent_id())
+                .expect("suppression Result")
+                .outcome,
+            ProactiveEgressOutcome::PolicyChangedBeforeEffect
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn copied_authenticated_descriptor_cannot_bind_a_different_claim() {
+        let home = tempfile::tempdir().unwrap();
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let policy = test_full_policy();
+        let source = new_claim(
+            item("receipt-source"),
+            "generation-a",
+            "telegram",
+            "owner-a",
+            56,
+        )
+        .unwrap();
+        let source_action = crate::permissions::Action::ProactiveChannelSend {
+            channel: source.target_channel.clone(),
+        };
+        let descriptor = crate::permissions::Gate::for_policy(policy.clone())
+            .with_confirm(crate::permissions::ConfirmStrategy::FailClosed)
+            .resolve_trust_admission(
+                &source_action,
+                &trust_operation_id_sha256(&source),
+                &trust_request_binding_sha256(&source),
+            )
+            .await
+            .unwrap();
+        crate::permissions::audit_trust_admission_once(
+            crate::permissions::PermissionAuditSink::Writer(&writer),
+            home.path(),
+            &descriptor,
+        )
+        .await
+        .unwrap();
+
+        let mut copied = new_claim(
+            item("receipt-target"),
+            "generation-b",
+            "telegram",
+            "owner-b",
+            57,
+        )
+        .unwrap();
+        copied.trust_admission = Some(descriptor);
+        copied.trust_admission_state = TrustAdmissionState::AwaitingAuthenticatedReceipt;
+        // This is an attacker-controlled aggregate hash recomputation. The
+        // central effect binding check must still reject the copied receipt.
+        copied.binding_sha256 = binding_hash(&copied);
+        let lock = acquire_delivery_lock(home.path()).await.unwrap();
+        let error = persist_prepared_claim(&lock, home.path(), &copied)
+            .await
+            .err()
+            .expect("a copied receipt must not produce a bound claim file");
+        assert!(
+            error
+                .to_string()
+                .contains("operation does not bind this intent")
+                || error
+                    .to_string()
+                    .contains("request binding does not bind this exact effect"),
+            "{error:#}"
+        );
+        let intents = HashSet::from([copied.intent_id.clone()]);
+        let evidence = scan_authenticated_wal(home.path(), &segment, &intents).unwrap();
+        assert!(evidence.intents.is_empty());
+        assert!(evidence.armed.is_empty());
+        drop(lock);
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn replacement_generation_survives_a_blocked_old_send() {
         let home = tempfile::tempdir().unwrap();
         let queued = item("replace-during-send");
         let old_generation = seed_queue(home.path(), queued.clone());
         let (segment, writer, join) = ready_writer(home.path()).await;
+        let mut full_config = crate::config::FreedomConfig::default();
+        full_config.autonomy = crate::permissions::AutonomyLevel::Full;
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            full_config,
+            home.path().join("freedom.yaml"),
+        ));
+        let old_accepted = controller.accepted_snapshot();
         let channel = Arc::new(BlockingChannel::new());
         let task_home = home.path().to_path_buf();
         let task_segment = segment.clone();
@@ -4943,11 +5693,13 @@ mod tests {
         let task_channel = Arc::clone(&channel);
         let task_item = queued.clone();
         let task_generation = old_generation.clone();
+        let task_accepted = Arc::clone(&old_accepted);
         let delivery = tokio::spawn(async move {
             let context = ProactiveEgressContext::new(
                 &task_home,
                 &task_segment,
                 &task_writer,
+                task_accepted,
                 60,
                 DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
             );
@@ -4962,6 +5714,21 @@ mod tests {
             .await
         });
         channel.entered.notified().await;
+        std::fs::write(home.path().join("freedom.yaml"), "autonomy: standard\n").unwrap();
+        let reload_controller = Arc::clone(&controller);
+        let reload = std::thread::spawn(move || reload_controller.try_reload());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while old_accepted.acquire_egress_leaf().is_ok() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "reload did not retire old egress admission"
+            );
+            std::thread::yield_now();
+        }
+        assert!(
+            Arc::ptr_eq(&controller.accepted_snapshot(), &old_accepted),
+            "reload published while the provider task still held an old-generation lease"
+        );
         let replacement_generation =
             ProactiveQueue::modify(&home.path().join("proactive_queue.json"), |queue| {
                 assert_eq!(queue.remove_by_key(&queued.dedup_key), 1);
@@ -4986,6 +5753,10 @@ mod tests {
         );
         assert_eq!(queue.peek().len(), 1);
         assert_eq!(channel.sends.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            reload.join().unwrap().unwrap(),
+            crate::config::reload::ReloadResult::Reloaded { .. }
+        ));
         drop(writer);
         join.await.unwrap().unwrap();
     }
@@ -5008,6 +5779,7 @@ mod tests {
                 &task_home,
                 &task_segment,
                 &task_writer,
+                test_accepted_config(&task_home),
                 70,
                 DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
             );
@@ -5059,7 +5831,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let (segment, writer, join) = ready_writer(home.path()).await;
         let delivery_lock = acquire_delivery_lock(home.path()).await.unwrap();
-        let claim = new_claim(
+        let mut claim = new_claim(
             item("marker-before-ack"),
             "generation",
             "local_inbox",
@@ -5067,6 +5839,8 @@ mod tests {
             75,
         )
         .unwrap();
+        claim.version = PREVIOUS_CLAIM_VERSION;
+        claim.binding_sha256 = binding_hash(&claim);
         append_intent(&delivery_lock, &writer, &claim)
             .await
             .unwrap();
@@ -5114,16 +5888,15 @@ mod tests {
             .save_to(&home.path().join("proactive_queue.json"))
             .unwrap();
         let (segment, writer, join) = ready_writer(home.path()).await;
+        let sidecar_context = test_egress_context(home.path(), &segment, &writer, 80);
+        let suppressed_context = test_egress_context(home.path(), &segment, &writer, 81);
 
         assert_eq!(
             record_sidecar_only_once(
-                home.path(),
-                &segment,
-                &writer,
+                &sidecar_context,
                 sidecar_item,
                 &sidecar_generation,
                 "local_inbox",
-                80,
             )
             .await
             .unwrap(),
@@ -5131,13 +5904,10 @@ mod tests {
         );
         assert_eq!(
             record_policy_suppressed_once(
-                home.path(),
-                &segment,
-                &writer,
+                &suppressed_context,
                 suppressed_item,
                 &suppressed_generation,
                 "telegram",
-                81,
             )
             .await
             .unwrap(),
@@ -5165,17 +5935,10 @@ mod tests {
         let queued = item("forged-projection");
         let generation = seed_queue(home.path(), queued.clone());
         let (segment, writer, join) = ready_writer(home.path()).await;
-        record_sidecar_only_once(
-            home.path(),
-            &segment,
-            &writer,
-            queued,
-            &generation,
-            "local_inbox",
-            90,
-        )
-        .await
-        .unwrap();
+        let context = test_egress_context(home.path(), &segment, &writer, 90);
+        record_sidecar_only_once(&context, queued, &generation, "local_inbox")
+            .await
+            .unwrap();
         assert_eq!(read_delivery_history(home.path()).unwrap().len(), 1);
 
         let path = home.path().join(PROACTIVE_DELIVERED_SIDECAR);
@@ -5440,19 +6203,20 @@ mod tests {
         std::fs::rename(&sentinel_stage, &canonical).unwrap();
 
         let (bound_claim, _) = scanned.pop().unwrap();
-        let removal = bound_claim.remove();
+        let error = bound_claim
+            .remove()
+            .expect_err("same-name replacement must fail closed before final delete authority");
+        assert!(
+            format!("{error:#}")
+                .contains("regular-file removal target changed before final delete authority"),
+            "{error:#}"
+        );
         assert_eq!(std::fs::read(&canonical).unwrap(), sentinel);
-        if removal.is_ok() {
-            assert!(
-                !moved_original.exists(),
-                "a successful bound removal must delete the originally opened identity"
-            );
-        } else {
-            assert!(
-                moved_original.exists(),
-                "a failed bound removal must preserve the original evidence"
-            );
-        }
+        assert_eq!(
+            std::fs::read(&moved_original).unwrap(),
+            serde_json::to_vec(&claim).unwrap(),
+            "a failed bound removal must preserve the exact original evidence"
+        );
 
         drop(scanned);
         drop(delivery_lock);
@@ -5981,6 +6745,13 @@ mod tests {
         let queued = item("reap-queue-test");
         let generation = seed_queue(home.path(), queued.clone());
         let (_segment, writer, join) = ready_writer(home.path()).await;
+        let mut full_config = crate::config::FreedomConfig::default();
+        full_config.autonomy = crate::permissions::AutonomyLevel::Full;
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            full_config,
+            home.path().join("freedom.yaml"),
+        ));
+        let accepted = controller.accepted_snapshot();
         let (claim_file, claim) =
             armed_v2_claim_with_evidence(home.path(), &writer, queued, &generation, 100, 160).await;
         let lease = match ArmedClaimLease::try_acquire(&claim_file, &claim).unwrap() {
@@ -5995,6 +6766,11 @@ mod tests {
             "body".to_string(),
             tokio::time::Instant::now() + Duration::from_secs(60),
             Arc::clone(&lease),
+            Arc::new(
+                accepted
+                    .acquire_egress_leaf()
+                    .expect("fresh test generation admits egress"),
+            ),
         );
         channel.entered.notified().await;
         drop(attempt);
@@ -6002,6 +6778,22 @@ mod tests {
             cancelled_transport_reap_queue_len(),
             baseline + 1,
             "Drop must retain the aborted JoinHandle for structured reaping"
+        );
+        std::fs::write(home.path().join("freedom.yaml"), "autonomy: standard\n").unwrap();
+        let reload_controller = Arc::clone(&controller);
+        let reload = tokio::task::spawn_blocking(move || reload_controller.try_reload());
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), reload)
+                .await
+                .expect("provider cancellation teardown must release egress lease without a tick")
+                .unwrap()
+                .unwrap(),
+            crate::config::reload::ReloadResult::Reloaded { .. }
+        ));
+        assert_eq!(
+            cancelled_transport_reap_queue_len(),
+            baseline + 1,
+            "reload publication must not require passive registration reaping"
         );
         reap_cancelled_transport_attempts().await.unwrap();
         assert_eq!(
@@ -6044,6 +6836,11 @@ mod tests {
             "body".to_string(),
             tokio::time::Instant::now() + Duration::from_secs(60),
             Arc::clone(&lease),
+            Arc::new(
+                test_accepted_config(home.path())
+                    .acquire_egress_leaf()
+                    .expect("fresh test generation admits egress"),
+            ),
         );
         assert!(matches!(
             attempt
@@ -6076,8 +6873,10 @@ mod tests {
         let generation = seed_queue(home.path(), queued.clone());
         let (segment, writer, join) = ready_writer(home.path()).await;
         let delivery_lock = acquire_delivery_lock(home.path()).await.unwrap();
-        let prepared =
+        let mut prepared =
             new_claim_with_deadline(queued, &generation, "telegram", "operator", 100, 160).unwrap();
+        prepared.version = PREVIOUS_CLAIM_VERSION;
+        prepared.binding_sha256 = binding_hash(&prepared);
         let claim_file = persist_prepared_claim(&delivery_lock, home.path(), &prepared)
             .await
             .unwrap();

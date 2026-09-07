@@ -1,0 +1,96 @@
+{
+  "schema": "neoth-gold-changed-inputs/v1",
+  "batch": "wave6-durable-egress-admission",
+  "baseCommit": "3fb7082ce06b6f86f0ffab1d1e9e727a5ebf014f",
+  "publicationTarget": "refs/heads/main",
+  "recordedUtc": "2026-09-07T12:20:07.0939474Z",
+  "scope": "Changed compiled inputs only; not an inventory of every transitive dependency",
+  "inputCount": 17,
+  "files": [
+    {
+      "path": "SRC/neothd/src/channels/webhook_listener.rs",
+      "bytes": 248192,
+      "sha256": "0152987c3450a9df8d2953b597afd6ee46b99bb75647b2c5bb69b9c621bb5283"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve.rs",
+      "bytes": 152187,
+      "sha256": "361524bac6df859b6189c1bbb1bfe7c06ca1ad1b5c7367f3834c1d9eb7a3a00e"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "bytes": 457064,
+      "sha256": "09d9b39fa19a86629127587e28dac037b3a9ac758ca1b4729b9f4dc4be03b1e2"
+    },
+    {
+      "path": "SRC/neothd/src/config/reload.rs",
+      "bytes": 82201,
+      "sha256": "9d1afee7aa61e350e367471a0009440a0d6d354652f4c2658310a768a9ab7aa7"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+      "bytes": 29860,
+      "sha256": "ce372e67cd104b434a5f19438a7c7a84c46a85959c44b84851045c489729bedd"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+      "bytes": 5897,
+      "sha256": "d897c77b605ab36e809c632e4f9baaa589452a80cf80c7ca22cbd9378cbb8857"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "bytes": 50406,
+      "sha256": "12a39243ea16099d68ecd20058ac759ee68c9e3bde09e97aac8a7182f47bd4d0"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "bytes": 72968,
+      "sha256": "6449ff2b85d57b50f3ba0f51940adf4748fcf4153d85044c6c96133fa33422fb"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/transport/mod.rs",
+      "bytes": 9846,
+      "sha256": "6174640e5d806467d3a90fcbd902b2e6a40dfb198aa414730552d194e9d66069"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "bytes": 85848,
+      "sha256": "104d89329d866dea396468d0c1802180890124cc7905f45f70d44133fc8d110f"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/proactive_egress.rs",
+      "bytes": 284043,
+      "sha256": "78f089d13e3c8449bb3e1e6f8b4bf1b06efe9c2eccbda13292dadef8cbfa8e9a"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/gate.rs",
+      "bytes": 72629,
+      "sha256": "a8f7d49b908488bc6ccf43a01b3cd7c3945f5dc90baade4cae8690b0c0890429"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/mod.rs",
+      "bytes": 93466,
+      "sha256": "50120cb100a93db83b2e22b10bbf3f481650a49714ca6c62893cb79e2d40c11f"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/policy.rs",
+      "bytes": 22983,
+      "sha256": "e3126234ea4725cf9525bf5b5c9482c39c6e35e57c69d4453b486f05043a3553"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/trust_ledger.rs",
+      "bytes": 43705,
+      "sha256": "eb3420210e63f27d7ad45c7c685c1886b43130659bcaff1617fac83b9329c117"
+    },
+    {
+      "path": "SRC/neothd/src/wal/writer.rs",
+      "bytes": 355854,
+      "sha256": "ed2bd995834c0a24ebd2668bac6ba4f4af6e70932a06300875bccb6ae4b86c55"
+    },
+    {
+      "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+      "bytes": 50307,
+      "sha256": "e1072b5d73cc561657c023f23bd99fd4a6437219b3655c0993db07f1527704db"
+    }
+  ]
+}

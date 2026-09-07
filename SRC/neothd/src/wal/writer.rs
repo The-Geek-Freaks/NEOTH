@@ -27,6 +27,9 @@ use super::segment_header::{
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024; // 16 MiB sanity ceiling
 const CONTEXT_EVIDENCE_RECEIPT_AUTHORITY_SENTINEL: &str = ".context-evidence-receipt-authority";
+const TRUST_DECISION_AUTHORITY_SENTINEL: &str = ".trust-decision-authority";
+#[cfg(test)]
+const TRUST_DECISION_AUTHORITY_ATTEMPT_ENV: &str = "NEOTH_TRUST_DECISION_AUTHORITY_ATTEMPT_FILE";
 // Keep the in-process side of the receipt authority deliberately bounded: one
 // mutex avoids an attacker-controlled home-key map whose entries can never be
 // reclaimed safely. The availability trade-off is explicit and conservative:
@@ -34,6 +37,12 @@ const CONTEXT_EVIDENCE_RECEIPT_AUTHORITY_SENTINEL: &str = ".context-evidence-rec
 // waiter fails closed after five seconds. Ordinary WAL appends are unaffected;
 // each receipt scan is itself capped by `supported_home_scan_limits()`.
 static CONTEXT_EVIDENCE_RECEIPT_PROCESS_AUTHORITY: std::sync::LazyLock<
+    std::sync::Arc<tokio::sync::Mutex<()>>,
+> = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
+// Durable TrustDecision reconciliation has its own authority.  It deliberately
+// does not share Context Evidence's bounded side-ledger lock: the former
+// serializes a scan plus an optional write in authenticated *primary* WAL.
+static TRUST_DECISION_PROCESS_AUTHORITY: std::sync::LazyLock<
     std::sync::Arc<tokio::sync::Mutex<()>>,
 > = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
 // Marker JSON uses only bounded integers plus a fixed 64-byte HMAC hex tag.
@@ -60,6 +69,35 @@ fn refuse_generic_context_evidence_receipt(header: &EventHeaderV2) -> Result<(),
         )));
     }
     Ok(())
+}
+
+fn is_trust_decision_header(header: &EventHeaderV2) -> bool {
+    header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+        && header.event_subtype == crate::wal::events::ExtendedSubtype::TrustDecision as u8
+}
+
+/// Schema-2 TrustDecision events are durable admission receipts.  They are
+/// intentionally unwriteable through the generic frame API: only the closed
+/// writer-owned reconciliation request may create one after it has looked up
+/// the authenticated primary-WAL prefix under the home authority.
+fn refuse_generic_durable_trust_decision(
+    header: &EventHeaderV2,
+    payload: &[u8],
+) -> Result<(), WalError> {
+    if !is_trust_decision_header(header) {
+        return Ok(());
+    }
+    match crate::permissions::trust_ledger::is_durable_trust_admission_payload(payload) {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "durable TrustDecision admissions require the writer-owned append-once API",
+        ))),
+        Err(_) => Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "generic TrustDecision payload is malformed or has an unsupported schema",
+        ))),
+    }
 }
 
 /// Immutable identity of a closed predecessor as observed through the
@@ -403,6 +441,11 @@ pub struct WriteRequest {
     /// transaction. Generic appends can never opt into deduplication by merely
     /// choosing the receipt event subtype.
     context_evidence_receipt_once: Option<ContextEvidenceReceiptOnce>,
+    /// Present only for the closed, primary-WAL TrustDecision reconciliation
+    /// primitive.  Its reply is distinct from a frame-offset acknowledgement:
+    /// an existing authenticated receipt is a successful terminal result
+    /// without a new frame offset.
+    trust_decision_once: Option<TrustDecisionOnce>,
     /// Generic WAL admission ownership. It remains pending from the successful
     /// pre-write quota decision until this request reaches a writer-terminal
     /// state, so an unrelated home-directory growth cannot consume it during a
@@ -457,6 +500,46 @@ struct ContextEvidenceReceiptOnce {
     receipt_handle: [u8; 32],
     expected: crate::wal::events::ContextEvidenceReceipt,
     quota_reservation: ContextEvidenceQuotaReservation,
+}
+
+struct TrustDecisionOnce {
+    home: PathBuf,
+    expected: crate::permissions::trust_ledger::TrustAdmissionDescriptor,
+    reply: Option<
+        oneshot::Sender<
+            Result<
+                crate::permissions::trust_ledger::TrustDecisionOnceOutcome,
+                crate::permissions::trust_ledger::TrustDecisionOnceError,
+            >,
+        >,
+    >,
+}
+
+impl TrustDecisionOnce {
+    fn finish(
+        mut self,
+        outcome: Result<
+            crate::permissions::trust_ledger::TrustDecisionOnceOutcome,
+            crate::permissions::trust_ledger::TrustDecisionOnceError,
+        >,
+    ) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(outcome);
+        }
+    }
+}
+
+// A request can leave the loop through a writer failure after it has become
+// owned.  Never turn that into an optimistic absence: a caller that did not
+// receive the terminal reply must reconcile the authenticated prefix.
+impl Drop for TrustDecisionOnce {
+    fn drop(&mut self) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(Err(
+                crate::permissions::trust_ledger::TrustDecisionOnceError::Indeterminate,
+            ));
+        }
+    }
 }
 
 impl ContextEvidenceReceiptOnce {
@@ -1265,6 +1348,7 @@ impl WalWriterHandle {
         force_authentication_marker: bool,
     ) -> Result<u64, WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
+        refuse_generic_durable_trust_decision(&header, &payload)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1281,6 +1365,7 @@ impl WalWriterHandle {
             ack: ack_tx,
             force_authentication_marker,
             context_evidence_receipt_once: None,
+            trust_decision_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1307,6 +1392,7 @@ impl WalWriterHandle {
         payload: Vec<u8>,
     ) -> Result<u64, WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
+        refuse_generic_durable_trust_decision(&header, &payload)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1323,6 +1409,7 @@ impl WalWriterHandle {
             ack: ack_tx,
             force_authentication_marker: false,
             context_evidence_receipt_once: None,
+            trust_decision_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1401,6 +1488,7 @@ impl WalWriterHandle {
                 expected: receipt,
                 quota_reservation,
             }),
+            trust_decision_once: None,
             quota_admission: None,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1421,6 +1509,97 @@ impl WalWriterHandle {
             Ok(Err(_)) => anyhow::bail!("context_evidence_receipt_append_failed"),
             Err(_) => anyhow::bail!("context_evidence_receipt_writer_unavailable"),
         }
+    }
+
+    /// Reconcile one durable TrustDecision against authenticated primary-WAL
+    /// history, appending it only when its immutable operation descriptor is
+    /// proven absent.  The returned receipt is either pre-existing evidence or
+    /// a newly appended, marker-authenticated frame; it is never an optimistic
+    /// acknowledgement of a queued write.
+    ///
+    /// The async caller is deliberately not the transaction owner.  Once this
+    /// method has spawned the blocking owner, dropping the caller future (for
+    /// example after an RPC disconnect) cannot free the descriptor to race an
+    /// old queued request.  A lost reply is indeterminate and recovery must
+    /// use the same descriptor against authenticated WAL.
+    pub(crate) async fn append_trust_decision_once(
+        &self,
+        home: &Path,
+        expected: crate::permissions::trust_ledger::TrustAdmissionDescriptor,
+    ) -> Result<
+        crate::permissions::trust_ledger::TrustDecisionOnceOutcome,
+        crate::permissions::trust_ledger::TrustDecisionOnceError,
+    > {
+        let writer = self.clone();
+        let home = home.to_path_buf();
+        let owner = tokio::task::spawn_blocking(move || {
+            writer.append_trust_decision_once_blocking(&home, expected)
+        });
+        match owner.await {
+            Ok(outcome) => outcome,
+            // A JoinError means this caller cannot prove whether the worker
+            // reached primary-WAL durability.  It must leave recovery blocked.
+            Err(_) => Err(crate::permissions::trust_ledger::TrustDecisionOnceError::Indeterminate),
+        }
+    }
+
+    /// Blocking owner for [`Self::append_trust_decision_once`].  This is kept
+    /// private to the WAL handle so consumers cannot create a side queue or
+    /// combine an external scan with a later generic append.
+    fn append_trust_decision_once_blocking(
+        &self,
+        home: &Path,
+        expected: crate::permissions::trust_ledger::TrustAdmissionDescriptor,
+    ) -> Result<
+        crate::permissions::trust_ledger::TrustDecisionOnceOutcome,
+        crate::permissions::trust_ledger::TrustDecisionOnceError,
+    > {
+        use crate::permissions::trust_ledger::TrustDecisionOnceError;
+
+        if !self.authentication_markers_enabled {
+            return Err(TrustDecisionOnceError::Indeterminate);
+        }
+        let event = expected
+            .to_schema2_event(current_ns())
+            .map_err(|_| TrustDecisionOnceError::Indeterminate)?;
+        let payload = event
+            .encode()
+            .map_err(|_| TrustDecisionOnceError::Indeterminate)?;
+        if payload.len() > MAX_PAYLOAD_BYTES {
+            return Err(TrustDecisionOnceError::Indeterminate);
+        }
+        let header =
+            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+                .event_subtype(crate::wal::events::ExtendedSubtype::TrustDecision as u8)
+                .flags(crate::wal::EventFlags::SYNTHETIC)
+                .build();
+        let (ack_tx, _ack_rx_drop) = oneshot::channel();
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let request = WriteRequest {
+            header,
+            payload,
+            ack: ack_tx,
+            force_authentication_marker: true,
+            context_evidence_receipt_once: None,
+            trust_decision_once: Some(TrustDecisionOnce {
+                home: home.to_path_buf(),
+                expected,
+                reply: Some(reply_tx),
+            }),
+            quota_admission: None,
+            #[cfg(test)]
+            test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)]
+            test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+        };
+        if let Err(mut error) = self.tx.blocking_send(request)
+            && let Some(once) = error.0.trust_decision_once.take()
+        {
+            once.finish(Err(TrustDecisionOnceError::Indeterminate));
+        }
+        reply_rx
+            .blocking_recv()
+            .unwrap_or(Err(TrustDecisionOnceError::Indeterminate))
     }
 
     /// K-Perf-2 2026-05-17: fire-and-forget append for high-cadence
@@ -1483,6 +1662,7 @@ impl WalWriterHandle {
     /// caller learns the offset + can surface fsync failure.
     pub fn try_append_sync(&self, header: EventHeaderV2, payload: Vec<u8>) -> Result<(), WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
+        refuse_generic_durable_trust_decision(&header, &payload)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1499,6 +1679,7 @@ impl WalWriterHandle {
             ack: ack_tx,
             force_authentication_marker: false,
             context_evidence_receipt_once: None,
+            trust_decision_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1530,6 +1711,7 @@ impl WalWriterHandle {
         payload: Vec<u8>,
     ) -> Result<(), WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
+        refuse_generic_durable_trust_decision(&header, &payload)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1550,6 +1732,7 @@ impl WalWriterHandle {
             ack: ack_tx,
             force_authentication_marker: false,
             context_evidence_receipt_once: None,
+            trust_decision_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -2892,6 +3075,64 @@ struct ContextEvidenceReceiptAuthority {
     _file_guard: std::fs::File,
 }
 
+fn trust_decision_authority_sentinel(home: &Path) -> PathBuf {
+    home.join("wal").join(TRUST_DECISION_AUTHORITY_SENTINEL)
+}
+
+async fn acquire_trust_decision_authority(home: &Path) -> Result<TrustDecisionAuthority, WalError> {
+    let process_authority = std::sync::Arc::clone(&*TRUST_DECISION_PROCESS_AUTHORITY);
+    let process_guard = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        process_authority.lock_owned(),
+    )
+    .await
+    .map_err(|_| {
+        compaction_recovery_error("TrustDecision process authority remained busy for >5s")
+    })?;
+    let sentinel = trust_decision_authority_sentinel(home);
+    #[cfg(test)]
+    let attempt_file = std::env::var_os(TRUST_DECISION_AUTHORITY_ATTEMPT_ENV).map(PathBuf::from);
+    let file_guard = tokio::task::spawn_blocking(move || {
+        #[cfg(test)]
+        if let Some(attempt_file) = attempt_file {
+            std::fs::write(&attempt_file, b"attempt").map_err(|error| {
+                std::io::Error::new(
+                    error.kind(),
+                    format!(
+                        "write TrustDecision cross-process authority-attempt signal {}: {error}",
+                        attempt_file.display()
+                    ),
+                )
+            })?;
+        }
+        super::redact::lock_segment_for_rewrite(&sentinel)
+    })
+    .await
+    .map_err(|error| {
+        compaction_recovery_error(format!("TrustDecision authority task failed: {error}"))
+    })?
+    .map_err(|error| {
+        compaction_recovery_error(format!(
+            "acquire capability-bound TrustDecision authority: {error:#}"
+        ))
+    })?;
+    Ok(TrustDecisionAuthority {
+        _process_guard: process_guard,
+        _file_guard: file_guard,
+    })
+}
+
+struct TrustDecisionAuthority {
+    _process_guard: tokio::sync::OwnedMutexGuard<()>,
+    _file_guard: std::fs::File,
+}
+
+fn canonical_home_matches(expected: &Path, authoritative: &Path) -> Result<bool, WalError> {
+    let expected = std::fs::canonicalize(expected).map_err(WalError::Io)?;
+    let authoritative = std::fs::canonicalize(authoritative).map_err(WalError::Io)?;
+    Ok(expected == authoritative)
+}
+
 fn validate_hmac_writer_authority(
     authority: Option<&crate::cli::security::HmacWriterAuthority>,
 ) -> Result<(), WalError> {
@@ -3868,15 +4109,38 @@ async fn run_writer(
 
     while let Some(mut req) = rx.recv().await {
         let is_receipt = is_context_evidence_receipt_header(&req.header);
+        let mut trust_decision_once = req.trust_decision_once.take();
+        let is_durable_trust_decision = if is_trust_decision_header(&req.header) {
+            match crate::permissions::trust_ledger::is_durable_trust_admission_payload(&req.payload)
+            {
+                Ok(value) => value,
+                Err(_) => {
+                    if let Some(admission) = req.quota_admission.take() {
+                        admission.settle();
+                    }
+                    let _ = req.ack.send(Err(WalError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "TrustDecision request has a malformed or unsupported payload",
+                    ))));
+                    // Dropping the closed request answers the special caller
+                    // indeterminate; no malformed frame reaches primary WAL.
+                    continue;
+                }
+            }
+        } else {
+            false
+        };
         if is_receipt != req.context_evidence_receipt_once.is_some()
             || (is_receipt && req.force_authentication_marker)
+            || is_durable_trust_decision != trust_decision_once.is_some()
+            || (trust_decision_once.is_some() && !req.force_authentication_marker)
         {
             if let Some(admission) = req.quota_admission.take() {
                 admission.settle();
             }
             let _ = req.ack.send(Err(WalError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "Context Evidence receipt request omitted its authenticated append-once authority",
+                "closed authenticated append-once request omitted its matching authority",
             ))));
             continue;
         }
@@ -3984,6 +4248,141 @@ async fn run_writer(
             let _ = req.ack.send(Ok(state.offset));
             drop(authority);
             continue;
+        }
+        let mut trust_decision_authority = None;
+        if let Some(once) = trust_decision_once.take() {
+            let requested_home = once.home.clone();
+            let authoritative_home = hmac_home.clone();
+            let homes_match = match tokio::task::spawn_blocking(move || {
+                canonical_home_matches(&requested_home, &authoritative_home)
+            })
+            .await
+            {
+                Ok(Ok(matches)) => matches,
+                Ok(Err(_)) | Err(_) => {
+                    once.finish(Err(
+                        crate::permissions::trust_ledger::TrustDecisionOnceError::Indeterminate,
+                    ));
+                    continue;
+                }
+            };
+            if !homes_match {
+                once.finish(Err(
+                    crate::permissions::trust_ledger::TrustDecisionOnceError::Indeterminate,
+                ));
+                continue;
+            }
+            let authority = match acquire_trust_decision_authority(&hmac_home).await {
+                Ok(authority) => authority,
+                Err(_) => {
+                    once.finish(Err(
+                        crate::permissions::trust_ledger::TrustDecisionOnceError::Indeterminate,
+                    ));
+                    continue;
+                }
+            };
+            // Establish a barrier for this writer's own live HMAC window
+            // before asking whether the operation is absent.  Otherwise a
+            // just-durable generic frame in this same queue could hide an old
+            // TrustDecision until a later marker and permit a duplicate.  The
+            // existing compaction state was reconstructed under this writer's
+            // HMAC lease, so this closes only bytes that this writer owns; a
+            // remaining incomplete segment from another writer stays
+            // indeterminate below.
+            let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key) else {
+                once.finish(Err(
+                    crate::permissions::trust_ledger::TrustDecisionOnceError::Indeterminate,
+                ));
+                drop(authority);
+                continue;
+            };
+            validate_hmac_writer_authority(hmac_authority.as_ref())?;
+            if compaction_state.frames() > 0 {
+                if let Err(error) =
+                    emit_compaction_marker(&mut state, compaction_state, key, None).await
+                {
+                    once.finish(Err(
+                        crate::permissions::trust_ledger::TrustDecisionOnceError::Indeterminate,
+                    ));
+                    drop(authority);
+                    return Err(error);
+                }
+                pending_unsynced = false;
+            }
+            validate_hmac_writer_authority(hmac_authority.as_ref())?;
+            let lookup_home = hmac_home.clone();
+            let lookup_expected = once.expected.clone();
+            let lookup = tokio::task::spawn_blocking(move || {
+                crate::permissions::trust_ledger::find_authenticated_decision_at_home(
+                    &lookup_home,
+                    &lookup_expected,
+                )
+            })
+            .await;
+            match lookup {
+                Ok(Ok(crate::permissions::trust_ledger::AuthenticatedDecisionLookup::Exact {
+                    ..
+                })) => {
+                    once.finish(Ok(
+                        crate::permissions::trust_ledger::TrustDecisionOnceOutcome::ExistingExact,
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(Ok(
+                    crate::permissions::trust_ledger::AuthenticatedDecisionLookup::Conflict {
+                        ..
+                    },
+                )) => {
+                    once.finish(Err(
+                        crate::permissions::trust_ledger::TrustDecisionOnceError::Conflict,
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(Ok(
+                    crate::permissions::trust_ledger::AuthenticatedDecisionLookup::Duplicate {
+                        ..
+                    },
+                )) => {
+                    once.finish(Err(
+                        crate::permissions::trust_ledger::TrustDecisionOnceError::Duplicate,
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(Ok(crate::permissions::trust_ledger::AuthenticatedDecisionLookup::Absent {
+                    prefix: crate::permissions::trust_ledger::TrustLedgerCompleteness::Complete,
+                })) => {
+                    // Keep both the authority and the closed descriptor alive
+                    // through primary-WAL write, forced marker, and terminal
+                    // reply.  The ordinary writer path below performs that
+                    // atomic writer-side portion without an external
+                    // scan-then-append gap.
+                    req.trust_decision_once = Some(once);
+                    trust_decision_authority = Some(authority);
+                }
+                Ok(Ok(crate::permissions::trust_ledger::AuthenticatedDecisionLookup::Absent {
+                    ..
+                })) => {
+                    // A live tail may contain an old queued durable decision
+                    // whose marker/ACK was lost.  It is neither proof of
+                    // absence nor usable receipt evidence, so never append a
+                    // second operation behind it.
+                    once.finish(Err(
+                        crate::permissions::trust_ledger::TrustDecisionOnceError::Indeterminate,
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(Err(_)) | Err(_) => {
+                    once.finish(Err(
+                        crate::permissions::trust_ledger::TrustDecisionOnceError::Indeterminate,
+                    ));
+                    drop(authority);
+                    continue;
+                }
+            }
         }
         let mut context_evidence_receipt_authority = None;
         let frame = encode_frame(&req.header, &req.payload);
@@ -4151,6 +4550,11 @@ async fn run_writer(
                 if let Some(admission) = req.quota_admission.take() {
                     admission.settle();
                 }
+                if let Some(once) = req.trust_decision_once.take() {
+                    once.finish(Ok(
+                        crate::permissions::trust_ledger::TrustDecisionOnceOutcome::AppendedExact,
+                    ));
+                }
                 if req.ack.send(Ok(written_at)).is_err() {
                     tracing::debug!(
                         offset = written_at,
@@ -4158,6 +4562,7 @@ async fn run_writer(
                     );
                 }
                 drop(context_evidence_receipt_authority);
+                drop(trust_decision_authority);
             }
             Err(e) => {
                 error!(error = %e, "WAL frame write failed");
@@ -4177,6 +4582,7 @@ async fn run_writer(
                     tracing::debug!("ack receiver dropped for failed WAL write");
                 }
                 drop(context_evidence_receipt_authority);
+                drop(trust_decision_authority);
                 // Continue; next caller may still succeed (e.g. transient ENOSPC clears).
             }
         }
@@ -4974,6 +5380,102 @@ mod tests {
         })
         .await
         .expect("join blocking Context Evidence receipt append")
+    }
+
+    fn trust_admission_descriptor(
+        operation_byte: u8,
+        binding_byte: u8,
+    ) -> crate::permissions::trust_ledger::TrustAdmissionDescriptor {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "operation_id_sha256": hex::encode([operation_byte; 32]),
+            "subject": "local",
+            "action": "proactive_channel_send",
+            "outcome": "allowed",
+            "autonomy_level": "standard",
+            "request_binding_sha256": hex::encode([binding_byte; 32]),
+            "lease_id": null,
+            "confirmation_source": null,
+            "reason_sha256": null,
+            "policy_snapshot_sha256": hex::encode([0xC3; 32]),
+        }))
+        .expect("construct validated durable TrustDecision descriptor")
+    }
+
+    fn authenticated_trust_admission_count(home: &Path, operation_id_sha256: &str) -> usize {
+        let mut count = 0usize;
+        crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
+            home,
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                    && frame.header.event_subtype
+                        == crate::wal::events::ExtendedSubtype::TrustDecision as u8
+                {
+                    let event =
+                        crate::permissions::trust_ledger::TrustEvent::decode(frame.payload)?;
+                    if event.operation_id_sha256.as_deref() == Some(operation_id_sha256) {
+                        count = count.saturating_add(1);
+                    }
+                }
+                Ok(())
+            },
+        )
+        .expect("scan authenticated TrustDecision evidence");
+        count
+    }
+
+    const TRUST_ONCE_CHILD_HOME_ENV: &str = "NEOTH_TRUST_ONCE_CHILD_HOME";
+    const TRUST_ONCE_CHILD_RESULT_ENV: &str = "NEOTH_TRUST_ONCE_CHILD_RESULT";
+
+    fn trust_once_child_test_name() -> String {
+        let module = module_path!()
+            .strip_prefix(concat!(env!("CARGO_CRATE_NAME"), "::"))
+            .unwrap_or(module_path!());
+        format!("{module}::trust_decision_once_cross_process_child")
+    }
+
+    #[test]
+    #[ignore = "spawned only by trust_decision_once_uses_file_authority_across_processes"]
+    fn trust_decision_once_cross_process_child() {
+        let home = PathBuf::from(
+            std::env::var_os(TRUST_ONCE_CHILD_HOME_ENV)
+                .expect("cross-process child home is required"),
+        );
+        let result_path = PathBuf::from(
+            std::env::var_os(TRUST_ONCE_CHILD_RESULT_ENV)
+                .expect("cross-process child result path is required"),
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build TrustDecision child runtime");
+        // `spawn_test_writer_at_home` starts the Tokio writer task, so the
+        // complete child lifecycle must enter this freshly-built runtime
+        // before it creates the handle.  Calling spawn first would panic in
+        // this re-exec test process before it reaches the OS authority lock.
+        let result = runtime.block_on(async {
+            let (writer, join) = spawn_test_writer_at_home(
+                home.join("wal").join("trust-child-000001.wal"),
+                &home,
+                RotationPolicy::default(),
+                CompressionPolicy::None,
+            )
+            .expect("spawn cross-process TrustDecision writer");
+            let result = writer
+                .append_trust_decision_once(&home, trust_admission_descriptor(0xB1, 0xB2))
+                .await;
+            drop(writer);
+            join.await.expect("join cross-process TrustDecision writer");
+            result
+        });
+        assert_eq!(
+            result.expect("cross-process once reconciliation"),
+            crate::permissions::trust_ledger::TrustDecisionOnceOutcome::ExistingExact,
+            "child must wait for and observe the parent receipt, never append a second frame"
+        );
+        std::fs::write(&result_path, b"existing")
+            .expect("publish cross-process TrustDecision child outcome");
     }
 
     async fn wait_for_context_evidence_receipt_authority_contention(
@@ -6372,6 +6874,7 @@ mod tests {
                 ack: ack_tx,
                 force_authentication_marker: false,
                 context_evidence_receipt_once: None,
+                trust_decision_once: None,
                 quota_admission: Some(quota_admission),
                 test_ack_gate: None,
                 test_receipt_decision_gate: None,
@@ -6912,6 +7415,446 @@ mod tests {
         let markers = read_and_verify_compaction_markers(&segment, &key);
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].frame_count, threshold);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn trust_decision_once_concurrent_then_restart_has_one_authenticated_receipt() {
+        use crate::permissions::trust_ledger::TrustDecisionOnceOutcome;
+
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let descriptor = trust_admission_descriptor(0x81, 0x82);
+        let operation_id = descriptor.operation_id_sha256().to_owned();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("trust-once-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn TrustDecision writer");
+
+        let (left, right) = tokio::join!(
+            writer.append_trust_decision_once(home.path(), descriptor.clone()),
+            writer.append_trust_decision_once(home.path(), descriptor.clone()),
+        );
+        let outcomes = [
+            left.expect("first once outcome"),
+            right.expect("second once outcome"),
+        ];
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| **outcome == TrustDecisionOnceOutcome::AppendedExact)
+                .count(),
+            1,
+            "only one concurrent request may append the operation"
+        );
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| **outcome == TrustDecisionOnceOutcome::ExistingExact)
+                .count(),
+            1,
+            "the peer request must observe the first authenticated receipt"
+        );
+        assert_eq!(
+            authenticated_trust_admission_count(home.path(), &operation_id),
+            1,
+            "forced marker makes exactly one receipt visible before restart"
+        );
+
+        drop(writer);
+        join.await.expect("join first TrustDecision writer");
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("trust-once-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("restart TrustDecision writer");
+        assert_eq!(
+            writer
+                .append_trust_decision_once(home.path(), descriptor)
+                .await
+                .expect("restart reconciliation outcome"),
+            TrustDecisionOnceOutcome::ExistingExact,
+            "restart must reconcile the authenticated receipt rather than append again"
+        );
+        assert_eq!(
+            authenticated_trust_admission_count(home.path(), &operation_id),
+            1
+        );
+        drop(writer);
+        join.await.expect("join restarted TrustDecision writer");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn trust_decision_once_uses_file_authority_across_processes() {
+        use crate::permissions::trust_ledger::TrustDecisionOnceOutcome;
+
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let attempt_path = home.path().join("child-authority-attempt");
+        let result_path = home.path().join("child-authority-result");
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("trust-parent-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn parent TrustDecision writer");
+        let gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let parent_writer = writer.clone();
+        let parent_home = home.path().to_path_buf();
+        let parent = tokio::spawn(async move {
+            parent_writer
+                .append_trust_decision_once(&parent_home, trust_admission_descriptor(0xB1, 0xB2))
+                .await
+        });
+        gate.wait_until_durable().await;
+
+        let child_test = trust_once_child_test_name();
+        let mut child = std::process::Command::new(
+            std::env::current_exe().expect("locate TrustDecision test binary"),
+        )
+        .args([
+            "--ignored",
+            "--exact",
+            child_test.as_str(),
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(TRUST_ONCE_CHILD_HOME_ENV, home.path())
+        .env(TRUST_ONCE_CHILD_RESULT_ENV, &result_path)
+        .env(TRUST_DECISION_AUTHORITY_ATTEMPT_ENV, &attempt_path)
+        .spawn()
+        .expect("spawn cross-process TrustDecision child");
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !attempt_path.exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("child must reach the OS authority acquisition boundary");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(
+            !result_path.exists(),
+            "child completed while the parent still held the cross-process authority"
+        );
+
+        gate.release();
+        assert_eq!(
+            parent
+                .await
+                .expect("join parent once caller")
+                .expect("parent once outcome"),
+            TrustDecisionOnceOutcome::AppendedExact
+        );
+        let status = tokio::task::spawn_blocking(move || child.wait())
+            .await
+            .expect("join child wait")
+            .expect("wait cross-process TrustDecision child");
+        assert!(status.success(), "cross-process child failed: {status}");
+        assert_eq!(
+            std::fs::read(&result_path).expect("read child outcome"),
+            b"existing",
+            "released child must reconcile the parent receipt"
+        );
+        assert_eq!(
+            authenticated_trust_admission_count(home.path(), &hex::encode([0xB1; 32])),
+            1,
+            "cross-process contention must retain exactly one authenticated receipt"
+        );
+        drop(writer);
+        join.await.expect("join parent TrustDecision writer");
+    }
+
+    #[tokio::test]
+    async fn trust_decision_once_refuses_generic_bypass_and_descriptor_conflict() {
+        use crate::permissions::trust_ledger::{TrustDecisionOnceError, TrustDecisionOnceOutcome};
+
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let descriptor = trust_admission_descriptor(0x91, 0x92);
+        let operation_id = descriptor.operation_id_sha256().to_owned();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("trust-conflict-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn TrustDecision writer");
+
+        let event = descriptor.to_schema2_event(current_ns()).unwrap();
+        let payload = event.encode().unwrap();
+        let header =
+            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+                .event_subtype(crate::wal::events::ExtendedSubtype::TrustDecision as u8)
+                .build();
+        let bypass = writer
+            .append_authenticated(header, payload)
+            .await
+            .expect_err("generic append must not bypass durable admission reconciliation");
+        assert!(bypass.to_string().contains("append-once API"));
+
+        assert_eq!(
+            writer
+                .append_trust_decision_once(home.path(), descriptor.clone())
+                .await
+                .expect("append initial exact descriptor"),
+            TrustDecisionOnceOutcome::AppendedExact
+        );
+        let conflict = trust_admission_descriptor(0x91, 0x93);
+        assert_eq!(
+            writer
+                .append_trust_decision_once(home.path(), conflict)
+                .await
+                .expect_err("same operation with a different binding must fail closed"),
+            TrustDecisionOnceError::Conflict
+        );
+        assert_eq!(
+            authenticated_trust_admission_count(home.path(), &operation_id),
+            1
+        );
+        drop(writer);
+        join.await.expect("join TrustDecision writer");
+    }
+
+    #[tokio::test]
+    async fn trust_decision_once_refuses_a_descriptor_for_another_canonical_home() {
+        use crate::permissions::trust_ledger::TrustDecisionOnceError;
+
+        let home = tempdir().unwrap();
+        let other_home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        std::fs::create_dir(other_home.path().join("wal")).unwrap();
+        let descriptor = trust_admission_descriptor(0x9A, 0x9B);
+        let operation_id = descriptor.operation_id_sha256().to_owned();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("trust-home-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn TrustDecision writer");
+
+        assert_eq!(
+            writer
+                .append_trust_decision_once(other_home.path(), descriptor)
+                .await
+                .expect_err("a writer must not accept an operation for another instance home"),
+            TrustDecisionOnceError::Indeterminate
+        );
+        assert_eq!(
+            authenticated_trust_admission_count(home.path(), &operation_id),
+            0,
+            "wrong-home reconciliation must not mutate the authoritative WAL"
+        );
+        drop(writer);
+        join.await.expect("join TrustDecision writer");
+    }
+
+    #[tokio::test]
+    async fn trust_decision_once_closes_its_ordinary_live_tail_before_lookup() {
+        use crate::permissions::trust_ledger::TrustDecisionOnceOutcome;
+
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let descriptor = trust_admission_descriptor(0x9C, 0x9D);
+        let operation_id = descriptor.operation_id_sha256().to_owned();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("trust-tail-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn TrustDecision writer");
+        writer
+            .append(batchable_header_for(1, 404), vec![b'x'])
+            .await
+            .expect("write a deliberately unmarked live tail");
+
+        assert_eq!(
+            writer
+                .append_trust_decision_once(home.path(), descriptor)
+                .await
+                .expect("the writer must close its own ordinary tail before lookup"),
+            TrustDecisionOnceOutcome::AppendedExact
+        );
+        assert_eq!(
+            authenticated_trust_admission_count(home.path(), &operation_id),
+            1,
+            "barrier plus forced admission marker must publish one receipt"
+        );
+        drop(writer);
+        join.await.expect("join TrustDecision writer");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn trust_decision_once_refuses_an_unsealed_tail_owned_by_another_writer() {
+        use crate::permissions::trust_ledger::TrustDecisionOnceError;
+
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (foreign, foreign_join) = spawn_test_writer_at_home(
+            wal.join("foreign-live-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn foreign writer");
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("trust-owned-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn TrustDecision writer");
+        foreign
+            .append(batchable_header_for(1, 405), vec![b'x'])
+            .await
+            .expect("write an unsealed foreign tail");
+
+        assert_eq!(
+            writer
+                .append_trust_decision_once(home.path(), trust_admission_descriptor(0x9E, 0x9F))
+                .await
+                .expect_err("a writer must not authenticate another live writer's tail"),
+            TrustDecisionOnceError::Indeterminate
+        );
+        drop(writer);
+        drop(foreign);
+        join.await.expect("join TrustDecision writer");
+        foreign_join.await.expect("join foreign writer");
+    }
+
+    #[tokio::test]
+    async fn trust_decision_once_fails_closed_on_malformed_external_primary_wal_bytes() {
+        use crate::permissions::trust_ledger::TrustDecisionOnceError;
+
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let foreign_path = wal.join("foreign-tampered-000001.wal");
+        let (foreign, foreign_join) = spawn_test_writer_at_home(
+            foreign_path.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn foreign writer");
+        foreign
+            .append(batchable_header_for(1, 406), vec![b'x'])
+            .await
+            .expect("write foreign frame before close");
+        drop(foreign);
+        foreign_join
+            .await
+            .expect("close and authenticate foreign segment");
+
+        // This bypasses the writer only to model an external namespace
+        // modification after a valid closed segment. It must never be
+        // normalized into a barrier by the active writer.
+        use std::io::Write as _;
+        let mut tamper = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&foreign_path)
+            .expect("open closed foreign segment for tamper fixture");
+        tamper
+            .write_all(b"not-a-wal-frame")
+            .expect("append malformed external bytes");
+        tamper.sync_all().expect("sync tamper fixture");
+        drop(tamper);
+
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("trust-tamper-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn TrustDecision writer");
+        assert_eq!(
+            writer
+                .append_trust_decision_once(home.path(), trust_admission_descriptor(0xAA, 0xAB))
+                .await
+                .expect_err("malformed external WAL bytes must be indeterminate"),
+            TrustDecisionOnceError::Indeterminate
+        );
+        drop(writer);
+        join.await.expect("join TrustDecision writer");
+    }
+
+    #[tokio::test]
+    async fn trust_decision_once_keeps_owned_request_after_caller_cancellation() {
+        use crate::permissions::trust_ledger::TrustDecisionOnceOutcome;
+
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let descriptor = trust_admission_descriptor(0xA1, 0xA2);
+        let operation_id = descriptor.operation_id_sha256().to_owned();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("trust-cancel-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn TrustDecision writer");
+        let gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let caller_writer = writer.clone();
+        let caller_home = home.path().to_path_buf();
+        let caller = tokio::spawn(async move {
+            caller_writer
+                .append_trust_decision_once(&caller_home, descriptor)
+                .await
+        });
+
+        gate.wait_until_durable().await;
+        caller.abort();
+        assert!(
+            caller.await.is_err(),
+            "fixture must cancel only the caller future"
+        );
+        gate.release();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if authenticated_trust_admission_count(home.path(), &operation_id) == 1 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("writer-owned operation must finish after caller cancellation");
+        drop(writer);
+        join.await
+            .expect("the owned transaction must retire before restart reconciliation");
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("trust-cancel-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("restart after lost caller acknowledgement");
+        assert_eq!(
+            writer
+                .append_trust_decision_once(home.path(), trust_admission_descriptor(0xA1, 0xA2))
+                .await
+                .expect("post-cancel restart reconciliation"),
+            TrustDecisionOnceOutcome::ExistingExact
+        );
+        drop(writer);
+        join.await.expect("join TrustDecision writer");
     }
 
     #[tokio::test]

@@ -392,6 +392,44 @@ impl Gate {
         .await
     }
 
+    /// Resolve a descriptor for the writer-owned durable-admission
+    /// transaction without appending generic permission evidence. The returned
+    /// value is only an expected receipt; a caller must still obtain the
+    /// authenticated typed receipt before crossing an effect boundary.
+    ///
+    /// The channel confirmation bus is deliberately excluded here: a live
+    /// reply is not restart-safe authority. Static policy allows and active
+    /// leases are represented; every other confirmation resolves to a durable
+    /// denial until a separately verifiable durable capability exists.
+    pub(crate) async fn resolve_trust_admission(
+        &self,
+        action: &Action,
+        operation_id_sha256: &str,
+        request_binding_sha256: &str,
+    ) -> Result<super::trust_ledger::TrustAdmissionDescriptor, GateError> {
+        let (decision, lease_id, confirmation_source) = self
+            .resolve_durable_decision_at(action, Self::now_unix())
+            .await;
+        let subject = self
+            .lease_ctx
+            .as_ref()
+            .map(|context| context.subject.as_str());
+        super::trust_ledger::TrustAdmissionDescriptor::from_gate_resolution(
+            operation_id_sha256,
+            action,
+            self.policy.level(),
+            &decision,
+            subject,
+            lease_id.as_deref(),
+            confirmation_source,
+            request_binding_sha256,
+            self.policy.trust_fingerprint_sha256(),
+        )
+        .map_err(|error| {
+            GateError::Unavailable(format!("invalid durable admission descriptor: {error}"))
+        })
+    }
+
     /// [`Self::check`] with an explicit decision-time clock. The lease
     /// expiry re-check uses `now_unix`; `check()` passes a fresh wall-clock,
     /// tests pass a deterministic value. Splitting it out keeps the lease
@@ -424,48 +462,8 @@ impl Gate {
         audit_required: bool,
         request_binding_sha256: Option<&str>,
     ) -> Result<(), GateError> {
-        let decision = evaluate(action, &self.policy);
-        // SL-01a-b: a covering capability lease upgrades `Confirm → Allow`,
-        // and ONLY `Confirm`. `Deny` is the operator's hard floor at this
-        // autonomy level — it is final and a lease can NEVER override it
-        // (so `Strict` stays `Strict`). `Allow` already needs no lease. The
-        // lease is therefore consulted on the `Confirm` branch alone,
-        // BEFORE the (TTY / channel / fail-closed) confirm round-trip. When
-        // a lease wins, its id is threaded into the audit frame so `neoth
-        // wal show --type permission_granted` records WHY the action was
-        // allowed — the verifiable-loyalty grant chain.
-        let (final_decision, lease_id, confirmation_source) = match decision {
-            // A request-bound capability can accompany a policy-level Allow
-            // (for example Full or Custom/Allow). Preserve that authority in
-            // the audit frame even though no Confirm upgrade was necessary.
-            Decision::Allow => (Decision::Allow, None, self.preconfirmed_source),
-            Decision::Deny(reason) => (Decision::Deny(reason), None, None),
-            Decision::Confirm(reason) => match self
-                .lease_ctx
-                .as_ref()
-                .and_then(|ctx| ctx.covering_lease_id(action, now_unix))
-            {
-                Some(id) => (Decision::Allow, Some(id), Some("capability_lease")),
-                None => match self.preconfirmed_source {
-                    Some(source) => (Decision::Allow, None, Some(source)),
-                    None => {
-                        let resolved = self.resolve_confirm(action, &reason).await;
-                        let source = if resolved.is_allow() {
-                            match self.confirm {
-                                ConfirmStrategy::Tty => Some("tty_operator_confirm"),
-                                ConfirmStrategy::Channel => Some("channel_operator_confirm"),
-                                ConfirmStrategy::FailClosed => None,
-                                #[cfg(test)]
-                                ConfirmStrategy::AlwaysAllow => Some("test_always_allow"),
-                            }
-                        } else {
-                            None
-                        };
-                        (resolved, None, source)
-                    }
-                },
-            },
-        };
+        let (final_decision, lease_id, confirmation_source) =
+            self.resolve_decision_at(action, now_unix).await;
 
         if !matches!(sink, PermissionAuditSink::None) {
             let subject = self.lease_ctx.as_ref().map(|c| c.subject.as_str());
@@ -509,6 +507,83 @@ impl Gate {
             // `Confirm` is never returned by resolve_confirm — it produces
             // Allow or Deny only. Treat as Aborted defensively.
             Decision::Confirm(r) => Err(GateError::Aborted(r)),
+        }
+    }
+
+    async fn resolve_decision_at(
+        &self,
+        action: &Action,
+        now_unix: i64,
+    ) -> (Decision, Option<String>, Option<&'static str>) {
+        let decision = evaluate(action, &self.policy);
+        match decision {
+            // A request-bound capability can accompany a policy Allow. Keep
+            // the source in generic audit evidence even where no upgrade was
+            // required.
+            Decision::Allow => (Decision::Allow, None, self.preconfirmed_source),
+            Decision::Deny(reason) => (Decision::Deny(reason), None, None),
+            Decision::Confirm(reason) => match self
+                .lease_ctx
+                .as_ref()
+                .and_then(|context| context.covering_lease_id(action, now_unix))
+            {
+                Some(id) => (Decision::Allow, Some(id), Some("capability_lease")),
+                None => match self.preconfirmed_source {
+                    Some(source) => (Decision::Allow, None, Some(source)),
+                    None => {
+                        let resolved = self.resolve_confirm(action, &reason).await;
+                        let source = if resolved.is_allow() {
+                            match self.confirm {
+                                ConfirmStrategy::Tty => Some("tty_operator_confirm"),
+                                ConfirmStrategy::Channel => Some("channel_operator_confirm"),
+                                ConfirmStrategy::FailClosed => None,
+                                #[cfg(test)]
+                                ConfirmStrategy::AlwaysAllow => Some("test_always_allow"),
+                            }
+                        } else {
+                            None
+                        };
+                        (resolved, None, source)
+                    }
+                },
+            },
+        }
+    }
+
+    async fn resolve_durable_decision_at(
+        &self,
+        action: &Action,
+        now_unix: i64,
+    ) -> (Decision, Option<String>, Option<&'static str>) {
+        let decision = evaluate(action, &self.policy);
+        match decision {
+            Decision::Allow => (Decision::Allow, None, None),
+            Decision::Deny(reason) => (Decision::Deny(reason), None, None),
+            Decision::Confirm(reason) => match self
+                .lease_ctx
+                .as_ref()
+                .and_then(|context| context.covering_lease_id(action, now_unix))
+            {
+                Some(id) => (Decision::Allow, Some(id), Some("capability_lease")),
+                None => {
+                    let denied = match self.confirm {
+                        ConfirmStrategy::FailClosed => {
+                            format!("daemon-mode fail-closed; {reason}")
+                        }
+                        ConfirmStrategy::Channel => format!(
+                            "durable admission refuses ephemeral channel confirmation; {reason}"
+                        ),
+                        ConfirmStrategy::Tty => format!(
+                            "durable admission requires a request-bound confirmation receipt; {reason}"
+                        ),
+                        #[cfg(test)]
+                        ConfirmStrategy::AlwaysAllow => format!(
+                            "durable admission refuses test-only ephemeral confirmation; {reason}"
+                        ),
+                    };
+                    (Decision::Deny(denied), None, None)
+                }
+            },
         }
     }
 
@@ -1618,5 +1693,79 @@ mod tests {
         let f = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
         let v: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
         assert!(v["lease_id"].is_null(), "no lease ⇒ lease_id null");
+    }
+
+    fn durable_digest(byte: char) -> String {
+        std::iter::repeat_n(byte, 64).collect()
+    }
+
+    #[tokio::test]
+    async fn durable_resolution_returns_typed_allow_and_denied_descriptors_without_audit() {
+        let allowed = Gate::for_level(AutonomyLevel::Full)
+            .resolve_trust_admission(
+                &Action::ChannelSend,
+                &durable_digest('a'),
+                &durable_digest('b'),
+            )
+            .await
+            .unwrap();
+        assert_eq!(allowed.outcome(), crate::permissions::TrustOutcome::Allowed);
+        assert_eq!(allowed.operation_id_sha256(), durable_digest('a'));
+        assert_eq!(allowed.request_binding_sha256(), durable_digest('b'));
+        assert_eq!(
+            allowed.subject(),
+            crate::permissions::trust_ledger::LOCAL_SUBJECT
+        );
+
+        let denied = Gate::for_level(AutonomyLevel::Strict)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .resolve_trust_admission(
+                &Action::ChannelSend,
+                &durable_digest('c'),
+                &durable_digest('d'),
+            )
+            .await
+            .unwrap();
+        assert_eq!(denied.outcome(), crate::permissions::TrustOutcome::Denied);
+        assert_ne!(
+            allowed.policy_snapshot_sha256(),
+            denied.policy_snapshot_sha256(),
+            "the durable receipt binds the exact snapshot that resolved it"
+        );
+    }
+
+    #[tokio::test]
+    async fn durable_resolution_refuses_ephemeral_channel_confirmation() {
+        let descriptor = Gate::for_level(AutonomyLevel::Standard)
+            .with_confirm(ConfirmStrategy::Channel)
+            .resolve_trust_admission(
+                &Action::ExecArbitrary,
+                &durable_digest('e'),
+                &durable_digest('f'),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            descriptor.outcome(),
+            crate::permissions::TrustOutcome::Denied,
+            "a live ConfirmBus answer is not durable authority"
+        );
+        assert!(descriptor.reason_sha256().is_some());
+
+        let ordinary_preconfirmation = Gate::for_level(AutonomyLevel::Standard)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .with_preconfirmed_confirmation("ordinary_cli_yes")
+            .resolve_trust_admission(
+                &Action::ExecArbitrary,
+                &durable_digest('0'),
+                &durable_digest('1'),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            ordinary_preconfirmation.outcome(),
+            crate::permissions::TrustOutcome::Denied,
+            "a generic preconfirmation label is not a durable recovery capability"
+        );
     }
 }

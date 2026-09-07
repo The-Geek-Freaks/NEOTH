@@ -4982,11 +4982,22 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
   See `docs/gold-wave5-verification.md`,
   `docs/verification/gold-wave5-source-manifest.json` and
   `docs/verification/gold-wave5-test-matrix.json`.
-  **Still open:** durable proactive/webhook decision reconciliation and the
-  separate GUI apply-confirmation flow. Broader feature/workspace, live
+  **2026-09-07 Wave 6 bounded checkpoint:** proactive claims and webhook
+  outboxes persist exact local-subject admission descriptors and reconcile
+  them through authenticated writer/RPC once transactions before transport.
+  Exact receipts survive retry, restart and lost responses; generic append
+  cannot mint the durable schema. Accepted-config effect leases fence reload
+  and preserve active I/O ownership through cancellation. Final selected
+  behavior evidence: 17 changed compiled inputs, 9/9 groups and 1,055 passing
+  parent-harness executions with zero failures. See
+  `docs/gold-wave6-verification.md`,
+  `docs/verification/gold-wave6-source-manifest.json` and
+  `docs/verification/gold-wave6-test-matrix.json`.
+  **Still open:** the native GUI/Buddy apply-confirmation flow and completion
+  of the overall boundary inventory. Broader feature/workspace, live
   peer/provider, package and exact-candidate CI/Security/CodeQL gates remain
   separate. These checkpoints close no checkbox. Wave 4 is published on GitHub
-  main at `479df2e0`; Wave 5 also targets main directly.
+  main at `479df2e0`, Wave 5 at `3fb7082c`; Wave 6 targets main directly.
 - [ ] **GOLD-LF-P1-06 — AgreementDimension council scoring:** define the complete dimension enum and explicit weighting/aggregation contract, thread dimension scores through council decisions and audits, and pin deterministic formula, missing-dimension and disagreement tests. Source: BLUEPRINT_v06_synthesis.md §8.
 - [ ] **GOLD-LF-P1-07 — External-family grader parity gate:** add a verified family tag to grader configuration and fail the recall-parity gate unless the required independent external family is present; cover spoofed, missing, duplicate and mixed-family configurations. Source: 00_DESIGN_v1.1_FINAL.md H7.
 - [ ] **GOLD-LF-P1-08 — Recall-parity evaluation harness:** ship transcript/WAL goldset mining, operator labeling, four-grader batch orchestration and family-bias clustering as one reproducible workflow with resumable artifacts, provenance and a release-gating report. Source: SPEC_recall_parity_methodology.md.

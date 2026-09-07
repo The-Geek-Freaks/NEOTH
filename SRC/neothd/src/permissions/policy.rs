@@ -5,6 +5,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::{Action, AutonomyLevel, Decision};
 
@@ -332,6 +333,28 @@ impl AutonomyPolicySnapshot {
         &self.overrides
     }
 
+    /// Stable digest of the exact snapshot used for one durable admission.
+    /// The field order is domain-separated and length-delimited; overrides are
+    /// a `BTreeMap`, so their canonical order does not depend on YAML input
+    /// order or hash-map iteration. This is an identity of policy *content*,
+    /// not a config reload epoch.
+    pub(crate) fn trust_fingerprint_sha256(&self) -> String {
+        fn add_part(hasher: &mut Sha256, value: &str) {
+            hasher.update((value.len() as u64).to_be_bytes());
+            hasher.update(value.as_bytes());
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"neoth.autonomy-policy.trust-fingerprint.v1\0");
+        add_part(&mut hasher, self.level.as_str());
+        hasher.update((self.overrides.len() as u64).to_be_bytes());
+        for (action, decision) in &self.overrides {
+            add_part(&mut hasher, action.as_str());
+            add_part(&mut hasher, &decision.to_string());
+        }
+        hex::encode(hasher.finalize())
+    }
+
     pub(crate) fn custom_override(&self, kind: ActionKind) -> Option<CustomDecision> {
         self.overrides.get(&kind).copied()
     }
@@ -471,6 +494,32 @@ mod tests {
                 kind
             );
         }
+    }
+
+    #[test]
+    fn trust_fingerprint_is_stable_sorted_and_policy_sensitive() {
+        let first = custom_snapshot([
+            (ActionKind::ChannelSend, CustomDecision::Confirm),
+            (ActionKind::Read, CustomDecision::Deny),
+        ]);
+        let reordered = custom_snapshot([
+            (ActionKind::Read, CustomDecision::Deny),
+            (ActionKind::ChannelSend, CustomDecision::Confirm),
+        ]);
+        let changed = custom_snapshot([
+            (ActionKind::ChannelSend, CustomDecision::Allow),
+            (ActionKind::Read, CustomDecision::Deny),
+        ]);
+        let first_fingerprint = first.trust_fingerprint_sha256();
+        assert_eq!(first_fingerprint.len(), 64);
+        assert_eq!(first_fingerprint, reordered.trust_fingerprint_sha256());
+        assert_ne!(first_fingerprint, changed.trust_fingerprint_sha256());
+        assert_ne!(
+            first_fingerprint,
+            AutonomyPolicySnapshot::builtin(AutonomyLevel::Standard)
+                .unwrap()
+                .trust_fingerprint_sha256()
+        );
     }
 
     #[test]

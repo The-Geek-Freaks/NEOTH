@@ -77,12 +77,52 @@ production effect must consume the same immutable target/arguments that were
 admitted. Raw request bodies, patches and task contents are not fields of a
 typed TrustDecision.
 
+## Durable outbound admission
+
+Proactive claims v3 and webhook outboxes v2 persist an immutable local-subject
+descriptor before submission. It binds the operation, action, effective target
+and body, policy fingerprint and decision provenance. A local receipt cache
+is not authority: recovery validates the descriptor against the actual effect
+and reconciles it through the authenticated primary WAL.
+
+The closed writer transaction owns home-scoped process and OS authority while
+it checks the ledger and, if absent, appends one schema-2 TrustDecision with a
+forced HMAC marker. It seals only the writer's own open HMAC window before
+lookup. A foreign or malformed tail cannot become an absence proof. An exact
+receipt returns ExistingExact; duplicate, conflict and indeterminate outcomes
+remain distinct. Generic append routes reject schema 2. The mandatory local
+RPC preserves the same typed results and home identity without automatic retry.
+
+Live egress captures one accepted ReloadController snapshot. An authenticated
+receipt precedes the accepted snapshot's effect lease and actual transport.
+Reload retires old admission and drains already leased effects before it
+publishes a replacement. A suppressed proactive operation still records its
+authenticated Intent/Result history, but never Arms or invokes a provider.
+The dispatcher reads a coherent config/credential pair from the exact serve
+configuration path and requires it to match the accepted snapshot before use.
+
+Normal proactive ownership retains the generation lease through terminal
+Result acknowledgement. Its provider task also owns a clone through actual
+I/O teardown, so cancellation cannot release a live effect or retain a reload
+lease until a later recovery tick. The Armed claim and queued JoinHandle retain
+truthful unknown-outcome reconciliation independently. A webhook owned task
+holds its record and generation leases through HTTP, result audit and durable
+outbox settlement even when the outer caller is cancelled.
+
+Webhook retries reuse the same authenticated descriptor when the current
+accepted policy fingerprint matches. Process-local reload epochs are not
+persisted authority. Legacy retry migration marks historical attempts as
+future-only continuation; it never claims retrospective authorization.
+DeliveredPendingAudit remains audit-only. Legacy proactive Armed uncertainty
+remains CrashUnknown without resend. Exactly once describes the TrustDecision,
+not physical provider delivery.
+
 ## Remaining GOLD scope
 
 This document describes implemented boundaries; runtime evidence belongs to
 the corresponding source-bound batch verification report. It does not close
-the all-boundary `GOLD-LF-P1-05` task. Durable proactive/webhook admission and
-unknown-append reconciliation remain separate implementation work. Pure policy
+the all-boundary `GOLD-LF-P1-05` task. The separate GUI apply-confirmation flow
+and completion of the overall boundary inventory remain open. Pure policy
 displays and scheduling probes must not be
 turned into duplicate final decisions to inflate apparent coverage.
 

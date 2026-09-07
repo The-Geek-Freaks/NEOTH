@@ -1,0 +1,316 @@
+{
+  "schema": "neoth-gold-selected-verification/v1",
+  "batch": "wave6-durable-egress-admission",
+  "baseCommit": "3fb7082ce06b6f86f0ffab1d1e9e727a5ebf014f",
+  "publicationTarget": "refs/heads/main",
+  "status": "bounded local verification passed; not full workspace or release qualification",
+  "binary": {
+    "path": "SRC/target/debug/deps/neothd-a576cce183334209.exe",
+    "sha256": "0762490F0AF83B9446FD3D9AE77BAAB1491717D0E287DABEDDFB89945E667BD9",
+    "bytes": 273219072,
+    "lastWriteTimeUtc": "2026-09-07T12:30:46.8630164Z",
+    "testSummary": "14180 tests, 0 benchmarks",
+    "listExit": 0,
+    "sourceManifest": "gold-wave6-source-manifest.json"
+  },
+  "stats": {
+    "groups": 9,
+    "passedGroups": 9,
+    "passedExecutions": 1055,
+    "failedExecutions": 0,
+    "ignoredHarnessEntries": 3
+  },
+  "gates": {
+    "environment": {
+      "platform": "Windows x64 MSVC",
+      "rustc": "1.95.0",
+      "cargo": "1.95.0",
+      "cargoJobs": 1,
+      "testThreads": 1,
+      "profileDebug": 0,
+      "offline": true
+    },
+    "strictClippy": {
+      "command": "SRC/_clippy.bat",
+      "cargoArgs": "clippy -p neoth --lib --tests --no-deps -- -D warnings",
+      "exit_code": 0,
+      "exitToken": "CLIPPY_EXIT=0",
+      "duration": "Finished `dev` profile [unoptimized] target(s) in 2m 52s"
+    },
+    "libraryTestBuild": {
+      "command": "SRC/_test.bat --no-run --locked --offline -j1",
+      "exit_code": 0,
+      "exitToken": "TEST_EXIT=0",
+      "duration": "Finished `test` profile [unoptimized] target(s) in 3m 40s"
+    },
+    "coreCheck": {
+      "command": "SRC/_check.bat",
+      "exit_code": 0,
+      "exitToken": "BUILD_EXIT=0",
+      "duration": "Finished `dev` profile [unoptimized] target(s) in 1m 58s",
+      "cargoArgs": "check -p neoth"
+    },
+    "publicCliBuild": {
+      "command": "SRC/_build.bat --locked --offline -j1",
+      "exit_code": 0,
+      "exitToken": "BUILD_EXIT=0",
+      "duration": "Finished `dev` profile [unoptimized] target(s) in 4m 58s"
+    },
+    "workspaceFormatting": {
+      "command": "SRC/_gui_check.bat fmt --all -- --check",
+      "exit_code": 0,
+      "exitToken": "GUI_GATE_EXIT=0"
+    },
+    "workspaceMetadata": {
+      "command": "SRC/_gui_check.bat metadata --locked --no-deps --format-version 1",
+      "exit_code": 0,
+      "exitToken": "GUI_GATE_EXIT=0",
+      "packages": 5,
+      "workspaceMembers": 5
+    },
+    "affectedFeatureCheck": {
+      "command": "SRC/_gui_check.bat check -p neoth --features matrix-channel,gchat-channel --tests --locked --offline -j1",
+      "exit_code": 0,
+      "exitToken": "GUI_GATE_EXIT=0",
+      "duration": "Finished `dev` profile [unoptimized] target(s) in 9m 24s",
+      "features": [
+        "matrix-channel",
+        "gchat-channel"
+      ],
+      "evidence": "Type checks optional production and test targets; not live Matrix/Google Chat acceptance"
+    }
+  },
+  "results": [
+    {
+      "label": "permissions",
+      "filter": "permissions::",
+      "exit_code": 0,
+      "seconds": 1.1226145,
+      "summary": "test result: ok. 200 passed; 0 failed; 0 ignored; 0 measured; 13980 filtered out; finished in 0.99s",
+      "passed": 200,
+      "failed": 0,
+      "ignored": 0,
+      "ignoredEntries": [],
+      "failureOutput": []
+    },
+    {
+      "label": "writer",
+      "filter": "wal::writer::",
+      "exit_code": 0,
+      "seconds": 9.3550134,
+      "summary": "test result: ok. 94 passed; 0 failed; 2 ignored; 0 measured; 14084 filtered out; finished in 9.32s",
+      "passed": 94,
+      "failed": 0,
+      "ignored": 2,
+      "ignoredEntries": [
+        "test wal::writer::tests::trust_decision_once_cross_process_child ... ignored, spawned only by trust_decision_once_uses_file_authority_across_processes",
+        "test wal::writer::tests::wal_sync_latency_measurement ... ignored, D008 latency bench — run with: cargo test -p neoth --lib wal_sync_latency -- --ignored --nocapture --test-threads=1"
+      ],
+      "failureOutput": []
+    },
+    {
+      "label": "audit-rpc",
+      "filter": "daemon::audit_rpc::",
+      "exit_code": 0,
+      "seconds": 1.9755325,
+      "summary": "test result: ok. 62 passed; 0 failed; 1 ignored; 0 measured; 14117 filtered out; finished in 1.93s",
+      "passed": 62,
+      "failed": 0,
+      "ignored": 1,
+      "ignoredEntries": [
+        "test daemon::audit_rpc::tests::health_probe_child_process_checks_live_listener ... ignored, helper invoked by client_round_trips_against_a_live_listener"
+      ],
+      "failureOutput": []
+    },
+    {
+      "label": "proactive-egress",
+      "filter": "daemon::proactive_egress::",
+      "exit_code": 0,
+      "seconds": 5.1558061,
+      "summary": "test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 14137 filtered out; finished in 5.12s",
+      "passed": 43,
+      "failed": 0,
+      "ignored": 0,
+      "ignoredEntries": [],
+      "failureOutput": []
+    },
+    {
+      "label": "proactive-dispatcher",
+      "filter": "daemon::proactive_dispatcher::",
+      "exit_code": 0,
+      "seconds": 1.2929832,
+      "summary": "test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 14153 filtered out; finished in 1.25s",
+      "passed": 27,
+      "failed": 0,
+      "ignored": 0,
+      "ignoredEntries": [],
+      "failureOutput": []
+    },
+    {
+      "label": "webhook",
+      "filter": "channels::webhook_listener::",
+      "exit_code": 0,
+      "seconds": 2.5703048,
+      "summary": "test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 14133 filtered out; finished in 2.53s",
+      "passed": 47,
+      "failed": 0,
+      "ignored": 0,
+      "ignoredEntries": [],
+      "failureOutput": []
+    },
+    {
+      "label": "reload",
+      "filter": "config::reload::",
+      "exit_code": 0,
+      "seconds": 1.9222376,
+      "summary": "test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 14134 filtered out; finished in 1.88s",
+      "passed": 46,
+      "failed": 0,
+      "ignored": 0,
+      "ignoredEntries": [],
+      "failureOutput": []
+    },
+    {
+      "label": "serve-tasks",
+      "filter": "cli::serve_tasks::",
+      "exit_code": 0,
+      "seconds": 8.5622082,
+      "summary": "test result: ok. 64 passed; 0 failed; 0 ignored; 0 measured; 14116 filtered out; finished in 8.52s",
+      "passed": 64,
+      "failed": 0,
+      "ignored": 0,
+      "ignoredEntries": [],
+      "failureOutput": []
+    },
+    {
+      "label": "cluster",
+      "filter": "cluster::",
+      "exit_code": 0,
+      "seconds": 12.7909363,
+      "summary": "test result: ok. 472 passed; 0 failed; 0 ignored; 0 measured; 13708 filtered out; finished in 12.61s",
+      "passed": 472,
+      "failed": 0,
+      "ignored": 0,
+      "ignoredEntries": [],
+      "failureOutput": []
+    }
+  ],
+  "staticContracts": [
+    {
+      "command": "python packaging/tests/test_roadmap_release_gate.py",
+      "tests": 11,
+      "exit_code": 0,
+      "afterFinalPlanAnnotations": true
+    },
+    {
+      "command": "python scripts/test_lost_feature_integrity.py",
+      "tests": 19,
+      "exit_code": 0,
+      "afterFinalPlanAnnotations": true
+    },
+    {
+      "buildCommand": "cmd /d /c \"call SRC\\_msvc_env.bat && rustc --edition 2024 --test SRC\\neothd\\tests\\proactive_egress_contract_source_gate.rs -o work\\gold-20260906\\proactive-source-gate-wave6-final.exe\"",
+      "environment": {
+        "CARGO_MANIFEST_DIR": "C:\\Users\\Shadow-PC\\CascadeProjects\\AGENTER\\SRC\\neothd"
+      },
+      "command": "work/gold-20260906/proactive-source-gate-wave6-final.exe --test-threads=1",
+      "tests": 19,
+      "exit_code": 0,
+      "exitTokens": [
+        "SOURCE_BUILD_EXIT=0",
+        "SOURCE_TEST_EXIT=0"
+      ],
+      "evidence": "Source integration contract, not provider runtime"
+    }
+  ],
+  "publicCli": {
+    "path": "SRC/target/debug/neoth.exe",
+    "sha256": "E3025B3BD5BC297D4A247D5B21B12CCAA75321DB241D4B402C58911E383E8A18",
+    "bytes": 182257664,
+    "lastWriteTimeUtc": "2026-09-07T12:38:26.7132146Z",
+    "probes": [
+      {
+        "args": [
+          "--version"
+        ],
+        "exit_code": 0,
+        "firstLine": "neoth 1.0.0"
+      },
+      {
+        "args": [
+          "serve",
+          "--help"
+        ],
+        "exit_code": 0,
+        "firstLine": "Run the daemon. Reads ~/.neoth/freedom.yaml, opens the WAL, awaits SIGTERM / Ctrl+C, drains cleanly on shutdown"
+      },
+      {
+        "args": [
+          "permissions",
+          "audit",
+          "--help"
+        ],
+        "exit_code": 0,
+        "firstLine": "Replay the typed append-only trust ledger for one exact subject key. Use `local` for decisions made without a delegated subject"
+      },
+      {
+        "args": [
+          "proactive",
+          "list",
+          "--help"
+        ],
+        "exit_code": 0,
+        "firstLine": "Print staged proposals"
+      },
+      {
+        "args": [
+          "reload",
+          "--help"
+        ],
+        "exit_code": 0,
+        "firstLine": "Pick #37 (Session 14, Agent #4 design-consensus): trigger the running `neoth serve` daemon to re-read `freedom.yaml` and atomically swap its live `Arc<FreedomConfig>` via `arc-swap`. Touches a sentinel file `~/.neoth/.reload-requested`; the daemon polls for it on every ingress tick. `operator_id`, `provider_kind`, and startup-bound provider runtime fields are rejected with a `CONFIG_RELOAD_REJECTED` audit frame until restart. That runtime set includes the secrets backend; provider binary, key, endpoint, model, aliases, region and API version; inference/fallback/Claude topology; provider token/compaction controls; Hysteria; SSH tunnels; and recursive MAS. Tunable policy/prompt fields and channel bindings such as `telegram_user_id` reload without a daemon restart; the credential-aware reconciler then restarts only the affected adapter"
+      }
+    ]
+  },
+  "postGateReadback": {
+    "checkedUtc": "2026-09-07T12:50:13.2707004Z",
+    "checkedInputs": 17,
+    "mismatches": [],
+    "libraryBinarySha256": "0762490F0AF83B9446FD3D9AE77BAAB1491717D0E287DABEDDFB89945E667BD9",
+    "publicBinarySha256": "E3025B3BD5BC297D4A247D5B21B12CCAA75321DB241D4B402C58911E383E8A18",
+    "changedCompiledInputs": [
+      "SRC/neothd/src/channels/webhook_listener.rs",
+      "SRC/neothd/src/cli/serve.rs",
+      "SRC/neothd/src/cli/serve_tasks.rs",
+      "SRC/neothd/src/config/reload.rs",
+      "SRC/neothd/src/daemon/audit_rpc/client.rs",
+      "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+      "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "SRC/neothd/src/daemon/audit_rpc/transport/mod.rs",
+      "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "SRC/neothd/src/daemon/proactive_egress.rs",
+      "SRC/neothd/src/permissions/gate.rs",
+      "SRC/neothd/src/permissions/mod.rs",
+      "SRC/neothd/src/permissions/policy.rs",
+      "SRC/neothd/src/permissions/trust_ledger.rs",
+      "SRC/neothd/src/wal/writer.rs",
+      "SRC/neothd/tests/proactive_egress_contract_source_gate.rs"
+    ],
+    "libraryBinaryMatches": true,
+    "publicBinaryMatches": true
+  },
+  "review": {
+    "code": "clear",
+    "rust": "clear",
+    "security": "clear",
+    "finalRepair": "Tokio writer lifecycle, ready RPC baseline, stable-lock-aware webhook fixtures and strict Windows replacement/restart fixtures independently re-reviewed"
+  },
+  "limits": [
+    "Selected local Windows core behavior, not all 14,180 library tests",
+    "Optional Matrix/Google Chat type check does not execute live provider flows",
+    "No live peer/provider, interactive GUI, package, installer or release qualification",
+    "Exactly once describes the authenticated TrustDecision, not physical provider delivery",
+    "P1-05 native GUI/Buddy apply confirmation and complete boundary inventory remain open"
+  ]
+}

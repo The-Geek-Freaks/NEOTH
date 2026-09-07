@@ -35,6 +35,9 @@ pub use ifc::{
 pub use policy::{
     ActionKind, AutonomyPolicySnapshot, CustomAutonomyConfig, CustomDecision, PolicyArgument,
 };
+pub(crate) use trust_ledger::{
+    AuthenticatedDecisionLookup, audit_trust_admission_once, find_authenticated_decision_at_home,
+};
 pub use trust_ledger::{
     TrustEvent, TrustLedger, TrustLedgerBoundary, TrustLedgerCompleteness, TrustLedgerEntry,
     TrustOutcome,

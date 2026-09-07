@@ -231,6 +231,100 @@ async fn try_post_frame_to_path(
     }
 }
 
+/// Reconcile a previously persisted durable admission with the daemon-owned
+/// writer. Availability errors are indeterminate: callers retain the exact
+/// descriptor and must never replace this operation with a fresh Gate call.
+pub(crate) async fn try_post_trust_decision_once(
+    home: &Path,
+    expected: &crate::permissions::trust_ledger::TrustAdmissionDescriptor,
+) -> std::result::Result<
+    crate::permissions::trust_ledger::TrustDecisionOnceOutcome,
+    crate::permissions::trust_ledger::TrustDecisionOnceError,
+> {
+    use crate::permissions::trust_ledger::TrustDecisionOnceError;
+
+    expected
+        .validate()
+        .map_err(|_| TrustDecisionOnceError::Indeterminate)?;
+    let body = serde_json::to_string(&super::TrustDecisionOnceRequest {
+        schema_version: 1,
+        descriptor: expected.clone(),
+    })
+    .map_err(|_| TrustDecisionOnceError::Indeterminate)?;
+    if body.len() > 4096 {
+        return Err(TrustDecisionOnceError::Indeterminate);
+    }
+    let (status, response) = post_rpc(home, "/trust-decision-once", &body)
+        .await
+        .map_err(|_| TrustDecisionOnceError::Indeterminate)?;
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .ok_or(TrustDecisionOnceError::Indeterminate)?;
+    if status != 200 {
+        return Err(parse_trust_decision_refusal(status, body));
+    }
+    parse_trust_decision_response(body).map_err(|_| TrustDecisionOnceError::Indeterminate)
+}
+
+/// Only the two closed conflict codes distinguish terminal failures. Missing,
+/// extended, malformed or unexpected replies preserve the unknown outcome.
+pub(super) fn parse_trust_decision_refusal(
+    status: u16,
+    body: &str,
+) -> crate::permissions::trust_ledger::TrustDecisionOnceError {
+    use crate::permissions::trust_ledger::TrustDecisionOnceError;
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Refusal {
+        error: RefusalCode,
+    }
+    #[derive(serde::Deserialize)]
+    enum RefusalCode {
+        #[serde(rename = "trust_admission_conflict")]
+        Conflict,
+        #[serde(rename = "trust_admission_duplicate")]
+        Duplicate,
+    }
+    if status != 409 {
+        return TrustDecisionOnceError::Indeterminate;
+    }
+    match serde_json::from_str::<Refusal>(body) {
+        Ok(Refusal {
+            error: RefusalCode::Conflict,
+        }) => TrustDecisionOnceError::Conflict,
+        Ok(Refusal {
+            error: RefusalCode::Duplicate,
+        }) => TrustDecisionOnceError::Duplicate,
+        Err(_) => TrustDecisionOnceError::Indeterminate,
+    }
+}
+
+pub(super) fn parse_trust_decision_response(
+    body: &str,
+) -> std::result::Result<
+    crate::permissions::trust_ledger::TrustDecisionOnceOutcome,
+    AuditRpcClientError,
+> {
+    use crate::permissions::trust_ledger::TrustDecisionOnceOutcome;
+
+    let response: super::TrustDecisionOnceResponse = serde_json::from_str(body)
+        .map_err(|_| AuditRpcClientError::Unavailable("invalid trust admission response".into()))?;
+    if response.schema_version != 1 {
+        return Err(AuditRpcClientError::Unavailable(
+            "unsupported trust admission response version".into(),
+        ));
+    }
+    Ok(match response.outcome {
+        super::TrustDecisionOnceWireOutcome::ExistingExact => {
+            TrustDecisionOnceOutcome::ExistingExact
+        }
+        super::TrustDecisionOnceWireOutcome::AppendedExact => {
+            TrustDecisionOnceOutcome::AppendedExact
+        }
+    })
+}
+
 /// Shared same-user IPC POST to the daemon's audit-RPC listener (same
 /// sidecar + bearer-token auth + staleness guard as [`try_post_audit_frame`]).
 /// Returns `(status, full_response)`. Used by the D34 FULL-AUTO token verbs.

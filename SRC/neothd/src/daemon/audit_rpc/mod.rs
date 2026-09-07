@@ -42,7 +42,8 @@
 //!
 //! The internal listener is mandatory while `neoth serve` owns the WAL.
 //! `freedom.yaml::audit_rpc.enabled` controls only the optional public audit and
-//! approval-token routes; the Skill-mutation authority route remains available.
+//! approval-token routes; the Skill-mutation and durable TrustDecision
+//! authority routes remain available.
 //! The listener is spawned from `cli/serve.rs` and aborted on shutdown; the
 //! sidecar is removed by [`SidecarGuard`] on drop.
 //!
@@ -68,6 +69,7 @@ mod transport;
 mod tests;
 
 pub(crate) use client::try_post_skill_mutation_frame;
+pub(crate) use client::try_post_trust_decision_once;
 pub(crate) use client::verified_daemon_endpoint_nonce;
 pub use client::{
     AuditRpcClientError, consume_fullauto_token, consume_jobs_run_token, enforce_required_audit,
@@ -90,5 +92,30 @@ pub(crate) use sidecar::read_sidecar;
 pub(crate) use sidecar::write_sidecar;
 pub use sidecar::{SidecarGuard, remove_sidecar, sidecar_path};
 pub use token::{init_rpc_token, read_rpc_token, rpc_token_path};
+pub(crate) use transport::homes_same_identity;
 #[cfg(test)]
 pub(crate) use transport::{AuditEndpointV2, endpoint_for_home};
+
+/// Closed same-user transport for a descriptor already resolved by Gate and
+/// durably retained by its caller. This carries no raw action/body/recipient
+/// and never resolves policy on the caller's behalf.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TrustDecisionOnceRequest {
+    schema_version: u8,
+    descriptor: crate::permissions::trust_ledger::TrustAdmissionDescriptor,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TrustDecisionOnceResponse {
+    schema_version: u8,
+    outcome: TrustDecisionOnceWireOutcome,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum TrustDecisionOnceWireOutcome {
+    ExistingExact,
+    AppendedExact,
+}

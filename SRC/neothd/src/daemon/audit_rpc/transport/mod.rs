@@ -88,6 +88,13 @@ impl AuditEndpointV2 {
     }
 }
 
+/// Compare homes using the same canonical identity as endpoint discovery.
+pub(crate) fn homes_same_identity(expected: &Path, supplied: &Path) -> Result<bool> {
+    let expected = std::fs::canonicalize(expected).context("canonicalize intended audit home")?;
+    let supplied = std::fs::canonicalize(supplied).context("canonicalize bound audit home")?;
+    Ok(canonical_home_sha256(&expected) == canonical_home_sha256(&supplied))
+}
+
 /// Deterministically derive the only endpoint accepted for this home + nonce.
 pub(crate) fn endpoint_for_home(home: &Path, endpoint_nonce: &str) -> Result<AuditEndpointV2> {
     validate_endpoint_nonce(endpoint_nonce)?;

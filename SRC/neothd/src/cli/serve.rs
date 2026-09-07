@@ -1843,6 +1843,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &neoth_home,
         &segment_chain_base_path,
         &writer,
+        &reload_controller,
     );
 
     // ── 5d-quartus. G-02 surfacing cron — "Knows things about you you

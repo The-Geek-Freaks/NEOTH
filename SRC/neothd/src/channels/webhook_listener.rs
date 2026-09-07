@@ -38,7 +38,7 @@ use std::convert::Infallible;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result};
 use futures_util::StreamExt as _;
@@ -87,7 +87,8 @@ pub const SHUTDOWN_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::fro
 const MAX_SPOOL_DRAIN_FILES: usize = 1024;
 const MAX_CONCURRENT_SPOOL_DRAINS: usize = 8;
 const MAX_SPOOL_ENTRY_BYTES: u64 = (MAX_BODY_BYTES as u64) * 8;
-const WEBHOOK_OUTBOX_VERSION: u8 = 1;
+const WEBHOOK_OUTBOX_VERSION: u8 = 2;
+const WEBHOOK_OUTBOX_LEGACY_VERSION: u8 = 1;
 const MAX_OUTBOX_ENTRY_BYTES: u64 = 512 * 1024;
 const WEBHOOK_RETRY_BASE_SECS: u64 = 5;
 const WEBHOOK_RETRY_MAX_SECS: u64 = 15 * 60;
@@ -98,6 +99,12 @@ const WEBHOOK_RETRY_MAX_SECS: u64 = 15 * 60;
 const MAX_TERMINAL_OUTBOX_RECEIPTS_PER_CHANNEL: usize = 4096;
 const TERMINAL_OUTBOX_RECEIPT_RETENTION: std::time::Duration =
     std::time::Duration::from_secs(30 * 24 * 60 * 60);
+
+/// Advisory OS locks exclude other NEOTH processes. The keyed in-process set
+/// closes platforms where a second lock acquisition by the same process is
+/// reentrant, so recovery and the foreground delivery cannot race one record.
+static ACTIVE_OUTBOX_DELIVERIES: LazyLock<Mutex<std::collections::HashSet<std::path::PathBuf>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -126,6 +133,10 @@ impl OutboxChannel {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum OutboxState {
     PendingSend,
+    /// A Gate-produced immutable receipt expectation was persisted, but the
+    /// writer transaction has not yet been proven from the authenticated WAL
+    /// prefix. This state never permits intent or provider I/O by itself.
+    AwaitingAuthenticatedReceipt,
     WaitingForConfiguration {
         reason: String,
     },
@@ -159,8 +170,27 @@ struct WebhookOutboxRecord {
     channel: OutboxChannel,
     source_key: String,
     recipient_id: String,
+    /// Privacy-safe recipient identity retained after terminal body scrubbing
+    /// so an immutable durable receipt can still be matched to its operation.
+    #[serde(default)]
+    recipient_sha256: Option<String>,
     body: String,
     body_sha256: String,
+    /// The typed final-egress admission. This is a local expectation/cache,
+    /// never authority by itself: recovery must prove it against the primary
+    /// authenticated WAL prefix before any transport attempt.
+    #[serde(default)]
+    trust_admission: Option<crate::permissions::trust_ledger::TrustAdmissionDescriptor>,
+    /// A v1 outbox may already have recorded provider attempts before the v2
+    /// admission boundary existed. We retain that bounded historical count in
+    /// the new immutable identity so a new receipt authorizes only future
+    /// continuation; it never rewrites history as permission for old I/O.
+    #[serde(default)]
+    legacy_attempts_before_admission: Option<u32>,
+    /// Original wire version for an explicit legacy retry continuation. This
+    /// prevents a v2 record from being silently reclassified as pre-effect.
+    #[serde(default)]
+    legacy_record_version: Option<u8>,
     #[serde(default)]
     attempts: u32,
     #[serde(default)]
@@ -190,6 +220,105 @@ enum DeliveryOutcome {
     TransportRetry,
     AuditRetry,
     PersistenceRetry,
+}
+
+type OwnedWebhookTransportJoin = tokio::task::JoinHandle<(DeliveryOutcome, WebhookOutboxRecord)>;
+
+/// Process-lifetime supervision for an owned transport whose caller was
+/// cancelled while awaiting it. The provider task itself retains the record
+/// lease and generation lease; this queue retains its JoinHandle until a
+/// named reaper has observed terminalization, rather than silently detaching
+/// an unowned effect future.
+static CANCELLED_WEBHOOK_TRANSPORT_REAP_QUEUE: LazyLock<Mutex<Vec<OwnedWebhookTransportJoin>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+
+struct CancelledWebhookTransportReapGuard {
+    handle: Option<OwnedWebhookTransportJoin>,
+}
+
+impl CancelledWebhookTransportReapGuard {
+    fn take_next() -> Option<Self> {
+        let handle = match CANCELLED_WEBHOOK_TRANSPORT_REAP_QUEUE.lock() {
+            Ok(mut queue) => queue.pop(),
+            Err(poisoned) => poisoned.into_inner().pop(),
+        };
+        handle.map(|handle| Self {
+            handle: Some(handle),
+        })
+    }
+
+    async fn reap(mut self) {
+        let handle = self
+            .handle
+            .as_mut()
+            .expect("webhook reaper owns one provider task");
+        if let Err(error) = handle.await {
+            warn!(error = %error, "webhook outbox: cancelled owned transport task failed");
+        }
+        let _ = self.handle.take();
+    }
+}
+
+impl Drop for CancelledWebhookTransportReapGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            match CANCELLED_WEBHOOK_TRANSPORT_REAP_QUEUE.lock() {
+                Ok(mut queue) => queue.push(handle),
+                Err(poisoned) => poisoned.into_inner().push(handle),
+            }
+        }
+    }
+}
+
+async fn reap_cancelled_webhook_transports() {
+    while let Some(guard) = CancelledWebhookTransportReapGuard::take_next() {
+        guard.reap().await;
+    }
+}
+
+/// A cancellation-safe supervisor for the complete post-intent operation.
+/// `Drop` transfers its still-running JoinHandle to the reaper queue instead
+/// of detaching it. Its task owns all provider and durable-terminal work.
+struct OwnedWebhookTransportAttempt {
+    handle: Option<OwnedWebhookTransportJoin>,
+}
+
+impl OwnedWebhookTransportAttempt {
+    fn start(job: OwnedWebhookTransportJob) -> Self {
+        Self {
+            handle: Some(tokio::spawn(run_owned_webhook_transport(job))),
+        }
+    }
+
+    async fn finish(
+        &mut self,
+    ) -> std::result::Result<(DeliveryOutcome, WebhookOutboxRecord), tokio::task::JoinError> {
+        let joined = self
+            .handle
+            .as_mut()
+            .expect("owned webhook transport is joined once")
+            .await;
+        let _ = self.handle.take();
+        joined
+    }
+}
+
+impl Drop for OwnedWebhookTransportAttempt {
+    fn drop(&mut self) {
+        let Some(handle) = self.handle.take() else {
+            return;
+        };
+        match CANCELLED_WEBHOOK_TRANSPORT_REAP_QUEUE.lock() {
+            Ok(mut queue) => queue.push(handle),
+            Err(poisoned) => poisoned.into_inner().push(handle),
+        }
+        // Start a named background reaper when a runtime remains available.
+        // The queue is still authoritative if this runtime is itself shutting
+        // down; a later delivery first drains it before record recovery.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(reap_cancelled_webhook_transports());
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -230,6 +359,14 @@ pub struct SendGovernance {
     /// Live daemon policy source. When present it supersedes `decision` and a
     /// fresh immutable snapshot is evaluated for every outbound reply.
     pub reload_controller: Option<std::sync::Arc<crate::config::reload::ReloadController>>,
+    /// Canonical policy snapshot supplied by the listener owner. A reload
+    /// controller, when present, replaces it at the effect leaf with its live
+    /// snapshot; the field keeps non-reloading authoritative callers explicit.
+    pub policy: Option<crate::permissions::AutonomyPolicySnapshot>,
+    /// The daemon instance home that owns both the private outbox and the
+    /// authenticated primary WAL. Production constructors must supply this;
+    /// `None` keeps the historical writerless test fixture path explicit.
+    pub neoth_home: Option<std::path::PathBuf>,
     /// When true, a send that cannot be audited is REFUSED (fail-closed).
     pub required_audit: bool,
     /// When true, skip the real API call — emit a dry-run audit only.
@@ -242,6 +379,8 @@ impl Default for SendGovernance {
             wal_writer: None,
             decision: crate::permissions::Decision::Allow,
             reload_controller: None,
+            policy: None,
+            neoth_home: None,
             required_audit: false,
             dry_run: false,
         }
@@ -255,6 +394,52 @@ impl SendGovernance {
         };
         let policy = controller.autonomy_policy();
         crate::permissions::evaluate(&crate::permissions::Action::ChannelSend, &policy)
+    }
+
+    /// Capture the one accepted authority which is allowed to resolve and
+    /// later effect a durable channel-send operation. In daemon mode this is
+    /// deliberately an `AcceptedConfigSnapshot`, rather than separately
+    /// reading a policy and a reload epoch: those independent reads could
+    /// describe different generations. The static branch is intentionally
+    /// limited to explicit non-reloading callers such as unit fixtures.
+    fn current_egress_authority(&self) -> Option<EgressAdmissionAuthority> {
+        if let Some(controller) = &self.reload_controller {
+            let snapshot = controller.accepted_snapshot();
+            let policy = snapshot.config().autonomy_policy();
+            return Some(EgressAdmissionAuthority::Accepted { snapshot, policy });
+        }
+        self.policy
+            .clone()
+            .map(|policy| EgressAdmissionAuthority::Static { policy })
+    }
+}
+
+/// Coherent authority captured for one final-egress operation. An accepted
+/// snapshot is also the only source from which a live daemon may take its
+/// generation lease later; a current controller lookup would be a different
+/// authority after a reload.
+enum EgressAdmissionAuthority {
+    Accepted {
+        snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+        policy: crate::permissions::AutonomyPolicySnapshot,
+    },
+    Static {
+        policy: crate::permissions::AutonomyPolicySnapshot,
+    },
+}
+
+impl EgressAdmissionAuthority {
+    fn policy(&self) -> &crate::permissions::AutonomyPolicySnapshot {
+        match self {
+            Self::Accepted { policy, .. } | Self::Static { policy } => policy,
+        }
+    }
+
+    fn snapshot(&self) -> Option<&Arc<crate::config::reload::AcceptedConfigSnapshot>> {
+        match self {
+            Self::Accepted { snapshot, .. } => Some(snapshot),
+            Self::Static { .. } => None,
+        }
     }
 }
 
@@ -972,10 +1157,15 @@ async fn append_audit(
 
 fn active_neoth_home(cfg: &WebhookListenerConfig) -> std::path::PathBuf {
     cfg.send_governance
-        .reload_controller
-        .as_ref()
-        .and_then(|controller| controller.source_path().parent())
-        .map(std::path::Path::to_path_buf)
+        .neoth_home
+        .clone()
+        .or_else(|| {
+            cfg.send_governance
+                .reload_controller
+                .as_ref()
+                .and_then(|controller| controller.source_path().parent())
+                .map(std::path::Path::to_path_buf)
+        })
         .unwrap_or_else(crate::config::FreedomConfig::default_neoth_home)
 }
 
@@ -1193,13 +1383,23 @@ fn outbox_path(
 }
 
 fn validate_outbox_record(record: &WebhookOutboxRecord) -> Result<()> {
-    if record.version != WEBHOOK_OUTBOX_VERSION
-        || record.source_key.len() != 64
+    let terminal_scrubbed = matches!(
+        record.state,
+        OutboxState::Complete | OutboxState::Quarantined { .. }
+    ) && record.recipient_id.is_empty()
+        && record.body.is_empty()
+        && record.attempts == 0
+        && record.audit_attempts == 0
+        && record.trust_admission.is_some();
+    if !matches!(
+        record.version,
+        WEBHOOK_OUTBOX_LEGACY_VERSION | WEBHOOK_OUTBOX_VERSION
+    ) || record.source_key.len() != 64
         || !record
             .source_key
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        || record.body_sha256 != sha256_hex(record.body.as_bytes())
+        || (!terminal_scrubbed && record.body_sha256 != sha256_hex(record.body.as_bytes()))
         || record.recipient_id.len() > 4096
         || record.body.len() > MAX_OUTBOX_ENTRY_BYTES as usize
         || record
@@ -1208,6 +1408,67 @@ fn validate_outbox_record(record: &WebhookOutboxRecord) -> Result<()> {
             .is_some_and(|reason| reason.len() > 128)
     {
         anyhow::bail!("invalid webhook outbox record");
+    }
+    if record.version == WEBHOOK_OUTBOX_LEGACY_VERSION
+        && (record.trust_admission.is_some()
+            || record.recipient_sha256.is_some()
+            || record.legacy_attempts_before_admission.is_some()
+            || record.legacy_record_version.is_some())
+    {
+        anyhow::bail!("legacy webhook outbox record carries v2 admission fields");
+    }
+    if record.version == WEBHOOK_OUTBOX_VERSION {
+        if record
+            .legacy_attempts_before_admission
+            .is_some_and(|historical| historical > record.attempts)
+            && !terminal_scrubbed
+        {
+            anyhow::bail!("webhook outbox legacy attempt provenance exceeds current attempts");
+        }
+        match (
+            record.legacy_record_version,
+            record.legacy_attempts_before_admission,
+        ) {
+            (None, None) => {}
+            (Some(WEBHOOK_OUTBOX_LEGACY_VERSION), Some(_)) => {}
+            _ => anyhow::bail!("webhook outbox legacy continuation provenance is invalid"),
+        }
+        match (&record.state, &record.trust_admission) {
+            (_, Some(descriptor)) => {
+                descriptor.validate().map_err(|error| {
+                    anyhow::anyhow!("invalid webhook outbox trust admission: {error}")
+                })?;
+                if descriptor.subject() != "local"
+                    || descriptor.action() != crate::permissions::ActionKind::ChannelSend
+                    || descriptor.operation_id_sha256() != webhook_operation_id(record)
+                    || descriptor.request_binding_sha256() != webhook_request_binding(record)
+                {
+                    anyhow::bail!(
+                        "webhook outbox trust admission does not bind this final local egress"
+                    );
+                }
+            }
+            (OutboxState::AwaitingAuthenticatedReceipt, None) => {
+                anyhow::bail!(
+                    "webhook outbox receipt reconciliation is missing its expected descriptor"
+                );
+            }
+            _ => {}
+        }
+        if let Some(recipient_sha256) = record.recipient_sha256.as_deref() {
+            if recipient_sha256 != sha256_hex(record.recipient_id.as_bytes())
+                && !record.recipient_id.is_empty()
+            {
+                anyhow::bail!("webhook outbox recipient digest does not match recipient");
+            }
+            if recipient_sha256.len() != 64
+                || !recipient_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            {
+                anyhow::bail!("invalid webhook outbox recipient digest");
+            }
+        }
     }
     if let Some(name) = record.inbound_spool_name.as_deref()
         && (name.is_empty()
@@ -1219,6 +1480,48 @@ fn validate_outbox_record(record: &WebhookOutboxRecord) -> Result<()> {
         anyhow::bail!("invalid webhook outbox inbound spool name");
     }
     Ok(())
+}
+
+fn webhook_operation_id(record: &WebhookOutboxRecord) -> String {
+    sha256_hex(
+        format!(
+            "neoth/webhook-outbox/v2/operation\\0{}\\0{}\\0{}",
+            record.channel.as_str(),
+            record.source_key,
+            record.legacy_attempts_before_admission.map_or_else(
+                || "fresh".to_owned(),
+                |value| format!(
+                    "legacy-v{}-continuation:{value}",
+                    record.legacy_record_version.unwrap_or_default()
+                ),
+            )
+        )
+        .as_bytes(),
+    )
+}
+
+fn webhook_request_binding(record: &WebhookOutboxRecord) -> String {
+    let recipient_sha256 = record
+        .recipient_sha256
+        .clone()
+        .unwrap_or_else(|| sha256_hex(record.recipient_id.as_bytes()));
+    sha256_hex(
+        format!(
+            "neoth/webhook-outbox/v2/final-egress\\0{}\\0{}\\0{}\\0{}\\0{}",
+            record.source_key,
+            record.channel.as_str(),
+            recipient_sha256,
+            record.body_sha256,
+            record.legacy_attempts_before_admission.map_or_else(
+                || "fresh".to_owned(),
+                |value| format!(
+                    "legacy-v{}-continuation:{value}",
+                    record.legacy_record_version.unwrap_or_default()
+                ),
+            ),
+        )
+        .as_bytes(),
+    )
 }
 
 fn encode_outbox_record(record: &WebhookOutboxRecord) -> Result<Vec<u8>> {
@@ -1271,6 +1574,35 @@ fn stage_outbox_record(
     }
 }
 
+/// Upgrade only a pre-effect v1 outbox into the durable-admission schema. The
+/// old `attempts` value records provider I/O that happened before this boundary
+/// existed; it becomes immutable continuation provenance and is deliberately
+/// excluded from any later retry counter. Delivered/audit-only and terminal v1
+/// receipts never enter this path.
+fn migrate_legacy_pending_outbox(
+    path: &std::path::Path,
+    record: &mut WebhookOutboxRecord,
+) -> Result<()> {
+    if record.version != WEBHOOK_OUTBOX_LEGACY_VERSION {
+        return Ok(());
+    }
+    if !matches!(
+        record.state,
+        OutboxState::PendingSend | OutboxState::WaitingForConfiguration { .. }
+    ) {
+        return Ok(());
+    }
+    record.version = WEBHOOK_OUTBOX_VERSION;
+    record.trust_admission = None;
+    record.recipient_sha256 = Some(sha256_hex(record.recipient_id.as_bytes()));
+    record.legacy_attempts_before_admission = (record.attempts > 0).then_some(record.attempts);
+    record.legacy_record_version = record
+        .legacy_attempts_before_admission
+        .map(|_| WEBHOOK_OUTBOX_LEGACY_VERSION);
+    persist_outbox_record(path, record)
+        .context("migrate legacy webhook outbox to durable admission")
+}
+
 fn inbound_spool_name(path: Option<&std::path::Path>) -> Option<String> {
     path.and_then(std::path::Path::file_name)
         .and_then(std::ffi::OsStr::to_str)
@@ -1292,14 +1624,15 @@ fn matching_inbound_spool_exists(
         .is_file()
 }
 
-async fn audit_delivered(
-    cfg: &WebhookListenerConfig,
+async fn audit_delivered_with_governance(
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    required_audit: bool,
     record: &WebhookOutboxRecord,
     provider_message_id: Option<&str>,
     confirm_degraded: bool,
 ) -> bool {
-    let Some(writer) = cfg.send_governance.wal_writer.as_ref() else {
-        return !cfg.send_governance.required_audit;
+    let Some(writer) = writer else {
+        return !required_audit;
     };
     let payload = crate::channels::send_gate::channel_egress_payload(
         record.channel.as_str(),
@@ -1320,6 +1653,158 @@ async fn audit_delivered(
     .await
 }
 
+#[derive(Clone)]
+enum DurableAdmissionOutcome {
+    /// The authenticated descriptor has allowed a send. A live daemon must
+    /// still acquire the enclosed *same-generation* lease before it records
+    /// an attempt, emits intent, or begins provider I/O.
+    Allowed {
+        snapshot: Option<Arc<crate::config::reload::AcceptedConfigSnapshot>>,
+    },
+    Denied,
+}
+
+fn quarantine_for_policy_change(
+    path: &std::path::Path,
+    record: &mut WebhookOutboxRecord,
+) -> std::result::Result<(), DeliveryOutcome> {
+    record.state = OutboxState::Quarantined {
+        reason: "policy_changed_before_transport".to_owned(),
+        quarantined_at: crate::time::now_unix_secs(),
+    };
+    record.transport_next_attempt_at = None;
+    record.last_failure = Some("policy_changed_before_transport".to_owned());
+    persist_outbox_record(path, record).map_err(|error| {
+        warn!(error = %error, "webhook outbox: policy-change suppression could not be persisted");
+        DeliveryOutcome::PersistenceRetry
+    })
+}
+
+/// Resolve and reconcile the final local outbox admission. Existing inbound
+/// sender authorization is intentionally not consulted here: it does not bind
+/// this recipient/body pair and belongs to an earlier boundary. The optional
+/// return preserves the writerless compatibility fixture used by old unit
+/// tests; production listener construction supplies writer, home and policy.
+async fn reconcile_final_outbox_admission(
+    cfg: &WebhookListenerConfig,
+    path: &std::path::Path,
+    record: &mut WebhookOutboxRecord,
+) -> std::result::Result<Option<DurableAdmissionOutcome>, DeliveryOutcome> {
+    let governance = &cfg.send_governance;
+    if governance.dry_run {
+        return Ok(None);
+    }
+    let (Some(writer), Some(home), Some(authority)) = (
+        governance.wal_writer.as_ref(),
+        governance.neoth_home.as_deref(),
+        governance.current_egress_authority(),
+    ) else {
+        return Ok(None);
+    };
+
+    if record.recipient_sha256.is_none() {
+        record.recipient_sha256 = Some(sha256_hex(record.recipient_id.as_bytes()));
+        if let Err(error) = persist_outbox_record(path, record) {
+            warn!(error = %error, "webhook outbox: could not persist recipient receipt identity");
+            return Err(DeliveryOutcome::PersistenceRetry);
+        }
+    }
+
+    let descriptor = match record.trust_admission.clone() {
+        Some(descriptor) => descriptor,
+        None => {
+            let gate = crate::permissions::Gate::for_policy(authority.policy().clone())
+                .with_confirm(crate::permissions::ConfirmStrategy::FailClosed);
+            let descriptor = gate
+                .resolve_trust_admission(
+                    &crate::permissions::Action::ChannelSend,
+                    &webhook_operation_id(record),
+                    &webhook_request_binding(record),
+                )
+                .await
+                .map_err(|error| {
+                    warn!(error = %error, "webhook outbox: could not resolve durable final admission");
+                    DeliveryOutcome::PersistenceRetry
+                })?;
+            // The operation must survive a lost writer acknowledgement. Store
+            // the exact expected receipt before handing it to the writer.
+            record.trust_admission = Some(descriptor.clone());
+            record.state = OutboxState::AwaitingAuthenticatedReceipt;
+            if let Err(error) = persist_outbox_record(path, record) {
+                warn!(error = %error, "webhook outbox: refusing admission before durable receipt expectation");
+                return Err(DeliveryOutcome::PersistenceRetry);
+            }
+            descriptor
+        }
+    };
+
+    // Recovery always asks the authenticated primary-WAL prefix first. A
+    // cached PendingSend state never independently authorizes a retry.
+    match crate::permissions::find_authenticated_decision_at_home(home, &descriptor) {
+        Ok(crate::permissions::AuthenticatedDecisionLookup::Exact { .. }) => {}
+        Ok(crate::permissions::AuthenticatedDecisionLookup::Absent { .. }) => {
+            if let Err(error) = crate::permissions::audit_trust_admission_once(
+                crate::permissions::PermissionAuditSink::Writer(writer),
+                home,
+                &descriptor,
+            )
+            .await
+            {
+                warn!(
+                    ?error,
+                    "webhook outbox: durable admission remains reconciliation-pending"
+                );
+                return Err(DeliveryOutcome::PersistenceRetry);
+            }
+            match crate::permissions::find_authenticated_decision_at_home(home, &descriptor) {
+                Ok(crate::permissions::AuthenticatedDecisionLookup::Exact { .. }) => {}
+                Ok(_) => {
+                    warn!(
+                        "webhook outbox: writer acknowledgement lacked an authenticated exact receipt"
+                    );
+                    return Err(DeliveryOutcome::PersistenceRetry);
+                }
+                Err(error) => {
+                    warn!(error = %error, "webhook outbox: could not authenticate writer admission receipt");
+                    return Err(DeliveryOutcome::PersistenceRetry);
+                }
+            }
+        }
+        Ok(
+            crate::permissions::AuthenticatedDecisionLookup::Duplicate { .. }
+            | crate::permissions::AuthenticatedDecisionLookup::Conflict { .. },
+        ) => {
+            warn!("webhook outbox: conflicting durable admission receipt retained fail-closed");
+            return Err(DeliveryOutcome::PersistenceRetry);
+        }
+        Err(error) => {
+            warn!(error = %error, "webhook outbox: could not inspect authenticated admission receipt");
+            return Err(DeliveryOutcome::PersistenceRetry);
+        }
+    }
+
+    if descriptor.outcome() == crate::permissions::TrustOutcome::Denied {
+        return Ok(Some(DurableAdmissionOutcome::Denied));
+    }
+
+    // The receipt is immutable. Even the same accepted generation must still
+    // carry the exact policy snapshot that resolved it; otherwise a stale
+    // descriptor could be mistaken for current authority.
+    if descriptor.policy_snapshot_sha256() != authority.policy().trust_fingerprint_sha256() {
+        quarantine_for_policy_change(path, record)?;
+        return Err(DeliveryOutcome::Quarantined);
+    }
+
+    record.state = OutboxState::PendingSend;
+    if let Err(error) = persist_outbox_record(path, record) {
+        warn!(error = %error, "webhook outbox: authenticated receipt cache could not be persisted");
+        return Err(DeliveryOutcome::PersistenceRetry);
+    }
+    Ok(Some(DurableAdmissionOutcome::Allowed {
+        snapshot: authority.snapshot().cloned(),
+    }))
+}
+
 fn complete_outbox(
     path: &std::path::Path,
     record: &mut WebhookOutboxRecord,
@@ -1338,6 +1823,99 @@ fn complete_outbox(
     }
 }
 
+fn outbox_delivery_lock_path(record_path: &std::path::Path) -> std::path::PathBuf {
+    record_path.with_extension("delivery.lock")
+}
+
+/// A stable per-record ownership capability. Its sibling lock file is never
+/// removed: unlinking while another process opens it could split ownership
+/// across two inodes. Dropping only releases the in-memory and OS locks.
+struct OutboxDeliveryLease {
+    record_path: std::path::PathBuf,
+    _os_lock: std::fs::File,
+}
+
+impl Drop for OutboxDeliveryLease {
+    fn drop(&mut self) {
+        ACTIVE_OUTBOX_DELIVERIES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.record_path);
+    }
+}
+
+fn try_acquire_outbox_delivery_lease(
+    record_path: &std::path::Path,
+) -> Result<Option<OutboxDeliveryLease>> {
+    let record_path = record_path.to_path_buf();
+    {
+        let mut active = ACTIVE_OUTBOX_DELIVERIES
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !active.insert(record_path.clone()) {
+            return Ok(None);
+        }
+    }
+    let lock_path = outbox_delivery_lock_path(&record_path);
+    let record_path_for_failure = record_path.clone();
+    // This is deliberately the non-blocking one-shot lock probe. It has no
+    // await between reserving the in-process key and acquiring the OS handle,
+    // so cancellation cannot strand a reservation without an owning lease.
+    let acquired =
+        crate::util::locked_file::try_lock_file_once(&lock_path, "webhook outbox delivery");
+    match acquired {
+        Ok(Some(os_lock)) => Ok(Some(OutboxDeliveryLease {
+            record_path,
+            _os_lock: os_lock,
+        })),
+        Ok(None) => {
+            ACTIVE_OUTBOX_DELIVERIES
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(&record_path_for_failure);
+            Ok(None)
+        }
+        Err(error) => {
+            ACTIVE_OUTBOX_DELIVERIES
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(&record_path_for_failure);
+            Err(error).context("acquire webhook outbox delivery lock")
+        }
+    }
+}
+
+/// Acquire record ownership and reload the durable current value *after* the
+/// capability exists. A queued stale `PendingSend` copy is never allowed to
+/// decide or call a provider after another owner completed the same outbox.
+async fn deliver_outbox_record(
+    cfg: &WebhookListenerConfig,
+    path: &std::path::Path,
+    record: &mut WebhookOutboxRecord,
+) -> DeliveryOutcome {
+    // A cancelled caller transfers a live owned provider task to this
+    // supervisor. Reap it before inspecting any record lease so recovery can
+    // never race an unobserved terminalization from the same process.
+    reap_cancelled_webhook_transports().await;
+    let lease = match try_acquire_outbox_delivery_lease(path) {
+        Ok(Some(lease)) => lease,
+        Ok(None) => return DeliveryOutcome::BackoffWait,
+        Err(error) => {
+            warn!(error = %error, "webhook outbox: delivery ownership unavailable");
+            return DeliveryOutcome::PersistenceRetry;
+        }
+    };
+    let current = match load_outbox_record(path) {
+        Ok(current) => current,
+        Err(error) => {
+            warn!(error = %error, "webhook outbox: owned record reload failed");
+            return DeliveryOutcome::PersistenceRetry;
+        }
+    };
+    *record = current;
+    deliver_outbox_record_owned(cfg, path, record, lease).await
+}
+
 fn scrub_terminal_outbox_receipt(
     path: &std::path::Path,
     record: &mut WebhookOutboxRecord,
@@ -1353,7 +1931,13 @@ fn scrub_terminal_outbox_receipt(
     }
     record.recipient_id.clear();
     record.body.clear();
-    record.body_sha256 = sha256_hex(b"");
+    // V1 (and descriptorless compatibility receipts) have no immutable
+    // admission binding to retain. Keep their historical scrub invariant:
+    // body digest follows the cleared body. V2 receipts with a descriptor keep
+    // the original hash as part of the durable operation identity.
+    if record.trust_admission.is_none() {
+        record.body_sha256 = sha256_hex(b"");
+    }
     record.attempts = 0;
     record.audit_attempts = 0;
     record.transport_next_attempt_at = None;
@@ -1380,6 +1964,25 @@ async fn finish_delivered_outbox(
     provider_message_id: Option<String>,
     confirm_degraded: bool,
 ) -> DeliveryOutcome {
+    finish_delivered_outbox_with_governance(
+        cfg.send_governance.wal_writer.as_ref(),
+        cfg.send_governance.required_audit,
+        path,
+        record,
+        provider_message_id,
+        confirm_degraded,
+    )
+    .await
+}
+
+async fn finish_delivered_outbox_with_governance(
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    required_audit: bool,
+    path: &std::path::Path,
+    record: &mut WebhookOutboxRecord,
+    provider_message_id: Option<String>,
+    confirm_degraded: bool,
+) -> DeliveryOutcome {
     let now = crate::time::now_unix_secs();
     if !retry_is_due(record.audit_next_attempt_at, now) {
         return DeliveryOutcome::BackoffWait;
@@ -1389,8 +1992,9 @@ async fn finish_delivered_outbox(
         warn!(error = %error, "webhook outbox: refusing audit before durable attempt state");
         return DeliveryOutcome::PersistenceRetry;
     }
-    if !audit_delivered(
-        cfg,
+    if !audit_delivered_with_governance(
+        writer,
+        required_audit,
         record,
         provider_message_id.as_deref(),
         confirm_degraded,
@@ -1411,11 +2015,270 @@ async fn finish_delivered_outbox(
     complete_outbox(path, record, DeliveryOutcome::Sent)
 }
 
-async fn deliver_outbox_record(
+/// Inputs needed by the one provider call, cloned out of listener config so a
+/// cancellation-safe owned task can retain the operation without borrowing the
+/// outer request future. Secrets remain `SecretString`s and never enter the
+/// outbox or an audit payload.
+enum OwnedWebhookProvider {
+    Meta {
+        base_url: String,
+        access_token: crate::secret::SecretString,
+        phone_number_id: String,
+    },
+    Line {
+        base_url: String,
+        access_token: crate::secret::SecretString,
+    },
+}
+
+impl OwnedWebhookProvider {
+    fn from_config(cfg: &WebhookListenerConfig, channel: OutboxChannel) -> Self {
+        match channel {
+            OutboxChannel::Meta => {
+                let credentials = cfg
+                    .whatsapp_send_creds
+                    .as_ref()
+                    .expect("credentials checked before owned transport");
+                Self::Meta {
+                    base_url: credentials.base_url.clone().unwrap_or_else(|| {
+                        crate::channels::whatsapp_api::GRAPH_API_BASE.to_owned()
+                    }),
+                    access_token: credentials.access_token.clone(),
+                    phone_number_id: credentials.phone_number_id.clone(),
+                }
+            }
+            OutboxChannel::Line => {
+                let line = cfg
+                    .line
+                    .as_ref()
+                    .expect("credentials checked before owned transport");
+                Self::Line {
+                    base_url: line
+                        .base_url
+                        .clone()
+                        .unwrap_or_else(|| crate::channels::line_api::LINE_API_BASE.to_owned()),
+                    access_token: line.access_token.clone(),
+                }
+            }
+        }
+    }
+
+    async fn send(&self, record: &WebhookOutboxRecord) -> TransportDisposition {
+        match self {
+            Self::Meta {
+                base_url,
+                access_token,
+                phone_number_id,
+            } => meta_disposition(
+                crate::channels::whatsapp_api::send_text_message_at(
+                    base_url,
+                    access_token,
+                    phone_number_id,
+                    &record.recipient_id,
+                    &record.body,
+                )
+                .await,
+            ),
+            Self::Line {
+                base_url,
+                access_token,
+            } => match crate::providers::http_client::build_client() {
+                Ok(client) => line_disposition(
+                    crate::channels::line_api::send_line_push(
+                        &client,
+                        base_url,
+                        access_token,
+                        &record.recipient_id,
+                        &record.body,
+                    )
+                    .await,
+                ),
+                Err(_) => TransportDisposition::Retry {
+                    reason: "line_http_client_unavailable",
+                    retry_after_secs: None,
+                },
+            },
+        }
+    }
+}
+
+/// Complete immutable/owned hand-off for one post-intent transport. Keeping
+/// the record capability and generation lease in this job makes the task's
+/// cancellation boundary explicit: only this job may release them after the
+/// provider result and durable terminal handling are complete.
+struct OwnedWebhookTransportJob {
+    path: std::path::PathBuf,
+    record: WebhookOutboxRecord,
+    provider: OwnedWebhookProvider,
+    decision: crate::permissions::Decision,
+    egress_intent: Option<String>,
+    writer: Option<crate::wal::writer::WalWriterHandle>,
+    required_audit: bool,
+    now: u64,
+    _outbox_lease: OutboxDeliveryLease,
+    _generation_effect_lease: Option<crate::config::reload::GenerationEffectLease>,
+}
+
+/// Finish a previously persisted provider attempt. The task owns both the
+/// stable outbox delivery capability and the accepted-generation lease until
+/// its Result frame and durable state transition finish. Consequently an
+/// aborted outer webhook/recovery future cannot free either capability while a
+/// remote HTTP request is still executing.
+async fn run_owned_webhook_transport(
+    job: OwnedWebhookTransportJob,
+) -> (DeliveryOutcome, WebhookOutboxRecord) {
+    use crate::channels::send_gate;
+
+    let OwnedWebhookTransportJob {
+        path,
+        mut record,
+        provider,
+        decision,
+        egress_intent,
+        writer,
+        required_audit,
+        now,
+        _outbox_lease,
+        _generation_effect_lease,
+    } = job;
+
+    let disposition = provider.send(&record).await;
+
+    // Pair the durable intent to the completed provider operation before any
+    // state bookkeeping. `_generation_effect_lease` remains in this task until
+    // this acknowledgement and the following terminal state work complete.
+    if let (Some(writer), Some(intent_id)) = (writer.as_ref(), egress_intent.as_ref()) {
+        let (outcome, provider_message_id) = match &disposition {
+            TransportDisposition::Delivered(id) => ("delivered", id.as_deref()),
+            TransportDisposition::Retry { .. } => ("retry", None),
+            _ => ("failed", None),
+        };
+        send_gate::emit_egress_result(writer, intent_id, outcome, provider_message_id, now).await;
+    }
+
+    let outcome = match disposition {
+        TransportDisposition::Delivered(provider_message_id) => {
+            let confirm_degraded = matches!(decision, crate::permissions::Decision::Confirm(_));
+            record.state = OutboxState::DeliveredPendingAudit {
+                provider_message_id: provider_message_id.clone(),
+                confirm_degraded,
+            };
+            record.transport_next_attempt_at = None;
+            record.last_failure = None;
+            if let Err(error) = persist_outbox_record(&path, &record) {
+                error!(error = %error, "webhook outbox: delivered response could not be persisted");
+                DeliveryOutcome::PersistenceRetry
+            } else {
+                finish_delivered_outbox_with_governance(
+                    writer.as_ref(),
+                    required_audit,
+                    &path,
+                    &mut record,
+                    provider_message_id,
+                    confirm_degraded,
+                )
+                .await
+            }
+        }
+        TransportDisposition::Retry {
+            reason,
+            retry_after_secs,
+        } => {
+            let delay = retry_delay_secs(&record, record.attempts, retry_after_secs);
+            record.transport_next_attempt_at = Some(now.saturating_add(delay));
+            record.last_failure = Some(reason.to_owned());
+            if let Err(error) = persist_outbox_record(&path, &record) {
+                warn!(error = %error, "webhook outbox: could not persist transport retry schedule");
+                DeliveryOutcome::PersistenceRetry
+            } else {
+                if let Some(writer) = writer.as_ref() {
+                    let payload = send_gate::channel_egress_failed_payload(
+                        record.channel.as_str(),
+                        &record.recipient_id,
+                        reason,
+                        now,
+                    );
+                    let _ = append_audit(
+                        writer,
+                        crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
+                        payload,
+                        false,
+                        "WAL write failed for webhook transport-error audit frame",
+                    )
+                    .await;
+                }
+                DeliveryOutcome::TransportRetry
+            }
+        }
+        TransportDisposition::Permanent { reason } => {
+            record.state = OutboxState::Quarantined {
+                reason: reason.to_owned(),
+                quarantined_at: now,
+            };
+            record.transport_next_attempt_at = None;
+            record.last_failure = Some(reason.to_owned());
+            if let Err(error) = persist_outbox_record(&path, &record) {
+                warn!(error = %error, "webhook outbox: could not persist quarantine state");
+                DeliveryOutcome::PersistenceRetry
+            } else {
+                if let Some(writer) = writer.as_ref() {
+                    let payload = send_gate::channel_egress_failed_payload(
+                        record.channel.as_str(),
+                        &record.recipient_id,
+                        reason,
+                        now,
+                    );
+                    let _ = append_audit(
+                        writer,
+                        crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
+                        payload,
+                        false,
+                        "WAL write failed for quarantined webhook send audit frame",
+                    )
+                    .await;
+                }
+                warn!(
+                    channel = record.channel.as_str(),
+                    source_hash = %record.source_key,
+                    reason,
+                    "webhook outbox send quarantined after permanent provider rejection"
+                );
+                DeliveryOutcome::Quarantined
+            }
+        }
+        TransportDisposition::ConfigurationWait { reason } => {
+            record.state = OutboxState::WaitingForConfiguration {
+                reason: reason.to_owned(),
+            };
+            record.transport_next_attempt_at = None;
+            record.last_failure = Some(reason.to_owned());
+            if let Err(error) = persist_outbox_record(&path, &record) {
+                warn!(error = %error, "webhook outbox: could not persist configuration-wait state");
+                DeliveryOutcome::PersistenceRetry
+            } else {
+                warn!(
+                    channel = record.channel.as_str(),
+                    source_hash = %record.source_key,
+                    reason,
+                    "webhook outbox paused for corrected channel configuration"
+                );
+                DeliveryOutcome::MissingCredentials
+            }
+        }
+    };
+    (outcome, record)
+}
+
+async fn deliver_outbox_record_owned(
     cfg: &WebhookListenerConfig,
     path: &std::path::Path,
     record: &mut WebhookOutboxRecord,
+    outbox_lease: OutboxDeliveryLease,
 ) -> DeliveryOutcome {
+    if let Err(error) = migrate_legacy_pending_outbox(path, record) {
+        warn!(error = %error, "webhook outbox: legacy migration could not be persisted");
+        return DeliveryOutcome::PersistenceRetry;
+    }
     match record.state.clone() {
         OutboxState::Complete => return DeliveryOutcome::AlreadyComplete,
         OutboxState::Quarantined { .. } => return DeliveryOutcome::Quarantined,
@@ -1448,7 +2311,7 @@ async fn deliver_outbox_record(
                 return DeliveryOutcome::PersistenceRetry;
             }
         }
-        OutboxState::PendingSend => {}
+        OutboxState::PendingSend | OutboxState::AwaitingAuthenticatedReceipt => {}
     }
 
     let now = crate::time::now_unix_secs();
@@ -1458,7 +2321,21 @@ async fn deliver_outbox_record(
 
     use crate::channels::send_gate::{self, ChannelSendVerdict};
     let governance = &cfg.send_governance;
-    let decision = governance.current_decision();
+    let (decision, durable_generation) =
+        match reconcile_final_outbox_admission(cfg, path, record).await {
+            Ok(Some(DurableAdmissionOutcome::Allowed { snapshot })) => {
+                // This is only the compatibility projection of a proven immutable
+                // receipt. It is never used to derive a policy or admission.
+                (crate::permissions::Decision::Allow, snapshot)
+            }
+            Ok(Some(DurableAdmissionOutcome::Denied)) => {
+                // The authenticated TrustDecision is the only final-denial audit;
+                // do not append a second compatibility decision for this operation.
+                return complete_outbox(path, record, DeliveryOutcome::Denied);
+            }
+            Ok(None) => (governance.current_decision(), None),
+            Err(outcome) => return outcome,
+        };
     let verdict = send_gate::decide_channel_send(
         &decision,
         governance.dry_run,
@@ -1539,6 +2416,27 @@ async fn deliver_outbox_record(
                 return DeliveryOutcome::MissingCredentials;
             }
 
+            // The effect gate is intentionally acquired only after the
+            // authenticated receipt, and immediately before attempt/intent/
+            // provider work. Reload retires this gate before publishing a new
+            // accepted snapshot, so a stale operation cannot begin I/O after
+            // its policy generation has been replaced. The local survives
+            // through egress-result acknowledgement and all terminal state
+            // writes below.
+            let _generation_effect_lease = match durable_generation {
+                Some(snapshot) => match snapshot.acquire_egress_leaf() {
+                    Ok(lease) => Some(lease),
+                    Err(error) => {
+                        debug!(error = %error, "webhook outbox: accepted generation retired before transport");
+                        if let Err(outcome) = quarantine_for_policy_change(path, record) {
+                            return outcome;
+                        }
+                        return DeliveryOutcome::Quarantined;
+                    }
+                },
+                None => None,
+            };
+
             record.attempts = record.attempts.saturating_add(1);
             record.transport_next_attempt_at = None;
             if let Err(error) = persist_outbox_record(path, record) {
@@ -1575,167 +2473,32 @@ async fn deliver_outbox_record(
                 None => None,
             };
 
-            let disposition = match record.channel {
-                OutboxChannel::Meta => {
-                    let credentials = cfg
-                        .whatsapp_send_creds
-                        .as_ref()
-                        .expect("credentials checked above");
-                    meta_disposition(
-                        crate::channels::whatsapp_api::send_text_message_at(
-                            credentials
-                                .base_url
-                                .as_deref()
-                                .unwrap_or(crate::channels::whatsapp_api::GRAPH_API_BASE),
-                            &credentials.access_token,
-                            &credentials.phone_number_id,
-                            &record.recipient_id,
-                            &record.body,
-                        )
-                        .await,
-                    )
+            // This spawned task is the transfer target on outer cancellation:
+            // it retains the OS/in-process record ownership and generation
+            // lease, completes HTTP + Result WAL acknowledgement + durable
+            // terminalization, and only then drops both capabilities. A
+            // recovery racing a cancelled caller observes the live record
+            // lease as Busy rather than starting another provider request.
+            let mut transport = OwnedWebhookTransportAttempt::start(OwnedWebhookTransportJob {
+                path: path.to_path_buf(),
+                record: record.clone(),
+                provider: OwnedWebhookProvider::from_config(cfg, record.channel),
+                decision,
+                egress_intent,
+                writer: governance.wal_writer.clone(),
+                required_audit: governance.required_audit,
+                now,
+                _outbox_lease: outbox_lease,
+                _generation_effect_lease,
+            });
+            match transport.finish().await {
+                Ok((outcome, completed_record)) => {
+                    *record = completed_record;
+                    outcome
                 }
-                OutboxChannel::Line => {
-                    let line = cfg.line.as_ref().expect("credentials checked above");
-                    match crate::providers::http_client::build_client() {
-                        Ok(client) => line_disposition(
-                            crate::channels::line_api::send_line_push(
-                                &client,
-                                line.base_url
-                                    .as_deref()
-                                    .unwrap_or(crate::channels::line_api::LINE_API_BASE),
-                                &line.access_token,
-                                &record.recipient_id,
-                                &record.body,
-                            )
-                            .await,
-                        ),
-                        Err(_) => TransportDisposition::Retry {
-                            reason: "line_http_client_unavailable",
-                            retry_after_secs: None,
-                        },
-                    }
-                }
-            };
-
-            // GOLD-LF-P1-01a — pair the intent to what the transport actually
-            // did, before any state bookkeeping can fail and hide it.
-            if let (Some(writer), Some(intent_id)) =
-                (governance.wal_writer.as_ref(), egress_intent.as_ref())
-            {
-                let (outcome, provider_message_id) = match &disposition {
-                    TransportDisposition::Delivered(id) => ("delivered", id.as_deref()),
-                    TransportDisposition::Retry { .. } => ("retry", None),
-                    _ => ("failed", None),
-                };
-                send_gate::emit_egress_result(writer, intent_id, outcome, provider_message_id, now)
-                    .await;
-            }
-
-            match disposition {
-                TransportDisposition::Delivered(provider_message_id) => {
-                    let confirm_degraded =
-                        matches!(decision, crate::permissions::Decision::Confirm(_));
-                    record.state = OutboxState::DeliveredPendingAudit {
-                        provider_message_id: provider_message_id.clone(),
-                        confirm_degraded,
-                    };
-                    record.transport_next_attempt_at = None;
-                    record.last_failure = None;
-                    if let Err(error) = persist_outbox_record(path, record) {
-                        error!(error = %error, "webhook outbox: delivered response could not be persisted");
-                        return DeliveryOutcome::PersistenceRetry;
-                    }
-                    finish_delivered_outbox(
-                        cfg,
-                        path,
-                        record,
-                        provider_message_id,
-                        confirm_degraded,
-                    )
-                    .await
-                }
-                TransportDisposition::Retry {
-                    reason,
-                    retry_after_secs,
-                } => {
-                    let delay = retry_delay_secs(record, record.attempts, retry_after_secs);
-                    record.transport_next_attempt_at = Some(now.saturating_add(delay));
-                    record.last_failure = Some(reason.to_owned());
-                    if let Err(error) = persist_outbox_record(path, record) {
-                        warn!(error = %error, "webhook outbox: could not persist transport retry schedule");
-                        return DeliveryOutcome::PersistenceRetry;
-                    }
-                    if let Some(writer) = governance.wal_writer.as_ref() {
-                        let payload = send_gate::channel_egress_failed_payload(
-                            record.channel.as_str(),
-                            &record.recipient_id,
-                            reason,
-                            now,
-                        );
-                        let _ = append_audit(
-                            writer,
-                            crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
-                            payload,
-                            false,
-                            "WAL write failed for webhook transport-error audit frame",
-                        )
-                        .await;
-                    }
-                    DeliveryOutcome::TransportRetry
-                }
-                TransportDisposition::Permanent { reason } => {
-                    record.state = OutboxState::Quarantined {
-                        reason: reason.to_owned(),
-                        quarantined_at: now,
-                    };
-                    record.transport_next_attempt_at = None;
-                    record.last_failure = Some(reason.to_owned());
-                    if let Err(error) = persist_outbox_record(path, record) {
-                        warn!(error = %error, "webhook outbox: could not persist quarantine state");
-                        return DeliveryOutcome::PersistenceRetry;
-                    }
-                    if let Some(writer) = governance.wal_writer.as_ref() {
-                        let payload = send_gate::channel_egress_failed_payload(
-                            record.channel.as_str(),
-                            &record.recipient_id,
-                            reason,
-                            now,
-                        );
-                        let _ = append_audit(
-                            writer,
-                            crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
-                            payload,
-                            false,
-                            "WAL write failed for quarantined webhook send audit frame",
-                        )
-                        .await;
-                    }
-                    warn!(
-                        channel = record.channel.as_str(),
-                        source_hash = %record.source_key,
-                        reason,
-                        "webhook outbox send quarantined after permanent provider rejection"
-                    );
-                    DeliveryOutcome::Quarantined
-                }
-                TransportDisposition::ConfigurationWait { reason } => {
-                    record.state = OutboxState::WaitingForConfiguration {
-                        reason: reason.to_owned(),
-                    };
-                    record.transport_next_attempt_at = None;
-                    record.last_failure = Some(reason.to_owned());
-                    if let Err(error) = persist_outbox_record(path, record) {
-                        warn!(error = %error, "webhook outbox: could not persist configuration-wait state");
-                        return DeliveryOutcome::PersistenceRetry;
-                    }
-                    warn!(
-                        channel = record.channel.as_str(),
-                        source_hash = %record.source_key,
-                        reason,
-                        "webhook outbox paused for corrected channel configuration"
-                    );
-                    DeliveryOutcome::MissingCredentials
+                Err(error) => {
+                    warn!(error = %error, "webhook outbox: owned transport task ended before terminalization");
+                    DeliveryOutcome::PersistenceRetry
                 }
             }
         }
@@ -2028,12 +2791,17 @@ async fn dispatch_messages_durable(
                 ),
                 None => (String::new(), String::new(), OutboxState::Complete),
             };
+            let recipient_sha256 = sha256_hex(recipient_id.as_bytes());
             let record = WebhookOutboxRecord {
                 version: WEBHOOK_OUTBOX_VERSION,
                 channel,
                 source_key: key.clone(),
                 body_sha256: sha256_hex(body.as_bytes()),
+                trust_admission: None,
+                legacy_attempts_before_admission: None,
+                legacy_record_version: None,
                 recipient_id,
+                recipient_sha256: Some(recipient_sha256),
                 body,
                 attempts: 0,
                 audit_attempts: 0,
@@ -3072,6 +3840,7 @@ mod tests {
                 crate::config::FreedomConfig::default(),
                 home.join("freedom.yaml"),
             ))),
+            neoth_home: Some(home.to_path_buf()),
             ..Default::default()
         }
     }
@@ -3095,6 +3864,21 @@ mod tests {
         join.await
             .expect("webhook WAL writer task must join")
             .expect("webhook WAL writer must complete successfully");
+    }
+
+    /// A delivery-lock sibling is a stable ownership capability, not an
+    /// outbox receipt. State assertions must inspect the JSON records rather
+    /// than counting every directory entry.
+    fn outbox_record_paths(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut paths = std::fs::read_dir(dir)
+            .expect("read webhook outbox")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.extension().and_then(|extension| extension.to_str()) == Some("json")
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
     }
 
     /// Decode the first WAL frame → (event_type, owned payload bytes).
@@ -3121,6 +3905,8 @@ mod tests {
                 wal_writer: Some(writer.clone()),
                 decision: crate::permissions::Decision::Deny("test-deny".into()),
                 reload_controller: None,
+                policy: None,
+                neoth_home: None,
                 required_audit: false,
                 dry_run: false,
             },
@@ -3162,6 +3948,8 @@ mod tests {
                 wal_writer: Some(writer.clone()),
                 decision: crate::permissions::Decision::Allow,
                 reload_controller: None,
+                policy: None,
+                neoth_home: None,
                 required_audit: false,
                 dry_run: true,
             },
@@ -3208,6 +3996,8 @@ mod tests {
                 wal_writer: Some(writer.clone()),
                 decision: crate::permissions::Decision::Allow,
                 reload_controller: None,
+                policy: None,
+                neoth_home: None,
                 required_audit: false,
                 dry_run: false,
             },
@@ -3268,7 +4058,11 @@ mod tests {
                 OutboxChannel::Meta => "+4900000".to_owned(),
                 OutboxChannel::Line => "Urecipient".to_owned(),
             },
+            recipient_sha256: None,
             body_sha256: sha256_hex(body.as_bytes()),
+            trust_admission: None,
+            legacy_attempts_before_admission: None,
+            legacy_record_version: None,
             body,
             attempts: 0,
             audit_attempts: 0,
@@ -3278,6 +4072,580 @@ mod tests {
             state: OutboxState::PendingSend,
             inbound_spool_name: None,
         }
+    }
+
+    fn durable_test_governance(
+        home: &std::path::Path,
+        writer: crate::wal::writer::WalWriterHandle,
+    ) -> SendGovernance {
+        SendGovernance {
+            wal_writer: Some(writer),
+            policy: Some(crate::permissions::AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Standard,
+            )),
+            neoth_home: Some(home.to_path_buf()),
+            required_audit: true,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_outbox_retries_reuse_one_authenticated_local_admission() {
+        use wiremock::matchers::{method, path as request_path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(request_path("/v2/bot/message/push"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (writer, join, home, _seg) = isolated_test_writer("webhook-durable-retry").await;
+        let outbox = webhook_outbox_dir_at(home.path());
+        let (path, mut record) = stage_outbox_record(
+            &outbox,
+            &pending_outbox_fixture(OutboxChannel::Line, "durable-retry"),
+        )
+        .unwrap();
+        let cfg = gated_line_cfg(
+            durable_test_governance(home.path(), writer.clone()),
+            Some(server.uri()),
+        );
+
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut record).await,
+            DeliveryOutcome::TransportRetry
+        );
+        let descriptor = record.trust_admission.clone().expect("receipt expectation");
+        assert_eq!(record.attempts, 1);
+        record.transport_next_attempt_at = None;
+        persist_outbox_record(&path, &record).unwrap();
+
+        server.reset().await;
+        Mock::given(method("POST"))
+            .and(request_path("/v2/bot/message/push"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"sentMessages":[{"id":"durable-ok"}]}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut restarted = load_outbox_record(&path).unwrap();
+        assert_eq!(restarted.trust_admission.as_ref(), Some(&descriptor));
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut restarted).await,
+            DeliveryOutcome::Sent
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+        drop(cfg);
+        drop(writer);
+        assert_test_writer_completed(join).await;
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(home.path(), "local")
+            .expect("authenticated local trust ledger");
+        assert_eq!(
+            ledger
+                .entries
+                .iter()
+                .filter(|entry| {
+                    entry.event.operation_id_sha256.as_deref()
+                        == Some(descriptor.operation_id_sha256())
+                })
+                .count(),
+            1,
+            "two provider attempts must reuse one durable admission"
+        );
+    }
+
+    #[tokio::test]
+    async fn unchanged_policy_reload_then_restart_reuses_authenticated_receipt() {
+        use wiremock::matchers::{method, path as request_path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(request_path("/v2/bot/message/push"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (writer, join, home, _seg) = isolated_test_writer("webhook-generation-restart").await;
+        let source = home.path().join("freedom.yaml");
+        let initial = crate::config::FreedomConfig::default();
+        std::fs::write(&source, serde_yaml::to_string(&initial).unwrap()).unwrap();
+        let live = Arc::new(crate::config::reload::ReloadController::new(
+            initial.clone(),
+            source.clone(),
+        ));
+        let governance = SendGovernance {
+            wal_writer: Some(writer.clone()),
+            reload_controller: Some(Arc::clone(&live)),
+            neoth_home: Some(home.path().to_path_buf()),
+            required_audit: true,
+            ..Default::default()
+        };
+        let outbox = webhook_outbox_dir_at(home.path());
+        let (path, mut record) = stage_outbox_record(
+            &outbox,
+            &pending_outbox_fixture(OutboxChannel::Line, "generation-restart"),
+        )
+        .unwrap();
+        let mut cfg = gated_line_cfg(governance, Some(server.uri()));
+
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut record).await,
+            DeliveryOutcome::TransportRetry
+        );
+        let descriptor = record
+            .trust_admission
+            .clone()
+            .expect("authenticated receipt");
+        record.transport_next_attempt_at = None;
+        persist_outbox_record(&path, &record).unwrap();
+
+        // Retire and replace the initial accepted snapshot with equivalent
+        // policy, then model a daemon restart whose fresh controller starts
+        // its epoch count again. Process-local epoch values must not make this
+        // otherwise identical durable retry ineligible.
+        let mut equivalent_policy = initial.clone();
+        equivalent_policy.review_gate_enabled = !equivalent_policy.review_gate_enabled;
+        std::fs::write(&source, serde_yaml::to_string(&equivalent_policy).unwrap()).unwrap();
+        assert!(matches!(
+            live.try_reload().unwrap(),
+            crate::config::reload::ReloadResult::Reloaded { .. }
+        ));
+        cfg.send_governance.reload_controller = Some(Arc::new(
+            crate::config::reload::ReloadController::new(equivalent_policy, source),
+        ));
+
+        server.reset().await;
+        Mock::given(method("POST"))
+            .and(request_path("/v2/bot/message/push"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"sentMessages":[{"id":"restart-ok"}]}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut restarted = load_outbox_record(&path).unwrap();
+        assert_eq!(restarted.trust_admission.as_ref(), Some(&descriptor));
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut restarted).await,
+            DeliveryOutcome::Sent
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+        drop(cfg);
+        drop(writer);
+        assert_test_writer_completed(join).await;
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(home.path(), "local")
+            .expect("authenticated local trust ledger");
+        assert_eq!(
+            ledger
+                .entries
+                .iter()
+                .filter(|entry| entry.event.operation_id_sha256.as_deref()
+                    == Some(descriptor.operation_id_sha256()))
+                .count(),
+            1,
+            "equivalent reload/restart must not append a second TrustDecision"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_outer_delivery_keeps_record_and_generation_owned_until_terminal_ack() {
+        use wiremock::matchers::{method, path as request_path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(request_path("/v2/bot/message/push"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(220))
+                    .set_body_string(r#"{"sentMessages":[{"id":"owned-after-cancel"}]}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (writer, join, home, _seg) = isolated_test_writer("webhook-cancel-owned").await;
+        let source = home.path().join("freedom.yaml");
+        let initial = crate::config::FreedomConfig::default();
+        std::fs::write(&source, serde_yaml::to_string(&initial).unwrap()).unwrap();
+        let live = Arc::new(crate::config::reload::ReloadController::new(
+            initial.clone(),
+            source.clone(),
+        ));
+        let cfg = gated_line_cfg(
+            SendGovernance {
+                wal_writer: Some(writer.clone()),
+                reload_controller: Some(Arc::clone(&live)),
+                neoth_home: Some(home.path().to_path_buf()),
+                required_audit: true,
+                ..Default::default()
+            },
+            Some(server.uri()),
+        );
+        let outbox = webhook_outbox_dir_at(home.path());
+        let (path, record) = stage_outbox_record(
+            &outbox,
+            &pending_outbox_fixture(OutboxChannel::Line, "cancel-owned"),
+        )
+        .unwrap();
+        let task_path = path.clone();
+        let outer = tokio::spawn(async move {
+            let mut record = record;
+            deliver_outbox_record(&cfg, &task_path, &mut record).await
+        });
+
+        // The provider has accepted the owned task. Aborting only the caller
+        // must not release its record/generation capability.
+        for _ in 0..40 {
+            if !server.received_requests().await.unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert!(
+            !server.received_requests().await.unwrap().is_empty(),
+            "owned provider request must have started before outer cancellation"
+        );
+        outer.abort();
+        let _ = outer.await;
+
+        // A policy-equivalent reload cannot publish while the cancellation
+        // transfer still owns the active egress lease. This runs on a blocking
+        // thread because reload intentionally waits for the terminal effect.
+        let mut equivalent_policy = initial.clone();
+        equivalent_policy.review_gate_enabled = !equivalent_policy.review_gate_enabled;
+        std::fs::write(&source, serde_yaml::to_string(&equivalent_policy).unwrap()).unwrap();
+        let reload_controller = Arc::clone(&live);
+        let reload = std::thread::spawn(move || reload_controller.try_reload());
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        assert!(
+            !reload.is_finished(),
+            "reload must wait for cancelled caller's owned HTTP/result operation"
+        );
+        let reloaded = tokio::task::spawn_blocking(move || reload.join().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            reloaded,
+            crate::config::reload::ReloadResult::Reloaded { .. }
+        ));
+        let completed = load_outbox_record(&path).unwrap();
+        assert!(matches!(completed.state, OutboxState::Complete));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+        drop(writer);
+        assert_test_writer_completed(join).await;
+    }
+
+    #[tokio::test]
+    async fn durable_outbox_dry_run_has_no_admission_or_transport() {
+        use wiremock::MockServer;
+
+        let server = MockServer::start().await;
+        let (writer, join, home, _seg) = isolated_test_writer("webhook-durable-dry-run").await;
+        let outbox = webhook_outbox_dir_at(home.path());
+        let (path, mut record) = stage_outbox_record(
+            &outbox,
+            &pending_outbox_fixture(OutboxChannel::Line, "durable-dry-run"),
+        )
+        .unwrap();
+        let mut governance = durable_test_governance(home.path(), writer.clone());
+        governance.dry_run = true;
+        let cfg = gated_line_cfg(governance, Some(server.uri()));
+
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut record).await,
+            DeliveryOutcome::DryRun
+        );
+        assert!(record.trust_admission.is_none());
+        assert!(server.received_requests().await.unwrap().is_empty());
+        drop(cfg);
+        drop(writer);
+        assert_test_writer_completed(join).await;
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(home.path(), "local")
+            .expect("authenticated local trust ledger");
+        assert!(
+            ledger
+                .entries
+                .iter()
+                .all(|entry| entry.event.operation_id_sha256.is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_pending_attempts_migrate_as_future_only_continuation() {
+        use wiremock::matchers::{method, path as request_path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(request_path("/v2/bot/message/push"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"sentMessages":[{"id":"legacy-next"}]}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (writer, join, home, _seg) = isolated_test_writer("webhook-legacy-continuation").await;
+        let outbox = webhook_outbox_dir_at(home.path());
+        let mut legacy = pending_outbox_fixture(OutboxChannel::Line, "legacy-continuation");
+        legacy.version = WEBHOOK_OUTBOX_LEGACY_VERSION;
+        legacy.attempts = 3;
+        legacy.trust_admission = None;
+        legacy.recipient_sha256 = None;
+        legacy.legacy_attempts_before_admission = None;
+        legacy.legacy_record_version = None;
+        let (path, mut record) = stage_outbox_record(&outbox, &legacy).unwrap();
+        let cfg = gated_line_cfg(
+            durable_test_governance(home.path(), writer.clone()),
+            Some(server.uri()),
+        );
+
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut record).await,
+            DeliveryOutcome::Sent
+        );
+        assert_eq!(record.version, WEBHOOK_OUTBOX_VERSION);
+        assert_eq!(record.legacy_attempts_before_admission, Some(3));
+        assert_eq!(
+            record.legacy_record_version,
+            Some(WEBHOOK_OUTBOX_LEGACY_VERSION)
+        );
+        assert_eq!(record.attempts, 4, "historical attempts remain truthful");
+        let descriptor = record.trust_admission.clone().expect("future-only receipt");
+        assert!(matches!(
+            crate::permissions::find_authenticated_decision_at_home(home.path(), &descriptor),
+            Ok(crate::permissions::AuthenticatedDecisionLookup::Exact { .. })
+        ));
+        scrub_terminal_outbox_receipt(&path, &mut record).unwrap();
+        let scrubbed = load_outbox_record(&path).unwrap();
+        assert!(scrubbed.recipient_id.is_empty());
+        assert!(scrubbed.body.is_empty());
+        assert_eq!(scrubbed.body_sha256, legacy.body_sha256);
+        assert_eq!(scrubbed.legacy_attempts_before_admission, Some(3));
+        assert_eq!(
+            scrubbed.legacy_record_version,
+            Some(WEBHOOK_OUTBOX_LEGACY_VERSION)
+        );
+        assert_eq!(scrubbed.trust_admission.as_ref(), Some(&descriptor));
+        assert!(validate_outbox_record(&scrubbed).is_ok());
+        drop(cfg);
+        drop(writer);
+        assert_test_writer_completed(join).await;
+    }
+
+    #[test]
+    fn legacy_terminal_scrub_remains_readable_without_a_v2_descriptor() {
+        let home = tempfile::tempdir().unwrap();
+        let outbox = webhook_outbox_dir_at(home.path());
+        let mut legacy = pending_outbox_fixture(OutboxChannel::Line, "legacy-terminal-scrub");
+        legacy.version = WEBHOOK_OUTBOX_LEGACY_VERSION;
+        legacy.state = OutboxState::Complete;
+        legacy.attempts = 2;
+        legacy.trust_admission = None;
+        legacy.recipient_sha256 = None;
+        legacy.legacy_attempts_before_admission = None;
+        legacy.legacy_record_version = None;
+        let (path, mut record) = stage_outbox_record(&outbox, &legacy).unwrap();
+
+        scrub_terminal_outbox_receipt(&path, &mut record).unwrap();
+        let scrubbed = load_outbox_record(&path).unwrap();
+        assert_eq!(scrubbed.version, WEBHOOK_OUTBOX_LEGACY_VERSION);
+        assert!(scrubbed.recipient_id.is_empty());
+        assert!(scrubbed.body.is_empty());
+        assert_eq!(scrubbed.body_sha256, sha256_hex(b""));
+        assert!(scrubbed.trust_admission.is_none());
+        assert!(validate_outbox_record(&scrubbed).is_ok());
+    }
+
+    #[tokio::test]
+    async fn delivered_pending_audit_never_reopens_admission_or_transport() {
+        use wiremock::MockServer;
+
+        let server = MockServer::start().await;
+        let (writer, join, home, _seg) = isolated_test_writer("webhook-delivered-audit-only").await;
+        let outbox = webhook_outbox_dir_at(home.path());
+        let mut delivered = pending_outbox_fixture(OutboxChannel::Line, "delivered-audit-only");
+        delivered.state = OutboxState::DeliveredPendingAudit {
+            provider_message_id: Some("prior-provider-id".to_owned()),
+            confirm_degraded: false,
+        };
+        let (path, mut record) = stage_outbox_record(&outbox, &delivered).unwrap();
+        let cfg = gated_line_cfg(
+            durable_test_governance(home.path(), writer.clone()),
+            Some(server.uri()),
+        );
+
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut record).await,
+            DeliveryOutcome::Sent
+        );
+        assert!(matches!(record.state, OutboxState::Complete));
+        assert!(record.trust_admission.is_none());
+        assert!(server.received_requests().await.unwrap().is_empty());
+        drop(cfg);
+        drop(writer);
+        assert_test_writer_completed(join).await;
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(home.path(), "local")
+            .expect("authenticated local trust ledger");
+        assert!(
+            ledger
+                .entries
+                .iter()
+                .all(|entry| entry.event.operation_id_sha256.is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn changed_policy_suppresses_old_receipt_without_a_second_decision() {
+        use wiremock::matchers::{method, path as request_path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(request_path("/v2/bot/message/push"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (writer, join, home, _seg) = isolated_test_writer("webhook-policy-change").await;
+        let outbox = webhook_outbox_dir_at(home.path());
+        let (path, mut record) = stage_outbox_record(
+            &outbox,
+            &pending_outbox_fixture(OutboxChannel::Line, "policy-change"),
+        )
+        .unwrap();
+        let mut cfg = gated_line_cfg(
+            durable_test_governance(home.path(), writer.clone()),
+            Some(server.uri()),
+        );
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut record).await,
+            DeliveryOutcome::TransportRetry
+        );
+        let operation_id = record
+            .trust_admission
+            .as_ref()
+            .expect("old receipt")
+            .operation_id_sha256()
+            .to_owned();
+        record.transport_next_attempt_at = None;
+        persist_outbox_record(&path, &record).unwrap();
+        cfg.send_governance.policy = Some(crate::permissions::AutonomyPolicySnapshot::test_level(
+            crate::permissions::AutonomyLevel::Strict,
+        ));
+        assert_eq!(
+            deliver_outbox_record(&cfg, &path, &mut record).await,
+            DeliveryOutcome::Quarantined
+        );
+        assert!(matches!(record.state, OutboxState::Quarantined { .. }));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        drop(cfg);
+        drop(writer);
+        assert_test_writer_completed(join).await;
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(home.path(), "local")
+            .expect("authenticated local trust ledger");
+        assert_eq!(
+            ledger
+                .entries
+                .iter()
+                .filter(|entry| entry.event.operation_id_sha256.as_deref() == Some(&operation_id))
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn overlapping_recovery_reloads_under_record_lease_and_sends_once() {
+        use wiremock::matchers::{method, path as request_path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(request_path("/v2/bot/message/push"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(180))
+                    .set_body_string(r#"{"sentMessages":[{"id":"locked-once"}]}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (writer, join, home, _seg) = isolated_test_writer("webhook-overlap-lease").await;
+        let outbox = webhook_outbox_dir_at(home.path());
+        let (path, record) = stage_outbox_record(
+            &outbox,
+            &pending_outbox_fixture(OutboxChannel::Line, "overlap-lease"),
+        )
+        .unwrap();
+        let cfg = gated_line_cfg(
+            durable_test_governance(home.path(), writer.clone()),
+            Some(server.uri()),
+        );
+        let mut foreground = record.clone();
+        let mut recovery_stale_copy = record;
+        let (first, second) = tokio::join!(
+            deliver_outbox_record(&cfg, &path, &mut foreground),
+            deliver_outbox_record(&cfg, &path, &mut recovery_stale_copy)
+        );
+        assert!(matches!(
+            first,
+            DeliveryOutcome::Sent | DeliveryOutcome::BackoffWait
+        ));
+        assert!(matches!(
+            second,
+            DeliveryOutcome::Sent | DeliveryOutcome::BackoffWait
+        ));
+        assert_ne!(
+            (first, second),
+            (DeliveryOutcome::BackoffWait, DeliveryOutcome::BackoffWait),
+            "one owner must make progress"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        let persisted = load_outbox_record(&path).unwrap();
+        assert!(matches!(persisted.state, OutboxState::Complete));
+        drop(cfg);
+        drop(writer);
+        assert_test_writer_completed(join).await;
+    }
+
+    #[tokio::test]
+    async fn durable_outbox_refuses_descriptor_tampering_of_subject_or_body() {
+        let mut record = pending_outbox_fixture(OutboxChannel::Line, "durable-tamper");
+        record.version = WEBHOOK_OUTBOX_VERSION;
+        record.recipient_sha256 = Some(sha256_hex(record.recipient_id.as_bytes()));
+        let policy = crate::permissions::AutonomyPolicySnapshot::test_level(
+            crate::permissions::AutonomyLevel::Standard,
+        );
+        record.trust_admission = Some(
+            crate::permissions::Gate::for_policy(policy)
+                .resolve_trust_admission(
+                    &crate::permissions::Action::ChannelSend,
+                    &webhook_operation_id(&record),
+                    &webhook_request_binding(&record),
+                )
+                .await
+                .unwrap(),
+        );
+        assert!(validate_outbox_record(&record).is_ok());
+
+        let mut value = serde_json::to_value(&record).unwrap();
+        value["trust_admission"]["subject"] = serde_json::json!("remote-peer");
+        let subject_tampered: WebhookOutboxRecord = serde_json::from_value(value).unwrap();
+        assert!(validate_outbox_record(&subject_tampered).is_err());
+
+        record.body = "changed after admission".to_owned();
+        record.body_sha256 = sha256_hex(record.body.as_bytes());
+        assert!(validate_outbox_record(&record).is_err());
     }
 
     #[tokio::test]
@@ -3294,6 +4662,8 @@ mod tests {
                 wal_writer: Some(writer.clone()),
                 decision: crate::permissions::Decision::Deny("test-deny".into()),
                 reload_controller: None,
+                policy: None,
+                neoth_home: None,
                 required_audit: false,
                 dry_run: false,
             },
@@ -3343,6 +4713,8 @@ mod tests {
                 wal_writer: Some(writer.clone()),
                 decision: crate::permissions::Decision::Allow,
                 reload_controller: None,
+                policy: None,
+                neoth_home: None,
                 required_audit: false,
                 dry_run: false,
             },
@@ -3722,16 +5094,13 @@ mod tests {
             "durable outbox owns the completed pipeline turn"
         );
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(std::fs::read_dir(&outbox_dir).unwrap().count(), 1);
+        let pending_paths = outbox_record_paths(&outbox_dir);
+        assert_eq!(pending_paths.len(), 1);
 
         // A restart must honor the persisted due time. Force it due without a
         // wall-clock sleep so this regression remains fast and deterministic.
-        let pending_path = std::fs::read_dir(&outbox_dir)
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
+        let pending_path = pending_paths.into_iter().next().unwrap();
+        assert!(outbox_delivery_lock_path(&pending_path).is_file());
         let mut pending = load_outbox_record(&pending_path).unwrap();
         assert_eq!(pending.attempts, 1);
         assert!(pending.transport_next_attempt_at.is_some());
@@ -3768,13 +5137,9 @@ mod tests {
         drain_webhook_outbox_at(&second_cfg, &outbox_dir, OutboxChannel::Meta).await;
 
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(std::fs::read_dir(&outbox_dir).unwrap().count(), 1);
-        let receipt_path = std::fs::read_dir(&outbox_dir)
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
+        let receipt_paths = outbox_record_paths(&outbox_dir);
+        assert_eq!(receipt_paths.len(), 1);
+        let receipt_path = receipt_paths.into_iter().next().unwrap();
         let receipt = load_outbox_record(&receipt_path).unwrap();
         assert!(matches!(receipt.state, OutboxState::Complete));
         assert!(receipt.recipient_id.is_empty());
@@ -3983,13 +5348,9 @@ mod tests {
         assert!(drain_one_spool_entry(&cfg, inbound.clone(), "meta").await);
         assert!(!inbound.exists());
         let outbox = webhook_outbox_dir_at(home.path());
-        assert_eq!(std::fs::read_dir(&outbox).unwrap().count(), 1);
-        let receipt_path = std::fs::read_dir(&outbox)
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
+        let receipt_paths = outbox_record_paths(&outbox);
+        assert_eq!(receipt_paths.len(), 1);
+        let receipt_path = receipt_paths.into_iter().next().unwrap();
         let receipt = load_outbox_record(&receipt_path).unwrap();
         assert!(matches!(receipt.state, OutboxState::Complete));
         assert!(receipt.recipient_id.is_empty());
@@ -4020,7 +5381,11 @@ mod tests {
                 channel: OutboxChannel::Line,
                 source_key: sha256_hex(format!("line-{index}").as_bytes()),
                 recipient_id: "Urecipient".into(),
+                recipient_sha256: None,
                 body_sha256: sha256_hex(body.as_bytes()),
+                trust_admission: None,
+                legacy_attempts_before_admission: None,
+                legacy_record_version: None,
                 body,
                 attempts: 0,
                 audit_attempts: 0,
@@ -4037,7 +5402,14 @@ mod tests {
         drain_webhook_outbox_at(&cfg, &outbox_dir, OutboxChannel::Line).await;
 
         assert_eq!(server.received_requests().await.unwrap().len(), 2);
-        assert_eq!(std::fs::read_dir(outbox_dir).unwrap().count(), 2);
+        let records = outbox_record_paths(&outbox_dir);
+        assert_eq!(records.len(), 2);
+        assert!(
+            records
+                .iter()
+                .all(|record| outbox_delivery_lock_path(record).is_file()),
+            "every recovered JSON receipt must retain its stable ownership lock"
+        );
     }
 
     #[tokio::test]

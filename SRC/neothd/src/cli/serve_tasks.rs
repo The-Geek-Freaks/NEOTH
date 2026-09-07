@@ -4422,12 +4422,14 @@ pub(crate) fn spawn_proactive_dispatcher(
     home: &std::path::Path,
     wal_segment_path: &std::path::Path,
     writer: &WalWriterHandle,
+    reload_controller: &Arc<ReloadController>,
 ) -> JoinHandle<()> {
     let handle = crate::daemon::proactive_dispatcher::spawn_proactive_drain_loop(
         home.to_path_buf(),
         wal_segment_path.to_path_buf(),
         crate::daemon::proactive_dispatcher::PROACTIVE_DRAIN_INTERVAL_SECS,
         writer.clone(),
+        Arc::clone(reload_controller),
     );
     info!(
         interval_secs = crate::daemon::proactive_dispatcher::PROACTIVE_DRAIN_INTERVAL_SECS,
@@ -6196,6 +6198,8 @@ pub(crate) fn spawn_channel_adapters(
                         &config.autonomy_policy(),
                     ),
                     reload_controller: Some(Arc::clone(reload_controller)),
+                    policy: Some(config.autonomy_policy()),
+                    neoth_home: Some(neoth_home.to_path_buf()),
                     required_audit: config.audit_rpc.required_for_oneshot_permission_events,
                     dry_run: false,
                 },
@@ -6403,6 +6407,8 @@ pub(crate) fn spawn_channel_adapters(
                         &config.autonomy_policy(),
                     ),
                     reload_controller: Some(Arc::clone(reload_controller)),
+                    policy: Some(config.autonomy_policy()),
+                    neoth_home: Some(neoth_home.to_path_buf()),
                     required_audit: config.audit_rpc.required_for_oneshot_permission_events,
                     dry_run: false,
                 },
