@@ -784,7 +784,7 @@ async fn authorize_channel_send<P: crate::permissions::PolicyArgument>(
     channel_asker: Option<&Arc<dyn crate::permissions::gate::ChannelAsker>>,
 ) -> Result<bool> {
     use crate::permissions::lease::LeaseStore;
-    use crate::permissions::{Action, ConfirmStrategy, Gate};
+    use crate::permissions::{Action, ConfirmStrategy, Gate, PermissionAuditSink};
 
     let action = Action::ChannelSend;
     let lease_store = {
@@ -808,7 +808,15 @@ async fn authorize_channel_send<P: crate::permissions::PolicyArgument>(
             base.with_confirm(ConfirmStrategy::FailClosed)
         }
     };
-    if let Err(error) = gate.check(&action, Some(writer)).await {
+    // The verified inbound sender remains the capability-lease subject and is
+    // therefore the authenticated TrustLedger principal. This boundary is
+    // upstream authorization for the reply/live stream only; CHANNEL_EGRESS
+    // remains outcome evidence and the durable outbox owns its later retry
+    // authority. A required typed decision must land before either can escape.
+    if let Err(error) = gate
+        .check_with_audit_sink(&action, PermissionAuditSink::Writer(writer), true, None)
+        .await
+    {
         warn!(
             channel = channel_str,
             error = %error,
@@ -6180,8 +6188,11 @@ mod tests {
     #[tokio::test]
     async fn release_channel_reply_allows_at_standard_and_emits_recall_egress() {
         let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("000001.wal");
+        let (writer, join) =
+            crate::wal::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let msg = inbound(Some("weißt du noch als wir über rust geredet haben?"), None);
         let prov = ReplyProvenance {
             provider: "local-recall".to_string(),
@@ -6211,6 +6222,24 @@ mod tests {
         let out = out.expect("Standard ChannelSend must Allow → Some(reply)");
         assert_eq!(out.recipient_id, msg.chat_id);
         assert_eq!(out.text, "here is what I recall about rust");
+        let trust = crate::permissions::trust_ledger::TrustLedger::replay_subject_at_home(
+            dir.path(),
+            &msg.sender_id,
+        )
+        .expect("ChannelSend allow must be authenticated before the returned outbound");
+        assert_eq!(
+            trust.entries.len(),
+            1,
+            "exactly one final ChannelSend decision"
+        );
+        assert_eq!(
+            trust.entries[0].event.action,
+            crate::permissions::ActionKind::ChannelSend
+        );
+        assert!(matches!(
+            trust.entries[0].event.outcome,
+            crate::permissions::trust_ledger::TrustOutcome::Allowed
+        ));
         drop(writer);
         let _ = join.await;
         let bytes = std::fs::read(&seg).unwrap();
@@ -6473,8 +6502,11 @@ mod tests {
     #[tokio::test]
     async fn release_channel_reply_denies_at_strict_and_writes_no_egress() {
         let dir = tempfile::tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("000001.wal");
+        let (writer, join) =
+            crate::wal::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let msg = inbound(Some("recall something"), None);
         let prov = ReplyProvenance {
             provider: "local-recall".to_string(),
@@ -6505,6 +6537,24 @@ mod tests {
             out.is_none(),
             "Strict ChannelSend (FailClosed, no lease) must Deny → None"
         );
+        let trust = crate::permissions::trust_ledger::TrustLedger::replay_subject_at_home(
+            dir.path(),
+            &msg.sender_id,
+        )
+        .expect("ChannelSend denial must be authenticated before suppressing outbound");
+        assert_eq!(
+            trust.entries.len(),
+            1,
+            "exactly one final ChannelSend decision"
+        );
+        assert_eq!(
+            trust.entries[0].event.action,
+            crate::permissions::ActionKind::ChannelSend
+        );
+        assert!(matches!(
+            trust.entries[0].event.outcome,
+            crate::permissions::trust_ledger::TrustOutcome::Denied
+        ));
         drop(writer);
         let _ = join.await;
         let bytes = std::fs::read(&seg).unwrap_or_default();
@@ -6512,6 +6562,55 @@ mod tests {
         assert_eq!(
             egress, 0,
             "a gate-denied reply must NOT emit a CHANNEL_EGRESS frame"
+        );
+    }
+
+    #[tokio::test]
+    async fn release_channel_reply_dead_required_audit_writer_returns_no_outbound() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("dead-required-channel-audit.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        // The production authorization seam receives a real writer handle, but
+        // its task has already disappeared. A required typed audit failure must
+        // suppress the returned outbound before any egress receipt is written.
+        join.abort();
+        let _ = join.await;
+
+        let msg = inbound(Some("reply only if the audit is durable"), None);
+        let provenance = ReplyProvenance {
+            provider: "local-recall".to_string(),
+            model: "conversational-recall".to_string(),
+            latency: std::time::Duration::ZERO,
+            input_tokens: None,
+            output_tokens: None,
+        };
+        let once_guard = crate::hooks::SessionOnceGuard::new();
+        let out = release_channel_reply(
+            &writer,
+            dir.path(),
+            &[],
+            crate::permissions::AutonomyLevel::Standard,
+            &msg,
+            "telegram",
+            "deadbeefdeadbeef",
+            "must never become an outbound message",
+            &provenance,
+            None,
+            false,
+            None,
+            &once_guard,
+        )
+        .await
+        .expect("required audit failure is a suppressed reply, not a transport error");
+        assert!(
+            out.is_none(),
+            "dead required audit must suppress returned outbound"
+        );
+        let bytes = std::fs::read(&seg).unwrap_or_default();
+        let (egress, _) = count_egress_with_provider(&bytes, "local-recall");
+        assert_eq!(
+            egress, 0,
+            "dead required audit must not reach CHANNEL_EGRESS"
         );
     }
 

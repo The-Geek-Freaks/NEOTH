@@ -13,8 +13,11 @@ neoth permissions audit --subject local
 
 `local` is the operator/process subject for decisions without delegated
 authority. The ledger can keep pre-authenticated peer and channel subjects
-separate when their authenticated call paths supply them. This Wave 4 scope
-records `local` and does not establish peer or channel principals. A free
+separate when their authenticated call paths supply them. Wave 4's implemented
+boundaries record `local`; the upstream channel-reply boundary records the
+platform-verified inbound sender supplied by its channel adapter. Cluster task
+admission uses the authenticated Noise remote key and rejects a membership
+grant bound to a different transport or peer. A free
 display label or a command's source-channel string cannot create a trusted
 subject or consume a local confirmation.
 
@@ -56,6 +59,9 @@ is reported.
 | Todo and calendar writes | Required admission precedes the provider mutation and binds the effective immutable request, including the calendar collection destination. The same audited operation owns its finalization. Read-only list and dry-run paths do not create production write admissions. |
 | Skill and cron self-activation | Existing kill-switch, allowlist, sovereign/Custom and confirmation rules remain authoritative. Config writes revalidate under the coherent config lock; cron holds config authority through dependent jobs publication in config-to-jobs lock order. Lock-taking mutations run off the async runtime thread. |
 | One-shot MCP call | The audit owner spans preflight, authorization, child spawn, invocation and outcome. Canonical server/tool/argument binding is carried by the opaque proof and checked again before transport. Rejection and invocation compatibility records do not independently emit another final TrustDecision. |
+| Upstream channel reply | The required decision retains the verified inbound sender as lease and ledger subject. It precedes live provider-stream opening or the ordinary reply release tail. A missing audit prevents returned outbound/egress. This is distinct from final durable outbox authority, whose recipient/body binding exists later. |
+| Obsidian template preload | Disabled or incomplete configuration skips without a decision. A configured preload requires one local decision before spawning the task and before its lifecycle intent, vault/state writes or DB ingestion. Both primary and knowledge templates ingest into the authoritative instance home's `views.db`. Shared containment checks reject existing linked ancestors before creating target parents. A denial or unavailable writer starts no preload task. |
+| Cluster task queue admission | Validated, paired tasks reserve bounded executor capacity before the final required decision. The authenticated Noise key is the ledger/lease subject; a domain-separated digest binds peer, task ID and exact prompt. Membership is revalidated after admission. A final fallible enqueue detects executor closure or newly exhausted capacity; the accepted cluster event follows only a successful enqueue. |
 
 ## Authentication and completeness
 
@@ -76,12 +82,21 @@ typed TrustDecision.
 This document describes implemented boundaries; runtime evidence belongs to
 the corresponding source-bound batch verification report. It does not close
 the all-boundary `GOLD-LF-P1-05` task. Durable proactive/webhook admission and
-unknown-append reconciliation, authenticated cluster-task admission, required
-upstream channel-reply audit and Obsidian preload admission remain separate
-implementation work. Pure policy displays and scheduling probes must not be
+unknown-append reconciliation remain separate implementation work. Pure policy
+displays and scheduling probes must not be
 turned into duplicate final decisions to inflate apparent coverage.
 
 The upstream authenticated channel-turn decision is distinct from the final
 local-subject durable reply decision, whose exact recipient and body exist
 only after the pipeline returns. Neither a boolean nor an unrelated upstream
 receipt authorizes that final outbox operation.
+
+Cluster parsing, static-denial and membership/lease prefilters, plus absent,
+full or closed executor queues, reject before final queue admission. They do
+not manufacture typed decisions for work that cannot enter the queue. A lease
+that expires before the final Gate is denied there. Membership revocation
+after an authenticated Allow retains that truthful decision but prevents the
+queue effect and accepted event. The same distinction applies if the executor
+closes or another producer takes the capacity before the final enqueue.
+This boundary does not deduplicate repeated
+peer task IDs or claim exactly-once remote task execution.

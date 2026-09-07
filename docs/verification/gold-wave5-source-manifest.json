@@ -1,0 +1,41 @@
+{
+  "schema": "neoth-gold-changed-inputs/v1",
+  "batch": "wave5-daemon-cluster-admission",
+  "baseCommit": "479df2e0a3bacc2f74045c21859d62a3340037dc",
+  "publicationTarget": "refs/heads/main",
+  "recordedUtc": "2026-09-07T10:15:36.3528491Z",
+  "scope": "Changed compiled inputs only; not an inventory of every transitive dependency",
+  "inputCount": 6,
+  "files": [
+    {
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "bytes": 309933,
+      "sha256": "92247648c4cc40d4233f8bbf523242c732c9650c19ad57c659c28e2e3299ec5f"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "bytes": 456730,
+      "sha256": "8c38c55b3b0a65b6a9ce4007577b24dbd9ac22d9760dd73e89d04d47d8b11409"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve.rs",
+      "bytes": 152159,
+      "sha256": "7bb355843dd5bab172e0b21adeab7d17b86405cf16b515d8b851e219542e5cc5"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/hyperswarm.rs",
+      "bytes": 142721,
+      "sha256": "ead26a9b7fcb0dc3d9eb3e5eea686d541e878e1435f12262b564529b2f06d037"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/gate.rs",
+      "bytes": 67111,
+      "sha256": "9c5bc9470a8140a25a87bd588ec90bff14061632a3387cf0cf8ba2aa1b479669"
+    },
+    {
+      "path": "SRC/neothd/src/cli/obsidian.rs",
+      "bytes": 169282,
+      "sha256": "4d261303f01d917b3669da20ad24db284a86f9e989e65b768649323ec1e942a4"
+    }
+  ]
+}

@@ -347,6 +347,27 @@ impl Gate {
         .await
     }
 
+    /// Test-only variant of [`Self::check_required_audit`] with an explicit
+    /// decision-time clock. Production callers must retain the fresh wall
+    /// clock used by `check_required_audit`.
+    #[cfg(test)]
+    pub(crate) async fn check_required_audit_at(
+        &self,
+        action: &Action,
+        writer: &WalWriterHandle,
+        now_unix: i64,
+        request_binding_sha256: Option<&str>,
+    ) -> Result<(), GateError> {
+        self.check_at_with_audit(
+            action,
+            PermissionAuditSink::Writer(writer),
+            now_unix,
+            true,
+            request_binding_sha256,
+        )
+        .await
+    }
+
     /// Resolve one action and route the exact permission decision through the
     /// caller's single-writer-compatible audit destination.
     ///

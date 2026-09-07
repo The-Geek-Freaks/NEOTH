@@ -1,0 +1,249 @@
+{
+  "schema": "neoth-gold-selected-verification/v1",
+  "batch": "wave5-daemon-cluster-admission",
+  "baseCommit": "479df2e0a3bacc2f74045c21859d62a3340037dc",
+  "status": "bounded local verification passed; not full workspace or release qualification",
+  "binary": {
+    "path": "SRC/target/debug/deps/neothd-a576cce183334209.exe",
+    "sha256": "7D1F3C332A30F34AF21FE79D5568B76346A66C6B0B8520204B133760441527FE",
+    "bytes": 271215104,
+    "lastWriteTimeUtc": "2026-09-07T10:23:43.2177447Z",
+    "testSummary": "14147 tests, 0 benchmarks",
+    "listExit": 0,
+    "sourceManifest": "gold-wave5-source-manifest.json"
+  },
+  "stats": {
+    "groups": 7,
+    "passedGroups": 7,
+    "passedExecutions": 1013,
+    "failedExecutions": 0,
+    "ignoredHarnessEntries": 2
+  },
+  "gates": {
+    "environment": {
+      "platform": "Windows x64 MSVC",
+      "cargoJobs": 1,
+      "testThreads": 1,
+      "profileDebug": 0,
+      "offline": true
+    },
+    "libraryTestBuild": {
+      "command": "SRC/_test.bat --no-run --locked --offline -j1",
+      "exit_code": 0,
+      "exitToken": "TEST_EXIT=0",
+      "duration": "Finished `test` profile [unoptimized] target(s) in 3m 39s"
+    },
+    "strictClippy": {
+      "command": "SRC/_clippy.bat",
+      "cargoArgs": "clippy -p neoth --lib --tests --no-deps -- -D warnings",
+      "exit_code": 0,
+      "exitToken": "CLIPPY_EXIT=0",
+      "duration": "Finished `dev` profile [unoptimized] target(s) in 3m 44s"
+    },
+    "coreCheck": {
+      "command": "SRC/_check.bat",
+      "cargoArgs": "check -p neoth",
+      "exit_code": 0,
+      "exitToken": "BUILD_EXIT=0",
+      "duration": "Finished `dev` profile [unoptimized] target(s) in 42.10s"
+    },
+    "workspaceFormatting": {
+      "command": "SRC/_gui_check.bat fmt --all -- --check",
+      "exit_code": 0,
+      "exitToken": "GUI_GATE_EXIT=0"
+    },
+    "publicCliBuild": {
+      "command": "SRC/_build.bat --locked --offline -j1",
+      "exit_code": 0,
+      "exitToken": "BUILD_EXIT=0",
+      "duration": "Finished `dev` profile [unoptimized] target(s) in 2m 30s"
+    },
+    "workspaceMetadata": {
+      "command": "SRC/_gui_check.bat metadata --locked --no-deps --format-version 1",
+      "exit_code": 0,
+      "exitToken": "GUI_GATE_EXIT=0",
+      "packages": 5,
+      "workspaceMembers": 5
+    }
+  },
+  "results": [
+    {
+      "filter": "cli::serve_pipeline::",
+      "exit_code": 0,
+      "seconds": 1.58,
+      "summary": "test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 14107 filtered out; finished in 0.41s",
+      "passed": 40,
+      "failed": 0,
+      "ignored": 0,
+      "no_tests": false,
+      "ignoredEntries": [],
+      "failureOutput": []
+    },
+    {
+      "filter": "cli::serve_tasks::",
+      "exit_code": 0,
+      "seconds": 10.43,
+      "summary": "test result: ok. 64 passed; 0 failed; 0 ignored; 0 measured; 14083 filtered out; finished in 9.17s",
+      "passed": 64,
+      "failed": 0,
+      "ignored": 0,
+      "no_tests": false,
+      "ignoredEntries": [],
+      "failureOutput": []
+    },
+    {
+      "filter": "cluster::",
+      "exit_code": 0,
+      "seconds": 12.31,
+      "summary": "test result: ok. 472 passed; 0 failed; 0 ignored; 0 measured; 13675 filtered out; finished in 10.88s",
+      "passed": 472,
+      "failed": 0,
+      "ignored": 0,
+      "no_tests": false,
+      "ignoredEntries": [],
+      "failureOutput": []
+    },
+    {
+      "filter": "permissions::",
+      "exit_code": 0,
+      "seconds": 2.26,
+      "summary": "test result: ok. 194 passed; 0 failed; 0 ignored; 0 measured; 13953 filtered out; finished in 1.05s",
+      "passed": 194,
+      "failed": 0,
+      "ignored": 0,
+      "no_tests": false,
+      "ignoredEntries": [],
+      "failureOutput": []
+    },
+    {
+      "filter": "daemon::audit_rpc::",
+      "exit_code": 0,
+      "seconds": 2.89,
+      "summary": "test result: ok. 56 passed; 0 failed; 1 ignored; 0 measured; 14090 filtered out; finished in 1.73s",
+      "passed": 56,
+      "failed": 0,
+      "ignored": 1,
+      "no_tests": false,
+      "ignoredEntries": [
+        "test daemon::audit_rpc::tests::health_probe_child_process_checks_live_listener ... ignored, helper invoked by client_round_trips_against_a_live_listener"
+      ],
+      "failureOutput": []
+    },
+    {
+      "filter": "wal::writer::",
+      "exit_code": 0,
+      "seconds": 9.39,
+      "summary": "test result: ok. 86 passed; 0 failed; 1 ignored; 0 measured; 14060 filtered out; finished in 8.25s",
+      "passed": 86,
+      "failed": 0,
+      "ignored": 1,
+      "no_tests": false,
+      "ignoredEntries": [
+        "test wal::writer::tests::wal_sync_latency_measurement ... ignored, D008 latency bench — run with: cargo test -p neoth --lib wal_sync_latency -- --ignored --nocapture --test-threads=1"
+      ],
+      "failureOutput": []
+    },
+    {
+      "filter": "obsidian::",
+      "exit_code": 0,
+      "seconds": 2.1,
+      "summary": "test result: ok. 101 passed; 0 failed; 0 ignored; 0 measured; 14046 filtered out; finished in 0.92s",
+      "passed": 101,
+      "failed": 0,
+      "ignored": 0,
+      "no_tests": false,
+      "ignoredEntries": [],
+      "failureOutput": []
+    }
+  ],
+  "publicationTarget": "refs/heads/main",
+  "staticContracts": [
+    {
+      "command": "python packaging/tests/test_roadmap_release_gate.py",
+      "tests": 11,
+      "exit_code": 0
+    },
+    {
+      "command": "python scripts/test_lost_feature_integrity.py",
+      "tests": 19,
+      "exit_code": 0
+    }
+  ],
+  "publicCli": {
+    "path": "SRC/target/debug/neoth.exe",
+    "sha256": "2F0A929D77A4D7AEE18B21C38C2E0EB5B24F47C7359580E07F9760F6700A4322",
+    "bytes": 181801472,
+    "lastWriteTimeUtc": "2026-09-07T10:28:36.1971681Z",
+    "probes": [
+      {
+        "args": [
+          "--version"
+        ],
+        "exit_code": 0,
+        "firstLine": "neoth 1.0.0"
+      },
+      {
+        "args": [
+          "serve",
+          "--help"
+        ],
+        "exit_code": 0,
+        "firstLine": "Run the daemon. Reads ~/.neoth/freedom.yaml, opens the WAL, awaits SIGTERM / Ctrl+C, drains cleanly on shutdown"
+      },
+      {
+        "args": [
+          "obsidian",
+          "--help"
+        ],
+        "exit_code": 0,
+        "firstLine": "One-way sync of the session archive into an Obsidian vault. Phase 13 R-5. Idempotent — re-runs skip unchanged files"
+      },
+      {
+        "args": [
+          "obsidian",
+          "preload",
+          "--help"
+        ],
+        "exit_code": 0,
+        "firstLine": "Copy a curated Markdown/YAML vault template into Obsidian and optionally ingest reviewed Markdown notes into NEOTH memory. Raw/restricted source folders stay copy-only unless the manifest explicitly marks them safe"
+      },
+      {
+        "args": [
+          "permissions",
+          "audit",
+          "--help"
+        ],
+        "exit_code": 0,
+        "firstLine": "Replay the typed append-only trust ledger for one exact subject key. Use `local` for decisions made without a delegated subject"
+      }
+    ]
+  },
+  "postGateReadback": {
+    "checkedUtc": "2026-09-07T10:30:21.5835889Z",
+    "checkedInputs": 6,
+    "mismatches": [],
+    "libraryBinarySha256": "7D1F3C332A30F34AF21FE79D5568B76346A66C6B0B8520204B133760441527FE",
+    "publicBinarySha256": "2F0A929D77A4D7AEE18B21C38C2E0EB5B24F47C7359580E07F9760F6700A4322",
+    "changedCompiledInputs": [
+      "SRC/neothd/src/cli/obsidian.rs",
+      "SRC/neothd/src/cli/serve.rs",
+      "SRC/neothd/src/cli/serve_pipeline.rs",
+      "SRC/neothd/src/cli/serve_tasks.rs",
+      "SRC/neothd/src/cluster/hyperswarm.rs",
+      "SRC/neothd/src/permissions/gate.rs"
+    ],
+    "libraryBinaryMatches": true,
+    "publicBinaryMatches": true
+  },
+  "review": {
+    "code": "clear",
+    "rust": "clear",
+    "security": "clear",
+    "finalRepair": "Explicit instance DB binding independently re-reviewed by code and Rust reviewers"
+  },
+  "limits": [
+    "Selected local Windows core behavior, not all 14,147 library tests",
+    "No live peer/provider, interactive GUI, package or release qualification",
+    "P1-05 durable proactive/webhook admission and unknown-append reconciliation remain open"
+  ]
+}

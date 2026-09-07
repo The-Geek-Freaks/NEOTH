@@ -3,6 +3,22 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-07
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 5 daemon/cluster checkpoint 2026-09-07:** required authenticated
+> admission now precedes upstream channel reply release, configured Obsidian
+> preload and paired cluster-task queue acceptance. Preload binds WAL, state
+> and ingestion DB to the same instance home; existing linked ancestors are
+> checked before target-parent creation. Cluster queue closure after admission
+> cannot emit a false accepted event. The six-input manifest is
+> `docs/verification/gold-wave5-source-manifest.json`; the selected runtime
+> proof is `docs/verification/gold-wave5-test-matrix.json`, with narrative in
+> `docs/gold-wave5-verification.md`. **7/7 groups and 1,013 parent-harness
+> executions pass**, alongside strict Clippy, core check, the public CLI build,
+> five startup/help probes, formatting and locked workspace metadata. This is bounded
+> local evidence. Durable proactive/webhook admission and unknown-append
+> reconciliation, plus the separate GUI apply-confirmation flow, remain open.
+> No checkbox closes: **1,324 total / 1,006 complete / 316 open / 2 partial =
+> 318 raw blockers and 317 pre-tag blockers**. Publication targets GitHub `main`.
+>
 > **Wave 4 required-decision checkpoint 2026-09-07:** required authenticated
 > trust admission now precedes Coding/self-source, external HTTP, one-shot MCP,
 > Todo/Calendar and self-activation effects. The final 19-input changed-source
@@ -15,9 +31,10 @@
 > pass. Windows Git path transport, exact historic Codegraph registration and
 > cancel-safe mutation/audit ownership are included. The former editable
 > `source_channel=cli` GUI permission bypass is closed; a separate legitimate
-> GUI apply-confirmation flow remains open. P1-05 also remains open for durable
-> proactive/webhook admission/reconciliation, authenticated cluster-task
-> admission, required channel-reply audit and Obsidian preload. No checkbox
+> GUI apply-confirmation flow remains open. At this checkpoint P1-05 also
+> retained durable proactive/webhook admission/reconciliation, cluster-task
+> admission, channel-reply audit and Obsidian preload; Wave 5 above advances
+> the latter three boundaries. No checkbox
 > closes in this batch; counts remain **1,324 total / 1,006 complete / 316 open /
 > 2 partial = 318 raw blockers and 317 pre-tag blockers**. This is bounded local
 > evidence, not complete workspace, interactive GUI, provider, package, release

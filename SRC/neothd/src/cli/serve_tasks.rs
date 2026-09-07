@@ -18,6 +18,7 @@ use crate::channels::{Channel, ChannelKind, PipelineHandler};
 use crate::cli::serve_pipeline::{PipelineHandlerDeps, build_pipeline_handler};
 use crate::config::FreedomConfig;
 use crate::config::reload::{AcceptedConfigSnapshot, ReloadController};
+use crate::permissions::{Action, ConfirmStrategy, Gate};
 use crate::providers::Provider;
 use crate::wal::writer::WalWriterHandle;
 
@@ -661,44 +662,30 @@ pub(crate) fn spawn_obsidian_wiki_rebuild(
 ///
 /// NEOTH-AUDIT-PRELOAD-FS-BOUNDARY-01: canonical-containment guard for vault writes.
 ///
-/// Creates `target_dir` if it does not yet exist, then canonicalizes both the
-/// vault root and `target_dir`.  Returns `true` iff the resolved path is a
-/// descendant of (or equal to) the vault root.  Fail-closed: returns `false`
-/// and emits a `warn!` on any I/O error or detected escape so the caller can
-/// skip the write entirely.
-///
-/// Windows note: `std::fs::canonicalize` returns a `\\?\`-verbatim path on
-/// Windows; both sides are canonicalized with the same call so
-/// `Path::starts_with` operates on consistent representations regardless of
-/// whether the raw strings carry a verbatim prefix.
-fn vault_subdir_is_contained(
-    canonical_vault: &std::path::Path,
-    target_dir: &std::path::Path,
-) -> bool {
-    if let Err(e) = std::fs::create_dir_all(target_dir) {
-        warn!(
-            error  = %e,
-            target = %target_dir.display(),
-            "obsidian preload: cannot create target dir; refusing write (fail-closed)"
-        );
-        return false;
-    }
-    match std::fs::canonicalize(target_dir) {
-        Ok(real) if real.starts_with(canonical_vault) => true,
-        Ok(real) => {
+/// The caller invokes this only after the required Gate and lifecycle intent,
+/// so materializing a first-run vault here is authorized. It then delegates
+/// all ancestor and post-create containment checks to the central preload
+/// guard shared by direct CLI and manifest-derived preload paths.
+fn vault_subdir_is_contained(vault: &std::path::Path, target_dir: &std::path::Path) -> bool {
+    let canonical_vault =
+        match std::fs::create_dir_all(vault).and_then(|()| std::fs::canonicalize(vault)) {
+            Ok(real) => real,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    vault = %vault.display(),
+                    "obsidian preload: materialize vault root failed; refusing write (fail-closed)"
+                );
+                return false;
+            }
+        };
+    match crate::cli::obsidian::assert_target_within_vault(&canonical_vault, target_dir) {
+        Ok(()) => true,
+        Err(error) => {
             warn!(
+                error = %error,
                 target = %target_dir.display(),
-                real   = %real.display(),
-                "obsidian preload: write target resolves outside vault \
-                 (symlink/junction escape); refusing write"
-            );
-            false
-        }
-        Err(e) => {
-            warn!(
-                error  = %e,
-                target = %target_dir.display(),
-                "obsidian preload: canonicalize failed; refusing write (fail-closed)"
+                "obsidian preload: target escapes vault boundary; refusing write"
             );
             false
         }
@@ -708,9 +695,9 @@ fn vault_subdir_is_contained(
 /// WAL-audited (NEOTH-AUDIT-PRELOAD-AUTORUN-AUDIT-01): emits
 /// `EXTENDED/ObsidianPreloadIntent` before the first vault/DB write and
 /// `EXTENDED/ObsidianPreloadResult` on completion. Returns `None` when preload
-/// is not configured or the `ObsidianPreloadWrite` autonomy gate blocks it
+/// is not configured or the required `ObsidianPreloadWrite` Gate blocks it
 /// (Strict=Confirm → fail-closed in daemon; Standard/Elevated/Full=Allow).
-pub(crate) fn spawn_obsidian_preload(
+pub(crate) async fn spawn_obsidian_preload(
     config: &FreedomConfig,
     home: &std::path::Path,
     writer: WalWriterHandle,
@@ -720,26 +707,8 @@ pub(crate) fn spawn_obsidian_preload(
         preload_state_path_for_home,
     };
 
-    // ── ADR-008/009 permission gate ──────────────────────────────────────
-    // ObsidianPreloadWrite: Strict=Confirm (no TTY in daemon → fail-closed),
-    // Standard/Elevated/Full=Allow. A Confirm result here means the daemon has
-    // no TTY to resolve it — skip the unattended preload rather than hang.
-    {
-        let decision = crate::permissions::evaluate(
-            &crate::permissions::Action::ObsidianPreloadWrite,
-            &config.autonomy_policy(),
-        );
-        if !decision.is_allow() {
-            warn!(
-                autonomy = config.autonomy.as_str(),
-                decision = decision.tag(),
-                "obsidian preload-autorun: permission gate blocked preload \
-                 (Strict requires confirm; daemon has no TTY — fail-closed)"
-            );
-            return None;
-        }
-    }
-
+    // Configuration is a pure admission decision. Disabled/misconfigured
+    // preload is not an attempted effect and deliberately creates no decision.
     let (vault, template_dir, subdir) = match preload_autorun_decision(config) {
         PreloadDecision::Skip => {
             tracing::debug!("obsidian_preload_template_dir not set — preload autorun disabled");
@@ -759,6 +728,40 @@ pub(crate) fn spawn_obsidian_preload(
         } => (vault, template_dir, subdir),
     };
 
+    // Validate a configured name before required admission or task creation.
+    // The containment helper materializes its target to resolve junctions; a
+    // malformed `../...` value must not reach that helper and create anything
+    // outside the configured vault. An empty value is manifest-derived later,
+    // where preload_template validates that effective subdir before writing.
+    if !subdir.as_os_str().is_empty()
+        && let Err(error) = crate::cli::obsidian::validate_subdir(&subdir)
+    {
+        warn!(
+            subdir = %subdir.display(),
+            error = %error,
+            "obsidian preload-autorun: configured subdir rejected; skipping"
+        );
+        return None;
+    }
+
+    // This is the required local-authority boundary. It runs after all pure
+    // configuration checks and before task creation, lifecycle intent, vault
+    // creation, state-file writes, or preload DB ingestion. The canonical Gate
+    // records one authenticated local TrustDecision and fails closed if its WAL
+    // evidence cannot be appended.
+    if let Err(error) = Gate::for_policy(config.autonomy_policy())
+        .with_confirm(ConfirmStrategy::FailClosed)
+        .check_required_audit(&Action::ObsidianPreloadWrite, &writer)
+        .await
+    {
+        warn!(
+            autonomy = config.autonomy.as_str(),
+            error = %error,
+            "obsidian preload-autorun: required permission admission refused"
+        );
+        return None;
+    }
+
     let knowledge_dirs: Vec<std::path::PathBuf> = config
         .knowledge_preload_dirs
         .iter()
@@ -774,13 +777,6 @@ pub(crate) fn spawn_obsidian_preload(
     );
 
     let handle = tokio::spawn(async move {
-        // NEOTH-AUDIT-PRELOAD-FS-BOUNDARY-01: canonicalize the vault root once.
-        // Per-call containment checks compare resolved paths against this root.
-        // Falls back to the raw path when the vault does not yet exist so the
-        // per-target create_dir_all + canonicalize check still catches escapes
-        // once the directory is materialised.
-        let canonical_vault = std::fs::canonicalize(&vault).unwrap_or_else(|_| vault.clone());
-
         // Reuse the daemon's single instance-local writer. Opening a second
         // default-path writer here would split one preload across two homes and
         // violate the WAL single-writer invariant.
@@ -801,6 +797,10 @@ pub(crate) fn spawn_obsidian_preload(
         }
 
         let mut preload_ok = true;
+        // The serve instance already owns this authoritative home. Passing the
+        // path explicitly keeps every preload root on the same instance DB and
+        // avoids the process-global default-home resolver.
+        let views_db = home.join("views.db");
 
         // ── Primary template ─────────────────────────────────────────────
         let state = preload_state_path_for_home(&home, &template_dir);
@@ -815,7 +815,7 @@ pub(crate) fn spawn_obsidian_preload(
         // traversal components for the manifest-derived value (defence-in-depth
         // for the empty-subdir path).
         let primary_allowed = subdir.as_os_str().is_empty()
-            || vault_subdir_is_contained(&canonical_vault, &vault.join(&subdir));
+            || vault_subdir_is_contained(&vault, &vault.join(&subdir));
         if !primary_allowed {
             warn!(
                 vault  = %vault.display(),
@@ -832,16 +832,27 @@ pub(crate) fn spawn_obsidian_preload(
                 false, // dry_run
                 true,  // ingest
                 Some(&state),
-                None,
+                Some(&views_db),
             )
             .await
             {
-                Ok(stats) => info!(
-                    files_copied = stats.files_copied,
-                    ingested_chunks = stats.ingested_chunks,
-                    template = %template_dir.display(),
-                    "obsidian preload-autorun: primary template complete"
-                ),
+                Ok(stats) => {
+                    if stats.skipped_containment > 0 {
+                        warn!(
+                            skipped_containment = stats.skipped_containment,
+                            template = %template_dir.display(),
+                            "obsidian preload-autorun: primary template skipped escaped targets"
+                        );
+                        preload_ok = false;
+                    } else {
+                        info!(
+                            files_copied = stats.files_copied,
+                            ingested_chunks = stats.ingested_chunks,
+                            template = %template_dir.display(),
+                            "obsidian preload-autorun: primary template complete"
+                        );
+                    }
+                }
                 Err(e) => {
                     warn!(
                         error = %e,
@@ -856,10 +867,10 @@ pub(crate) fn spawn_obsidian_preload(
         // ── knowledge_preload_dirs ────────────────────────────────────────
         // NOTE: effective_subdir for each knowledge root is read from the
         // root's preload_manifest.yaml by preload_template (obsidian.rs); we
-        // cannot perform the per-subdir containment check here without
-        // re-loading the manifest.  validate_subdir inside preload_template
-        // rejects traversal components; a junction/symlink-at-subdir guard for
-        // this code path requires a fix in preload_template (obsidian.rs).
+        // cannot perform the per-subdir check here without re-loading the
+        // manifest. The shared preload_template guard validates the derived
+        // subdir and rejects link/junction ancestors before it creates a file
+        // parent, while continuing remaining safe files.
         for root in &knowledge_dirs {
             if !knowledge_root_has_manifest(root) {
                 warn!(
@@ -877,15 +888,26 @@ pub(crate) fn spawn_obsidian_preload(
                 false,
                 true,
                 Some(&state),
-                None,
+                Some(&views_db),
             )
             .await
             {
-                Ok(stats) => info!(
-                    dir = %root.display(),
-                    files_copied = stats.files_copied,
-                    "obsidian preload-autorun: knowledge root complete"
-                ),
+                Ok(stats) => {
+                    if stats.skipped_containment > 0 {
+                        warn!(
+                            dir = %root.display(),
+                            skipped_containment = stats.skipped_containment,
+                            "obsidian preload-autorun: knowledge root skipped escaped targets"
+                        );
+                        preload_ok = false;
+                    } else {
+                        info!(
+                            dir = %root.display(),
+                            files_copied = stats.files_copied,
+                            "obsidian preload-autorun: knowledge root complete"
+                        );
+                    }
+                }
                 Err(e) => {
                     warn!(
                         error = %e,
@@ -7186,7 +7208,8 @@ pub(crate) struct BackgroundHandles {
     pub cloud_task: Option<JoinHandle<anyhow::Result<()>>>,
     /// L6-PRELOAD-AUTORUN-01 — one-shot vault-preload task. `None` when
     /// `obsidian_preload_template_dir` is unset (most installs).
-    /// WAL-free; abort order relative to `drop(writer)` is irrelevant.
+    /// Its required admission and lifecycle frames use the instance WAL; drain
+    /// it before the final writer clone is dropped.
     pub obsidian_preload_task: Option<JoinHandle<()>>,
     pub hysteria_supervisor: Option<crate::transport::hysteria::HysteriaSupervisor>,
     /// TERMIX-01 — running SSH local-forward tunnels. Shut down (task
@@ -7610,9 +7633,10 @@ pub(crate) async fn shutdown_background_tasks(
     // file lands on disk.
     crate::cli::serve_tasks::abort_optional(cloud_task).await;
 
-    // L6-PRELOAD-AUTORUN-01: abort the one-shot preload task. WAL-free;
-    // mid-pass abort at worst leaves vault files partially updated — the next
-    // daemon start re-runs and the hash state skips already-copied files.
+    // L6-PRELOAD-AUTORUN-01: abort the one-shot preload task before the final
+    // writer clone is dropped. Mid-pass abort at worst leaves vault files
+    // partially updated — the next daemon start re-runs and the hash state
+    // skips already-copied files.
     crate::cli::serve_tasks::abort_optional(obsidian_preload_task).await;
 
     // Tear down the Hysteria subprocess. `Drop` does the cleanup; the
@@ -9906,6 +9930,31 @@ mod zf06_fleet_tests {
 mod vault_containment_tests {
     use super::vault_subdir_is_contained;
 
+    #[cfg(unix)]
+    pub(super) fn create_directory_link(target: &std::path::Path, link: &std::path::Path) {
+        std::os::unix::fs::symlink(target, link)
+            .expect("create directory symlink containment fixture");
+    }
+
+    #[cfg(windows)]
+    pub(super) fn create_directory_link(target: &std::path::Path, link: &std::path::Path) {
+        if std::os::windows::fs::symlink_dir(target, link).is_ok() {
+            return;
+        }
+        // The repository's Windows link fixtures use an unprivileged junction
+        // fallback so this regression runs when Developer Mode is unavailable.
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("run mklink /J containment fixture");
+        assert!(status.success(), "mklink /J containment fixture failed");
+    }
+
     /// A normal subdir immediately inside the vault must pass.
     #[test]
     fn allows_in_vault_subdir() {
@@ -9918,6 +9967,22 @@ mod vault_containment_tests {
         assert!(
             vault_subdir_is_contained(&canonical_vault, &target),
             "an in-vault subdir must be allowed"
+        );
+    }
+
+    /// A newly configured vault is materialized by the target creation. The
+    /// raw root captured before that creation must be re-canonicalized before
+    /// comparison, otherwise Windows compares a normal path to a verbatim path
+    /// and incorrectly refuses the first preload.
+    #[test]
+    fn allows_fresh_vault_subdir_after_materializing_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = tmp.path().join("fresh-vault");
+        let target = vault.join("NEOTH");
+
+        assert!(
+            vault_subdir_is_contained(&vault, &target),
+            "a first in-vault preload must be allowed after materializing the vault"
         );
     }
 
@@ -9948,9 +10013,46 @@ mod vault_containment_tests {
 
         // Construct a path that canonicalises to tmp/outside — NOT under vault.
         let escape = vault.join("..").join("outside");
+        let outside = tmp.path().join("outside");
         assert!(
             !vault_subdir_is_contained(&canonical_vault, &escape),
             "a path escaping the vault via `..` must be refused"
+        );
+        assert!(
+            !outside.exists(),
+            "refusing an existing outside ancestor must precede external mkdir"
+        );
+    }
+
+    /// A normal configured subdir can contain a pre-existing link below the
+    /// vault. The nearest-existing-ancestor check must reject it before mkdir
+    /// extends the linked outside directory with a missing child.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn linked_ancestor_refuses_before_creating_outside_child() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = tmp.path().join("vault");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let canonical_vault = std::fs::canonicalize(&vault).unwrap();
+        let configured_subdir = std::path::Path::new("NEOTH");
+        crate::cli::obsidian::validate_subdir(configured_subdir)
+            .expect("fixture uses a syntactically valid configured subdir");
+        let linked_ancestor = vault.join(configured_subdir);
+        create_directory_link(&outside, &linked_ancestor);
+        let outside_child = outside.join("must-not-be-created");
+
+        assert!(
+            !vault_subdir_is_contained(
+                &canonical_vault,
+                &linked_ancestor.join("must-not-be-created")
+            ),
+            "a linked ancestor outside the vault must be refused"
+        );
+        assert!(
+            !outside_child.exists(),
+            "refusal must happen before create_dir_all reaches the outside child"
         );
     }
 
@@ -10143,5 +10245,398 @@ mod channel_reconcile_tests {
             &credentials,
             ChannelKind::Keet
         ));
+    }
+
+    fn write_preload_fixture(template: &std::path::Path) {
+        std::fs::create_dir_all(template.join("notes")).unwrap();
+        std::fs::write(
+            template.join("preload_manifest.yaml"),
+            r#"version: 1
+neoth_import_contract:
+  default_source_tag: neoth-preload
+  default_vault_subdir: NEOTH-Preload
+  default_scope: l6-vault
+  default_trust: curated-reference
+  default_chunking: markdown-heading
+sections:
+  - path: notes
+    scope: l6-notes
+    trust: curated-reference
+    ingest: true
+    copy_to_vault: true
+    chunking: markdown-heading
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            template.join("notes").join("hello.md"),
+            "# Hello\n\nPreload body.",
+        )
+        .unwrap();
+    }
+
+    fn write_linked_knowledge_fixture(template: &std::path::Path) {
+        std::fs::create_dir_all(template.join("notes")).unwrap();
+        std::fs::write(
+            template.join("preload_manifest.yaml"),
+            r#"version: 1
+neoth_import_contract:
+  default_source_tag: neoth-preload
+  default_vault_subdir: Linked
+  default_scope: l6-vault
+  default_trust: curated-reference
+  default_chunking: markdown-heading
+sections:
+  - path: notes
+    scope: l6-notes
+    trust: curated-reference
+    ingest: true
+    copy_to_vault: true
+    chunking: markdown-heading
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            template.join("notes").join("knowledge.md"),
+            "# Knowledge\n\nLinked target must not receive this.",
+        )
+        .unwrap();
+    }
+
+    fn configured_obsidian_preload(
+        template: &std::path::Path,
+        vault: &std::path::Path,
+    ) -> FreedomConfig {
+        let mut config = FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Standard;
+        config.obsidian_preload_template_dir = Some(template.display().to_string());
+        config.obsidian_vault = Some(vault.display().to_string());
+        config.obsidian_preload_subdir = Some("Accepted-Preload".to_owned());
+        config
+    }
+
+    fn extended_subtypes(segment: &std::path::Path) -> Vec<u8> {
+        let bytes = std::fs::read(segment).expect("read preload fixture WAL");
+        let mut subtypes = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED {
+                subtypes.push(frame.header.event_subtype);
+            }
+            Ok(())
+        })
+        .expect("scan preload fixture WAL");
+        subtypes
+    }
+
+    fn preload_result_outcomes(segment: &std::path::Path) -> Vec<bool> {
+        let bytes = std::fs::read(segment).expect("read preload result WAL");
+        let mut outcomes = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::ObsidianPreloadResult as u8
+            {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(frame.payload).expect("preload result payload is JSON");
+                outcomes.push(
+                    payload["ok"]
+                        .as_bool()
+                        .expect("preload result has boolean ok"),
+                );
+            }
+            Ok(())
+        })
+        .expect("scan preload result payload");
+        outcomes
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn obsidian_preload_requires_authenticated_allow_before_intent_and_effect() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let template = temp.path().join("template");
+        let vault = temp.path().join("vault");
+        write_preload_fixture(&template);
+        let config = configured_obsidian_preload(&template, &vault);
+        let segment = home.join("wal").join("000001.wal");
+        std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment.clone(), home.clone())
+            .expect("spawn home-bound preload writer");
+
+        let task = spawn_obsidian_preload(&config, &home, writer)
+            .await
+            .expect("Standard preload must spawn after required admission");
+        task.await.expect("preload task must complete");
+        join.await.expect("preload writer must close");
+
+        let copied = vault
+            .join("Accepted-Preload")
+            .join("notes")
+            .join("hello.md");
+        assert_eq!(
+            std::fs::read_to_string(copied).unwrap(),
+            "---\nsource: neoth-preload\nneoth_preload: true\nneoth_scope: l6-notes\n\
+             neoth_trust: curated-reference\nneoth_chunking: markdown-heading\n---\n\n\
+             # Hello\n\nPreload body."
+        );
+        assert!(
+            crate::cli::obsidian::preload_state_path_for_home(&home, &template).is_file(),
+            "successful preload must persist its instance-local state"
+        );
+        assert!(
+            home.join("views.db").is_file(),
+            "successful ingest must use the temporary home DB"
+        );
+
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(
+            &home,
+            crate::permissions::trust_ledger::LOCAL_SUBJECT,
+        )
+        .expect("replay authenticated local preload admission");
+        assert_eq!(
+            ledger.completeness,
+            crate::permissions::TrustLedgerCompleteness::Complete
+        );
+        assert_eq!(ledger.entries.len(), 1, "one preload admission decision");
+        assert_eq!(
+            ledger.entries[0].event.action,
+            crate::permissions::ActionKind::ObsidianPreloadWrite
+        );
+        assert_eq!(
+            ledger.entries[0].event.outcome,
+            crate::permissions::TrustOutcome::Allowed
+        );
+        let subtypes = extended_subtypes(&segment);
+        let decision = subtypes
+            .iter()
+            .position(|subtype| {
+                *subtype == crate::wal::events::ExtendedSubtype::TrustDecision as u8
+            })
+            .expect("required TrustDecision frame");
+        let intent = subtypes
+            .iter()
+            .position(|subtype| {
+                *subtype == crate::wal::events::ExtendedSubtype::ObsidianPreloadIntent as u8
+            })
+            .expect("preload intent frame");
+        let result = subtypes
+            .iter()
+            .position(|subtype| {
+                *subtype == crate::wal::events::ExtendedSubtype::ObsidianPreloadResult as u8
+            })
+            .expect("preload result frame");
+        assert!(
+            decision < intent && intent < result,
+            "admission must precede lifecycle and effect"
+        );
+        assert_eq!(
+            preload_result_outcomes(&segment),
+            vec![true],
+            "allowed preload must report a successful lifecycle result"
+        );
+    }
+
+    #[tokio::test]
+    async fn strict_obsidian_preload_records_denial_without_task_or_effect() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let template = temp.path().join("template");
+        let vault = temp.path().join("vault");
+        write_preload_fixture(&template);
+        let mut config = configured_obsidian_preload(&template, &vault);
+        config.autonomy = crate::permissions::AutonomyLevel::Strict;
+        let segment = home.join("wal").join("000001.wal");
+        std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.clone()).unwrap();
+
+        assert!(
+            spawn_obsidian_preload(&config, &home, writer)
+                .await
+                .is_none()
+        );
+        join.await.expect("preload writer closes");
+        assert!(!vault.exists(), "Strict denial must precede vault creation");
+        assert!(
+            !crate::cli::obsidian::preload_state_path_for_home(&home, &template).exists(),
+            "Strict denial must precede state writes"
+        );
+        assert!(
+            !home.join("views.db").exists(),
+            "Strict denial must precede DB ingestion"
+        );
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(
+            &home,
+            crate::permissions::trust_ledger::LOCAL_SUBJECT,
+        )
+        .unwrap();
+        assert_eq!(ledger.entries.len(), 1);
+        assert_eq!(
+            ledger.entries[0].event.outcome,
+            crate::permissions::TrustOutcome::Denied
+        );
+        assert!(
+            !extended_subtypes(&segment)
+                .contains(&(crate::wal::events::ExtendedSubtype::ObsidianPreloadIntent as u8))
+        );
+    }
+
+    #[tokio::test]
+    async fn unconfigured_obsidian_preload_returns_none_without_decision() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let segment = home.join("wal").join("000001.wal");
+        std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.clone()).unwrap();
+
+        assert!(
+            spawn_obsidian_preload(&FreedomConfig::default(), &home, writer)
+                .await
+                .is_none()
+        );
+        join.await.expect("preload writer closes");
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(
+            &home,
+            crate::permissions::trust_ledger::LOCAL_SUBJECT,
+        )
+        .unwrap();
+        assert!(
+            ledger.entries.is_empty(),
+            "unconfigured preload has no decision"
+        );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[tokio::test(flavor = "current_thread")]
+    async fn knowledge_manifest_linked_subdir_skips_outside_child_and_reports_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let template = temp.path().join("template");
+        let knowledge = temp.path().join("knowledge");
+        let vault = temp.path().join("vault");
+        let outside = temp.path().join("outside");
+        write_preload_fixture(&template);
+        write_linked_knowledge_fixture(&knowledge);
+        let mut config = configured_obsidian_preload(&template, &vault);
+        config.knowledge_preload_dirs = vec![knowledge.display().to_string()];
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        super::vault_containment_tests::create_directory_link(&outside, &vault.join("Linked"));
+        let segment = home.join("wal").join("000001.wal");
+        std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment.clone(), home.clone())
+            .expect("spawn home-bound preload writer");
+
+        let task = spawn_obsidian_preload(&config, &home, writer)
+            .await
+            .expect("required admission permits preload task");
+        task.await.expect("preload task must complete");
+        join.await.expect("preload writer closes");
+
+        assert!(
+            vault
+                .join("Accepted-Preload")
+                .join("notes")
+                .join("hello.md")
+                .is_file(),
+            "the safe primary template must continue despite a refused knowledge file"
+        );
+        assert!(
+            !outside.join("notes").exists(),
+            "manifest-derived linked subdir must be refused before outside mkdir"
+        );
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(
+            &home,
+            crate::permissions::trust_ledger::LOCAL_SUBJECT,
+        )
+        .expect("replay authenticated preload admission");
+        assert_eq!(ledger.entries.len(), 1, "one original required admission");
+        assert_eq!(
+            ledger.entries[0].event.outcome,
+            crate::permissions::TrustOutcome::Allowed
+        );
+        assert_eq!(
+            preload_result_outcomes(&segment),
+            vec![false],
+            "containment-skipped knowledge files must make the lifecycle result false"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_configured_preload_subdir_has_no_decision_or_external_mkdir() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let template = temp.path().join("template");
+        let vault = temp.path().join("vault");
+        let outside = temp.path().join("escape");
+        write_preload_fixture(&template);
+        let mut config = configured_obsidian_preload(&template, &vault);
+        config.obsidian_preload_subdir = Some("../escape".to_owned());
+        let segment = home.join("wal").join("000001.wal");
+        std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.clone()).unwrap();
+
+        assert!(
+            spawn_obsidian_preload(&config, &home, writer)
+                .await
+                .is_none(),
+            "invalid configured subdir must refuse before task creation"
+        );
+        join.await.expect("preload writer closes");
+        assert!(!vault.exists(), "invalid subdir must not create the vault");
+        assert!(
+            !outside.exists(),
+            "invalid subdir must not create a directory outside the vault"
+        );
+        assert!(
+            !crate::cli::obsidian::preload_state_path_for_home(&home, &template).exists(),
+            "invalid subdir must not write preload state"
+        );
+        assert!(
+            !home.join("views.db").exists(),
+            "invalid subdir must not ingest to the home database"
+        );
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(
+            &home,
+            crate::permissions::trust_ledger::LOCAL_SUBJECT,
+        )
+        .unwrap();
+        assert!(
+            ledger.entries.is_empty(),
+            "invalid pure configuration has no permission decision"
+        );
+    }
+
+    #[tokio::test]
+    async fn dead_preload_writer_blocks_task_and_effect_before_intent() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let template = temp.path().join("template");
+        let vault = temp.path().join("vault");
+        write_preload_fixture(&template);
+        let config = configured_obsidian_preload(&template, &vault);
+        let segment = home.join("wal").join("000001.wal");
+        std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.clone()).unwrap();
+        join.abort();
+        let _ = join.await;
+
+        assert!(
+            spawn_obsidian_preload(&config, &home, writer)
+                .await
+                .is_none()
+        );
+        assert!(
+            !vault.exists(),
+            "dead required writer must block vault creation"
+        );
+        assert!(
+            !crate::cli::obsidian::preload_state_path_for_home(&home, &template).exists(),
+            "dead required writer must block state writes"
+        );
+        assert!(
+            !home.join("views.db").exists(),
+            "dead writer must block DB ingestion"
+        );
     }
 }

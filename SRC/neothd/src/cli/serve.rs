@@ -1363,10 +1363,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Fires once at serve startup when `obsidian_preload_template_dir` AND
     // `obsidian_vault` are both set in freedom.yaml.  Idempotent: unchanged
     // files are skipped via hash state kept in ~/.neoth/obsidian_preload_state_*.json.
-    // Errors are logged (warn) but never crash the daemon.  WAL-free.
+    // Errors are logged (warn) but never crash the daemon. Required local
+    // permission admission is authenticated in the instance WAL before spawn.
     // GOLD-ARCH-01: body in serve_tasks (same handle pattern as cloud_task).
     let obsidian_preload_task =
-        crate::cli::serve_tasks::spawn_obsidian_preload(&config, &neoth_home, writer.clone());
+        crate::cli::serve_tasks::spawn_obsidian_preload(&config, &neoth_home, writer.clone()).await;
 
     // ADR-003 Dream calendar runtime is fleet-managed below. It is seeded from
     // the accepted generation and restarted on schedule/effect-policy reloads.

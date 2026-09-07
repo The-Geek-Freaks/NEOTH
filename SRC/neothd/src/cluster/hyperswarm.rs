@@ -51,6 +51,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use sha2::{Digest, Sha256};
 use tokio::io::AsyncRead;
 // Only the test-gated `send_hello` writes; production sinks go through
 // `heartbeat::write_framed` with concrete stream types.
@@ -1813,6 +1814,43 @@ async fn handle_task_delegate(
     dispatch_tx: Option<&tokio::sync::mpsc::Sender<ClusterTaskJob>>,
     membership_grant: &super::membership::MembershipGrant,
 ) {
+    handle_task_delegate_inner(
+        body,
+        remote_pk_hex,
+        own_peer_id,
+        autonomy_policy,
+        neoth_home,
+        wal_writer,
+        peer_streams,
+        dispatch_tx,
+        membership_grant,
+        #[cfg(test)]
+        None,
+        #[cfg(test)]
+        None,
+        #[cfg(test)]
+        None,
+    )
+    .await;
+}
+
+/// The test-only hook exposes the one relevant race boundary without adding a
+/// production callback or global synchronization state.
+#[allow(clippy::too_many_arguments)]
+async fn handle_task_delegate_inner(
+    body: TaskDelegateBody,
+    remote_pk_hex: &str,
+    own_peer_id: &str,
+    autonomy_policy: &crate::permissions::AutonomyPolicySnapshot,
+    neoth_home: &std::path::Path,
+    wal_writer: ClusterWalWriter,
+    peer_streams: &PeerStreamRegistry,
+    dispatch_tx: Option<&tokio::sync::mpsc::Sender<ClusterTaskJob>>,
+    membership_grant: &super::membership::MembershipGrant,
+    #[cfg(test)] before_final_gate: Option<&(dyn Fn() + Sync)>,
+    #[cfg(test)] after_gate_before_job: Option<&(dyn Fn() + Sync)>,
+    #[cfg(test)] final_gate_now_unix: Option<i64>,
+) {
     let task_id = body.task_id.clone();
 
     // Pre-checkpoint: validate the frame BEFORE spending gate work. A malformed
@@ -1851,6 +1889,24 @@ async fn handle_task_delegate(
         return;
     }
 
+    // The grant was minted at the authenticated transport boundary. Keep that
+    // binding explicit here so a future caller cannot pair a valid grant with
+    // a different frame/session identity and obtain a lease subject from a
+    // request-controlled value.
+    if membership_grant.carrier() != super::membership::CarrierKind::Peeroxide
+        || membership_grant.transport_identity().as_str() != remote_pk_hex
+    {
+        reply_task_rejected(
+            peer_streams,
+            remote_pk_hex,
+            own_peer_id,
+            &task_id,
+            "not_paired",
+        );
+        emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "not_paired");
+        return;
+    }
+
     // Checkpoint 1: re-read dedicated authority. `cluster.yaml` is not an
     // authorization source and a passphrase holder is not necessarily active.
     let is_paired = membership_grant.revalidate(now_unix_secs() as i64).is_ok();
@@ -1860,11 +1916,16 @@ async fn handle_task_delegate(
     // (Elevated/Full) the lease is not required, so skip the I/O. Fresh load is
     // cross-process correct (a CLI `neoth lease grant` must be visible) + runs
     // off the runtime thread.
-    let lease_active = if is_paired && matches!(decision, Decision::Confirm(_)) {
-        check_cluster_lease(neoth_home, remote_pk_hex).await
+    let lease_store = if is_paired && matches!(decision, Decision::Confirm(_)) {
+        load_cluster_leases(neoth_home).await
     } else {
-        false
+        crate::permissions::lease::LeaseStore::default()
     };
+    let lease_active = lease_store.active_for(
+        remote_pk_hex,
+        &crate::permissions::lease::LeaseScope::ClusterTaskAccept,
+        now_unix_secs() as i64,
+    );
 
     match cluster_task_gate(is_paired, &decision, lease_active) {
         TaskGateOutcome::Reject(reason) => {
@@ -1872,9 +1933,126 @@ async fn handle_task_delegate(
             emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, reason);
         }
         TaskGateOutcome::Accept { lease_backed } => {
-            // Dispatch off-loop to the executor. Bounded channel ⇒ a busy
-            // executor (one inference already running) means try_send fails and
-            // we reply busy rather than queueing unboundedly.
+            // Reserve capacity before the final decision. Full, closed, or
+            // absent queues cannot consume an admission decision because no
+            // task can be queued; dropping a reservation releases it on every
+            // later denial path.
+            let Some(dispatch_tx) = dispatch_tx else {
+                reply_task_rejected(
+                    peer_streams,
+                    remote_pk_hex,
+                    own_peer_id,
+                    &task_id,
+                    "no_provider",
+                );
+                emit_task_rejected_wal(
+                    wal_writer.as_deref(),
+                    &task_id,
+                    remote_pk_hex,
+                    "no_provider",
+                );
+                return;
+            };
+            let permit = match dispatch_tx.try_reserve() {
+                Ok(permit) => permit,
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, "busy");
+                    emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "busy");
+                    return;
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    error!(task_id = %task_id, "cluster executor channel closed — executor task is gone");
+                    reply_task_rejected(
+                        peer_streams,
+                        remote_pk_hex,
+                        own_peer_id,
+                        &task_id,
+                        "executor_dead",
+                    );
+                    emit_task_rejected_wal(
+                        wal_writer.as_deref(),
+                        &task_id,
+                        remote_pk_hex,
+                        "executor_dead",
+                    );
+                    return;
+                }
+            };
+
+            let Some(writer) = wal_writer.as_deref() else {
+                reply_task_rejected(
+                    peer_streams,
+                    remote_pk_hex,
+                    own_peer_id,
+                    &task_id,
+                    "audit_unavailable",
+                );
+                emit_task_rejected_wal(None, &task_id, remote_pk_hex, "audit_unavailable");
+                return;
+            };
+
+            // The Noise remote static key is the Gate subject. Task-body
+            // fields never name a requester; they only enter the immutable,
+            // length-delimited binding hash for this admission attempt.
+            let binding = cluster_task_admission_binding(remote_pk_hex, &task_id, &body.prompt);
+            let gate = crate::permissions::Gate::for_policy(autonomy_policy.clone())
+                .with_confirm(crate::permissions::ConfirmStrategy::FailClosed)
+                .with_lease_snapshot(&lease_store, remote_pk_hex, now_unix_secs() as i64);
+            #[cfg(test)]
+            if let Some(hook) = before_final_gate {
+                hook();
+            }
+            #[cfg(test)]
+            let gate_result = match final_gate_now_unix {
+                Some(now_unix) => {
+                    gate.check_required_audit_at(
+                        &Action::ClusterTaskAccept,
+                        writer,
+                        now_unix,
+                        Some(&binding),
+                    )
+                    .await
+                }
+                None => {
+                    gate.check_with_audit_sink(
+                        &Action::ClusterTaskAccept,
+                        crate::permissions::PermissionAuditSink::Writer(writer),
+                        true,
+                        Some(&binding),
+                    )
+                    .await
+                }
+            };
+            #[cfg(not(test))]
+            let gate_result = gate
+                .check_with_audit_sink(
+                    &Action::ClusterTaskAccept,
+                    crate::permissions::PermissionAuditSink::Writer(writer),
+                    true,
+                    Some(&binding),
+                )
+                .await;
+            if let Err(error) = gate_result {
+                let reason = if matches!(error, crate::permissions::gate::GateError::Unavailable(_))
+                {
+                    "audit_unavailable"
+                } else {
+                    "autonomy_deny"
+                };
+                reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, reason);
+                emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, reason);
+                return;
+            }
+
+            #[cfg(test)]
+            if let Some(hook) = after_gate_before_job {
+                hook();
+            }
+
+            // `authorized` begins the queued-provider membership effect and
+            // revalidates the exact generation after the durable Gate append.
+            // A revocation in this interval keeps its truthful one Allow
+            // decision, but must never consume the reserved queue permit.
             let job = match ClusterTaskJob::authorized(
                 task_id.clone(),
                 body.prompt,
@@ -1905,93 +2083,76 @@ async fn handle_task_delegate(
                     return;
                 }
             };
-            match dispatch_tx {
-                Some(tx) => match tx.try_send(job) {
-                    Ok(()) => {
-                        emit_task_accepted_wal(
-                            wal_writer.as_deref(),
-                            &task_id,
-                            remote_pk_hex,
-                            lease_backed,
-                            autonomy_policy.level(),
-                        );
-                        notify_task_accepted(neoth_home, &task_id, remote_pk_hex).await;
-                    }
-                    // Full ⇒ an inference is already running (bounded(1)) — back
-                    // off. Closed ⇒ the executor task died (panic) — surface it
-                    // as a DISTINCT, operator-visible reason rather than hiding
-                    // a dead executor behind "busy" (review finding).
-                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                        reply_task_rejected(
-                            peer_streams,
-                            remote_pk_hex,
-                            own_peer_id,
-                            &task_id,
-                            "busy",
-                        );
-                        emit_task_rejected_wal(
-                            wal_writer.as_deref(),
-                            &task_id,
-                            remote_pk_hex,
-                            "busy",
-                        );
-                    }
-                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                        error!(task_id = %task_id, "cluster executor channel closed — executor task is gone");
-                        reply_task_rejected(
-                            peer_streams,
-                            remote_pk_hex,
-                            own_peer_id,
-                            &task_id,
-                            "executor_dead",
-                        );
-                        emit_task_rejected_wal(
-                            wal_writer.as_deref(),
-                            &task_id,
-                            remote_pk_hex,
-                            "executor_dead",
-                        );
-                    }
-                },
-                None => {
-                    // No executor wired (no provider / CLI one-shot path).
+            // The reservation proves capacity before the audit decision, but
+            // it does not make send infallible: a receiver can close after
+            // the Gate or another producer can consume capacity once this
+            // permit is released. Keep the truthful Allow, but produce no
+            // accepted effect evidence unless this final enqueue succeeds.
+            drop(permit);
+            match dispatch_tx.try_send(job) {
+                Ok(()) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, "busy");
+                    emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "busy");
+                    return;
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    error!(task_id = %task_id, "cluster executor channel closed after task admission");
                     reply_task_rejected(
                         peer_streams,
                         remote_pk_hex,
                         own_peer_id,
                         &task_id,
-                        "no_provider",
+                        "executor_dead",
                     );
                     emit_task_rejected_wal(
                         wal_writer.as_deref(),
                         &task_id,
                         remote_pk_hex,
-                        "no_provider",
+                        "executor_dead",
                     );
+                    return;
                 }
             }
+            emit_task_accepted_wal(
+                wal_writer.as_deref(),
+                &task_id,
+                remote_pk_hex,
+                lease_backed,
+                autonomy_policy.level(),
+            );
+            notify_task_accepted(neoth_home, &task_id, remote_pk_hex).await;
         }
     }
 }
 
-/// Fresh, off-thread lease check for `ClusterTaskAccept` on `subject`.
-/// Fail-closed: any load error ⇒ no lease.
-async fn check_cluster_lease(neoth_home: &std::path::Path, subject: &str) -> bool {
+/// Load one immutable lease snapshot off the async runtime. A missing or
+/// unreadable store becomes empty, so the final Gate remains fail-closed.
+async fn load_cluster_leases(
+    neoth_home: &std::path::Path,
+) -> crate::permissions::lease::LeaseStore {
     let path = crate::permissions::lease::LeaseStore::default_path(neoth_home);
-    let subject = subject.to_string();
-    let now = now_unix_secs() as i64;
-    tokio::task::spawn_blocking(
-        move || match crate::permissions::lease::LeaseStore::load(&path) {
-            Ok(store) => store.active_for(
-                &subject,
-                &crate::permissions::lease::LeaseScope::ClusterTaskAccept,
-                now,
-            ),
-            Err(_) => false,
-        },
-    )
+    tokio::task::spawn_blocking(move || {
+        crate::permissions::lease::LeaseStore::load(&path).unwrap_or_default()
+    })
     .await
-    .unwrap_or(false)
+    .unwrap_or_default()
+}
+
+/// Bind one delegated execution request without retaining its prompt in WAL.
+/// Every variable field is length-delimited to prevent concatenation ambiguity.
+fn cluster_task_admission_binding(remote_pk_hex: &str, task_id: &str, prompt: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"neoth.cluster.task-delegate-admission.v1\0");
+    for field in [
+        remote_pk_hex.as_bytes(),
+        task_id.as_bytes(),
+        prompt.as_bytes(),
+    ] {
+        digest.update(u64::try_from(field.len()).unwrap_or(u64::MAX).to_be_bytes());
+        digest.update(field);
+    }
+    hex::encode(digest.finalize())
 }
 
 /// Queue a `TaskResult{Rejected}` reply via the peer's outbound channel.
@@ -2345,6 +2506,74 @@ fn hex_encode(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    fn task_delegate(task_id: &str, prompt: &str) -> TaskDelegateBody {
+        TaskDelegateBody {
+            task_id: task_id.into(),
+            prompt: prompt.into(),
+            model_hint: None,
+        }
+    }
+
+    fn paired_peer_grant(
+        home: &std::path::Path,
+    ) -> (String, super::super::membership::MembershipGrant) {
+        let now = now_unix_secs() as i64;
+        let identity = super::super::membership::LocalNodeIdentity::load_or_create(home).unwrap();
+        let key_pair = identity.peeroxide_key_pair();
+        let remote_pk_hex = hex_encode(&key_pair.public_key);
+        let transport =
+            super::super::membership::TransportIdentity::peeroxide(&key_pair.public_key);
+        let attestation = identity
+            .attest_endpoint(
+                super::super::membership::CarrierKind::Peeroxide,
+                transport.clone(),
+                super::super::membership::BootId::new(),
+                "hyperswarm-task-test".into(),
+                "test".into(),
+                super::super::membership::AuthEpoch::INITIAL,
+                super::super::membership::MembershipEpoch::new(2).unwrap(),
+                Some("test".into()),
+                now + 3_600,
+            )
+            .unwrap();
+        let store = super::super::membership::MembershipStore::open(home).unwrap();
+        store
+            .confirm_attestation(
+                &attestation,
+                super::super::membership::CarrierKind::Peeroxide,
+                &transport,
+                "test",
+                "hyperswarm-task-test",
+                now,
+            )
+            .unwrap();
+        (
+            remote_pk_hex,
+            store
+                .admit(
+                    super::super::membership::CarrierKind::Peeroxide,
+                    &transport,
+                    now,
+                )
+                .unwrap(),
+        )
+    }
+
+    fn authenticated_writer(
+        home: &std::path::Path,
+    ) -> (Arc<WalWriterHandle>, tokio::task::JoinHandle<()>) {
+        let wal = home.join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = crate::wal::writer::unique_standalone_segment_path(&wal, "cluster-task");
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
+            .expect("home-backed task-admission writer");
+        (Arc::new(writer), join)
+    }
+
+    fn policy(level: AutonomyLevel) -> crate::permissions::AutonomyPolicySnapshot {
+        crate::permissions::AutonomyPolicySnapshot::test_level(level)
+    }
+
     #[test]
     fn public_rendezvous_join_is_server_only() {
         let options = server_only_join_opts();
@@ -2499,6 +2728,427 @@ mod tests {
             cluster_task_gate(true, &allow, true),
             TaskGateOutcome::Accept { lease_backed: true }
         );
+    }
+
+    #[tokio::test]
+    async fn delegated_task_gate_authenticates_allow_before_queue_effect() {
+        let home = tempfile::tempdir().unwrap();
+        let (remote_pk_hex, grant) = paired_peer_grant(home.path());
+        let (writer, writer_join) = authenticated_writer(home.path());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let peer_streams = PeerStreamRegistry::new();
+        let body = task_delegate("task-allow", "exact delegated prompt");
+        let expected_binding =
+            cluster_task_admission_binding(&remote_pk_hex, &body.task_id, &body.prompt);
+
+        handle_task_delegate(
+            body,
+            &remote_pk_hex,
+            "local",
+            &policy(AutonomyLevel::Elevated),
+            home.path(),
+            Some(Arc::clone(&writer)),
+            &peer_streams,
+            Some(&tx),
+            &grant,
+        )
+        .await;
+
+        let job = rx.recv().await.expect("allowed admission queues one job");
+        assert_eq!(job.reply_peer_pk, remote_pk_hex);
+        assert_eq!(job.task_id, "task-allow");
+        let live_ledger =
+            crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &remote_pk_hex)
+                .expect("required Gate append is authenticated before queue send");
+        // The required Gate receipt is visible in the live authenticated
+        // prefix before the queued effect. Later ordinary acceptance/notice
+        // frames can leave the open writer tail explicitly incomplete.
+        assert!(matches!(
+            live_ledger.completeness,
+            crate::permissions::TrustLedgerCompleteness::IncompleteAuthenticatedPrefix { .. }
+        ));
+        assert_eq!(live_ledger.entries.len(), 1);
+        let event = &live_ledger.entries[0].event;
+        assert_eq!(
+            event.action,
+            crate::permissions::ActionKind::ClusterTaskAccept
+        );
+        assert_eq!(event.outcome, crate::permissions::TrustOutcome::Allowed);
+        assert_eq!(
+            event.request_binding_sha256.as_deref(),
+            Some(expected_binding.as_str())
+        );
+        drop(job);
+        drop(writer);
+        writer_join.await.unwrap();
+
+        let settled_ledger =
+            crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &remote_pk_hex)
+                .expect("closed writer seals the complete authenticated ledger");
+        assert!(matches!(
+            settled_ledger.completeness,
+            crate::permissions::TrustLedgerCompleteness::Complete
+        ));
+        assert_eq!(settled_ledger.entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn standard_task_admission_uses_the_authenticated_noise_key_for_its_lease() {
+        let home = tempfile::tempdir().unwrap();
+        let (remote_pk_hex, grant) = paired_peer_grant(home.path());
+        let now = now_unix_secs() as i64;
+        let mut leases = crate::permissions::lease::LeaseStore::default();
+        let lease = crate::permissions::lease::CapabilityLease::new(
+            remote_pk_hex.clone(),
+            crate::permissions::lease::LeaseScope::ClusterTaskAccept,
+            3_600,
+            now,
+        );
+        let lease_id = lease.lease_id.clone();
+        leases.grant(lease);
+        leases
+            .save(&crate::permissions::lease::LeaseStore::default_path(
+                home.path(),
+            ))
+            .unwrap();
+        let (writer, writer_join) = authenticated_writer(home.path());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        handle_task_delegate(
+            task_delegate("task-standard", "prompt"),
+            &remote_pk_hex,
+            "local",
+            &policy(AutonomyLevel::Standard),
+            home.path(),
+            Some(Arc::clone(&writer)),
+            &PeerStreamRegistry::new(),
+            Some(&tx),
+            &grant,
+        )
+        .await;
+
+        let job = rx
+            .recv()
+            .await
+            .expect("matching authenticated lease queues");
+        assert_eq!(job.reply_peer_pk, remote_pk_hex);
+        let ledger =
+            crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &remote_pk_hex)
+                .unwrap();
+        assert_eq!(ledger.entries.len(), 1);
+        assert_eq!(
+            ledger.entries[0].event.lease_id.as_deref(),
+            Some(lease_id.as_str())
+        );
+        drop(job);
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn standard_lease_expiring_between_snapshot_and_final_gate_is_denied() {
+        let home = tempfile::tempdir().unwrap();
+        let (remote_pk_hex, grant) = paired_peer_grant(home.path());
+        let now = now_unix_secs() as i64;
+        // The persisted snapshot has a long-lived lease. The handler's
+        // cfg(test) final-Gate clock advances past it without sleeping, so
+        // this proves decision-time expiry rather than an early prefilter.
+        let mut leases = crate::permissions::lease::LeaseStore::default();
+        leases.grant(crate::permissions::lease::CapabilityLease::new(
+            remote_pk_hex.clone(),
+            crate::permissions::lease::LeaseScope::ClusterTaskAccept,
+            3_600,
+            now,
+        ));
+        leases
+            .save(&crate::permissions::lease::LeaseStore::default_path(
+                home.path(),
+            ))
+            .unwrap();
+        let (writer, writer_join) = authenticated_writer(home.path());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        handle_task_delegate_inner(
+            task_delegate("task-expired", "prompt"),
+            &remote_pk_hex,
+            "local",
+            &policy(AutonomyLevel::Standard),
+            home.path(),
+            Some(Arc::clone(&writer)),
+            &PeerStreamRegistry::new(),
+            Some(&tx),
+            &grant,
+            None,
+            None,
+            Some(now + 3_601),
+        )
+        .await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "expired lease must not queue a task"
+        );
+        let ledger =
+            crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &remote_pk_hex)
+                .unwrap();
+        assert_eq!(ledger.entries.len(), 1);
+        assert_eq!(
+            ledger.entries[0].event.outcome,
+            crate::permissions::TrustOutcome::Denied
+        );
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn membership_revocation_after_required_allow_keeps_history_without_queue_effect() {
+        let home = tempfile::tempdir().unwrap();
+        let (remote_pk_hex, grant) = paired_peer_grant(home.path());
+        let stable_node_id = grant.stable_node_id().as_str().to_string();
+        let authority_home = home.path().to_path_buf();
+        let revoke_after_gate = move || {
+            super::super::membership::MembershipStore::open(&authority_home)
+                .unwrap()
+                .revoke(
+                    &stable_node_id,
+                    "test post-gate revoke",
+                    now_unix_secs() as i64,
+                    "closed",
+                )
+                .unwrap();
+        };
+        let (writer, writer_join) = authenticated_writer(home.path());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        handle_task_delegate_inner(
+            task_delegate("task-revoked", "prompt"),
+            &remote_pk_hex,
+            "local",
+            &policy(AutonomyLevel::Elevated),
+            home.path(),
+            Some(Arc::clone(&writer)),
+            &PeerStreamRegistry::new(),
+            Some(&tx),
+            &grant,
+            None,
+            Some(&revoke_after_gate),
+            None,
+        )
+        .await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "revoked generation must not reach queue"
+        );
+        let ledger =
+            crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &remote_pk_hex)
+                .unwrap();
+        assert_eq!(ledger.entries.len(), 1);
+        assert_eq!(
+            ledger.entries[0].event.outcome,
+            crate::permissions::TrustOutcome::Allowed
+        );
+        drop(writer);
+        writer_join.await.unwrap();
+
+        let mut accepted = 0usize;
+        crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
+            home.path(),
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                if frame.header.event_type == crate::wal::events::EVENT_TYPE_CLUSTER_TASK_ACCEPTED {
+                    accepted += 1;
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(accepted, 0, "revoked admission must not emit 0xEB");
+    }
+
+    #[tokio::test]
+    async fn executor_close_after_required_allow_keeps_history_without_accepted_effect() {
+        let home = tempfile::tempdir().unwrap();
+        let (remote_pk_hex, grant) = paired_peer_grant(home.path());
+        let (writer, writer_join) = authenticated_writer(home.path());
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let receiver = std::sync::Mutex::new(Some(rx));
+        let close_receiver_after_gate = || drop(receiver.lock().unwrap().take());
+
+        handle_task_delegate_inner(
+            task_delegate("task-executor-closed-after-gate", "prompt"),
+            &remote_pk_hex,
+            "local",
+            &policy(AutonomyLevel::Elevated),
+            home.path(),
+            Some(Arc::clone(&writer)),
+            &PeerStreamRegistry::new(),
+            Some(&tx),
+            &grant,
+            None,
+            Some(&close_receiver_after_gate),
+            None,
+        )
+        .await;
+
+        assert!(
+            receiver.lock().unwrap().is_none(),
+            "the deterministic hook must close the receiver after the Gate"
+        );
+        let ledger =
+            crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &remote_pk_hex)
+                .unwrap();
+        assert_eq!(ledger.entries.len(), 1);
+        assert_eq!(
+            ledger.entries[0].event.outcome,
+            crate::permissions::TrustOutcome::Allowed
+        );
+        drop(writer);
+        writer_join.await.unwrap();
+
+        let mut accepted = 0usize;
+        crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
+            home.path(),
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                if frame.header.event_type == crate::wal::events::EVENT_TYPE_CLUSTER_TASK_ACCEPTED {
+                    accepted += 1;
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(accepted, 0, "closed executor must not emit 0xEB");
+    }
+
+    #[tokio::test]
+    async fn delegated_task_missing_required_writer_never_queues() {
+        let home = tempfile::tempdir().unwrap();
+        let (remote_pk_hex, grant) = paired_peer_grant(home.path());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        handle_task_delegate(
+            task_delegate("task-no-writer", "prompt"),
+            &remote_pk_hex,
+            "local",
+            &policy(AutonomyLevel::Elevated),
+            home.path(),
+            None,
+            &PeerStreamRegistry::new(),
+            Some(&tx),
+            &grant,
+        )
+        .await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "audit absence must block queue send"
+        );
+    }
+
+    #[tokio::test]
+    async fn delegated_task_dead_required_writer_never_queues() {
+        let home = tempfile::tempdir().unwrap();
+        let (remote_pk_hex, grant) = paired_peer_grant(home.path());
+        let (writer, writer_join) = authenticated_writer(home.path());
+        writer_join.abort();
+        let _ = writer_join.await;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        handle_task_delegate(
+            task_delegate("task-dead-writer", "prompt"),
+            &remote_pk_hex,
+            "local",
+            &policy(AutonomyLevel::Elevated),
+            home.path(),
+            Some(writer),
+            &PeerStreamRegistry::new(),
+            Some(&tx),
+            &grant,
+        )
+        .await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "required audit append failure must block queue send"
+        );
+    }
+
+    #[tokio::test]
+    async fn full_or_closed_executor_has_no_final_gate_decision() {
+        let home = tempfile::tempdir().unwrap();
+        let (remote_pk_hex, grant) = paired_peer_grant(home.path());
+        let (writer, writer_join) = authenticated_writer(home.path());
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let held = tx.try_reserve().expect("hold the only queue capacity");
+
+        handle_task_delegate(
+            task_delegate("task-full", "prompt"),
+            &remote_pk_hex,
+            "local",
+            &policy(AutonomyLevel::Elevated),
+            home.path(),
+            Some(Arc::clone(&writer)),
+            &PeerStreamRegistry::new(),
+            Some(&tx),
+            &grant,
+        )
+        .await;
+
+        drop(held);
+        drop(rx);
+
+        // With the receiver gone, the same sender reports Closed before the
+        // final Gate. Neither backpressure state can consume a decision.
+        handle_task_delegate(
+            task_delegate("task-closed", "prompt"),
+            &remote_pk_hex,
+            "local",
+            &policy(AutonomyLevel::Elevated),
+            home.path(),
+            Some(Arc::clone(&writer)),
+            &PeerStreamRegistry::new(),
+            Some(&tx),
+            &grant,
+        )
+        .await;
+
+        let ledger =
+            crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &remote_pk_hex)
+                .expect("empty authenticated ledger is inspectable");
+        assert!(ledger.entries.is_empty());
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn task_delegate_rejects_grant_bound_to_another_authenticated_noise_key() {
+        let home = tempfile::tempdir().unwrap();
+        let (_bound_peer, grant) = paired_peer_grant(home.path());
+        let (writer, writer_join) = authenticated_writer(home.path());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let spoofed_remote = "cd".repeat(32);
+
+        handle_task_delegate(
+            task_delegate("task-spoof", "prompt"),
+            &spoofed_remote,
+            "local",
+            &policy(AutonomyLevel::Elevated),
+            home.path(),
+            Some(Arc::clone(&writer)),
+            &PeerStreamRegistry::new(),
+            Some(&tx),
+            &grant,
+        )
+        .await;
+
+        assert!(rx.try_recv().is_err());
+        let ledger =
+            crate::permissions::TrustLedger::replay_subject_at_home(home.path(), &spoofed_remote)
+                .expect("spoof prefilter writes no final decision");
+        assert!(ledger.entries.is_empty());
+        drop(writer);
+        writer_join.await.unwrap();
     }
 
     #[test]

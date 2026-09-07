@@ -1727,18 +1727,51 @@ fn promote_cmd(
 
 /// Central vault-containment guard applied to every preload write target.
 ///
-/// Creates `parent` (fail-closed on mkdir failure), resolves its real path
-/// via [`std::fs::canonicalize`], and verifies the result is a descendant of
-/// `canonical_vault`.  Catches pre-existing symlinks and Windows junctions
-/// anywhere in the destination tree — including those present between a prior
-/// `validate_subdir` name-check and the actual write.
+/// Before materializing `parent`, resolves its nearest existing ancestor and
+/// verifies that it is a descendant of `canonical_vault`. Then creates
+/// `parent`, re-resolves it, and performs the same containment check again.
+/// This prevents a pre-existing symlink or Windows junction ancestor from
+/// redirecting `create_dir_all` outside the vault while retaining a post-create
+/// check for the materialized path.
 ///
 /// Called once per file from [`preload_template`] so ALL callers — the CLI
 /// `Preload` arm, the daemon autorun primary template, `knowledge_preload_dirs`
 /// entries, and manifest-derived subdirs — share this single centralized
-/// boundary check.  Fail-closed: mkdir failure and canonicalize failure both
-/// return `Err`.
-fn assert_target_within_vault(canonical_vault: &Path, parent: &Path) -> Result<()> {
+/// boundary check. Fail-closed: any inspection, mkdir, or canonicalize failure
+/// returns `Err`.
+pub(super) fn assert_target_within_vault(canonical_vault: &Path, parent: &Path) -> Result<()> {
+    let mut candidate = parent;
+    let existing_ancestor = loop {
+        match candidate.try_exists() {
+            Ok(true) => break Some(candidate),
+            Ok(false) => match candidate.parent() {
+                Some(next) => candidate = next,
+                None => break None,
+            },
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "inspect preload target ancestor while guarding {}",
+                        parent.display()
+                    )
+                });
+            }
+        }
+    };
+    if let Some(existing_ancestor) = existing_ancestor {
+        let real = std::fs::canonicalize(existing_ancestor).with_context(|| {
+            format!(
+                "canonicalize existing preload target ancestor {}",
+                existing_ancestor.display()
+            )
+        })?;
+        if !real.starts_with(canonical_vault) {
+            anyhow::bail!(
+                "preload target ancestor resolves outside vault root \
+                 (symlink/junction escape detected); write refused before mkdir (fail-closed)"
+            );
+        }
+    }
     std::fs::create_dir_all(parent)
         .with_context(|| format!("create preload target dir {}", parent.display()))?;
     let real = std::fs::canonicalize(parent)
@@ -3694,8 +3727,14 @@ sections:
         let evil_link = vault.join("evil");
         std::os::unix::fs::symlink(&outside, &evil_link).unwrap();
 
-        let err = assert_target_within_vault(&canonical_vault, &evil_link);
+        let outside_child = outside.join("must-not-be-created");
+        let err =
+            assert_target_within_vault(&canonical_vault, &evil_link.join("must-not-be-created"));
         assert!(err.is_err(), "symlink escape must be refused: {err:?}");
+        assert!(
+            !outside_child.exists(),
+            "symlink ancestor must be refused before create_dir_all reaches outside"
+        );
     }
 }
 
