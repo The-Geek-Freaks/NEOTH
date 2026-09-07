@@ -1,0 +1,335 @@
+{
+  "base": "e422815d524ae1c535c948b6604d976f50976247",
+  "validation": "Wave 3 final source input inventory (repair 6 code)",
+  "inventory_note": "Completes repair-6's changed-input inventory with the core Cargo manifest, which has been unchanged since 2026-09-06 20:48:40 local, before all repair-6 compiler/runtime gates. No compiled source was edited during this inventory completion.",
+  "sources": [
+    {
+      "path": "SRC/Cargo.lock",
+      "sha256": "DBFD9688EB561001A857202B0649E2F2D18948026AD5E335818B400502D9376E"
+    },
+    {
+      "path": "SRC/neothd-gui/Cargo.toml",
+      "sha256": "92E112728E4E6F0C6422F884F5B7C8CFE9D1BBF7CD1FFFDF67015750BB2C2B16"
+    },
+    {
+      "path": "SRC/neothd-gui/src/buddy_activity.rs",
+      "sha256": "0FD5CABA9CF2FE3571EFA98275204DA7C7955B05859243FAAEC38B8DE7E32A5E"
+    },
+    {
+      "path": "SRC/neothd-gui/src/coding_controller.rs",
+      "sha256": "0C16A94FA42A4DBBDD9B0867980019996C4A929C1343E1B1978C4AAEBBE4A466"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "sha256": "E9335A03AAE6E1685412375E5F3BC9875493544B993FBB33254EB9AF7CE868E3"
+    },
+    {
+      "path": "SRC/neothd-gui/src/trusted_probe_supervisor.rs",
+      "sha256": "7D1CBC37207C2E17EAA713DEBAA2C8AE4DB744FF45B1FDD652C837FE1CBCAC19"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/main.slint",
+      "sha256": "B0A167409BB07A7D0D798AFABC88791165EFC860DA14FC9E863013DCEB18FDCA"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/settings.slint",
+      "sha256": "1784B1A76AC05A8CF53CCAB9F2068F3817434630E8457EF2899C2026526D54A7"
+    },
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "sha256": "7D24459A096771B8D26B882A7FF55951C21CFA11BB5DE9808833E22D9DB6DBC7"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "sha256": "17014EA6C2E855C00801ADEFB06608134AFBED97E26AC8BF161ACB343B74E4C2"
+    },
+    {
+      "path": "SRC/neothd/src/cli/code_map.rs",
+      "sha256": "83693E41EA3CA282FB35803E3D8EBCBBC3767C3EA432067FDBF7FF1B5CD92845"
+    },
+    {
+      "path": "SRC/neothd/src/cli/code.rs",
+      "sha256": "2527931C2A1087301E2FEA1B11E0B9A53CD9A1FFEDAA01A06EDD66CE2231C2B4"
+    },
+    {
+      "path": "SRC/neothd/src/cli/context.rs",
+      "sha256": "5534095557BE4C682D324A91F2389AD2EB037526412F577414E3F1995556960E"
+    },
+    {
+      "path": "SRC/neothd/src/cli/doctor.rs",
+      "sha256": "B29AD5C0CC16066ED1AC7FB8A431048285B18C1CA9D2493B694DBC385E672ECA"
+    },
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "sha256": "C21D83B30B750089D3EDE877AEFD9D444FDCB23E4F8CDD6B226157D737B22C68"
+    },
+    {
+      "path": "SRC/neothd/src/cli/permissions.rs",
+      "sha256": "E9CCB1D76EE5F212AB8B84B23F8C4C77D52C346628479316F6C83EC4027E0E45"
+    },
+    {
+      "path": "SRC/neothd/src/cli/recipe.rs",
+      "sha256": "7AC8832A7C5DB40118C2677ED46288877170C6E71F6AB86FD82E6B8D08BDB663"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sha256": "34058C222873A41628868302AD0582C30903C7D21D78F1EE0156BD4D5B0279E7"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "sha256": "BF5A49898AF759696FC4ACDF0424E7E45AB64B4AF41E47315C81D9756EF5746A"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve.rs",
+      "sha256": "64672904879D06888AF736A646341FA77C1D47B24718FC220841BF8C14E88CE0"
+    },
+    {
+      "path": "SRC/neothd/src/cli/updater.rs",
+      "sha256": "D2D3151951AB90C5B03C99D05A7553A42BBC8661AA325B5C4C0C351D35B85EEC"
+    },
+    {
+      "path": "SRC/neothd/src/cli/wal.rs",
+      "sha256": "D78A89074CCA7C14EBEDC9C63C6AC16C94CC606F3F2902B5105C8577BE6F4877"
+    },
+    {
+      "path": "SRC/neothd/src/cluster/wal_sync.rs",
+      "sha256": "DC907DD346E4E6DBC4941C8AD12A4C7140509B3C0D4AB5932567E7175CB72A7B"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/diff_git.rs",
+      "sha256": "B6E283FBFADC3E4D2903BE9832AEE8A91734C86BB710DAC9A7FEBD97B1897D68"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/graph.rs",
+      "sha256": "99D255CE33B46E2BC7DDA6B808C7F2F6930EED4DD334F0370ACC349598A0CB0B"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/impact.rs",
+      "sha256": "E3E58432BCDCC5DD35A71CDEE0B744578E320C96CFD1F5C39C88742F9BA59EFA"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/incremental.rs",
+      "sha256": "5537C823EBE08FFFFCAAEBE56447C966D5823E92AA26AF56FB5F742914AF1C47"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/lifecycle_config.rs",
+      "sha256": "9945A10232ADC5A49EA6883D5A44D6FC5462071848D337C7CD3DADD4000FB3FD"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/lifecycle_repair.rs",
+      "sha256": "A335AEE366FC7C284717A1DD09B5F2BB828C40F1CF3B0E19AC497150A4E6AAD5"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/lifecycle_watcher_tests.rs",
+      "sha256": "9A27F504AE730970C2A8AAC5DDCAFCAA36B82ED8B515D8D875F15925E044ADA2"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/lifecycle.rs",
+      "sha256": "BCA9A35BDA0397102966B375518ED86C71CC62299E84A59526BCBCD52441C4B1"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/mod.rs",
+      "sha256": "C18C47B9CAC49F62042B8E609EFB2D187874D4E8817043D22F3F1FB858AEFB41"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/outline.rs",
+      "sha256": "CCC07741EB7DFC4642A90B7AEE87E2BB311455AB2D79852B4AE4B7432D7F58AE"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/persist.rs",
+      "sha256": "D44E13A355336405650993F8AECF2FDA9052C12C56817D64841A1EB8767301E7"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/recall.rs",
+      "sha256": "55635542E30322889DBFE23F45EDE7F6EF294FA13C212EB4926B79D491C0E78F"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/repo_map.rs",
+      "sha256": "C6A4F53CC3E739D5EDFB4949A311315D940F2E82B794A3A42B94DA2008906E21"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/snapshot.rs",
+      "sha256": "4ECCB51E85D3A6EAAD80F26CA17A229F532AD586F2CE0D17434C977C7A1E7019"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/symbols.rs",
+      "sha256": "A950315B6D76CBBD669FFE2B2ED2A786638BFDD8C4D535F47B9A41DCB5C840B5"
+    },
+    {
+      "path": "SRC/neothd/src/coding/decomposer.rs",
+      "sha256": "59327686AD5B99CEE86D8BB8DFE1CD6464AFD4996DCC534F2405D8EE41D71078"
+    },
+    {
+      "path": "SRC/neothd/src/coding/dispatcher.rs",
+      "sha256": "817B967AD28A464E434576DFF68D640E9887F8B3ECA2F7FDCA6A2DC3980F56C4"
+    },
+    {
+      "path": "SRC/neothd/src/coding/mod.rs",
+      "sha256": "29C0604A2F0878091D9B985E1039B86F61987A529F4D549ED7975638E1E9B06F"
+    },
+    {
+      "path": "SRC/neothd/src/coding/service_runtime_tests.rs",
+      "sha256": "6EB360952693DE1981A8D30512F9AED3D32A60B1AFBC81DE2C3C6C7487A43951"
+    },
+    {
+      "path": "SRC/neothd/src/coding/service.rs",
+      "sha256": "BBF9B69B8CF5E91B1B91305D056F65E6221D364CAD5957A4061A9EFA08A3118F"
+    },
+    {
+      "path": "SRC/neothd/src/connectors/control_plane.rs",
+      "sha256": "CB94DB14AF316D29AE518B49813D40F23631D1ACB130C27920689FD95717C282"
+    },
+    {
+      "path": "SRC/neothd/src/connectors/control_plane/rpc/mod.rs",
+      "sha256": "836F82D3ABCEC0733A80139C432E31A26B78CD4895D79B55C40AD3EAF3776C0D"
+    },
+    {
+      "path": "SRC/neothd/src/context_graph/mod.rs",
+      "sha256": "555C6E39D191CF3C6DCF491A826B64CF89C65936D79EABD22A8464779C7C1446"
+    },
+    {
+      "path": "SRC/neothd/src/context_graph/windows_vfs.rs",
+      "sha256": "67BFF54B77FE8F0851154DDBF5CCD663CC385615320709FE18929B8198C21402"
+    },
+    {
+      "path": "SRC/neothd/src/context_graph/windows_vfs/handles.rs",
+      "sha256": "677BB17A324632FF79D58CBBAB6CCD374177A96A71AB204ED0BDF0390793A7EB"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+      "sha256": "B00A8580828956817FE853180ADE483E00F5F49CDCECE97C1443A15368C9AB04"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
+      "sha256": "E944B93409952985FD02B80A288728A83D767CE2162D5E0F69A13E9C6B43D750"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "sha256": "9EB680825519B773A859D4339A872204CFA5E1504F0DE237D95598E31C450471"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/transport/tests.rs",
+      "sha256": "F00D3B8E2E78DB667DABCFD055F9C9289E33DADD6C470B804D272AAC47BF4923"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/transport/windows.rs",
+      "sha256": "E347B84124674E4269829CB3022AABAC08CFED9813935586B9AEBC4A82C69D95"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/updater_cron.rs",
+      "sha256": "9EAE3CEFA0E1A2DB1FBEEAAB028921458C02959D14A4E8812BA6C89ACD369014"
+    },
+    {
+      "path": "SRC/neothd/src/lib.rs",
+      "sha256": "64C0E6732B24A4E64591D1960F9EEF12D91A46BD7E9D50CC29992DBEEB3B6714"
+    },
+    {
+      "path": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "sha256": "05749350CCA81E3B51704BE807727701C4B40387AFA13C6F85B5872C94F17A89"
+    },
+    {
+      "path": "SRC/neothd/src/mcp/gate.rs",
+      "sha256": "DC127159E144F82C1434F270D8EA72C45063BBD7464F692779FBBAF964AC1035"
+    },
+    {
+      "path": "SRC/neothd/src/memory/store.rs",
+      "sha256": "8D010BC68BEF09D97ED9D0F84B8ED4ED5A660D2B7A4B1BD19DDE90313065C7A4"
+    },
+    {
+      "path": "SRC/neothd/src/os_tools/gate.rs",
+      "sha256": "0DC50E8B29B3D5EA38F705E35FBC810444DE545FD7EF7034ABA68886C10D6E9E"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/gate.rs",
+      "sha256": "2F873CC301DFF567BEC5F7265C516ACF946610F269D064A8EA4BCEF040C75555"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/mod.rs",
+      "sha256": "EEF7E431776028A4AF8CFEC7908894D3F158EEBA41DDEF5BB302EFF67B256C26"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/trust_ledger.rs",
+      "sha256": "3DC53625553D83F02296776785F548A9C8EA52E2410FB03BE6ADB75825F331CB"
+    },
+    {
+      "path": "SRC/neothd/src/providers/ouro/artifacts.rs",
+      "sha256": "22794ABB8889980608707A2D9AB36E9F247863799FE3BE8B8DBB79B265E44EEA"
+    },
+    {
+      "path": "SRC/neothd/src/security/refusal_abliterated.rs",
+      "sha256": "9609A7F996C93568C01C5E987D54700641212FE443B500570D096E76B4CD9CF8"
+    },
+    {
+      "path": "SRC/neothd/src/security/refusal_recovery.rs",
+      "sha256": "C8863477C29E5E983A5F28FBDEF12C6D601C4A9D75442B2288816DC2B693403C"
+    },
+    {
+      "path": "SRC/neothd/src/skills/installer.rs",
+      "sha256": "425EEF5720C2942D2948590B7C6292CE3B56B50C853E7CD006A1086FDCE05F1A"
+    },
+    {
+      "path": "SRC/neothd/src/skills/store.rs",
+      "sha256": "CBF36F6866BA8D01EC0AE257DA3D46439985FC3AEA5F8A83EF579218B317C05F"
+    },
+    {
+      "path": "SRC/neothd/src/tools/web_fetch.rs",
+      "sha256": "4083A15CF8E09BF5673FDE95439C5F0076246EBBE3C947CC0872BF58560235F9"
+    },
+    {
+      "path": "SRC/neothd/src/updater/authority.rs",
+      "sha256": "31FBBDC1673554640923E82728EBC3D0F9F85A5A721B7B12F745A45F926A0683"
+    },
+    {
+      "path": "SRC/neothd/src/updater/budget.rs",
+      "sha256": "E9270A336170CCD630AFDF3BFFF6FA7FB5FC9AF60E9A5E7AAA8007B66B143281"
+    },
+    {
+      "path": "SRC/neothd/src/updater/mod.rs",
+      "sha256": "89EDCA028F7371DCF590DE42BBC51E0C72723B7247C438E578B7E3F74315B629"
+    },
+    {
+      "path": "SRC/neothd/src/updater/pipeline.rs",
+      "sha256": "9F5716E7EC7F41398651CB0CC11D53803DB1055F82837473617A585093CD9059"
+    },
+    {
+      "path": "SRC/neothd/src/updater/reconcile.rs",
+      "sha256": "68C9330DA665BF646C27615853F329DB06B695115A88F9973142B603D9730ADA"
+    },
+    {
+      "path": "SRC/neothd/src/updater/self_update.rs",
+      "sha256": "1501DB7CF0FCCFC168A829C9C97CEEE4274012DA755D7C0E564B46A9FE0ED130"
+    },
+    {
+      "path": "SRC/neothd/src/wal/events.rs",
+      "sha256": "0FCE6B1D825634B5C82F9F9CD1A67F1E83850643E874FDDBD7CC4B4AF0D1B689"
+    },
+    {
+      "path": "SRC/neothd/src/wal/hlc.rs",
+      "sha256": "E7219395CEB29A87FDB0223B586AF7D9349794967C289E933273DCCBA35832DA"
+    },
+    {
+      "path": "SRC/neothd/src/wal/payloads_u04.rs",
+      "sha256": "1A7869020EC6000AC7601B0838B7CFE939AE9741E093BB68515ED51E1BFD6033"
+    },
+    {
+      "path": "SRC/neothd/src/wal/scan.rs",
+      "sha256": "80A10D974D74AFFEF31EEAF027A37CBF046D43CC8FDD785949F8D668EE669947"
+    },
+    {
+      "path": "SRC/neothd/src/wal/win_native.rs",
+      "sha256": "52011DC5EB3BF0EAD1BF13C263B2D722A816DADB385058C586F0487D53CD6692"
+    },
+    {
+      "path": "SRC/neothd/src/wal/writer.rs",
+      "sha256": "BECEE0E4F0534655D4E7F411FA335625C7CDDA80F7DE0A17117E6C85C273AD71"
+    },
+    {
+      "path": "SRC/neothd/src/windows_private_ipc.rs",
+      "sha256": "4163F3B82F6BDDB0952AD47A80979B728301E6816F34FA30DDEB95EE8D60DEB1"
+    },
+    {
+      "path": "SRC/neothd/tests/gui_coding_controller.rs",
+      "sha256": "BE1B22083554F6BB5F4A49578631658015BD6CD00D636D0C918F15A65C2AB20E"
+    }
+  ]
+}

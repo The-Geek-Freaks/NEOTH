@@ -66,6 +66,13 @@ static CODE_MAP_RECALL_ACTIVE: std::sync::atomic::AtomicBool =
 static CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+// Native Coding background callbacks may outlive a terminal receipt or a
+// subsequent Buddy/Settings start. This UI ownership revision is distinct
+// from the shared service run id: it prevents an older queued UI callback from
+// repainting a newer explicit operator action.
+static NATIVE_CODING_UI_REVISION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 // Multiple background-job refreshes can overlap (manual refresh, route entry,
 // and the automatic refresh after a successful spawn). Only the newest request
 // may publish its list or clear the loading state.
@@ -1101,6 +1108,7 @@ mod buddy_activity;
 mod chat_child_supervisor;
 mod chat_stream_phase;
 mod code_map_controller;
+mod coding_controller;
 mod gui_action;
 mod gui_stream;
 mod panel_logic;
@@ -13662,6 +13670,7 @@ fn main() -> Result<()> {
         std::sync::Arc::new(code_map_controller::CodeMapLifecycleController::new(
             neothd::code_map::persist::default_path(),
         ));
+    let native_coding_controller = std::sync::Arc::new(coding_controller::CodingController::new());
 
     let weak_code_map_lifecycle_inspect = window.as_weak();
     let inspect_controller = std::sync::Arc::clone(&code_map_lifecycle_controller);
@@ -13705,9 +13714,6 @@ fn main() -> Result<()> {
     });
     let weak_code_map_lifecycle_root_remove = window.as_weak();
     window.on_code_map_lifecycle_managed_root_remove_clicked(move |path| {
-        let Some(window) = weak_code_map_lifecycle_root_remove.upgrade() else {
-            return;
-        };
         start_code_map_lifecycle_root_remove(
             weak_code_map_lifecycle_root_remove.clone(),
             path.to_string(),
@@ -13766,6 +13772,59 @@ fn main() -> Result<()> {
         request_code_map_lifecycle_cancel(
             weak_buddy_code_map_cancel.clone(),
             std::sync::Arc::clone(&buddy_cancel_controller),
+        );
+    });
+
+    // Native Coding service callbacks. Settings and Buddy use this exact
+    // controller; the GUI supplies explicit operator intent only.
+    let weak_native_coding_start = window.as_weak();
+    let native_coding_start_controller = std::sync::Arc::clone(&native_coding_controller);
+    window.on_native_coding_start_clicked(
+        move |prompt, repository_root, source_channel, no_assign, dispatch, apply| {
+            start_native_coding_run(
+                weak_native_coding_start.clone(),
+                std::sync::Arc::clone(&native_coding_start_controller),
+                prompt.to_string(),
+                repository_root.to_string(),
+                source_channel.to_string(),
+                no_assign,
+                dispatch,
+                apply,
+            );
+        },
+    );
+    let weak_native_coding_cancel = window.as_weak();
+    let native_coding_cancel_controller = std::sync::Arc::clone(&native_coding_controller);
+    window.on_native_coding_cancel_clicked(move || {
+        request_native_coding_cancel(
+            weak_native_coding_cancel.clone(),
+            std::sync::Arc::clone(&native_coding_cancel_controller),
+        );
+    });
+    let weak_buddy_native_coding_start = window.as_weak();
+    let buddy_native_coding_start_controller = std::sync::Arc::clone(&native_coding_controller);
+    window.on_buddy_native_coding_start(move || {
+        let Some(window) = weak_buddy_native_coding_start.upgrade() else {
+            return;
+        };
+        window.set_nav_active("coding".into());
+        start_native_coding_run(
+            weak_buddy_native_coding_start.clone(),
+            std::sync::Arc::clone(&buddy_native_coding_start_controller),
+            window.get_native_coding_prompt().to_string(),
+            window.get_code_map_root().to_string(),
+            "buddy".into(),
+            window.get_native_coding_no_assign(),
+            window.get_native_coding_dispatch(),
+            window.get_native_coding_apply(),
+        );
+    });
+    let weak_buddy_native_coding_cancel = window.as_weak();
+    let buddy_native_coding_cancel_controller = std::sync::Arc::clone(&native_coding_controller);
+    window.on_buddy_native_coding_cancel(move || {
+        request_native_coding_cancel(
+            weak_buddy_native_coding_cancel.clone(),
+            std::sync::Arc::clone(&buddy_native_coding_cancel_controller),
         );
     });
 
@@ -15487,6 +15546,8 @@ fn main() -> Result<()> {
             tracing::warn!("usage overview worker terminated unexpectedly");
         }
     }
+    let native_coding_shutdown_result =
+        shutdown_native_coding_service(native_coding_controller.as_ref());
     let chat_shutdown_result = shutdown_gui_chat_runtime(
         chat_stream.as_ref(),
         chat_launch_gate.as_ref(),
@@ -15511,17 +15572,34 @@ fn main() -> Result<()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .take();
     if let Some(error) = ready_failure {
-        if let Err(shutdown_error) = chat_shutdown_result {
+        if let Err(shutdown_error) = &native_coding_shutdown_result {
+            anyhow::bail!("{error}; native coding shutdown also failed: {shutdown_error:#}");
+        }
+        if let Err(shutdown_error) = &chat_shutdown_result {
             anyhow::bail!("{error}; chat shutdown also failed: {shutdown_error}");
         }
         anyhow::bail!(error);
     }
-    match (run_result, chat_shutdown_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(error), Ok(())) => Err(error.into()),
-        (Ok(()), Err(error)) => Err(anyhow::Error::msg(error)),
-        (Err(run_error), Err(shutdown_error)) => Err(anyhow::anyhow!(
-            "GUI event loop failed: {run_error}; chat shutdown also failed: {shutdown_error}"
+    match (
+        run_result,
+        native_coding_shutdown_result,
+        chat_shutdown_result,
+    ) {
+        (Ok(()), Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(()), Ok(())) => Err(error.into()),
+        (Ok(()), Err(error), Ok(())) => Err(error.context("native coding shutdown failed")),
+        (Ok(()), Ok(()), Err(error)) => Err(anyhow::Error::msg(error)),
+        (Err(run_error), Err(coding_error), Ok(())) => Err(anyhow::anyhow!(
+            "GUI event loop failed: {run_error}; native coding shutdown also failed: {coding_error:#}"
+        )),
+        (Err(run_error), Ok(()), Err(chat_error)) => Err(anyhow::anyhow!(
+            "GUI event loop failed: {run_error}; chat shutdown also failed: {chat_error}"
+        )),
+        (Ok(()), Err(coding_error), Err(chat_error)) => Err(anyhow::anyhow!(
+            "native coding shutdown failed: {coding_error:#}; chat shutdown also failed: {chat_error}"
+        )),
+        (Err(run_error), Err(coding_error), Err(chat_error)) => Err(anyhow::anyhow!(
+            "GUI event loop failed: {run_error}; native coding shutdown also failed: {coding_error:#}; chat shutdown also failed: {chat_error}"
         )),
     }
 }
@@ -19840,7 +19918,8 @@ fn set_code_map_lifecycle_managed_roots_from_observations(
                     } else {
                         "unavailable".into()
                     }
-                }),
+                })
+                .into(),
         })
         .collect::<Vec<_>>();
     window.set_code_map_lifecycle_managed_roots(slint::ModelRc::new(slint::VecModel::from(rows)));
@@ -20058,7 +20137,7 @@ fn code_map_lifecycle_runtime_summary_from(
         )
     } else {
         format!(
-            "Live daemon PID {} accepted lifecycle generation {}, but no watcher is active yet (requested roots: {}){}",
+            "Live daemon PID {} accepted lifecycle generation {}, but no watcher is active yet (requested roots: {}){}{}",
             status.daemon_pid,
             status.config_generation,
             if requested_roots.is_empty() {
@@ -20084,6 +20163,481 @@ fn set_code_map_lifecycle_error(window: &MainWindow, message: &str) {
     window.set_code_map_lifecycle_can_refresh(false);
     window.set_code_map_lifecycle_can_force_rebuild(false);
     window.set_code_map_lifecycle_can_repair(false);
+}
+
+fn start_native_coding_run(
+    weak: slint::Weak<MainWindow>,
+    controller: std::sync::Arc<coding_controller::CodingController>,
+    prompt: String,
+    repository_root: String,
+    source_channel: String,
+    no_assign: bool,
+    dispatch: bool,
+    apply: bool,
+) {
+    let Some(window) = weak.upgrade() else {
+        return;
+    };
+    if controller.has_active_run() {
+        window.set_native_coding_error(true);
+        window.set_native_coding_state("Coding run already active".into());
+        window.set_native_coding_detail(
+            "Wait for its terminal receipt or request cancellation before starting another run."
+                .into(),
+        );
+        buddy(&window, GuiActivity::NativeCodingFailed);
+        return;
+    }
+    let prompt = prompt.trim().to_owned();
+    let repository_root = repository_root.trim().to_owned();
+    let source_channel = source_channel.trim().to_owned();
+    let request = match coding_controller::native_coding_request(
+        prompt,
+        PathBuf::from(repository_root),
+        source_channel,
+        no_assign,
+        dispatch,
+        apply,
+    ) {
+        Ok(request) => request,
+        Err(error) => {
+            set_native_coding_error(
+                &window,
+                &format!("Cannot start native coding run: {error:#}"),
+            );
+            buddy(&window, GuiActivity::NativeCodingFailed);
+            return;
+        }
+    };
+    let revision = match controller.begin_start() {
+        Ok(revision) => revision,
+        Err(error) => {
+            set_native_coding_error(
+                &window,
+                &format!("Cannot reserve native coding run: {error:#}"),
+            );
+            buddy(&window, GuiActivity::NativeCodingFailed);
+            return;
+        }
+    };
+    NATIVE_CODING_UI_REVISION.store(revision, std::sync::atomic::Ordering::Release);
+    window.set_native_coding_running(true);
+    window.set_native_coding_cancel_pending(false);
+    window.set_native_coding_error(false);
+    window.set_native_coding_terminal_receipt("".into());
+    window.set_native_coding_run_id("".into());
+    window.set_native_coding_state("Starting native coding run…".into());
+    window.set_native_coding_detail(
+        "Submitting the explicit root and source channel to the shared Coding service.".into(),
+    );
+    buddy(&window, GuiActivity::NativeCodingStarting);
+
+    std::thread::spawn(move || {
+        let result = coding_bridge_runtime()
+            .and_then(|runtime| runtime.block_on(controller.start_reserved(revision, request)));
+        match result {
+            Ok(mut started) => {
+                let run_id = started.run_id();
+                let event_receiver = started.subscribe();
+                let deferred_cancel_error = started
+                    .deferred_cancel_error()
+                    .map(std::borrow::ToOwned::to_owned);
+                spawn_native_coding_event_bridge(
+                    weak.clone(),
+                    std::sync::Arc::clone(&controller),
+                    started.revision(),
+                    run_id,
+                    event_receiver,
+                );
+                let _ = slint::invoke_from_event_loop({
+                    let weak = weak.clone();
+                    let controller = std::sync::Arc::clone(&controller);
+                    move || {
+                        if !controller.is_current(revision, run_id) {
+                            return;
+                        }
+                        let Some(window) = weak.upgrade() else {
+                            return;
+                        };
+                        window.set_native_coding_run_id(run_id.raw().to_string().into());
+                        if let Some(error) = deferred_cancel_error {
+                            // The run is live despite this relay failure. Keep
+                            // it visible and re-enable cancellation instead of
+                            // claiming startup failed or that it was cancelled.
+                            window.set_native_coding_cancel_pending(false);
+                            window.set_native_coding_error(true);
+                            window.set_native_coding_state(
+                                "Coding run active; cancellation needs retry".into(),
+                            );
+                            window.set_native_coding_detail(error.into());
+                            buddy(&window, GuiActivity::NativeCodingFailed);
+                        } else {
+                            window.set_native_coding_state("Coding service accepted run".into());
+                            window.set_native_coding_detail(
+                                "Preparing local code-map context and a durable coding receipt."
+                                    .into(),
+                            );
+                            buddy(&window, GuiActivity::NativeCodingProgress);
+                        }
+                    }
+                });
+
+                let terminal = coding_bridge_runtime()
+                    .and_then(|runtime| runtime.block_on(started.wait_terminal_and_join()));
+                let accepted = controller.finish(revision, run_id);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if !accepted || !native_coding_ui_revision_matches(revision) {
+                        return;
+                    }
+                    let Some(window) = weak.upgrade() else {
+                        return;
+                    };
+                    window.set_native_coding_running(false);
+                    window.set_native_coding_cancel_pending(false);
+                    match terminal {
+                        Ok(receipt) => apply_native_coding_terminal(&window, &receipt),
+                        Err(error) => {
+                            set_native_coding_error(
+                                &window,
+                                &format!(
+                                    "Coding service ended without a terminal receipt: {error:#}"
+                                ),
+                            );
+                            buddy(&window, GuiActivity::NativeCodingFailed);
+                        }
+                    }
+                });
+            }
+            Err(error) => {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if !native_coding_ui_revision_matches(revision) {
+                        return;
+                    }
+                    let Some(window) = weak.upgrade() else {
+                        return;
+                    };
+                    window.set_native_coding_running(false);
+                    window.set_native_coding_cancel_pending(false);
+                    set_native_coding_error(
+                        &window,
+                        &format!("Native coding run was not accepted: {error:#}"),
+                    );
+                    buddy(&window, GuiActivity::NativeCodingFailed);
+                });
+            }
+        }
+    });
+}
+
+fn request_native_coding_cancel(
+    weak: slint::Weak<MainWindow>,
+    controller: std::sync::Arc<coding_controller::CodingController>,
+) {
+    let Some(window) = weak.upgrade() else {
+        return;
+    };
+    let ui_revision = NATIVE_CODING_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
+    if !controller.has_active_run() {
+        // A terminal worker may have settled after the click but before this
+        // callback. Leave its authoritative receipt untouched.
+        return;
+    }
+    window.set_native_coding_cancel_pending(true);
+    window.set_native_coding_error(false);
+    window.set_native_coding_state("Cancelling native coding run…".into());
+    window.set_native_coding_detail(
+        "Cancellation is a request; the Coding service still joins its worker and returns a terminal receipt."
+            .into(),
+    );
+    buddy(&window, GuiActivity::NativeCodingCancelling);
+    std::thread::spawn(move || {
+        let result = coding_bridge_runtime()
+            .and_then(|runtime| runtime.block_on(controller.request_cancel(ui_revision)));
+        let _ = slint::invoke_from_event_loop(move || {
+            if !native_coding_ui_revision_matches(ui_revision) {
+                return;
+            }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            match result {
+                Ok(Some(coding_controller::CodingCancelState::DeferredStart { revision }))
+                    if revision == ui_revision && controller.is_active_revision(revision) =>
+                {
+                    window.set_native_coding_detail(
+                        "Cancellation is queued until the Coding service returns the new run id."
+                            .into(),
+                    );
+                }
+                Ok(Some(coding_controller::CodingCancelState::Requested { revision, run_id }))
+                    if revision == ui_revision && controller.is_current(revision, run_id) =>
+                {
+                    window.set_native_coding_detail(
+                        "Cancellation was sent to the Coding service; waiting for its joined terminal receipt."
+                            .into(),
+                    );
+                }
+                Ok(_) => {}
+                Err(error) if controller.is_active_revision(ui_revision) => {
+                    window.set_native_coding_cancel_pending(false);
+                    window.set_native_coding_error(true);
+                    window.set_native_coding_state("Cancellation request failed".into());
+                    window.set_native_coding_detail(
+                        format!(
+                            "The run remains active until a terminal receipt arrives: {error:#}"
+                        )
+                        .into(),
+                    );
+                    buddy(&window, GuiActivity::NativeCodingFailed);
+                }
+                Err(_) => {}
+            }
+        });
+    });
+}
+
+fn spawn_native_coding_event_bridge(
+    weak: slint::Weak<MainWindow>,
+    controller: std::sync::Arc<coding_controller::CodingController>,
+    revision: u64,
+    run_id: neothd::coding::CodingRunId,
+    mut events: tokio::sync::broadcast::Receiver<neothd::coding::CodingRunEvent>,
+) {
+    std::thread::spawn(move || {
+        let Ok(runtime) = coding_bridge_runtime() else {
+            return;
+        };
+        runtime.block_on(async move {
+            loop {
+                match events.recv().await {
+                    Ok(event) => {
+                        let terminal = matches!(&event, neothd::coding::CodingRunEvent::Terminal(_));
+                        let (state, detail) = native_coding_event_text(&event);
+                        let _ = slint::invoke_from_event_loop({
+                            let weak = weak.clone();
+                            let controller = std::sync::Arc::clone(&controller);
+                            move || {
+                                if !controller.is_current(revision, run_id) {
+                                    return;
+                                }
+                                let Some(window) = weak.upgrade() else {
+                                    return;
+                                };
+                                window.set_native_coding_state(state.into());
+                                window.set_native_coding_detail(detail.into());
+                                buddy(&window, GuiActivity::NativeCodingProgress);
+                            }
+                        });
+                        if terminal {
+                            return;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                        let _ = slint::invoke_from_event_loop({
+                            let weak = weak.clone();
+                            let controller = std::sync::Arc::clone(&controller);
+                            move || {
+                                if !controller.is_current(revision, run_id) {
+                                    return;
+                                }
+                                if let Some(window) = weak.upgrade() {
+                                    window.set_native_coding_detail(
+                                        format!("{count} bounded progress updates were skipped; waiting for the authoritative terminal receipt.").into(),
+                                    );
+                                }
+                            }
+                        });
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+    });
+}
+
+fn coding_bridge_runtime() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .context("start GUI bridge runtime for native coding")
+}
+
+/// Window teardown is a real service lifecycle transition: Core receives the
+/// cancellation request, joins provider/dispatch work, publishes terminal
+/// receipts, and joins its owned runtime thread before the GUI process exits.
+fn shutdown_native_coding_service(controller: &coding_controller::CodingController) -> Result<()> {
+    coding_bridge_runtime()?
+        .block_on(controller.shutdown_and_join())
+        .context("shut down native coding service")
+}
+
+fn native_coding_ui_revision_matches(revision: u64) -> bool {
+    NATIVE_CODING_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) == revision
+}
+
+fn native_coding_event_text(event: &neothd::coding::CodingRunEvent) -> (&'static str, String) {
+    match event {
+        neothd::coding::CodingRunEvent::Phase(phase) => (
+            native_coding_phase_label(*phase),
+            "The shared Coding service advanced this run.".into(),
+        ),
+        neothd::coding::CodingRunEvent::SessionCreated { session_id } => (
+            "Coding session created",
+            format!("Created durable session #{}.", session_id.raw()),
+        ),
+        neothd::coding::CodingRunEvent::CodeMapContextPrepared => (
+            "Local context prepared",
+            "Prepared bounded local code-map context for the explicit repository root.".into(),
+        ),
+        neothd::coding::CodingRunEvent::PlanReviewUnavailable => (
+            "Advisory plan review unavailable",
+            "The shared service continued with the configured coding workflow; its durable receipt remains authoritative."
+                .into(),
+        ),
+        neothd::coding::CodingRunEvent::ReceiptRecorded { attempt } => (
+            "Coding receipt recorded",
+            format!("Recorded local provenance receipt attempt {attempt}."),
+        ),
+        neothd::coding::CodingRunEvent::TasksInserted { count } => (
+            "Tasks inserted",
+            format!("Inserted {count} task(s) into the coding session."),
+        ),
+        neothd::coding::CodingRunEvent::CancelRequested => (
+            "Cancellation requested",
+            "The service is joining the active worker before it publishes the terminal effect receipt.".into(),
+        ),
+        neothd::coding::CodingRunEvent::CancelAcknowledged { effect } => (
+            "Cancellation acknowledged",
+            format!("Terminal effect boundary: {}.", native_coding_effect_label(effect)),
+        ),
+        neothd::coding::CodingRunEvent::Terminal(result) => (
+            "Terminal receipt received",
+            native_coding_terminal_text(result),
+        ),
+    }
+}
+
+fn native_coding_phase_label(phase: neothd::coding::CodingRunPhase) -> &'static str {
+    match phase {
+        neothd::coding::CodingRunPhase::Queued => "Coding run queued",
+        neothd::coding::CodingRunPhase::PreparingContext => "Preparing local context",
+        neothd::coding::CodingRunPhase::PersistingReceipt => "Persisting coding receipt",
+        neothd::coding::CodingRunPhase::Decomposing => "Decomposing coding request",
+        neothd::coding::CodingRunPhase::InsertingTasks => "Inserting coding tasks",
+        neothd::coding::CodingRunPhase::Assigning => "Assigning tasks",
+        neothd::coding::CodingRunPhase::Dispatching => "Dispatching tasks",
+        neothd::coding::CodingRunPhase::Applying => "Applying task changes",
+        neothd::coding::CodingRunPhase::Cancelling => "Cancelling coding run",
+        neothd::coding::CodingRunPhase::Completed => "Coding run completed",
+        neothd::coding::CodingRunPhase::Failed => "Coding run failed",
+        neothd::coding::CodingRunPhase::Cancelled => "Coding run cancelled",
+    }
+}
+
+fn native_coding_effect_label(effect: &neothd::coding::CancellationEffect) -> String {
+    match effect {
+        neothd::coding::CancellationEffect::NoEffect => "no durable effect".into(),
+        neothd::coding::CancellationEffect::SessionCreatedNoProvider => {
+            "session created; provider was not called".into()
+        }
+        neothd::coding::CancellationEffect::ProviderAttemptedUnknown => {
+            "provider attempt may have occurred; outcome is unknown".into()
+        }
+        neothd::coding::CancellationEffect::ProviderCompletedNoTasks => {
+            "provider completed; no tasks were inserted".into()
+        }
+        neothd::coding::CancellationEffect::TasksInsertedUndispatched => {
+            "tasks were inserted but not dispatched".into()
+        }
+        neothd::coding::CancellationEffect::DispatchEffects {
+            completed_task_ids,
+            applied_task_ids,
+            blocked_task_ids,
+            unassigned_task_ids,
+        } => format!(
+            "{} task(s) completed; {} task(s) applied; {} task(s) blocked; {} task(s) unassigned",
+            completed_task_ids.len(),
+            applied_task_ids.len(),
+            blocked_task_ids.len(),
+            unassigned_task_ids.len()
+        ),
+    }
+}
+
+fn native_coding_terminal_text(result: &neothd::coding::CodingRunResult) -> String {
+    match result {
+        neothd::coding::CodingRunResult::Completed {
+            session_id,
+            task_count,
+            session_complexity,
+            input_truncated,
+            dispatch,
+            ..
+        } => format!(
+            "Completed session #{} with {task_count} task(s), complexity {session_complexity}{}{}.",
+            session_id.raw(),
+            if *input_truncated {
+                "; input was bounded"
+            } else {
+                ""
+            },
+            dispatch
+                .as_ref()
+                .map_or_else(String::new, |summary| format!(
+                    "; dispatch completed {}/{} task(s), {} blocked",
+                    summary.tasks_completed, summary.tasks_attempted, summary.tasks_blocked
+                )),
+        ),
+        neothd::coding::CodingRunResult::Cancelled {
+            session_id,
+            provider_state,
+            effect,
+            ..
+        } => format!(
+            "Cancelled{}; provider state {:?}; effect {}.",
+            session_id.map_or_else(String::new, |id| format!(" for session #{}", id.raw())),
+            provider_state,
+            native_coding_effect_label(effect),
+        ),
+        neothd::coding::CodingRunResult::Failed {
+            session_id,
+            message,
+            ..
+        } => format!(
+            "Failed{}: {message}",
+            session_id.map_or_else(String::new, |id| format!(" after session #{}", id.raw())),
+        ),
+    }
+}
+
+fn apply_native_coding_terminal(window: &MainWindow, result: &neothd::coding::CodingRunResult) {
+    let terminal = native_coding_terminal_text(result);
+    window.set_native_coding_terminal_receipt(terminal.clone().into());
+    window.set_native_coding_detail(terminal.into());
+    match result {
+        neothd::coding::CodingRunResult::Completed { .. } => {
+            window.set_native_coding_error(false);
+            window.set_native_coding_state("Coding run complete".into());
+            buddy(window, GuiActivity::NativeCodingComplete);
+        }
+        neothd::coding::CodingRunResult::Cancelled { .. } => {
+            window.set_native_coding_error(false);
+            window.set_native_coding_state("Coding run cancelled".into());
+            buddy(window, GuiActivity::NativeCodingComplete);
+        }
+        neothd::coding::CodingRunResult::Failed { .. } => {
+            window.set_native_coding_error(true);
+            window.set_native_coding_state("Coding run failed".into());
+            buddy(window, GuiActivity::NativeCodingFailed);
+        }
+    }
+}
+
+fn set_native_coding_error(window: &MainWindow, message: &str) {
+    window.set_native_coding_running(false);
+    window.set_native_coding_cancel_pending(false);
+    window.set_native_coding_error(true);
+    window.set_native_coding_state("Native coding action failed".into());
+    window.set_native_coding_detail(message.into());
 }
 
 fn run_code_map_recall(

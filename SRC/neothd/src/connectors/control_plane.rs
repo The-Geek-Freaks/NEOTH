@@ -18,9 +18,8 @@ use super::{
     control_state::{ConnectorControlConfig, ConnectorLifecycle, RegisteredConnectorAccount},
 };
 
-// The private same-user transport remains Unix-only. Its module also owns the
-// platform-neutral guard and the fail-closed non-Unix stub, which the daemon
-// needs to represent Windows as unavailable without a weaker transport.
+// The private same-user transport owns its platform-specific listener while
+// this module retains the sealed daemon-only authority mint.
 pub(crate) mod rpc;
 
 /// Capability representing a principal already authenticated by a later local
@@ -50,12 +49,12 @@ impl AuthenticatedControlSession {
     }
 }
 
-/// Mints the private session used exclusively by the Unix daemon-owned RPC
+/// Mints the private session used exclusively by the daemon-owned local RPC
 /// child module after it has selected the startup-configured subject.
 ///
 /// This is not exported beyond this control-plane module tree, so request data
 /// cannot construct a session or choose a subject.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn daemon_authenticated_session(subject_id: SubjectId) -> AuthenticatedControlSession {
     AuthenticatedControlSession {
         subject_id,

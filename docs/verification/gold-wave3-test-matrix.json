@@ -1,0 +1,423 @@
+{
+  "binary": {
+    "path": "SRC/target/debug/deps/neothd-a576cce183334209.exe",
+    "sha256": "360FD5F14C431306B6C344944AE8BC16DC25EE72E2F59221AF8FD193CD2DABB9",
+    "bytes": 270337024,
+    "testSummary": "14091 tests, 0 benchmarks",
+    "sourceManifest": "gold-wave3-source-manifest.json",
+    "sourceMismatches": [],
+    "sourceCount": 82
+  },
+  "stats": {
+    "groups": 31,
+    "passedGroups": 31,
+    "passedExecutions": 2174,
+    "ignoredExecutions": 1
+  },
+  "gates": {
+    "environment": {
+      "platform": "Windows x64 MSVC",
+      "rustc": "1.95.0 (59807616e 2026-04-14)",
+      "cargo": "1.95.0 (f2d3ce0bd 2026-03-21)",
+      "cargoJobs": 1,
+      "testThreads": 1,
+      "profileDebug": 0,
+      "offline": true
+    },
+    "libraryTestBuild": {
+      "command": "_test.bat --no-run --locked --offline -j1",
+      "exitToken": "TEST_EXIT=0",
+      "duration": "1m32s"
+    },
+    "strictClippy": {
+      "command": "_clippy.bat",
+      "cargoArgs": "clippy -p neoth --lib --tests --no-deps -- -D warnings",
+      "exitToken": "CLIPPY_EXIT=0",
+      "duration": "2m33s"
+    },
+    "coreCheck": {
+      "command": "_check.bat",
+      "cargoArgs": "check -p neoth",
+      "exitToken": "BUILD_EXIT=0",
+      "duration": "1m46s"
+    },
+    "guiCheck": {
+      "command": "_gui_check.bat check -p neothd-gui --tests --locked --offline -j1",
+      "exitToken": "GUI_GATE_EXIT=0",
+      "duration": "4m57s",
+      "features": "default",
+      "warnings": "13 unused-code warnings in existing probe-supervisor definitions; peeroxide dependency warning"
+    },
+    "controllerRuntime": {
+      "command": "_gui_check.bat test -p neoth --test gui_code_map_controller --test gui_coding_controller --locked --offline -j1 -- --test-threads=1",
+      "exitToken": "GUI_GATE_EXIT=0",
+      "duration": "4m31s",
+      "codeMapPassed": 6,
+      "codingPassed": 6
+    },
+    "publicCli": {
+      "command": "_build.bat --locked --offline -j1",
+      "exitToken": "BUILD_EXIT=0",
+      "duration": "5m15s",
+      "path": "SRC/target/debug/neoth.exe",
+      "sha256": "EC2FC675141B8E107C0986A12C31CE201EB68DB9C45A22772A6E27E4156E5DC8",
+      "bytes": 181485056,
+      "smoke": [
+        { "args": ["--version"], "exitCode": 0, "output": "neoth 1.0.0" },
+        { "args": ["code", "--help"], "exitCode": 0 },
+        { "args": ["code-map", "diff-impact", "--help"], "exitCode": 0 },
+        { "args": ["context", "--help"], "exitCode": 0 },
+        { "args": ["permissions", "--help"], "exitCode": 0 },
+        { "args": ["wal", "--help"], "exitCode": 0 }
+      ],
+      "scope": "default-feature debug executable startup and CLI registration only"
+    },
+    "sourceReadback": {
+      "inputs": 82,
+      "mismatches": []
+    }
+  },
+  "results": [
+    {
+      "slug": "context-store",
+      "filter": "context_graph::",
+      "exit_code": 0,
+      "seconds": 12,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 14075 filtered out; finished in 10.41s"
+      ]
+    },
+    {
+      "slug": "context-cli",
+      "filter": "cli::context::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14090 filtered out; finished in 0.27s"
+      ]
+    },
+    {
+      "slug": "native-delete",
+      "filter": "relative_private_child_delete_uses_the_pinned_parent_capability",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14090 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "slug": "code-map",
+      "filter": "code_map::",
+      "exit_code": 0,
+      "seconds": 22,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 347 passed; 0 failed; 0 ignored; 0 measured; 13744 filtered out; finished in 20.33s"
+      ]
+    },
+    {
+      "slug": "coding",
+      "filter": "coding::",
+      "exit_code": 0,
+      "seconds": 18,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 562 passed; 0 failed; 0 ignored; 0 measured; 13529 filtered out; finished in 15.77s"
+      ]
+    },
+    {
+      "slug": "cli-code",
+      "filter": "cli::code::",
+      "exit_code": 0,
+      "seconds": 35,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 14062 filtered out; finished in 32.25s"
+      ]
+    },
+    {
+      "slug": "chat-explicit-root",
+      "filter": "auto_code_",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 14089 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "slug": "private-ipc",
+      "filter": "windows_private_ipc::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 14089 filtered out; finished in 0.21s"
+      ]
+    },
+    {
+      "slug": "audit-transport",
+      "filter": "daemon::audit_rpc::transport::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 14084 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "slug": "trust-permissions",
+      "filter": "permissions::",
+      "exit_code": 0,
+      "seconds": 3,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 194 passed; 0 failed; 0 ignored; 0 measured; 13897 filtered out; finished in 0.85s"
+      ]
+    },
+    {
+      "slug": "mcp-gate",
+      "filter": "mcp::gate::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 14062 filtered out; finished in 0.06s"
+      ]
+    },
+    {
+      "slug": "os-gate",
+      "filter": "os_tools::gate::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 14064 filtered out; finished in 0.18s"
+      ]
+    },
+    {
+      "slug": "wal-scan",
+      "filter": "wal::scan::",
+      "exit_code": 0,
+      "seconds": 4,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 14055 filtered out; finished in 2.26s"
+      ]
+    },
+    {
+      "slug": "wal-hlc",
+      "filter": "wal::hlc::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 14077 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "slug": "wal-cli",
+      "filter": "cli::wal::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 14064 filtered out; finished in 0.34s"
+      ]
+    },
+    {
+      "slug": "foreign-persist",
+      "filter": "foreign_persist_writer_ingests_submitted_jobs",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14090 filtered out; finished in 0.07s"
+      ]
+    },
+    {
+      "slug": "updater",
+      "filter": "updater::",
+      "exit_code": 0,
+      "seconds": 21,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 321 passed; 0 failed; 0 ignored; 0 measured; 13770 filtered out; finished in 18.86s"
+      ]
+    },
+    {
+      "slug": "updater-cron",
+      "filter": "daemon::updater_cron::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 14072 filtered out; finished in 0.87s"
+      ]
+    },
+    {
+      "slug": "memory-store",
+      "filter": "memory::store::",
+      "exit_code": 0,
+      "seconds": 3,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 14066 filtered out; finished in 0.98s"
+      ]
+    },
+    {
+      "slug": "skills-installer",
+      "filter": "skills::installer::",
+      "exit_code": 0,
+      "seconds": 14,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 84 passed; 0 failed; 0 ignored; 0 measured; 14007 filtered out; finished in 12.49s"
+      ]
+    },
+    {
+      "slug": "skills-store",
+      "filter": "skills::store::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 14042 filtered out; finished in 0.21s"
+      ]
+    },
+    {
+      "slug": "ouro-artifacts",
+      "filter": "providers::ouro::artifacts::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 14082 filtered out; finished in 0.16s"
+      ]
+    },
+    {
+      "slug": "doctor",
+      "filter": "cli::doctor::",
+      "exit_code": 0,
+      "seconds": 12,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 176 passed; 0 failed; 0 ignored; 0 measured; 13915 filtered out; finished in 10.82s"
+      ]
+    },
+    {
+      "slug": "typed-retry",
+      "filter": "retry_provider_receives_complete_canonical_repo_and_tool_context",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14090 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "slug": "typed-fallback",
+      "filter": "local_fallback_loader_receives_selected_model_and_dispatches_canonical_context",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14090 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "slug": "typed-channel",
+      "filter": "channel_shared_builder_keeps_hostile_repo_and_attachment_data_typed_until_provider",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14090 filtered out; finished in 0.04s"
+      ]
+    },
+    {
+      "slug": "web-goal",
+      "filter": "tools::web_fetch::",
+      "exit_code": 0,
+      "seconds": 3,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 14038 filtered out; finished in 1.06s"
+      ]
+    },
+    {
+      "slug": "wal-writer",
+      "filter": "wal::writer::",
+      "exit_code": 0,
+      "seconds": 10,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 86 passed; 0 failed; 1 ignored; 0 measured; 14004 filtered out; finished in 8.07s"
+      ]
+    },
+    {
+      "slug": "wal-sync",
+      "filter": "cluster::wal_sync::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 14063 filtered out; finished in 0.24s"
+      ]
+    },
+    {
+      "slug": "control-plane",
+      "filter": "connectors::control_plane::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 14072 filtered out; finished in 0.06s"
+      ]
+    },
+    {
+      "slug": "cli-docgen",
+      "filter": "cli::docgen::",
+      "exit_code": 0,
+      "seconds": 2,
+      "no_tests": false,
+      "truncated": false,
+      "summary": [
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 14084 filtered out; finished in 0.18s"
+      ]
+    }
+  ]
+}

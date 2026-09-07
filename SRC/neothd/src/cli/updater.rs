@@ -1343,6 +1343,7 @@ mod tests {
             duration_ms: 500,
             terminal_outcome: None,
             fired_receipt_sha256: None,
+            leaf_receipt_binding: None,
             components: vec![
                 ComponentOutcome::up_to_date("claude-cli", "1.2.3"),
                 ComponentOutcome::upgraded("codex", "0.4.0", "0.5.0"),
@@ -1387,6 +1388,7 @@ mod tests {
             duration_ms: 10,
             terminal_outcome: Some(terminal_outcome),
             fired_receipt_sha256: Some(fired_receipt_sha256),
+            leaf_receipt_binding: None,
             components: vec![component],
         })
     }

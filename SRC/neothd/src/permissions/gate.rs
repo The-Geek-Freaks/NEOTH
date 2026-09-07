@@ -283,8 +283,8 @@ impl Gate {
     }
 
     /// Resolve `action` under the configured level + confirm strategy.
-    /// Emits a single WAL audit frame (PERMISSION_GRANTED or PERMISSION_DENIED)
-    /// when `writer` is `Some`.
+    /// Emits legacy permission evidence plus one typed TrustDecision frame when
+    /// `writer` is `Some`.
     ///
     /// Returns `Ok(())` on Allow, `Err(GateError::*)` otherwise.
     pub async fn check(
@@ -531,16 +531,16 @@ impl Gate {
     }
 }
 
-/// Append a single permission-decision frame to the WAL.
+/// Append compatibility permission evidence and one typed TrustDecision frame.
 ///
 /// `subject` and `lease_id` are SL-01a-b additions (both `None` for call
 /// sites that pass no lease context). When a capability lease upgraded a
 /// `Confirm` to `Allow`, `lease_id` names the grant that authorised it so
 /// the operator can cross-reference `0xA5 LEASE_GRANTED` and prove the
-/// chain: "subject S was allowed action A at T because of lease L". No new
-/// event code is allocated — the existing `0xA0 PERMISSION_GRANTED` /
-/// `0xA1 PERMISSION_DENIED` payload is enriched (single frame per decision,
-/// inherits immediate-sync, no SC-01a band churn).
+/// chain: "subject S was allowed action A at T because of lease L". The
+/// existing `0xA0 PERMISSION_GRANTED` / `0xA1 PERMISSION_DENIED` frame remains
+/// byte-schema compatible; the paired typed record is metadata-only and uses
+/// the extended `TrustDecision` subtype.
 async fn audit(
     sink: PermissionAuditSink<'_>,
     action: &Action,
@@ -591,6 +591,16 @@ async fn audit(
     }
     let request_binding_sha256 =
         explicit_request_binding_sha256.or(intrinsic_request_binding_sha256);
+    let trust_event = super::trust_ledger::TrustEvent::from_gate(
+        action,
+        level,
+        decision,
+        subject,
+        lease_id,
+        confirmation_source,
+        request_binding_sha256,
+        crate::time::now_unix_ns(),
+    )?;
     let payload = serde_json::to_vec(&serde_json::json!({
         "level": level.as_str(),
         "action": format!("{action:?}"),
@@ -610,12 +620,14 @@ async fn audit(
                 .flags(crate::wal::EventFlags::SYNTHETIC)
                 .build();
             writer.append(header, payload).await?;
+            super::trust_ledger::append_to_writer(writer, &trust_event).await?;
             Ok(())
         }
         PermissionAuditSink::DaemonRpc(home) => {
             crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload)
                 .await
-                .map_err(|error| anyhow::anyhow!(error))
+                .map_err(|error| anyhow::anyhow!(error))?;
+            super::trust_ledger::append_to_daemon(home, &trust_event).await
         }
         #[cfg(test)]
         PermissionAuditSink::Fail(message) => anyhow::bail!("{message}"),
@@ -629,6 +641,7 @@ mod tests {
     use crate::wal::frame::decode_frame;
     use crate::wal::segment_header::SEGMENT_HEADER_LEN;
     use crate::wal::spawn as wal_spawn;
+    use crate::wal::writer::spawn_for_home;
     use tempfile::tempdir;
     use tokio::fs::read;
 
@@ -845,9 +858,11 @@ mod tests {
 
     #[tokio::test]
     async fn audit_emits_granted_frame_when_allow() {
-        let dir = tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let home = tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("000001.wal");
+        let (writer, join) = spawn_for_home(seg.clone(), home.path().to_path_buf()).unwrap();
 
         let gate = Gate::for_level(AutonomyLevel::Standard);
         gate.check(&Action::Read, Some(&writer)).await.unwrap();
@@ -858,13 +873,94 @@ mod tests {
         let bytes = read(&seg).await.unwrap();
         let f = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
         assert_eq!(f.header.event_type, EVENT_TYPE_PERMISSION_GRANTED);
+        let trust = decode_frame(&bytes[SEGMENT_HEADER_LEN + f.header.total_len as usize..])
+            .expect("typed TrustDecision frame follows compatibility frame");
+        assert_eq!(
+            trust.header.event_type,
+            crate::wal::events::EVENT_TYPE_EXTENDED
+        );
+        assert_eq!(
+            trust.header.event_subtype,
+            crate::wal::events::ExtendedSubtype::TrustDecision as u8
+        );
+        let trust_payload: serde_json::Value = serde_json::from_slice(trust.payload).unwrap();
+        assert_eq!(trust_payload["action"], "read");
+        assert_eq!(trust_payload["subject"], "local");
+        assert!(trust_payload.get("reason_sha256").unwrap().is_null());
+    }
+
+    #[tokio::test]
+    async fn required_gate_audit_replays_as_a_subject_scoped_trust_event() {
+        let home = tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let (writer, join) =
+            spawn_for_home(wal_dir.join("000001.wal"), home.path().to_path_buf()).unwrap();
+
+        Gate::for_level(AutonomyLevel::Full)
+            .check_required_audit(&Action::ExecArbitrary, &writer)
+            .await
+            .unwrap();
+
+        let live_ledger = crate::permissions::TrustLedger::replay_subject_at_home(
+            home.path(),
+            crate::permissions::trust_ledger::LOCAL_SUBJECT,
+        )
+        .expect("the required Gate decision is marker-authenticated before allow returns");
+        assert!(matches!(
+            live_ledger.completeness,
+            crate::permissions::TrustLedgerCompleteness::Complete
+        ));
+        assert_eq!(live_ledger.entries.len(), 1);
+        drop(writer);
+        join.await.unwrap();
+
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(home.path(), "local")
+            .expect("canonical home WAL replays its typed Gate decision");
+        assert_eq!(ledger.entries.len(), 1);
+        assert_eq!(
+            ledger.entries[0].event.action,
+            crate::permissions::ActionKind::ExecArbitrary
+        );
+        assert_eq!(
+            ledger.entries[0].event.outcome,
+            crate::permissions::TrustOutcome::Allowed
+        );
+    }
+
+    #[tokio::test]
+    async fn required_gate_audit_fails_closed_when_typed_evidence_is_invalid() {
+        let dir = tempdir().unwrap();
+        let segment = dir.path().join("invalid-typed-evidence.wal");
+        let (writer, join) = wal_spawn(segment.clone()).unwrap();
+        let action = Action::PaidProviderCall {
+            provider: "test-provider".into(),
+            model: "test-model".into(),
+            authorization_id: "a".repeat(64),
+            request_binding_sha256: "not-a-canonical-sha256".into(),
+            eur_estimate: 0.1,
+        };
+
+        let error = Gate::for_level(AutonomyLevel::Full)
+            .check_required_audit(&action, &writer)
+            .await
+            .expect_err("an invalid typed receipt must block the external action");
+        assert!(matches!(error, GateError::Unavailable(_)));
+        drop(writer);
+        join.await.unwrap();
+        assert!(
+            !segment.exists() || std::fs::read(segment).unwrap().len() <= SEGMENT_HEADER_LEN,
+            "typed validation occurs before the legacy compatibility frame is appended"
+        );
     }
 
     #[tokio::test]
     async fn bound_exec_audit_carries_the_exact_request_binding() {
-        let dir = tempdir().unwrap();
-        let seg = dir.path().join("bound-exec.wal");
-        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let seg = wal.join("bound-exec-000001.wal");
+        let (writer, join) = spawn_for_home(seg.clone(), home.path().to_path_buf()).unwrap();
         let binding = "ab".repeat(32);
 
         Gate::for_level(AutonomyLevel::Full)
@@ -891,9 +987,11 @@ mod tests {
 
     #[tokio::test]
     async fn explicit_request_confirmation_is_audited_and_cannot_override_deny() {
-        let dir = tempdir().unwrap();
-        let seg = dir.path().join("explicit-request.wal");
-        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let seg = wal.join("explicit-request-000001.wal");
+        let (writer, join) = spawn_for_home(seg.clone(), home.path().to_path_buf()).unwrap();
 
         let gate = Gate::for_level(AutonomyLevel::Strict)
             .with_confirm(ConfirmStrategy::FailClosed)
@@ -955,9 +1053,11 @@ mod tests {
 
     #[tokio::test]
     async fn paid_call_permission_frame_carries_request_binding_fields() {
-        let dir = tempdir().unwrap();
-        let seg = dir.path().join("bound-paid-call.wal");
-        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let seg = wal.join("bound-paid-call-000001.wal");
+        let (writer, join) = spawn_for_home(seg.clone(), home.path().to_path_buf()).unwrap();
         let action = paid_action(0.10);
 
         Gate::for_level(AutonomyLevel::Full)
@@ -1115,9 +1215,11 @@ mod tests {
         // action without Confirm — even a 10-euro provider call. Pins
         // the upper bound of the lattice: Full must not accidentally
         // grow a hidden Confirm branch.
-        let dir = tempdir().unwrap();
-        let seg = dir.path().join("000001.wal");
-        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let home = tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("000001.wal");
+        let (writer, join) = spawn_for_home(seg.clone(), home.path().to_path_buf()).unwrap();
 
         let gate = Gate::for_level(AutonomyLevel::Full).with_confirm(ConfirmStrategy::FailClosed);
         for action in [
@@ -1136,27 +1238,40 @@ mod tests {
 
         drop(writer);
         join.await.unwrap();
-        // Five Allow checks should produce five PERMISSION_GRANTED frames.
+        // Five Allow checks preserve five legacy frames and add five typed
+        // TrustDecision frames. A compaction marker is bookkeeping only.
         let bytes = read(&seg).await.unwrap();
         let mut cursor = SEGMENT_HEADER_LEN;
         let mut granted_count = 0;
+        let mut trust_count = 0;
         while cursor < bytes.len() {
             let f = decode_frame(&bytes[cursor..]).expect("frame parse");
             cursor += f.header.total_len as usize;
             // TESTDEBT-WAL-01: a home-bound writer appends its own `0x15`
             // compaction marker on drain. That is WAL bookkeeping, not a
             // permission decision — skip it rather than let it masquerade as
-            // an unexpected verdict. Every other frame must still be GRANTED,
-            // so a stray decision frame is caught exactly as before.
+            // an unexpected verdict.
             if f.header.event_type == crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
                 continue;
             }
-            assert_eq!(f.header.event_type, EVENT_TYPE_PERMISSION_GRANTED);
-            granted_count += 1;
+            if f.header.event_type == EVENT_TYPE_PERMISSION_GRANTED {
+                granted_count += 1;
+            } else {
+                assert_eq!(f.header.event_type, crate::wal::events::EVENT_TYPE_EXTENDED);
+                assert_eq!(
+                    f.header.event_subtype,
+                    crate::wal::events::ExtendedSubtype::TrustDecision as u8
+                );
+                trust_count += 1;
+            }
         }
         assert_eq!(
             granted_count, 5,
             "expected exactly 5 GRANTED frames; got {granted_count}"
+        );
+        assert_eq!(
+            trust_count, 5,
+            "expected exactly 5 typed TrustDecision frames; got {trust_count}"
         );
     }
 

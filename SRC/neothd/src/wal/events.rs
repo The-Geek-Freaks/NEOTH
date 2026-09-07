@@ -259,6 +259,10 @@ pub enum ExtendedSubtype {
     /// `TranscriptMiningRevokedV1` codec. Unknown/legacy frames must not be
     /// inferred into this modern authority.
     TranscriptMiningRevoked = 0x29,
+    /// GOLD-LF-P1-05 — one closed, metadata-only final autonomy decision.
+    /// Legacy `PERMISSION_GRANTED` / `PERMISSION_DENIED` frames remain intact;
+    /// this subtype is the typed, subject-scoped TrustLedger projection.
+    TrustDecision = 0x2A,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -354,6 +358,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::ContextEvidenceReceipt => "context_evidence_receipt",
             ExtendedSubtype::TranscriptMiningBound => "transcript_mining_bound",
             ExtendedSubtype::TranscriptMiningRevoked => "transcript_mining_revoked",
+            ExtendedSubtype::TrustDecision => "trust_decision",
         }
     }
 
@@ -401,6 +406,7 @@ impl ExtendedSubtype {
             0x27 => Some(ExtendedSubtype::ContextEvidenceReceipt),
             0x28 => Some(ExtendedSubtype::TranscriptMiningBound),
             0x29 => Some(ExtendedSubtype::TranscriptMiningRevoked),
+            0x2A => Some(ExtendedSubtype::TrustDecision),
             _ => None,
         }
     }
@@ -450,6 +456,7 @@ impl ExtendedSubtype {
             Self::ContextEvidenceReceipt,
             Self::TranscriptMiningBound,
             Self::TranscriptMiningRevoked,
+            Self::TrustDecision,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))

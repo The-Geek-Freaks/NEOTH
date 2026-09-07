@@ -829,8 +829,9 @@ mod tests {
         // + OMI runtime config/credential/ledger/supervisor posture = 53;
         // + canonical TTS runtime/provider readiness = 54;
         // + ppt_master, graphify and officecli readiness = 57;
-        // + installed Skill authority integrity/recovery readiness = 58.
-        assert_eq!(all_check_docs().count(), 58);
+        // + asynchronous cluster runtime membership = 58;
+        // + code-map lifecycle readiness = 59.
+        assert_eq!(all_check_docs().count(), 59);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────

@@ -32,16 +32,27 @@
 //! - **C / C++**: header `function_name(...)`, `struct Name`,
 //!   `class Name`
 //!
-//! Patterns are anchored at line start with optional leading
-//! whitespace, so multi-line declarations are NOT detected — Phase 2b
-//! will use AST parsing to cover them.
+//! Patterns are anchored at line start with optional leading whitespace, so
+//! extraction remains intentionally declaration-oriented. Rust functions that
+//! matched this scan receive a separate single-pass AST extent certification;
+//! declarations the AST cannot prove retain an unknown extent.
 
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
+use proc_macro2::Span;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use syn::visit::Visit;
 
-use super::walker::Language;
+use super::walker::{DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_SYMBOLS, Language};
+
+/// A single-file extraction cannot retain more declarations than the native
+/// map builder retains in total. Callers beyond this cap receive only the
+/// bounded prefix; unmapped diff hunks conservatively become file seeds.
+const MAX_SYMBOLS_PER_FILE: usize = DEFAULT_MAX_SYMBOLS;
+/// Match the native per-file source cap before invoking the Rust AST parser.
+const MAX_RUST_AST_SOURCE_BYTES: usize = DEFAULT_MAX_FILE_BYTES as usize;
 
 /// Kind of declaration the regex matched. Coarse enough that it's
 /// comparable across languages; refines into language-specific kinds
@@ -86,6 +97,11 @@ pub struct Symbol {
     pub kind: SymbolKind,
     /// 1-indexed line number where the declaration starts.
     pub line: u32,
+    /// Inclusive end line of a parser-certified balanced brace body. `None`
+    /// means the Rust parser could not prove an extent; consumers must
+    /// use a file-level fallback instead of estimating one from declarations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_end: Option<u32>,
 }
 
 /// Public entry — given source text + language, return all
@@ -104,10 +120,14 @@ pub fn extract_symbols(text: &str, language: Language) -> Vec<Symbol> {
                 // capture group 1.
                 if let Some(name_match) = captures.get(1) {
                     let name = name_match.as_str().to_string();
+                    if out.len() == MAX_SYMBOLS_PER_FILE {
+                        return out;
+                    }
                     out.push(Symbol {
                         name,
                         kind: *kind,
                         line: (line_idx as u32) + 1,
+                        line_end: None,
                     });
                     // Once a line matches one pattern don't try the
                     // others — prevents `fn foo(x: SomeStruct)` from
@@ -118,7 +138,87 @@ pub fn extract_symbols(text: &str, language: Language) -> Vec<Symbol> {
             }
         }
     }
+    if language == Language::Rust {
+        apply_rust_function_extents(text, &mut out);
+    }
     out
+}
+
+/// Populate inclusive function extents from one complete Rust AST parse.
+///
+/// Syn owns Rust's lexical and delimiter rules, so raw strings, lifetimes,
+/// destructuring parameters, const generics, and multiline return types cannot
+/// be mistaken for a function body. A parse error leaves all extents unknown:
+/// downstream diff mapping then produces a file seed instead of a guessed
+/// declaration seed.
+fn apply_rust_function_extents(text: &str, symbols: &mut [Symbol]) {
+    if text.len() > MAX_RUST_AST_SOURCE_BYTES {
+        return;
+    }
+    let Ok(file) = syn::parse_file(text) else {
+        return;
+    };
+    let mut collector = RustFunctionExtents::default();
+    collector.visit_file(&file);
+    for symbol in symbols
+        .iter_mut()
+        .filter(|symbol| symbol.kind == SymbolKind::Function)
+    {
+        symbol.line_end = collector
+            .extents
+            .get(&(symbol.name.clone(), symbol.line))
+            .copied();
+    }
+}
+
+#[derive(Default)]
+struct RustFunctionExtents {
+    extents: BTreeMap<(String, u32), u32>,
+}
+
+impl RustFunctionExtents {
+    fn record(&mut self, ident: &syn::Ident, function_span: Span, close_span: Span) {
+        let start = function_span.start().line;
+        let end = close_span.end().line;
+        if let (Ok(start), Ok(end)) = (u32::try_from(start), u32::try_from(end))
+            && end >= start
+        {
+            self.extents.insert((ident.to_string(), start), end);
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for RustFunctionExtents {
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        // Regex extraction records the physical function-keyword line, which
+        // can differ from an outer attribute's span start.
+        self.record(
+            &item.sig.ident,
+            item.sig.fn_token.span,
+            item.block.brace_token.span.close(),
+        );
+        syn::visit::visit_item_fn(self, item);
+    }
+
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        self.record(
+            &item.sig.ident,
+            item.sig.fn_token.span,
+            item.block.brace_token.span.close(),
+        );
+        syn::visit::visit_impl_item_fn(self, item);
+    }
+
+    fn visit_trait_item_fn(&mut self, item: &'ast syn::TraitItemFn) {
+        if let Some(body) = &item.default {
+            self.record(
+                &item.sig.ident,
+                item.sig.fn_token.span,
+                body.brace_token.span.close(),
+            );
+        }
+        syn::visit::visit_trait_item_fn(self, item);
+    }
 }
 
 /// Compiled regex registry per language. Lazy-initialised because
@@ -421,6 +521,130 @@ struct Point { int x; int y; };
         let s = extract_symbols(text, Language::Rust);
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].line, 2);
+    }
+
+    #[test]
+    fn rust_balanced_extents_cover_multiline_and_nested_function_bodies() {
+        let source = concat!(
+            "fn outer(\n",
+            "    input: u32,\n",
+            ") -> u32 {\n",
+            "    fn inner() {\n",
+            "        if input > 0 { println!(\"{not a brace}\"); }\n",
+            "    }\n",
+            "    inner();\n",
+            "    input\n",
+            "}\n",
+        );
+        let symbols = extract_symbols(source, Language::Rust);
+        let outer = symbols
+            .iter()
+            .find(|symbol| symbol.name == "outer")
+            .unwrap();
+        let inner = symbols
+            .iter()
+            .find(|symbol| symbol.name == "inner")
+            .unwrap();
+        assert_eq!(outer.line, 1);
+        assert_eq!(outer.line_end, Some(9));
+        assert_eq!(inner.line, 4);
+        assert_eq!(inner.line_end, Some(6));
+    }
+
+    #[test]
+    fn rust_extent_stays_unknown_for_unbalanced_or_semicolon_declarations() {
+        let trait_method = extract_symbols("fn declaration_only();\n", Language::Rust);
+        assert_eq!(trait_method[0].line_end, None);
+        let unbalanced = extract_symbols("fn broken() {\n", Language::Rust);
+        assert_eq!(unbalanced[0].line_end, None);
+    }
+
+    #[test]
+    fn rust_ast_extents_cover_raw_strings_lifetimes_and_complex_headers() {
+        let raw = extract_symbols(
+            r##"fn raw() { let text = r#" quote " } hidden "#; }"##,
+            Language::Rust,
+        );
+        assert_eq!(raw[0].line_end, Some(1));
+        let lifetime = extract_symbols(
+            "fn borrow<'a>(value: &'a str) { drop(value); }\n",
+            Language::Rust,
+        );
+        assert_eq!(lifetime[0].line_end, Some(1));
+        let return_type_const =
+            extract_symbols("fn array() -> [u8; { 1 + 1 }] { [0; 2] }\n", Language::Rust);
+        assert_eq!(return_type_const[0].line_end, Some(1));
+        let destructured = extract_symbols(
+            "fn take(Foo { value }: Foo) { drop(value); }\n",
+            Language::Rust,
+        );
+        assert_eq!(destructured[0].line_end, Some(1));
+        let multiline_const = extract_symbols(
+            "fn generic<\n    const N: usize = { 1 + 1 },\n>() {\n    let _ = N;\n}\n",
+            Language::Rust,
+        );
+        assert_eq!(multiline_const[0].line_end, Some(5));
+    }
+
+    #[test]
+    fn rust_ast_extent_uses_function_keyword_line_after_outer_attributes() {
+        let symbols = extract_symbols(
+            "#[inline]\nfn attributed() {\n    body();\n}\n",
+            Language::Rust,
+        );
+        assert_eq!(symbols[0].line, 2);
+        assert_eq!(symbols[0].line_end, Some(4));
+    }
+
+    #[test]
+    fn rust_ast_extents_cover_impl_and_trait_default_methods_only() {
+        let symbols = extract_symbols(
+            concat!(
+                "impl Widget {\n",
+                "    fn method(&self) {\n",
+                "        work();\n",
+                "    }\n",
+                "}\n",
+                "trait Behavior {\n",
+                "    fn required(&self);\n",
+                "    fn defaulted(&self) {\n",
+                "        work();\n",
+                "    }\n",
+                "}\n",
+            ),
+            Language::Rust,
+        );
+        assert_eq!(
+            symbols
+                .iter()
+                .find(|symbol| symbol.name == "method")
+                .unwrap()
+                .line_end,
+            Some(4)
+        );
+        assert_eq!(
+            symbols
+                .iter()
+                .find(|symbol| symbol.name == "required")
+                .unwrap()
+                .line_end,
+            None
+        );
+        assert_eq!(
+            symbols
+                .iter()
+                .find(|symbol| symbol.name == "defaulted")
+                .unwrap()
+                .line_end,
+            Some(10)
+        );
+    }
+
+    #[test]
+    fn malformed_rust_leaves_every_function_extent_unknown() {
+        let symbols = extract_symbols("fn valid() {}\nfn broken( {\n", Language::Rust);
+        assert_eq!(symbols[0].line_end, None);
+        assert_eq!(symbols[1].line_end, None);
     }
 
     #[test]

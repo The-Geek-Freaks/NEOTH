@@ -961,13 +961,37 @@ pub fn spawn_foreign_persist_writer(
                         &job.policy,
                     )
                     .map_err(|error| error.to_string());
-                    match persisted {
-                        Ok(commit) => Ok(AuthorizedInboundCommit {
-                            commit,
-                            effect_guard,
-                        }),
-                        Err(error) => Err(error),
-                    }
+                    persisted.and_then(|commit| {
+                            // P1-04: the durable receive transaction has completed before
+                            // we touch the independent process-global HLC mutex. Only a
+                            // canonical committed frame (or its fully bound duplicate) is
+                            // eligible: an old unbound receipt cannot lend an arbitrary
+                            // payload a trusted HLC/node identity.
+                            if matches!(
+                                &commit,
+                                super::durable_sync::InboundCommit::Committed(_)
+                                    | super::durable_sync::InboundCommit::Duplicate(_)
+                            ) {
+                                let peer_header = crate::wal::frame::decode_frame(&job.frame.payload)
+                                    .map_err(|error| {
+                                        format!(
+                                            "durably committed mesh frame could not be re-decode for HLC merge: {error}"
+                                        )
+                                    })?;
+                                crate::wal::hlc::merge_global_hlc_after_authenticated_receive(
+                                    &peer_header.header,
+                                )
+                                .map_err(|error| {
+                                    format!(
+                                        "durably committed mesh frame failed HLC receive merge: {error}"
+                                    )
+                                })?;
+                            }
+                            Ok(AuthorizedInboundCommit {
+                                commit,
+                                effect_guard,
+                            })
+                        })
                 }
                 Err(error) => Err(format!("membership_revoked: {error}")),
             };
@@ -2735,88 +2759,126 @@ mod tests {
         assert_eq!(n, 0, "fresh table is empty");
     }
 
-    #[tokio::test]
-    async fn foreign_persist_writer_ingests_submitted_jobs() {
+    #[test]
+    fn foreign_persist_writer_ingests_submitted_jobs() {
         use sha2::{Digest as _, Sha256};
 
         // DES-13: the channel-based writer opens a real views.db, drains jobs,
         // and persists them — verified end-to-end without a live cluster.
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("views.db");
-        let (tx, handle) = spawn_foreign_persist_writer(db.clone());
-        let inner = br#"{"event_count":1}"#;
-        let header = crate::wal::HeaderBuilder::new(0x94, inner).build();
-        let payload = crate::wal::frame::encode_frame(&header, inner);
-        let timestamp = gossip_payload_timestamp_unix(&payload).unwrap();
-        let membership_grant = foreign_test_grant(dir.path(), "aaaa1111");
-        let origin = PeerPubkey::new(membership_grant.stable_node_id().as_str().to_string());
-        let mut vector_clock = VectorClock::new();
-        assert!(
-            vector_clock.tick(&origin),
-            "the submitted frame must carry its authenticated origin slot"
+        let _env = crate::test_env::lock();
+        struct GlobalHlcRestore(crate::wal::Hlc);
+        impl Drop for GlobalHlcRestore {
+            fn drop(&mut self) {
+                *crate::wal::GLOBAL_HLC
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = self.0;
+            }
+        }
+        let _global_hlc_restore = GlobalHlcRestore(
+            *crate::wal::GLOBAL_HLC
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
         );
-        let frame = test_gossip_frame(vector_clock, origin.clone(), 1, timestamp, payload.clone());
-        let envelope = SyncEnvelope {
-            version: SYNC_ENVELOPE_VERSION,
-            content_id: format!("metadata:{}", restore_hex_digest(&Sha256::digest(&payload))),
-            updated_at_unix: timestamp,
-            content: SyncContent::Metadata {
-                event_type: 0x94,
-                event_subtype: 0,
-                wal_frame: payload,
-            },
-        };
-        let frame = GossipFrame {
-            content_sha256: envelope.content_sha256(),
-            envelope,
-            ..frame
-        };
-        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-        tx.send(ForeignPersistJob {
-            membership_grant: membership_grant.clone(),
-            frame: frame.clone(),
-            policy: GossipPolicy::default(),
-            reply: reply_tx,
-        })
-        .await
-        .unwrap();
-        let first = reply_rx.await.unwrap().unwrap();
-        assert!(matches!(
-            first.commit,
-            crate::cluster::durable_sync::InboundCommit::Committed(_)
-        ));
-        first.effect_guard.finish().unwrap();
-        // A re-delivered (duplicate) frame must be an idempotent no-op.
-        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-        tx.send(ForeignPersistJob {
-            membership_grant: membership_grant.clone(),
-            frame,
-            policy: GossipPolicy::default(),
-            reply: reply_tx,
-        })
-        .await
-        .unwrap();
-        let duplicate = reply_rx.await.unwrap().unwrap();
-        assert!(matches!(
-            duplicate.commit,
-            crate::cluster::durable_sync::InboundCommit::Duplicate(_)
-        ));
-        duplicate.effect_guard.finish().unwrap();
-        drop(tx); // closes the channel → the blocking loop exits
-        handle.await.unwrap();
+        // Keep process-global exclusion and restoration outside the async
+        // future, including runtime shutdown if a persistence assertion fails.
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let dir = tempfile::tempdir().unwrap();
+                let db = dir.path().join("views.db");
+                let (tx, handle) = spawn_foreign_persist_writer(db.clone());
+                let inner = br#"{"event_count":1}"#;
+                let peer_hlc = crate::wal::Hlc::new(u64::MAX - 1, 41).unwrap();
+                let peer_node = crate::wal::NodeId::from_bytes([0xA5; 16]);
+                let mut header = crate::wal::HeaderBuilder::new(0x94, inner).build();
+                header.hlc = peer_hlc;
+                header.node_id = peer_node;
+                let payload = crate::wal::frame::encode_frame(&header, inner);
+                let timestamp = gossip_payload_timestamp_unix(&payload).unwrap();
+                let membership_grant = foreign_test_grant(dir.path(), "aaaa1111");
+                let origin =
+                    PeerPubkey::new(membership_grant.stable_node_id().as_str().to_string());
+                let mut vector_clock = VectorClock::new();
+                assert!(
+                    vector_clock.tick(&origin),
+                    "the submitted frame must carry its authenticated origin slot"
+                );
+                let frame =
+                    test_gossip_frame(vector_clock, origin.clone(), 1, timestamp, payload.clone());
+                let envelope = SyncEnvelope {
+                    version: SYNC_ENVELOPE_VERSION,
+                    content_id: format!(
+                        "metadata:{}",
+                        restore_hex_digest(&Sha256::digest(&payload))
+                    ),
+                    updated_at_unix: timestamp,
+                    content: SyncContent::Metadata {
+                        event_type: 0x94,
+                        event_subtype: 0,
+                        wal_frame: payload,
+                    },
+                };
+                let frame = GossipFrame {
+                    content_sha256: envelope.content_sha256(),
+                    envelope,
+                    ..frame
+                };
+                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+                tx.send(ForeignPersistJob {
+                    membership_grant: membership_grant.clone(),
+                    frame: frame.clone(),
+                    policy: GossipPolicy::default(),
+                    reply: reply_tx,
+                })
+                .await
+                .unwrap();
+                let first = reply_rx.await.unwrap().unwrap();
+                assert!(matches!(
+                    first.commit,
+                    crate::cluster::durable_sync::InboundCommit::Committed(_)
+                ));
+                first.effect_guard.finish().unwrap();
+                assert_eq!(
+                    *crate::wal::GLOBAL_HLC
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                    crate::wal::Hlc::new(u64::MAX - 1, 42).unwrap(),
+                    "authenticated receive merges the durable peer header after commit"
+                );
+                // A re-delivered (duplicate) frame must be an idempotent no-op.
+                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+                tx.send(ForeignPersistJob {
+                    membership_grant: membership_grant.clone(),
+                    frame,
+                    policy: GossipPolicy::default(),
+                    reply: reply_tx,
+                })
+                .await
+                .unwrap();
+                let duplicate = reply_rx.await.unwrap().unwrap();
+                assert!(matches!(
+                    duplicate.commit,
+                    crate::cluster::durable_sync::InboundCommit::Duplicate(_)
+                ));
+                duplicate.effect_guard.finish().unwrap();
+                drop(tx); // closes the channel → the blocking loop exits
+                handle.await.unwrap();
 
-        let conn = crate::memory::store::open(&db).unwrap();
-        let rows = list_foreign_events(&conn, Some(origin.as_str()), 10).unwrap();
-        assert_eq!(rows.len(), 1, "duplicate (pk,seq) collapses to one row");
-        assert_eq!(rows[0].stable_node_id, origin.as_str());
-        assert_eq!(rows[0].auth_epoch, membership_grant.auth_epoch().get());
-        assert_eq!(
-            rows[0].membership_epoch,
-            membership_grant.membership_epoch().get()
-        );
-        assert_eq!(rows[0].fence_state, "active");
-        assert_eq!(rows[0].origin_seq, 1);
-        assert_eq!(rows[0].event_type, 0x94);
+                let conn = crate::memory::store::open(&db).unwrap();
+                let rows = list_foreign_events(&conn, Some(origin.as_str()), 10).unwrap();
+                assert_eq!(rows.len(), 1, "duplicate (pk,seq) collapses to one row");
+                assert_eq!(rows[0].stable_node_id, origin.as_str());
+                assert_eq!(rows[0].auth_epoch, membership_grant.auth_epoch().get());
+                assert_eq!(
+                    rows[0].membership_epoch,
+                    membership_grant.membership_epoch().get()
+                );
+                assert_eq!(rows[0].fence_state, "active");
+                assert_eq!(rows[0].origin_seq, 1);
+                assert_eq!(rows[0].event_type, 0x94);
+            });
     }
 
     #[test]

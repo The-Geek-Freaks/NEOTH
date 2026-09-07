@@ -39,14 +39,15 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::updater::budget::{UpdaterDeadlinePhase, UpdaterRunClock, UpdaterRunLimits};
 #[cfg(test)]
 use crate::updater::pipeline::ComponentSpec;
 use crate::updater::pipeline::run_updater_pass;
 use crate::wal::events::{EVENT_TYPE_UPDATER_TASK_FIRED, EVENT_TYPE_UPDATER_TASK_RESULT};
 use crate::wal::payloads_u04::{
-    ComponentOutcome, UpdaterPassIdentity, UpdaterPassLane, UpdaterTaskFiredPayload,
-    UpdaterTaskKind, UpdaterTaskResultPayload, UpdaterTerminalOutcome,
-    updater_fired_receipt_sha256,
+    ComponentOutcome, UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION, UpdaterLeafReceiptBinding,
+    UpdaterPassIdentity, UpdaterPassLane, UpdaterTaskFiredPayload, UpdaterTaskKind,
+    UpdaterTaskResultPayload, UpdaterTerminalOutcome, updater_fired_receipt_sha256,
 };
 use crate::wal::writer::WalWriterHandle;
 use crate::wal::{EventFlags, HeaderBuilder};
@@ -294,10 +295,9 @@ fn effective_lane_schedules(config: &crate::config::FreedomConfig) -> Vec<LaneSc
 
 fn recurring_egress_gate(lane: RecurringUpdateLane) -> crate::updater::pipeline::GateDecision {
     match lane {
-        // Their exact request-bound authority is wired, but admitting either
-        // lane before R3-18B would let a stalled transport, filesystem effect,
-        // blocking stage helper or terminal append hold reload/shutdown
-        // forever. Keep them inert until the owned lifecycle is bounded.
+        // The HTTP-only plumbing is present but has not yet passed the full
+        // native lifecycle acceptance gate, including bounded terminal drain.
+        // SelfStage still reaches blocking local work.  Keep both denied.
         RecurringUpdateLane::NeothSelfProbe | RecurringUpdateLane::SelfStage => {
             crate::updater::pipeline::GateDecision::Deny {
                 reason: UNBOUNDED_RECURRING_LIFECYCLE_DENIED.to_string(),
@@ -864,6 +864,7 @@ where
         duration_ms: started.elapsed().as_millis().min(u32::MAX as u128) as u32,
         terminal_outcome: Some(terminal_outcome),
         fired_receipt_sha256: Some(fired_receipt_sha256),
+        leaf_receipt_binding: None,
         components: vec![component],
     };
     append_updater_result(&result, writer).await?;
@@ -889,13 +890,24 @@ async fn run_authorized_self_probe(
 ) -> Result<UpdaterTaskResultPayload, String> {
     let task_kind = UpdaterTaskKind::NeothSelf;
     let fired_receipt_sha256 = append_updater_fired(&identity, task_kind, writer).await?;
+    let pass_id = identity
+        .correlatable_pass_id_for(task_kind)
+        .ok_or_else(|| "authorized updater probe requires a bound outer pass identity".to_string())?
+        .to_string();
+    // Admission happens only after FIRED is durable.  Every leaf receives a
+    // clone of this one monotonic clock; no request can restart its budget.
+    let run_clock = UpdaterRunLimits::default_http_probe()
+        .and_then(UpdaterRunClock::start)
+        .map_err(|error| format!("admit bounded updater probe pass: {error}"))?;
+    let authority = crate::updater::self_update::RecurringSelfUpdateAuthority::for_probe(
+        writer.clone(),
+        Arc::clone(&snapshot),
+        pass_id,
+        run_clock.clone(),
+    );
     let started = std::time::Instant::now();
     let current = crate::updater::self_update::current_version();
     let checked = std::panic::AssertUnwindSafe(async {
-        let authority = crate::updater::self_update::RecurringSelfUpdateAuthority::for_probe(
-            writer.clone(),
-            Arc::clone(&snapshot),
-        );
         let config = &snapshot.config().auto_update;
         crate::updater::self_update::check_for_update_channel_authorized(
             &authority,
@@ -906,7 +918,26 @@ async fn run_authorized_self_probe(
     })
     .catch_unwind()
     .await;
-    let (component, terminalized_failure, terminal_outcome) = match checked {
+    let terminal_receipts = authority
+        .terminal_receipts()
+        .map_err(|error| format!("collect acknowledged updater leaf receipts: {error}"))?;
+    if authority.outer_terminal_indeterminate() {
+        // An intent may be durable while its terminal WAL acknowledgement is
+        // unknown.  Do not manufacture an outer RESULT around that gap; leave
+        // the FIRED/intent for strict recovery to synthesize an interrupted
+        // terminal and its matching outer pass closure.
+        return Err(
+            "updater leaf terminal acknowledgement is indeterminate; outer RESULT withheld for recovery"
+                .to_string(),
+        );
+    }
+    let leaf_receipt_binding =
+        (!terminal_receipts.is_empty()).then_some(UpdaterLeafReceiptBinding {
+            schema_version: UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION,
+            budgets: run_clock.budgets().clone(),
+            terminal_receipts,
+        });
+    let (component, mut terminalized_failure, mut terminal_outcome) = match checked {
         Ok(Ok(check)) if check.needs_update => (
             ComponentOutcome::update_available("neoth", check.current, check.latest),
             None,
@@ -955,6 +986,16 @@ async fn run_authorized_self_probe(
             )
         }
     };
+    if run_clock
+        .remaining(UpdaterDeadlinePhase::Terminal)
+        .is_zero()
+    {
+        terminal_outcome = UpdaterTerminalOutcome::TimedOut;
+        terminalized_failure = Some(TerminalizedPassFailure::RetryNextCadence(
+            "updater pass terminal acknowledgement exceeded its inherited absolute deadline"
+                .to_string(),
+        ));
+    }
     let result = UpdaterTaskResultPayload {
         identity,
         task_kind,
@@ -962,6 +1003,7 @@ async fn run_authorized_self_probe(
         duration_ms: started.elapsed().as_millis().min(u32::MAX as u128) as u32,
         terminal_outcome: Some(terminal_outcome),
         fired_receipt_sha256: Some(fired_receipt_sha256),
+        leaf_receipt_binding,
         components: vec![component],
     };
     append_updater_result(&result, writer).await?;
@@ -1095,6 +1137,7 @@ fn failed_probe_result(
         duration_ms: 0,
         terminal_outcome: None,
         fired_receipt_sha256: None,
+        leaf_receipt_binding: None,
         components: vec![ComponentOutcome::failed(
             format!("{}_pass", task_kind.as_str()),
             "unknown",
@@ -1129,6 +1172,9 @@ async fn append_updater_result(
     result: &crate::wal::payloads_u04::UpdaterTaskResultPayload,
     writer: &WalWriterHandle,
 ) -> Result<(), String> {
+    result
+        .validate_leaf_receipt_binding()
+        .map_err(|error| format!("validate outer updater leaf receipt binding: {error}"))?;
     let body = serde_json::to_vec(result).map_err(|error| format!("serde result: {error}"))?;
     let header = HeaderBuilder::new(EVENT_TYPE_UPDATER_TASK_RESULT, &body)
         .flags(EventFlags::SYNTHETIC)

@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::root_identity::CanonicalRepoRoot;
-use super::snapshot::{RebuildOptions, rebuild_snapshot_cancellable, stable_source_fingerprint};
+use super::snapshot::{
+    RebuildOptions, rebuild_snapshot_delta_cancellable, stable_source_fingerprint,
+};
 use super::walker::ScanCancellation;
 
 const MAX_LIFECYCLE_TEXT_BYTES: i64 = 64 * 1024;
@@ -518,7 +520,7 @@ fn refresh_with_repair_checkpoint(
             .owner_id,
         prior.as_ref(),
     )?;
-    let snapshot = match rebuild_snapshot_cancellable(
+    let snapshot = match rebuild_snapshot_delta_cancellable(
         &root,
         database_path,
         RebuildOptions::default(),
@@ -1078,15 +1080,51 @@ mod tests {
         let added = normal_refresh(&database, &repo);
         prior = published(&added);
         assert!(prior.index_generation > edited.published_generation.unwrap().index_generation);
+        let canonical = CanonicalRepoRoot::discover(&repo).unwrap();
+        let connection = super::super::persist::open_read_only(&database).unwrap();
+        assert_eq!(
+            super::super::persist::load_map(&connection, canonical.display())
+                .unwrap()
+                .unwrap()
+                .files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["one.rs", "two.rs"]
+        );
+        drop(connection);
 
         std::fs::remove_file(repo.join("two.rs")).unwrap();
         let removed = normal_refresh(&database, &repo);
         prior = published(&removed);
         assert!(prior.index_generation > added.published_generation.unwrap().index_generation);
+        let connection = super::super::persist::open_read_only(&database).unwrap();
+        assert_eq!(
+            super::super::persist::load_map(&connection, canonical.display())
+                .unwrap()
+                .unwrap()
+                .files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["one.rs"]
+        );
+        drop(connection);
 
         std::fs::rename(repo.join("one.rs"), repo.join("renamed.rs")).unwrap();
         let renamed = normal_refresh(&database, &repo);
         assert!(published(&renamed).index_generation > prior.index_generation);
+        let connection = super::super::persist::open_read_only(&database).unwrap();
+        assert_eq!(
+            super::super::persist::load_map(&connection, canonical.display())
+                .unwrap()
+                .unwrap()
+                .files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["renamed.rs"]
+        );
     }
 
     #[test]
@@ -1314,6 +1352,54 @@ mod tests {
             inspect(&database, &repo).state,
             CodeMapLifecycleState::Fresh { .. }
         ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn repaired_fresh_open_wal_set_is_fresh_and_not_repaired_again() {
+        let workspace = tempdir().unwrap();
+        let repo = workspace.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        write_source(&repo, "lib.rs", "pub fn ready() {}\n");
+        let database = workspace.path().join("code_map.db");
+        std::fs::write(&database, b"corrupt sqlite database").unwrap();
+        let options = LifecycleRefreshOptions {
+            repair_corrupt: true,
+            cause: RefreshCause::ExplicitCorruptStoreRepair,
+            ..LifecycleRefreshOptions::default()
+        };
+
+        let repaired = refresh(
+            &database,
+            &repo,
+            options.clone(),
+            &LifecycleCancellation::new(),
+        )
+        .unwrap();
+        assert_eq!(repaired.outcome, RefreshOutcome::IndexedFirstTime);
+
+        let fresh_connection = rusqlite::Connection::open(&database).unwrap();
+        let journal_mode: String = fresh_connection
+            .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+        fresh_connection
+            .execute_batch(
+                "CREATE TABLE repair_wal_probe (id INTEGER); INSERT INTO repair_wal_probe VALUES (1);",
+            )
+            .unwrap();
+        let wal = PathBuf::from(format!("{}-wal", database.display()));
+        let shm = PathBuf::from(format!("{}-shm", database.display()));
+        assert!(wal.is_file());
+        assert!(shm.is_file());
+
+        assert!(matches!(
+            inspect(&database, &repo).state,
+            CodeMapLifecycleState::Fresh { .. }
+        ));
+        let reused = refresh(&database, &repo, options, &LifecycleCancellation::new()).unwrap();
+        assert_eq!(reused.outcome, RefreshOutcome::ReusedFresh);
+        drop(fresh_connection);
     }
 
     #[test]

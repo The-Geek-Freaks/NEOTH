@@ -21,7 +21,8 @@ use sha2::Sha256;
 
 use super::authority::{
     RecoveredUpdaterLeafIdentity, RecoveredUpdaterLeafIntent, RecoveredUpdaterLeafResult,
-    decode_and_validate_updater_leaf_intent, decode_and_validate_updater_leaf_result,
+    RecoveredUpdaterLeafTerminal, decode_and_validate_updater_leaf_intent,
+    decode_and_validate_updater_leaf_result, decode_updater_leaf_terminal_receipt,
     synthetic_interrupted_result_payload,
 };
 use crate::wal::events::{
@@ -29,11 +30,9 @@ use crate::wal::events::{
     ExtendedSubtype,
 };
 use crate::wal::payloads_u04::{
-    ComponentOutcome, UpdaterTaskFiredPayload, UpdaterTaskResultPayload, UpdaterTerminalOutcome,
-    updater_fired_receipt_sha256,
+    ComponentOutcome, MAX_UPDATER_LEAF_RECEIPTS_PER_PASS, UpdaterTaskFiredPayload,
+    UpdaterTaskResultPayload, UpdaterTerminalOutcome, updater_fired_receipt_sha256,
 };
-#[cfg(test)]
-use crate::wal::payloads_u04::{UpdaterPassIdentity, UpdaterTaskKind};
 #[cfg(test)]
 use crate::wal::scan::for_each_frame_at_home;
 use crate::wal::scan::{
@@ -190,6 +189,7 @@ struct OpenUpdaterPass {
 #[derive(Default)]
 struct UpdaterPassScanState {
     open: HashMap<String, OpenUpdaterPass>,
+    terminal_leaves: HashMap<String, Vec<RecoveredUpdaterLeafTerminal>>,
     scanned: usize,
     terminal: usize,
 }
@@ -200,6 +200,31 @@ impl UpdaterPassScanState {
         frame: &crate::wal::frame::DecodedFrame<'_>,
         segment_name: &OsStr,
     ) -> Result<()> {
+        if frame.header.event_type == EVENT_TYPE_EXTENDED
+            && ExtendedSubtype::from_u8(frame.header.event_subtype)
+                == Some(ExtendedSubtype::UpdaterLeafResult)
+        {
+            let terminal =
+                decode_updater_leaf_terminal_receipt(frame.payload).with_context(|| {
+                    format!("decode updater leaf RESULT in WAL segment {segment_name:?}")
+                })?;
+            // Only a currently-open outer pass can later bind this leaf.
+            // Historical/interactive leaves are validated by their own
+            // reconciler and must not grow this pass-local scan state.
+            if !self.open.contains_key(&terminal.receipt.operation_id) {
+                return Ok(());
+            }
+            let leaves = self
+                .terminal_leaves
+                .entry(terminal.receipt.operation_id.clone())
+                .or_default();
+            anyhow::ensure!(
+                leaves.len() < MAX_UPDATER_LEAF_RECEIPTS_PER_PASS,
+                "updater pass recovery exceeds the {MAX_UPDATER_LEAF_RECEIPTS_PER_PASS}-leaf limit"
+            );
+            leaves.push(terminal);
+            return Ok(());
+        }
         if !matches!(
             frame.header.event_type,
             EVENT_TYPE_UPDATER_TASK_FIRED | EVENT_TYPE_UPDATER_TASK_RESULT
@@ -282,6 +307,38 @@ impl UpdaterPassScanState {
                     result.correlatable_fired_receipt() == Some(open.fired_receipt_sha256.as_str()),
                     "updater RESULT has an invalid or mismatched FIRED receipt for run_id {run_id}"
                 );
+                result.validate_leaf_receipt_binding().with_context(|| {
+                    format!("invalid updater leaf receipt binding for run_id {run_id}")
+                })?;
+                // Consume the observed leaves even if the outer payload omitted
+                // its binding.  A schema-v2 leaf carries an inherited budget,
+                // so allowing it to disappear behind a legacy-shaped RESULT
+                // would sever the durable outer-to-leaf relation.
+                let observed = self.terminal_leaves.remove(&run_id).unwrap_or_default();
+                match &result.leaf_receipt_binding {
+                    Some(binding) => {
+                        let observed_receipts = observed
+                            .iter()
+                            .map(|terminal| terminal.receipt.clone())
+                            .collect::<Vec<_>>();
+                        anyhow::ensure!(
+                            binding.terminal_receipts == observed_receipts,
+                            "updater outer RESULT leaf receipts do not exactly match preceding terminal leaves for run_id {run_id}"
+                        );
+                        anyhow::ensure!(
+                            observed.iter().all(|terminal| {
+                                terminal.run_budgets.as_ref() == Some(&binding.budgets)
+                            }),
+                            "updater outer RESULT leaf budgets do not exactly match its inherited pass budget for run_id {run_id}"
+                        );
+                    }
+                    None => anyhow::ensure!(
+                        observed
+                            .iter()
+                            .all(|terminal| terminal.run_budgets.is_none()),
+                        "updater outer RESULT omitted its required leaf receipt binding for budgeted leaf terminals in run_id {run_id}"
+                    ),
+                }
                 self.terminal = self
                     .terminal
                     .checked_add(1)
@@ -360,6 +417,7 @@ async fn append_interrupted_updater_pass(
         duration_ms: 0,
         terminal_outcome: Some(UpdaterTerminalOutcome::Interrupted),
         fired_receipt_sha256: Some(open.fired_receipt_sha256),
+        leaf_receipt_binding: None,
         components: vec![ComponentOutcome::failed(
             lane.as_str(),
             "unknown",
@@ -989,6 +1047,12 @@ mod tests {
         UpdaterLeafAuthorizer, UpdaterLeafEffect, UpdaterLeafOutcomeCode, UpdaterLeafRequest,
         UpdaterLeafSuccess, UpdaterProgram, serialize_updater_leaf_intent_payload,
     };
+    use crate::updater::budget::UpdaterRunBudgets;
+    use crate::wal::payloads_u04::{
+        UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION, UpdaterLeafReceiptBinding,
+        UpdaterLeafTerminalReceipt, UpdaterPassIdentity, UpdaterPassLane, UpdaterTaskKind,
+        updater_leaf_result_receipt_sha256,
+    };
     use serde_json::{Value, json};
     use sha2::Digest as _;
 
@@ -1008,6 +1072,35 @@ mod tests {
             128 * 1024,
         )
         .unwrap()
+    }
+
+    fn inherited_test_budgets() -> UpdaterRunBudgets {
+        UpdaterRunBudgets::from_absolute(10_000, 10_100, 10_200, 10_300, 10_400).unwrap()
+    }
+
+    fn bound_http_request(
+        operation: &str,
+        request: &str,
+        path: &str,
+        budgets: &UpdaterRunBudgets,
+    ) -> UpdaterLeafRequest {
+        http_request(operation, request, path)
+            .with_run_budgets(budgets.clone())
+            .unwrap()
+    }
+
+    fn terminal_receipt(
+        operation: &str,
+        request: &str,
+        request_binding_sha256: &str,
+        result_payload: &[u8],
+    ) -> UpdaterLeafTerminalReceipt {
+        UpdaterLeafTerminalReceipt {
+            operation_id: operation.to_string(),
+            request_id: request.to_string(),
+            request_binding_sha256: request_binding_sha256.to_string(),
+            result_receipt_sha256: updater_leaf_result_receipt_sha256(result_payload),
+        }
     }
 
     fn process_request(operation: &str, request: &str) -> UpdaterLeafRequest {
@@ -1203,6 +1296,209 @@ mod tests {
 
         drop(writer);
         join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn outer_result_commits_the_exact_ordered_budgeted_leaf_terminals() {
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join, segment) = writer_for_home(home.path());
+        let identity = UpdaterPassIdentity::new(UpdaterPassLane::NeothSelfProbe, 7);
+        let operation = identity
+            .correlatable_pass_id_for(UpdaterTaskKind::NeothSelf)
+            .unwrap()
+            .to_string();
+        let budgets = inherited_test_budgets();
+        let fired = UpdaterTaskFiredPayload {
+            identity: identity.clone(),
+            task_kind: UpdaterTaskKind::NeothSelf,
+            ts_unix: 10,
+        };
+        let fired_body = serde_json::to_vec(&fired).unwrap();
+        let fired_receipt = updater_fired_receipt_sha256(&fired_body);
+        append_updater_pass_payload(&writer, EVENT_TYPE_UPDATER_TASK_FIRED, fired_body).await;
+
+        let mut receipts = Vec::new();
+        for (request_id, path) in [
+            ("leaf-metadata-1", "/releases/latest"),
+            ("leaf-checksum-2", "/releases/checksums"),
+        ] {
+            let request = bound_http_request(&operation, request_id, path, &budgets);
+            let intent = intent_payload(&request);
+            let terminal = interrupted_payload(&intent);
+            append_payload(&writer, ExtendedSubtype::UpdaterLeafIntent, intent).await;
+            append_payload_with_flags(
+                &writer,
+                ExtendedSubtype::UpdaterLeafResult,
+                terminal.clone(),
+                EventFlags::SYNTHETIC,
+            )
+            .await;
+            receipts.push(terminal_receipt(
+                &operation,
+                request_id,
+                request.binding_sha256(),
+                &terminal,
+            ));
+        }
+
+        let result = UpdaterTaskResultPayload {
+            identity,
+            task_kind: UpdaterTaskKind::NeothSelf,
+            ts_unix: 11,
+            duration_ms: 1,
+            terminal_outcome: Some(UpdaterTerminalOutcome::Interrupted),
+            fired_receipt_sha256: Some(fired_receipt),
+            leaf_receipt_binding: Some(UpdaterLeafReceiptBinding {
+                schema_version: UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION,
+                budgets,
+                terminal_receipts: receipts,
+            }),
+            components: vec![],
+        };
+        append_updater_pass_payload(
+            &writer,
+            EVENT_TYPE_UPDATER_TASK_RESULT,
+            serde_json::to_vec(&result).unwrap(),
+        )
+        .await;
+
+        let summary = reconcile_unfinished_updater_leaves(
+            home.path(),
+            &segment,
+            &writer,
+            UpdaterReconcilePhase::Startup,
+        )
+        .await
+        .unwrap();
+        assert_eq!(summary.already_terminal, 2);
+        assert_eq!(summary.interrupted, 0);
+
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn outer_result_rejects_missing_duplicate_reordered_cross_pass_budget_mismatch_and_missing_binding()
+     {
+        #[derive(Clone, Copy)]
+        enum Mutation {
+            Missing,
+            Duplicate,
+            Reordered,
+            CrossPass,
+            BudgetMismatch,
+            MissingBinding,
+        }
+        for mutation in [
+            Mutation::Missing,
+            Mutation::Duplicate,
+            Mutation::Reordered,
+            Mutation::CrossPass,
+            Mutation::BudgetMismatch,
+            Mutation::MissingBinding,
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let (writer, join, segment) = writer_for_home(home.path());
+            let identity = UpdaterPassIdentity::new(UpdaterPassLane::NeothSelfProbe, 7);
+            let operation = identity
+                .correlatable_pass_id_for(UpdaterTaskKind::NeothSelf)
+                .unwrap()
+                .to_string();
+            let budgets = inherited_test_budgets();
+            let fired = UpdaterTaskFiredPayload {
+                identity: identity.clone(),
+                task_kind: UpdaterTaskKind::NeothSelf,
+                ts_unix: 10,
+            };
+            let fired_body = serde_json::to_vec(&fired).unwrap();
+            let fired_receipt = updater_fired_receipt_sha256(&fired_body);
+            append_updater_pass_payload(&writer, EVENT_TYPE_UPDATER_TASK_FIRED, fired_body).await;
+
+            let mut receipts = Vec::new();
+            for (request_id, path) in [
+                ("leaf-metadata-1", "/releases/latest"),
+                ("leaf-checksum-2", "/releases/checksums"),
+            ] {
+                let request = bound_http_request(&operation, request_id, path, &budgets);
+                let intent = intent_payload(&request);
+                let terminal = interrupted_payload(&intent);
+                append_payload(&writer, ExtendedSubtype::UpdaterLeafIntent, intent).await;
+                append_payload_with_flags(
+                    &writer,
+                    ExtendedSubtype::UpdaterLeafResult,
+                    terminal.clone(),
+                    EventFlags::SYNTHETIC,
+                )
+                .await;
+                receipts.push(terminal_receipt(
+                    &operation,
+                    request_id,
+                    request.binding_sha256(),
+                    &terminal,
+                ));
+            }
+
+            let binding_budgets = match mutation {
+                Mutation::BudgetMismatch => {
+                    UpdaterRunBudgets::from_absolute(10_000, 10_101, 10_201, 10_301, 10_401)
+                        .unwrap()
+                }
+                _ => budgets.clone(),
+            };
+            match mutation {
+                Mutation::Missing => {
+                    receipts.pop();
+                }
+                Mutation::Duplicate => {
+                    receipts[1] = receipts[0].clone();
+                }
+                Mutation::Reordered => receipts.reverse(),
+                Mutation::CrossPass => receipts[0].operation_id = uuid::Uuid::now_v7().to_string(),
+                Mutation::BudgetMismatch | Mutation::MissingBinding => {}
+            }
+            let leaf_receipt_binding = match mutation {
+                Mutation::MissingBinding => None,
+                _ => Some(UpdaterLeafReceiptBinding {
+                    schema_version: UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION,
+                    budgets: binding_budgets,
+                    terminal_receipts: receipts,
+                }),
+            };
+            let result = UpdaterTaskResultPayload {
+                identity,
+                task_kind: UpdaterTaskKind::NeothSelf,
+                ts_unix: 11,
+                duration_ms: 1,
+                terminal_outcome: Some(UpdaterTerminalOutcome::Interrupted),
+                fired_receipt_sha256: Some(fired_receipt),
+                leaf_receipt_binding,
+                components: vec![],
+            };
+            append_updater_pass_payload(
+                &writer,
+                EVENT_TYPE_UPDATER_TASK_RESULT,
+                serde_json::to_vec(&result).unwrap(),
+            )
+            .await;
+            let error = reconcile_unfinished_updater_leaves(
+                home.path(),
+                &segment,
+                &writer,
+                UpdaterReconcilePhase::Startup,
+            )
+            .await
+            .unwrap_err();
+            let diagnostic = format!("{error:#}");
+            assert!(
+                diagnostic.contains("leaf receipt")
+                    || diagnostic.contains("leaf budgets")
+                    || diagnostic.contains("does not match"),
+                "unexpected receipt-rejection diagnostic: {diagnostic}"
+            );
+
+            drop(writer);
+            join.await.unwrap();
+        }
     }
 
     async fn restart_writer_for_home(

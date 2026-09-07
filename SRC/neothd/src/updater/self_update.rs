@@ -11,7 +11,8 @@ use std::collections::BTreeSet;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -28,6 +29,8 @@ use crate::updater::authority::{
     UpdaterLeafAuthorizer, UpdaterLeafEffect, UpdaterLeafFailure, UpdaterLeafFailureKind,
     UpdaterLeafOutcomeCode, UpdaterLeafRequest, UpdaterLeafSuccess, UpdaterStageCompletion,
 };
+use crate::updater::budget::UpdaterRunClock;
+use crate::wal::payloads_u04::UpdaterLeafTerminalReceipt;
 use crate::wal::writer::WalWriterHandle;
 #[cfg(windows)]
 use crate::windows_nt::{NtCreateFile, NtIoStatusBlock, NtObjectAttributes, NtUnicodeString};
@@ -228,18 +231,24 @@ pub(crate) struct RecurringSelfUpdateAuthority {
     accepted_epoch: u64,
     lane: UpdaterAuthorityLane,
     next_request: AtomicU64,
+    run_clock: Option<UpdaterRunClock>,
+    terminal_receipts: Mutex<Vec<UpdaterLeafTerminalReceipt>>,
+    outer_terminal_indeterminate: AtomicBool,
 }
 
 impl RecurringSelfUpdateAuthority {
     pub(crate) fn for_probe(
         writer: WalWriterHandle,
         snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+        outer_pass_id: String,
+        run_clock: UpdaterRunClock,
     ) -> Self {
-        Self::new(
+        Self::new_bound(
             writer,
             snapshot,
             UpdaterAuthorityLane::NeothSelfProbe,
-            "self-probe",
+            outer_pass_id,
+            Some(run_clock),
         )
     }
 
@@ -247,7 +256,7 @@ impl RecurringSelfUpdateAuthority {
         writer: WalWriterHandle,
         snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
     ) -> Self {
-        Self::new(
+        Self::new_legacy(
             writer,
             snapshot,
             UpdaterAuthorityLane::SelfStage,
@@ -255,17 +264,14 @@ impl RecurringSelfUpdateAuthority {
         )
     }
 
-    fn new(
+    fn new_bound(
         writer: WalWriterHandle,
         snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
         lane: UpdaterAuthorityLane,
-        lane_id: &str,
+        operation_id: String,
+        run_clock: Option<UpdaterRunClock>,
     ) -> Self {
         let accepted_epoch = snapshot.epoch();
-        let operation_id = format!(
-            "{lane_id}-{accepted_epoch}-{}",
-            uuid::Uuid::now_v7().simple()
-        );
         Self {
             authorizer: Arc::new(UpdaterLeafAuthorizer::for_snapshot(
                 writer,
@@ -276,7 +282,35 @@ impl RecurringSelfUpdateAuthority {
             accepted_epoch,
             lane,
             next_request: AtomicU64::new(1),
+            run_clock,
+            terminal_receipts: Mutex::new(Vec::new()),
+            outer_terminal_indeterminate: AtomicBool::new(false),
         }
+    }
+
+    fn new_legacy(
+        writer: WalWriterHandle,
+        snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+        lane: UpdaterAuthorityLane,
+        lane_id: &str,
+    ) -> Self {
+        let operation_id = format!(
+            "{lane_id}-{}-{}",
+            snapshot.epoch(),
+            uuid::Uuid::now_v7().simple()
+        );
+        Self::new_bound(writer, snapshot, lane, operation_id, None)
+    }
+
+    pub(crate) fn terminal_receipts(&self) -> Result<Vec<UpdaterLeafTerminalReceipt>> {
+        self.terminal_receipts
+            .lock()
+            .map(|receipts| receipts.clone())
+            .map_err(|_| anyhow::anyhow!("recurring updater receipt collector is poisoned"))
+    }
+
+    pub(crate) fn outer_terminal_indeterminate(&self) -> bool {
+        self.outer_terminal_indeterminate.load(Ordering::Acquire)
     }
 
     fn request_id(&self, effect: &str) -> String {
@@ -302,7 +336,7 @@ impl RecurringSelfUpdateAuthority {
     {
         let max_response_bytes =
             u64::try_from(max_response_bytes).context("self-update response cap overflow")?;
-        let request = UpdaterLeafRequest::http(
+        let mut request = UpdaterLeafRequest::http(
             &self.operation_id,
             self.request_id(effect_id),
             self.accepted_epoch,
@@ -316,6 +350,49 @@ impl RecurringSelfUpdateAuthority {
             expected_content_sha256,
             max_response_bytes,
         )?;
+        if let Some(clock) = &self.run_clock {
+            request = request.with_run_budgets(clock.budgets().clone())?;
+            let completed = self
+                .authorizer
+                .execute_http_with_receipt(
+                    request,
+                    clock.clone(),
+                    effect,
+                    UpdaterHttpMethod::Get,
+                    url,
+                    &[],
+                    expected_content_sha256,
+                    max_response_bytes,
+                    run,
+                )
+                .await;
+            match completed {
+                Ok((value, receipt)) => {
+                    self.terminal_receipts
+                        .lock()
+                        .map_err(|_| {
+                            anyhow::anyhow!("recurring updater receipt collector is poisoned")
+                        })?
+                        .push(receipt);
+                    return Ok(value);
+                }
+                Err(error) => {
+                    if let Some(receipt) = error.terminal_receipt() {
+                        self.terminal_receipts
+                            .lock()
+                            .map_err(|_| {
+                                anyhow::anyhow!("recurring updater receipt collector is poisoned")
+                            })?
+                            .push(receipt);
+                    }
+                    if error.leaves_outer_terminal_indeterminate() {
+                        self.outer_terminal_indeterminate
+                            .store(true, Ordering::Release);
+                    }
+                    return Err(anyhow::Error::new(error));
+                }
+            }
+        }
         self.authorizer
             .execute_http(
                 request,

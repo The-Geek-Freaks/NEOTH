@@ -491,7 +491,7 @@ impl ContextEvidenceReceiptOnce {
 /// and all pre-write terminal paths.
 struct ContextEvidenceQuotaReservation {
     guard: Option<std::sync::Arc<QuotaGuard>>,
-    #[cfg(any(unix, test))]
+    #[cfg(any(unix, windows, test))]
     admitted_bytes: u64,
     owned_bytes: u64,
     pending_bytes: u64,
@@ -561,7 +561,7 @@ impl ContextEvidenceQuotaReservation {
         })
     }
 
-    #[cfg(any(unix, test))]
+    #[cfg(any(unix, windows, test))]
     fn release_unqueued(mut self) {
         debug_assert_eq!(
             self.releasable_bytes, self.admitted_bytes,
@@ -865,7 +865,7 @@ impl QuotaGuard {
     /// increments its pending floor.  Receipt ownership is more granular than
     /// a generic request because its blocking transaction may split into
     /// independently terminal publication components.
-    #[cfg(any(unix, test))]
+    #[cfg(any(unix, windows, test))]
     fn reserve_context_evidence_admission(
         guard: &std::sync::Arc<Self>,
         payload_bytes: u64,
@@ -1351,7 +1351,7 @@ impl WalWriterHandle {
     /// the same handle fails closed. Admission reserves the ledger's complete
     /// bounded crash transaction and reconciles it to the exact retained bytes
     /// only after the uncancellable blocking owner reaches a terminal state.
-    #[cfg(any(unix, test))]
+    #[cfg(any(unix, windows, test))]
     pub(crate) fn append_context_evidence_receipt_once_blocking(
         &self,
         receipt_handle: &[u8; 32],

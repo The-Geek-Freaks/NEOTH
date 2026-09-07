@@ -641,8 +641,12 @@ mod tests {
         let concurrent = home.path().join("concurrent-add");
         fs::create_dir_all(&first).unwrap();
         fs::create_dir_all(&concurrent).unwrap();
-        apply_code_map_lifecycle_config_with_reload(home.path(), enabled(first.clone()), |_| Ok(()))
-            .unwrap();
+        apply_code_map_lifecycle_config_with_reload(
+            home.path(),
+            enabled(first.clone()),
+            |_| Ok(()),
+        )
+        .unwrap();
 
         // A second GUI action commits an add before the stale first form
         // removes what it thought was the final root.
@@ -666,7 +670,10 @@ mod tests {
         )
         .unwrap();
         assert!(receipt.persisted_config.enabled);
-        assert_eq!(receipt.canonical_managed_roots, vec![fs::canonicalize(concurrent).unwrap()]);
+        assert_eq!(
+            receipt.canonical_managed_roots,
+            vec![fs::canonicalize(concurrent).unwrap()]
+        );
     }
 
     #[test]

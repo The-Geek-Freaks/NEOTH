@@ -68,6 +68,7 @@ mod transport;
 mod tests;
 
 pub(crate) use client::try_post_skill_mutation_frame;
+pub(crate) use client::verified_daemon_endpoint_nonce;
 pub use client::{
     AuditRpcClientError, consume_fullauto_token, consume_jobs_run_token, enforce_required_audit,
     is_reachable, mint_fullauto_token, mint_jobs_run_token, try_post_audit_frame,
@@ -90,4 +91,4 @@ pub(crate) use sidecar::write_sidecar;
 pub use sidecar::{SidecarGuard, remove_sidecar, sidecar_path};
 pub use token::{init_rpc_token, read_rpc_token, rpc_token_path};
 #[cfg(test)]
-pub(crate) use transport::AuditEndpointV2;
+pub(crate) use transport::{AuditEndpointV2, endpoint_for_home};

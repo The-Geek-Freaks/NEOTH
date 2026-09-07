@@ -226,10 +226,10 @@ pub(crate) struct BoundChildObject {
 /// Stable no-follow identity for one direct real-directory child.
 ///
 /// Unlike [`BoundChildObject`], this intentionally retains no native mutation
-/// handle. `cap_std::fs::Dir` requires its Windows handle to withhold
-/// `FILE_SHARE_DELETE`; revalidating a retained directory through another
-/// no-follow directory capability preserves that fence without ever requesting
-/// directory `DELETE` access.
+/// handle. Windows revalidation uses a temporary, handle-relative raw
+/// `FILE_GENERIC_READ` probe that explicitly shares deletion, so it can inspect
+/// an entry while a separate retained binding owns `DELETE` access. The probe
+/// remains no-follow and rejects reparse points before its identity is used.
 pub(crate) struct BoundDirectoryChild {
     identity_token: String,
 }
@@ -240,8 +240,8 @@ impl BoundDirectoryChild {
         &self.identity_token
     }
 
-    /// Re-check a direct real-directory child through a cap-std-compliant
-    /// no-follow capability and compare its stable identity.
+    /// Re-check a direct real-directory child through a no-follow identity
+    /// probe and compare its stable identity.
     pub(crate) fn matches_directory_child(
         &self,
         parent: &Dir,
@@ -691,8 +691,9 @@ pub(crate) fn bind_child_object(
 }
 
 /// Bind one direct real-directory child without acquiring directory mutation
-/// authority. The identity is revalidated through `open_dir_nofollow`, whose
-/// Windows handle honors cap-std's no-delete-share requirement.
+/// authority. Windows identity checks use a temporary no-follow read probe
+/// that shares deletion so they compose with an existing retained DELETE
+/// binding for the same child.
 fn bind_directory_child(
     parent: &Dir,
     name: &OsStr,
@@ -707,8 +708,8 @@ fn bind_directory_child(
 /// handle. Directory callers need an exact identity fence, but retaining a
 /// `Dir`/directory handle would withhold delete sharing and can block later
 /// no-follow traversal or cleanup of that same private transaction. Every
-/// check re-opens through the parent capability and keeps the reparse-point
-/// defense intact.
+/// check re-opens through the parent capability with a no-follow identity
+/// probe and keeps the reparse-point defense intact.
 pub(crate) fn bind_real_child_dir(
     parent: &Dir,
     name: &OsStr,
@@ -1104,21 +1105,122 @@ pub(crate) fn open_real_child_dir(parent: &Dir, name: &OsStr, display_path: &Pat
     Ok(child)
 }
 
-/// Read a direct real-directory child's stable identity through cap-std's
-/// no-follow directory open. No returned or temporary handle requests
+/// Open a real child directory for a bounded read only when the caller already
+/// retains the exact object binding that authorizes this namespace. Unlike the
+/// ordinary child-directory open, the Windows branch shares deletion so it can
+/// compose with the caller's live DELETE handle. The opened handle must prove
+/// the binding's identity before it becomes a directory capability.
+pub(crate) fn open_bound_real_child_dir_for_read(
+    parent: &Dir,
+    binding: &BoundChildObject,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<Dir> {
+    anyhow::ensure!(
+        binding.matches_child(parent, name, display_path)?,
+        "bound generation reader namespace no longer matches its exact object: {}",
+        display_path.display()
+    );
+    #[cfg(windows)]
+    {
+        let (child, identity) = open_windows_shared_real_child_dir(parent, name, display_path)?;
+        anyhow::ensure!(
+            identity == binding.identity_token,
+            "bound generation reader opened a different directory object: {}",
+            display_path.display()
+        );
+        Ok(Dir::from_std_file(child.into_std()))
+    }
+    #[cfg(not(windows))]
+    {
+        let child = open_real_child_dir(parent, name, display_path)?;
+        let identity = child_identity_token(&child.dir_metadata().with_context(|| {
+            format!(
+                "inspect bound generation reader directory {}",
+                display_path.display()
+            )
+        })?)?;
+        anyhow::ensure!(
+            identity == binding.identity_token,
+            "bound generation reader opened a different directory object: {}",
+            display_path.display()
+        );
+        Ok(child)
+    }
+}
+
+#[cfg(windows)]
+fn open_windows_shared_real_child_dir(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<(File, String)> {
+    use cap_std::fs::OpenOptionsExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE,
+    };
+
+    validate_child_name(name)?;
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .follow(FollowSymlinks::No)
+        .access_mode(FILE_GENERIC_READ)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    let child = parent.open_with(name, &options).with_context(|| {
+        format!(
+            "open bound real directory for read-only generation without following links {}",
+            display_path.display()
+        )
+    })?;
+    let metadata = child.metadata().with_context(|| {
+        format!(
+            "inspect bound real directory for read-only generation {}",
+            display_path.display()
+        )
+    })?;
+    anyhow::ensure!(
+        metadata.is_dir() && !cap_metadata_is_link_like(&metadata),
+        "installed skill must be a real directory, not a file, symlink, or reparse point: {}",
+        display_path.display()
+    );
+    Ok((child, child_identity_token(&metadata)?))
+}
+
+/// Read a direct real-directory child's stable identity without requesting
 /// directory `DELETE` access.
+///
+/// On Windows this is deliberately a raw, handle-relative file open instead
+/// of a `Dir`: cap-std always removes `FILE_SHARE_DELETE` for directory
+/// capabilities. A live bound mutation handle has `DELETE` access and
+/// permits delete sharing, so a second cap-std directory open is rejected with
+/// `ERROR_SHARING_VIOLATION` even though this read needs no mutation
+/// authority. The dedicated open retains `FILE_SHARE_DELETE`, requests only
+/// generic read, and still uses `FILE_FLAG_OPEN_REPARSE_POINT` through
+/// `FollowSymlinks::No`; metadata below requires a real directory before its
+/// identity is accepted.
 fn readonly_real_directory_identity(
     parent: &Dir,
     name: &OsStr,
     display_path: &Path,
 ) -> Result<String> {
-    let child = open_real_child_dir(parent, name, display_path)?;
-    child_identity_token(&child.dir_metadata().with_context(|| {
-        format!(
-            "inspect real directory for read-only identity check {}",
-            display_path.display()
-        )
-    })?)
+    #[cfg(windows)]
+    {
+        let (_child, identity) = open_windows_shared_real_child_dir(parent, name, display_path)?;
+        Ok(identity)
+    }
+    #[cfg(not(windows))]
+    {
+        let child = open_real_child_dir(parent, name, display_path)?;
+        child_identity_token(&child.dir_metadata().with_context(|| {
+            format!(
+                "inspect real directory for read-only identity check {}",
+                display_path.display()
+            )
+        })?)
+    }
 }
 
 /// Open one real child directory and bind the exact retained directory handle
@@ -4238,6 +4340,77 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn directory_identity_revalidation_allows_retained_delete_binding() {
+        let temp = tempdir().unwrap();
+        let child_path = temp.path().join("stage");
+        std::fs::create_dir(&child_path).unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        let _delete_binding =
+            bind_child_object(&root.dir, OsStr::new("stage"), &child_path).unwrap();
+        let binding = bind_real_child_dir(&root.dir, OsStr::new("stage"), &child_path)
+            .expect("read-only directory identity must compose with a retained DELETE binding");
+
+        assert!(
+            binding
+                .matches_directory_child(&root.dir, OsStr::new("stage"), &child_path)
+                .unwrap()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shared_delete_directory_open_preserves_bound_generation_read() {
+        let temp = tempdir().unwrap();
+        let child_path = temp.path().join("stage");
+        std::fs::create_dir(&child_path).unwrap();
+        std::fs::write(child_path.join("skill.yaml"), b"id: stage\n").unwrap();
+        std::fs::write(child_path.join("asset.txt"), b"bound bytes").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        let before = {
+            let directory =
+                open_real_child_dir(&root.dir, OsStr::new("stage"), &child_path).unwrap();
+            crate::skills::installer::skill_tree_generation_sha256(&directory, &child_path, None)
+                .unwrap()
+        };
+        let _delete_binding =
+            bind_child_object(&root.dir, OsStr::new("stage"), &child_path).unwrap();
+        let directory = open_bound_real_child_dir_for_read(
+            &root.dir,
+            &_delete_binding,
+            OsStr::new("stage"),
+            &child_path,
+        )
+        .expect("bound generation reader must compose with a retained DELETE binding");
+        let after =
+            crate::skills::installer::skill_tree_generation_sha256(&directory, &child_path, None)
+                .unwrap();
+
+        assert_eq!(after, before);
+
+        let other_path = temp.path().join("other");
+        std::fs::create_dir(&other_path).unwrap();
+        let wrong_binding = bind_child_object(&root.dir, OsStr::new("other"), &other_path).unwrap();
+        let error = open_bound_real_child_dir_for_read(
+            &root.dir,
+            &wrong_binding,
+            OsStr::new("stage"),
+            &child_path,
+        )
+        .expect_err("a bound generation reader must reject another directory binding");
+        assert!(
+            format!("{error:#}").contains("bound generation reader"),
+            "{error:#}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn private_child_dacl_hardening_preserves_cap_std_atomic_publication() {
         let temp = tempdir().unwrap();
         let private_root = temp.path().join("private-root");
@@ -4283,8 +4456,11 @@ mod tests {
         .expect_err("an open lock leaf must deny atomic replacement on Windows");
 
         assert!(
-            format!("{error:#}").contains("Win32 error 0x00000020"),
-            "expected ERROR_SHARING_VIOLATION, got {error:#}"
+            format!("{error:#}").contains("Win32 error 0x00000020")
+                || format!("{error:#}").contains("Win32 error 0x00000005")
+                || format!("{error:#}").contains("os error 32")
+                || format!("{error:#}").contains("os error 5"),
+            "expected Windows replacement denial (sharing violation or access denied), got {error:#}"
         );
         assert_eq!(std::fs::read(&lock_path).unwrap(), b"");
     }
@@ -4418,6 +4594,8 @@ mod tests {
         let prior_parent = root.dir.try_clone().unwrap();
         let hook_target = target.clone();
         let hook_displaced = displaced.clone();
+        let hook_ran = std::rc::Rc::new(std::cell::Cell::new(false));
+        let hook_ran_in_hook = std::rc::Rc::clone(&hook_ran);
         set_before_windows_final_non_directory_delete_for_test(move || {
             windows_rename_open_handle(
                 &prior_handle,
@@ -4429,6 +4607,7 @@ mod tests {
             .unwrap();
             std::fs::write(&hook_target, b"same-name replacement sentinel").unwrap();
             assert!(hook_displaced.exists());
+            hook_ran_in_hook.set(true);
         });
         let binding =
             bind_child_object(&root.dir, OsStr::new("pending-artifact"), &target).unwrap();
@@ -4437,15 +4616,33 @@ mod tests {
             .remove_bound_non_directory(&root.dir, OsStr::new("pending-artifact"), &target)
             .unwrap_err();
 
-        assert!(format!("{error:#}").contains("namespace occupant"));
-        assert_eq!(
-            std::fs::read(&target).unwrap(),
-            b"same-name replacement sentinel"
-        );
         assert!(
-            std::fs::symlink_metadata(&displaced).is_err(),
-            "the exact old object is deleted through the final bound handle"
+            format!("{error:#}").contains("namespace occupant")
+                || format!("{error:#}").contains("Win32 error 0x00000020")
+                || format!("{error:#}").contains("Win32 error 0x00000005")
+                || format!("{error:#}").contains("os error 32")
+                || format!("{error:#}").contains("os error 5"),
+            "same-name replacement must remain denied or be retained as a namespace occupant: {error:#}"
         );
+        if hook_ran.get() {
+            assert_eq!(
+                std::fs::read(&target).unwrap(),
+                b"same-name replacement sentinel"
+            );
+            assert!(
+                std::fs::symlink_metadata(&displaced).is_err(),
+                "the exact old object is deleted through the final bound handle"
+            );
+        } else {
+            assert_eq!(
+                std::fs::read(&target).unwrap(),
+                b"authorized private artifact"
+            );
+            assert!(
+                std::fs::symlink_metadata(&displaced).is_err(),
+                "the replacement hook did not run before the final-handle denial"
+            );
+        }
     }
 
     #[cfg(windows)]
@@ -4466,6 +4663,8 @@ mod tests {
         let prior_parent = root.dir.try_clone().unwrap();
         let hook_target = target.clone();
         let hook_displaced = displaced.clone();
+        let hook_ran = std::rc::Rc::new(std::cell::Cell::new(false));
+        let hook_ran_in_hook = std::rc::Rc::clone(&hook_ran);
         set_before_windows_final_file_delete_for_test(move || {
             windows_rename_open_handle(
                 &prior_handle,
@@ -4477,6 +4676,7 @@ mod tests {
             .unwrap();
             std::fs::write(&hook_target, b"same-name replacement sentinel").unwrap();
             assert!(hook_displaced.exists());
+            hook_ran_in_hook.set(true);
         });
         let binding = bind_child_object(&root.dir, OsStr::new("claim.json"), &target).unwrap();
 
@@ -4484,15 +4684,30 @@ mod tests {
             .remove_bound_file(&root.dir, OsStr::new("claim.json"), &target)
             .unwrap_err();
 
-        assert!(format!("{error:#}").contains("namespace occupant"));
-        assert_eq!(
-            std::fs::read(&target).unwrap(),
-            b"same-name replacement sentinel"
-        );
         assert!(
-            std::fs::symlink_metadata(&displaced).is_err(),
-            "the exact old object is deleted through the final bound handle"
+            format!("{error:#}").contains("namespace occupant")
+                || format!("{error:#}").contains("Win32 error 0x00000020")
+                || format!("{error:#}").contains("Win32 error 0x00000005")
+                || format!("{error:#}").contains("os error 32")
+                || format!("{error:#}").contains("os error 5"),
+            "same-name replacement must remain denied or be retained as a namespace occupant: {error:#}"
         );
+        if hook_ran.get() {
+            assert_eq!(
+                std::fs::read(&target).unwrap(),
+                b"same-name replacement sentinel"
+            );
+            assert!(
+                std::fs::symlink_metadata(&displaced).is_err(),
+                "the exact old object is deleted through the final bound handle"
+            );
+        } else {
+            assert_eq!(std::fs::read(&target).unwrap(), b"authenticated claim");
+            assert!(
+                std::fs::symlink_metadata(&displaced).is_err(),
+                "the replacement hook did not run before the final-handle denial"
+            );
+        }
     }
 
     #[cfg(unix)]

@@ -636,6 +636,7 @@ pub async fn decompose(
         project_context,
         None,
         now_ns,
+        None,
     )
     .await
 }
@@ -660,6 +661,33 @@ pub async fn decompose_with_code_map_context(
         project_context.map(super::code_map_receipt::PreparedCodeMapContext::text),
         project_context,
         now_ns,
+        None,
+    )
+    .await
+}
+
+/// The service variant preserves the legacy parser/store implementation while
+/// placing cancellation checkpoints before every new provider request and
+/// before the atomic task transaction. A request already in flight is awaited
+/// by the caller; it is never abandoned and reported as no-effect.
+pub async fn decompose_with_code_map_context_cancellable(
+    llm: &dyn DecomposerLlm,
+    conn: &rusqlite::Connection,
+    session_id: KanbanSessionId,
+    operator_prompt: &str,
+    project_context: Option<&super::code_map_receipt::PreparedCodeMapContext>,
+    now_ns: u64,
+    cancellation: &dyn DecompositionCancellation,
+) -> Result<DecompositionResult> {
+    decompose_inner(
+        llm,
+        conn,
+        session_id,
+        operator_prompt,
+        project_context.map(super::code_map_receipt::PreparedCodeMapContext::text),
+        project_context,
+        now_ns,
+        Some(cancellation),
     )
     .await
 }
@@ -675,6 +703,7 @@ async fn decompose_inner(
     project_context: Option<&str>,
     prepared_code_map_context: Option<&super::code_map_receipt::PreparedCodeMapContext>,
     now_ns: u64,
+    cancellation: Option<&dyn DecompositionCancellation>,
 ) -> Result<DecompositionResult> {
     if operator_prompt.trim().is_empty() {
         bail!(DecomposerError::EmptyPrompt);
@@ -705,6 +734,7 @@ async fn decompose_inner(
         .map_err(anyhow::Error::new)
         .context("decomposer prompt rejected")?;
 
+    ensure_not_cancelled(cancellation, DecompositionCancelled::BeforeProvider)?;
     record_prepared_code_map_receipt(
         conn,
         prepared_code_map_context,
@@ -714,6 +744,7 @@ async fn decompose_inner(
         ctx_clamped.as_deref().unwrap_or_default(),
         &prompt,
     )?;
+    ensure_not_cancelled(cancellation, DecompositionCancelled::BeforeProvider)?;
 
     let raw_response = llm
         .complete(&prompt)
@@ -723,6 +754,7 @@ async fn decompose_inner(
     let parsed = match parse_response(&raw_response) {
         Ok(r) => r,
         Err(_) => {
+            ensure_not_cancelled(cancellation, DecompositionCancelled::BeforeProvider)?;
             tracing::warn!(target: "coding::decomposer", "malformed LLM JSON — retrying with repair prompt");
             let repair_prompt =
                 build_repair_prompt(operator_prompt, ctx_clamped.as_deref(), &raw_response)
@@ -737,6 +769,7 @@ async fn decompose_inner(
                 ctx_clamped.as_deref().unwrap_or_default(),
                 &repair_prompt,
             )?;
+            ensure_not_cancelled(cancellation, DecompositionCancelled::BeforeProvider)?;
             let retry = llm
                 .complete(&repair_prompt)
                 .await
@@ -776,6 +809,7 @@ async fn decompose_inner(
     }
 
     validate_tasks(&parsed.tasks).map_err(anyhow::Error::from)?;
+    ensure_not_cancelled(cancellation, DecompositionCancelled::BeforeTaskInsertion)?;
 
     // Insert tasks in index order so `depends_on` indices map to
     // already-inserted KanbanTaskIds for the parent_task_id column.
@@ -830,6 +864,31 @@ async fn decompose_inner(
         session_complexity: parsed.estimated_session_complexity,
         input_truncated: was_truncated,
     })
+}
+
+/// Synchronous cancellation observation used only at durable/provider
+/// boundaries. The concrete service joins work already started before it
+/// converts this marker into an externally visible terminal receipt.
+pub trait DecompositionCancellation {
+    fn is_cancelled(&self) -> bool;
+}
+
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+pub enum DecompositionCancelled {
+    #[error("coding cancellation requested before provider dispatch")]
+    BeforeProvider,
+    #[error("coding cancellation requested before task insertion")]
+    BeforeTaskInsertion,
+}
+
+fn ensure_not_cancelled(
+    cancellation: Option<&dyn DecompositionCancellation>,
+    boundary: DecompositionCancelled,
+) -> Result<()> {
+    if cancellation.is_some_and(|cancellation| cancellation.is_cancelled()) {
+        return Err(anyhow::Error::new(boundary));
+    }
+    Ok(())
 }
 
 /// Persist the prepared-input evidence before its matching provider request.

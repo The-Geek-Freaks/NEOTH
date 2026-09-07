@@ -154,6 +154,58 @@ pub struct SymbolDef {
 }
 
 impl CallGraph {
+    /// Build edges for selected source files against every declaration in the
+    /// candidate snapshot.  Delta refresh uses this when unchanged sources can
+    /// retain their persisted outgoing edges but all target names must remain
+    /// visible to the heuristic.
+    pub(crate) fn build_selected_bounded(
+        files: &[FileInput],
+        all_symbols: impl Iterator<Item = Symbol>,
+        max_edges: usize,
+        cancellation: &super::walker::ScanCancellation,
+    ) -> Result<Vec<CodeEdge>> {
+        let all_names: BTreeSet<String> = all_symbols.map(|symbol| symbol.name).collect();
+        let mut edges = Vec::new();
+        for file in files {
+            cancellation.checkpoint()?;
+            let mut symbols = file.symbols.clone();
+            symbols.sort_by_key(|symbol| symbol.line);
+            let stripped = match file.comment_family {
+                CommentFamily::CFamily => strip_comments_and_strings_c_family(&file.source),
+                CommentFamily::HashFamily => strip_comments_and_strings_hash_family(&file.source),
+            };
+            let offsets = line_start_offsets(&stripped);
+            let line_count = stripped.lines().count();
+            for (index, symbol) in symbols.iter().enumerate() {
+                cancellation.checkpoint()?;
+                let end_line = symbols
+                    .get(index + 1)
+                    .map(|next| next.line as usize)
+                    .unwrap_or(line_count + 1);
+                let body = file_slice(&stripped, &offsets, symbol.line as usize, end_line);
+                for name in called_symbol_names(body, &all_names) {
+                    cancellation.checkpoint()?;
+                    if name == symbol.name {
+                        continue;
+                    }
+                    if edges.len() >= max_edges {
+                        bail!(
+                            "native call graph exceeds bounded {}-edge work budget",
+                            max_edges
+                        );
+                    }
+                    edges.push(CodeEdge {
+                        from_file: file.file_path.clone(),
+                        from_symbol: symbol.name.clone(),
+                        to_name: name,
+                        kind: EdgeKind::Calls,
+                    });
+                }
+            }
+        }
+        Ok(edges)
+    }
+
     /// Build a graph from a list of files. Identifier scanning treats
     /// any symbol name (extracted from any file) as a potential call
     /// target — cross-file calls show up as edges from one file's
@@ -1304,6 +1356,7 @@ fn e() {}
             name: "anchor".into(),
             kind: SymbolKind::Function,
             line: 1,
+            line_end: None,
         };
     }
 

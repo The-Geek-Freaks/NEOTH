@@ -12,6 +12,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use sha2::{Digest, Sha256};
 
 use super::graph::{CallGraph, DEFAULT_MAX_GRAPH_EDGES, FileInput};
+use super::incremental;
 use super::persist::PersistStats;
 use super::root_identity::CanonicalRepoRoot;
 use super::walker::{
@@ -422,6 +423,112 @@ pub fn rebuild_snapshot_cancellable(
         },
         cancellation,
     )
+}
+
+/// Delta-aware lifecycle rebuild.  It still hashes the whole selected corpus
+/// and performs the normal final root/source fence, but it reuses persisted
+/// declarations for equal hashes and preserves unaffected outgoing edges.
+pub(crate) fn rebuild_snapshot_delta_cancellable(
+    root: &CanonicalRepoRoot,
+    db_path: &Path,
+    options: RebuildOptions,
+    cancellation: &ScanCancellation,
+) -> Result<RebuildSnapshot> {
+    if !options.require_complete {
+        return rebuild_snapshot_cancellable(root, db_path, options, cancellation);
+    }
+    let Some(prepared) = incremental::prepare(root, db_path, options, cancellation)? else {
+        return rebuild_snapshot_cancellable(root, db_path, options, cancellation);
+    };
+    let max_file_bytes = options.max_file_bytes.unwrap_or(DEFAULT_MAX_FILE_BYTES);
+    let mut inputs = Vec::with_capacity(prepared.edge_sources.len());
+    let mut retained_source_bytes = 0usize;
+    for file in prepared
+        .map
+        .files
+        .iter()
+        .filter(|file| prepared.edge_sources.contains(&file.path))
+    {
+        cancellation.checkpoint()?;
+        // A declaration-free file cannot produce an outgoing edge. Its bytes
+        // remain protected by the final whole-corpus hash fence, but avoiding
+        // an owned source copy keeps this path's graph-memory bound identical
+        // to the full rebuild path.
+        if file.symbols.is_empty() {
+            continue;
+        }
+        let absolute = root.path().join(&file.path);
+        let raw = read_file_bounded(&absolute, max_file_bytes)?.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "delta graph source exceeded bound",
+            )
+        })?;
+        ensure!(
+            raw.len() as u64 == file.bytes && hex::encode(Sha256::digest(&raw)) == file.sha256,
+            "delta graph source changed after inventory: {}",
+            file.path
+        );
+        retained_source_bytes = retained_source_bytes
+            .checked_add(raw.len())
+            .context("native delta call-graph source-byte count overflow")?;
+        ensure!(
+            retained_source_bytes <= MAX_GRAPH_SOURCE_BYTES,
+            "native delta call-graph source exceeds bounded {}-byte work budget; no generation was published",
+            MAX_GRAPH_SOURCE_BYTES
+        );
+        let source = String::from_utf8_lossy(&raw).into_owned();
+        let input = match file.language {
+            Language::Python
+            | Language::Ruby
+            | Language::Shell
+            | Language::Toml
+            | Language::Yaml
+            | Language::Dockerfile => {
+                FileInput::hash_family(file.path.clone(), source, file.symbols.clone())
+            }
+            _ => FileInput::c_family(file.path.clone(), source, file.symbols.clone()),
+        };
+        inputs.push(input);
+    }
+    let replacement_edges = CallGraph::build_selected_bounded(
+        &inputs,
+        prepared
+            .map
+            .files
+            .iter()
+            .flat_map(|file| file.symbols.clone()),
+        DEFAULT_MAX_GRAPH_EDGES,
+        cancellation,
+    )?;
+    let mut all_edges = prepared.retained_edges.clone();
+    all_edges.extend(replacement_edges.iter().cloned());
+    super::persist::enforce_incoming_edge_bounds(&prepared.map.root, &all_edges)?;
+    let cycles = CallGraph::from_edges(all_edges.clone()).find_cycles(50)?;
+    cancellation.checkpoint()?;
+    let source_fingerprint_sha256 = source_fingerprint_digest(root, &prepared.map, &[], &[]);
+    let mut conn = super::persist::open(db_path)?;
+    let publication = super::persist::persist_delta_map_and_edges_bound(
+        &mut conn,
+        &prepared.map,
+        &all_edges,
+        &replacement_edges,
+        &prepared.edge_sources,
+        &prepared.removed_paths,
+        root,
+        || incremental::validate_final_source_fence(root, &prepared, options, cancellation),
+    )?;
+    Ok(RebuildSnapshot {
+        root: root.clone(),
+        root_identity_sha256: root_identity_digest(root),
+        index_generation: publication.index_generation,
+        graph_generation: publication.graph_generation,
+        source_fingerprint_sha256,
+        stats: publication.stats,
+        edges_inserted: publication.edges_inserted,
+        cycles,
+        scan_report: prepared.map.report,
+    })
 }
 
 /// Rebuild a snapshot while excluding an explicit, fingerprint-bound set of
@@ -1064,6 +1171,90 @@ mod tests {
         std::fs::write(&source, "pub fn second() {}\n").unwrap();
         let changed = stable_source_fingerprint(&root, RebuildOptions::default()).unwrap();
         assert_ne!(changed, verified);
+    }
+
+    #[test]
+    fn delta_refresh_replaces_only_changed_source_edges_when_names_are_stable() {
+        let repo = tempdir().unwrap();
+        std::fs::write(repo.path().join("a.rs"), "pub fn a() { b(); }\n").unwrap();
+        std::fs::write(repo.path().join("b.rs"), "pub fn b() { c(); }\n").unwrap();
+        std::fs::write(repo.path().join("c.rs"), "pub fn c() {}\n").unwrap();
+        let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let db_dir = tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
+        rebuild_snapshot(&root, &db, RebuildOptions::default()).unwrap();
+        let before = super::super::persist::open_read_only(&db).unwrap();
+        let b_before: Vec<_> = super::super::persist::load_edges_for_root(&before, root.display())
+            .unwrap()
+            .into_iter()
+            .filter(|edge| edge.from_file == "b.rs")
+            .collect();
+        drop(before);
+        std::fs::write(repo.path().join("a.rs"), "pub fn a() { let _ = 1; }\n").unwrap();
+
+        let refreshed = rebuild_snapshot_delta_cancellable(
+            &root,
+            &db,
+            RebuildOptions::default(),
+            &ScanCancellation::new(),
+        )
+        .unwrap();
+        assert_eq!(refreshed.stats.files_skipped_unchanged, 2);
+        let after = super::super::persist::open_read_only(&db).unwrap();
+        let edges = super::super::persist::load_edges_for_root(&after, root.display()).unwrap();
+        assert!(edges.iter().all(|edge| edge.from_file != "a.rs"));
+        assert_eq!(
+            edges
+                .into_iter()
+                .filter(|edge| edge.from_file == "b.rs")
+                .collect::<Vec<_>>(),
+            b_before
+        );
+    }
+
+    #[test]
+    fn delta_refresh_rebuilds_unchanged_caller_for_added_and_removed_name() {
+        let repo = tempdir().unwrap();
+        std::fs::write(
+            repo.path().join("caller.rs"),
+            "pub fn caller() { future_target(); }\n",
+        )
+        .unwrap();
+        let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let db_dir = tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
+        rebuild_snapshot(&root, &db, RebuildOptions::default()).unwrap();
+        std::fs::write(repo.path().join("target.rs"), "pub fn future_target() {}\n").unwrap();
+        rebuild_snapshot_delta_cancellable(
+            &root,
+            &db,
+            RebuildOptions::default(),
+            &ScanCancellation::new(),
+        )
+        .unwrap();
+        let after_add = super::super::persist::open_read_only(&db).unwrap();
+        assert!(
+            super::super::persist::load_edges_for_root(&after_add, root.display())
+                .unwrap()
+                .iter()
+                .any(|edge| edge.from_file == "caller.rs" && edge.to_name == "future_target")
+        );
+        drop(after_add);
+        std::fs::remove_file(repo.path().join("target.rs")).unwrap();
+        rebuild_snapshot_delta_cancellable(
+            &root,
+            &db,
+            RebuildOptions::default(),
+            &ScanCancellation::new(),
+        )
+        .unwrap();
+        let after_remove = super::super::persist::open_read_only(&db).unwrap();
+        assert!(
+            super::super::persist::load_edges_for_root(&after_remove, root.display())
+                .unwrap()
+                .iter()
+                .all(|edge| edge.to_name != "future_target")
+        );
     }
 
     #[test]

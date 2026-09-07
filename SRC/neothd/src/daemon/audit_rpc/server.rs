@@ -98,6 +98,9 @@ pub const ALLOWED_CLIENT_EXTENDED_SUBTYPES: &[u8] = &[
     ExtendedSubtype::OsFileWriteResult as u8,
     ExtendedSubtype::OsAppLaunchIntent as u8,
     ExtendedSubtype::OsAppLaunchResult as u8,
+    // GOLD-LF-P1-05 — one-shot commands may route their final canonical Gate
+    // decision through the daemon-owned WAL writer.
+    ExtendedSubtype::TrustDecision as u8,
 ];
 
 /// Max inbound request size (headers + body). Audit payloads are small.
@@ -1007,7 +1010,14 @@ async fn handle_one(
     let header = crate::wal::HeaderBuilder::new(event_type, &payload)
         .event_subtype(event_subtype)
         .build();
-    match state.writer.append(header, payload).await {
+    let append = if event_type == EVENT_TYPE_EXTENDED
+        && event_subtype == ExtendedSubtype::TrustDecision as u8
+    {
+        state.writer.append_authenticated(header, payload).await
+    } else {
+        state.writer.append(header, payload).await
+    };
+    match append {
         Ok(offset) => {
             emit_accept(state, event_type, event_subtype).await;
             let body = format!("{{\"ok\":true,\"offset\":{offset}}}");

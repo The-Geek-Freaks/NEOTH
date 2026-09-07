@@ -104,7 +104,7 @@ pub(crate) fn inspection_error(database_path: &Path) -> Result<()> {
         ),
         // Windows deliberately retains a terminal manifest instead of claiming
         // that an ordinary DeleteFile namespace update was crash-durable.
-        RepairPhase::Completed => verify_terminal_accounting(&layout, &manifest),
+        RepairPhase::Completed => verify_terminal_accounting(&layout, &manifest, true),
     }
 }
 
@@ -141,7 +141,7 @@ where
     };
     match manifest.phase {
         RepairPhase::Prepared => complete_manifest(&layout, &manifest, &mut checkpoint),
-        RepairPhase::Completed => verify_terminal_accounting(&layout, &manifest),
+        RepairPhase::Completed => verify_terminal_accounting(&layout, &manifest, false),
     }
 }
 
@@ -403,17 +403,41 @@ fn durable_rename_no_replace(source: &Path, preserved: &Path) -> std::io::Result
 }
 
 /// Check that every manifest entry reached exactly one terminal position.
-/// This is used for a Windows retained terminal manifest as well as by an
-/// explicit restart/resume before allowing a normal lifecycle refresh.
-fn verify_terminal_accounting(layout: &RepairLayout, manifest: &RepairManifest) -> Result<()> {
+/// A normal lifecycle refresh can recreate a complete SQLite set only after
+/// terminal evidence has been durably published. Inspection accepts that set
+/// only when its main database differs from the preserved corrupt main file.
+/// Explicit resume remains strict.
+fn verify_terminal_accounting(
+    layout: &RepairLayout,
+    manifest: &RepairManifest,
+    allow_recreated_sqlite_set: bool,
+) -> Result<()> {
     validate_manifest(manifest, layout)?;
     ensure_parent_unchanged(&layout.parent, &manifest.parent_identity)?;
+    let mut observed = Vec::with_capacity(manifest.artifacts.len());
     for artifact in &manifest.artifacts {
         let source = Path::new(&artifact.source_path);
         let preserved = Path::new(&artifact.preserved_path);
-        let source_observed = optional_file_identity(source, "corrupt code-map evidence")?;
-        let preserved_observed =
-            optional_file_identity(preserved, "preserved corrupt code-map evidence")?;
+        observed.push((
+            artifact,
+            optional_file_identity(source, "corrupt code-map evidence")?,
+            optional_file_identity(preserved, "preserved corrupt code-map evidence")?,
+        ));
+    }
+    let recreated_main = observed.iter().any(|(artifact, source, preserved)| {
+        artifact.role == ArtifactRole::Main
+            && matches!(
+                (
+                    artifact.source_identity.as_ref(),
+                    source.as_ref(),
+                    preserved.as_ref(),
+                ),
+                (Some(expected), Some(source), Some(preserved))
+                    if source != expected && preserved == expected
+            )
+    });
+    for (artifact, source_observed, preserved_observed) in observed {
+        let source = Path::new(&artifact.source_path);
         match (
             &artifact.source_identity,
             source_observed,
@@ -421,6 +445,12 @@ fn verify_terminal_accounting(layout: &RepairLayout, manifest: &RepairManifest) 
         ) {
             (None, None, None) => {}
             (Some(expected), None, Some(observed)) if &observed == expected => {}
+            (Some(expected), Some(source_observed), Some(preserved_observed))
+                if allow_recreated_sqlite_set
+                    && recreated_main
+                    && &preserved_observed == expected
+                    && &source_observed != expected => {}
+            (None, Some(_), None) if allow_recreated_sqlite_set && recreated_main => {}
             (None, _, _) => anyhow::bail!(
                 "terminal corrupt repair accounting changed for an originally absent artifact: {}",
                 source.display()
@@ -446,7 +476,7 @@ fn complete_manifest_terminal(layout: &RepairLayout, manifest: &RepairManifest) 
             observed.phase == RepairPhase::Completed,
             "terminal corrupt repair manifest phase was not durably published"
         );
-        verify_terminal_accounting(layout, &observed)
+        verify_terminal_accounting(layout, &observed, false)
     }
 
     #[cfg(unix)]

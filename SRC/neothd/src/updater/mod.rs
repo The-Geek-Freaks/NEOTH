@@ -28,6 +28,7 @@ use tracing::{info, warn};
 // the GitHub-Releases-API path doesn't entangle with the npm-aware
 // installer path.
 pub(crate) mod authority;
+pub(crate) mod budget;
 pub mod install_transaction;
 pub mod pipeline;
 pub mod probes;

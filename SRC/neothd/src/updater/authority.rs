@@ -22,10 +22,13 @@ use thiserror::Error;
 use crate::config::reload::{GenerationRetired, UpdaterLeafGate, UpdaterLeafLease};
 use crate::permissions::gate::{ConfirmStrategy, Gate, GateError, PermissionAuditSink};
 use crate::permissions::{Action, AutonomyPolicySnapshot};
+use crate::updater::budget::{UpdaterDeadlinePhase, UpdaterRunBudgets, UpdaterRunClock};
 use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
+use crate::wal::payloads_u04::{UpdaterLeafTerminalReceipt, updater_leaf_result_receipt_sha256};
 use crate::wal::writer::WalWriterHandle;
 
-const AUDIT_SCHEMA_VERSION: u8 = 1;
+const LEGACY_AUDIT_SCHEMA_VERSION: u8 = 1;
+const AUDIT_SCHEMA_VERSION: u8 = 2;
 const MAX_AUDIT_ID_BYTES: usize = 128;
 const INTERRUPTED_ERROR_DOMAIN: &[u8] = b"updater_leaf_interrupted_without_terminal";
 
@@ -563,6 +566,7 @@ pub(crate) struct UpdaterLeafRequest {
     component: UpdaterAuthorityComponent,
     effect: UpdaterLeafEffect,
     target: UpdaterLeafTarget,
+    run_budgets: Option<UpdaterRunBudgets>,
     binding_sha256: String,
 }
 
@@ -733,6 +737,7 @@ impl UpdaterLeafRequest {
             component,
             effect,
             target,
+            run_budgets: None,
             binding_sha256: String::new(),
         };
         request.binding_sha256 = request.compute_binding_sha256();
@@ -741,6 +746,24 @@ impl UpdaterLeafRequest {
 
     pub(crate) fn binding_sha256(&self) -> &str {
         &self.binding_sha256
+    }
+
+    /// The budgeted schema is opt-in so existing v1 audit records retain
+    /// their exact decoder.  New recurring HTTP leaves call this only after
+    /// the outer FIRED acknowledgement has admitted one shared pass clock.
+    pub(crate) fn with_run_budgets(mut self, budgets: UpdaterRunBudgets) -> Result<Self> {
+        budgets.validate()?;
+        self.run_budgets = Some(budgets);
+        self.binding_sha256 = self.compute_binding_sha256();
+        Ok(self)
+    }
+
+    fn audit_schema_version(&self) -> u8 {
+        if self.run_budgets.is_some() {
+            AUDIT_SCHEMA_VERSION
+        } else {
+            LEGACY_AUDIT_SCHEMA_VERSION
+        }
     }
 
     fn permission_action(&self) -> Action {
@@ -764,7 +787,11 @@ impl UpdaterLeafRequest {
 
     fn compute_binding_sha256(&self) -> String {
         let mut digest = Sha256::new();
-        digest_field(&mut digest, b"schema_version", &[AUDIT_SCHEMA_VERSION]);
+        digest_field(
+            &mut digest,
+            b"schema_version",
+            &[self.audit_schema_version()],
+        );
         digest_field(&mut digest, b"operation_id", self.operation_id.as_bytes());
         digest_field(&mut digest, b"request_id", self.request_id.as_bytes());
         digest_field(
@@ -785,6 +812,9 @@ impl UpdaterLeafRequest {
             self.component.identity_sha256().map(str::as_bytes),
         );
         digest_field(&mut digest, b"effect", self.effect.as_str().as_bytes());
+        if let Some(budgets) = &self.run_budgets {
+            digest_field(&mut digest, b"run_budgets", &budgets.binding_bytes());
+        }
 
         match &self.target {
             UpdaterLeafTarget::Http(http) => {
@@ -1151,6 +1181,7 @@ pub(crate) enum UpdaterLeafExecutionError {
     Effect {
         kind: &'static str,
         error_sha256: String,
+        terminal_receipt: Box<UpdaterLeafTerminalReceipt>,
         #[source]
         source: anyhow::Error,
     },
@@ -1170,6 +1201,28 @@ impl UpdaterLeafExecutionError {
 
     pub(crate) fn is_generation_retired(&self) -> bool {
         matches!(self, Self::GenerationRetired(_))
+    }
+
+    /// An ordinary effect failure has already crossed the mandatory terminal
+    /// ACK boundary.  The outer recurring pass must commit that receipt before
+    /// it reports the failure to the supervisor.
+    pub(crate) fn terminal_receipt(&self) -> Option<UpdaterLeafTerminalReceipt> {
+        match self {
+            Self::Effect {
+                terminal_receipt, ..
+            } => Some((**terminal_receipt).clone()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn leaves_outer_terminal_indeterminate(&self) -> bool {
+        matches!(
+            self,
+            Self::Audit {
+                phase: UpdaterLeafAuditPhase::Result,
+                ..
+            }
+        )
     }
 }
 
@@ -1196,6 +1249,8 @@ struct IntentPayload<'a> {
     component: &'a UpdaterAuthorityComponent,
     effect: UpdaterLeafEffect,
     request_binding_sha256: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_budgets: Option<&'a UpdaterRunBudgets>,
     phase: &'static str,
     target: &'a UpdaterLeafTarget,
     ts_unix: u64,
@@ -1212,6 +1267,8 @@ struct ResultPayload<'a> {
     component: &'a UpdaterAuthorityComponent,
     effect: UpdaterLeafEffect,
     request_binding_sha256: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_budgets: Option<&'a UpdaterRunBudgets>,
     phase: &'static str,
     status: &'static str,
     outcome: Option<&'static str>,
@@ -1234,6 +1291,8 @@ struct RecoveredIntentPayload {
     component: UpdaterAuthorityComponent,
     effect: UpdaterLeafEffect,
     request_binding_sha256: String,
+    #[serde(default)]
+    run_budgets: Option<UpdaterRunBudgets>,
     phase: String,
     target: UpdaterLeafTarget,
     ts_unix: u64,
@@ -1251,6 +1310,8 @@ struct RecoveredResultPayload {
     component: UpdaterAuthorityComponent,
     effect: UpdaterLeafEffect,
     request_binding_sha256: String,
+    #[serde(default)]
+    run_budgets: Option<UpdaterRunBudgets>,
     phase: String,
     status: String,
     outcome: Option<String>,
@@ -1305,6 +1366,7 @@ pub(super) struct RecoveredUpdaterLeafResult {
     component: UpdaterAuthorityComponent,
     effect: UpdaterLeafEffect,
     request_binding_sha256: String,
+    run_budgets: Option<UpdaterRunBudgets>,
     kind: RecoveredUpdaterLeafResultKind,
 }
 
@@ -1338,7 +1400,7 @@ impl RecoveredUpdaterLeafResult {
     pub(super) fn validate_matches(&self, intent: &RecoveredUpdaterLeafIntent) -> Result<()> {
         let request = &intent.request;
         anyhow::ensure!(
-            self.schema_version == AUDIT_SCHEMA_VERSION
+            self.schema_version == request.audit_schema_version()
                 && self.operation_id == request.operation_id
                 && self.request_id == request.request_id
                 && self.accepted_epoch == request.accepted_epoch
@@ -1346,7 +1408,8 @@ impl RecoveredUpdaterLeafResult {
                 && self.lane == request.lane
                 && self.component == request.component
                 && self.effect == request.effect
-                && self.request_binding_sha256 == request.binding_sha256,
+                && self.request_binding_sha256 == request.binding_sha256
+                && self.run_budgets == request.run_budgets,
             "updater result conflicts with its intent"
         );
         if let RecoveredUpdaterLeafResultKind::Success {
@@ -1372,16 +1435,24 @@ pub(super) fn decode_and_validate_updater_leaf_intent(
     let payload: RecoveredIntentPayload =
         serde_json::from_slice(payload).context("decode updater intent")?;
     anyhow::ensure!(
-        payload.schema_version == AUDIT_SCHEMA_VERSION,
+        matches!(
+            payload.schema_version,
+            LEGACY_AUDIT_SCHEMA_VERSION | AUDIT_SCHEMA_VERSION
+        ),
         "unsupported updater intent schema version {}",
         payload.schema_version
+    );
+    anyhow::ensure!(
+        (payload.schema_version == LEGACY_AUDIT_SCHEMA_VERSION && payload.run_budgets.is_none())
+            || (payload.schema_version == AUDIT_SCHEMA_VERSION && payload.run_budgets.is_some()),
+        "updater intent schema/budget fields conflict"
     );
     anyhow::ensure!(payload.phase == "intent", "updater intent has wrong phase");
     let _ = payload.ts_unix;
 
     let recorded_binding = payload.request_binding_sha256;
     validate_sha256(&recorded_binding)?;
-    let request = UpdaterLeafRequest::build(
+    let mut request = UpdaterLeafRequest::build(
         payload.operation_id,
         payload.request_id,
         payload.accepted_epoch,
@@ -1391,6 +1462,9 @@ pub(super) fn decode_and_validate_updater_leaf_intent(
         payload.effect,
         payload.target,
     )?;
+    if let Some(budgets) = payload.run_budgets {
+        request = request.with_run_budgets(budgets)?;
+    }
     anyhow::ensure!(
         request.binding_sha256 == recorded_binding,
         "updater intent request binding does not match its payload"
@@ -1404,9 +1478,17 @@ pub(super) fn decode_and_validate_updater_leaf_result(
     let payload: RecoveredResultPayload =
         serde_json::from_slice(payload).context("decode updater result")?;
     anyhow::ensure!(
-        payload.schema_version == AUDIT_SCHEMA_VERSION,
+        matches!(
+            payload.schema_version,
+            LEGACY_AUDIT_SCHEMA_VERSION | AUDIT_SCHEMA_VERSION
+        ),
         "unsupported updater result schema version {}",
         payload.schema_version
+    );
+    anyhow::ensure!(
+        (payload.schema_version == LEGACY_AUDIT_SCHEMA_VERSION && payload.run_budgets.is_none())
+            || (payload.schema_version == AUDIT_SCHEMA_VERSION && payload.run_budgets.is_some()),
+        "updater result schema/budget fields conflict"
     );
     anyhow::ensure!(payload.phase == "result", "updater result has wrong phase");
     validate_audit_id(&payload.operation_id, "operation")?;
@@ -1497,7 +1579,31 @@ pub(super) fn decode_and_validate_updater_leaf_result(
         component: payload.component,
         effect: payload.effect,
         request_binding_sha256: payload.request_binding_sha256,
+        run_budgets: payload.run_budgets,
         kind,
+    })
+}
+
+/// Extract the durable terminal receipt used by an outer pass commitment.
+/// This reuses the strict result decoder before hashing the exact WAL body;
+/// callers cannot bind arbitrary extended-event bytes as a leaf terminal.
+pub(super) struct RecoveredUpdaterLeafTerminal {
+    pub(super) receipt: UpdaterLeafTerminalReceipt,
+    pub(super) run_budgets: Option<UpdaterRunBudgets>,
+}
+
+pub(super) fn decode_updater_leaf_terminal_receipt(
+    payload: &[u8],
+) -> Result<RecoveredUpdaterLeafTerminal> {
+    let result = decode_and_validate_updater_leaf_result(payload)?;
+    Ok(RecoveredUpdaterLeafTerminal {
+        receipt: UpdaterLeafTerminalReceipt {
+            operation_id: result.operation_id,
+            request_id: result.request_id,
+            request_binding_sha256: result.request_binding_sha256,
+            result_receipt_sha256: updater_leaf_result_receipt_sha256(payload),
+        },
+        run_budgets: result.run_budgets,
     })
 }
 
@@ -1521,7 +1627,7 @@ pub(super) fn serialize_updater_leaf_intent_payload(
     ts_unix: u64,
 ) -> Result<Vec<u8>> {
     serde_json::to_vec(&IntentPayload {
-        schema_version: AUDIT_SCHEMA_VERSION,
+        schema_version: request.audit_schema_version(),
         operation_id: &request.operation_id,
         request_id: &request.request_id,
         accepted_epoch: request.accepted_epoch,
@@ -1530,6 +1636,7 @@ pub(super) fn serialize_updater_leaf_intent_payload(
         component: &request.component,
         effect: request.effect,
         request_binding_sha256: &request.binding_sha256,
+        run_budgets: request.run_budgets.as_ref(),
         phase: "intent",
         target: &request.target,
         ts_unix,
@@ -1548,7 +1655,7 @@ fn serialize_result_payload(
             observed_sha256,
             observed_size_bytes,
         } => ResultPayload {
-            schema_version: AUDIT_SCHEMA_VERSION,
+            schema_version: request.audit_schema_version(),
             operation_id: &request.operation_id,
             request_id: &request.request_id,
             accepted_epoch: request.accepted_epoch,
@@ -1557,6 +1664,7 @@ fn serialize_result_payload(
             component: &request.component,
             effect: request.effect,
             request_binding_sha256: &request.binding_sha256,
+            run_budgets: request.run_budgets.as_ref(),
             phase: "result",
             status: "success",
             outcome: Some(outcome.as_str()),
@@ -1570,7 +1678,7 @@ fn serialize_result_payload(
             error_kind,
             error_sha256,
         } => ResultPayload {
-            schema_version: AUDIT_SCHEMA_VERSION,
+            schema_version: request.audit_schema_version(),
             operation_id: &request.operation_id,
             request_id: &request.request_id,
             accepted_epoch: request.accepted_epoch,
@@ -1579,6 +1687,7 @@ fn serialize_result_payload(
             component: &request.component,
             effect: request.effect,
             request_binding_sha256: &request.binding_sha256,
+            run_budgets: request.run_budgets.as_ref(),
             phase: "result",
             status: "failure",
             outcome: None,
@@ -1651,12 +1760,22 @@ impl UpdaterLeafAuditTicket {
         serialize_updater_leaf_intent_payload(&self.request, (self.clock)())
     }
 
-    async fn append_terminal(&self, terminal: UpdaterLeafTerminal) -> Result<()> {
+    async fn append_terminal(
+        &self,
+        terminal: UpdaterLeafTerminal,
+    ) -> Result<UpdaterLeafTerminalReceipt> {
         let payload = serialize_result_payload(&self.request, &terminal, (self.clock)())?;
+        let receipt = UpdaterLeafTerminalReceipt {
+            operation_id: self.request.operation_id.clone(),
+            request_id: self.request.request_id.clone(),
+            request_binding_sha256: self.request.binding_sha256.clone(),
+            result_receipt_sha256: updater_leaf_result_receipt_sha256(&payload),
+        };
         self.sink
             .append_updater_leaf(ExtendedSubtype::UpdaterLeafResult, payload)
             .await
-            .context("append mandatory updater leaf result")
+            .context("append mandatory updater leaf result")?;
+        Ok(receipt)
     }
 }
 
@@ -1816,6 +1935,7 @@ impl UpdaterLeafPermit {
     async fn execute<F, Fut, T>(
         self,
         request: &UpdaterLeafRequest,
+        run_clock: Option<&UpdaterRunClock>,
         effect: F,
     ) -> std::result::Result<
         std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>,
@@ -1849,7 +1969,26 @@ impl UpdaterLeafPermit {
                 )));
             }
         };
-        Ok(match AssertUnwindSafe(future).catch_unwind().await {
+        let completed = match run_clock {
+            Some(clock) => match tokio::time::timeout_at(
+                clock.deadline(UpdaterDeadlinePhase::Effect),
+                AssertUnwindSafe(future).catch_unwind(),
+            )
+            .await
+            {
+                Ok(outcome) => outcome,
+                Err(_) => {
+                    return Ok(Err(UpdaterLeafFailure::new(
+                        UpdaterLeafFailureKind::Timeout,
+                        anyhow::anyhow!(
+                            "updater HTTP effect exceeded its inherited absolute deadline"
+                        ),
+                    )));
+                }
+            },
+            None => AssertUnwindSafe(future).catch_unwind().await,
+        };
+        Ok(match completed {
             Ok(outcome) => outcome,
             Err(_) => Err(UpdaterLeafFailure::new(
                 UpdaterLeafFailureKind::Panic,
@@ -1868,27 +2007,56 @@ impl UpdaterLeafAuditGuard {
     async fn finish(
         &mut self,
         terminal: UpdaterLeafTerminal,
-    ) -> std::result::Result<UpdaterLeafLease, UpdaterLeafExecutionError> {
+        run_clock: Option<&UpdaterRunClock>,
+    ) -> std::result::Result<
+        (UpdaterLeafLease, UpdaterLeafTerminalReceipt),
+        UpdaterLeafExecutionError,
+    > {
         let effect_error_sha256 = terminal.error_sha256().map(str::to_string);
         let Some(ticket) = self.ticket.take() else {
             unreachable!("updater terminal audit can finish only once");
         };
         // The terminal append survives cancellation while this method awaits.
-        tokio::spawn(async move {
-            ticket.append_terminal(terminal).await?;
-            Ok::<_, anyhow::Error>(ticket.generation_lease)
-        })
-        .await
-        .map_err(|source| UpdaterLeafExecutionError::Audit {
-            phase: UpdaterLeafAuditPhase::Result,
-            effect_error_sha256: effect_error_sha256.clone(),
-            source: source.into(),
-        })?
-        .map_err(|source| UpdaterLeafExecutionError::Audit {
-            phase: UpdaterLeafAuditPhase::Result,
-            effect_error_sha256,
-            source,
-        })
+        // A terminal deadline may make the pass indeterminate, but it never
+        // detaches this task: it retains the generation lease until its owned
+        // acknowledgement has actually joined.
+        let mut acknowledgement = tokio::spawn(async move {
+            let receipt = ticket.append_terminal(terminal).await?;
+            Ok::<_, anyhow::Error>((ticket.generation_lease, receipt))
+        });
+        let (joined, exceeded_terminal_deadline) = match run_clock {
+            Some(clock) => match tokio::time::timeout_at(
+                clock.deadline(UpdaterDeadlinePhase::Terminal),
+                &mut acknowledgement,
+            )
+            .await
+            {
+                Ok(joined) => (joined, false),
+                Err(_) => (acknowledgement.await, true),
+            },
+            None => (acknowledgement.await, false),
+        };
+        let acknowledged = joined
+            .map_err(|source| UpdaterLeafExecutionError::Audit {
+                phase: UpdaterLeafAuditPhase::Result,
+                effect_error_sha256: effect_error_sha256.clone(),
+                source: source.into(),
+            })?
+            .map_err(|source| UpdaterLeafExecutionError::Audit {
+                phase: UpdaterLeafAuditPhase::Result,
+                effect_error_sha256,
+                source,
+            })?;
+        if exceeded_terminal_deadline {
+            // Preserve the acknowledged receipt for the outer pass.  Its
+            // caller observes the expired clock and records a truthful
+            // TimedOut/Indeterminate outer RESULT; dropping it here would
+            // strand a durable leaf terminal outside that commitment.
+            tracing::warn!(
+                "updater terminal acknowledgement exceeded the inherited absolute deadline"
+            );
+        }
+        Ok(acknowledged)
     }
 }
 
@@ -2170,6 +2338,49 @@ impl UpdaterLeafAuthorizer {
         .await
     }
 
+    /// Budgeted recurring HTTP execution.  The receipt is returned only after
+    /// the terminal WAL frame has been acknowledged, allowing the caller to
+    /// make an outer pass RESULT commit an ordered durable leaf set.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_http_with_receipt<F, Fut, T>(
+        &self,
+        request: UpdaterLeafRequest,
+        run_clock: UpdaterRunClock,
+        expected_effect: UpdaterLeafEffect,
+        method: UpdaterHttpMethod,
+        url: &str,
+        body: &[u8],
+        expected_content_sha256: Option<&str>,
+        max_response_bytes: u64,
+        run: F,
+    ) -> std::result::Result<(T, UpdaterLeafTerminalReceipt), UpdaterLeafExecutionError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>>,
+    {
+        if request.run_budgets.as_ref() != Some(run_clock.budgets()) {
+            return Err(UpdaterLeafExecutionError::Audit {
+                phase: UpdaterLeafAuditPhase::Intent,
+                effect_error_sha256: None,
+                source: anyhow::anyhow!(
+                    "budgeted updater leaf did not carry the outer pass budget tuple"
+                ),
+            });
+        }
+        self.execute_with_clock(request, Some(&run_clock), move |authority| async move {
+            authority.validate_http(
+                expected_effect,
+                method,
+                url,
+                body,
+                expected_content_sha256,
+                max_response_bytes,
+            )?;
+            run().await
+        })
+        .await
+    }
+
     /// Execute one verified-stage leaf through the only crate-visible local
     /// stage authority surface.
     pub(crate) async fn execute_stage<F, Fut, T>(
@@ -2185,8 +2396,8 @@ impl UpdaterLeafAuthorizer {
         F: FnOnce() -> Fut,
         Fut: Future<Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>>,
     {
-        let (value, generation_lease) = self
-            .execute_with_lease(request, move |authority| async move {
+        let (value, generation_lease, _) = self
+            .execute_with_lease(request, None, move |authority| async move {
                 authority.validate_stage(
                     neoth_home,
                     destination,
@@ -2213,16 +2424,36 @@ impl UpdaterLeafAuthorizer {
         F: FnOnce(UpdaterLeafAuthority) -> Fut,
         Fut: Future<Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>>,
     {
-        let (value, generation_lease) = self.execute_with_lease(request, effect).await?;
+        self.execute_with_clock(request, None, effect)
+            .await
+            .map(|(value, _receipt)| value)
+    }
+
+    async fn execute_with_clock<F, Fut, T>(
+        &self,
+        request: UpdaterLeafRequest,
+        run_clock: Option<&UpdaterRunClock>,
+        effect: F,
+    ) -> std::result::Result<(T, UpdaterLeafTerminalReceipt), UpdaterLeafExecutionError>
+    where
+        F: FnOnce(UpdaterLeafAuthority) -> Fut,
+        Fut: Future<Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>>,
+    {
+        let (value, generation_lease, receipt) =
+            self.execute_with_lease(request, run_clock, effect).await?;
         drop(generation_lease);
-        Ok(value)
+        Ok((value, receipt))
     }
 
     async fn execute_with_lease<F, Fut, T>(
         &self,
         request: UpdaterLeafRequest,
+        run_clock: Option<&UpdaterRunClock>,
         effect: F,
-    ) -> std::result::Result<(T, UpdaterLeafLease), UpdaterLeafExecutionError>
+    ) -> std::result::Result<
+        (T, UpdaterLeafLease, UpdaterLeafTerminalReceipt),
+        UpdaterLeafExecutionError,
+    >
     where
         F: FnOnce(UpdaterLeafAuthority) -> Fut,
         Fut: Future<Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>>,
@@ -2266,7 +2497,7 @@ impl UpdaterLeafAuthorizer {
         let mut audit = intent.into_guard();
 
         let permit = UpdaterLeafPermit::for_request(&request);
-        let mut outcome = permit.execute(&request, effect).await?;
+        let mut outcome = permit.execute(&request, run_clock, effect).await?;
         if let Ok(success) = &outcome
             && let Err(source) = request.validate_success(success)
         {
@@ -2289,15 +2520,16 @@ impl UpdaterLeafAuthorizer {
                     .expect("failure digest is always present"),
             },
         };
-        let generation_lease = audit.finish(terminal).await?;
+        let (generation_lease, receipt) = audit.finish(terminal, run_clock).await?;
 
         match outcome {
-            Ok(success) => Ok((success.value, generation_lease)),
+            Ok(success) => Ok((success.value, generation_lease, receipt)),
             Err(failure) => {
                 drop(generation_lease);
                 Err(UpdaterLeafExecutionError::Effect {
                     kind: failure.kind.as_str(),
                     error_sha256: error_sha256.expect("failure digest is always present"),
+                    terminal_receipt: Box::new(receipt),
                     source: failure.source,
                 })
             }
@@ -2426,6 +2658,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::updater::budget::{UpdaterRunClock, UpdaterRunLimits};
 
     const TEST_EPOCH: u64 = 41;
     const TEST_TS: u64 = 1_900_000_000;
@@ -2622,7 +2855,7 @@ mod tests {
         let permit = UpdaterLeafPermit::for_request(&approved);
         let called = AtomicBool::new(false);
         let result = permit
-            .execute(&actual, |_authority| async {
+            .execute(&actual, None, |_authority| async {
                 called.store(true, Ordering::SeqCst);
                 Ok(metadata_success(()))
             })
@@ -2643,7 +2876,7 @@ mod tests {
             metadata_request("req-owned-once", "https://api.example.test/releases/latest");
         let permit = UpdaterLeafPermit::for_request(&request);
         let result = permit
-            .execute(&request, |authority| async move {
+            .execute(&request, None, |authority| async move {
                 // Both this closure and `UpdaterLeafPermit::execute` take their
                 // capabilities by value. Neither type implements Clone/Copy;
                 // a second invocation is rejected by the Rust type checker.
@@ -2882,6 +3115,114 @@ mod tests {
         let events = sink.events.lock().unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[1].0, ExtendedSubtype::UpdaterLeafResult);
+    }
+
+    #[tokio::test]
+    async fn budgeted_http_failure_returns_its_acknowledged_terminal_receipt() {
+        let sink = Arc::new(RecordingSink::default());
+        let authorizer = authorizer(sink.clone());
+        let run_clock = UpdaterRunClock::start(
+            UpdaterRunLimits::new(
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+                Duration::from_secs(3),
+                Duration::from_secs(4),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let request = metadata_request(
+            "req-budgeted-failure",
+            "https://api.example.test/releases/latest",
+        )
+        .with_run_budgets(run_clock.budgets().clone())
+        .unwrap();
+        let expected_binding = request.binding_sha256().to_string();
+        let error = authorizer
+            .execute_http_with_receipt(
+                request,
+                run_clock,
+                UpdaterLeafEffect::ReleaseMetadataFetch,
+                UpdaterHttpMethod::Get,
+                "https://api.example.test/releases/latest",
+                &[],
+                None,
+                128 * 1024,
+                || async {
+                    Err::<UpdaterLeafSuccess<()>, UpdaterLeafFailure>(UpdaterLeafFailure::new(
+                        UpdaterLeafFailureKind::Transport,
+                        anyhow::anyhow!("injected transport failure"),
+                    ))
+                },
+            )
+            .await
+            .unwrap_err();
+        let receipt = error
+            .terminal_receipt()
+            .expect("failed leaf has terminal receipt");
+        assert_eq!(receipt.operation_id, "op-self-update");
+        assert_eq!(receipt.request_id, "req-budgeted-failure");
+        assert_eq!(receipt.request_binding_sha256, expected_binding);
+
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, ExtendedSubtype::UpdaterLeafIntent);
+        assert_eq!(events[1].0, ExtendedSubtype::UpdaterLeafResult);
+        assert_eq!(events[0].1["schema_version"], 2);
+        assert_eq!(events[1].1["schema_version"], 2);
+        assert!(events[0].1["run_budgets"].is_object());
+        assert!(events[1].1["run_budgets"].is_object());
+        assert_eq!(events[1].1["status"], "failure");
+        assert_eq!(events[1].1["error_kind"], "transport");
+    }
+
+    #[tokio::test]
+    async fn budgeted_terminal_ack_remains_owned_after_its_deadline() {
+        let sink = Arc::new(BlockingResultSink::default());
+        let authorizer = Arc::new(authorizer(sink.clone()));
+        let run_clock = UpdaterRunClock::start(
+            UpdaterRunLimits::new(
+                Duration::from_millis(10),
+                Duration::from_millis(15),
+                Duration::from_millis(20),
+                Duration::from_millis(25),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let request = metadata_request(
+            "req-budgeted-late-terminal",
+            "https://api.example.test/releases/latest",
+        )
+        .with_run_budgets(run_clock.budgets().clone())
+        .unwrap();
+        let task_authorizer = Arc::clone(&authorizer);
+        let task = tokio::spawn(async move {
+            task_authorizer
+                .execute_http_with_receipt(
+                    request,
+                    run_clock,
+                    UpdaterLeafEffect::ReleaseMetadataFetch,
+                    UpdaterHttpMethod::Get,
+                    "https://api.example.test/releases/latest",
+                    &[],
+                    None,
+                    128 * 1024,
+                    || async { Ok(metadata_success("done")) },
+                )
+                .await
+        });
+        sink.result_started.notified().await;
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert!(
+            !task.is_finished(),
+            "terminal acknowledgement detached after its inherited deadline"
+        );
+        sink.release_result.notify_one();
+        let (value, receipt) = task.await.unwrap().unwrap();
+        assert_eq!(value, "done");
+        assert_eq!(receipt.request_id, "req-budgeted-late-terminal");
+        assert_eq!(sink.events.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

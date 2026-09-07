@@ -348,6 +348,10 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
 ) -> Result<McpInvocationPreflight, GateError> {
     let policy_snapshot = policy.policy_snapshot();
     let autonomy = policy_snapshot.level();
+    let action = Action::McpToolInvocation {
+        server_id: cfg.id.clone(),
+        tool: tool.to_string(),
+    };
 
     if let Some(list) = cfg.allow_tools.as_ref() {
         if !list.iter().any(|candidate| candidate == tool) {
@@ -361,6 +365,16 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
                 )
                 .await
                 .map_err(GateError::Wal)?;
+                record_trust_decision(
+                    writer,
+                    &action,
+                    autonomy,
+                    &Decision::Deny("tool not in allow_tools allowlist".into()),
+                    None,
+                    None,
+                    now_unix,
+                )
+                .await?;
             }
             return Err(GateError::NotInAllowlist {
                 server: cfg.id.clone(),
@@ -378,6 +392,16 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
             )
             .await
             .map_err(GateError::Wal)?;
+            record_trust_decision(
+                writer,
+                &action,
+                autonomy,
+                &Decision::Deny("server has no allowlist and does not trust all tools".into()),
+                None,
+                None,
+                now_unix,
+            )
+            .await?;
         }
         return Err(GateError::MissingAllowlistSecureDefault {
             server: cfg.id.clone(),
@@ -402,6 +426,16 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
             )
             .await
             .map_err(GateError::Wal)?;
+            record_trust_decision(
+                writer,
+                &action,
+                autonomy,
+                &Decision::Deny("server autonomy gate requires a higher level".into()),
+                None,
+                None,
+                now_unix,
+            )
+            .await?;
         }
         return Err(GateError::AutonomyGate {
             server: cfg.id.clone(),
@@ -411,16 +445,14 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
         });
     }
 
-    let action = Action::McpToolInvocation {
-        server_id: cfg.id.clone(),
-        tool: tool.to_string(),
-    };
     let decision = evaluate(&action, policy);
     if let Decision::Deny(reason) = &decision {
         if let Some(writer) = writer {
             emit_reject(writer, &cfg.id, tool, &format!("deny: {reason}"), now_unix)
                 .await
                 .map_err(GateError::Wal)?;
+            record_trust_decision(writer, &action, autonomy, &decision, None, None, now_unix)
+                .await?;
         }
         return Err(GateError::PermissionDenied {
             server: cfg.id.clone(),
@@ -461,7 +493,20 @@ pub(crate) async fn authorize_preflight_with_audit(
     }
 
     match preflight.decision {
-        Decision::Allow => {}
+        Decision::Allow => {
+            if let Some(writer) = writer {
+                record_trust_decision(
+                    writer,
+                    &preflight.action,
+                    preflight.policy_snapshot.level(),
+                    &Decision::Allow,
+                    subject,
+                    None,
+                    now_unix,
+                )
+                .await?;
+            }
+        }
         Decision::Deny(reason) => {
             // `preflight_with_audit` consumes every Deny. Keep this branch
             // fail-closed for forward compatibility without emitting a second
@@ -478,6 +523,16 @@ pub(crate) async fn authorize_preflight_with_audit(
                     emit_readonly_allow(writer, &cfg.id, tool, now_unix)
                         .await
                         .map_err(GateError::Wal)?;
+                    record_trust_decision(
+                        writer,
+                        &preflight.action,
+                        preflight.policy_snapshot.level(),
+                        &Decision::Allow,
+                        subject,
+                        Some("smart_approve_readonly"),
+                        now_unix,
+                    )
+                    .await?;
                 }
                 tracing::info!(
                     server = %cfg.id, tool = %tool,
@@ -510,6 +565,18 @@ pub(crate) async fn authorize_preflight_with_audit(
                     }
                 } else {
                     emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix).await?;
+                    if let Some(writer) = writer {
+                        record_trust_decision(
+                            writer,
+                            &preflight.action,
+                            preflight.policy_snapshot.level(),
+                            &Decision::Deny(reason.clone()),
+                            Some(subject),
+                            None,
+                            now_unix,
+                        )
+                        .await?;
+                    }
                     return Err(GateError::ConfirmRequired {
                         server: cfg.id.clone(),
                         tool: tool.to_string(),
@@ -518,6 +585,18 @@ pub(crate) async fn authorize_preflight_with_audit(
                 }
             } else {
                 emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix).await?;
+                if let Some(writer) = writer {
+                    record_trust_decision(
+                        writer,
+                        &preflight.action,
+                        preflight.policy_snapshot.level(),
+                        &Decision::Deny(reason.clone()),
+                        subject,
+                        None,
+                        now_unix,
+                    )
+                    .await?;
+                }
                 return Err(GateError::ConfirmRequired {
                     server: cfg.id.clone(),
                     tool: tool.to_string(),
@@ -843,6 +922,34 @@ pub async fn enforce_agent_denylist(
         server: server.to_string(),
         tool: tool.to_string(),
     })
+}
+
+/// Emit the closed TrustDecision that corresponds to this MCP gate's final
+/// policy result. The MCP domain event remains its own compatibility record.
+async fn record_trust_decision(
+    writer: &WalWriterHandle,
+    action: &Action,
+    autonomy: crate::permissions::AutonomyLevel,
+    decision: &Decision,
+    subject: Option<&str>,
+    confirmation_source: Option<&str>,
+    now_unix: i64,
+) -> Result<(), GateError> {
+    crate::permissions::trust_ledger::append_resolved_decision_to_writer(
+        writer,
+        crate::permissions::trust_ledger::ResolvedTrustDecision {
+            action,
+            autonomy_level: autonomy,
+            decision,
+            subject,
+            lease_id: None,
+            confirmation_source,
+            request_binding_sha256: None,
+            decided_at_ns: now_unix.max(0) as u64 * 1_000_000_000,
+        },
+    )
+    .await
+    .map_err(GateError::Wal)
 }
 
 async fn emit_reject(

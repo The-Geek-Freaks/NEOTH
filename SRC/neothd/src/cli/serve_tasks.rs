@@ -4121,7 +4121,7 @@ pub(crate) async fn spawn_audit_rpc(
 /// Start the separate Connector-Control same-user endpoint.  It deliberately
 /// receives the PID-bound audit nonce only as input; its own endpoint nonce is
 /// derived in the connector-control domain and is never an audit endpoint.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) async fn spawn_connector_control_rpc(
     home: &std::path::Path,
     audit_pid_nonce: &str,
@@ -4147,7 +4147,7 @@ pub(crate) async fn spawn_connector_control_rpc(
 /// endpoint is discoverable. The RPC child owns the daemon-only subject
 /// session and the plan-independent replay coordinator; this wrapper keeps
 /// `serve` from receiving any authority minting surface.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) async fn replay_connector_control_receipts_at_startup(
     home: &std::path::Path,
     plane: Arc<crate::connectors::control_plane::ConnectorControlPlane>,

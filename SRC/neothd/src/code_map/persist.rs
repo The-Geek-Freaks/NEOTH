@@ -51,7 +51,8 @@
 //!     file_id INTEGER NOT NULL REFERENCES code_map_files(id) ON DELETE CASCADE,
 //!     name    TEXT NOT NULL,
 //!     kind    TEXT NOT NULL,
-//!     line    INTEGER NOT NULL
+//!     line    INTEGER NOT NULL,
+//!     line_end INTEGER
 //! );
 //!
 //! CREATE INDEX idx_code_map_symbols_name ON code_map_symbols(name);
@@ -96,7 +97,10 @@ use super::walker::{Language, RepoFile, RepoMap, ScanReport};
 /// Unreachable legacy roots remain NULL and cannot produce typed receipts until
 /// a successful rebuild adopts their identity; reachable roots are adopted by
 /// the migration itself.
-pub const CODE_MAP_SCHEMA_VERSION: i64 = 7;
+/// v8 adds nullable parser-certified inclusive symbol end lines. Existing
+/// regex-only and legacy rows remain `NULL`, which means unknown rather than
+/// an estimated declaration extent.
+pub const CODE_MAP_SCHEMA_VERSION: i64 = 8;
 
 /// Hard ceiling for one filesystem freshness receipt. The count gate runs
 /// before row materialisation and every SELECT still carries `LIMIT cap + 1`
@@ -367,6 +371,23 @@ where
             [],
         )
         .context("v6→v7: stamp schema_version=7")?;
+        v = 7;
+    }
+
+    // v7 → v8: only parser-certified declaration end lines are stored. A
+    // nullable column preserves the distinction between a legacy/regex symbol
+    // with no proven extent and an actual one-line extent.
+    if v < 8 {
+        tx.execute(
+            "ALTER TABLE code_map_symbols ADD COLUMN line_end INTEGER",
+            [],
+        )
+        .context("v7→v8: add nullable code-map symbol end line")?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '8')",
+            [],
+        )
+        .context("v7→v8: stamp schema_version=8")?;
     }
 
     tx.commit().context("commit locked code-map migration")?;
@@ -525,7 +546,8 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             file_id INTEGER NOT NULL REFERENCES code_map_files(id) ON DELETE CASCADE,
             name    TEXT NOT NULL,
             kind    TEXT NOT NULL,
-            line    INTEGER NOT NULL
+            line    INTEGER NOT NULL,
+            line_end INTEGER
         );
 
         CREATE INDEX IF NOT EXISTS idx_code_map_symbols_name
@@ -754,6 +776,15 @@ fn enforce_incoming_map_bounds(map: &RepoMap) -> Result<()> {
             map.root
         );
         for symbol in &file.symbols {
+            if let Some(line_end) = symbol.line_end {
+                ensure!(
+                    line_end >= symbol.line,
+                    "incoming code-map symbol end line {line_end} precedes start line {} for {}::{}",
+                    symbol.line,
+                    file.path,
+                    symbol.name
+                );
+            }
             let symbol_row_bytes = symbol
                 .name
                 .len()
@@ -780,7 +811,7 @@ fn enforce_incoming_map_bounds(map: &RepoMap) -> Result<()> {
     Ok(())
 }
 
-fn enforce_incoming_edge_bounds(
+pub(crate) fn enforce_incoming_edge_bounds(
     root: &str,
     edges: &[crate::code_map::graph::CodeEdge],
 ) -> Result<()> {
@@ -1018,7 +1049,9 @@ fn persist_map_in_transaction(
     symbol_comparison: SymbolComparisonMode,
     expected_root: Option<&super::root_identity::CanonicalRepoRoot>,
 ) -> Result<PersistStats> {
-    type StoredSymbols = Vec<(String, String, u32)>;
+    // `line_end` stays optional: historical rows and declarations without a
+    // parser-certified balanced body must never be upgraded to a guessed end.
+    type StoredSymbols = Vec<(String, String, u32, Option<u32>)>;
     type StoredFile = (String, i64, StoredSymbols);
 
     enforce_incoming_map_bounds(map)?;
@@ -1046,11 +1079,11 @@ fn persist_map_in_transaction(
     {
         let mut stmt = tx
             .prepare(
-                "SELECT f.path, s.name, s.kind, s.line \
+                "SELECT f.path, s.name, s.kind, s.line, s.line_end \
                  FROM code_map_files f \
                  JOIN code_map_symbols s ON s.file_id = f.id \
                  WHERE f.root = ?1 \
-                 ORDER BY f.path, s.name, s.kind, s.line",
+                 ORDER BY f.path, s.name, s.kind, s.line, s.line_end",
             )
             .context("prepare pre-pass stored-symbol query")?;
         let rows = stmt
@@ -1060,15 +1093,28 @@ fn persist_map_in_transaction(
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, i64>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
                 ))
             })
             .context("execute pre-pass stored-symbol query")?;
         for row in rows {
-            let (path, name, kind, line) = row.context("read stored symbol row")?;
+            let (path, name, kind, line, line_end) = row.context("read stored symbol row")?;
             let line = u32::try_from(line)
                 .with_context(|| format!("invalid stored symbol line {line} for {path}::{name}"))?;
+            let line_end = line_end
+                .map(|end| {
+                    let end = u32::try_from(end).with_context(|| {
+                        format!("invalid stored symbol end line {end} for {path}::{name}")
+                    })?;
+                    ensure!(
+                        end >= line,
+                        "stored symbol end line {end} precedes start line {line} for {path}::{name}"
+                    );
+                    Ok(end)
+                })
+                .transpose()?;
             if let Some((_, _, symbols)) = stored.get_mut(&path) {
-                symbols.push((name, kind, line));
+                symbols.push((name, kind, line, line_end));
             }
         }
     }
@@ -1094,6 +1140,7 @@ fn persist_map_in_transaction(
                     symbol.name.clone(),
                     symbol.kind.label().to_string(),
                     symbol.line,
+                    symbol.line_end,
                 )
             })
             .collect();
@@ -1205,9 +1252,15 @@ fn persist_map_in_transaction(
         for sym in &file.symbols {
             tx.execute(
                 "INSERT INTO code_map_symbols \
-                 (file_id, name, kind, line) \
-                 VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![file_id, &sym.name, sym.kind.label(), sym.line as i64],
+                 (file_id, name, kind, line, line_end) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    file_id,
+                    &sym.name,
+                    sym.kind.label(),
+                    sym.line as i64,
+                    sym.line_end.map(i64::from),
+                ],
             )
             .with_context(|| {
                 format!(
@@ -1321,6 +1374,128 @@ pub(crate) fn persist_map_and_edges_bound(
         edges_inserted: inserted,
         index_generation,
         graph_generation,
+    })
+}
+
+/// Atomically publish a complete map while replacing outgoing edges only for
+/// selected source paths.  Callers use every code path when the global
+/// declaration-name set changed; otherwise they select changed code sources.
+pub(crate) fn persist_delta_map_and_edges_bound<PreCommitFence>(
+    conn: &mut Connection,
+    map: &RepoMap,
+    published_edges: &[crate::code_map::graph::CodeEdge],
+    replacement_edges: &[crate::code_map::graph::CodeEdge],
+    replacement_sources: &std::collections::BTreeSet<String>,
+    removed_paths: &std::collections::BTreeSet<String>,
+    expected_root: &super::root_identity::CanonicalRepoRoot,
+    pre_commit_fence: PreCommitFence,
+) -> Result<BoundPersistResult>
+where
+    PreCommitFence: FnOnce() -> Result<()>,
+{
+    enforce_incoming_edge_bounds(&map.root, published_edges)?;
+    for edge in replacement_edges {
+        ensure!(
+            replacement_sources.contains(&edge.from_file)
+                && !removed_paths.contains(&edge.from_file),
+            "delta edge source is outside the selected live source set"
+        );
+    }
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .context("begin bound atomic delta code-map snapshot transaction")?;
+    let stats = persist_map_in_transaction(
+        &tx,
+        map,
+        SymbolComparisonMode::ExactSnapshot,
+        Some(expected_root),
+    )?;
+    let mut delete_sources = replacement_sources.clone();
+    delete_sources.extend(removed_paths.iter().cloned());
+    for source in &delete_sources {
+        tx.execute(
+            "DELETE FROM code_map_edges WHERE root = ?1 AND from_file = ?2",
+            rusqlite::params![&map.root, source],
+        )
+        .with_context(|| format!("clear delta code-map edges for {source}"))?;
+    }
+    let (retained_count, retained_text_bytes): (i64, i64) = tx.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(LENGTH(from_file) + LENGTH(from_symbol) + LENGTH(to_name) + LENGTH(kind)), 0) \
+         FROM code_map_edges WHERE root = ?1",
+        rusqlite::params![&map.root],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let replacement_count =
+        i64::try_from(replacement_edges.len()).context("convert delta replacement edge count")?;
+    let replacement_text_bytes = replacement_edges.iter().try_fold(0i64, |total, edge| {
+        let text = edge
+            .from_file
+            .len()
+            .checked_add(edge.from_symbol.len())
+            .and_then(|bytes| bytes.checked_add(edge.to_name.len()))
+            .and_then(|bytes| bytes.checked_add(edge.kind.as_str().len()))
+            .context("delta replacement edge text byte count overflow")?;
+        let text = i64::try_from(text).context("convert delta replacement edge text bytes")?;
+        total
+            .checked_add(text)
+            .context("delta replacement edge text total overflow")
+    })?;
+    ensure!(
+        retained_count
+            .checked_add(replacement_count)
+            .is_some_and(|count| count <= PERSIST_PREPASS_EDGE_CAP as i64),
+        "delta code-map graph exceeds bounded {PERSIST_PREPASS_EDGE_CAP}-edge publish cap"
+    );
+    ensure!(
+        retained_text_bytes
+            .checked_add(replacement_text_bytes)
+            .is_some_and(|bytes| bytes <= PERSIST_PREPASS_TEXT_BYTE_CAP),
+        "delta code-map graph text exceeds bounded {PERSIST_PREPASS_TEXT_BYTE_CAP}-byte publish cap"
+    );
+    let mut inserted = 0usize;
+    {
+        let mut statement = tx.prepare(
+            "INSERT INTO code_map_edges (root, from_file, from_symbol, to_name, kind) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for edge in replacement_edges {
+            statement.execute(rusqlite::params![
+                &map.root,
+                &edge.from_file,
+                &edge.from_symbol,
+                &edge.to_name,
+                edge.kind.as_str(),
+            ])?;
+            inserted += 1;
+        }
+    }
+    pre_commit_fence().context("validate delta source fence under writer transaction")?;
+    let observed = super::root_identity::CanonicalRepoRoot::discover(Path::new(&map.root))?;
+    ensure!(
+        observed == *expected_root,
+        "code-map repository root was replaced before bound delta commit"
+    );
+    let (stored_identity, index_generation) = tx.query_row(
+        "SELECT root_identity, index_generation FROM code_map_roots WHERE root = ?1",
+        rusqlite::params![&map.root],
+        |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?)),
+    )?;
+    ensure!(
+        stored_identity.as_deref() == Some(expected_root.identity().as_str()),
+        "bound delta snapshot persisted a different physical root identity"
+    );
+    let updated = tx.execute(
+        "UPDATE code_map_roots SET graph_generation = ?2 WHERE root = ?1",
+        rusqlite::params![&map.root, index_generation],
+    )?;
+    ensure!(updated == 1, "bind delta graph generation");
+    tx.commit()
+        .context("commit bound atomic delta code-map snapshot transaction")?;
+    Ok(BoundPersistResult {
+        stats,
+        edges_inserted: inserted,
+        index_generation,
+        graph_generation: index_generation,
     })
 }
 
@@ -1457,6 +1632,26 @@ pub fn load_edges_for_root(
     root: &str,
 ) -> Result<Vec<crate::code_map::graph::CodeEdge>> {
     load_edges_filtered(conn, Some(root))
+}
+
+/// Read the complete existing graph for a bounded delta publication. Unlike
+/// the compatibility loader above, this rejects rather than materialises a
+/// graph beyond the writer's row or aggregate-text ceilings.
+pub(crate) fn load_edges_for_delta_refresh(
+    conn: &Connection,
+    root: &str,
+) -> Result<Vec<crate::code_map::graph::CodeEdge>> {
+    let (edges, truncated, _) = load_edges_for_root_bounded_with_text_limit(
+        conn,
+        root,
+        PERSIST_PREPASS_EDGE_CAP,
+        PERSIST_PREPASS_TEXT_BYTE_CAP as usize,
+    )?;
+    ensure!(
+        !truncated,
+        "persisted code-map graph for {root:?} exceeds bounded {PERSIST_PREPASS_EDGE_CAP}-edge delta refresh cap"
+    );
+    Ok(edges)
 }
 
 /// Impact-analysis loader with a second, byte-based allocation boundary.
@@ -1646,11 +1841,11 @@ pub fn load_map(conn: &Connection, root: &str) -> Result<Option<RepoMap>> {
     // and then performed an O(files * symbols) filter.
     let mut sym_stmt = conn
         .prepare(
-            "SELECT s.file_id, s.name, s.kind, s.line \
+            "SELECT s.file_id, s.name, s.kind, s.line, s.line_end \
              FROM code_map_symbols s \
              JOIN code_map_files f ON f.id = s.file_id \
              WHERE f.root = ?1 \
-             ORDER BY s.file_id ASC, s.line ASC",
+             ORDER BY s.file_id ASC, s.line ASC, s.line_end ASC",
         )
         .context("prepare code_map_symbols SELECT")?;
     let mut sym_rows = sym_stmt
@@ -1666,10 +1861,24 @@ pub fn load_map(conn: &Connection, root: &str) -> Result<Option<RepoMap>> {
         let name: String = row.get(1).context("read code-map symbol name")?;
         let kind_label: String = row.get(2).context("read code-map symbol kind")?;
         let line: i64 = row.get(3).context("read code-map symbol line")?;
+        let line_end: Option<i64> = row.get(4).context("read code-map symbol end line")?;
+        let line = u32::try_from(line).context("invalid persisted code-map symbol line")?;
+        let line_end = line_end
+            .map(|end| {
+                let end =
+                    u32::try_from(end).context("invalid persisted code-map symbol end line")?;
+                ensure!(
+                    end >= line,
+                    "persisted code-map symbol end line {end} precedes start line {line}"
+                );
+                Ok(end)
+            })
+            .transpose()?;
         symbols_by_file.entry(file_id).or_default().push(Symbol {
             name,
             kind: symbol_kind_from_label(&kind_label).unwrap_or(SymbolKind::Function),
-            line: u32::try_from(line).context("invalid persisted code-map symbol line")?,
+            line,
+            line_end,
         });
     }
 
@@ -2238,6 +2447,7 @@ mod tests {
                         name: "main".into(),
                         kind: SymbolKind::Function,
                         line: 1,
+                        line_end: None,
                     }],
                 },
                 RepoFile {
@@ -2820,6 +3030,7 @@ mod tests {
                     name: format!("extract_noise_{file}_{sym}"),
                     kind: SymbolKind::Function,
                     line: sym + 1,
+                    line_end: None,
                 })
                 .collect();
             noisy_files.push(RepoFile {
@@ -2870,11 +3081,13 @@ mod tests {
                             name: "extract_symbols".into(),
                             kind: SymbolKind::Function,
                             line: 5,
+                            line_end: None,
                         },
                         Symbol {
                             name: "extract_response".into(),
                             kind: SymbolKind::Function,
                             line: 25,
+                            line_end: None,
                         },
                     ],
                 },
@@ -2889,6 +3102,7 @@ mod tests {
                         name: "cluster_heartbeat".into(),
                         kind: SymbolKind::Function,
                         line: 1,
+                        line_end: None,
                     }],
                 },
             ],
@@ -3019,46 +3233,55 @@ mod tests {
                         name: "f".into(),
                         kind: SymbolKind::Function,
                         line: 1,
+                        line_end: Some(4),
                     },
                     Symbol {
                         name: "m".into(),
                         kind: SymbolKind::Method,
                         line: 2,
+                        line_end: None,
                     },
                     Symbol {
                         name: "C".into(),
                         kind: SymbolKind::Class,
                         line: 3,
+                        line_end: None,
                     },
                     Symbol {
                         name: "S".into(),
                         kind: SymbolKind::Struct,
                         line: 4,
+                        line_end: None,
                     },
                     Symbol {
                         name: "E".into(),
                         kind: SymbolKind::Enum,
                         line: 5,
+                        line_end: None,
                     },
                     Symbol {
                         name: "T".into(),
                         kind: SymbolKind::Trait,
                         line: 6,
+                        line_end: None,
                     },
                     Symbol {
                         name: "I".into(),
                         kind: SymbolKind::Interface,
                         line: 7,
+                        line_end: None,
                     },
                     Symbol {
                         name: "Mod".into(),
                         kind: SymbolKind::Module,
                         line: 8,
+                        line_end: None,
                     },
                     Symbol {
                         name: "Ty".into(),
                         kind: SymbolKind::Type,
                         line: 9,
+                        line_end: None,
                     },
                 ],
             }],
@@ -3067,6 +3290,7 @@ mod tests {
         let _ = persist_map(&mut conn, &map).unwrap();
         let loaded = load_map(&conn, "/repo/kinds").unwrap().unwrap();
         let kinds: Vec<SymbolKind> = loaded.files[0].symbols.iter().map(|s| s.kind).collect();
+        assert_eq!(loaded.files[0].symbols[0].line_end, Some(4));
         assert!(kinds.contains(&SymbolKind::Function));
         assert!(kinds.contains(&SymbolKind::Method));
         assert!(kinds.contains(&SymbolKind::Class));
@@ -3306,6 +3530,62 @@ mod tests {
         assert_eq!(
             root_index_generation(&conn, &symbol_aware.root).unwrap(),
             root_graph_generation(&conn, &symbol_aware.root).unwrap()
+        );
+    }
+
+    #[test]
+    fn delta_final_fence_failure_rolls_back_map_edges_and_generations() {
+        let repo = tempdir().unwrap();
+        std::fs::write(repo.path().join("lib.rs"), "pub fn first() { target(); }\n").unwrap();
+        let root = super::super::root_identity::CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(root.path())
+            .with_symbols(true)
+            .strict_errors(true)
+            .scan()
+            .unwrap();
+        let (_db_dir, mut conn) = temp_db();
+        let old_edges = vec![crate::code_map::graph::CodeEdge {
+            from_file: "lib.rs".into(),
+            from_symbol: "first".into(),
+            to_name: "target".into(),
+            kind: crate::code_map::graph::EdgeKind::Calls,
+        }];
+        persist_map_and_edges_bound(&mut conn, &map, &old_edges, &root).unwrap();
+        let before_index = root_index_generation(&conn, root.display()).unwrap();
+        let before_graph = root_graph_generation(&conn, root.display()).unwrap();
+
+        std::fs::write(repo.path().join("lib.rs"), "pub fn second() {}\n").unwrap();
+        let changed_map = crate::code_map::walker::RepoMapBuilder::new(root.path())
+            .with_symbols(true)
+            .strict_errors(true)
+            .scan()
+            .unwrap();
+        let result = persist_delta_map_and_edges_bound(
+            &mut conn,
+            &changed_map,
+            &[],
+            &[],
+            &std::collections::BTreeSet::from(["lib.rs".to_owned()]),
+            &std::collections::BTreeSet::new(),
+            &root,
+            || anyhow::bail!("test final source fence rejected changed bytes"),
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            root_index_generation(&conn, root.display()).unwrap(),
+            before_index
+        );
+        assert_eq!(
+            root_graph_generation(&conn, root.display()).unwrap(),
+            before_graph
+        );
+        assert_eq!(
+            load_map(&conn, root.display()).unwrap().unwrap().files[0].symbols[0].name,
+            "first"
+        );
+        assert_eq!(
+            load_edges_for_root(&conn, root.display()).unwrap(),
+            old_edges
         );
     }
 
@@ -3656,6 +3936,62 @@ mod tests {
                      truncated_at INTEGER,
                      index_generation INTEGER NOT NULL DEFAULT 0
                  );
+                 CREATE TABLE code_map_files (
+                     id INTEGER PRIMARY KEY,
+                     root TEXT NOT NULL,
+                     path TEXT NOT NULL,
+                     language TEXT NOT NULL,
+                     bytes INTEGER NOT NULL,
+                     loc INTEGER NOT NULL,
+                     sha256 TEXT NOT NULL DEFAULT '',
+                     mtime_ns INTEGER NOT NULL DEFAULT 0,
+                     UNIQUE(root, path),
+                     FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE
+                 );
+                 CREATE TABLE code_map_symbols (
+                     id INTEGER PRIMARY KEY,
+                     file_id INTEGER NOT NULL REFERENCES code_map_files(id) ON DELETE CASCADE,
+                     name TEXT NOT NULL,
+                     kind TEXT NOT NULL,
+                     line INTEGER NOT NULL
+                 );
+                 CREATE INDEX idx_code_map_symbols_name ON code_map_symbols(name);
+                 CREATE INDEX idx_code_map_files_path ON code_map_files(root, path);
+                 CREATE TABLE code_map_edges (
+                     id INTEGER PRIMARY KEY,
+                     root TEXT NOT NULL,
+                     from_file TEXT NOT NULL,
+                     from_symbol TEXT NOT NULL,
+                     to_name TEXT NOT NULL,
+                     kind TEXT NOT NULL,
+                     FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE
+                 );
+                 CREATE INDEX idx_code_map_edges_to_name ON code_map_edges(to_name);
+                 CREATE INDEX idx_code_map_edges_source ON code_map_edges(from_file, from_symbol);
+                 CREATE VIRTUAL TABLE code_map_symbols_fts
+                     USING fts5(name, kind, content='code_map_symbols',
+                                content_rowid='id',
+                                tokenize='unicode61 separators ''_-.''');
+                 CREATE TRIGGER code_map_symbols_fts_insert
+                     AFTER INSERT ON code_map_symbols
+                 BEGIN
+                     INSERT INTO code_map_symbols_fts(rowid, name, kind)
+                     VALUES (new.id, new.name, new.kind);
+                 END;
+                 CREATE TRIGGER code_map_symbols_fts_delete
+                     AFTER DELETE ON code_map_symbols
+                 BEGIN
+                     INSERT INTO code_map_symbols_fts(code_map_symbols_fts, rowid, name, kind)
+                     VALUES ('delete', old.id, old.name, old.kind);
+                 END;
+                 CREATE TRIGGER code_map_symbols_fts_update
+                     AFTER UPDATE ON code_map_symbols
+                 BEGIN
+                     INSERT INTO code_map_symbols_fts(code_map_symbols_fts, rowid, name, kind)
+                     VALUES ('delete', old.id, old.name, old.kind);
+                     INSERT INTO code_map_symbols_fts(rowid, name, kind)
+                     VALUES (new.id, new.name, new.kind);
+                 END;
                   INSERT INTO code_map_roots
                       (root, scanned_at, total_files, total_bytes, total_loc,
                        oversize_skipped, truncated_at, index_generation)
@@ -3726,7 +4062,7 @@ mod tests {
             .expect("first migration opener failed");
 
         // Release that same stale-v3 opener only after A committed. It must
-        // acquire IMMEDIATE, re-read v5 under the lock, and skip a duplicate
+        // acquire IMMEDIATE, re-read v8 under the lock, and skip a duplicate
         // ALTER TABLE rather than relying on a fresh outer version read.
         allow_b_tx.send(()).unwrap();
         b_locked_rx
@@ -3743,7 +4079,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "7");
+        assert_eq!(version, "8");
         let graph_columns: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('code_map_roots') \
@@ -3888,12 +4224,11 @@ mod tests {
     }
 
     #[test]
-    fn open_migrates_v1_to_v7_on_existing_db() {
+    fn open_migrates_v1_to_v8_on_existing_db() {
         // Build a v1 DB manually (apply_schema with version stamped as 1,
         // without sha256/mtime_ns columns), then call open() and verify the
-        // migration chain fires: schema_version advances to "7"
-        // (v1→v2→v3→v4→v5→v6→v7), the v2 file columns exist, both generation
-        // columns exist, and physical identity is nullable for legacy roots.
+        // migration chain fires through v8, adding the nullable parser extent
+        // column without inventing an end line for legacy declarations.
         let dir = tempdir().unwrap();
         let path = dir.path().join("v1.db");
         let repo = tempdir().unwrap();
@@ -3972,12 +4307,18 @@ mod tests {
                 rusqlite::params![&root],
             )
             .unwrap();
+            conn.execute(
+                "INSERT INTO code_map_symbols (file_id, name, kind, line) \
+                 VALUES (1, 'x', 'function', 1)",
+                [],
+            )
+            .unwrap();
         }
 
         // Open via the public API — should trigger v1→v2 migration.
         let mut conn = open(&path).expect("open must succeed on a v1 DB");
 
-        // schema_version must now be "7" (v1→v2→v3→v4→v5→v6→v7 chain).
+        // schema_version must now be "8" (v1→v2→v3→v4→v5→v6→v7→v8 chain).
         let version: String = conn
             .query_row(
                 "SELECT value FROM meta WHERE key='schema_version'",
@@ -3986,8 +4327,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            version, "7",
-            "schema_version must advance to 7 after migration"
+            version, "8",
+            "schema_version must advance to 8 after migration"
         );
 
         // v3 column: code_map_roots.index_generation exists, and the migrated
@@ -4075,6 +4416,22 @@ mod tests {
             "existing row sha256 must default to empty string"
         );
         assert_eq!(mtime_ns, 0, "existing row mtime_ns must default to 0");
+        let symbol_columns: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(code_map_symbols)").unwrap();
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert!(
+            symbol_columns.iter().any(|column| column == "line_end"),
+            "v8 must add nullable line_end; got {symbol_columns:?}"
+        );
+        assert_eq!(
+            load_map(&conn, &root).unwrap().unwrap().files[0].symbols[0].line_end,
+            None,
+            "legacy declaration rows must remain extent-unknown"
+        );
 
         let rebuilt = crate::code_map::walker::RepoMapBuilder::new(repo.path())
             .with_symbols(true)

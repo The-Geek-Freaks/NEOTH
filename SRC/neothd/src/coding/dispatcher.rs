@@ -270,6 +270,38 @@ pub struct DispatchOutcome {
     pub tasks_blocked: usize,
     pub tasks_unassigned: usize,
     pub budget_exhausted: bool,
+    /// Appended only after the dispatcher's durable success transition for a
+    /// task. These identifiers make a joined cancellation result inspectable
+    /// without inferring effects from an aggregate count.
+    pub completed_task_ids: Vec<i64>,
+    /// Subset whose task-scoped worktree apply and receipt attachment both
+    /// succeeded. An empty patch deliberately does not enter this list.
+    pub applied_task_ids: Vec<i64>,
+    /// Tasks durably transitioned to Blocked during this pass.
+    pub blocked_task_ids: Vec<i64>,
+    /// Subset blocked because no worker was bound for their hemisphere.
+    pub unassigned_task_ids: Vec<i64>,
+}
+
+/// Cooperative service cancellation. The dispatcher never drops an in-flight
+/// batch: a caller that requests cancellation waits for its controlled worker
+/// futures and receives every durable task effect that completed first.
+pub trait DispatchCancellation {
+    fn is_cancelled(&self) -> bool;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispatchEffectReceipt {
+    pub completed_task_ids: Vec<i64>,
+    pub applied_task_ids: Vec<i64>,
+    pub blocked_task_ids: Vec<i64>,
+    pub unassigned_task_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub enum CancellableDispatchOutcome {
+    Completed(DispatchOutcome),
+    Cancelled(DispatchEffectReceipt),
 }
 
 /// TASK-02 — hard wall-clock ceiling for a single `worker.execute()`
@@ -317,6 +349,21 @@ pub async fn dispatch_session_with_apply(
     budget: DispatchBudget,
     apply_config: Option<&DispatchApplyConfig>,
 ) -> Result<DispatchOutcome> {
+    dispatch_session_with_apply_inner(conn, session_id, workers, budget, apply_config, None).await
+}
+
+/// Shared serial dispatcher body. The cancellable service path supplies its
+/// token so cancellation is observed before every new batch and before each
+/// durable completion/apply write; legacy callers retain the exact previous
+/// behaviour by passing `None`.
+async fn dispatch_session_with_apply_inner(
+    conn: &Connection,
+    session_id: KanbanSessionId,
+    workers: &HemisphereWorkerSet,
+    budget: DispatchBudget,
+    apply_config: Option<&DispatchApplyConfig>,
+    cancellation: Option<&dyn DispatchCancellation>,
+) -> Result<DispatchOutcome> {
     let started = Instant::now();
     let mut outcome = DispatchOutcome::default();
     let mut retry_policy = WorkerRetryPolicy::new();
@@ -352,7 +399,10 @@ pub async fn dispatch_session_with_apply(
     // SD-02 (Round-3 v0.4) — best-effort WAL progress writer; no-op when
     // wal_writer is None (CLI one-shot without --apply). Computed once.
     let writer_for_progress = apply_config.and_then(|cfg| cfg.wal_writer.as_deref());
-    loop {
+    'dispatch: loop {
+        if cancellation.is_some_and(|token| token.is_cancelled()) {
+            break;
+        }
         // Cycle-prevention Q4 — time + count budget. Defense in depth:
         // either cap stops the loop. Bail out before touching DB to
         // keep the metric accurate.
@@ -384,6 +434,11 @@ pub async fn dispatch_session_with_apply(
         // never crosses a task boundary — no Arc<Mutex<Connection>> needed.
         let batch = pick_batch(conn, session_id, workers, &mut outcome)?;
         if batch.is_empty() {
+            break;
+        }
+        // `pick_batch` can durably block unbound work, but cancellation must
+        // stop before selected tasks enter InProgress or any provider starts.
+        if cancellation.is_some_and(|token| token.is_cancelled()) {
             break;
         }
 
@@ -456,7 +511,22 @@ pub async fn dispatch_session_with_apply(
         // early-stop state (retry_policy / patch_spiral / recent_outputs)
         // and all `conn` writes happen here, one task at a time, so the
         // match arms below are byte-identical to the pre-COR-19 serial loop.
-        for (task, (contract, timed_result)) in batch.into_iter().zip(exec_results) {
+        let mut completed_batch = batch.into_iter().zip(exec_results);
+        while let Some((task, (contract, timed_result))) = completed_batch.next() {
+            if cancellation.is_some_and(|token| token.is_cancelled()) {
+                // The provider futures above have all settled. Their outputs
+                // have not yet crossed a durable result/apply boundary, so
+                // restore every untouched task to Backlog and acknowledge the
+                // cancellation with only effects that completed earlier.
+                let now_ns = now_unix_ns();
+                store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns)
+                    .context("restore cancelled dispatch task to Backlog")?;
+                for (pending, _) in completed_batch {
+                    store::patch_task_status(conn, pending.task_id, TaskStatus::Backlog, now_ns)
+                        .context("restore cancelled dispatch batch task to Backlog")?;
+                }
+                break 'dispatch;
+            }
             // TASK-02: unwrap the per-worker timeout layer first. A hung
             // worker (Elapsed) is a HARD block — a wall-clock hang is not a
             // transient retryable error, so it goes straight to Blocked +
@@ -477,6 +547,7 @@ pub async fn dispatch_session_with_apply(
                         );
                     }
                     outcome.tasks_blocked += 1;
+                    outcome.blocked_task_ids.push(task.task_id.raw());
                     patch_spiral.record(task.task_id, false);
                     warn!(
                         task_id = task.task_id.raw(),
@@ -666,6 +737,13 @@ pub async fn dispatch_session_with_apply(
                                     Some(verified),
                                 )
                                 .context("attach dispatcher-verified test receipt")?;
+                                // Both worktree apply and the durable task
+                                // receipt succeeded. Only now may a joined
+                                // cancellation report this task as applied.
+                                if !o.patch_text.trim().is_empty() {
+                                    outcome.applied_task_ids.push(task.task_id.raw());
+                                }
+                                outcome.completed_task_ids.push(task.task_id.raw());
                             }
                             Err(diagnosis) => {
                                 patch_spiral.record(task.task_id, false);
@@ -695,6 +773,7 @@ pub async fn dispatch_session_with_apply(
                         // so a later unrelated failure on the same task id
                         // (rare, but possible after re-queue) starts fresh.
                         recent_outputs.remove(&task.task_id);
+                        outcome.completed_task_ids.push(task.task_id.raw());
                     }
                 }
                 Ok(o) => {
@@ -755,6 +834,51 @@ pub async fn dispatch_session_with_apply(
         "dispatch session complete"
     );
     Ok(outcome)
+}
+
+/// Cancellation-aware service entry point. The existing dispatcher keeps its
+/// serial SQLite ownership and joins every started worker/apply future. A
+/// cancellation observed before entry has no dispatch effects; one observed
+/// while it is running is acknowledged only after the full pass settles and
+/// returns the exact durable IDs accumulated by that pass.
+pub async fn dispatch_session_with_apply_cancellable(
+    conn: &Connection,
+    session_id: KanbanSessionId,
+    workers: &HemisphereWorkerSet,
+    budget: DispatchBudget,
+    apply_config: Option<&DispatchApplyConfig>,
+    cancellation: &dyn DispatchCancellation,
+) -> Result<CancellableDispatchOutcome> {
+    if cancellation.is_cancelled() {
+        return Ok(CancellableDispatchOutcome::Cancelled(
+            DispatchEffectReceipt {
+                completed_task_ids: Vec::new(),
+                applied_task_ids: Vec::new(),
+                blocked_task_ids: Vec::new(),
+                unassigned_task_ids: Vec::new(),
+            },
+        ));
+    }
+    let outcome = dispatch_session_with_apply_inner(
+        conn,
+        session_id,
+        workers,
+        budget,
+        apply_config,
+        Some(cancellation),
+    )
+    .await?;
+    if cancellation.is_cancelled() {
+        return Ok(CancellableDispatchOutcome::Cancelled(
+            DispatchEffectReceipt {
+                completed_task_ids: outcome.completed_task_ids.clone(),
+                applied_task_ids: outcome.applied_task_ids.clone(),
+                blocked_task_ids: outcome.blocked_task_ids.clone(),
+                unassigned_task_ids: outcome.unassigned_task_ids.clone(),
+            },
+        ));
+    }
+    Ok(CancellableDispatchOutcome::Completed(outcome))
 }
 
 /// Resolve the dispatcher-owned audit root from the *live* main SQLite
@@ -847,6 +971,8 @@ fn pick_batch(
             outcome.tasks_unassigned += 1;
             store::patch_task_status(conn, t.task_id, TaskStatus::Blocked, now_ns)
                 .context("transition Backlog → Blocked (no worker)")?;
+            outcome.blocked_task_ids.push(t.task_id.raw());
+            outcome.unassigned_task_ids.push(t.task_id.raw());
             continue;
         }
         // `insert` returns false when the hemisphere is already claimed
@@ -1431,6 +1557,7 @@ fn handle_retryable_failure(
         store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
             .context("block greeting-regression worker result")?;
         outcome.tasks_blocked += 1;
+        outcome.blocked_task_ids.push(task.task_id.raw());
         return Ok(());
     }
     if patch_spiral.is_spiraling(task.task_id) {
@@ -1446,6 +1573,7 @@ fn handle_retryable_failure(
         store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
             .context("block patch-spiral worker result")?;
         outcome.tasks_blocked += 1;
+        outcome.blocked_task_ids.push(task.task_id.raw());
         return Ok(());
     }
     // 3. Repetition-loop (QU-01 Phase 3) — the worker re-emitted the
@@ -1466,6 +1594,7 @@ fn handle_retryable_failure(
         store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
             .context("block repeated worker result")?;
         outcome.tasks_blocked += 1;
+        outcome.blocked_task_ids.push(task.task_id.raw());
         return Ok(());
     }
 
@@ -1553,6 +1682,7 @@ fn handle_retryable_failure(
                 store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
                     .context("block task after escalation reassignment failure")?;
                 outcome.tasks_blocked += 1;
+                outcome.blocked_task_ids.push(task.task_id.raw());
             }
         }
     } else {
@@ -1569,6 +1699,7 @@ fn handle_retryable_failure(
         store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
             .context("block exhausted worker retry")?;
         outcome.tasks_blocked += 1;
+        outcome.blocked_task_ids.push(task.task_id.raw());
     }
     Ok(())
 }

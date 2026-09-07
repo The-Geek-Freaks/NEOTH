@@ -74,6 +74,12 @@ pub struct ChatArgs {
     #[arg(long, value_name = "PATH")]
     pub attach: Vec<PathBuf>,
 
+    /// Explicit repository root for a high-confidence coding request. Chat
+    /// only enters the dedicated coding workflow when the operator supplied
+    /// this value; ordinary chat remains available without it.
+    #[arg(long = "repo-root", value_name = "REPO_ROOT")]
+    pub repository_root: Option<PathBuf>,
+
     /// GOLD-ADOPT-24 — compose the prompt in `$VISUAL`/`$EDITOR` instead of
     /// passing it inline. Any inline message/`--message` seeds the editor as
     /// prefill. Aborts if the editor is left empty.
@@ -6881,6 +6887,41 @@ pub async fn run_chat_with(
     .await
 }
 
+/// Admit automatic coding only when the normal chat-priority checks pass and
+/// the operator has explicitly selected the repository that owns the work.
+/// Keeping this policy free of process state makes the chat/code boundary
+/// directly testable without invoking a provider or reading the current CWD.
+fn admits_auto_code_route(
+    incognito: bool,
+    explicit_route_requested: bool,
+    has_attachments: bool,
+    high_confidence_intent: bool,
+    repository_root: Option<&std::path::Path>,
+) -> bool {
+    !incognito
+        && !explicit_route_requested
+        && !has_attachments
+        && high_confidence_intent
+        && repository_root.is_some()
+}
+
+/// Build the code invocation used only for an admitted chat auto-route. The
+/// root is already explicit at this boundary, so the coding service never
+/// needs to infer a repository from the process working directory.
+fn chat_auto_code_args(prompt: String, repository_root: PathBuf) -> crate::cli::code::CodeArgs {
+    crate::cli::code::CodeArgs {
+        prompt,
+        db: None,
+        repository_root: Some(repository_root),
+        source_channel: "chat".to_string(),
+        no_assign: false,
+        dispatch: false, // operator runs `neoth kanban` after to drive dispatch
+        apply: None,
+        run_pending: false,
+        output: crate::cli::OutputFormat::default(),
+    }
+}
+
 async fn run_chat_with_consent(
     mut args: ChatArgs,
     config: FreedomConfig,
@@ -7099,12 +7140,16 @@ async fn run_chat_with_consent(
     // Operator opt-out: `NEOTH_NO_AUTO_CODE=1` env var disables
     // auto-dispatch entirely. Low-confidence detections (verb XOR
     // noun, not both) print an offer banner but still run the chat
-    // turn — only High confidence auto-dispatches.
-    if !args.incognito
-        && !explicit_route_requested
-        && !has_attachments
-        && crate::coding::intent::should_auto_dispatch(&prompt)
-    {
+    // turn — only High confidence auto-dispatches, and only after the
+    // operator explicitly names the repository that owns the coding work.
+    let high_confidence_auto_dispatch = crate::coding::intent::should_auto_dispatch(&prompt);
+    if admits_auto_code_route(
+        args.incognito,
+        explicit_route_requested,
+        has_attachments,
+        high_confidence_auto_dispatch,
+        args.repository_root.as_deref(),
+    ) {
         let intent = crate::coding::intent::detect_coding_intent(&prompt)
             .expect("should_auto_dispatch returned true so detect must return Some");
         write_chat_notice(
@@ -7112,16 +7157,11 @@ async fn run_chat_with_consent(
             crate::coding::intent::format_dispatch_banner(&intent),
         )
         .context("write coding auto-dispatch notice")?;
-        let code_args = crate::cli::code::CodeArgs {
-            prompt: prompt.clone(),
-            db: None,
-            source_channel: "chat".to_string(),
-            no_assign: false,
-            dispatch: false, // operator runs `neoth kanban` after to drive dispatch
-            apply: None,
-            run_pending: false,
-            output: crate::cli::OutputFormat::default(),
-        };
+        let repository_root = args
+            .repository_root
+            .clone()
+            .expect("admitted auto-code route requires an explicit repository root");
+        let code_args = chat_auto_code_args(prompt.clone(), repository_root);
         let result = crate::cli::code::run_code(code_args).await;
         if result.is_ok() && args.stream {
             write_local_stream_completion(
@@ -7136,12 +7176,18 @@ async fn run_chat_with_consent(
         && !has_attachments
         && let Some(intent) = crate::coding::intent::detect_coding_intent(&prompt)
     {
-        // Low-confidence: print an offer banner + continue with chat.
-        write_chat_notice(
-            args.stream,
-            format_args!(
-                "[neoth] coding intent detected at low confidence (verb={:?} noun={:?}). \
-                 Try `neoth code \"{}\"` for the dedicated coding workflow.",
+        // Offer the dedicated workflow but keep this as a normal chat turn.
+        // A high-confidence request without an explicit root is deliberately
+        // not an error: it cannot select a repository on the operator's
+        // behalf, and the ordinary chat response remains useful.
+        let offer = if matches!(
+            intent.confidence,
+            crate::coding::intent::IntentConfidence::High
+        ) && args.repository_root.is_none()
+        {
+            format!(
+                "[neoth] high-confidence coding intent detected (verb={:?} noun={:?}), but auto-dispatch requires an explicit repository root. \
+                 Try `neoth code --repo-root <PATH> \"{}\"` for the dedicated coding workflow.",
                 intent.matched_verb.as_deref().unwrap_or("?"),
                 intent.matched_noun.as_deref().unwrap_or("?"),
                 prompt
@@ -7151,9 +7197,23 @@ async fn run_chat_with_consent(
                     .chars()
                     .take(60)
                     .collect::<String>(),
-            ),
-        )
-        .context("write coding intent notice")?;
+            )
+        } else {
+            format!(
+                "[neoth] coding intent detected (verb={:?} noun={:?}). \
+                 Try `neoth code --repo-root <PATH> \"{}\"` for the dedicated coding workflow.",
+                intent.matched_verb.as_deref().unwrap_or("?"),
+                intent.matched_noun.as_deref().unwrap_or("?"),
+                prompt
+                    .lines()
+                    .next()
+                    .unwrap_or(&prompt)
+                    .chars()
+                    .take(60)
+                    .collect::<String>(),
+            )
+        };
+        write_chat_notice(args.stream, offer).context("write coding intent notice")?;
     }
 
     // OP-02 (Session 25) — next-session seed banner. Read the
@@ -12292,6 +12352,7 @@ fn test_chat_args_default() -> ChatArgs {
     ChatArgs {
         message: None,
         attach: Vec::new(),
+        repository_root: None,
         model: None,
         skill: None,
         system: None,
@@ -12699,6 +12760,66 @@ mod tests {
 
         assert_eq!(parsed.chat.skill.as_deref(), Some("academic_research"));
         assert_eq!(parsed.chat.message.as_deref(), Some("review this paper"));
+    }
+
+    #[test]
+    fn chat_args_parser_accepts_explicit_repository_root() {
+        let parsed = <ChatArgsParser as clap::Parser>::try_parse_from([
+            "neoth-chat-test",
+            "--repo-root",
+            r"C:\operator\selected-repository",
+            "build a function",
+        ])
+        .expect("parse explicit coding repository root");
+
+        assert_eq!(
+            parsed.chat.repository_root,
+            Some(PathBuf::from(r"C:\operator\selected-repository"))
+        );
+        assert_eq!(parsed.chat.message.as_deref(), Some("build a function"));
+    }
+
+    #[test]
+    fn auto_code_route_requires_explicit_root_and_preserves_chat_priorities() {
+        let root = PathBuf::from(r"C:\operator\selected-repository");
+
+        assert!(admits_auto_code_route(
+            false,
+            false,
+            false,
+            true,
+            Some(root.as_path())
+        ));
+        assert!(
+            !admits_auto_code_route(false, false, false, true, None),
+            "a high-confidence request without a root must remain an ordinary chat turn"
+        );
+        assert!(
+            !admits_auto_code_route(true, false, false, true, Some(root.as_path())),
+            "incognito retains its no-auto-dispatch boundary"
+        );
+        assert!(
+            !admits_auto_code_route(false, true, false, true, Some(root.as_path())),
+            "an explicit skill/slash route keeps priority"
+        );
+        assert!(
+            !admits_auto_code_route(false, false, true, true, Some(root.as_path())),
+            "attachments retain their normal chat pipeline"
+        );
+        assert!(
+            !admits_auto_code_route(false, false, false, false, Some(root.as_path())),
+            "low-confidence intent remains offer-only"
+        );
+    }
+
+    #[test]
+    fn auto_code_handoff_retains_the_explicit_repository_root() {
+        let root = PathBuf::from(r"C:\operator\selected-repository");
+        let code_args = chat_auto_code_args("build a function".to_string(), root.clone());
+
+        assert_eq!(code_args.repository_root, Some(root));
+        assert_eq!(code_args.source_channel, "chat");
+        assert!(code_args.apply.is_none());
     }
 
     #[test]
@@ -15184,6 +15305,7 @@ modes:
         let provider = ConsentCountingProvider::default();
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("Reply with one short greeting.".into()),
             model: None,
             skill: None,
@@ -15244,6 +15366,7 @@ modes:
         let provider = NeverCalledProvider::default();
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("Do you remember when we talked about rust?".into()),
             model: None,
             skill: None,
@@ -15372,6 +15495,7 @@ modes:
 
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("hi".into()),
             model: None,
             skill: None,
@@ -15563,6 +15687,7 @@ modes:
 
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("do the dangerous thing".into()),
             model: None,
             skill: None,
@@ -15689,6 +15814,7 @@ modes:
         };
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("Capital of France?".into()),
             model: None,
             skill: None,
@@ -15865,6 +15991,7 @@ modes:
         };
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("hi".into()),
             model: None,
             skill: None,
@@ -16047,6 +16174,7 @@ modes:
         };
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("trigger".into()),
             model: None,
             skill: None,
@@ -16229,6 +16357,7 @@ modes:
 
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("b22 test prompt".into()),
             model: None, // no CLI override — freedom tier must win
             skill: None,
@@ -17414,6 +17543,7 @@ modes:
                     name: "auth_middleware".into(),
                     kind: SymbolKind::Function,
                     line: 12,
+                    line_end: None,
                 }],
             }],
             report: ScanReport::default(),
@@ -17572,6 +17702,7 @@ modes:
         .unwrap();
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("private_auth_marker".to_string()),
             model: None,
             skill: None,
@@ -17635,6 +17766,7 @@ modes:
         let marker_before = std::fs::read(home.join(".last-active")).unwrap();
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("current private request".to_string()),
             model: None,
             skill: None,
@@ -17725,6 +17857,7 @@ modes:
         let provider = ConsentCountingProvider::default();
         let args = ChatArgs {
             message: Some("private ordinary request".into()),
+            repository_root: None,
             config: Some(config_path),
             wal_segment: Some(canonical_test_wal(
                 home.path(),
@@ -17830,6 +17963,7 @@ modes:
         let mut args = ChatArgs {
             message: Some("/custom-private-command attachment".into()),
             attach: vec![PathBuf::from("not-opened.txt")],
+            repository_root: None,
             incognito: true,
             ..test_chat_args_default()
         };
@@ -17853,6 +17987,7 @@ modes:
         let args = ChatArgs {
             message: Some("/custom-private-command".into()),
             attach: vec![dir.path().join("missing-private-attachment.txt")],
+            repository_root: None,
             incognito: true,
             ..test_chat_args_default()
         };
@@ -17873,6 +18008,7 @@ modes:
         let args = ChatArgs {
             message: Some("/".into()),
             attach: vec![dir.path().join("missing-private-attachment.txt")],
+            repository_root: None,
             incognito: true,
             ..test_chat_args_default()
         };
@@ -18249,6 +18385,7 @@ modes:
 
         let args = ChatArgs {
             message: Some("adversarial memory marker".to_owned()),
+            repository_root: None,
             ..test_chat_args_default()
         };
         let (writer, writer_join) = wal_spawn(home.join("prompt-build.wal")).unwrap();
@@ -18877,6 +19014,7 @@ modes:
 
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("test prompt".to_string()),
             model: args_model,
             skill: None,
@@ -19027,6 +19165,7 @@ modes:
         };
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("blocked prompt".to_string()),
             model: Some("unknown-paid-model".to_string()),
             skill: None,
@@ -19162,6 +19301,7 @@ modes:
 
         let args = ChatArgs {
             attach: Vec::new(),
+            repository_root: None,
             message: Some("effort test".to_string()),
             model: None,
             skill: None,
@@ -19674,6 +19814,7 @@ mod attach_tests {
         let args = ChatArgs {
             message: Some("the question".into()),
             attach: vec![txt],
+            repository_root: None,
             ..test_chat_args_default()
         };
         let resolved = resolve_turn_input(&args, dir.path()).await.unwrap();
@@ -19711,6 +19852,7 @@ mod attach_tests {
         let args = ChatArgs {
             message: Some("the question".into()),
             attach: vec![dir.path().join("missing.txt")],
+            repository_root: None,
             ..test_chat_args_default()
         };
         let resolved = resolve_turn_input(&args, dir.path()).await.unwrap();
@@ -19738,6 +19880,7 @@ mod attach_tests {
             let args = ChatArgs {
                 message: Some(message.into()),
                 attach: vec![missing.clone()],
+                repository_root: None,
                 ..test_chat_args_default()
             };
             let error = resolve_turn_input(&args, dir.path()).await.unwrap_err();

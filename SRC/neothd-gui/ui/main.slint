@@ -1381,6 +1381,22 @@ export component MainWindow inherits Window {
     callback buddy-code-map-setup;
     callback buddy-code-map-rebuild;
     callback buddy-code-map-cancel;
+    in-out property <string> native-coding-prompt: "";
+    in-out property <string> native-coding-source-channel: "gui";
+    in-out property <bool> native-coding-no-assign: false;
+    in-out property <bool> native-coding-dispatch: false;
+    in-out property <bool> native-coding-apply: false;
+    in property <bool> native-coding-running: false;
+    in property <bool> native-coding-cancel-pending: false;
+    in property <bool> native-coding-error: false;
+    in property <string> native-coding-state: "Ready for an explicit repository and prompt.";
+    in property <string> native-coding-detail: "The Coding service will prepare local code-map evidence before any provider work.";
+    in property <string> native-coding-run-id: "";
+    in property <string> native-coding-terminal-receipt: "";
+    callback native-coding-start-clicked(string, string, string, bool, bool, bool);
+    callback native-coding-cancel-clicked;
+    callback buddy-native-coding-start;
+    callback buddy-native-coding-cancel;
     callback channels-refresh-clicked;
     callback channel-test(string);
     callback channel-remove(string);
@@ -3642,6 +3658,22 @@ export component MainWindow inherits Window {
             code-map-lifecycle-managed-root-remove-clicked(path) => {
                 root.code-map-lifecycle-managed-root-remove-clicked(path);
             }
+            native-coding-prompt <=> root.native-coding-prompt;
+            native-coding-source-channel <=> root.native-coding-source-channel;
+            native-coding-no-assign <=> root.native-coding-no-assign;
+            native-coding-dispatch <=> root.native-coding-dispatch;
+            native-coding-apply <=> root.native-coding-apply;
+            native-coding-running: root.native-coding-running;
+            native-coding-cancel-pending: root.native-coding-cancel-pending;
+            native-coding-error: root.native-coding-error;
+            native-coding-state: root.native-coding-state;
+            native-coding-detail: root.native-coding-detail;
+            native-coding-run-id: root.native-coding-run-id;
+            native-coding-terminal-receipt: root.native-coding-terminal-receipt;
+            native-coding-start-clicked(prompt, repo-root, source-channel, no-assign, dispatch, apply) => {
+                root.native-coding-start-clicked(prompt, repo-root, source-channel, no-assign, dispatch, apply);
+            }
+            native-coding-cancel-clicked => { root.native-coding-cancel-clicked(); }
             // A3 — session selector.
             kanban-sessions: root.kanban-sessions;
             kanban-session-idx <=> root.kanban-session-idx;
@@ -5050,7 +5082,7 @@ export component MainWindow inherits Window {
     if root.buddy-menu-open: ContextMenu {
         width: 100%; height: 100%;
         menu-x: root.width - 250px;
-        menu-y: root.height - 410px;
+        menu-y: root.height - 510px;
         items: [
             { label: "Open chat", glyph: "💬", danger: false },
             { label: "Minimize to companion", glyph: "⊟", danger: false },
@@ -5060,6 +5092,8 @@ export component MainWindow inherits Window {
             { label: root.code-map-lifecycle-refresh-active ? "Index refresh is active" : "Set up or refresh index", glyph: "↻", danger: false },
             { label: root.code-map-root == "" ? "Select a repository root first" : "Force rebuild index", glyph: "↺", danger: root.code-map-root != "" },
             { label: root.code-map-lifecycle-refresh-active ? "Cancel index refresh" : "No index refresh active", glyph: "×", danger: root.code-map-lifecycle-refresh-active },
+            { label: root.native-coding-running ? "Coding run is active" : root.native-coding-prompt == "" ? "Enter a coding prompt first" : root.code-map-root == "" ? "Select a repository root first" : "Start coding run", glyph: "⌁", danger: false },
+            { label: root.native-coding-running ? "Cancel coding run" : "No coding run active", glyph: "×", danger: root.native-coding-running },
         ];
         picked(i) => {
             root.buddy-menu-open = false;
@@ -5075,6 +5109,8 @@ export component MainWindow inherits Window {
             if (i == 5) { root.buddy-code-map-setup(); }
             if (i == 6) { root.buddy-code-map-rebuild(); }
             if (i == 7) { root.buddy-code-map-cancel(); }
+            if (i == 8) { root.buddy-native-coding-start(); }
+            if (i == 9) { root.buddy-native-coding-cancel(); }
         }
         dismissed => { root.buddy-menu-open = false; }
     }

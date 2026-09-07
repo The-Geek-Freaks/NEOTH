@@ -1,11 +1,20 @@
 # SPEC -- Recall-Parity Methodology — NEOTH v1.1
 
 **Version:** 1.1
-**Last-Updated:** 2026-08-20
+**Last-Updated:** 2026-09-07
 **Implementation-Status:** PARTIAL — the deterministic scorer and P1-07
-versioned roster/coverage gate are implemented. Live goldset extraction,
-shadow-run execution, external provider provenance, and P1-08 cryptographic
-batch binding remain open. Underlying multi-tier recall (hot+warm+cold+groundtruth)
+versioned roster/coverage component are implemented; the P1-07 GOLD checkbox
+remains open in `ROAD_TO_1_0_GOLD.md` pending its own acceptance disposition.
+An offline P1-08 pipeline also exists in `cli/recall_score.rs` and
+`recall/parity_harness.rs`: candidate validation, operator-anchor ingest,
+four-grader batch planning, Ed25519-attested result ingest, family-bias output,
+and a bound gate report. This is a source-inspection statement, not a claim
+that the current Wave 3 tests executed that pipeline or validated real provider
+origins. Live goldset extraction, transcript/WAL producer provenance,
+shadow-run execution, and the complete reproducible P1-08 release workflow
+remain open. The transcript-provenance ADR separately accepts only stages
+1–3a; offline grading receipts do not supply its missing producer authority.
+Underlying multi-tier recall (hot+warm+cold+groundtruth)
 it evaluates is SHIPPED at `SRC/neothd/src/memory/{store, tiers, consolidate,
 groundtruth}.rs` + `cli/recall.rs`.
 
@@ -160,7 +169,10 @@ Output per grader: `eval/grades-grader-{A,B,C,D}.jsonl` (100 lines each × 2 sys
   - Rubric: paste of 5 dimensions above
   - Output format: JSON object with 5 integer keys, nothing else
 
-### 4.1 P1-07 roster and complete-coverage gate (implemented)
+### 4.1 P1-07 roster and complete-coverage gate (implemented component)
+
+This section describes the implemented scorer boundary. It does not change
+the still-open P1-07 roadmap checkbox or replace that item's acceptance proof.
 
 `neoth recall-score` requires both `--grader-config <PATH>` and
 `--goldset <PATH>` for every scoring run. The file is a strict JSON object with

@@ -194,7 +194,10 @@ pub async fn read_os_file<P: PolicyArgument>(
     let action = Action::OsFileRead {
         path: canonical.clone(),
     };
-    match evaluate(&action, policy) {
+    let policy_snapshot = policy.policy_snapshot();
+    let decision = evaluate(&action, policy);
+    emit_trust_decision(sink, &action, policy_snapshot.level(), &decision, now_unix).await;
+    match decision {
         Decision::Allow => {}
         Decision::Deny(reason) => {
             emit_denied(sink, &canonical.display().to_string(), &reason, now_unix).await;
@@ -277,7 +280,10 @@ pub async fn write_os_file<P: PolicyArgument>(
     let action = Action::OsFileWrite {
         path: resolved.clone(),
     };
-    match evaluate(&action, policy) {
+    let policy_snapshot = policy.policy_snapshot();
+    let decision = evaluate(&action, policy);
+    emit_trust_decision(sink, &action, policy_snapshot.level(), &decision, now_unix).await;
+    match decision {
         Decision::Allow => {}
         Decision::Deny(reason) => {
             emit_write_denied(sink, &resolved.display().to_string(), &reason, now_unix).await;
@@ -366,7 +372,10 @@ pub async fn launch_os_app<P: PolicyArgument>(
     let action = Action::OsAppLaunch {
         program: resolved.clone(),
     };
-    match evaluate(&action, policy) {
+    let policy_snapshot = policy.policy_snapshot();
+    let decision = evaluate(&action, policy);
+    emit_trust_decision(sink, &action, policy_snapshot.level(), &decision, now_unix).await;
+    match decision {
         Decision::Allow => {}
         Decision::Deny(reason) => {
             emit_launch_denied(sink, &resolved.display().to_string(), &reason, now_unix).await;
@@ -458,7 +467,11 @@ pub async fn read_os_clipboard<P: PolicyArgument>(
     }
     // Layer 2 — autonomy gate, BEFORE touching the backend: a denied read must
     // never open the clipboard.
-    match evaluate(&Action::OsClipboardRead, policy) {
+    let action = Action::OsClipboardRead;
+    let policy_snapshot = policy.policy_snapshot();
+    let decision = evaluate(&action, policy);
+    emit_trust_decision(sink, &action, policy_snapshot.level(), &decision, now_unix).await;
+    match decision {
         Decision::Allow => {}
         Decision::Deny(reason) => {
             emit_clipboard_denied(sink, "read", &reason, now_unix).await;
@@ -576,7 +589,11 @@ pub async fn write_os_clipboard<P: PolicyArgument>(
         ));
     }
     // Layer 2 — autonomy gate.
-    match evaluate(&Action::OsClipboardWrite, policy) {
+    let action = Action::OsClipboardWrite;
+    let policy_snapshot = policy.policy_snapshot();
+    let decision = evaluate(&action, policy);
+    emit_trust_decision(sink, &action, policy_snapshot.level(), &decision, now_unix).await;
+    match decision {
         Decision::Allow => {}
         Decision::Deny(reason) => {
             emit_clipboard_denied(sink, "write", &reason, now_unix).await;
@@ -678,7 +695,12 @@ async fn dispatch_extended_frame(
             let header = crate::wal::HeaderBuilder::new(0x00, &payload)
                 .event_subtype(code)
                 .build();
-            match w.append(header, payload).await {
+            let append = if subtype == crate::wal::events::ExtendedSubtype::TrustDecision {
+                w.append_authenticated(header, payload).await
+            } else {
+                w.append(header, payload).await
+            };
+            match append {
                 Ok(_) => IntentOutcome::Recorded,
                 Err(_) => IntentOutcome::Failed,
             }
@@ -687,7 +709,12 @@ async fn dispatch_extended_frame(
             let header = crate::wal::HeaderBuilder::new(0x00, &payload)
                 .event_subtype(code)
                 .build();
-            match writer.append(header, payload).await {
+            let append = if subtype == crate::wal::events::ExtendedSubtype::TrustDecision {
+                writer.append_authenticated(header, payload).await
+            } else {
+                writer.append(header, payload).await
+            };
+            match append {
                 Ok(_) => IntentOutcome::Recorded,
                 Err(error) => {
                     status.record(&error);
@@ -727,6 +754,48 @@ async fn dispatch_extended_frame(
             }
         }
     }
+}
+
+/// Append the closed, metadata-only projection of the policy result while
+/// preserving the OS-specific lifecycle frames emitted by the caller. A
+/// tracked sink retains append failures for the existing required-audit owner;
+/// an ordinary sink keeps its documented best-effort behavior.
+async fn emit_trust_decision(
+    sink: AuditSink<'_>,
+    action: &Action,
+    autonomy: crate::permissions::AutonomyLevel,
+    decision: &Decision,
+    now_unix: i64,
+) {
+    let event = match crate::permissions::TrustEvent::from_resolved_decision(
+        action,
+        autonomy,
+        decision,
+        None,
+        None,
+        None,
+        None,
+        now_unix.max(0) as u64 * 1_000_000_000,
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            tracing::warn!(error = %error, action = ?action, "refused to encode typed OS trust decision");
+            return;
+        }
+    };
+    let payload = match event.encode() {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::warn!(error = %error, action = ?action, "refused to serialize typed OS trust decision");
+            return;
+        }
+    };
+    let _ = dispatch_extended_frame(
+        sink,
+        crate::wal::events::ExtendedSubtype::TrustDecision,
+        payload,
+    )
+    .await;
 }
 
 /// GOLD-LF-P1-01 — durable record of a write we are *about* to perform. The
@@ -1159,7 +1228,10 @@ mod tests {
 
     #[tokio::test]
     async fn emits_read_frame_via_writer() {
-        use crate::wal::events::EVENT_TYPE_OS_FILE_READ;
+        use crate::wal::events::{
+            EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_EXTENDED, EVENT_TYPE_OS_FILE_READ,
+            ExtendedSubtype,
+        };
         use crate::wal::frame::decode_frame;
         use crate::wal::segment_header::SEGMENT_HEADER_LEN;
         use crate::wal::spawn as wal_spawn;
@@ -1185,7 +1257,30 @@ mod tests {
         join.await.unwrap();
 
         let bytes = tokio::fs::read(&seg).await.unwrap();
-        let frame = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
+        let trust = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
+        assert_eq!(trust.header.event_type, EVENT_TYPE_EXTENDED);
+        assert_eq!(
+            trust.header.event_subtype,
+            ExtendedSubtype::TrustDecision as u8
+        );
+        let trust_payload: serde_json::Value = serde_json::from_slice(trust.payload).unwrap();
+        assert_eq!(trust_payload["subject"], "local");
+        assert_eq!(trust_payload["action"], "os_file_read");
+        assert_eq!(trust_payload["outcome"], "allowed");
+
+        let marker_offset = SEGMENT_HEADER_LEN + trust.header.total_len as usize;
+        let marker = decode_frame(&bytes[marker_offset..])
+            .expect("an authenticated TrustDecision must be followed by its marker");
+        assert_eq!(marker.header.event_type, EVENT_TYPE_COMPACTION_MARKER);
+        let marker_payload: crate::wal::compaction::MarkerPayload =
+            serde_json::from_slice(marker.payload).expect("forced marker payload must decode");
+        assert_eq!(marker_payload.from_offset, SEGMENT_HEADER_LEN as u64);
+        assert_eq!(marker_payload.to_offset, marker_offset as u64);
+        assert_eq!(marker_payload.frame_count, 1);
+        assert_eq!(marker_payload.hmac_hex.len(), 64);
+
+        let frame = decode_frame(&bytes[marker_offset + marker.header.total_len as usize..])
+            .expect("legacy read evidence must follow the forced marker");
         assert_eq!(frame.header.event_type, EVENT_TYPE_OS_FILE_READ);
         let v: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
         assert_eq!(v["bytes"], 7);

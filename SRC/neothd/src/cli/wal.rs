@@ -28,6 +28,8 @@ use crate::wal::events::{
     event_name_from_code, extended_subtype_name,
 };
 use crate::wal::frame::decode_frame;
+use crate::wal::header::EventHeaderV2;
+use crate::wal::hlc::compare_event_headers_for_replay;
 use crate::wal::proof_bundle::{
     PROOF_SCHEMA_VERSION, ProofBundle, ProofEnvelope, ProofFrame, ProofMarker,
 };
@@ -790,6 +792,7 @@ fn stats(segment: &std::path::Path, output: OutputFormat) -> Result<()> {
 
 /// One decoded frame the show pass surfaces.
 struct ShownFrame {
+    replay_header: EventHeaderV2,
     event_type: u8,
     event_subtype: u8,
     payload_len: u32,
@@ -873,9 +876,10 @@ fn show(
         }
     }
 
-    // Newest-first: the chain is appended chronologically, so the tail is
-    // the most recent. Apply `skip` from the newest end, then take `limit`.
-    frames.reverse();
+    // A segment's append order is only a local write order. Cross-node replay
+    // and inspection must instead use the V2 HLC plus deterministic node-aware
+    // tie breakers, then present the newest ordered frame first.
+    sort_shown_frames_newest_first(&mut frames);
     let view: Vec<&ShownFrame> = frames.iter().skip(skip).take(limit).collect();
 
     match output {
@@ -934,6 +938,13 @@ fn show(
     Ok(())
 }
 
+fn sort_shown_frames_newest_first(frames: &mut [ShownFrame]) {
+    frames.sort_by(|left, right| {
+        compare_event_headers_for_replay(&left.replay_header, &right.replay_header)
+    });
+    frames.reverse();
+}
+
 /// Sorted `*.wal` paths under `wal_dir` (zero-padded names sort
 /// chronologically). Empty when the dir is missing or has none.
 fn sorted_segments(wal_dir: &Path) -> Vec<PathBuf> {
@@ -983,6 +994,7 @@ fn read_segment_frames(
         };
         *walked += 1;
         let frame = ShownFrame {
+            replay_header: dec.header,
             event_type: dec.header.event_type,
             event_subtype: dec.header.event_subtype,
             payload_len: dec.header.payload_len,
@@ -1042,7 +1054,7 @@ fn collect_proof(
     start_ns: u64,
     end_ns: u64,
 ) -> Result<(Vec<ProofFrame>, Vec<CollectedMarker>)> {
-    let mut frames: Vec<ProofFrame> = Vec::new();
+    let mut frames: Vec<(EventHeaderV2, ProofFrame)> = Vec::new();
     let mut markers: Vec<CollectedMarker> = Vec::new();
 
     for seg_path in sorted_segments(wal_dir) {
@@ -1088,16 +1100,19 @@ fn collect_proof(
                     markers.push((seg_path.clone(), m));
                 }
             } else if ts >= start_ns && ts < end_ns {
-                frames.push(ProofFrame {
-                    segment: seg_name.clone(),
-                    offset: cursor as u64,
-                    event_type: et,
-                    event_id: dec.header.event_id.0,
-                    ts_ns: ts,
-                    payload_hash: dec.header.payload_hash,
-                    payload_len: dec.header.payload_len,
-                    importance: dec.header.importance.raw(),
-                });
+                frames.push((
+                    dec.header,
+                    ProofFrame {
+                        segment: seg_name.clone(),
+                        offset: cursor as u64,
+                        event_type: et,
+                        event_id: dec.header.event_id.0,
+                        ts_ns: ts,
+                        payload_hash: dec.header.payload_hash,
+                        payload_len: dec.header.payload_len,
+                        importance: dec.header.importance.raw(),
+                    },
+                ));
             }
             let total = dec.header.total_len as usize;
             if total == 0 {
@@ -1106,7 +1121,11 @@ fn collect_proof(
             cursor = cursor.saturating_add(total);
         }
     }
-    Ok((frames, markers))
+    frames.sort_by(|left, right| compare_event_headers_for_replay(&left.0, &right.0));
+    Ok((
+        frames.into_iter().map(|(_, frame)| frame).collect(),
+        markers,
+    ))
 }
 
 fn run_wal_export(
@@ -1887,6 +1906,65 @@ mod tests {
         assert_eq!(boots.len(), 1);
         assert_eq!(boots[0].event_type, EVENT_TYPE_BOOT);
         assert_eq!(w2, 4, "walked count counts every frame, not just matches");
+    }
+
+    #[test]
+    fn legacy_v1_segment_still_reads_current_v2_event_headers() {
+        // Segment v1 and EventHeaderV2 are separate format layers. V1 segment
+        // reader support must continue to decode the already-shipped V2 HLC
+        // header rather than inventing an EventHeaderV1 migration path.
+        let dir = tempdir().unwrap();
+        let segment = write_segment(dir.path(), 1, 1);
+        let mut frames = Vec::new();
+        let mut walked = 0;
+
+        read_segment_frames(&segment, None, &mut frames, &mut walked).unwrap();
+
+        assert_eq!(walked, 1);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(
+            frames[0].replay_header.wal_format_version,
+            EventHeaderV2::WAL_FORMAT_VERSION
+        );
+    }
+
+    #[test]
+    fn inspection_orders_skewed_and_tied_frames_by_hlc_then_node() {
+        fn shown(physical_ns: u64, logical: u32, node: u8, event_id: u64) -> ShownFrame {
+            let mut replay_header = EventHeaderV2::empty();
+            replay_header.hlc = crate::wal::Hlc::new(physical_ns, logical).unwrap();
+            replay_header.node_id = crate::wal::NodeId::from_bytes([node; 16]);
+            replay_header.event_id = crate::wal::EventId(event_id);
+            ShownFrame {
+                replay_header,
+                event_type: EVENT_TYPE_RAW_TEXT,
+                event_subtype: 0,
+                payload_len: 0,
+                importance: 0.0,
+                ts_ns: physical_ns,
+                event_id,
+                payload_hash: 0,
+            }
+        }
+
+        // Input follows append order, deliberately the inverse of HLC order.
+        let mut frames = vec![
+            shown(200, 0, 0x01, 1),
+            shown(100, 7, 0x02, 1),
+            shown(100, 7, 0x01, 9),
+        ];
+        sort_shown_frames_newest_first(&mut frames);
+
+        assert_eq!(
+            frames
+                .iter()
+                .map(|frame| frame.event_id)
+                .collect::<Vec<_>>(),
+            vec![1, 1, 9],
+            "newest HLC first; equal HLCs descend by node identity"
+        );
+        assert_eq!(frames[1].replay_header.node_id.0, [0x02; 16]);
+        assert_eq!(frames[2].replay_header.node_id.0, [0x01; 16]);
     }
 
     #[test]

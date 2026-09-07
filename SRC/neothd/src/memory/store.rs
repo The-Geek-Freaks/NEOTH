@@ -893,7 +893,8 @@ fn open_private_history_with_hooks(
     match &prepared {
         PreparedHistoryTarget::Generic => {}
         PreparedHistoryTarget::Existing(file) | PreparedHistoryTarget::Fresh(file) => {
-            verify_fresh_history_path_identity(&path, file)?;
+            verify_fresh_history_path_identity(&path, file)
+                .context("rebind prepared private History database after schema initialization")?;
         }
     }
     harden_new_history_sidecars(&path)?;
@@ -923,12 +924,15 @@ fn open_private_history_parent_delete_fence(
 ) -> Result<std::fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY,
+        FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL,
     };
 
     let directory = OpenOptions::new()
-        .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+        // A metadata-only directory handle does not participate in Windows
+        // delete-share accounting. FILE_LIST_DIRECTORY is read-only but makes
+        // the retained no-delete-share handle reject parent rename/delete.
+        .access_mode(FILE_LIST_DIRECTORY | READ_CONTROL | FILE_READ_ATTRIBUTES)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
@@ -1135,7 +1139,9 @@ fn open_private_history_file(path: &Path) -> Result<std::fs::File> {
 /// [`open_private_history_file`].
 fn open_private_history_file_witness(path: &Path) -> Result<std::fs::File> {
     let mut options = OpenOptions::new();
-    options.read(true).write(true);
+    // This witness only proves the exact object and its private owner/DACL;
+    // SQLite owns the separate writable database handle.
+    options.read(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -1396,7 +1402,8 @@ fn open_with_prepared_history_target_and_hook(
     }
     .with_context(|| format!("open SQLite db {}", path.display()))?;
     if let Some(file) = witness {
-        verify_fresh_history_path_identity(path, file)?;
+        verify_fresh_history_path_identity(path, file)
+            .context("rebind prepared private History database after SQLite open")?;
     }
     after_identity_proof();
 
@@ -1493,7 +1500,13 @@ fn open_with_prepared_history_target_and_hook(
         }
         #[cfg(windows)]
         {
-            let _ = crate::wal::win_acl::restrict_to_owner(path);
+            // Prepared History targets already hold an exact, protected
+            // TokenUser-SID DACL. The generic Views compatibility helper is
+            // name-based and best-effort, so applying it here could replace
+            // that authenticated descriptor after the first identity rebind.
+            if matches!(prepared, PreparedHistoryTarget::Generic) {
+                let _ = crate::wal::win_acl::restrict_to_owner(path);
+            }
         }
     }
 

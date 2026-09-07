@@ -50,6 +50,7 @@ pub mod consent;
 #[doc(hidden)]
 pub mod consent_challenge;
 pub(crate) mod consent_outbox;
+pub mod context;
 pub mod cost;
 pub mod council;
 pub mod credential;
@@ -500,6 +501,9 @@ pub enum Commands {
     /// Modes: `--search "q"`, `--index <path>`, `--index-stdin --label X`,
     /// `--stats`, `--doctor`, `--purge --label/--category/--all`.
     Ctx(ctx::CtxArgs),
+
+    /// Plan and apply local context imports through the running daemon.
+    Context(context::ContextArgs),
 
     /// List installed skills + probe the router with a test message.
     ///
@@ -1603,6 +1607,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Ctx(mut args) => {
             args.output = global_output;
             ctx::run_ctx(args).await?;
+        }
+        Commands::Context(mut args) => {
+            args.output = global_output;
+            context::run(args).await?;
         }
         Commands::Skills(mut args) => {
             args.output = global_output;

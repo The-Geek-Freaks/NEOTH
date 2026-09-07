@@ -6,11 +6,11 @@
 //! no request-controlled subject identity.  The daemon supplies the only
 //! subject from its accepted startup configuration.
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::collections::BTreeMap;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::ffi::OsStr;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::time::{Duration, Instant};
 use std::{
     path::{Path, PathBuf},
@@ -20,36 +20,38 @@ use std::{
     },
 };
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use anyhow::Context as _;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use anyhow::ensure;
 use anyhow::{Result, bail};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use base64::Engine as _;
+#[cfg(any(unix, windows))]
+use serde::Deserialize;
 #[cfg(unix)]
-use serde::{Deserialize, Serialize};
-#[cfg(unix)]
+use serde::Serialize;
+#[cfg(any(unix, windows))]
 use sha2::{Digest as _, Sha256};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinHandle;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tokio::task::JoinSet;
 
 use super::{ConnectorControlPlane, SubjectId};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use super::{ConnectorInstanceId, daemon_authenticated_session};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::connectors::local_import::{approve_import_root, issue_operator_import_capability};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::connectors::runtime_local_import::RuntimeLocalImport;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::n8n_api::auth::AuthCooldown;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::n8n_api::{constant_time_token_eq, extract_bearer_token};
 use crate::wal::writer::WalWriterHandle;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::{
     connectors::{
         ConnectorId,
@@ -60,25 +62,28 @@ use crate::{
 };
 
 const TOKEN_FILE: &str = "connector_control_rpc_token";
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const SIDECAR_FILE: &str = "connector_control_rpc.endpoint.v1.json";
 #[cfg(unix)]
 const PREBIND_FILE: &str = "connector_control_rpc.prebind.v1.json";
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const SIDECAR_SCHEMA_VERSION: u8 = 1;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const MAX_REQUEST_BYTES: usize = 8 * 1024;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const MAX_BODY_BYTES: usize = 4096;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const MAX_RESPONSE_BYTES: usize = 4096;
-#[cfg(unix)]
+/// Fixed HTTP status-line and header allowance around a bounded response body.
+#[cfg(windows)]
+const MAX_WINDOWS_RESPONSE_ENVELOPE_BYTES: usize = MAX_RESPONSE_BYTES + 1024;
+#[cfg(any(unix, windows))]
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const PLAN_TTL: Duration = Duration::from_secs(5 * 60);
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const MAX_PENDING_PLANS: usize = 64;
 #[cfg(unix)]
 const MAX_UNIX_SOCKET_PATH_BYTES: usize = 100;
@@ -174,6 +179,10 @@ impl Drop for SidecarGuard {
                 return;
             }
         }
+        #[cfg(windows)]
+        if remove_windows_sidecar_checked(&self.home).is_err() {
+            return;
+        }
         remove_boot_artifacts(&self.home, None);
     }
 }
@@ -188,7 +197,7 @@ struct RpcShutdown {
 }
 
 impl RpcShutdown {
-    #[cfg(any(unix, test))]
+    #[cfg(any(unix, windows, test))]
     fn new() -> Self {
         Self {
             stopped: AtomicBool::new(false),
@@ -210,12 +219,12 @@ impl RpcShutdown {
         self.notify.notify_one();
     }
 
-    #[cfg(any(unix, test))]
+    #[cfg(any(unix, windows, test))]
     fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::Acquire)
     }
 
-    #[cfg(any(unix, test))]
+    #[cfg(any(unix, windows, test))]
     fn admit_blocking<T>(&self, start: impl FnOnce() -> JoinHandle<T>) -> Option<JoinHandle<T>> {
         let _admission = self.admission.lock().ok()?;
         if self.stopped.load(Ordering::Acquire) {
@@ -225,7 +234,7 @@ impl RpcShutdown {
         }
     }
 
-    #[cfg(any(unix, test))]
+    #[cfg(any(unix, windows, test))]
     async fn cancelled(&self) {
         if self.stopped.load(Ordering::Acquire) {
             return;
@@ -238,7 +247,7 @@ impl RpcShutdown {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct RpcState {
     token: String,
     cooldown: Arc<AuthCooldown>,
@@ -246,17 +255,16 @@ struct RpcState {
     daemon_subject: Option<SubjectId>,
     home: PathBuf,
     writer: WalWriterHandle,
-    #[cfg(unix)]
     plans: Mutex<PlanRegistry>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct PlanRegistry {
     planning: BTreeMap<String, Instant>,
     pending: BTreeMap<String, PendingPlan>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct PendingPlan {
     runtime: RuntimeLocalImport,
     local_plan_id: crate::connectors::local_import::LocalImportPlanId,
@@ -264,7 +272,7 @@ struct PendingPlan {
     expires_at: Instant,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PlanRequest {
@@ -272,7 +280,7 @@ struct PlanRequest {
     relative_path: String,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplyRequest {
@@ -328,7 +336,6 @@ pub(crate) async fn bind_and_serve(
         daemon_subject,
         home: home.to_path_buf(),
         writer,
-        #[cfg(unix)]
         plans: Mutex::new(PlanRegistry {
             planning: BTreeMap::new(),
             pending: BTreeMap::new(),
@@ -366,9 +373,68 @@ pub(crate) async fn bind_and_serve(
     ))
 }
 
-/// Windows and other non-Unix targets deliberately expose no connector-control
-/// transport in this slice: there is no TCP or un-attested pipe fallback.
-#[cfg(not(unix))]
+/// Bind the Windows listener using a distinct connector-control pipe service.
+/// Its per-boot token is never an audit token, and the service identifier
+/// prevents a valid audit endpoint from substituting this control authority.
+#[cfg(windows)]
+pub(crate) async fn bind_and_serve(
+    home: &Path,
+    audit_pid_nonce: &str,
+    plane: Arc<ConnectorControlPlane>,
+    daemon_subject: Option<SubjectId>,
+    writer: WalWriterHandle,
+) -> Result<(JoinHandle<Result<()>>, SidecarGuard)> {
+    validate_nonce(audit_pid_nonce)?;
+    let endpoint_nonce = connector_nonce(audit_pid_nonce);
+    remove_windows_sidecar_checked(home)?;
+    remove_boot_artifacts(home, None);
+    let token = init_token(home)?;
+    let canonical_home = std::fs::canonicalize(home)
+        .with_context(|| format!("canonicalize NEOTH home {}", home.display()))?;
+    let home_sha256 = hex::encode(Sha256::digest(
+        canonical_home.as_os_str().as_encoded_bytes(),
+    ));
+    let endpoint = crate::windows_private_ipc::PrivatePipeEndpoint::derive(
+        "neoth-cc-v1",
+        &home_sha256,
+        &endpoint_nonce,
+    )?;
+    let listener =
+        crate::windows_private_ipc::Listener::bind(endpoint.clone(), MAX_REQUEST_BYTES as u32)?;
+    let state = Arc::new(RpcState {
+        token,
+        cooldown: Arc::new(AuthCooldown::new()),
+        plane,
+        daemon_subject,
+        home: home.to_path_buf(),
+        writer,
+        plans: Mutex::new(PlanRegistry {
+            planning: BTreeMap::new(),
+            pending: BTreeMap::new(),
+        }),
+    });
+    let shutdown = Arc::new(RpcShutdown::new());
+    if let Err(error) = write_windows_sidecar(home, &endpoint_nonce, &home_sha256, &endpoint) {
+        drop(listener);
+        remove_boot_artifacts(home, None);
+        return Err(error).context("publish connector-control Windows sidecar");
+    }
+    let task = {
+        let shutdown = Arc::clone(&shutdown);
+        tokio::spawn(async move { run_windows_listener(listener, state, shutdown).await })
+    };
+    Ok((
+        task,
+        SidecarGuard {
+            home: home.to_path_buf(),
+            shutdown,
+        },
+    ))
+}
+
+/// Other targets deliberately expose no connector-control transport: there is
+/// no TCP or un-attested pipe fallback.
+#[cfg(not(any(unix, windows)))]
 pub(crate) async fn bind_and_serve(
     _: &Path,
     _: &str,
@@ -388,7 +454,7 @@ pub(crate) async fn bind_and_serve(
 ///
 /// A failed authenticated append or conditional ACK blocks startup rather than
 /// advertising a daemon whose committed Context Evidence cannot be recovered.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) async fn replay_pending_context_evidence_at_startup(
     home: &Path,
     plane: Arc<ConnectorControlPlane>,
@@ -422,6 +488,220 @@ fn remove_boot_artifacts(home: &Path, socket_path: Option<PathBuf>) {
     if let Some(path) = socket_path {
         let _ = std::fs::remove_file(path);
     }
+}
+
+#[cfg(windows)]
+fn write_windows_sidecar(
+    home: &Path,
+    endpoint_nonce: &str,
+    home_sha256: &str,
+    endpoint: &crate::windows_private_ipc::PrivatePipeEndpoint,
+) -> Result<()> {
+    let body = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SIDECAR_SCHEMA_VERSION,
+        "daemon_pid": std::process::id(),
+        "endpoint_nonce": endpoint_nonce,
+        "transport": "windows_named_pipe",
+        "name": endpoint.name(),
+        "home_sha256": home_sha256,
+    }))?;
+    ensure!(
+        body.len() <= MAX_RESPONSE_BYTES,
+        "connector-control sidecar exceeds cap"
+    );
+    let trusted_anchor = home.parent().unwrap_or(home);
+    let bound = crate::skills::store::open_bound_directory_from_trusted_anchor(
+        trusted_anchor,
+        home,
+        true,
+        "connector-control Windows sidecar directory",
+    )?
+    .context("connector-control Windows sidecar directory was not created")?;
+    let path = bound.display_path.join(SIDECAR_FILE);
+    crate::skills::store::atomic_write_private_child(
+        &bound.dir,
+        OsStr::new(SIDECAR_FILE),
+        &path,
+        &body,
+    )?;
+    let persisted = crate::skills::store::read_regular_file_bounded(
+        &bound.dir,
+        OsStr::new(SIDECAR_FILE),
+        &path,
+        MAX_RESPONSE_BYTES,
+    )?;
+    ensure!(
+        persisted == body,
+        "connector-control Windows sidecar changed during publication"
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
+fn remove_windows_sidecar_checked(home: &Path) -> Result<()> {
+    let Some(bound) = crate::skills::store::open_bound_directory(
+        home,
+        false,
+        "connector-control Windows sidecar directory",
+    )?
+    else {
+        return Ok(());
+    };
+    let path = bound.display_path.join(SIDECAR_FILE);
+    crate::skills::store::remove_child_file_if_present(
+        &bound.dir,
+        OsStr::new(SIDECAR_FILE),
+        &path,
+    )?;
+    Ok(())
+}
+
+/// Windows CC client discovery deliberately reads only CC-owned material. It
+/// derives the expected `neoth-cc-v1` endpoint from the caller's canonical
+/// home and PID-bound audit nonce, then rejects a substituted sidecar before
+/// opening a named pipe.
+#[cfg(windows)]
+pub(crate) struct WindowsClient {
+    endpoint: crate::windows_private_ipc::PrivatePipeEndpoint,
+    token: String,
+}
+
+#[cfg(windows)]
+pub(crate) fn windows_client(home: &Path, audit_pid_nonce: &str) -> Result<WindowsClient> {
+    validate_nonce(audit_pid_nonce)?;
+    let endpoint_nonce = connector_nonce(audit_pid_nonce);
+    let canonical_home = std::fs::canonicalize(home)
+        .with_context(|| format!("canonicalize NEOTH home {}", home.display()))?;
+    let home_sha256 = hex::encode(Sha256::digest(
+        canonical_home.as_os_str().as_encoded_bytes(),
+    ));
+    let expected = crate::windows_private_ipc::PrivatePipeEndpoint::derive(
+        "neoth-cc-v1",
+        &home_sha256,
+        &endpoint_nonce,
+    )?;
+    let bound = crate::skills::store::open_bound_directory(
+        home,
+        false,
+        "connector-control Windows client discovery directory",
+    )?
+    .context("connector-control home is absent")?;
+    let sidecar_path = bound.display_path.join(SIDECAR_FILE);
+    let sidecar = crate::skills::store::read_regular_file_bounded(
+        &bound.dir,
+        OsStr::new(SIDECAR_FILE),
+        &sidecar_path,
+        MAX_RESPONSE_BYTES,
+    )?;
+    let value: serde_json::Value = serde_json::from_slice(&sidecar)?;
+    let object = value
+        .as_object()
+        .context("connector-control Windows sidecar is not an object")?;
+    ensure!(
+        object.len() == 6
+            && object
+                .get("schema_version")
+                .and_then(serde_json::Value::as_u64)
+                == Some(u64::from(SIDECAR_SCHEMA_VERSION))
+            && object
+                .get("daemon_pid")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|pid| pid != 0)
+            && object
+                .get("endpoint_nonce")
+                .and_then(serde_json::Value::as_str)
+                == Some(&endpoint_nonce)
+            && object.get("transport").and_then(serde_json::Value::as_str)
+                == Some("windows_named_pipe")
+            && object.get("name").and_then(serde_json::Value::as_str) == Some(expected.name())
+            && object
+                .get("home_sha256")
+                .and_then(serde_json::Value::as_str)
+                == Some(&home_sha256),
+        "connector-control Windows sidecar is not bound to this daemon, home, and nonce"
+    );
+    let token_path = bound.display_path.join(TOKEN_FILE);
+    let token_body = crate::skills::store::read_regular_file_bounded(
+        &bound.dir,
+        OsStr::new(TOKEN_FILE),
+        &token_path,
+        MAX_RESPONSE_BYTES,
+    )?;
+    let token = String::from_utf8(crate::wal::compaction::maybe_unwrap_dpapi(
+        &token_body,
+        &token_path,
+    )?)?
+    .trim()
+    .to_owned();
+    ensure!(!token.is_empty(), "connector-control token is empty");
+    Ok(WindowsClient {
+        endpoint: expected,
+        token,
+    })
+}
+
+#[cfg(all(windows, test))]
+pub(crate) fn windows_client_with_token_for_test(
+    home: &Path,
+    audit_pid_nonce: &str,
+    token: String,
+) -> Result<WindowsClient> {
+    let mut client = windows_client(home, audit_pid_nonce)?;
+    client.token = token;
+    Ok(client)
+}
+
+#[cfg(windows)]
+impl WindowsClient {
+    pub(crate) async fn post(&self, route: &str, body: &[u8]) -> Result<Vec<u8>> {
+        ensure!(
+            body.len() <= MAX_BODY_BYTES,
+            "connector-control client body exceeds cap"
+        );
+        let request = format!(
+            "POST {route} HTTP/1.1\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            self.token,
+            body.len(),
+        );
+        let mut stream = crate::windows_private_ipc::connect(&self.endpoint).await?;
+        let response = tokio::time::timeout(CONNECTION_TIMEOUT, async {
+            stream.write_all(request.as_bytes()).await?;
+            stream.write_all(body).await?;
+            stream.shutdown().await?;
+            read_bounded_windows_response(&mut stream).await
+        })
+        .await
+        .context("connector-control client request deadline exceeded")??;
+        let response_text =
+            std::str::from_utf8(&response).context("connector-control response is not UTF-8")?;
+        ensure!(
+            response_text.starts_with("HTTP/1.1 200 "),
+            "connector-control daemon rejected request"
+        );
+        Ok(response)
+    }
+}
+
+/// Receive one connector-control response without trusting a same-user peer to
+/// close the pipe at the service envelope limit.
+#[cfg(windows)]
+async fn read_bounded_windows_response(
+    stream: &mut (impl tokio::io::AsyncRead + Unpin),
+) -> Result<Vec<u8>> {
+    let sentinel_limit = MAX_WINDOWS_RESPONSE_ENVELOPE_BYTES
+        .checked_add(1)
+        .context("connector-control response cap overflow")?;
+    let mut response = Vec::with_capacity(MAX_WINDOWS_RESPONSE_ENVELOPE_BYTES);
+    stream
+        .take(sentinel_limit as u64)
+        .read_to_end(&mut response)
+        .await
+        .context("read connector-control response")?;
+    ensure!(
+        response.len() <= MAX_WINDOWS_RESPONSE_ENVELOPE_BYTES,
+        "connector-control client response envelope exceeds cap"
+    );
+    Ok(response)
 }
 
 #[cfg(unix)]
@@ -668,7 +948,7 @@ fn sync_directory(path: &Path) -> Result<()> {
         .map(|_| ())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn init_token(home: &Path) -> Result<String> {
     let mut raw = [0u8; 32];
     getrandom::getrandom(&mut raw).context("OS RNG unavailable for connector-control RPC token")?;
@@ -814,7 +1094,7 @@ fn remove_prebind_checked(home: &Path) -> Result<()> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn connector_nonce(audit_pid_nonce: &str) -> String {
     let mut digest = Sha256::new();
     digest.update(b"neoth-connector-control-rpc-v1-endpoint-nonce\0");
@@ -822,7 +1102,7 @@ fn connector_nonce(audit_pid_nonce: &str) -> String {
     hex::encode(digest.finalize())[..32].to_owned()
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn validate_nonce(nonce: &str) -> Result<()> {
     ensure!(
         nonce.len() == 32
@@ -851,7 +1131,7 @@ fn validate_home_sha256(home_sha256: &str) -> Result<()> {
 /// legacy identifier: an incompatible value must stop the required endpoint
 /// before token/socket/sidecar creation instead of silently becoming no
 /// subject. Disabled CC preserves the daemon's historical operator-id grammar.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) fn daemon_subject_from_operator_id(
     operator_id: Option<&str>,
     required: bool,
@@ -1207,6 +1487,74 @@ async fn run_listener(
     }
 }
 
+/// Windows acceptance is already current-TokenUser-attested by
+/// `windows_private_ipc::Listener::accept`. Keep every admitted connection in
+/// this JoinSet through its terminal SQLite/WAL result before the listener is
+/// torn down, so VFS-backed ContextStore owners drop before pipe shutdown.
+#[cfg(windows)]
+async fn run_windows_listener(
+    mut listener: crate::windows_private_ipc::Listener,
+    state: Arc<RpcState>,
+    shutdown: Arc<RpcShutdown>,
+) -> Result<()> {
+    let limit = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
+    let mut connections = JoinSet::new();
+    let listener_failure = loop {
+        let accepted = if connections.is_empty() {
+            tokio::select! {
+                _ = shutdown.cancelled() => break None,
+                accepted = listener.accept() => accepted,
+            }
+        } else {
+            tokio::select! {
+                _ = shutdown.cancelled() => break None,
+                joined = connections.join_next() => {
+                    if let Some(Err(error)) = joined {
+                        tracing::warn!(%error, "connector-control RPC owned connection task failed");
+                    }
+                    continue;
+                }
+                accepted = listener.accept() => accepted,
+            }
+        };
+        let stream = match accepted {
+            Ok(stream) => stream,
+            Err(error) => {
+                break Some(error.context("accept connector-control named-pipe connection"));
+            }
+        };
+        if shutdown.is_stopped() {
+            drop(stream);
+            break None;
+        }
+        let permit = match Arc::clone(&limit).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                drop(stream);
+                continue;
+            }
+        };
+        let state = Arc::clone(&state);
+        let shutdown = Arc::clone(&shutdown);
+        connections.spawn(async move {
+            let _permit = permit;
+            if let Err(error) = handle_connection(stream, state, shutdown).await {
+                tracing::warn!(%error, "connector-control named-pipe connection failed");
+            }
+        });
+    };
+    drop(listener);
+    while let Some(joined) = connections.join_next().await {
+        if let Err(error) = joined {
+            tracing::warn!(%error, "connector-control named-pipe connection task panicked");
+        }
+    }
+    match listener_failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn same_effective_uid(stream: &tokio::net::UnixStream) -> bool {
     use std::os::fd::AsRawFd as _;
@@ -1262,12 +1610,15 @@ fn same_effective_uid(_: &tokio::net::UnixStream) -> bool {
     false
 }
 
-#[cfg(unix)]
-async fn handle_connection(
-    mut stream: tokio::net::UnixStream,
+#[cfg(any(unix, windows))]
+async fn handle_connection<S>(
+    mut stream: S,
     state: Arc<RpcState>,
     shutdown: Arc<RpcShutdown>,
-) -> Result<()> {
+) -> Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let deadline = Instant::now()
         .checked_add(CONNECTION_TIMEOUT)
         .context("connector-control connection deadline overflow")?;
@@ -1342,7 +1693,7 @@ async fn handle_connection(
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct ParsedRequest {
     method: String,
     path: String,
@@ -1350,8 +1701,11 @@ struct ParsedRequest {
     body: Vec<u8>,
 }
 
-#[cfg(unix)]
-async fn read_request(stream: &mut tokio::net::UnixStream) -> Option<ParsedRequest> {
+#[cfg(any(unix, windows))]
+async fn read_request<S>(stream: &mut S) -> Option<ParsedRequest>
+where
+    S: tokio::io::AsyncRead + Unpin,
+{
     let mut buf = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
     let header_end = loop {
@@ -1418,13 +1772,16 @@ async fn read_request(stream: &mut tokio::net::UnixStream) -> Option<ParsedReque
     })
 }
 
-#[cfg(unix)]
-async fn write_response(
-    stream: &mut tokio::net::UnixStream,
+#[cfg(any(unix, windows))]
+async fn write_response<S>(
+    stream: &mut S,
     status: u16,
     code: &str,
     data: Option<&str>,
-) -> Result<()> {
+) -> Result<()>
+where
+    S: tokio::io::AsyncWrite + Unpin,
+{
     let body = match data {
         Some(data) => format!("{{\"ok\":true,\"data\":{data}}}"),
         None => format!("{{\"ok\":{},\"code\":\"{code}\"}}", status == 200),
@@ -1450,7 +1807,7 @@ async fn write_response(
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn http_status_line(status: u16) -> &'static str {
     match status {
         200 => "HTTP/1.1 200 OK",
@@ -1465,7 +1822,7 @@ fn http_status_line(status: u16) -> &'static str {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn process_route(
     route: &str,
     body: &[u8],
@@ -1501,7 +1858,7 @@ fn process_route(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn encode_accounts_status(accounts: &[super::ConnectorAccountStatus]) -> Result<String> {
     let views = accounts
         .iter()
@@ -1522,7 +1879,7 @@ fn encode_accounts_status(accounts: &[super::ConnectorAccountStatus]) -> Result<
     Ok(encoded)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn plan_import(state: &RpcState, request: PlanRequest) -> Result<String> {
     release_expired_pending_plans(state)?;
     let plan_id = random_opaque()?;
@@ -1585,7 +1942,7 @@ fn plan_import(state: &RpcState, request: PlanRequest) -> Result<String> {
     .to_string())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn build_pending_plan(
     state: &RpcState,
     request: PlanRequest,
@@ -1633,7 +1990,7 @@ fn build_pending_plan(
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn apply_import(state: &RpcState, request: ApplyRequest) -> Result<String> {
     release_expired_pending_plans(state)?;
     {
@@ -1697,7 +2054,7 @@ fn apply_import(state: &RpcState, request: ApplyRequest) -> Result<String> {
     Ok(plan_outcome_response(audit_pending))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn reserve_planning_slot(state: &RpcState, plan_id: &str, expires_at: Instant) -> Result<()> {
     let mut registry = state
         .plans
@@ -1706,7 +2063,7 @@ fn reserve_planning_slot(state: &RpcState, plan_id: &str, expires_at: Instant) -
     reserve_planning_slot_in_registry(&mut registry, plan_id, expires_at, Instant::now())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn reserve_planning_slot_in_registry(
     registry: &mut PlanRegistry,
     plan_id: &str,
@@ -1732,7 +2089,7 @@ fn reserve_planning_slot_in_registry(
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn remove_planning_slot(state: &RpcState, plan_id: &str) -> Result<()> {
     state
         .plans
@@ -1743,7 +2100,7 @@ fn remove_planning_slot(state: &RpcState, plan_id: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn release_expired_pending_plans(state: &RpcState) -> Result<()> {
     loop {
         let expired = {
@@ -1790,7 +2147,7 @@ fn release_expired_pending_plans(state: &RpcState) -> Result<()> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn context_evidence_replay_runtime(state: &RpcState) -> Result<ContextEvidenceReplayRuntime> {
     let subject = state
         .daemon_subject
@@ -1806,7 +2163,7 @@ fn context_evidence_replay_runtime(state: &RpcState) -> Result<ContextEvidenceRe
     Ok(ContextEvidenceReplayRuntime::new(binding, store))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn context_import_apply_key(
     plan_id: &str,
     confirmation_nonce: &str,
@@ -1817,7 +2174,7 @@ fn context_import_apply_key(
     ))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn decode_lower_hex_32(label: &str, value: &str) -> Result<[u8; 32]> {
     ensure!(
         value.len() == 64,
@@ -1834,17 +2191,17 @@ fn decode_lower_hex_32(label: &str, value: &str) -> Result<[u8; 32]> {
         .map_err(|_| anyhow::anyhow!("{label} must decode to exactly 32 bytes"))
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn plan_outcome_response(audit_pending: bool) -> String {
     serde_json::json!({"accepted": true, "audit_pending": audit_pending}).to_string()
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct DaemonWalSink {
     writer: WalWriterHandle,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl ContextEvidenceWalSink for DaemonWalSink {
     fn append_context_evidence_receipt_once(
         &mut self,
@@ -1861,7 +2218,7 @@ impl ContextEvidenceWalSink for DaemonWalSink {
     }
 }
 
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 fn random_opaque() -> Result<String> {
     let mut bytes = [0u8; 32];
     getrandom::getrandom(&mut bytes)?;
@@ -1878,7 +2235,7 @@ mod tests {
     /// Test-only endpoint nonces still exercise the production parser and
     /// endpoint derivation, but must not resemble reusable cryptographic
     /// material in the compiled test binary.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn fresh_test_nonce() -> String {
         let mut bytes = [0_u8; 16];
         getrandom::getrandom(&mut bytes).expect("OS randomness for connector-control test nonce");
@@ -1892,7 +2249,7 @@ mod tests {
         String::from_utf8(bytes).expect("hex test nonce remains UTF-8")
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn connector_nonce_is_strict_and_domain_separated_from_pid_nonce() {
         let audit_nonce = fresh_test_nonce();
@@ -1923,6 +2280,74 @@ mod tests {
             plan.bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_connector_control_pipe_namespace_is_distinct_from_audit() {
+        let home_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let audit_nonce = fresh_test_nonce();
+        let connector_nonce = connector_nonce(&audit_nonce);
+        let connector = crate::windows_private_ipc::PrivatePipeEndpoint::derive(
+            "neoth-cc-v1",
+            home_sha256,
+            &connector_nonce,
+        )
+        .unwrap();
+        let audit = crate::windows_private_ipc::PrivatePipeEndpoint::derive(
+            "neoth-audit-v2",
+            home_sha256,
+            &audit_nonce,
+        )
+        .unwrap();
+        assert_ne!(connector.name(), audit.name());
+        assert!(
+            connector
+                .validate_binding("neoth-audit-v2", home_sha256, &connector_nonce)
+                .is_err()
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_client_rejects_an_oversized_same_user_pipe_response_at_the_bound() {
+        let endpoint = crate::windows_private_ipc::PrivatePipeEndpoint::derive(
+            "neoth-cc-response-bound-test",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            &fresh_test_nonce(),
+        )
+        .expect("test endpoint must derive");
+        let mut listener =
+            crate::windows_private_ipc::Listener::bind(endpoint.clone(), MAX_REQUEST_BYTES as u32)
+                .expect("test listener must bind");
+        let oversized = vec![b'x'; MAX_WINDOWS_RESPONSE_ENVELOPE_BYTES + 1];
+        let server = tokio::spawn(async move {
+            let mut stream = listener.accept().await?;
+            let request = read_request(&mut stream)
+                .await
+                .context("test client must send a complete request")?;
+            assert_eq!(request.path, "/cc/health");
+            stream.write_all(&oversized).await?;
+            stream.shutdown().await?;
+            Ok::<(), anyhow::Error>(())
+        });
+        let client = WindowsClient {
+            endpoint,
+            token: "test-cc-token".to_owned(),
+        };
+        let error = client
+            .post("/cc/health", b"")
+            .await
+            .expect_err("client must reject response above its bounded envelope");
+        assert!(
+            error
+                .to_string()
+                .contains("connector-control client response envelope exceeds cap")
+        );
+        server
+            .await
+            .expect("oversized-response server task must not panic")
+            .expect("oversized-response server must finish cleanly");
     }
 
     #[cfg(unix)]

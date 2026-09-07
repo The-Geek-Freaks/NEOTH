@@ -1148,11 +1148,13 @@ mod tests {
                             name: "auth_middleware".into(),
                             kind: SymbolKind::Function,
                             line: 12,
+                            line_end: None,
                         },
                         Symbol {
                             name: "verify_token".into(),
                             kind: SymbolKind::Function,
                             line: 30,
+                            line_end: None,
                         },
                     ],
                 },
@@ -1167,6 +1169,7 @@ mod tests {
                         name: "Config".into(),
                         kind: SymbolKind::Struct,
                         line: 5,
+                        line_end: None,
                     }],
                 },
             ],
@@ -1327,6 +1330,7 @@ mod tests {
                         name: "auth_gateway".into(),
                         kind: SymbolKind::Function,
                         line: 1,
+                        line_end: None,
                     }],
                 }],
                 report: ScanReport::default(),
@@ -1347,11 +1351,13 @@ mod tests {
                         name: "auth_gateway".into(),
                         kind: SymbolKind::Function,
                         line: 1,
+                        line_end: None,
                     },
                     Symbol {
                         name: "token_verify".into(),
                         kind: SymbolKind::Function,
                         line: 2,
+                        line_end: None,
                     },
                 ],
             })
@@ -1556,6 +1562,7 @@ mod tests {
                     name: format!("term_{index:03}"),
                     kind: SymbolKind::Function,
                     line: 1,
+                    line_end: None,
                 }],
             })
             .collect();
@@ -1609,6 +1616,7 @@ mod tests {
                     name: "shared_symbol".into(),
                     kind: SymbolKind::Function,
                     line: 1,
+                    line_end: None,
                 }],
             })
             .collect();

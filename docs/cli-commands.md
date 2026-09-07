@@ -359,6 +359,7 @@ One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply. Both re
 - `--skill <SKILL_ID>` — Explicit authority-validated Skill for this turn. This selection wins over automatic routing and any `/skill-id` embedded in the message
 - `--system <TEXT>` — Inject a one-shot system prompt for this call
 - `--attach <PATH>` — Attach files to this turn. Each file runs through bounded admission and the media extraction pipeline; extracted data stays separate from the operator message as canonical untrusted context. Repeatable
+- `--repo-root <REPO_ROOT>` — Explicit repository root for a high-confidence coding request. Chat only enters the dedicated coding workflow when the operator supplied this value; ordinary chat remains available without it
 - `--edit` — GOLD-ADOPT-24 — compose the prompt in `$VISUAL`/`$EDITOR` instead of passing it inline. Any inline message/`--message` seeds the editor as prefill. Aborts if the editor is left empty
 - `--config <PATH>` — Override the freedom.yaml path (mostly for tests)
 - `--wal-segment <PATH>` — Diagnostic/test WAL override. Must be a canonical direct child of the selected config home's `wal` directory with a six-digit segment suffix
@@ -560,6 +561,7 @@ V11 coding workflow — autonomous software-engineering entry point
 
 - `<PROMPT>` — Free-text coding request. Wrapped in `<operator_request>` by the decomposer prompt — no further escaping needed. Optional only so `--run-pending` (which decomposes nothing) can run without one
 - `--db <PATH>` — Override `views.db` path. Defaults to `~/.neoth/views.db`
+- `--repo-root <REPO_ROOT>` — Repository used for code-map provenance and (when requested) dispatch worktrees. A fresh coding run never guesses process CWD; `--apply` remains an explicit repository root for backwards-compatible apply invocations
 - `--source-channel <SOURCE_CHANNEL>` — Source channel label for the kanban session (`cli` / `chat` / `telegram` / `discord` / ...). Defaults to `cli`
 - `--no-assign` — Skip the auto-classify + auto-assign step. Useful for operator-in-loop review of the decomposition before any hemisphere binding
 - `--dispatch` — Pick #6 Phase 3 (2026-05-20): after decomposition + assign, actually run the workers. Without this flag the command stops at "decomposed into N tasks" and the operator drives dispatch manually (`neoth kanban move …`). With `--dispatch`, we build a `HemisphereWorkerSet` from the freedom.yaml provider bindings and call `dispatch_session()` once. Q1 patch-safety placeholder applies — workers store patches, do not apply
@@ -577,6 +579,20 @@ REPOW-01/02/03 — git-derived repo intelligence
 ## `neoth code-map`
 
 Repository code-map (K-Repo-Map Phase 1, Session 14 Pick #13). `scan` walks the operator's project root, classifies files by language, counts LOC + bytes. Honours .gitignore / .neothignore. Phase 2 adds tree-sitter symbol extraction; Phase 3 persists into a `~/.neoth/code_map.db` SQLite for recall integration
+
+### `neoth code-map diff-impact`
+
+Acquire one explicit Git diff, map only hunk-intersecting declaration lines to exact symbols, then run the canonical impact service. The selected root must already have a current persisted code map
+
+- `--root <PATH>` — Explicit Git and code-map root. This command never infers a root from the current directory
+- `--staged` — Compare the index with HEAD. The default source is the working tree
+- `--base <REF>` — Older committed revision; requires --target and cannot be combined with --staged or --stdin
+- `--target <REF>` — Newer committed revision; requires --base and cannot be combined with --staged or --stdin
+- `--stdin` — Read a unified diff from standard input. --root remains mandatory so changed paths are contained before their source is read
+- `--direction <DIRECTION>` — Relationship direction from each changed declaration
+- `--max-depth <N>` — Maximum relationship hops. Hard ceiling 32
+- `--max-nodes <N>` — Maximum affected declarations returned. Hard ceiling 10000
+- `--allow-stale` — Permit analysis against an index known to predate on-disk edits
 
 ### `neoth code-map impact`
 
@@ -605,6 +621,14 @@ Phase 3a (Session 14 Pick #22) — scan PATH (or cwd) and persist the resulting 
 - `--max-file-bytes <BYTES>` — Hard cap on per-file byte size. Defaults to 2 MiB
 - `--include-hidden` — Include hidden directories. Default behaviour skips them
 
+### `neoth code-map refresh`
+
+Create the first complete snapshot for PATH or refresh it when the current generation is stale or incomplete. Ctrl-C requests cooperative cancellation and waits for the owned blocking refresh to finish
+
+- `<PATH>` — Root directory to refresh. Defaults to the current working directory
+- `--force` — Rebuild even when the current snapshot is fresh
+- `--repair-corrupt` — Explicitly preserve a corrupt database and create a replacement. Normal status and refresh calls never alter a corrupt store
+
 ### `neoth code-map relevant`
 
 Phase 3b (Session 14 Pick #25) — given a free-text PROMPT, query the persisted code map for files that look relevant. Ranks by identifier-symbol matches first, path-keyword overlap second. Use this to inspect what chat would inject as a `<repo-context>` block without firing a provider call
@@ -630,6 +654,12 @@ Walk the repository at PATH (default: cwd), classify by language, count LOC + by
 Phase 3a — find persisted files in the active repository that declare a symbol matching NAME exactly
 
 - `<NAME>` — Symbol name to look up
+
+### `neoth code-map status`
+
+Inspect the selected repository's code-map lifecycle state without creating, migrating, rebuilding, or repairing the database
+
+- `<PATH>` — Root directory to inspect. Defaults to the current working directory
 
 ## `neoth companion`
 
@@ -723,6 +753,28 @@ Remove a previously recorded consent grant
 Show consent state for a single provider
 
 - `<PROVIDER>`
+
+## `neoth context`
+
+Plan and apply local context imports through the running daemon
+
+### `neoth context import`
+
+Ask the live daemon to plan one capability-bound local import
+
+#### `neoth context import apply`
+
+Consume exactly one plan confirmation and persist its Context Evidence
+
+- `<PLAN_ID>` — Opaque handle returned by `context import plan`
+- `<CONFIRMATION_NONCE>` — Opaque confirmation returned by `context import plan`
+
+#### `neoth context import plan`
+
+Validate one approved root and return a short-lived confirmation handle
+
+- `<ROOT>` — Absolute local directory presented for capability-bound approval
+- `<RELATIVE_PATH>` — Relative regular-file path below the approved root
 
 ## `neoth cost`
 
@@ -2398,6 +2450,12 @@ Print the full quarantine item JSON for a specific uid
 ## `neoth permissions`
 
 Inspect and edit the active autonomy policy. `show [--level X]` prints the active level, Custom overrides, and every stable action across all five levels. `check <action>` evaluates one action against the active immutable policy. `set` and `clear` atomically persist typed Custom overrides in freedom.yaml
+
+### `neoth permissions audit`
+
+Replay the typed append-only trust ledger for one exact subject key. Use `local` for decisions made without a delegated subject
+
+- `--subject <SUBJECT>` — Exact subject identity. This filter is mandatory so one subject's authority decisions never appear in another subject's inspection
 
 ### `neoth permissions check`
 

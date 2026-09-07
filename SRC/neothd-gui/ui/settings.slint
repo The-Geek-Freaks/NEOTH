@@ -971,6 +971,23 @@ export component SettingsView inherits Rectangle {
     callback code-map-lifecycle-cancel-clicked();
     callback code-map-lifecycle-config-apply-clicked(bool, string, string);
     callback code-map-lifecycle-managed-root-remove-clicked(string);
+    // Native coding runs use the explicit repository root above. The GUI
+    // supplies only operator intent; the shared service owns providers,
+    // context preparation, SQLite, progress, cancellation, and receipts.
+    in-out property <string> native-coding-prompt: "";
+    in-out property <string> native-coding-source-channel: "gui";
+    in-out property <bool> native-coding-no-assign: false;
+    in-out property <bool> native-coding-dispatch: false;
+    in-out property <bool> native-coding-apply: false;
+    in property <bool> native-coding-running: false;
+    in property <bool> native-coding-cancel-pending: false;
+    in property <bool> native-coding-error: false;
+    in property <string> native-coding-state: "Ready for an explicit repository and prompt.";
+    in property <string> native-coding-detail: "The Coding service will prepare local code-map evidence before any provider work.";
+    in property <string> native-coding-run-id: "";
+    in property <string> native-coding-terminal-receipt: "";
+    callback native-coding-start-clicked(string, string, string, bool, bool, bool);
+    callback native-coding-cancel-clicked();
     /// One-line summary above the board: which session is showing,
     /// when it was opened, what the operator's prompt was. Empty
     /// string means "no sessions yet — operator has not run `neoth
@@ -4543,13 +4560,13 @@ export component SettingsView inherits Rectangle {
                             NeothLineEdit {
                                 text <=> root.code-map-root;
                                 placeholder-text: "Repository root (required; never inferred from GUI CWD)";
-                                enabled: !root.code-map-running && !root.code-map-lifecycle-running;
+                                enabled: !root.code-map-running && !root.code-map-lifecycle-running && !root.native-coding-running;
                                 horizontal-stretch: 1;
                             }
                             NeothButton {
                                 label: "Browse…";
                                 size: "sm";
-                                enabled: !root.code-map-running && !root.code-map-lifecycle-running;
+                                enabled: !root.code-map-running && !root.code-map-lifecycle-running && !root.native-coding-running;
                                 clicked => { root.code-map-browse-clicked(); }
                             }
                         }
@@ -4820,6 +4837,130 @@ export component SettingsView inherits Rectangle {
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-2xs;
                             color: Theme.accent-amber;
+                        }
+                    }
+                }
+
+                Card {
+                    shimmer: root.native-coding-running;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: "NATIVE CODING RUN";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-medium;
+                                letter-spacing: Theme.letter-spacing-tight;
+                                color: Theme.accent-cyan;
+                                horizontal-stretch: 1;
+                                vertical-alignment: center;
+                            }
+                            if root.native-coding-running: Text {
+                                text: root.native-coding-cancel-pending ? "CANCELLING…" : "RUNNING…";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.accent-amber;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            text: "Runs use the selected repository root and source channel below. The shared service owns provider selection, local context, persistence, progress, cancellation, and the terminal receipt.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        NeothTextArea {
+                            text <=> root.native-coding-prompt;
+                            placeholder-text: "Describe the change or investigation to run in this repository";
+                            enabled: !root.native-coding-running;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            NeothLineEdit {
+                                text <=> root.native-coding-source-channel;
+                                placeholder-text: "Source channel, for example gui";
+                                enabled: !root.native-coding-running;
+                                horizontal-stretch: 1;
+                            }
+                            NeothCheckBox {
+                                text: "No assignment";
+                                checked <=> root.native-coding-no-assign;
+                                enabled: !root.native-coding-running;
+                            }
+                            NeothCheckBox {
+                                text: "Dispatch";
+                                checked <=> root.native-coding-dispatch;
+                                enabled: !root.native-coding-running;
+                            }
+                            NeothCheckBox {
+                                text: "Apply";
+                                checked <=> root.native-coding-apply;
+                                enabled: !root.native-coding-running && root.native-coding-dispatch;
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            NeothButton {
+                                label: root.native-coding-running ? "Coding run active" : "Start coding run";
+                                size: "sm";
+                                primary: true;
+                                enabled: !root.native-coding-running
+                                    && root.native-coding-prompt != ""
+                                    && root.code-map-root != ""
+                                    && root.native-coding-source-channel != ""
+                                    && (!root.native-coding-apply || root.native-coding-dispatch);
+                                clicked => {
+                                    root.native-coding-start-clicked(
+                                        root.native-coding-prompt,
+                                        root.code-map-root,
+                                        root.native-coding-source-channel,
+                                        root.native-coding-no-assign,
+                                        root.native-coding-dispatch,
+                                        root.native-coding-apply,
+                                    );
+                                }
+                            }
+                            NeothButton {
+                                label: root.native-coding-cancel-pending ? "Cancelling…" : "Cancel coding run";
+                                size: "sm";
+                                danger: true;
+                                enabled: root.native-coding-running && !root.native-coding-cancel-pending;
+                                clicked => { root.native-coding-cancel-clicked(); }
+                            }
+                            if root.native-coding-run-id != "": Text {
+                                text: "run " + root.native-coding-run-id;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.text-muted;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            text: root.native-coding-state;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: root.native-coding-error ? Theme.accent-pink
+                                 : root.native-coding-running ? Theme.accent-amber
+                                 : Theme.text-primary;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: root.native-coding-detail;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: root.native-coding-error ? Theme.accent-pink : Theme.text-secondary;
+                            wrap: word-wrap;
+                        }
+                        if root.native-coding-terminal-receipt != "": Text {
+                            text: root.native-coding-terminal-receipt;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.accent-cyan;
+                            wrap: word-wrap;
                         }
                     }
                 }

@@ -237,6 +237,8 @@ recursive-mas = []
 hash-bench = ["dep:opthash"]
 
 [dependencies]
+proc-macro2 = { version = "1", features = ["span-locations"] }
+syn = { version = "2", features = ["full", "visit"] }
 # GOLD-ADAPT-HASH-01 — ElasticHashMap + FunnelHashMap bench spike.
 # Optional, default-OFF; never present in a release binary. Pulled only when
 # the `hash-bench` feature is active. Its 1.88 MSRV remains below NEOTH's 1.91
@@ -756,9 +758,7 @@ version = "0.8"
 optional = true
 
 [dev-dependencies]
-proc-macro2 = { version = "1", features = ["span-locations"] }
 quote        = "1"
-syn          = { version = "2", features = ["full", "visit"] }
 tokio        = { version = "1", features = ["test-util", "macros", "rt-multi-thread", "fs", "io-util", "sync", "time"] }
 # tempfile moved to regular [dependencies] above for the V03-09
 # Phase 2b apply path. Dev-deps inherit the regular dep so existing

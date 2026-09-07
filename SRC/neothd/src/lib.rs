@@ -354,6 +354,8 @@ pub mod wiki;
 /// respective ownership and no-follow policy layers.
 #[cfg(windows)]
 pub(crate) mod windows_nt;
+#[cfg(windows)]
+pub(crate) mod windows_private_ipc;
 pub mod wizard;
 
 pub const BANNER: &str = "Neoth ready. Sup.";

@@ -77,6 +77,7 @@ pub mod self_source;
 /// Fail-closed: any gate failure refuses the request without touching the live
 /// source tree. WAL audit via `EXTENDED/SelfEditProposed` + `SelfEditApplied`.
 pub mod self_source_gate;
+pub mod service;
 pub mod store;
 /// QU-10b / SP-A1 — pending-task controller loop driving the dispatcher
 /// across every session with a Backlog task (`neoth code --run-pending`).
@@ -108,6 +109,11 @@ pub use decomposer::{
 pub use feed::{FeedEntry, is_kanban_event, parse_kanban_payload};
 pub use review::{
     ReviewBlocker, auto_promote_if_green, auto_promote_session, check_auto_promotable,
+};
+pub use service::{
+    CancellationEffect, CodingDispatchSummary, CodingRunEvent, CodingRunHandle, CodingRunId,
+    CodingRunPhase, CodingRunResult, CodingRunSnapshot, CodingService, CodingServiceConfig,
+    CodingStartRequest, ProviderCallState,
 };
 pub use types::{
     Hemisphere, KanbanComment, KanbanSession, KanbanSessionId, KanbanTask, KanbanTaskId,

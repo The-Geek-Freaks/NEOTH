@@ -31,6 +31,7 @@
 //! - `codegraph_callers` — transitive callers of a symbol (inverse BFS)
 //! - `codegraph_callees` — transitive callees of a symbol (forward BFS)
 //! - `codegraph_impact_radius` — generation-bound, concrete-node blast radius
+//! - `codegraph_diff_impact` — explicit Git diff acquisition into that radius
 //! - `codegraph_outline` — structural outline for a file already indexed in
 //!   the persisted code map
 //!
@@ -294,6 +295,40 @@ pub fn codegraph_tools() -> Vec<McpTool> {
             }),
             annotations: read_only_annotations(),
         },
+        McpTool {
+            name: "codegraph_diff_impact".into(),
+            description: Some(
+                "Acquire one explicit bounded Git diff under the active repository, map only \
+                 hunk-intersecting parser declaration lines to exact symbol seeds, then run \
+                 the canonical generation-bound impact analysis. Source reads, Git failures, \
+                 malformed diffs, and stale indexes are returned as errors."
+                    .into(),
+            ),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "root": {
+                        "type": "string",
+                        "description": "Explicit repository root used for Git, source containment, and active code-map selection."
+                    },
+                    "source": {
+                        "type": "string",
+                        "enum": ["working_tree", "staged", "committed", "stdin"],
+                        "default": "working_tree"
+                    },
+                    "base": {"type": "string", "description": "Required only for source=committed."},
+                    "target": {"type": "string", "description": "Required only for source=committed."},
+                    "unified_diff": {"type": "string", "description": "Required only for source=stdin."},
+                    "direction": {"type": "string", "enum": ["callers", "callees", "both"], "default": "callers"},
+                    "max_depth": {"type": "integer", "minimum": 0, "maximum": crate::code_map::impact::MAX_IMPACT_DEPTH, "default": crate::code_map::impact::DEFAULT_MAX_DEPTH},
+                    "max_nodes": {"type": "integer", "minimum": 0, "maximum": crate::code_map::impact::MAX_IMPACT_NODES, "default": crate::code_map::impact::DEFAULT_MAX_NODES},
+                    "allow_stale": {"type": "boolean", "default": false}
+                },
+                "required": ["root"],
+                "additionalProperties": false
+            }),
+            annotations: read_only_annotations(),
+        },
         // GOLD-ADAPT-CCS-04: native AST outline — per-file structural overview
         // (symbols + line ranges) without any Node.js or tree-sitter dep.
         McpTool {
@@ -336,6 +371,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "codegraph_callers",
     "codegraph_callees",
     "codegraph_impact_radius",
+    "codegraph_diff_impact",
     "codegraph_outline",
 ];
 
@@ -375,6 +411,7 @@ pub(crate) fn dispatch_codegraph_tool_at(
         "codegraph_callers" => tool_callers(db_path, args, cwd),
         "codegraph_callees" => tool_callees(db_path, args, cwd),
         "codegraph_impact_radius" => tool_impact_radius(db_path, args, cwd),
+        "codegraph_diff_impact" => tool_diff_impact(db_path, args, cwd),
         "codegraph_outline" => tool_outline(db_path, args, cwd),
         other => error_result(format!(
             "unknown codegraph tool `{other}` (known: {})",
@@ -645,6 +682,178 @@ fn tool_impact_radius(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> T
         Err(error) => error_result(format!(
             "codegraph_impact_radius result serialisation failed: {error}"
         )),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DiffImpactSource {
+    #[default]
+    WorkingTree,
+    Staged,
+    Committed,
+    Stdin,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiffImpactArgs {
+    root: String,
+    #[serde(default)]
+    source: DiffImpactSource,
+    #[serde(default)]
+    base: Option<String>,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    unified_diff: Option<String>,
+    #[serde(default)]
+    direction: crate::code_map::impact::ImpactDirection,
+    #[serde(default = "default_impact_depth")]
+    max_depth: usize,
+    #[serde(default = "default_impact_nodes")]
+    max_nodes: usize,
+    #[serde(default)]
+    allow_stale: bool,
+}
+
+fn tool_diff_impact(db_path: &Path, args: &serde_json::Value, _cwd: &Path) -> ToolCallResult {
+    let parsed: DiffImpactArgs = match serde_json::from_value(args.clone()) {
+        Ok(parsed) => parsed,
+        Err(error) => return error_result(format!("bad args: {error}")),
+    };
+    let DiffImpactArgs {
+        root,
+        source,
+        base,
+        target,
+        unified_diff,
+        direction,
+        max_depth,
+        max_nodes,
+        allow_stale,
+    } = parsed;
+    let root = std::path::PathBuf::from(root);
+    let acquired = match (&source, base, target, unified_diff) {
+        (DiffImpactSource::WorkingTree, None, None, None) => {
+            crate::code_map::diff_git::acquire_git_diff(
+                &root,
+                crate::code_map::diff_git::GitDiffSource::WorkingTree,
+            )
+        }
+        (DiffImpactSource::Staged, None, None, None) => crate::code_map::diff_git::acquire_git_diff(
+            &root,
+            crate::code_map::diff_git::GitDiffSource::Staged,
+        ),
+        (DiffImpactSource::Committed, Some(base), Some(target), None) => {
+            crate::code_map::diff_git::acquire_git_diff(
+                &root,
+                crate::code_map::diff_git::GitDiffSource::Committed { base, target },
+            )
+        }
+        (DiffImpactSource::Stdin, None, None, Some(input)) => {
+            crate::code_map::diff_git::parse_stdin_diff(&input)
+        }
+        _ => return error_result(
+            "bad args: source requires exactly its matching fields: working_tree/staged have none, committed has base and target, stdin has unified_diff".into(),
+        ),
+    };
+    let acquired = match acquired {
+        Ok(acquired) => acquired,
+        Err(error) => {
+            return error_result(format!(
+                "codegraph_diff_impact failed to acquire diff: {error:#}"
+            ));
+        }
+    };
+    let exists = match db_path.try_exists() {
+        Ok(exists) => exists,
+        Err(error) => {
+            return error_result(format!(
+                "codegraph_diff_impact failed to inspect {}: {error}",
+                db_path.display()
+            ));
+        }
+    };
+    if !exists {
+        return error_result(format!(
+            "codegraph_diff_impact failed: code-map DB {} does not exist; run `neoth code-map persist` first",
+            db_path.display()
+        ));
+    }
+    let conn = match open_code_map_read_only(db_path) {
+        Ok(conn) => conn,
+        Err(error) => {
+            return error_result(format!(
+                "codegraph_diff_impact failed to open {}: {error:#}",
+                db_path.display()
+            ));
+        }
+    };
+    let canonical_root = match root.canonicalize() {
+        Ok(root) if root.is_dir() => root,
+        Ok(root) => {
+            return error_result(format!(
+                "codegraph_diff_impact root is not a directory: {}",
+                root.display()
+            ));
+        }
+        Err(error) => {
+            return error_result(format!(
+                "codegraph_diff_impact failed to canonicalize root {}: {error}",
+                root.display()
+            ));
+        }
+    };
+    let canonical_root_text = match canonical_root.to_str() {
+        Some(root) => root,
+        None => return error_result("codegraph_diff_impact root is not valid UTF-8".into()),
+    };
+    let indexed = match crate::code_map::persist::load_map(&conn, canonical_root_text) {
+        Ok(Some(map)) => map,
+        Ok(None) => {
+            return error_result(format!(
+                "codegraph_diff_impact failed: root {} is not indexed; run `neoth code-map persist` first",
+                canonical_root.display()
+            ));
+        }
+        Err(error) => {
+            return error_result(format!(
+                "codegraph_diff_impact failed to load indexed extents: {error:#}"
+            ));
+        }
+    };
+    let seeds = match crate::code_map::diff_git::map_acquired_diff_to_indexed_impact_seeds(
+        &canonical_root,
+        &acquired,
+        &indexed,
+    ) {
+        Ok(seeds) => seeds,
+        Err(error) => {
+            return error_result(format!(
+                "codegraph_diff_impact failed to map diff: {error:#}"
+            ));
+        }
+    };
+    let result = crate::code_map::impact::impact_radius_for_diff_seeds(
+        &conn,
+        &canonical_root,
+        &seeds,
+        crate::code_map::impact::ImpactOptions {
+            direction,
+            max_depth,
+            max_nodes,
+            allow_stale,
+        },
+    );
+    match result {
+        Ok(result) => match serde_json::to_string(&result) {
+            Ok(payload) => text_result(payload),
+            Err(error) => error_result(format!(
+                "codegraph_diff_impact result serialisation failed: {error}"
+            )),
+        },
+        Err(error) => error_result(format!("codegraph_diff_impact failed: {error:#}")),
     }
 }
 
@@ -1558,6 +1767,7 @@ mod tests {
         assert!(names.contains(&"codegraph_callers"));
         assert!(names.contains(&"codegraph_callees"));
         assert!(names.contains(&"codegraph_impact_radius"));
+        assert!(names.contains(&"codegraph_diff_impact"));
         assert!(names.contains(&"codegraph_outline"));
     }
 
@@ -2093,6 +2303,63 @@ fn root() { alpha(); beta(); }
         let from_mcp: crate::code_map::impact::ImpactResult =
             serde_json::from_str(&text_content(&dispatched)).unwrap();
         assert_eq!(from_mcp, canonical);
+        assert_eq!(from_mcp.impacted_nodes[0].node.symbol, "caller");
+    }
+
+    #[test]
+    fn diff_impact_dispatch_uses_parser_backed_symbol_seed() {
+        let repo = tempdir().unwrap();
+        std::fs::write(repo.path().join("changed.rs"), "fn changed() {}\n").unwrap();
+        std::fs::write(repo.path().join("caller.rs"), "fn caller() {}\n").unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(repo.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        let db_dir = tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
+        let mut conn = crate::code_map::persist::open(&db).unwrap();
+        crate::code_map::persist::persist_map(&mut conn, &map).unwrap();
+        crate::code_map::persist::persist_edges(
+            &mut conn,
+            &map.root,
+            &[crate::code_map::graph::CodeEdge {
+                from_file: "caller.rs".into(),
+                from_symbol: "caller".into(),
+                to_name: "changed".into(),
+                kind: crate::code_map::graph::EdgeKind::Calls,
+            }],
+        )
+        .unwrap();
+        let dispatched = dispatch_codegraph_tool_at(
+            &db,
+            "codegraph_diff_impact",
+            &serde_json::json!({
+                "root": repo.path(),
+                "source": "stdin",
+                "unified_diff": concat!(
+                    "diff --git a/changed.rs b/changed.rs\\n",
+                    "--- a/changed.rs\\n",
+                    "+++ b/changed.rs\\n",
+                    "@@ -1 +1 @@\\n",
+                    "-fn changed() {}\\n",
+                    "+fn changed() {}\\n"
+                ),
+                "direction": "callers",
+                "max_depth": 3,
+                "max_nodes": 25
+            }),
+            repo.path(),
+        );
+        assert!(!dispatched.is_error, "got: {}", text_content(&dispatched));
+        let from_mcp: crate::code_map::impact::ImpactResult =
+            serde_json::from_str(&text_content(&dispatched)).unwrap();
+        assert_eq!(
+            from_mcp.requested_seeds,
+            vec![crate::code_map::impact::ImpactSeed::symbol(
+                "changed.rs",
+                "changed"
+            )]
+        );
         assert_eq!(from_mcp.impacted_nodes[0].node.symbol, "caller");
     }
 

@@ -16,6 +16,7 @@
 
 #![cfg(target_os = "windows")]
 
+use std::ffi::{OsStr, c_void};
 use std::fs::File;
 use std::io;
 use std::os::windows::ffi::OsStrExt;
@@ -52,10 +53,11 @@ use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken}
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, CREATE_NEW, CreateDirectoryW, CreateFileW, DELETE, FILE_ALL_ACCESS,
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH,
-    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_LIST_DIRECTORY, FILE_READ_DATA, FILE_RENAME_INFO,
-    FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_DATA,
-    FileRenameInfoEx, FlushFileBuffers, GetFileInformationByHandle, OPEN_EXISTING, READ_CONTROL,
+    FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_FLAG_WRITE_THROUGH, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_LIST_DIRECTORY,
+    FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_DATA, FileDispositionInfo, FileRenameInfoEx,
+    FlushFileBuffers, GetFileInformationByHandle, OPEN_EXISTING, READ_CONTROL,
     SetFileInformationByHandle, WRITE_DAC,
 };
 
@@ -668,6 +670,139 @@ pub fn create_private_file_new(path: &Path) -> io::Result<File> {
 /// inherited temp-directory ACL, remains the access-control boundary.
 pub fn create_private_shared_file_new(path: &Path) -> io::Result<File> {
     create_private_file_new_with_share(path, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+}
+
+/// Create or open one exact private child below an already-pinned directory.
+///
+/// This is deliberately capability-relative: `parent` is passed as NT's
+/// RootDirectory and `leaf` is a single component. There is no absolute-path
+/// fallback, and creation supplies the protected TokenUser DACL before the
+/// child is observable.
+pub(crate) fn create_private_child_file_relative(
+    parent: HANDLE,
+    leaf: &OsStr,
+    desired_access: u32,
+    share_mode: u32,
+    create_if_missing: bool,
+) -> io::Result<File> {
+    let mut wide: Vec<u16> = leaf.encode_wide().collect();
+    if wide.is_empty()
+        || wide.len() > (u16::MAX as usize / 2)
+        || wide.iter().any(|unit| {
+            *unit == 0 || *unit == b'\\' as u16 || *unit == b'/' as u16 || *unit == b':' as u16
+        })
+        || wide == [b'.' as u16]
+        || wide == [b'.' as u16, b'.' as u16]
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "context child must be one non-empty NT leaf",
+        ));
+    }
+    let sid = current_process_token_sid()?;
+    let acl = single_trustee_acl(
+        sid.as_ptr().cast_mut().cast(),
+        TRUSTEE_IS_SID,
+        NO_INHERITANCE,
+    )?;
+    let mut descriptor: SECURITY_DESCRIPTOR = unsafe { std::mem::zeroed() };
+    let descriptor_ptr = std::ptr::addr_of_mut!(descriptor).cast::<c_void>();
+    if unsafe { InitializeSecurityDescriptor(descriptor_ptr, 1) } == 0 {
+        return Err(last_win32_error(
+            "InitializeSecurityDescriptor(context child)",
+        ));
+    }
+    if unsafe { SetSecurityDescriptorDacl(descriptor_ptr, 1, acl.0, 0) } == 0
+        || unsafe {
+            SetSecurityDescriptorControl(descriptor_ptr, SE_DACL_PROTECTED, SE_DACL_PROTECTED)
+        } == 0
+    {
+        return Err(last_win32_error("set protected Context child DACL"));
+    }
+    let bytes = u16::try_from(wide.len() * 2).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "context child leaf is too long",
+        )
+    })?;
+    let mut name = crate::windows_nt::NtUnicodeString {
+        length: bytes,
+        maximum_length: bytes,
+        buffer: wide.as_mut_ptr(),
+    };
+    let attributes = crate::windows_nt::NtObjectAttributes {
+        length: std::mem::size_of::<crate::windows_nt::NtObjectAttributes>() as u32,
+        root_directory: parent,
+        object_name: &mut name,
+        attributes: 0x40,
+        security_descriptor: descriptor_ptr,
+        security_quality_of_service: std::ptr::null_mut(),
+    };
+    let mut status = crate::windows_nt::NtIoStatusBlock::zeroed();
+    let mut raw = std::ptr::null_mut();
+    // FILE_OPEN_IF/FILE_OPEN; FILE_NON_DIRECTORY_FILE, FILE_OPEN_REPARSE_POINT
+    // and FILE_SYNCHRONOUS_IO_NONALERT. Delete sharing is always withheld.
+    let nt_status = unsafe {
+        crate::windows_nt::NtCreateFile(
+            &mut raw,
+            desired_access,
+            &attributes,
+            &mut status,
+            std::ptr::null(),
+            0x80,
+            share_mode & !FILE_SHARE_DELETE,
+            if create_if_missing { 3 } else { 1 },
+            0x0020_0000 | 0x40 | 0x20,
+            std::ptr::null(),
+            0,
+        )
+    };
+    if nt_status < 0 {
+        if nt_status as u32 == 0xC000_0034 || nt_status as u32 == 0xC000_003A {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "context child does not exist",
+            ));
+        }
+        return Err(io::Error::other(format!(
+            "NtCreateFile(context child) failed with NTSTATUS {nt_status:#010x}"
+        )));
+    }
+    let owned = OwnedHandle(raw);
+    // This is handle-bound: FILE_OPEN_REPARSE_POINT exposes the leaf itself so
+    // a reparse substitution is rejected here rather than followed by SQLite.
+    private_file_identity(raw)?;
+    verify_private_handle_for_sid(raw, &sid)?;
+    Ok(owned.into_file())
+}
+
+/// Delete one exact child below a pinned parent without resolving a path.
+pub(crate) fn delete_private_child_file_relative(parent: HANDLE, leaf: &OsStr) -> io::Result<()> {
+    let file = create_private_child_file_relative(
+        parent,
+        leaf,
+        // `create_private_child_file_relative` proves identity with
+        // GetFileInformationByHandle before this dedicated delete handle can
+        // reach FileDispositionInfo. That probe requires FILE_READ_ATTRIBUTES.
+        DELETE | READ_CONTROL | FILE_READ_ATTRIBUTES | 0x0010_0000,
+        0,
+        false,
+    )?;
+    let mut disposition = FILE_DISPOSITION_INFO { DeleteFile: 1 };
+    if unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle() as HANDLE,
+            FileDispositionInfo,
+            (&mut disposition as *mut FILE_DISPOSITION_INFO).cast(),
+            std::mem::size_of_val(&disposition) as u32,
+        )
+    } == 0
+    {
+        return Err(last_win32_error(
+            "SetFileInformationByHandle(FileDispositionInfo)",
+        ));
+    }
+    Ok(())
 }
 
 fn create_private_file_new_with_share(path: &Path, share_mode: u32) -> io::Result<File> {
@@ -1740,6 +1875,42 @@ mod tests {
     fn cap_std_directory_satisfies_handle_bound_dacl_api() {
         fn assert_as_raw_handle<T: AsRawHandle>() {}
         assert_as_raw_handle::<cap_std::fs::Dir>();
+    }
+
+    #[test]
+    fn relative_private_child_delete_uses_the_pinned_parent_capability() {
+        let root = tempdir().unwrap();
+        let parent_path = root.path().join("relative-private-child");
+        create_private_directory_new(&parent_path)
+            .expect("create a private parent before acquiring its capability");
+        let parent = OpenOptions::new()
+            .access_mode(FILE_LIST_DIRECTORY | READ_CONTROL)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&parent_path)
+            .expect("open the private parent as a no-delete directory capability");
+        let leaf = std::ffi::OsStr::new("context.db-journal");
+        let child = create_private_child_file_relative(
+            parent.as_raw_handle() as HANDLE,
+            leaf,
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            true,
+        )
+        .expect("create an exact private child below the retained parent");
+        drop(child);
+
+        delete_private_child_file_relative(parent.as_raw_handle() as HANDLE, leaf)
+            .expect("delete the exact closed child through the retained parent");
+        let missing = create_private_child_file_relative(
+            parent.as_raw_handle() as HANDLE,
+            leaf,
+            FILE_GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            false,
+        )
+        .expect_err("deleted child must not be reopened through the capability");
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
     }
 
     #[test]

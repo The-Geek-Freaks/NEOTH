@@ -473,7 +473,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     .await
     .context("start mandatory daemon audit RPC")?;
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let connector_control_replay_enabled = config.context_connectors.enabled
         && config
             .context_connectors
@@ -483,20 +483,20 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 account.configuration.connector_id == crate::connectors::ConnectorId::LocalImport
                     && account.lifecycle.admits_context_import()
             });
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let connector_control_plane = Arc::new(
         crate::connectors::control_plane::ConnectorControlPlane::from_config(
             &config.context_connectors,
         )
         .context("construct private connector-control authority projection")?,
     );
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let connector_control_subject =
         crate::connectors::control_plane::rpc::daemon_subject_from_operator_id(
             config.operator_id.as_deref(),
             connector_control_replay_enabled,
         )?;
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     if connector_control_replay_enabled {
         let replayed = crate::cli::serve_tasks::replay_connector_control_receipts_at_startup(
             &neoth_home,
@@ -513,7 +513,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             );
         }
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let (connector_control_rpc_task, mut connector_control_rpc_guard) = {
         let (task, guard) = crate::cli::serve_tasks::spawn_connector_control_rpc(
             &neoth_home,
@@ -526,7 +526,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         .context("start private connector-control RPC")?;
         (Some(task), Some(guard))
     };
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     let (connector_control_rpc_task, mut connector_control_rpc_guard): (
         Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
         Option<crate::connectors::control_plane::rpc::SidecarGuard>,

@@ -474,6 +474,7 @@ fn reconcile_hmac_archives_to_at_most(home: &Path, max_retained_archives: usize)
         limits,
         Some(&key_set.verification_keys),
         true,
+        false,
         |_, _| Ok(()),
     )
     .context("authenticate complete retained WAL history before HMAC archive retention")?;
@@ -495,6 +496,7 @@ fn reconcile_hmac_archives_to_at_most(home: &Path, max_retained_archives: usize)
             limits,
             Some(&without_candidate),
             true,
+            false,
             |_, _| Ok(()),
         )
         .is_ok()
@@ -656,7 +658,38 @@ pub(crate) fn for_each_frame_at_home<F>(home: &Path, limits: HomeWalScanLimits, 
 where
     F: FnMut(&HomeWalFrameLocation, &DecodedFrame<'_>) -> Result<()>,
 {
-    for_each_frame_at_home_with_hmac_keys(home, limits, None, false, cb)
+    for_each_frame_at_home_with_hmac_keys(home, limits, None, false, false, cb).map(|_| ())
+}
+
+/// Authenticated boundary of one segment in an accepted-prefix inspection.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct AuthenticatedPrefixBoundary {
+    pub segment_name: String,
+    pub authenticated_through: usize,
+    pub logical_len: usize,
+}
+
+/// A prefix inspection result. `complete` is false whenever retained bytes
+/// extend after the final keyed marker, so callers cannot present a live WAL
+/// tail as a complete audit history.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct AuthenticatedPrefixScan {
+    pub complete: bool,
+    pub boundaries: Vec<AuthenticatedPrefixBoundary>,
+}
+
+/// Enumerate only the verified keyed-marker prefix of every retained home-WAL
+/// segment. Any live bytes after the boundary are deliberately invisible to the
+/// callback and reported through [`AuthenticatedPrefixScan::complete`].
+pub(crate) fn for_each_authenticated_prefix_frame_at_home<F>(
+    home: &Path,
+    limits: HomeWalScanLimits,
+    cb: F,
+) -> Result<AuthenticatedPrefixScan>
+where
+    F: FnMut(&HomeWalFrameLocation, &DecodedFrame<'_>) -> Result<()>,
+{
+    for_each_frame_at_home_with_hmac_keys(home, limits, None, false, true, cb)
 }
 
 /// Offline/legacy forensic lookup for an exact Context Connector receipt in
@@ -685,7 +718,7 @@ pub(crate) fn authenticated_context_evidence_receipt_exists(
     );
 
     let mut found = false;
-    for_each_frame_at_home_with_hmac_keys(home, limits, None, true, |_, frame| {
+    for_each_frame_at_home_with_hmac_keys(home, limits, None, true, false, |_, frame| {
         if frame.header.event_type != crate::wal::events::EVENT_TYPE_EXTENDED
             || frame.header.event_subtype
                 != crate::wal::events::ExtendedSubtype::ContextEvidenceReceipt as u8
@@ -897,20 +930,27 @@ fn for_each_frame_at_home_with_hmac_keys<F>(
     limits: HomeWalScanLimits,
     verification_keys: Option<&[Vec<u8>]>,
     require_complete_authentication: bool,
+    authenticated_prefix_only: bool,
     mut cb: F,
-) -> Result<()>
+) -> Result<AuthenticatedPrefixScan>
 where
     F: FnMut(&HomeWalFrameLocation, &DecodedFrame<'_>) -> Result<()>,
 {
     let wal_path = home.join("wal");
     let Some(root) = crate::skills::store::open_bound_directory(&wal_path, false, "WAL scan root")?
     else {
-        return Ok(());
+        return Ok(AuthenticatedPrefixScan {
+            complete: true,
+            boundaries: Vec::new(),
+        });
     };
     let segment_key = load_home_segment_key(&root)?;
     let segments = enumerate_home_segments(&root, &wal_path, limits)?;
     if segments.is_empty() {
-        return Ok(());
+        return Ok(AuthenticatedPrefixScan {
+            complete: true,
+            boundaries: Vec::new(),
+        });
     }
     let loaded_verification_keys;
     let verification_keys = match verification_keys {
@@ -978,6 +1018,7 @@ where
     );
     total_physical = 0;
     total_logical = 0;
+    let mut boundaries = Vec::with_capacity(callback_segments.len());
     for (index, (namespace, sequence, name)) in callback_segments.iter().enumerate() {
         let ends_namespace = index + 1 == callback_segments.len()
             || callback_segments[index + 1].0.as_deref() != namespace.as_deref();
@@ -999,17 +1040,32 @@ where
             segment.proof() == authenticated_proofs[index],
             "WAL segment changed between authentication and callback passes"
         );
+        let logical_end = if authenticated_prefix_only {
+            segment.authenticated_through
+        } else {
+            segment.logical.len()
+        };
+        boundaries.push(AuthenticatedPrefixBoundary {
+            segment_name: segment.name.to_string_lossy().into_owned(),
+            authenticated_through: segment.authenticated_through,
+            logical_len: segment.logical.len(),
+        });
         scan_one_home_segment(
             &segment.name,
             segment.parsed,
             &segment.logical,
             segment.header_len,
-            segment.logical.len(),
-            segment.allow_torn_tail,
+            logical_end,
+            segment.allow_torn_tail && logical_end == segment.logical.len(),
             &mut cb,
         )?;
     }
-    Ok(())
+    Ok(AuthenticatedPrefixScan {
+        complete: boundaries
+            .iter()
+            .all(|boundary| boundary.authenticated_through == boundary.logical_len),
+        boundaries,
+    })
 }
 
 fn canonical_segment_parts(name: &std::ffi::OsStr) -> Option<(Option<&str>, u64)> {

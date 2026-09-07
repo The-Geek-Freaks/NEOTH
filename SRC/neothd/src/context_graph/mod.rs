@@ -10,16 +10,18 @@
 //! is deliberately unavailable until authenticated-session wiring can provide
 //! a verified principal. A connector cannot name an account in an operation.
 
+#[cfg(not(windows))]
+use std::fs;
 use std::{
     collections::HashSet,
-    fs,
     path::{Path, PathBuf},
 };
+#[cfg(windows)]
+mod windows_vfs;
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::Utc;
 use hmac::{Hmac, Mac};
-#[cfg(not(windows))]
 use rusqlite::OpenFlags;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
@@ -32,21 +34,14 @@ use crate::connectors::{
     },
     local_import::LocalImportPlan,
 };
-#[cfg(not(windows))]
 use crate::wal::crypto::derive_subkey;
 use crate::wal::crypto::{WalMasterKey, WalSegmentKey, decrypt_blob, encrypt_blob};
 
-#[cfg(not(windows))]
 const APPLICATION_ID: i64 = 0x4e43_5432; // "NCT2"
-#[cfg(not(windows))]
 const SCHEMA_VERSION: i64 = 7;
-#[cfg(not(windows))]
 const SCHEMA_VERSION_V5: i64 = 5;
-#[cfg(not(windows))]
 const SCHEMA_VERSION_V6: i64 = 6;
-#[cfg(not(windows))]
 const CRYPTO_DOMAIN: &[u8] = b"neoth-context-graph-content-v1";
-#[cfg(not(windows))]
 const LOOKUP_DOMAIN: &[u8] = b"neoth-context-graph-lookup-v1";
 const MAX_BATCH_OPS: usize = 64;
 const MAX_CONTENT_BYTES: usize = 1024 * 1024;
@@ -75,9 +70,7 @@ const ENCRYPTED_VALUE_OVERHEAD: i64 = 39; // ENC_MAGIC + nonce + GCM-SIV tag
 // writes so a maximum batch cannot pass admission then cross the store cap.
 const PROJECTED_PAGES_PER_ROW: i64 = 4;
 const STORE_GROWTH_SAFETY_PAGES: i64 = 4;
-#[cfg(not(windows))]
 const WAL_AUTOCHECKPOINT_PAGES: i64 = 256;
-#[cfg(not(windows))]
 const JOURNAL_SIZE_LIMIT_BYTES: i64 = 8 * 1024 * 1024;
 const WAL_HEADER_BYTES: i64 = 32;
 const WAL_FRAME_HEADER_BYTES: i64 = 24;
@@ -261,8 +254,9 @@ pub(crate) struct ContextImportApplyKey {
 }
 
 impl ContextImportApplyKey {
-    // The current connector-control transport and its store tests are Unix-only.
-    #[cfg(unix)]
+    // The connector-control transports and native ContextStore tests use this
+    // opaque key on both supported local platforms.
+    #[cfg(any(unix, windows))]
     pub(crate) const fn new(operation_key: [u8; 32], confirmation_nonce: [u8; 32]) -> Self {
         Self {
             operation_key,
@@ -285,12 +279,12 @@ pub(crate) struct ContextImportApplyOutcome {
 }
 
 impl ContextImportApplyOutcome {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) const fn accepted(self) -> bool {
         self.accepted
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) const fn audit_pending(self) -> bool {
         self.audit_pending
     }
@@ -459,6 +453,8 @@ pub struct ContextStore {
     conn: Connection,
     key: WalSegmentKey,
     lookup_key: WalSegmentKey,
+    #[cfg(windows)]
+    _windows_vfs: windows_vfs::ContextStoreVfs,
     #[cfg(test)]
     fail_next_post_commit_maintenance: bool,
     #[cfg(test)]
@@ -466,12 +462,25 @@ pub struct ContextStore {
 }
 
 impl ContextStore {
+    #[cfg(windows)]
+    fn vfs_footprint(&self) -> Result<StoreFootprint> {
+        let (_, database_bytes, wal_bytes, shm_bytes) = self._windows_vfs.footprint()?;
+        Ok(StoreFootprint {
+            database_bytes: i64::try_from(database_bytes)?,
+            wal_bytes: i64::try_from(wal_bytes)?,
+            shm_bytes: i64::try_from(shm_bytes)?,
+        })
+    }
+    #[cfg(not(windows))]
+    fn vfs_footprint(&self) -> Result<StoreFootprint> {
+        physical_store_footprint(&self.path)
+    }
     /// Open an explicitly selected, instance-local `context.db`. No fallback
     /// to HOME/USERPROFILE is permitted.
     pub fn open_at(path: impl AsRef<Path>, master_key: &WalMasterKey) -> Result<Self> {
         #[cfg(windows)]
         {
-            open_windows_context_store_unwired(path.as_ref(), master_key)
+            open_windows_context_store(path.as_ref(), master_key)
         }
         #[cfg(not(windows))]
         {
@@ -559,6 +568,8 @@ impl ContextStore {
         let scope = self.scope(&account);
         let digests =
             context_import_outcome_digests(&scope, &self.lookup_key, runtime_binding, key);
+        #[cfg(not(windows))]
+        let store_path = &self.path;
         lease.with_context_import_commit_permit(|| {
             let tx = self
                 .conn
@@ -599,9 +610,20 @@ impl ContextStore {
             {
                 bail!("context-import apply outcome capacity is exhausted");
             }
+            #[cfg(windows)]
+            let footprint = {
+                let (_, database_bytes, wal_bytes, shm_bytes) = self._windows_vfs.footprint()?;
+                StoreFootprint {
+                    database_bytes: i64::try_from(database_bytes)?,
+                    wal_bytes: i64::try_from(wal_bytes)?,
+                    shm_bytes: i64::try_from(shm_bytes)?,
+                }
+            };
+            #[cfg(not(windows))]
+            let footprint = physical_store_footprint(store_path)?;
             ensure_context_import_outcome_reservation_store_limit(
                 &tx,
-                &self.path,
+                footprint,
                 DEFAULT_STORE_LIMITS.max_bytes,
             )?;
             tx.execute(
@@ -938,6 +960,8 @@ impl ContextStore {
         }
         let scope = self.scope(account);
         let batch_digest = scope.pseudonym(&self.lookup_key, b"batch", &batch.source_batch_key.0);
+        #[cfg(not(windows))]
+        let store_path = &self.path;
         for recovery_attempt in 0..=MAX_MAINTENANCE_RECOVERY_ATTEMPTS {
             let tx = self
                 .conn
@@ -1036,7 +1060,18 @@ impl ContextStore {
                 anyhow!("context store failed to retain its maintenance generation")
             })?;
 
-            ensure_store_limits_with(&tx, &self.path, &scope, &newly_claimed, limits)?;
+            #[cfg(windows)]
+            let footprint = {
+                let (_, database_bytes, wal_bytes, shm_bytes) = self._windows_vfs.footprint()?;
+                StoreFootprint {
+                    database_bytes: i64::try_from(database_bytes)?,
+                    wal_bytes: i64::try_from(wal_bytes)?,
+                    shm_bytes: i64::try_from(shm_bytes)?,
+                }
+            };
+            #[cfg(not(windows))]
+            let footprint = physical_store_footprint(store_path)?;
+            ensure_store_limits_with(&tx, footprint, &scope, &newly_claimed, limits)?;
             ensure_scope_limits(&tx, &self.lookup_key, &scope, &newly_claimed)?;
             for operation in &newly_claimed {
                 let mutation_key = scope.pseudonym(
@@ -1116,6 +1151,14 @@ impl ContextStore {
             };
             #[cfg(not(test))]
             let inject_failure = false;
+            #[cfg(windows)]
+            finish_committed_maintenance_windows(
+                &mut self.conn,
+                &self._windows_vfs,
+                generation,
+                inject_failure,
+            );
+            #[cfg(not(windows))]
             finish_committed_maintenance(&mut self.conn, &self.path, generation, inject_failure);
             return Ok(committed_outcome);
         }
@@ -1190,7 +1233,13 @@ impl ContextStore {
                 new_operation_indexes,
             });
         }
-        ensure_store_limits_with(&self.conn, &self.path, &scope, &operations, limits)?;
+        ensure_store_limits_with(
+            &self.conn,
+            self.vfs_footprint()?,
+            &scope,
+            &operations,
+            limits,
+        )?;
         ensure_scope_limits(&self.conn, &self.lookup_key, &scope, &operations)?;
         Ok(Preflight {
             batch_seen: false,
@@ -1321,11 +1370,18 @@ impl ContextStore {
             self.fail_next_recovery_maintenance = false;
             bail!("injected maintenance recovery failure");
         }
+        #[cfg(windows)]
+        {
+            self._windows_vfs.checkpoint(&self.conn)?;
+            clear_maintenance_generation(&mut self.conn, generation)
+        }
+        #[cfg(not(windows))]
         recover_persisted_maintenance_generation(&mut self.conn, &self.path, generation)
     }
 }
 
-/// Windows is deliberately not a path-based implementation placeholder.
+/// Windows ContextStore implementation binds SQLite to a retained parent
+/// capability through the native Context VFS.
 ///
 /// `win_native` now supplies process-token DACL and exact-handle identity
 /// primitives, and `skills::store` supplies capability-relative no-reparse
@@ -1337,22 +1393,58 @@ impl ContextStore {
 /// handle alone is also insufficient because SQLite may create, replace, or
 /// reopen either sidecar later in the connection lifetime.
 ///
-/// The future Windows implementation must therefore start with a dedicated
-/// capability-bound SQLite VFS (or equivalent reviewed SQLite handle API). It
-/// must open every database object below an already verified private parent,
-/// reject every reparse ancestor and leaf, bind stable file identity before and
-/// after SQLite use, retain the appropriate no-delete handles through quota and
-/// recovery, and fail the whole open if a main or sidecar DACL proof fails.
-/// Do not weaken this boundary into pre-open/post-open path checks.
+/// The Windows implementation therefore uses a dedicated capability-bound
+/// SQLite VFS. It opens every database object below an already verified
+/// private parent, rejects every reparse ancestor and leaf, binds stable file
+/// identity before SQLite use, retains the appropriate no-delete handles
+/// through quota and recovery, and fails the whole open if a main or sidecar
+/// DACL proof fails. Do not weaken this boundary into pre-open/post-open path
+/// checks.
 #[cfg(windows)]
-fn open_windows_context_store_unwired(
-    path: &Path,
-    master_key: &WalMasterKey,
-) -> Result<ContextStore> {
-    let _ = (path, master_key);
-    bail!(
-        "context graph store is disabled on Windows: a capability-bound SQLite VFS for private, identity-pinned context.db and WAL/SHM sidecars is not wired"
-    );
+fn open_windows_context_store(path: &Path, master_key: &WalMasterKey) -> Result<ContextStore> {
+    if path.file_name().and_then(|name| name.to_str()) != Some("context.db") {
+        bail!("context store path must be the instance-local context.db");
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("context.db has no parent directory"))?;
+    let bound =
+        crate::skills::store::open_absolute_bound_directory(parent, false, "context store parent")?
+            .ok_or_else(|| anyhow!("context store parent does not exist"))?;
+    let directory = windows_vfs::PinnedContextDirectory::duplicate_verified_handle(&bound.dir)?;
+    let vfs = windows_vfs::ContextStoreVfs::register(directory, MAX_STORE_BYTES as u64)?;
+    let (existed, _, _, _) = vfs.footprint()?;
+    let conn = Connection::open_with_flags_and_vfs(
+        "context.db",
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_FULL_MUTEX,
+        vfs.name(),
+    )
+    .context("open exact context.db through the pinned Windows Context VFS")?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .context("configure pinned Windows Context VFS busy timeout")?;
+    configure_connection(&conn).context("configure pinned Windows Context VFS connection")?;
+    validate_or_initialize_schema(&conn, existed)
+        .context("initialize pinned Windows Context VFS schema")?;
+    validate_schema(&conn).context("validate pinned Windows Context VFS schema")?;
+    // SQLite's WAL recovery occurs while opening the native VFS. A checkpoint
+    // is capability-bound too; no Windows path maintenance/reopen follows it.
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .context("checkpoint pinned Windows Context VFS WAL during store open")?;
+    let key = derive_subkey(master_key, CRYPTO_DOMAIN)?;
+    let lookup_key = derive_subkey(master_key, LOOKUP_DOMAIN)?;
+    Ok(ContextStore {
+        path: path.to_path_buf(),
+        conn,
+        key,
+        lookup_key,
+        _windows_vfs: vfs,
+        #[cfg(test)]
+        fail_next_post_commit_maintenance: false,
+        #[cfg(test)]
+        fail_next_recovery_maintenance: false,
+    })
 }
 
 struct Scope {
@@ -1513,10 +1605,8 @@ fn audit_receipt_handle(
     ))
 }
 
-#[cfg(not(windows))]
 const CONTEXT_IMPORT_OUTCOME_SQL: &str = "CREATE TABLE context_import_outcomes (scope_key BLOB NOT NULL CHECK(length(scope_key)=32), outcome_key BLOB NOT NULL CHECK(length(outcome_key)=32), binding_digest BLOB NOT NULL CHECK(length(binding_digest)=32), confirmation_digest BLOB NOT NULL CHECK(length(confirmation_digest)=32), accepted INTEGER NOT NULL CHECK(accepted IN (0,1)), audit_pending INTEGER NOT NULL CHECK(audit_pending IN (0,1)), event_id INTEGER, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, CHECK((accepted=0 AND audit_pending=0 AND event_id IS NULL) OR (accepted=1 AND event_id IS NOT NULL)), PRIMARY KEY(scope_key,outcome_key), UNIQUE(event_id), FOREIGN KEY(event_id) REFERENCES events(event_id) ON DELETE RESTRICT)";
 
-#[cfg(not(windows))]
 const EXPECTED_TABLE_SQL: &[(&str, &str)] = &[
     (
         "applied_batches",
@@ -1568,10 +1658,8 @@ const EXPECTED_TABLE_SQL: &[(&str, &str)] = &[
 /// The exact v5 outbox shape accepted as a migration source.  It is kept
 /// separate from v6 so an attacker cannot smuggle a relaxed schema through a
 /// write-first "upgrade" path.
-#[cfg(not(windows))]
 const V5_AUDIT_OUTBOX_SQL: &str = "CREATE TABLE audit_outbox (event_id INTEGER PRIMARY KEY, scope_key BLOB NOT NULL, receipt_code INTEGER NOT NULL, occurred_at_ms INTEGER NOT NULL, mutation_key BLOB NOT NULL, FOREIGN KEY(event_id) REFERENCES events(event_id) ON DELETE CASCADE, UNIQUE(scope_key, mutation_key))";
 
-#[cfg(not(windows))]
 fn configure_connection(conn: &Connection) -> Result<()> {
     conn.execute_batch(&format!(
         "PRAGMA foreign_keys=ON;\
@@ -1592,7 +1680,6 @@ fn configure_connection(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
 fn ensure_pragma_i64(conn: &Connection, name: &str, expected: i64) -> Result<()> {
     // All names are fixed literals from configure_connection; accepting a
     // caller-supplied PRAGMA name here would create an injection boundary.
@@ -1603,7 +1690,6 @@ fn ensure_pragma_i64(conn: &Connection, name: &str, expected: i64) -> Result<()>
     Ok(())
 }
 
-#[cfg(not(windows))]
 fn validate_or_initialize_schema(conn: &Connection, existing: bool) -> Result<()> {
     let app_id: i64 = conn.query_row("PRAGMA application_id", [], |row| row.get(0))?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
@@ -1660,7 +1746,6 @@ fn validate_or_initialize_schema(conn: &Connection, existing: bool) -> Result<()
     Ok(())
 }
 
-#[cfg(not(windows))]
 #[derive(Debug, PartialEq, Eq)]
 struct ColumnSignature {
     cid: i64,
@@ -1672,7 +1757,6 @@ struct ColumnSignature {
     hidden: i64,
 }
 
-#[cfg(not(windows))]
 #[derive(Debug, PartialEq, Eq)]
 struct IndexColumnSignature {
     sequence: i64,
@@ -1683,7 +1767,6 @@ struct IndexColumnSignature {
     key_column: i64,
 }
 
-#[cfg(not(windows))]
 #[derive(Debug, PartialEq, Eq)]
 struct IndexSignature {
     name: String,
@@ -1693,14 +1776,12 @@ struct IndexSignature {
     columns: Vec<IndexColumnSignature>,
 }
 
-#[cfg(not(windows))]
 #[derive(Debug, PartialEq, Eq)]
 struct SchemaSignature {
     sql_fingerprint: [u8; 32],
     tables: Vec<(String, Vec<ColumnSignature>, Vec<IndexSignature>)>,
 }
 
-#[cfg(not(windows))]
 fn validate_schema(conn: &Connection) -> Result<()> {
     let expected = Connection::open_in_memory()?;
     for (_, statement) in EXPECTED_TABLE_SQL {
@@ -1711,7 +1792,6 @@ fn validate_schema(conn: &Connection) -> Result<()> {
     validate_context_import_outcome_rows(conn)
 }
 
-#[cfg(not(windows))]
 fn validate_context_import_outcome_rows(conn: &Connection) -> Result<()> {
     let invalid_link = conn
         .query_row(
@@ -1744,7 +1824,6 @@ fn validate_context_import_outcome_rows(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
 fn validate_v5_schema(conn: &Connection) -> Result<()> {
     let expected = Connection::open_in_memory()?;
     for (table_name, statement) in EXPECTED_TABLE_SQL {
@@ -1764,7 +1843,6 @@ fn validate_v5_schema(conn: &Connection) -> Result<()> {
     validate_v5_audit_rows(conn)
 }
 
-#[cfg(not(windows))]
 fn validate_v6_schema(conn: &Connection) -> Result<()> {
     let expected = Connection::open_in_memory()?;
     for (table_name, statement) in EXPECTED_TABLE_SQL {
@@ -1776,7 +1854,6 @@ fn validate_v6_schema(conn: &Connection) -> Result<()> {
     validate_v6_or_later_audit_rows(conn)
 }
 
-#[cfg(not(windows))]
 fn validate_v5_audit_rows(conn: &Connection) -> Result<()> {
     let invalid_event = conn
         .query_row(
@@ -1801,7 +1878,6 @@ fn validate_v5_audit_rows(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
 fn validate_v6_or_later_audit_rows(conn: &Connection) -> Result<()> {
     let invalid_event = conn
         .query_row(
@@ -1826,7 +1902,6 @@ fn validate_v6_or_later_audit_rows(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
 fn validate_schema_against(conn: &Connection, expected: &Connection) -> Result<()> {
     let journal_mode: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
     if !journal_mode.eq_ignore_ascii_case("wal") {
@@ -1851,7 +1926,6 @@ fn validate_schema_against(conn: &Connection, expected: &Connection) -> Result<(
     Ok(())
 }
 
-#[cfg(not(windows))]
 fn schema_signature(conn: &Connection) -> Result<SchemaSignature> {
     let mut master = conn.prepare(
         "SELECT type,name,tbl_name,COALESCE(sql,'') FROM sqlite_master ORDER BY type,name",
@@ -1888,7 +1962,6 @@ fn schema_signature(conn: &Connection) -> Result<SchemaSignature> {
     })
 }
 
-#[cfg(not(windows))]
 fn column_signature(conn: &Connection, table_name: &str) -> Result<Vec<ColumnSignature>> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_xinfo('{table_name}')"))?;
     stmt.query_map([], |row| {
@@ -1906,7 +1979,6 @@ fn column_signature(conn: &Connection, table_name: &str) -> Result<Vec<ColumnSig
     .map_err(Into::into)
 }
 
-#[cfg(not(windows))]
 fn index_signature(conn: &Connection, table_name: &str) -> Result<Vec<IndexSignature>> {
     let mut stmt = conn.prepare(&format!("PRAGMA index_list('{table_name}')"))?;
     let rows = stmt
@@ -2108,7 +2180,7 @@ const DEFAULT_STORE_LIMITS: StoreLimits = StoreLimits {
 /// grow the shared DB by racing another `ContextStore` handle.
 fn ensure_store_limits_with(
     conn: &Connection,
-    database_path: &Path,
+    footprint: StoreFootprint,
     scope: &Scope,
     operations: &[&ContextOperation],
     limits: StoreLimits,
@@ -2146,7 +2218,6 @@ fn ensure_store_limits_with(
     let logical_bytes = page_count
         .checked_mul(page_size)
         .ok_or_else(|| anyhow!("context store SQLite allocation overflows quota accounting"))?;
-    let footprint = physical_store_footprint(database_path)?;
     let database_growth = projected_store_growth(page_size, !scope_row_exists, operations)?;
     let projected_growth = projected_database_and_pinned_wal_growth(database_growth, page_size)?;
     ensure_projected_store_bytes(logical_bytes, footprint, projected_growth, limits.max_bytes)?;
@@ -2158,7 +2229,7 @@ fn ensure_store_limits_with(
 /// ceiling merely because no Evidence operation has been admitted yet.
 fn ensure_context_import_outcome_reservation_store_limit(
     conn: &Connection,
-    database_path: &Path,
+    footprint: StoreFootprint,
     max_bytes: i64,
 ) -> Result<()> {
     if max_bytes < 0 {
@@ -2176,12 +2247,7 @@ fn ensure_context_import_outcome_reservation_store_limit(
         .checked_mul(PROJECTED_PAGES_PER_ROW)
         .ok_or_else(|| anyhow!("context-import outcome growth overflows quota accounting"))?;
     let projected_growth = projected_database_and_pinned_wal_growth(outcome_growth, page_size)?;
-    ensure_projected_store_bytes(
-        logical_bytes,
-        physical_store_footprint(database_path)?,
-        projected_growth,
-        max_bytes,
-    )
+    ensure_projected_store_bytes(logical_bytes, footprint, projected_growth, max_bytes)
 }
 
 /// Reserve both possible destinations for every dirty page. With a pinned
@@ -2284,6 +2350,7 @@ fn ensure_projected_store_bytes(
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn physical_store_footprint(database_path: &Path) -> Result<StoreFootprint> {
     reject_database_sidecars(database_path)?;
     Ok(StoreFootprint {
@@ -2293,6 +2360,7 @@ fn physical_store_footprint(database_path: &Path) -> Result<StoreFootprint> {
     })
 }
 
+#[cfg(not(windows))]
 fn maintain_bounded_wal(conn: &Connection, database_path: &Path) -> Result<()> {
     // PASSIVE never waits for readers. A blocked reader may leave frames in
     // the WAL, which is why physical_store_footprint remains part of every
@@ -2338,6 +2406,7 @@ fn recover_required_maintenance_on_open(conn: &mut Connection, database_path: &P
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn recover_persisted_maintenance_generation(
     conn: &mut Connection,
     database_path: &Path,
@@ -2361,6 +2430,7 @@ fn clear_maintenance_generation(conn: &mut Connection, generation: [u8; 32]) -> 
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn finish_committed_maintenance(
     conn: &mut Connection,
     database_path: &Path,
@@ -2390,6 +2460,31 @@ fn finish_committed_maintenance(
     }
 }
 
+#[cfg(windows)]
+fn finish_committed_maintenance_windows(
+    conn: &mut Connection,
+    vfs: &windows_vfs::ContextStoreVfs,
+    generation: [u8; 32],
+    inject_failure: bool,
+) {
+    let maintenance = if inject_failure {
+        Err(anyhow!("injected post-commit WAL maintenance failure"))
+    } else {
+        vfs.checkpoint(conn).map_err(Into::into)
+    };
+    match maintenance {
+        Ok(()) => {
+            if let Err(error) = clear_maintenance_generation(conn, generation) {
+                tracing::error!(%error, "context store could not clear maintenance generation");
+            }
+        }
+        Err(error) => {
+            tracing::error!(%error, "context store WAL maintenance deferred; recovery generation retained")
+        }
+    }
+}
+
+#[cfg(not(windows))]
 fn regular_file_len(path: &Path) -> Result<i64> {
     match fs::metadata(path) {
         Ok(metadata) => {
@@ -2782,6 +2877,7 @@ fn decrypt_value(
     decrypt_blob(key, &nonce, &aad(domain, scope, name, revision), ciphertext)
 }
 
+#[cfg(not(windows))]
 fn reject_links(path: &Path) -> Result<()> {
     let mut current = Some(path);
     while let Some(candidate) = current {
@@ -2827,6 +2923,7 @@ fn ensure_private_parent(parent: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn reject_database_sidecars(path: &Path) -> Result<()> {
     for candidate in [
         path.to_path_buf(),
@@ -2838,6 +2935,7 @@ fn reject_database_sidecars(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
     let mut sidecar = path.as_os_str().to_os_string();
     sidecar.push(suffix);
@@ -4109,18 +4207,193 @@ mod tests {
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
+    use crate::{
+        connectors::{
+            ConnectorId, ConnectorInstanceId, SubjectId,
+            control_plane::test_context_import_runtime_fixture,
+            local_import::{approve_import_root, issue_operator_import_capability},
+            runtime_local_import::{
+                ContextEvidenceReplayRuntime, ContextEvidenceWalSink, RuntimeLocalImport,
+            },
+        },
+        wal::{crypto::WalMasterKey, events::ContextEvidenceReceipt},
+    };
+    use rusqlite::{Connection, OpenFlags};
+
+    struct RecordingWal {
+        delivered: usize,
+    }
+
+    impl ContextEvidenceWalSink for RecordingWal {
+        fn append_context_evidence_receipt_once(
+            &mut self,
+            _: &[u8; 32],
+            _: ContextEvidenceReceipt,
+        ) -> Result<()> {
+            self.delivered += 1;
+            Ok(())
+        }
+    }
 
     #[test]
-    fn context_store_fails_closed_without_a_capability_bound_sqlite_vfs() {
-        let home = crate::test_env::canonical_tempdir().unwrap();
-        let path = home.path().join("context.db");
-        let error = ContextStore::open_at(&path, test_master_key())
-            .err()
-            .expect("Windows context storage must remain unavailable without a bound SQLite VFS");
-        assert!(error.to_string().contains("capability-bound SQLite VFS"));
+    fn local_import_plan_apply_reopen_and_receipt_replay_use_native_vfs() {
+        let source_home = crate::test_env::canonical_tempdir().unwrap();
+        std::fs::write(
+            source_home.path().join("selected.txt"),
+            "native VFS evidence",
+        )
+        .unwrap();
+
+        let store_home = crate::test_env::canonical_tempdir().unwrap();
+        let parent = store_home.path().join("private-context");
+        crate::wal::win_native::create_private_directory_new(&parent).unwrap();
+        let path = parent.join("context.db");
+        let instance = ConnectorInstanceId::accountless(ConnectorId::LocalImport);
+        let subject = SubjectId::new("windows-operator").unwrap();
+        let binding =
+            test_context_import_runtime_fixture(instance.clone(), subject.clone(), 7, 11).unwrap();
+        let capability = issue_operator_import_capability(
+            approve_import_root(source_home.path()).unwrap(),
+            [0x31; 32],
+            binding.capability_binding(),
+        );
+        let master_key = WalMasterKey::generate().unwrap();
+        let store = ContextStore::open_at(&path, &master_key).unwrap();
+        let key = ContextImportApplyKey::new([0x29; 32], [0x2a; 32]);
+        let mut runtime = RuntimeLocalImport::new(capability, binding, store).unwrap();
+
+        let reserved = runtime.reserve_apply_outcome(&key).unwrap();
+        assert!(!reserved.accepted());
+        assert!(!reserved.audit_pending());
+        let plan = runtime.plan_import(Path::new("selected.txt")).unwrap();
+        let accepted = runtime
+            .confirm_import_with_outcome(plan, plan, &key)
+            .unwrap();
+        assert!(accepted.accepted());
+        assert!(accepted.audit_pending());
+        drop(runtime);
+
+        let recovered_binding =
+            test_context_import_runtime_fixture(instance, subject, 7, 11).unwrap();
+        let reopened = ContextStore::open_at(&path, &master_key).unwrap();
         assert!(
-            !path.exists(),
-            "the fail-closed Windows gate must not create context.db before it can bind SQLite's exact handles"
+            maintenance_generation(&reopened.conn).unwrap().is_none(),
+            "the native VFS post-commit checkpoint must clear its durable maintenance marker"
+        );
+        let mut recovery = ContextEvidenceReplayRuntime::new(recovered_binding, reopened);
+        assert_eq!(recovery.query_apply_outcome(&key).unwrap(), Some(accepted));
+        let mut wal = RecordingWal { delivered: 0 };
+        assert_eq!(recovery.replay_receipts(&mut wal).unwrap(), 1);
+        assert_eq!(wal.delivered, 1);
+        let acknowledged = recovery.query_apply_outcome(&key).unwrap().unwrap();
+        assert!(acknowledged.accepted());
+        assert!(!acknowledged.audit_pending());
+    }
+
+    #[test]
+    fn native_vfs_pinned_reader_near_cap_rejects_before_any_durable_claim() {
+        let store_home = crate::test_env::canonical_tempdir().unwrap();
+        let parent = store_home.path().join("private-context-near-cap");
+        crate::wal::win_native::create_private_directory_new(&parent).unwrap();
+        let path = parent.join("context.db");
+        let mut store = ContextStore::open_at(&path, test_master_key()).unwrap();
+
+        let reader = Connection::open_with_flags_and_vfs(
+            "context.db",
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_FULL_MUTEX,
+            store._windows_vfs.name(),
+        )
+        .expect("open a second reader through the retained Windows Context VFS");
+        reader
+            .execute_batch("PRAGMA query_only=ON; BEGIN DEFERRED")
+            .unwrap();
+        let _: i64 = reader
+            .query_row("SELECT COUNT(*) FROM scopes", [], |row| row.get(0))
+            .unwrap();
+
+        let instance = ConnectorInstanceId::accountless(ConnectorId::LocalImport);
+        let subject = SubjectId::new("windows-near-cap-reader").unwrap();
+        let account = AccountContext::from_local_import_binding(&subject, &instance).unwrap();
+        let batch = CommitBatch {
+            source_batch_key: SourceKey::new("windows-pinned-reader-near-cap-page").unwrap(),
+            operations: vec![ContextOperation::PutRevision {
+                source_key: SourceKey::new("windows-pinned-reader-near-cap-revision").unwrap(),
+                object: ObjectRef {
+                    object_id: "near-cap-note".into(),
+                    object_kind: ObjectKind::Note,
+                },
+                content: b"never-stored".to_vec(),
+                provenance: Provenance {
+                    source_kind: ProvenanceKind::Connector,
+                    source_ref: "provider:windows-near-cap".into(),
+                },
+                receipt: AuditReceipt::RevisionStored,
+            }],
+        };
+        let operations = batch.operations.iter().collect::<Vec<_>>();
+        let page_size: i64 = store
+            .conn
+            .query_row("PRAGMA page_size", [], |row| row.get(0))
+            .unwrap();
+        let page_count: i64 = store
+            .conn
+            .query_row("PRAGMA page_count", [], |row| row.get(0))
+            .unwrap();
+        let logical_bytes = page_count.checked_mul(page_size).unwrap();
+        let footprint = store.vfs_footprint().unwrap();
+        let single_destination_growth =
+            projected_store_growth(page_size, true, &operations).unwrap();
+        let old_single_reservation_limit = logical_bytes
+            .max(footprint.total_bytes().unwrap())
+            .checked_add(single_destination_growth)
+            .unwrap();
+        assert!(
+            projected_database_and_pinned_wal_growth(single_destination_growth, page_size).unwrap()
+                > single_destination_growth,
+            "admission must reserve both database and retained WAL destinations"
+        );
+
+        let error = store
+            .commit_batch_with_limits(
+                &account,
+                &batch,
+                StoreLimits {
+                    max_scopes: MAX_SCOPES_PER_STORE,
+                    max_bytes: old_single_reservation_limit,
+                },
+            )
+            .expect_err("the single-destination limit must fail before any durable claim");
+        assert!(
+            error.to_string().contains("byte safety cap exceeded"),
+            "the rejection must come from store admission quota, got: {error:#}"
+        );
+        for table in [
+            "scopes",
+            "applied_mutations",
+            "applied_batches",
+            "store_state",
+        ] {
+            let count: i64 = store
+                .conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "near-cap rejection leaked a row into {table}");
+        }
+        reader.execute_batch("ROLLBACK").unwrap();
+    }
+
+    #[test]
+    fn context_store_rejects_an_ordinary_unprotected_parent() {
+        let parent = tempfile::Builder::new()
+            .prefix("neoth-context-unprotected-")
+            .tempdir_in(std::env::temp_dir())
+            .unwrap();
+        let result = ContextStore::open_at(parent.path().join("context.db"), test_master_key());
+        assert!(
+            result.is_err(),
+            "the ambient temporary directory's inherited DACL is not a ContextStore capability"
         );
     }
 }

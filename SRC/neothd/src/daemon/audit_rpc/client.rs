@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use base64::Engine;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -109,6 +109,18 @@ fn validate_health_response(response: Vec<u8>) -> std::result::Result<(), AuditR
 fn exact_daemon_owner(home: &Path, pid: u32, endpoint_nonce: &str) -> bool {
     let pidfile = home.join("neothd.pid");
     crate::daemon::pidfile::live_daemon_endpoint(&pidfile, pid, endpoint_nonce).unwrap_or(false)
+}
+
+/// Return the live daemon's PID-lock-bound endpoint nonce for a sibling local
+/// authority. This exposes no audit bearer and never accepts caller-supplied
+/// nonce material.
+pub(crate) fn verified_daemon_endpoint_nonce(home: &Path) -> Result<String> {
+    let sidecar = read_sidecar(home).context("read audit-RPC daemon discovery")?;
+    anyhow::ensure!(
+        exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce),
+        "audit-RPC sidecar daemon PID does not own the exact endpoint"
+    );
+    Ok(sidecar.endpoint_nonce)
 }
 
 /// AUDIT-RPC-01 #1 — fail-closed pre-flight for one-shot PERMISSION actions.

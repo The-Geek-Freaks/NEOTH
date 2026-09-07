@@ -4,39 +4,32 @@
 //! the v1.0 ship-blocker chain — operator types one command and gets
 //! a decomposed, classified, kanban-tracked session.
 //!
-//! Flow per the Twitter image's stage diagram:
-//!
-//! 1. Open session row in `idx_kanban_session` (status=planning).
-//! 2. Resolve the Cerebellum hemisphere provider from
-//!    `InferenceTopology` + wrap in `CerebellumDecomposer`.
-//! 3. Hand off to `coding::decomposer::decompose` — produces tasks,
-//!    inserts them via store CRUD, returns ids + complexity rollup.
-//! 4. Run heuristic classifier (`coding::classifier::classify_heuristic`)
-//!    on each inserted task; persist Left/Right assignment via
-//!    `store::patch_task_hemisphere`. Ambiguous tasks stay
-//!    `Unassigned` for now — Pick #9 will add LLM second-opinion.
-//! 5. Flip session status from `Planning` to `Running`.
-//! 6. Print the operator-facing summary (task ids + assignments +
-//!    clarifying question if the LLM asked one).
+//! The CLI validates the explicit repository root and displays terminal
+//! results. [`crate::coding::service::CodingService`] owns the actual
+//! context/session/provider/classification/dispatch lifecycle so CLI, desktop,
+//! and Buddy runs share one durable implementation.
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use clap::Args;
 use rusqlite::Connection;
 
 use crate::cli::OutputFormat;
-use crate::coding::cerebellum_provider::CerebellumDecomposer;
+#[cfg(test)]
 use crate::coding::classifier::{Complexity, classify_heuristic};
 use crate::coding::code_map_receipt::{
     CodeMapCaller, CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile,
     MAX_CODE_MAP_SOURCE_BYTES, PreparedCodeMapContext,
 };
+#[cfg(test)]
 use crate::coding::decomposer::{
     DecomposerLlm, DecompositionResult, decompose_with_code_map_context,
 };
 use crate::coding::store;
-use crate::coding::types::{Hemisphere, KanbanSessionId, KanbanTaskId, SessionStatus};
+use crate::coding::types::Hemisphere;
+#[cfg(test)]
+use crate::coding::types::{KanbanSessionId, KanbanTaskId};
 use crate::config::FreedomConfig;
 use crate::config::inference::HemisphereRole;
 use crate::memory::store as memstore;
@@ -52,6 +45,12 @@ pub struct CodeArgs {
     /// Override `views.db` path. Defaults to `~/.neoth/views.db`.
     #[arg(long, value_name = "PATH")]
     pub db: Option<PathBuf>,
+    /// Repository used for code-map provenance and (when requested) dispatch
+    /// worktrees. A fresh coding run never guesses process CWD; `--apply`
+    /// remains an explicit repository root for backwards-compatible apply
+    /// invocations.
+    #[arg(long = "repo-root", value_name = "REPO_ROOT")]
+    pub repository_root: Option<PathBuf>,
     /// Source channel label for the kanban session (`cli` / `chat` /
     /// `telegram` / `discord` / ...). Defaults to `cli`.
     #[arg(long, default_value = "cli")]
@@ -109,25 +108,6 @@ struct BoundCodeMapContext {
 /// hard text limit. This is deliberately a byte ceiling: both provider input
 /// and persisted selection metadata use UTF-8 byte commitments.
 const MAX_PREPARED_CODE_MAP_CONTEXT_BYTES: usize = 64 * 1024;
-
-/// GOLD-ADAPT-AWE-AIDER-01 — generation-bound repo-map context for the coding-intent
-/// decomposer. Loads the indexed `code_map` for the current working directory
-/// and returns a token-budgeted [`crate::code_map::RepoMapSummary`] text
-/// (aider-style call-graph summary) to inject as the decomposer's
-/// `project_context`. A genuinely unindexed root or empty summary returns
-/// `Ok(None)`; DB, identity, completeness and freshness failures remain visible
-/// and block the explicit coding command instead of silently dropping context.
-fn repo_map_context(
-    config: &crate::config::CodeMapConfig,
-    max_text_bytes: usize,
-) -> Result<Option<BoundCodeMapContext>> {
-    config.validate()?;
-    let db_path = crate::code_map::persist::default_path();
-    let conn = crate::code_map::persist::open(&db_path)
-        .with_context(|| format!("open code-map database at {}", db_path.display()))?;
-    let cwd = std::env::current_dir().context("resolve current directory for repo-map context")?;
-    repo_map_context_at_bounded(&conn, &cwd, config, max_text_bytes)
-}
 
 /// Existing test/utility entry point with the full prepared-context budget.
 #[cfg(test)]
@@ -263,22 +243,6 @@ const RECALL_CONTEXT_MAX_FILES: usize = 8;
 const RECALL_CALLERS_PER_SYMBOL: usize = 3;
 const RECALL_EDGE_CAP: usize = 250_000;
 const RECALL_EDGE_TEXT_BYTE_CAP: usize = 32 * 1024 * 1024;
-
-/// CRG-01 — prompt-targeted code-map context: the files whose symbols the
-/// prompt names, plus depth-1 callers of those symbols. Missing matches remain
-/// optional; integrity and freshness errors are explicit.
-fn prompt_recall_context(
-    prompt: &str,
-    config: &crate::config::CodeMapConfig,
-    max_text_bytes: usize,
-) -> Result<Option<BoundCodeMapContext>> {
-    config.validate()?;
-    let db_path = crate::code_map::persist::default_path();
-    let conn = crate::code_map::persist::open(&db_path)
-        .with_context(|| format!("open code-map database at {}", db_path.display()))?;
-    let cwd = std::env::current_dir().context("resolve current directory for targeted recall")?;
-    prompt_recall_context_at_bounded(&conn, &cwd, prompt, config, max_text_bytes)
-}
 
 /// Existing test/utility entry point with the full prepared-context budget.
 #[cfg(test)]
@@ -655,42 +619,58 @@ fn assemble_code_map_context(
     PreparedCodeMapContext::new(text, sources).map(Some)
 }
 
+/// Build the exact bounded coding context for an explicit repository root.
+///
+/// This is deliberately shared by the CLI adapter and the native coding
+/// service.  Neither consumer may resolve process CWD: the physical root is
+/// part of the run request and binds both recall and repo-map provenance.
+pub(crate) fn prepare_code_map_context_for_root(
+    prompt: &str,
+    repository_root: &std::path::Path,
+    config: &crate::config::CodeMapConfig,
+) -> Result<Option<PreparedCodeMapContext>> {
+    config.validate()?;
+    let db_path = crate::code_map::persist::default_path();
+    let conn = crate::code_map::persist::open(&db_path)
+        .with_context(|| format!("open code-map database at {}", db_path.display()))?;
+    let recall = prompt_recall_context_at_bounded(
+        &conn,
+        repository_root,
+        prompt,
+        config,
+        MAX_PREPARED_CODE_MAP_CONTEXT_BYTES,
+    )
+    .context("resolve targeted code-map context")?;
+    let remaining_repo_bytes =
+        recall
+            .as_ref()
+            .map_or(MAX_PREPARED_CODE_MAP_CONTEXT_BYTES, |context| {
+                MAX_PREPARED_CODE_MAP_CONTEXT_BYTES
+                    .saturating_sub(context.text.len().saturating_add(2))
+            });
+    let repo = if remaining_repo_bytes < 4 {
+        None
+    } else {
+        repo_map_context_at_bounded(&conn, repository_root, config, remaining_repo_bytes)
+            .context("resolve repo-map context")?
+    };
+    assemble_code_map_context(recall, repo)
+}
+
+/// Start one fresh coding run through the shared native service.  The CLI has
+/// no provider, receipt, SQLite, dispatch, apply, or cancellation loop of its
+/// own; those durable boundaries belong to `CodingService` so desktop and
+/// Buddy receive the same terminal receipt.
 pub async fn run_code(args: CodeArgs) -> Result<()> {
-    // `--apply` needs a dispatch path to apply INTO. Both `--dispatch`
-    // (fresh session) and `--run-pending` (existing Backlog) are dispatch
-    // paths, so accept either — clap's per-arg `requires` can only name one
-    // other flag, which wrongly forced operators to pass `--dispatch`
-    // alongside `--run-pending` just to apply pending work.
     validate_apply_has_dispatch_path(args.apply.is_some(), args.dispatch, args.run_pending)?;
-    // QU-10b: --run-pending drives the dispatcher across every session
-    // with a Backlog task instead of decomposing a fresh prompt.
     if args.run_pending {
         return run_pending_phase(&args).await;
     }
     if args.prompt.trim().is_empty() {
-        // Context-accurate remedy: a `--dispatch` operator chose the
-        // fresh-decompose path and just forgot the prompt — telling them to
-        // use `--run-pending` (a mutually-exclusive mode) would misdirect.
-        if args.dispatch {
-            anyhow::bail!(
-                "neoth code --dispatch requires a prompt to decompose — e.g. \
-                 `neoth code --dispatch \"add auth\"` (to drive EXISTING Backlog \
-                 tasks without a prompt, use --run-pending instead)"
-            );
-        }
-        anyhow::bail!(
-            "neoth code: prompt is empty — nothing to decompose \
-             (pass --run-pending to drive existing Backlog tasks)"
-        );
+        anyhow::bail!("neoth code: prompt is empty — nothing to decompose");
     }
-
     let cfg = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml — run `neoth init` first")?;
-
-    // GOLD-ADAPT-GRILL-02/04 — Socratic brainstorm gate BEFORE any DB write.
-    // Pure heuristic (zero LLM cost). Interactive refinement needs a TTY;
-    // piped/scripted invocations degrade to a single warn-and-proceed pass.
-    // stdin reads are blocking → the whole gate runs on spawn_blocking.
     let (prompt, spec) = if cfg.coding.brainstorm_gate {
         let initial = args.prompt.clone();
         let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
@@ -702,396 +682,125 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     } else {
         (args.prompt.clone(), None)
     };
-
-    // QM-7 (2026-05-22 Session 20) — TDD pre-flight. Classify the
-    // operator's prompt before decomposition + surface the matching
-    // checklist so the discipline expectation is visible up front.
-    // Non-blocking by design: the operator's authority is final;
-    // pre-flight is education, not gatekeeping.
     let preflight = crate::coding::tdd_preflight::evaluate(&prompt);
     println!("{}", preflight.headline);
     if !preflight.skip_tdd {
         println!("{}", preflight.checklist);
     }
-
-    // Freeze source metadata and rendered context before opening a coding
-    // session or provider audit. Filesystem/SQLite errors must not bypass
-    // audit finalization, and blocking index reads must not occupy Tokio.
-    let context_prompt = prompt.clone();
-    let context_config = cfg.code_map.clone();
-    let project_ctx = tokio::task::spawn_blocking(move || {
-        let recall = prompt_recall_context(
-            &context_prompt,
-            &context_config,
-            MAX_PREPARED_CODE_MAP_CONTEXT_BYTES,
-        )
-        .context("resolve targeted code-map context")?;
-        // Targeted recall has precedence. Its exact rendered text consumes the
-        // shared budget first; a generic summary may only use the remaining
-        // bytes after the two-byte join separator.
-        let remaining_repo_bytes =
-            recall
-                .as_ref()
-                .map_or(MAX_PREPARED_CODE_MAP_CONTEXT_BYTES, |ctx| {
-                    MAX_PREPARED_CODE_MAP_CONTEXT_BYTES
-                        .saturating_sub(ctx.text.len().saturating_add(2))
-                });
-        let repo = if remaining_repo_bytes < 4 {
-            eprintln!(
-                "[neoth:code-map] no shared byte budget remains for generic repo map; omitting it"
-            );
-            None
-        } else {
-            repo_map_context(&context_config, remaining_repo_bytes)
-                .context("resolve repo-map context")?
-        };
-        assemble_code_map_context(recall, repo)
-    })
-    .await
-    .context("coding code-map context worker panicked")??;
-
+    let repository_root = args
+        .repository_root
+        .clone()
+        .or_else(|| args.apply.clone())
+        .context(
+            "fresh coding runs require --repo-root <REPO_ROOT> (or explicit --apply <REPO_ROOT>)",
+        )?;
     let db_path = args.db.clone().unwrap_or_else(memstore::default_path);
-    let conn = memstore::open(&db_path).context("open views.db")?;
-    store::ensure_schema(&conn).context("ensure kanban schema")?;
-
-    let now_ns = now_unix_ns();
-    let prompt_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()));
-    let session_id = store::insert_session(
-        &conn,
-        now_ns,
-        &prompt,
-        &prompt_hash,
-        &args.source_channel,
-        cfg.operator_id.as_deref(),
-    )
-    .context("insert kanban session row")?;
-
-    let provider = providers::from_config_for_role_at(
-        &cfg,
-        HemisphereRole::Cerebellum,
-        &FreedomConfig::default_neoth_home(),
-    )
-    .await
-    .context("resolve cerebellum hemisphere provider")?;
-    let default_model = providers::provider_default_wire_model(provider.as_ref());
-    let provider_audit =
-        providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
-            cfg.autonomy_policy(),
-            cfg.tokens.max_per_request,
-        )
-        .await?;
-    let provider = providers::cost_authorization::AuthorizedProvider::from_box(
-        provider,
-        provider_audit.authorizer(),
-        default_model,
-        "coding.decomposer",
-    );
-    let llm = CerebellumDecomposer::new(provider);
-    println!("cerebellum bound to: {}", llm.provider_name());
-    println!("decomposing prompt …");
-
-    if project_ctx.is_some() {
-        println!("injecting generation-bound code context …");
-    }
-    let llm_phase: Result<Option<DecompositionResult>> = async {
-        let result = decompose_with_code_map_context(
-            &llm,
-            &conn,
-            session_id,
-            &prompt,
-            project_ctx.as_ref(),
-            now_ns,
-        )
-        .await
-        .context("decompose prompt via cerebellum")?;
-
-        if result.input_truncated {
-            eprintln!("⚠  input was truncated to fit the 12k-token budget");
+    let request = crate::coding::service::CodingStartRequest::new(
+        prompt,
+        repository_root,
+        args.source_channel.clone(),
+        args.no_assign,
+        args.dispatch,
+        args.apply.is_some(),
+    )?
+    .with_brainstorm_spec(spec.map(|spec| *spec));
+    let service = crate::coding::service::CodingService::spawn(
+        crate::coding::service::CodingServiceConfig {
+            database_path: db_path,
+            neoth_home: FreedomConfig::default_neoth_home(),
+            freedom_config_path: FreedomConfig::default_path(),
+            freedom_config: cfg,
+        },
+    )?;
+    let terminal = match service.start(request).await {
+        Ok(mut run) => {
+            let mut events = run.subscribe();
+            let terminal = run.wait_terminal().await;
+            report_service_advisories(&mut events);
+            terminal
         }
-        if let Some(q) = result.clarifying_question.as_ref() {
-            eprintln!("⚠  cerebellum asked a clarifying question:");
-            eprintln!("   {q}");
+        Err(error) => Err(error),
+    };
+    let shutdown = service.shutdown_and_join().await;
+    let terminal = match (terminal, shutdown) {
+        (Ok(terminal), Ok(())) => terminal,
+        (Err(primary), Ok(())) => return Err(primary),
+        (Ok(_), Err(shutdown)) => return Err(shutdown),
+        (Err(primary), Err(shutdown)) => {
+            return Err(primary.context(format!("coding service shutdown also failed: {shutdown}")));
         }
-
-        if result.task_ids.is_empty() {
-            // Decomposer surfaced only a clarifying question — flip
-            // session to Abandoned so it doesn't sit in Planning forever
-            // unless the operator re-runs. Their next `neoth code "..."`
-            // opens a fresh session.
-            println!("{}", abandon_empty_decomposition(&conn, session_id, &result));
-            return Ok(None);
-        }
-
-        // Session identifiers correlate local work history. Do not emit them
-        // into terminal transcripts; the operator can inspect scoped state
-        // explicitly with `neoth kanban list`.
-        println!("session opened (channel={})", args.source_channel);
-        println!("decomposed into {} task(s):", result.task_ids.len());
-
-        // GOLD-ADAPT-GRILL-02 — adversarial plan review on the decomposed plan
-        // (spec sections + task list rendered as markdown). Deadlock surfaces
-        // the unresolved critiques and continues — operator sovereignty; the
-        // review must NEVER emit a false approval, and a hard block would make
-        // a flaky reviewer LLM a denial-of-service on `neoth code`.
-        if cfg.coding.plan_review {
-            use crate::coding::plan_review::{MAX_REVIEW_ROUNDS, ReviewOutcome, review_plan};
-            let plan_text = render_plan_text(spec.as_deref(), &prompt, &conn, &result)?;
-            println!("adversarial plan review (≤{MAX_REVIEW_ROUNDS} rounds, cerebellum) …");
-            match review_plan(&llm, &plan_text).await {
-                Ok(ReviewOutcome::Approved { log }) => {
-                    println!("plan review: APPROVED after {} round(s)", log.len());
-                    write_plan_review_log(&log, session_id);
-                }
-                Ok(ReviewOutcome::Deadlock { log, unresolved }) => {
-                    eprintln!(
-                        "⚠  plan review DEADLOCK — {} round(s) without APPROVED; unresolved critiques:",
-                        log.len()
-                    );
-                    for u in &unresolved {
-                        eprintln!("  • {u}");
-                    }
-                    eprintln!("   (tasks stay queued — review them before dispatching)");
-                    write_plan_review_log(&log, session_id);
-                }
-                Err(e) => {
-                    eprintln!("⚠  plan review unavailable (reviewer LLM error) — proceeding: {e}");
-                }
+    };
+    match terminal {
+        crate::coding::service::CodingRunResult::Completed {
+            task_count,
+            task_ids,
+            clarifying_question,
+            session_complexity,
+            dispatch,
+            input_truncated,
+            ..
+        } => {
+            if input_truncated {
+                eprintln!("⚠  input was truncated to fit the 12k-token budget");
             }
-        }
-
-        if !args.no_assign {
-            auto_classify_and_assign(&conn, &result, Some(&llm as &dyn DecomposerLlm)).await?;
-        }
-
-        Ok(Some(result))
-    }
-    .await;
-
-    let audit_finalization = provider_audit
-        .finish(llm)
-        .await
-        .context("finalize cerebellum provider-call audit WAL");
-    let result = match (llm_phase, audit_finalization) {
-        (Ok(result), Ok(())) => result,
-        (Err(operation_error), Ok(())) => return Err(operation_error),
-        (Ok(_), Err(finalization_error)) => return Err(finalization_error),
-        (Err(operation_error), Err(finalization_error)) => {
-            return Err(finalization_error.context(format!(
-                "cerebellum LLM phase also failed before audit finalization: {operation_error:#}"
-            )));
-        }
-    };
-    let Some(result) = result else {
-        return Ok(());
-    };
-
-    print_decomposition_summary(&conn, &result)?;
-
-    if args.dispatch {
-        run_dispatch_phase(&conn, &cfg, session_id, args.apply.clone()).await?;
-    }
-
-    // Session moves out of Planning now that work exists. Pick #6
-    // (dispatcher) flips to Running once it actually starts firing
-    // workers — for now, we land in Review-equivalent state by
-    // leaving the status alone. Operators ALSO see this via
-    // `neoth kanban show <session>`.
-    Ok(())
-}
-
-/// Archive an empty decomposition exactly as the CLI's historical best-effort
-/// path did, then return its table-only status. Keeping this decision separate
-/// ensures the abandoned path never formats the durable session identifier.
-fn abandon_empty_decomposition(
-    conn: &Connection,
-    session_id: KanbanSessionId,
-    result: &DecompositionResult,
-) -> &'static str {
-    debug_assert!(result.task_ids.is_empty());
-    store::archive_session(
-        conn,
-        session_id,
-        SessionStatus::Abandoned,
-        result
-            .clarifying_question
-            .as_deref()
-            .or(Some("decomposer produced no tasks")),
-        None,
-    )
-    .ok();
-    abandoned_session_notice()
-}
-
-/// Human-facing terminal status for an empty decomposition. The durable session
-/// identifier remains available to explicit machine/query paths, but must not
-/// be echoed in an abandoned-session status line.
-fn abandoned_session_notice() -> &'static str {
-    "(no tasks created — session abandoned)"
-}
-
-/// GOLD-ADAPT-GRILL-03 — persist the plan-review log produced by `review_plan`
-/// for a completed session. Best-effort: write/serialise errors are reported to
-/// stderr and never fail the command.
-fn write_plan_review_log(
-    log: &crate::coding::plan_writer::PlanReviewLog,
-    session_id: KanbanSessionId,
-) {
-    let log_path = FreedomConfig::default_neoth_home()
-        .join(format!("plan_review_log_{}.json", session_id.raw()));
-    write_plan_review_log_to(log, &log_path);
-}
-
-fn write_plan_review_log_to(
-    log: &crate::coding::plan_writer::PlanReviewLog,
-    log_path: &std::path::Path,
-) {
-    match log.to_json() {
-        Ok(json) => {
-            if std::fs::write(log_path, json.as_bytes()).is_err() {
-                eprintln!("⚠  plan review log write failed — review history was not persisted");
+            if let Some(question) = clarifying_question {
+                eprintln!("⚠  cerebellum asked a clarifying question:\n   {question}");
             }
-        }
-        Err(_) => {
-            eprintln!("⚠  plan review log serialise failed — review history was not persisted");
-        }
-    }
-}
-
-/// Pick #6 Phase 3 (2026-05-20): build a HemisphereWorkerSet from
-/// freedom.yaml provider bindings and run dispatch_session against
-/// the just-decomposed kanban session.
-///
-/// Per-hemisphere provider lookup:
-///   Left       -> `from_config_for_role(cfg, HemisphereRole::Left)`
-///   Right      -> `from_config_for_role(cfg, HemisphereRole::Right)`
-///   Cerebellum -> already-resolved during decompose; we re-resolve
-///                 here so the binding is independent of the
-///                 decomposer's call site
-///   Unassigned -> no worker bound; dispatch_session blocks tasks
-///
-/// Patch root defaults to the operator's WAL dir parent (~/.neoth).
-async fn run_dispatch_phase(
-    conn: &Connection,
-    cfg: &FreedomConfig,
-    session_id: crate::coding::types::KanbanSessionId,
-    apply_repo: Option<PathBuf>,
-) -> Result<()> {
-    use crate::coding::dispatcher::{
-        ApplyOrigin, DispatchApplyConfig, DispatchBudget, dispatch_session,
-        dispatch_session_with_apply,
-    };
-
-    // GR-069b — bind a one-shot WAL writer (only when no daemon owns the WAL) so
-    // gate decisions + progress/patch frames are audited; drained after dispatch.
-    let audit = coding_audit_writer();
-    let aw = audit.as_ref().map(|(w, _)| std::sync::Arc::clone(w));
-    let workers = build_worker_set(cfg, aw.clone()).await;
-    if !workers.has_any() {
-        eprintln!("dispatch: no hemisphere has a worker bound — skipping");
-        return Ok(());
-    }
-
-    // Pick #6 Phase 4: route through the apply-aware variant
-    // when the operator passed `--apply <repo>`. Without the
-    // flag, legacy semantics (patch stored, never applied).
-    let outcome = if let Some(repo) = apply_repo.as_ref() {
-        let mut apply_cfg = DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed);
-        if let Some(w) = aw.as_ref() {
-            apply_cfg = apply_cfg.with_wal_writer(std::sync::Arc::clone(w));
-        }
-        if let Some(cmd) = cfg.coding.test_cmd.as_deref() {
-            apply_cfg = apply_cfg
-                .with_test_cmd(cmd)
-                .with_test_timeout(std::time::Duration::from_secs(cfg.coding.test_timeout_secs));
+            println!("decomposed into {task_count} task(s)");
+            if !task_ids.is_empty() {
+                let task_ids = task_ids
+                    .iter()
+                    .map(|task_id| format!("#{}", task_id.raw()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!("tasks: {task_ids}");
+            }
+            println!("estimated complexity: {session_complexity}");
             println!(
-                "dispatch: --apply set; patches land in <{}>/.neoth-task-<id>/, \
-                 tests via `{cmd}` (timeout {}s)",
-                repo.parent().unwrap_or(repo).display(),
-                cfg.coding.test_timeout_secs
+                "next: `neoth kanban list` to inspect, `neoth kanban watch` for the activity feed"
             );
-        } else {
-            println!(
-                "dispatch: --apply set; patches land in <{}>/.neoth-task-<id>/ \
-                 (no test_cmd configured — skipping test-loop)",
-                repo.parent().unwrap_or(repo).display()
+            if let Some(dispatch) = dispatch {
+                println!(
+                    "dispatch: attempted={} completed={} blocked={} unassigned={}{}",
+                    dispatch.tasks_attempted,
+                    dispatch.tasks_completed,
+                    dispatch.tasks_blocked,
+                    dispatch.tasks_unassigned,
+                    if dispatch.budget_exhausted {
+                        "  (budget exhausted)"
+                    } else {
+                        ""
+                    },
+                );
+            }
+            Ok(())
+        }
+        crate::coding::service::CodingRunResult::Cancelled {
+            provider_state,
+            effect,
+            ..
+        } => anyhow::bail!(
+            "coding run cancelled after provider_state={provider_state:?}, effect={effect:?}"
+        ),
+        crate::coding::service::CodingRunResult::Failed { .. } => {
+            anyhow::bail!("coding operation failed; inspect scoped local diagnostics")
+        }
+    }
+}
+
+fn report_service_advisories(
+    events: &mut tokio::sync::broadcast::Receiver<crate::coding::service::CodingRunEvent>,
+) {
+    while let Ok(event) = events.try_recv() {
+        if matches!(
+            event,
+            crate::coding::service::CodingRunEvent::PlanReviewUnavailable
+        ) {
+            eprintln!(
+                "⚠  plan review was unavailable or did not complete; decomposition continued"
             );
         }
-        dispatch_session_with_apply(
-            conn,
-            session_id,
-            &workers,
-            DispatchBudget::default(),
-            Some(&apply_cfg),
-        )
-        .await
-        .context("dispatch_session_with_apply run")?
-    } else {
-        dispatch_session(conn, session_id, &workers, DispatchBudget::default())
-            .await
-            .context("dispatch_session run")?
-    };
-
-    // GR-069b — drop every WAL-writer clone (workers + aw), then drain the writer
-    // task so the gate/progress/patch frames flush before the process exits.
-    drop(workers);
-    drop(aw);
-    if let Some((w, j)) = audit {
-        drop(w);
-        let _ = j.await;
     }
-
-    println!(
-        "dispatch: attempted={} completed={} blocked={} unassigned={}{}",
-        outcome.tasks_attempted,
-        outcome.tasks_completed,
-        outcome.tasks_blocked,
-        outcome.tasks_unassigned,
-        if outcome.budget_exhausted {
-            "  (budget exhausted)"
-        } else {
-            ""
-        }
-    );
-
-    // GOLD-TASK-03 — when proactive notifications are enabled, enqueue a
-    // ONE-PER-SESSION result summary so the operator gets "here's the result
-    // of the task you gave me" in their channel (useful for a backgrounded /
-    // channel-initiated run; the terminal already showed it interactively).
-    // Best-effort: a queue failure never fails the dispatch.
-    if cfg.proactive.enabled {
-        enqueue_session_summary(&outcome, session_id);
-    }
-    Ok(())
-}
-
-/// GOLD-TASK-03 — best-effort enqueue of a one-per-session coding summary
-/// into the proactive queue. The daemon's proactive drain delivers it to
-/// the operator's channel subject to the `Action::ProactiveChannelSend`
-/// autonomy gate + recipient-own-id resolution (no live channel ⇒ it lands
-/// in the `proactive_delivered.jsonl` ledger, still operator-visible). The
-/// item body is counts-only ([`crate::coding::feed::build_session_summary_item`]
-/// → `render_session_summary` — no task titles / LLM text) so it carries no
-/// injection / PII risk. A missing queue file is a fresh queue (`load_from`
-/// returns default); a real load/save error logs at warn + is swallowed —
-/// the terminal already printed the result, so a lost notification is
-/// non-fatal.
-fn enqueue_session_summary(
-    outcome: &crate::coding::dispatcher::DispatchOutcome,
-    session_id: crate::coding::types::KanbanSessionId,
-) {
-    let queue_path =
-        crate::config::FreedomConfig::default_neoth_home().join("proactive_queue.json");
-    let item = crate::coding::feed::build_session_summary_item(outcome, session_id.raw());
-    if let Err(e) = enqueue_session_summary_at(&queue_path, item) {
-        tracing::warn!(error = %e, "session-summary: proactive queue transaction failed");
-    }
-}
-
-fn enqueue_session_summary_at(
-    queue_path: &std::path::Path,
-    item: crate::proactive::ProactiveItem,
-) -> anyhow::Result<bool> {
-    crate::proactive::ProactiveQueue::enqueue_at(queue_path, item)
 }
 
 /// ARCH-22 — intern Worker name labels so the `&'static str` the `Worker` trait
@@ -1113,11 +822,10 @@ fn intern_label(label: &str) -> &'static str {
     leaked
 }
 
-/// QU-10b: build the `HemisphereWorkerSet` from the operator's
-/// per-hemisphere provider bindings. Extracted from `run_dispatch_phase`
-/// so the single-session dispatch path AND the `--run-pending` controller
-/// share one binding routine. Each role may legitimately fail (operator
-/// bound only one side) — the dispatcher blocks unassigned tasks cleanly.
+/// QU-10b: build the `HemisphereWorkerSet` for the independent
+/// `--run-pending` resume controller. Fresh runs construct their bindings in
+/// `coding::service`; each role may legitimately fail here and the dispatcher
+/// blocks unassigned tasks cleanly.
 /// GR-069b — one-shot WAL writer for the standalone `neoth code` path so the
 /// autonomy decision (0xA0/0xA1), cost estimate, and dispatcher frames land in
 /// the operator's WAL. A UUID-namespaced segment is independent of the daemon's
@@ -1410,6 +1118,9 @@ fn read_spec_block_stdin() -> Option<String> {
     }
 }
 
+/// Test-only copy of the historical review-plan renderer. Production review
+/// rendering is owned by `coding::service::review_plan_for_service`.
+#[cfg(test)]
 /// Render the reviewed plan as markdown: spec sections (when the gate
 /// produced one) + the decomposed task list. `review_plan` takes free-form
 /// markdown — this is the reviewer's whole context.
@@ -1472,6 +1183,8 @@ fn render_plan_text(
     Ok(out.replace("</", "<\u{200B}/"))
 }
 
+/// Test-only classifier seam; production assignment is service-owned.
+#[cfg(test)]
 /// Classify every inserted task heuristically + persist the hemisphere
 /// assignment. Tasks the heuristic marks `Ambiguous` escalate to the
 /// Pick #9 LLM second opinion when a Cerebellum handle is bound; without
@@ -1524,6 +1237,8 @@ async fn auto_classify_and_assign(
     Ok(())
 }
 
+/// Test-only task lookup used by the retained renderer/classifier checks.
+#[cfg(test)]
 /// Load each inserted task by id (in insertion order). Pulls one
 /// roundtrip per task — fine for the typical 1-10 task batch a
 /// decomposition produces. Larger sessions would benefit from a
@@ -1557,40 +1272,6 @@ fn collect_tasks(
         .collect())
 }
 
-/// Print operator-readable line per task. Mirrors the format used by
-/// `neoth kanban show` so muscle memory carries across commands.
-fn print_decomposition_summary(conn: &Connection, result: &DecompositionResult) -> Result<()> {
-    let tasks = collect_tasks(conn, &result.task_ids)?;
-    if tasks.is_empty() {
-        return Err(anyhow!(
-            "no tasks found for ids {:?} — store/insert inconsistency",
-            result.task_ids
-        ));
-    }
-    for t in &tasks {
-        let hemi_label = match t.hemisphere {
-            Hemisphere::Left => "→ LEFT  (fast)",
-            Hemisphere::Right => "→ RIGHT (deep)",
-            Hemisphere::Cerebellum => "→ CEREBELLUM",
-            Hemisphere::Unassigned => "  unassigned",
-        };
-        println!(
-            "  #{:>4}  [{:>8}]  {}  {}",
-            t.task_id.raw(),
-            t.task_type,
-            hemi_label,
-            t.title,
-        );
-    }
-    println!();
-    println!(
-        "estimated complexity: {}",
-        result.session_complexity.as_str()
-    );
-    println!("next: `neoth kanban list` to inspect, `neoth kanban watch` for the activity feed");
-    Ok(())
-}
-
 /// `--apply` requires a dispatch path. Returns `Err` when an apply is
 /// requested with neither `--dispatch` (fresh decomposed session) nor
 /// `--run-pending` (existing Backlog) — both are dispatch paths that can
@@ -1604,10 +1285,6 @@ fn validate_apply_has_dispatch_path(apply: bool, dispatch: bool, run_pending: bo
         );
     }
     Ok(())
-}
-
-fn now_unix_ns() -> u64 {
-    crate::time::now_unix_ns()
 }
 
 #[cfg(test)]
@@ -1878,55 +1555,6 @@ mod tests {
         assert!(repo_map_context_at(&conn, &repo, &config).is_err());
     }
 
-    #[test]
-    fn session_summary_enqueue_preserves_existing_queue_state() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("proactive_queue.json");
-        let mut queue = crate::proactive::ProactiveQueue::new();
-        assert!(
-            queue
-                .enqueue(crate::proactive::ProactiveItem {
-                    priority: 10,
-                    dedup_key: "retained".into(),
-                    channel: String::new(),
-                    source: "test".into(),
-                    body: "keep me".into(),
-                    scheduled_for_unix: 0,
-                    is_failure: false,
-                    expires_unix: 0,
-                })
-                .unwrap()
-        );
-        queue.save_to(&path).unwrap();
-
-        assert!(
-            enqueue_session_summary_at(
-                &path,
-                crate::proactive::ProactiveItem {
-                    priority: 50,
-                    dedup_key: "session-summary:42".into(),
-                    channel: String::new(),
-                    source: "coding_session".into(),
-                    body: "done".into(),
-                    scheduled_for_unix: 0,
-                    is_failure: false,
-                    expires_unix: 0,
-                },
-            )
-            .unwrap()
-        );
-        let loaded = crate::proactive::ProactiveQueue::load_from(&path).unwrap();
-        let keys = loaded
-            .peek()
-            .iter()
-            .map(|item| item.dedup_key.as_str())
-            .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(
-            keys,
-            std::collections::BTreeSet::from(["retained", "session-summary:42"])
-        );
-    }
-
     // GOLD-ADAPT-AWE-AIDER-01 — an unindexed repo yields no repo-map context, so
     // run_code's decomposer falls back to context-free exactly as before (the
     // safety property: the wiring must never break the coding path when the repo
@@ -1964,6 +1592,7 @@ mod tests {
                     name: "verify_token".into(),
                     kind: crate::code_map::symbols::SymbolKind::Function,
                     line: 12,
+                    line_end: None,
                 }],
             }],
             report: crate::code_map::walker::ScanReport::default(),
@@ -1984,6 +1613,7 @@ mod tests {
                     name: "verify_token".into(),
                     kind: crate::code_map::symbols::SymbolKind::Function,
                     line: 3,
+                    line_end: None,
                 }],
             }],
             report: crate::code_map::walker::ScanReport::default(),
@@ -2040,37 +1670,6 @@ mod tests {
         // no apply → never gated, regardless of the other flags.
         assert!(validate_apply_has_dispatch_path(false, false, false).is_ok());
         assert!(validate_apply_has_dispatch_path(false, false, true).is_ok());
-    }
-
-    #[test]
-    fn empty_decomposition_archives_without_human_session_identifier() {
-        let (_dir, conn) = fresh_db();
-        let session_id = store::insert_session(&conn, 1, "prompt", "hash", "cli", None).unwrap();
-        let result = DecompositionResult {
-            task_ids: Vec::new(),
-            clarifying_question: Some("Which repository should I change?".into()),
-            session_complexity: crate::coding::decomposer::SessionComplexity::Fast,
-            input_truncated: false,
-        };
-
-        let notice = abandon_empty_decomposition(&conn, session_id, &result);
-        assert_eq!(notice, "(no tasks created — session abandoned)");
-        assert!(
-            !notice.contains('#'),
-            "human-facing abandoned-session output must not include an ID: {notice}"
-        );
-        assert!(
-            !notice.contains(&session_id.raw().to_string()),
-            "human-facing abandoned-session output must not include the persistent ID: {notice}"
-        );
-        let status: String = conn
-            .query_row(
-                "SELECT status FROM idx_kanban_session WHERE session_id = ?1",
-                [session_id.raw()],
-                |row| row.get(0),
-            )
-            .expect("read archived session status");
-        assert_eq!(status, "abandoned");
     }
 
     fn fresh_db() -> (tempfile::TempDir, Connection) {
@@ -2330,26 +1929,6 @@ mod tests {
         assert!(text.contains("## Problem"));
         assert!(text.contains("Add board rendering"));
         assert!(text.contains("## Decomposed tasks"));
-    }
-
-    #[test]
-    fn write_plan_review_log_to_creates_json_file_and_round_trips() {
-        use crate::coding::plan_writer::{PlanReviewLog, PlanReviewRound};
-        let dir = tempfile::tempdir().unwrap();
-        let log_path = dir.path().join("plan_review_log_99.json");
-        let mut log = PlanReviewLog::new();
-        log.append(PlanReviewRound {
-            round: 1,
-            critique: "needs more tests".into(),
-            response: "added tests".into(),
-            verdict: "APPROVED".into(),
-        });
-        write_plan_review_log_to(&log, &log_path);
-        assert!(log_path.exists(), "plan review log file must be created");
-        let content = std::fs::read_to_string(&log_path).unwrap();
-        let recovered = PlanReviewLog::from_json(&content).unwrap();
-        assert_eq!(recovered.rounds().len(), 1);
-        assert_eq!(recovered.rounds()[0].verdict, "APPROVED");
     }
 
     #[test]

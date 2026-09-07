@@ -18,6 +18,7 @@ use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
+use crate::permissions::TrustLedger;
 use crate::permissions::lease::{LeaseScope, LeaseStore};
 use crate::permissions::{
     Action, ActionKind, AutonomyLevel, AutonomyPolicySnapshot, CustomDecision, Decision, evaluate,
@@ -76,6 +77,14 @@ pub enum PermissionsAction {
         /// Stable snake-case action name from `permissions show`.
         action: ActionKind,
     },
+    /// Replay the typed append-only trust ledger for one exact subject key.
+    /// Use `local` for decisions made without a delegated subject.
+    Audit {
+        /// Exact subject identity. This filter is mandatory so one subject's
+        /// authority decisions never appear in another subject's inspection.
+        #[arg(long)]
+        subject: String,
+    },
 }
 
 pub async fn run_permissions(args: PermissionsArgs) -> Result<()> {
@@ -108,7 +117,61 @@ pub async fn run_permissions(args: PermissionsArgs) -> Result<()> {
             clear_override_at(&FreedomConfig::default_path(), action)?;
             print_override_change("cleared", action, None, &args.output)
         }
+        PermissionsAction::Audit { subject } => run_audit(&subject, &args.output),
     }
+}
+
+fn run_audit(subject: &str, output: &OutputFormat) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let ledger = TrustLedger::replay_subject_at_home(&home, subject)?;
+    match output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&ledger)?);
+        }
+        OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string(&ledger)?);
+        }
+        OutputFormat::Table => {
+            println!("# Trust ledger — subject: {}", ledger.subject);
+            match &ledger.completeness {
+                crate::permissions::TrustLedgerCompleteness::Complete => {
+                    println!("  completeness: complete authenticated history");
+                }
+                crate::permissions::TrustLedgerCompleteness::IncompleteAuthenticatedPrefix {
+                    boundaries,
+                } => {
+                    println!("  completeness: incomplete; verified authenticated prefix only");
+                    for boundary in boundaries {
+                        if boundary.authenticated_through < boundary.logical_len {
+                            println!(
+                                "  unverified tail: {} ({} of {} bytes authenticated)",
+                                boundary.segment_name,
+                                boundary.authenticated_through,
+                                boundary.logical_len,
+                            );
+                        }
+                    }
+                }
+            }
+            if ledger.entries.is_empty() {
+                println!("  no typed trust decisions retained");
+            }
+            for entry in ledger.entries {
+                println!(
+                    "  {}:{} {} {} {}",
+                    entry.hlc_physical_ns,
+                    entry.hlc_logical,
+                    entry.event.action.as_str(),
+                    match entry.event.outcome {
+                        crate::permissions::TrustOutcome::Allowed => "allowed",
+                        crate::permissions::TrustOutcome::Denied => "denied",
+                    },
+                    entry.event_id,
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn load_config() -> Result<FreedomConfig> {

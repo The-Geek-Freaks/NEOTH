@@ -70,6 +70,16 @@ pub enum GuiActivity {
     CodeMapLifecycleConfigSaved,
     /// Lifecycle inspection or refresh failed, or returned a failure receipt.
     CodeMapLifecycleFailed,
+    /// A typed Coding service run was accepted with an explicit root/source.
+    NativeCodingStarting,
+    /// A typed Coding service event advanced the active run.
+    NativeCodingProgress,
+    /// Cancellation was requested and the service is joining its worker.
+    NativeCodingCancelling,
+    /// A typed Coding service terminal result completed successfully.
+    NativeCodingComplete,
+    /// A typed Coding service terminal result failed or was cancelled.
+    NativeCodingFailed,
 
     // ── Daemon lifecycle (WAL-driven, fired by the events follower) ──
     /// Dreaming pass composing a journal entry (WAL 0xF4).
@@ -132,6 +142,11 @@ impl GuiActivity {
             GuiActivity::CodeMapLifecycleComplete => ("success", "index receipt ready"),
             GuiActivity::CodeMapLifecycleConfigSaved => ("success", "lifecycle config saved"),
             GuiActivity::CodeMapLifecycleFailed => ("error", "index action failed"),
+            GuiActivity::NativeCodingStarting => ("working", "starting coding run…"),
+            GuiActivity::NativeCodingProgress => ("working", "coding run active…"),
+            GuiActivity::NativeCodingCancelling => ("alert", "cancelling coding run…"),
+            GuiActivity::NativeCodingComplete => ("success", "coding receipt ready"),
+            GuiActivity::NativeCodingFailed => ("error", "coding run failed"),
 
             GuiActivity::Dreaming => ("sleeping", "dreaming…"),
             GuiActivity::CouncilDeliberating => ("parallel", "council in session"),
@@ -225,6 +240,11 @@ mod tests {
         GuiActivity::CodeMapLifecycleComplete,
         GuiActivity::CodeMapLifecycleConfigSaved,
         GuiActivity::CodeMapLifecycleFailed,
+        GuiActivity::NativeCodingStarting,
+        GuiActivity::NativeCodingProgress,
+        GuiActivity::NativeCodingCancelling,
+        GuiActivity::NativeCodingComplete,
+        GuiActivity::NativeCodingFailed,
         GuiActivity::Dreaming,
         GuiActivity::CouncilDeliberating,
         GuiActivity::SelfImproving,
@@ -294,6 +314,26 @@ mod tests {
         assert_eq!(
             GuiActivity::CodeMapLifecycleFailed.mood(),
             ("error", "index action failed")
+        );
+    }
+
+    #[test]
+    fn native_coding_uses_terminal_receipt_moods() {
+        assert_eq!(
+            GuiActivity::NativeCodingStarting.mood(),
+            ("working", "starting coding run…")
+        );
+        assert_eq!(
+            GuiActivity::NativeCodingCancelling.mood(),
+            ("alert", "cancelling coding run…")
+        );
+        assert_eq!(
+            GuiActivity::NativeCodingComplete.mood(),
+            ("success", "coding receipt ready")
+        );
+        assert_eq!(
+            GuiActivity::NativeCodingFailed.mood(),
+            ("error", "coding run failed")
         );
     }
 

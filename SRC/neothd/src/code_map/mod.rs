@@ -18,8 +18,10 @@
 
 pub mod co_change;
 pub mod diff;
+pub mod diff_git;
 pub mod graph;
 pub mod impact;
+mod incremental;
 pub mod lifecycle;
 pub mod lifecycle_config;
 pub(crate) mod lifecycle_repair;
@@ -45,7 +47,8 @@ pub mod walker;
 pub use impact::{
     ImpactDirection, ImpactEdgeEvidence, ImpactNodeId, ImpactOptions, ImpactResult, ImpactSeed,
     ImpactedFile, ImpactedNode, UnresolvedEdge, UnresolvedEdgeEndpoint, UnresolvedEdgeReason,
-    UnresolvedSeed, UnresolvedSeedReason, impact_radius, impact_radius_for_path,
+    UnresolvedSeed, UnresolvedSeedReason, impact_radius, impact_radius_for_diff_seeds,
+    impact_radius_for_path,
 };
 #[allow(unused_imports)]
 pub use lifecycle::{

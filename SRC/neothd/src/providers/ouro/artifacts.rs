@@ -775,14 +775,30 @@ fn make_artifact_readonly(path: &Path) -> Result<()> {
 fn make_artifact_readonly(path: &Path) -> Result<()> {
     use std::os::windows::fs::OpenOptionsExt as _;
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_SHARE_READ, FILE_WRITE_ATTRIBUTES,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_READ,
+        FILE_WRITE_ATTRIBUTES,
     };
 
     ensure_regular_artifact_path(path)?;
+    // A retry can reach this point after the readonly attribute succeeded but
+    // the later pointer/journal transition did not. Re-verify it with the
+    // retained nofollow/reparse-safe reader; do not ask for write access to an
+    // already-staged readonly artifact.
+    let read_lease = open_read_lease(path)?;
+    if read_lease
+        .metadata()
+        .with_context(|| format!("stat staged Ouro generation {}", path.display()))?
+        .permissions()
+        .readonly()
+    {
+        return Ok(());
+    }
+    drop(read_lease);
+
     let mut options = OpenOptions::new();
-    options.read(true);
+    options.read(true).write(true);
     options
-        .access_mode(FILE_GENERIC_READ | FILE_WRITE_ATTRIBUTES)
+        .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_WRITE_ATTRIBUTES)
         .share_mode(FILE_SHARE_READ)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     let file = options
@@ -798,6 +814,15 @@ fn make_artifact_readonly(path: &Path) -> Result<()> {
         .metadata()
         .with_context(|| format!("stat published Ouro generation {}", path.display()))?
         .permissions();
+    if permissions.readonly() {
+        return Ok(());
+    }
+    file.sync_all().with_context(|| {
+        format!(
+            "durably flush Ouro artifact before readonly {}",
+            path.display()
+        )
+    })?;
     permissions.set_readonly(true);
     file.set_permissions(permissions)
         .with_context(|| format!("make Ouro generation readonly {}", path.display()))?;
@@ -1107,6 +1132,21 @@ mod tests {
             !dir.path().join(SAFETENSORS_FILE).exists(),
             "recovery must not recreate mutable canonical artifacts"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_promotion_and_readonly_retry_preserve_artifact_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        write_fixture(dir.path());
+        let generation = resolve_or_promote_generation(dir.path()).unwrap();
+        for artifact in &REQUIRED_ARTIFACTS {
+            let path = generation.join(artifact.filename);
+            let expected = std::fs::read(&path).unwrap();
+            make_artifact_readonly(&path).expect("retry accepts readonly staged artifact");
+            assert_eq!(std::fs::read(&path).unwrap(), expected);
+            assert!(std::fs::metadata(&path).unwrap().permissions().readonly());
+        }
     }
 
     #[cfg(unix)]

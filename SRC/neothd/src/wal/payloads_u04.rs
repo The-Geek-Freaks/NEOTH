@@ -8,8 +8,12 @@
 //! [`UpdaterTaskFiredPayload`] + one [`UpdaterTaskResultPayload`]
 //! per pass.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+
+use crate::updater::budget::UpdaterRunBudgets;
 
 /// Current wire schema for recurring updater pass correlation.
 ///
@@ -20,6 +24,14 @@ use sha2::{Digest as _, Sha256};
 pub const UPDATER_PASS_SCHEMA_VERSION: u16 = 3;
 
 const UPDATER_FIRED_RECEIPT_DOMAIN: &[u8] = b"neoth/updater-fired-receipt/v1\0";
+const UPDATER_LEAF_RESULT_RECEIPT_DOMAIN: &[u8] = b"neoth/updater-leaf-result-receipt/v1\0";
+
+/// The outer-result extension is intentionally versioned separately from the
+/// FIRED/RESULT pass identity.  Schema-v3 pass pairs predate leaf receipts and
+/// remain readable; an outer result that opts into this binding must satisfy
+/// the stricter v1 relation below.
+pub const UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION: u8 = 1;
+pub const MAX_UPDATER_LEAF_RECEIPTS_PER_PASS: usize = 32;
 
 const fn legacy_schema_version() -> u16 {
     1
@@ -163,6 +175,80 @@ pub fn updater_fired_receipt_sha256(payload: &[u8]) -> String {
     hasher.update(UPDATER_FIRED_RECEIPT_DOMAIN);
     hasher.update(payload);
     hex::encode(hasher.finalize())
+}
+
+/// Digest the exact acknowledged leaf RESULT payload.  It is distinct from
+/// the request binding: the latter admits an effect, while this one commits
+/// its terminal outcome in the ordered outer-pass receipt list.
+pub fn updater_leaf_result_receipt_sha256(payload: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(UPDATER_LEAF_RESULT_RECEIPT_DOMAIN);
+    hasher.update(payload);
+    hex::encode(hasher.finalize())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdaterLeafTerminalReceipt {
+    pub(crate) operation_id: String,
+    pub(crate) request_id: String,
+    pub(crate) request_binding_sha256: String,
+    pub(crate) result_receipt_sha256: String,
+}
+
+impl UpdaterLeafTerminalReceipt {
+    pub fn validate_for_pass(&self, pass_id: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.operation_id == pass_id,
+            "updater leaf receipt operation does not match its outer pass"
+        );
+        anyhow::ensure!(
+            !self.request_id.is_empty() && self.request_id.len() <= 128,
+            "updater leaf receipt has an invalid request id"
+        );
+        anyhow::ensure!(
+            is_canonical_sha256(&self.request_binding_sha256)
+                && is_canonical_sha256(&self.result_receipt_sha256),
+            "updater leaf receipt has a non-canonical digest"
+        );
+        Ok(())
+    }
+}
+
+/// Ordered receipt commitment for a bounded, budgeted pass.  Ordering is
+/// request order, never WAL scan order, so a later outer RESULT cannot hide a
+/// terminal leaf or silently exchange leaves from another pass.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdaterLeafReceiptBinding {
+    pub(crate) schema_version: u8,
+    pub(crate) budgets: UpdaterRunBudgets,
+    pub(crate) terminal_receipts: Vec<UpdaterLeafTerminalReceipt>,
+}
+
+impl UpdaterLeafReceiptBinding {
+    pub fn validate_for_pass(&self, pass_id: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.schema_version == UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION,
+            "unsupported updater leaf receipt binding schema {}",
+            self.schema_version
+        );
+        self.budgets.validate()?;
+        anyhow::ensure!(
+            !self.terminal_receipts.is_empty()
+                && self.terminal_receipts.len() <= MAX_UPDATER_LEAF_RECEIPTS_PER_PASS,
+            "updater pass leaf receipt count is outside the bounded range"
+        );
+        let mut request_ids = BTreeSet::new();
+        for receipt in &self.terminal_receipts {
+            receipt.validate_for_pass(pass_id)?;
+            anyhow::ensure!(
+                request_ids.insert(receipt.request_id.as_str()),
+                "updater pass repeats a terminal leaf receipt"
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Which updater task fired. Pinned exhaustively — adding a new
@@ -363,6 +449,11 @@ pub struct UpdaterTaskResultPayload {
     pub terminal_outcome: Option<UpdaterTerminalOutcome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fired_receipt_sha256: Option<String>,
+    /// Present only for the new HTTP recurring pass path.  Older durable
+    /// records deliberately omit it and are reconciled under their recorded
+    /// schema rather than being reinterpreted as a completed leaf-bound pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) leaf_receipt_binding: Option<UpdaterLeafReceiptBinding>,
     pub components: Vec<ComponentOutcome>,
 }
 
@@ -377,6 +468,17 @@ impl UpdaterTaskResultPayload {
             && self.terminal_outcome_matches_components()
             && is_canonical_sha256(digest))
         .then_some(digest)
+    }
+
+    pub fn validate_leaf_receipt_binding(&self) -> anyhow::Result<()> {
+        let Some(binding) = &self.leaf_receipt_binding else {
+            return Ok(());
+        };
+        let pass_id = self
+            .identity
+            .correlatable_pass_id_for(self.task_kind)
+            .ok_or_else(|| anyhow::anyhow!("leaf receipt binding requires a correlatable pass"))?;
+        binding.validate_for_pass(pass_id)
     }
 
     fn terminal_outcome_matches_components(&self) -> bool {
@@ -535,6 +637,7 @@ mod tests {
             duration_ms: 1234,
             terminal_outcome: None,
             fired_receipt_sha256: None,
+            leaf_receipt_binding: None,
             components,
         }
     }
@@ -764,6 +867,7 @@ mod tests {
             duration_ms: 250,
             terminal_outcome: Some(UpdaterTerminalOutcome::Completed),
             fired_receipt_sha256: Some("a".repeat(64)),
+            leaf_receipt_binding: None,
             components: vec![ComponentOutcome::upgraded("skill_a", "1.0", "1.1")],
         };
         let json = serde_json::to_string(&r).unwrap();
@@ -792,6 +896,7 @@ mod tests {
             duration_ms: 0,
             terminal_outcome: None,
             fired_receipt_sha256: None,
+            leaf_receipt_binding: None,
             components: vec![ComponentOutcome::up_to_date("a", "1.0")],
         };
         let json = serde_json::to_string(&r).unwrap();
@@ -832,6 +937,7 @@ mod tests {
             duration_ms: 1,
             terminal_outcome: Some(UpdaterTerminalOutcome::Completed),
             fired_receipt_sha256: Some(fired_receipt_sha256),
+            leaf_receipt_binding: None,
             components: vec![],
         };
         let fired_json = serde_json::to_value(fired).unwrap();

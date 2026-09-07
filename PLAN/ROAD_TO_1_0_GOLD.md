@@ -400,10 +400,15 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     - **Packaging:** core Rust inclusion is complete; a clean install still has
       to prove first-run index creation/refresh and all surfaces without an
       external CRG runtime.
-    - [ ] Add one explicit, bounded first-index + incremental refresh lifecycle
+    - [x] Add one explicit, bounded first-index + incremental refresh lifecycle
       with root selection, watcher/debounce or equivalent invalidation,
       cancellation, restart recovery, index-generation receipt and a manual
-      rebuild escape hatch.
+      rebuild escape hatch. Completed 2026-09-06 (Wave 3): selected-root
+      lifecycle refresh is cancellable and receipt-bound; delta publication
+      retains unchanged file/symbol data and valid edges while recomputing the
+      conservative invalidation set behind the final source fence. Evidence:
+      `docs/verification/gold-wave3-source-manifest.json` and
+      `docs/verification/gold-wave3-test-matrix.json`.
     - [ ] Make enabled-but-missing, stale, corrupt and unmapped-root states
       visible and actionable in CLI, Channel logs/receipts, GUI, Buddy and
       Doctor; do not silently claim context-aware coding when the consumer
@@ -445,16 +450,23 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     `docs/coding-code-map-receipts.md`; local audit:
     `REVIEWS/_gold_audit/2026-09-06-coding-context-batch.md`.
 
-    **2026-09-06 lifecycle integration checkpoint (behavior gates pending):**
-    shared root-bound refresh/recovery/cancellation, daemon watcher ownership,
-    transactional lifecycle configuration, CLI/Doctor and GUI/Buddy lifecycle
-    controls are implemented. Strict core Clippy including tests is now green;
-    the small `gui_code_map_controller` core test target imports the production
-    controller without linking the Slint test monolith. Runtime tests, native GUI
-    and packaged acceptance are still pending. The incremental-refresh leaf
-    remains open: unchanged file/symbol rows are retained, but a stale refresh
-    still parses the complete root and replaces all root edges. Native coding
-    parity and the remaining cross-surface consumers are also still required.
+    **2026-09-06 final Wave 3 source/test checkpoint:** Repair 6 produced the
+    14,091-test binary
+    `360FD5F14C431306B6C344944AE8BC16DC25EE72E2F59221AF8FD193CD2DABB9`;
+    test compilation passed in 1m32s (`TEST_EXIT=0`), strict core Clippy in
+    2m33s (`CLIPPY_EXIT=0`), and the core package check in 1m46s
+    (`BUILD_EXIT=0`). The final selected matrix is 31/31 groups and 2,174
+    passing test executions, with one pre-existing ignored D008 WAL-latency
+    benchmark. Default-feature GUI `check --tests` passed in 4m57s
+    (`GUI_GATE_EXIT=0`), and the production code-map/Coding controller
+    harnesses passed 6/0 plus 6/0 in 4m31s. All 82 final manifest inputs,
+    including the unchanged pre-gate `SRC/neothd/Cargo.toml` inventory entry,
+    read back equal. Canonical proof is
+    `docs/verification/gold-wave3-source-manifest.json` and
+    `docs/verification/gold-wave3-test-matrix.json`. This replaces only the
+    historical full-root replacement statement: it does not close remaining
+    CRG-01 consumers, GUI/Buddy parity, clean-install/package, provider,
+    interactive-GUI, remote, or release obligations.
 
   - [ ] **CRG-02 — structural blast radius:
     NATIVE SERVICE + CLI/MCP WIRED / PRODUCT CONSUMERS PARTIAL / OPEN for
@@ -539,16 +551,23 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     - **Config/lifecycle/surfaces/package:** no ref/base/worktree mode, byte/hunk
       cap, timeout, rename policy, refresh rule, GUI diff inspector, Buddy
       action, Doctor probe or packaged workflow exists.
-    - [ ] Port the useful behavior of CRG
+    - [x] Port the useful behavior of CRG
       `changes.py::parse_git_diff_ranges` into a native typed parser/runner:
       safe bounded argv (no shell), explicit repo/root/ref authority,
       `--unified=0`, timeout/output/hunk caps, deterministic path normalization,
       and correct additions, modifications, deletions, renames, zero-length
-      ranges, quoted paths and binary handling.
-    - [ ] Persist or deterministically derive trustworthy symbol start/end
+      ranges, quoted paths and binary handling. Completed 2026-09-06 (Wave 3)
+      with the native bounded acquisition/parser and final `code_map::` proof;
+      see `docs/verification/gold-wave3-source-manifest.json` and
+      `docs/verification/gold-wave3-test-matrix.json`.
+    - [x] Persist or deterministically derive trustworthy symbol start/end
       extents with schema version/migration and language limitations made
       explicit; implement root/file/range intersection without treating an
-      estimated next declaration as exact proof.
+      estimated next declaration as exact proof. Completed 2026-09-06 (Wave 3):
+      schema v8 stores nullable parser-certified `line_end` extents and mapping
+      falls back to conservative file evidence without one. Evidence:
+      `docs/verification/gold-wave3-source-manifest.json` and
+      `docs/verification/gold-wave3-test-matrix.json`.
     - [ ] Feed resulting concrete nodes into CRG-02 and expose one canonical
       CLI/MCP service; wire review/apply/decomposer/risk prompt consumers with
       diff/ref/index-generation citations and visible partial/unmapped results.
@@ -4938,7 +4957,7 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
 - [ ] **GOLD-LF-P1-01 — ADR-009 INTENT/RESULT WAL pairs:** implement paired OsFileWriteIntent, ChannelEgressIntent, MediaCallIntent, SelfUpdateIntent and OsAppLaunchIntent subtypes at every real effect edge; focused tests must prove intent-before-effect, exactly one terminal result, replayability and secret-safe payloads. Source: ADR/009 and LOST_FEATURES P1.
 - [ ] **GOLD-LF-P1-02 — Mirror-refusal stages 2–6:** wire Schicht-0 output through the specified right-hemisphere, callosum and recovery stages, including bounded termination, provider/fallback behavior and audited outcomes; adversarial regressions must exercise every stage rather than only detection. Source: SPEC_mirror_refusal.md.
 - [x] **GOLD-LF-P1-03 — Derived external-output safety across Coding, MCP, Recall and CCR:** ✅ DONE 2026-07-18 — one canonical output sanitizer now covers control-sequence deobfuscation, modern credential shapes and structured JSON keys before every derived prompt/channel/recall/CCR/log/WAL surface. MCP keeps raw byte accounting and a metadata-only success WAL, validates opaque images, and restores one trusted outer MCP envelope around sanitized, nested-fence-defanged content. Agent transcript/title/dream rows sanitize on persistence while operator source rows remain byte-exact in atomic current-user-only Hindsight storage; legacy recall/code-map rows sanitize again on egress. Coding patches are never rewritten after CRLF transport canonicalization: any byte-changing control/secret scan fails closed before owner-private atomic persistence or apply, while diagnostics and decoded failure WAL payloads are sanitized at their producers. File CCR is atomic and current-user-only across processes. Evidence: 34/34 `lf_p1_03_`, 142/142 sanitizer-family, operator-source 1/1, dream-cloud 1/1 and generated CLI-doc 1/1 regressions plus independent adversarial review. Source: SMALLCODE_AUDIT_2026-05-21 §5#4 plus current-source correction in `LOST_FEATURES_1_0_RECOVERY.md`.
-- [ ] **GOLD-LF-P1-04 — HLC-ordered WAL replay:** first record a backwards-compatible EventHeaderV2/HLC merge design, then replace naive ±300-second wall-clock ordering with deterministic node-aware HLC ordering without breaking existing WAL consumers; mixed-version, skew and tie tests are required. Source: CLAUDE_v07_review.md §11.
+- [x] **GOLD-LF-P1-04 — HLC-ordered WAL replay:** first record a backwards-compatible EventHeaderV2/HLC merge design, then replace naive ±300-second wall-clock ordering with deterministic node-aware HLC ordering without breaking existing WAL consumers; mixed-version, skew and tie tests are required. Completed 2026-09-06 (Wave 3): canonical HLC/node/event replay order and authenticated post-commit receive merge are documented in `docs/wal-hlc-replay-design.md`; the final matrix proves compatibility, skew, tie, scan/CLI and receive paths. Evidence: `docs/verification/gold-wave3-source-manifest.json` and `docs/verification/gold-wave3-test-matrix.json`. Source: CLAUDE_v07_review.md §11.
 - [ ] **GOLD-LF-P1-05 — Per-decision append-only trust ledger:** add typed TrustEvent/TrustLedger persistence and a WAL event at every autonomy/trust decision boundary, with deterministic inspection, subject isolation, tamper detection and replay tests. Source: GREMIUM_EXECUTION_BACKLOG_2026-05-20 P3.
 - [ ] **GOLD-LF-P1-06 — AgreementDimension council scoring:** define the complete dimension enum and explicit weighting/aggregation contract, thread dimension scores through council decisions and audits, and pin deterministic formula, missing-dimension and disagreement tests. Source: BLUEPRINT_v06_synthesis.md §8.
 - [ ] **GOLD-LF-P1-07 — External-family grader parity gate:** add a verified family tag to grader configuration and fail the recall-parity gate unless the required independent external family is present; cover spoofed, missing, duplicate and mixed-family configurations. Source: 00_DESIGN_v1.1_FINAL.md H7.

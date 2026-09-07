@@ -25,6 +25,10 @@ fn generation(database: &Path, root: &Path) -> LifecycleGeneration {
         CodeMapLifecycleState::Fresh { snapshot }
         | CodeMapLifecycleState::Stale { snapshot }
         | CodeMapLifecycleState::Incomplete { snapshot } => snapshot,
+        CodeMapLifecycleState::Refreshing {
+            prior: Some(snapshot),
+            ..
+        } => snapshot,
         state => panic!("expected an indexed lifecycle snapshot, found {state:?}"),
     }
 }
@@ -190,7 +194,11 @@ fn disabling_or_removing_a_root_cancels_and_joins_before_returning() {
     let database = workspace.path().join("instance/code_map.db");
     let config = managed_config(root.clone());
     let mut watchers = CodeMapLifecycleWatchers::start(&database, &config).unwrap();
-    assert_eq!(watchers.roots().collect::<Vec<_>>(), vec![root.as_path()]);
+    let canonical_root = fs::canonicalize(&root).unwrap();
+    assert_eq!(
+        watchers.roots().collect::<Vec<_>>(),
+        vec![canonical_root.as_path()]
+    );
 
     let started = Instant::now();
     watchers.shutdown().unwrap();
@@ -227,7 +235,11 @@ fn rejected_lifecycle_candidate_leaves_the_accepted_watcher_set_and_epoch_intact
         ..CodeMapLifecycleConfig::default()
     };
     assert!(invalid.validate().is_err());
-    assert_eq!(watchers.roots().collect::<Vec<_>>(), vec![root.as_path()]);
+    let canonical_root = fs::canonicalize(&root).unwrap();
+    assert_eq!(
+        watchers.roots().collect::<Vec<_>>(),
+        vec![canonical_root.as_path()]
+    );
 
     fs::write(root.join("lib.rs"), "pub fn still_accepted() {}\n").unwrap();
     let after = wait_for_generation_after(&database, &root, before.index_generation);

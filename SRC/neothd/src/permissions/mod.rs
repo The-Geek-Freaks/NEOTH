@@ -26,6 +26,7 @@ pub mod ifc;
 pub mod lease;
 pub mod policy;
 pub mod tier_classifier;
+pub mod trust_ledger;
 
 pub use gate::{ConfirmStrategy, Gate, PermissionAuditSink};
 pub use ifc::{
@@ -33,6 +34,10 @@ pub use ifc::{
 };
 pub use policy::{
     ActionKind, AutonomyPolicySnapshot, CustomAutonomyConfig, CustomDecision, PolicyArgument,
+};
+pub use trust_ledger::{
+    TrustEvent, TrustLedger, TrustLedgerBoundary, TrustLedgerCompleteness, TrustLedgerEntry,
+    TrustOutcome,
 };
 
 // SP-3 bridge: re-export the SDK's typed API primitives so daemon code

@@ -55,9 +55,10 @@ use super::schema::SkillManifest;
 use super::store::{
     BoundChildObject, BoundDirectory, BoundDirectoryChild, bind_child_object, bind_real_child_dir,
     cap_metadata_is_link_like, open_bound_directory, open_bound_directory_from_trusted_anchor,
-    open_real_child_dir, open_regular_file, read_regular_file_bounded,
-    read_regular_file_bounded_observed, remove_bound_real_directory_tree, remove_child_file,
-    remove_real_directory_tree, rename_child, valid_child_identity_token,
+    open_bound_real_child_dir_for_read, open_real_child_dir, open_regular_file,
+    read_regular_file_bounded, read_regular_file_bounded_observed,
+    remove_bound_real_directory_tree, remove_child_file, remove_real_directory_tree, rename_child,
+    valid_child_identity_token,
 };
 
 const MAX_SKILL_MANIFEST_BYTES: usize = 1024 * 1024;
@@ -1835,6 +1836,26 @@ fn installed_entry_generation_at_locked(
     entry_name: &str,
     logical_id: &str,
 ) -> Result<Option<String>> {
+    installed_entry_generation_at_bound_locked(root, entry_name, logical_id, None)
+}
+
+/// Hash an entry through a retained exact-object binding when one is required
+/// to compose a Windows generation read with a live deletion capability.
+fn installed_entry_generation_at_with_binding_locked(
+    root: &BoundDirectory,
+    entry_name: &str,
+    logical_id: &str,
+    binding: &BoundChildObject,
+) -> Result<Option<String>> {
+    installed_entry_generation_at_bound_locked(root, entry_name, logical_id, Some(binding))
+}
+
+fn installed_entry_generation_at_bound_locked(
+    root: &BoundDirectory,
+    entry_name: &str,
+    logical_id: &str,
+    binding: Option<&BoundChildObject>,
+) -> Result<Option<String>> {
     let display = root.display_path.join(entry_name);
     let metadata = match root.dir.symlink_metadata(entry_name) {
         Ok(metadata) => metadata,
@@ -1846,7 +1867,15 @@ fn installed_entry_generation_at_locked(
     };
 
     if metadata.is_dir() && !cap_metadata_is_link_like(&metadata) {
-        let directory = open_real_child_dir(&root.dir, OsStr::new(entry_name), &display)?;
+        let directory = match binding {
+            Some(binding) => open_bound_real_child_dir_for_read(
+                &root.dir,
+                binding,
+                OsStr::new(entry_name),
+                &display,
+            )?,
+            None => open_real_child_dir(&root.dir, OsStr::new(entry_name), &display)?,
+        };
         if let Ok(generation) = skill_tree_generation_sha256(&directory, &display, None) {
             return Ok(Some(generation));
         }
@@ -3257,7 +3286,12 @@ impl PreparedSkillRemoval {
             if !bound_identity.matches_child(&self.root.dir, OsStr::new(&self.id), &target)? {
                 anyhow::bail!("skill uninstall target identity changed before commit");
             }
-            let observed = installed_entry_generation_locked(&self.root, &self.id)?;
+            let observed = installed_entry_generation_at_with_binding_locked(
+                &self.root,
+                &self.id,
+                &self.id,
+                bound_identity,
+            )?;
             if observed.as_deref() != Some(self.target_generation_sha256.as_str()) {
                 anyhow::bail!(
                     "skill uninstall destination changed after its intent was acknowledged"
@@ -3287,9 +3321,14 @@ impl PreparedSkillRemoval {
                     &self.root,
                     &mut self.journal,
                     SkillMutationFailureState::Aborted,
-                    installed_entry_generation_locked(&self.root, &self.id)
-                        .ok()
-                        .flatten(),
+                    installed_entry_generation_at_with_binding_locked(
+                        &self.root,
+                        &self.id,
+                        &self.id,
+                        bound_identity,
+                    )
+                    .ok()
+                    .flatten(),
                     error.context("revalidate bound skill removal object"),
                 ));
             }
@@ -3299,9 +3338,14 @@ impl PreparedSkillRemoval {
                 &self.root,
                 &mut self.journal,
                 SkillMutationFailureState::Indeterminate,
-                installed_entry_generation_locked(&self.root, &self.id)
-                    .ok()
-                    .flatten(),
+                installed_entry_generation_at_with_binding_locked(
+                    &self.root,
+                    &self.id,
+                    &self.id,
+                    bound_identity,
+                )
+                .ok()
+                .flatten(),
                 error.context("inject deterministic final-lookup removal swap"),
             ));
         }
@@ -3354,12 +3398,22 @@ impl PreparedSkillRemoval {
             let tombstone_name = tombstone
                 .to_str()
                 .context("private removal tombstone name is not UTF-8")?;
-            if installed_entry_generation_at_locked(&self.root, tombstone_name, &self.id)?
-                .as_deref()
+            if installed_entry_generation_at_with_binding_locked(
+                &self.root,
+                tombstone_name,
+                &self.id,
+                bound_identity,
+            )?
+            .as_deref()
                 != Some(self.target_generation_sha256.as_str())
             {
                 anyhow::bail!(
                     "removal tombstone generation differs from the preflight-bound target"
+                );
+            }
+            if !bound_identity.matches_child(&self.root.dir, &tombstone, &tombstone_path)? {
+                anyhow::bail!(
+                    "removal tombstone identity changed while its generation was revalidated"
                 );
             }
             Ok(())
@@ -3487,12 +3541,13 @@ fn restore_prior_backup_if_present(
     if bound_backup.identity_token() != prior_identity {
         return Ok(false);
     }
-    let backup_generation = installed_entry_generation_at_locked(
+    let backup_generation = installed_entry_generation_at_with_binding_locked(
         root,
         backup
             .to_str()
             .context("private skill backup name is not UTF-8")?,
         &record.skill_id,
+        &bound_backup,
     )?;
     if backup_generation.as_deref() != Some(prior) {
         anyhow::bail!(
@@ -3533,9 +3588,27 @@ fn restore_prior_backup_if_present(
             record.operation_id
         );
     }
-    if installed_entry_generation_locked(root, &record.skill_id)?.as_deref() != Some(prior) {
+    if installed_entry_generation_at_with_binding_locked(
+        root,
+        &record.skill_id,
+        &record.skill_id,
+        &bound_backup,
+    )?
+    .as_deref()
+        != Some(prior)
+    {
         anyhow::bail!(
             "restored public Skill generation does not match the journal-bound prior generation for {}",
+            record.operation_id
+        );
+    }
+    if !bound_backup.matches_child(
+        &root.dir,
+        OsStr::new(&record.skill_id),
+        &root.display_path.join(&record.skill_id),
+    )? {
+        anyhow::bail!(
+            "restored public Skill object changed during generation verification for {}",
             record.operation_id
         );
     }
@@ -3617,7 +3690,13 @@ fn restore_prior_removal_tombstone(
     let tombstone_name = expected_tombstone
         .to_str()
         .context("private removal tombstone name is not UTF-8")?;
-    if installed_entry_generation_at_locked(root, tombstone_name, &record.skill_id)?.as_deref()
+    if installed_entry_generation_at_with_binding_locked(
+        root,
+        tombstone_name,
+        &record.skill_id,
+        &bound_tombstone,
+    )?
+    .as_deref()
         != Some(prior)
     {
         anyhow::bail!(
@@ -3655,9 +3734,23 @@ fn restore_prior_removal_tombstone(
             record.operation_id
         );
     }
-    if installed_entry_generation_locked(root, &record.skill_id)?.as_deref() != Some(prior) {
+    if installed_entry_generation_at_with_binding_locked(
+        root,
+        &record.skill_id,
+        &record.skill_id,
+        &bound_tombstone,
+    )?
+    .as_deref()
+        != Some(prior)
+    {
         anyhow::bail!(
             "restored removal generation does not match the journal-bound v2 prior generation for {}",
+            record.operation_id
+        );
+    }
+    if !bound_tombstone.matches_child(&root.dir, OsStr::new(&record.skill_id), &public_display)? {
+        anyhow::bail!(
+            "restored removal object changed during generation verification for {}",
             record.operation_id
         );
     }
@@ -4138,10 +4231,11 @@ impl PendingSkillMutationReconciliation {
                         .to_str()
                         .context("private replacement backup name is not UTF-8")?;
                     if bound_backup.identity_token() != expected_identity
-                        || installed_entry_generation_at_locked(
+                        || installed_entry_generation_at_with_binding_locked(
                             &self.root,
                             backup_name,
                             &self.record.skill_id,
+                            &bound_backup,
                         )? != self.record.prior_generation_sha256
                         || !bound_backup.matches_child(&self.root.dir, &backup, &backup_display)?
                     {
@@ -4189,10 +4283,11 @@ impl PendingSkillMutationReconciliation {
                     let tombstone_name = tombstone
                         .to_str()
                         .context("private removal tombstone name is not UTF-8")?;
-                    if installed_entry_generation_at_locked(
+                    if installed_entry_generation_at_with_binding_locked(
                         &self.root,
                         tombstone_name,
                         &self.record.skill_id,
+                        &bound_tombstone,
                     )? != self.record.prior_generation_sha256
                     {
                         anyhow::bail!(

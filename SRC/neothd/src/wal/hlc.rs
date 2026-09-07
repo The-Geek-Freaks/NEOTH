@@ -3,6 +3,7 @@
 // S9 fix: overflow returns Result, never panics.
 
 use super::error::HlcError;
+use super::header::EventHeaderV2;
 use super::types::NodeId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +49,57 @@ impl PartialOrd for Hlc {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
+}
+
+/// Canonical deterministic order for replaying or inspecting decoded WAL
+/// frames. HLC establishes the inter-node temporal order; node identity then
+/// resolves concurrent equal-HLC frames without trusting a peer wall clock.
+///
+/// The remaining immutable header fields make the comparison total even for
+/// malformed-but-decodable duplicate metadata. Exact same-header frames still
+/// compare equal, which is the only case where retaining their source order is
+/// meaningful.
+pub(crate) fn compare_event_headers_for_replay(
+    left: &EventHeaderV2,
+    right: &EventHeaderV2,
+) -> std::cmp::Ordering {
+    left.hlc
+        .cmp(&right.hlc)
+        .then_with(|| left.node_id.0.cmp(&right.node_id.0))
+        .then_with(|| left.event_id.cmp(&right.event_id))
+        .then_with(|| left.payload_hash.cmp(&right.payload_hash))
+        .then_with(|| left.event_type.cmp(&right.event_type))
+        .then_with(|| left.event_subtype.cmp(&right.event_subtype))
+        .then_with(|| left.flags.bits().cmp(&right.flags.bits()))
+        .then_with(|| left.generation.cmp(&right.generation))
+        .then_with(|| left.scope.0.cmp(&right.scope.0))
+        .then_with(|| left.category.0.cmp(&right.category.0))
+        .then_with(|| left.session_id.0.cmp(&right.session_id.0))
+        .then_with(|| left.importance.cmp(&right.importance))
+        .then_with(|| left.reserved_len.cmp(&right.reserved_len))
+        .then_with(|| left.payload_len.cmp(&right.payload_len))
+        .then_with(|| left.total_len.cmp(&right.total_len))
+}
+
+/// Merge a canonical peer WAL header into the process-global HLC only after
+/// the authenticated receive transaction has committed. The caller must not
+/// hold a database or membership lock while acquiring the independent clock
+/// mutex, keeping the writer's lock order one-way.
+pub(crate) fn merge_global_hlc_after_authenticated_receive(
+    peer_header: &EventHeaderV2,
+) -> Result<(), HlcError> {
+    let now_ns = crate::time::now_unix_ns();
+    let mut current = crate::wal::GLOBAL_HLC
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // `hlc_tick_receive` updates its argument branch-by-branch. In the
+    // peer-physical-dominant branch that means physical time is assigned before
+    // the logical increment can report overflow. Keep the real global value
+    // untouched until the complete receive transition succeeds.
+    let mut candidate = *current;
+    hlc_tick_receive(&mut candidate, now_ns, peer_header.hlc, peer_header.node_id)?;
+    *current = candidate;
+    Ok(())
 }
 
 /// On local event generation. Updates `current` in-place.
@@ -115,6 +167,14 @@ pub fn hlc_tick_receive(
 mod tests {
     use super::*;
 
+    fn header(physical_ns: u64, logical: u32, node: u8, event_id: u64) -> EventHeaderV2 {
+        let mut header = EventHeaderV2::empty();
+        header.hlc = Hlc::new(physical_ns, logical).unwrap();
+        header.node_id = NodeId::from_bytes([node; 16]);
+        header.event_id = super::super::types::EventId(event_id);
+        header
+    }
+
     #[test]
     fn epoch_is_zero() {
         assert_eq!(Hlc::EPOCH.physical_ns(), 0);
@@ -164,6 +224,74 @@ mod tests {
         assert!(a < b);
         assert!(b < c);
         assert!(a < c);
+    }
+
+    #[test]
+    fn replay_order_uses_hlc_before_node_identity_despite_wall_clock_skew() {
+        let older_hlc = header(1_000, 9, 0xFF, 99);
+        let newer_hlc = header(1_001, 0, 0x00, 1);
+
+        assert_eq!(
+            compare_event_headers_for_replay(&older_hlc, &newer_hlc),
+            std::cmp::Ordering::Less,
+            "physical HLC order must win over node-id and event-id tie breakers"
+        );
+    }
+
+    #[test]
+    fn replay_order_breaks_equal_hlc_ties_by_node_then_event_identity() {
+        let lower_node = header(1_000, 7, 0x01, 99);
+        let higher_node = header(1_000, 7, 0x02, 1);
+        let later_event = header(1_000, 7, 0x02, 2);
+
+        assert_eq!(
+            compare_event_headers_for_replay(&lower_node, &higher_node),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_event_headers_for_replay(&higher_node, &later_event),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn global_receive_overflow_leaves_the_clock_unchanged() {
+        let _env = crate::test_env::lock();
+        struct HlcRestore(Hlc);
+        impl Drop for HlcRestore {
+            fn drop(&mut self) {
+                *crate::wal::GLOBAL_HLC
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = self.0;
+            }
+        }
+
+        let initial = Hlc::new(u64::MAX - 2, 9).unwrap();
+        let _restore = HlcRestore(
+            *crate::wal::GLOBAL_HLC
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        *crate::wal::GLOBAL_HLC
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = initial;
+        let peer = header(u64::MAX - 1, u32::MAX, 0xA5, 7);
+
+        let result = merge_global_hlc_after_authenticated_receive(&peer);
+
+        assert!(matches!(
+            result,
+            Err(HlcError::LogicalOverflow {
+                peer_node_id: Some(node)
+            }) if node == peer.node_id
+        ));
+        assert_eq!(
+            *crate::wal::GLOBAL_HLC
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            initial,
+            "a rejected receive must not partially advance the global HLC"
+        );
     }
 
     #[test]

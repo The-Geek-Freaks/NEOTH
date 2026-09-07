@@ -19,6 +19,7 @@
 //!   - `impact`          Compute a generation-bound structural blast radius
 //!                       from changed files or exact file::symbol seeds.
 
+use std::io::Read;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -236,6 +237,51 @@ pub enum CodeMapAction {
         #[arg(long)]
         allow_stale: bool,
     },
+
+    /// Acquire one explicit Git diff, map only hunk-intersecting declaration
+    /// lines to exact symbols, then run the canonical impact service. The
+    /// selected root must already have a current persisted code map.
+    DiffImpact {
+        /// Explicit Git and code-map root. This command never infers a root
+        /// from the current directory.
+        #[arg(long, value_name = "PATH")]
+        root: PathBuf,
+
+        /// Compare the index with HEAD. The default source is the working tree.
+        #[arg(long, conflicts_with_all = ["base", "target", "stdin"])]
+        staged: bool,
+
+        /// Older committed revision; requires --target and cannot be combined
+        /// with --staged or --stdin.
+        #[arg(long, value_name = "REF", requires = "target", conflicts_with_all = ["staged", "stdin"])]
+        base: Option<String>,
+
+        /// Newer committed revision; requires --base and cannot be combined
+        /// with --staged or --stdin.
+        #[arg(long, value_name = "REF", requires = "base", conflicts_with_all = ["staged", "stdin"])]
+        target: Option<String>,
+
+        /// Read a unified diff from standard input. --root remains mandatory
+        /// so changed paths are contained before their source is read.
+        #[arg(long, conflicts_with_all = ["staged", "base", "target"])]
+        stdin: bool,
+
+        /// Relationship direction from each changed declaration.
+        #[arg(long, value_enum, default_value_t = ImpactDirectionArg::Callers)]
+        direction: ImpactDirectionArg,
+
+        /// Maximum relationship hops. Hard ceiling 32.
+        #[arg(long, value_name = "N", default_value_t = crate::code_map::impact::DEFAULT_MAX_DEPTH)]
+        max_depth: usize,
+
+        /// Maximum affected declarations returned. Hard ceiling 10000.
+        #[arg(long, value_name = "N", default_value_t = crate::code_map::impact::DEFAULT_MAX_NODES)]
+        max_nodes: usize,
+
+        /// Permit analysis against an index known to predate on-disk edits.
+        #[arg(long)]
+        allow_stale: bool,
+    },
 }
 
 fn parse_recall_max(raw: &str) -> std::result::Result<usize, String> {
@@ -308,6 +354,30 @@ pub async fn run_code_map(args: CodeMapArgs) -> Result<()> {
             max_depth,
             max_nodes,
             allow_stale,
+            args.output,
+        ),
+        CodeMapAction::DiffImpact {
+            root,
+            staged,
+            base,
+            target,
+            stdin,
+            direction,
+            max_depth,
+            max_nodes,
+            allow_stale,
+        } => run_diff_impact(
+            DiffImpactRequest {
+                root,
+                staged,
+                base,
+                target,
+                stdin,
+                direction,
+                max_depth,
+                max_nodes,
+                allow_stale,
+            },
             args.output,
         ),
     }
@@ -913,14 +983,114 @@ fn run_impact(
     output: OutputFormat,
 ) -> Result<()> {
     let seeds = parse_impact_seeds(files, symbols)?;
+    let cwd = std::env::current_dir().context("resolve current directory for impact analysis")?;
+    run_impact_for_root(
+        cwd,
+        seeds,
+        direction,
+        max_depth,
+        max_nodes,
+        allow_stale,
+        output,
+    )
+}
 
+struct DiffImpactRequest {
+    root: PathBuf,
+    staged: bool,
+    base: Option<String>,
+    target: Option<String>,
+    stdin: bool,
+    direction: ImpactDirectionArg,
+    max_depth: usize,
+    max_nodes: usize,
+    allow_stale: bool,
+}
+
+fn run_diff_impact(request: DiffImpactRequest, output: OutputFormat) -> Result<()> {
+    let source = match (
+        request.staged,
+        request.base.as_ref(),
+        request.target.as_ref(),
+        request.stdin,
+    ) {
+        (true, None, None, false) => crate::code_map::diff_git::GitDiffSource::Staged,
+        (false, Some(base), Some(target), false) => {
+            crate::code_map::diff_git::GitDiffSource::Committed {
+                base: base.clone(),
+                target: target.clone(),
+            }
+        }
+        (false, None, None, true) => crate::code_map::diff_git::GitDiffSource::Stdin,
+        (false, None, None, false) => crate::code_map::diff_git::GitDiffSource::WorkingTree,
+        _ => anyhow::bail!(
+            "choose exactly one diff source: working tree, --staged, --base/--target, or --stdin"
+        ),
+    };
+    let acquired = if source == crate::code_map::diff_git::GitDiffSource::Stdin {
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .take((crate::code_map::diff::MAX_DIFF_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .context("read unified diff from standard input")?;
+        let input = String::from_utf8(bytes).context("unified diff standard input is not UTF-8")?;
+        crate::code_map::diff_git::parse_stdin_diff(&input)?
+    } else {
+        crate::code_map::diff_git::acquire_git_diff(&request.root, source)?
+    };
     let db_path = crate::code_map::persist::default_path();
     let conn = crate::code_map::persist::open(&db_path)
         .with_context(|| format!("open code_map db at {}", db_path.display()))?;
-    let cwd = std::env::current_dir().context("resolve current directory for impact analysis")?;
+    let canonical_root = request
+        .root
+        .canonicalize()
+        .with_context(|| format!("canonicalize explicit diff root {}", request.root.display()))?;
+    let indexed = crate::code_map::persist::load_map(
+        &conn,
+        canonical_root
+            .to_str()
+            .context("explicit diff root is not valid UTF-8")?,
+    )?
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "explicit diff root {} is not indexed; run `neoth code-map persist` first",
+            canonical_root.display()
+        )
+    })?;
+    let seeds = crate::code_map::diff_git::map_acquired_diff_to_indexed_impact_seeds(
+        &canonical_root,
+        &acquired,
+        &indexed,
+    )?;
+    let result = crate::code_map::impact::impact_radius_for_diff_seeds(
+        &conn,
+        &canonical_root,
+        &seeds,
+        crate::code_map::impact::ImpactOptions {
+            direction: request.direction.into(),
+            max_depth: request.max_depth,
+            max_nodes: request.max_nodes,
+            allow_stale: request.allow_stale,
+        },
+    )?;
+    render_impact_result(&result, output)
+}
+
+fn run_impact_for_root(
+    root: PathBuf,
+    seeds: Vec<crate::code_map::impact::ImpactSeed>,
+    direction: ImpactDirectionArg,
+    max_depth: usize,
+    max_nodes: usize,
+    allow_stale: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    let db_path = crate::code_map::persist::default_path();
+    let conn = crate::code_map::persist::open(&db_path)
+        .with_context(|| format!("open code_map db at {}", db_path.display()))?;
     let result = crate::code_map::impact::impact_radius_for_path(
         &conn,
-        &cwd,
+        &root,
         &seeds,
         crate::code_map::impact::ImpactOptions {
             direction: direction.into(),
@@ -930,10 +1100,17 @@ fn run_impact(
         },
     )?;
 
+    render_impact_result(&result, output)
+}
+
+fn render_impact_result(
+    result: &crate::code_map::impact::ImpactResult,
+    output: OutputFormat,
+) -> Result<()> {
     match output {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&result)?),
         OutputFormat::Jsonl => println!("{}", serde_json::to_string(&result)?),
-        OutputFormat::Table => render_impact_table(&result),
+        OutputFormat::Table => render_impact_table(result),
     }
     Ok(())
 }
@@ -1067,6 +1244,48 @@ mod tests {
         );
         assert!(parse_impact_seeds(Vec::new(), vec!["missing-separator".into()]).is_err());
         assert!(parse_impact_seeds(Vec::new(), vec!["::empty".into()]).is_err());
+    }
+
+    #[test]
+    fn diff_impact_cli_requires_explicit_root_and_mutually_exclusive_source() {
+        let parsed = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "code-map",
+            "diff-impact",
+            "--root",
+            "C:/work/repository",
+            "--base",
+            "HEAD~1",
+            "--target",
+            "HEAD",
+        ])
+        .expect("committed diff source must parse");
+        let crate::cli::Commands::CodeMap(parsed) = parsed.command else {
+            panic!("expected code-map command");
+        };
+        assert!(matches!(
+            parsed.action,
+            CodeMapAction::DiffImpact {
+                root,
+                base: Some(base),
+                target: Some(target),
+                staged: false,
+                stdin: false,
+                ..
+            } if root == std::path::Path::new("C:/work/repository") && base == "HEAD~1" && target == "HEAD"
+        ));
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "neoth",
+                "code-map",
+                "diff-impact",
+                "--root",
+                "C:/work/repository",
+                "--staged",
+                "--stdin",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

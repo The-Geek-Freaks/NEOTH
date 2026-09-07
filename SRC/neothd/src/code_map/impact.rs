@@ -80,6 +80,19 @@ impl ImpactSeed {
     }
 }
 
+/// CRG-03 to CRG-02 seam: execute the canonical impact service from typed
+/// diff-derived seeds. Acquisition and source parsing stay outside this
+/// module; only the public seed identities cross this boundary.
+pub fn impact_radius_for_diff_seeds(
+    conn: &Connection,
+    repo_root: &Path,
+    seeds: &[super::diff_git::DiffImpactSeed],
+    options: ImpactOptions,
+) -> Result<ImpactResult> {
+    let seeds: Vec<ImpactSeed> = seeds.iter().map(|seed| seed.seed.clone()).collect();
+    impact_radius_for_path(conn, repo_root, &seeds, options)
+}
+
 /// Which side of a call relationship is affected by a changed declaration.
 ///
 /// - `callers`: dependents that call the changed declaration (blast radius).
