@@ -2,12 +2,12 @@
 //!
 //! `list` issues a WebDAV `REPORT` for VEVENTs (read-only); `add` PUTs a new
 //! event. The write is gated + audited through the SAME unified
-//! `ExternalTaskWrite` path as `neoth todo` (autonomy/consent pre-flight +
-//! fail-closed `0xC8 TODO_WRITE` audit) — a calendar PUT is an external network
+//! `ExternalTaskWrite` path as `neoth todo` (required canonical Gate decision
+//! before the PUT, plus outcome evidence) — a calendar PUT is an external network
 //! mutation, so it carries the identical guarantees. Credentials come from the
 //! same `caldav_{url,username,password}` the todo CalDAV provider uses.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
@@ -33,7 +33,7 @@ pub enum CalendarAction {
         #[arg(long, value_name = "URL")]
         url: Option<String>,
     },
-    /// Add (PUT) a new event. Gated + audited (`0xC8`) like every external
+    /// Add (PUT) a new event. Gated and decision-audited like every external
     /// write; idempotent by `(summary, start)` so a re-run never duplicates.
     Add {
         /// Event title (SUMMARY).
@@ -112,48 +112,68 @@ pub async fn run_calendar(args: CalendarArgs) -> Result<()> {
                 );
             }
 
-            // P0: every external write goes through the unified gate.
-            crate::cli::todo::gate_external_task_write(*yes, "caldav_calendar", "add")?;
-            let uid = caldav_calendar::event_uid(&event);
-            let outcome = match caldav_calendar::create_event_against(
-                &cal_url,
-                &creds.username,
-                creds.password.expose(),
-                &event,
-            )
-            .await
-            {
-                Ok(o) => o,
-                Err(e) => {
-                    // COR-20: the write passed the kill switch + autonomy gate
-                    // but the CalDAV network PUT failed. Emit CALENDAR_WRITE_FAILED
-                    // (0xCE) BEFORE propagating so a network failure leaves a
-                    // durable audit anchor instead of vanishing into the error
-                    // chain. `{e:#}` is the full chain (URL + HTTP status, never
-                    // credentials).
-                    emit_calendar_write_failed("caldav_calendar", "add", &uid, &e.to_string())
-                        .await;
-                    return Err(e);
-                }
-            };
-            // Audit the write (its OWN event 0xCA — calendar is a distinct
-            // domain from 0xC8 TODO_WRITE). Metadata only: provider/action/uid +
-            // a HASH of the title + start/end. Never the raw summary, never
-            // credentials. Mirrors the todo path (audits regardless of outcome).
-            emit_calendar_write(
+            let binding = calendar_write_permission_binding(&cal_url, &creds.username, &event)?;
+            crate::cli::todo::execute_external_task_write(
+                *yes,
                 "caldav_calendar",
                 "add",
-                &uid,
-                summary,
-                start,
-                &event.end_rfc3339,
+                &binding,
+                || async {
+                    let uid = caldav_calendar::event_uid(&event);
+                    let outcome = match caldav_calendar::create_event_against(
+                        &cal_url,
+                        &creds.username,
+                        creds.password.expose(),
+                        &event,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            emit_calendar_write_failed(
+                                "caldav_calendar",
+                                "add",
+                                &uid,
+                                &error.to_string(),
+                            )
+                            .await;
+                            return Err(error);
+                        }
+                    };
+                    emit_calendar_write(
+                        "caldav_calendar",
+                        "add",
+                        &uid,
+                        summary,
+                        start,
+                        &event.end_rfc3339,
+                    )
+                    .await;
+                    render_create_outcome(args.output, outcome, summary, &uid);
+                    Ok(())
+                },
             )
-            .await;
-
-            render_create_outcome(args.output, outcome, summary, &uid);
-            Ok(())
+            .await
         }
     }
+}
+
+/// Bind the exact CalDAV collection and VEVENT body before the mandatory Gate
+/// decision. The URL and event remain private input to the digest helper; the
+/// resulting TrustEvent carries only the opaque binding.
+fn calendar_write_permission_binding(
+    cal_url: &str,
+    account_selector: &str,
+    event: &CalendarEvent,
+) -> Result<String> {
+    let private_request = serde_json::to_vec(&serde_json::json!({
+        "schema": 1,
+        "collection_url": cal_url,
+        "account_selector": account_selector,
+        "event": event,
+    }))
+    .context("serialize canonical calendar event permission binding")?;
+    crate::cli::todo::external_task_request_binding("caldav_calendar", "add", private_request)
 }
 
 fn render_events(events: &[CalendarEvent], output: OutputFormat) {
@@ -321,6 +341,13 @@ async fn emit_calendar_write_failed(provider: &str, action: &str, uid: &str, rea
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn full_calendar_policy() -> crate::permissions::AutonomyPolicySnapshot {
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.autonomy = crate::permissions::AutonomyLevel::Full;
+        cfg.autonomy_policy()
+    }
 
     #[test]
     fn calendar_write_payload_hashes_title_and_omits_raw_text() {
@@ -384,5 +411,114 @@ mod tests {
         );
         // The frame distinguishes a network failure from a policy denial.
         assert!(v.get("summary_hash").is_none());
+    }
+
+    #[tokio::test]
+    async fn calendar_admission_has_authenticated_ledger_before_injected_put() {
+        let home = tempfile::tempdir().unwrap();
+        let event = CalendarEvent {
+            calendar_id: "primary".to_owned(),
+            event_id: String::new(),
+            summary: "private planning".to_owned(),
+            description: "private detail".to_owned(),
+            location: "private location".to_owned(),
+            start_rfc3339: "2026-09-07T10:00:00Z".to_owned(),
+            end_rfc3339: "2026-09-07T11:00:00Z".to_owned(),
+            attendees: Vec::new(),
+        };
+        let binding = calendar_write_permission_binding(
+            "https://dav.example/tasks",
+            "operator@example.test",
+            &event,
+        )
+        .unwrap();
+        let put_called = AtomicBool::new(false);
+        crate::cli::todo::execute_external_task_write_at(
+            home.path(),
+            full_calendar_policy(),
+            true,
+            "caldav_calendar",
+            "add",
+            &binding,
+            || async {
+                let ledger = crate::permissions::trust_ledger::TrustLedger::replay_subject_at_home(
+                    home.path(),
+                    crate::permissions::trust_ledger::LOCAL_SUBJECT,
+                )
+                .unwrap();
+                assert_eq!(ledger.entries.len(), 1);
+                put_called.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert!(put_called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn calendar_dead_required_sink_cannot_reach_injected_put() {
+        let binding = crate::cli::todo::external_task_request_binding(
+            "caldav_calendar",
+            "add",
+            b"serialized private event",
+        )
+        .unwrap();
+        let put_called = AtomicBool::new(false);
+        let admission = crate::cli::todo::execute_external_task_write_with_sink(
+            full_calendar_policy(),
+            true,
+            "caldav_calendar",
+            "add",
+            &binding,
+            crate::permissions::PermissionAuditSink::Fail("dead test audit sink"),
+            || async {
+                put_called.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await;
+        assert!(admission.is_err());
+        assert!(!put_called.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn calendar_permission_binding_is_collection_url_sensitive() {
+        let event = CalendarEvent {
+            calendar_id: "primary".to_owned(),
+            event_id: String::new(),
+            summary: "private planning".to_owned(),
+            description: String::new(),
+            location: String::new(),
+            start_rfc3339: "2026-09-07T10:00:00Z".to_owned(),
+            end_rfc3339: "2026-09-07T11:00:00Z".to_owned(),
+            attendees: Vec::new(),
+        };
+        let first = calendar_write_permission_binding(
+            "https://dav.example/a",
+            "operator@example.test",
+            &event,
+        )
+        .unwrap();
+        let second = calendar_write_permission_binding(
+            "https://dav.example/b",
+            "operator@example.test",
+            &event,
+        )
+        .unwrap();
+        let different_account = calendar_write_permission_binding(
+            "https://dav.example/a",
+            "other@example.test",
+            &event,
+        )
+        .unwrap();
+        assert_ne!(
+            first, second,
+            "the allowed decision must bind the collection URL"
+        );
+        assert_ne!(
+            first, different_account,
+            "the allowed decision must bind the authenticated calendar account"
+        );
     }
 }

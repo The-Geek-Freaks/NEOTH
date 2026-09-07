@@ -20,7 +20,7 @@ use super::decomposer::{
     DecomposerLlm, DecompositionCancellation, DecompositionCancelled,
     decompose_with_code_map_context_cancellable,
 };
-use super::dispatcher::{ApplyOrigin, DispatchApplyConfig, HemisphereWorkerSet};
+use super::dispatcher::{ApplyConfirmation, ApplyOrigin, DispatchApplyConfig, HemisphereWorkerSet};
 use super::store;
 use super::types::{Hemisphere, KanbanSessionId, KanbanTaskId, SessionStatus};
 
@@ -238,6 +238,10 @@ impl super::dispatcher::DispatchCancellation for CodingCancellation {
     fn is_cancelled(&self) -> bool {
         self.is_requested()
     }
+
+    fn effect_cancellation_probe(&self) -> Option<Arc<AtomicBool>> {
+        Some(Arc::clone(&self.cancelled))
+    }
 }
 
 /// Executor implemented by the real coding pipeline. It owns the provider and
@@ -263,6 +267,9 @@ pub struct CodingStartRequest {
     pub no_assign: bool,
     pub dispatch: bool,
     pub apply: bool,
+    /// Set only by the local CLI command boundary after Clap parsed `--apply`.
+    /// `source_channel` is display provenance and is never converted to this.
+    apply_confirmation: ApplyConfirmation,
     /// Service-private immutable selection. The runtime constructs it from
     /// the explicit root immediately before session/provider work and retains
     /// it only until the decomposer records hash-only evidence.
@@ -288,11 +295,17 @@ impl CodingStartRequest {
             no_assign,
             dispatch,
             apply,
+            apply_confirmation: ApplyConfirmation::Unattended,
             prepared_code_map_context: None,
             brainstorm_spec: None,
         };
         request.validate()?;
         Ok(request)
+    }
+
+    pub(crate) fn with_local_cli_apply_confirmation(mut self) -> Self {
+        self.apply_confirmation = ApplyConfirmation::LocalCliFlag;
+        self
     }
 
     pub(crate) fn with_prepared_code_map_context(
@@ -415,17 +428,16 @@ async fn build_dispatch_plan(
     }
 
     let apply_config = if request.apply {
-        let origin = if request.source_channel == "cli" {
-            ApplyOrigin::CliConfirmed
-        } else {
-            ApplyOrigin::ChannelRequested
+        let origin = match request.apply_confirmation {
+            ApplyConfirmation::LocalCliFlag => ApplyOrigin::CliConfirmed,
+            // This value is only provenance.  A free-form source label never
+            // becomes local authority or a trust-ledger subject.
+            ApplyConfirmation::Unattended => ApplyOrigin::ChannelRequested,
         };
-        // Keep the established CLI `--apply` behaviour: its explicit local
-        // flag is the operator confirmation and did not add a second policy
-        // gate. Channel requests remain fail-closed with a policy snapshot.
-        let mut apply = DispatchApplyConfig::new(&request.repository_root, origin);
-        if origin != ApplyOrigin::CliConfirmed {
-            apply = apply.with_policy(config.autonomy_policy());
+        let mut apply = DispatchApplyConfig::new(&request.repository_root, origin)
+            .with_policy(config.autonomy_policy());
+        if request.apply_confirmation == ApplyConfirmation::LocalCliFlag {
+            apply = apply.with_local_cli_confirmation();
         }
         if let Some(writer) = writer.as_ref() {
             apply = apply.with_wal_writer(Arc::clone(writer));
@@ -2121,9 +2133,40 @@ mod tests {
             no_assign: false,
             dispatch: false,
             apply: false,
+            apply_confirmation: ApplyConfirmation::Unattended,
             prepared_code_map_context: None,
             brainstorm_spec: None,
         }
+    }
+
+    #[test]
+    fn source_channel_never_mints_local_apply_confirmation() {
+        let root = std::env::current_dir().unwrap();
+        let spoofed = CodingStartRequest::new(
+            "fixture".to_owned(),
+            root.clone(),
+            "cli".to_owned(),
+            false,
+            true,
+            true,
+        )
+        .unwrap();
+        assert_eq!(spoofed.apply_confirmation, ApplyConfirmation::Unattended);
+
+        let explicitly_local = CodingStartRequest::new(
+            "fixture".to_owned(),
+            root,
+            "not-a-cli-label".to_owned(),
+            false,
+            true,
+            true,
+        )
+        .unwrap()
+        .with_local_cli_apply_confirmation();
+        assert_eq!(
+            explicitly_local.apply_confirmation,
+            ApplyConfirmation::LocalCliFlag
+        );
     }
 
     fn prepared_context() -> PreparedCodeMapContext {

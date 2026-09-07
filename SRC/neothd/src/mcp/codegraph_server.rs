@@ -22,7 +22,7 @@
 //!   operator's code-map DB path and returns a [`ToolCallResult`]
 //!   ready for the MCP `tools/call` response envelope.
 //!
-//! Today's tool set (8 tools, including a versioned recall receipt):
+//! Today's tool set (9 tools, including a versioned recall receipt and diff impact):
 //!
 //! - `codegraph_relevant_files` — top-N files for a prompt
 //! - `codegraph_recall_v1` — identity/generation-bound recall envelope

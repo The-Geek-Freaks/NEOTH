@@ -86,6 +86,24 @@ fn with_coherent_freedom_update_lock<T>(
     })
 }
 
+/// Hold the canonical `freedom.yaml` authority boundary while an adjacent
+/// durable mutation is validated against its effective policy and published.
+///
+/// Callers that also need another file lock must acquire it *inside* this
+/// closure, establishing the single config-to-dependent-file order. This
+/// prevents a kill switch or autonomy change from committing between a policy
+/// read and the dependent file's atomic publication.
+pub(crate) fn with_current_freedom_config_authority_locked<T>(
+    path: &Path,
+    action: impl FnOnce(&FreedomConfig) -> Result<T>,
+) -> Result<T> {
+    with_coherent_freedom_update_lock(path, || {
+        let config = FreedomConfig::load_from_path_unlocked(path)
+            .with_context(|| format!("load {} under config authority lock", path.display()))?;
+        action(&config)
+    })
+}
+
 fn read_optional_config_bytes(path: &Path) -> Result<Option<Vec<u8>>> {
     match std::fs::read(path) {
         Ok(bytes) => Ok(Some(bytes)),

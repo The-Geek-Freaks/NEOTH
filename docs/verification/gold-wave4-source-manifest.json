@@ -1,0 +1,116 @@
+{
+  "schema": "neoth-gold-changed-inputs/v1",
+  "batch": "wave4-required-trust-decisions",
+  "baseCommit": "89c21dd3256408102f73de3bb7eeaa16a1361602",
+  "branch": "codex/gold-batches-20260906",
+  "recordedUtc": "2026-09-07T07:57:25.0450820Z",
+  "scope": "Changed compiled inputs only; not an inventory of every transitive dependency",
+  "inputCount": 19,
+  "files": [
+    {
+      "path": "SRC/neothd/src/cli/calendar.rs",
+      "bytes": 18846,
+      "sha256": "a56280ba52a8b78315ad28cd46f0025eb6d93430ada76b0efd14b2b9d15c7d72"
+    },
+    {
+      "path": "SRC/neothd/src/cli/code.rs",
+      "bytes": 86390,
+      "sha256": "1a5651f77d2ce4f39ace77c51e93aa794de226b6b3dd9f5eeb3f822cbe88e11e"
+    },
+    {
+      "path": "SRC/neothd/src/cli/mcp.rs",
+      "bytes": 77507,
+      "sha256": "d595dcb1d1248a3ba84502affccca438863240122c06eefa00ef6d421b75b1ef"
+    },
+    {
+      "path": "SRC/neothd/src/cli/mod.rs",
+      "bytes": 95565,
+      "sha256": "b4fcfc6dbe80bff36c056c8b44e4c5ea50af38201b22d1675a19bf7d39675862"
+    },
+    {
+      "path": "SRC/neothd/src/cli/permission_audit.rs",
+      "bytes": 8634,
+      "sha256": "d583fb992c5a4cc8db68b4651a9932df1001f36d7ba65ccb4a820e1b99f97eb2"
+    },
+    {
+      "path": "SRC/neothd/src/cli/self_activate.rs",
+      "bytes": 46465,
+      "sha256": "80fe24211b1ec9e8eabaa4bc782fb877a2eb1c0bae40ff973bc7b2e751ea1a0e"
+    },
+    {
+      "path": "SRC/neothd/src/cli/todo.rs",
+      "bytes": 42186,
+      "sha256": "f628dca1a72865ace3f3c6de4598e93212c22ecc197cbff533dfca2cbaf2b8cb"
+    },
+    {
+      "path": "SRC/neothd/src/coding/dispatcher.rs",
+      "bytes": 180346,
+      "sha256": "77579e6cbabd93c26a915362c831db8db6fbbcd1d3fd9831747aaab62e3165dd"
+    },
+    {
+      "path": "SRC/neothd/src/coding/self_source_gate.rs",
+      "bytes": 108666,
+      "sha256": "7fd3e518a30863549ff6e88d6c8d7e197e38bcb91e57f9b0ebc1cb7665d8e3fb"
+    },
+    {
+      "path": "SRC/neothd/src/coding/service.rs",
+      "bytes": 95027,
+      "sha256": "0ae2f604fb44e2ce08063a5d4fc88857a58cded059cf3fcfb7e7419561309fa5"
+    },
+    {
+      "path": "SRC/neothd/src/coding/worktree.rs",
+      "bytes": 44339,
+      "sha256": "3f151604f8febe86b7ee2f0b46a7faba0124013fe060ed32423d3c8a83c9230c"
+    },
+    {
+      "path": "SRC/neothd/src/config/mod.rs",
+      "bytes": 118869,
+      "sha256": "b6eaed3006cc6ceda12b216b0e86df463037ca00cab2ab7d67bdc9ac11b01dee"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
+      "bytes": 47186,
+      "sha256": "bd5c864ddd10414aef2f4133522050066535b34c66f188471ddcdb11305a4a69"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "bytes": 62204,
+      "sha256": "f66b5236264b08b0ea326bf47bb2f1f095f5d8e34acdf048611b786440b2d452"
+    },
+    {
+      "path": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "bytes": 109143,
+      "sha256": "ecd03180a23ac64ff76b58a2b889c7c60353cd17aac39f131097a80981b065cf"
+    },
+    {
+      "path": "SRC/neothd/src/mcp/gate.rs",
+      "bytes": 67907,
+      "sha256": "a96a98fdc9d887a89bf866610087de377cf8d85493b3003e50742741866d469f"
+    },
+    {
+      "path": "SRC/neothd/src/permissions/gate.rs",
+      "bytes": 66460,
+      "sha256": "8232d07e1124b53397289ede9957e39f8a7f9f0c376532cbc4939e8e7265605b"
+    },
+    {
+      "path": "SRC/neothd/src/tools/external_http.rs",
+      "bytes": 87710,
+      "sha256": "b0b9899f5bde0db4c3d9af1220849662ec956c1aac377df7668eacb32fb2529e"
+    },
+    {
+      "path": "SRC/neothd/src/wal/writer.rs",
+      "bytes": 316566,
+      "sha256": "8054cb5b933d7e1da2fd3ef27b56308349e50eca92f955f70d190d578b3da743"
+    }
+  ],
+  "postGateReadback": {
+    "checkedUtc": "2026-09-07T08:37:25.3495787Z",
+    "checkedInputs": 19,
+    "mismatches": [],
+    "libraryBinarySha256": "303A46117041066DA180DC947B92C5B6B7883D394C4027C00DB9E64358A1E5C4",
+    "publicBinarySha256": "3156B1FE3C5E9B687E17BBFC13B5EBA3D26A73E1B7B48365F4D15C6839E14413",
+    "libraryBinaryMatches": true,
+    "publicBinaryMatches": true
+  },
+  "publicationTarget": "refs/heads/main"
+}

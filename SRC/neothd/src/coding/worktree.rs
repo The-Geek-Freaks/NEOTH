@@ -93,6 +93,90 @@ fn sanitize_process_stderr(stderr: &[u8]) -> String {
     crate::security::redact::sanitize_tool_output(String::from_utf8_lossy(stderr).trim())
 }
 
+/// Translate a Windows extended-length path only at the `git` process
+/// boundary. `CanonicalRepoRoot` deliberately retains the verbatim physical
+/// spelling for identity and admission binding, but Git for Windows rewrites
+/// that spelling into a POSIX-looking `//?/...` path and rejects `worktree
+/// add`. Every converted existing path is physically revalidated by
+/// [`verified_git_transport_path`] before it reaches Git.
+fn git_transport_path(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+        const VERBATIM_PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+        const VERBATIM_UNC_PREFIX: [u16; 8] = [
+            b'\\' as u16,
+            b'\\' as u16,
+            b'?' as u16,
+            b'\\' as u16,
+            b'U' as u16,
+            b'N' as u16,
+            b'C' as u16,
+            b'\\' as u16,
+        ];
+
+        let units = path.as_os_str().encode_wide().collect::<Vec<_>>();
+        if let Some(unc_suffix) = units.strip_prefix(&VERBATIM_UNC_PREFIX) {
+            let mut native_unc = vec![b'\\' as u16, b'\\' as u16];
+            native_unc.extend_from_slice(unc_suffix);
+            return PathBuf::from(std::ffi::OsString::from_wide(&native_unc));
+        }
+        if let Some(native) = units.strip_prefix(&VERBATIM_PREFIX)
+            && native.len() >= 2
+            && native[1] == b':' as u16
+        {
+            return PathBuf::from(std::ffi::OsString::from_wide(native));
+        }
+    }
+
+    path.to_path_buf()
+}
+
+/// Return a Git-compatible spelling only after proving it still resolves to
+/// the same physical directory. This prevents Win32 normalization of a valid
+/// verbatim path (for example, one containing a trailing dot or space) from
+/// silently retargeting a previously admitted capability.
+fn verified_git_transport_path(path: &Path) -> Result<PathBuf> {
+    let transport = git_transport_path(path);
+    if transport != path {
+        let admitted = crate::code_map::CanonicalRepoRoot::discover(path)
+            .context("resolve verbatim path before Git transport")?;
+        let transported = crate::code_map::CanonicalRepoRoot::discover(&transport)
+            .context("resolve Git-compatible path before Git transport")?;
+        anyhow::ensure!(
+            admitted == transported,
+            "Git-compatible path does not preserve the physical target"
+        );
+    }
+    Ok(transport)
+}
+
+/// The worktree destination does not yet exist, so prove that its parent is
+/// still the same physical directory under the Git-compatible spelling. The
+/// generated child name itself is fixed (`.neoth-task-<id>`), and this parent
+/// fence is immediately before `git worktree add`.
+fn verified_git_transport_new_child_path(path: &Path) -> Result<PathBuf> {
+    let transport = git_transport_path(path);
+    if transport != path {
+        let admitted_parent = path
+            .parent()
+            .context("verbatim worktree path has no parent")?;
+        let transported_parent = transport
+            .parent()
+            .context("Git-compatible worktree path has no parent")?;
+        let admitted = crate::code_map::CanonicalRepoRoot::discover(admitted_parent)
+            .context("resolve verbatim worktree parent before Git transport")?;
+        let transported = crate::code_map::CanonicalRepoRoot::discover(transported_parent)
+            .context("resolve Git-compatible worktree parent before Git transport")?;
+        anyhow::ensure!(
+            admitted == transported,
+            "Git-compatible worktree parent does not preserve the physical target"
+        );
+    }
+    Ok(transport)
+}
+
 /// Derive the task-scoped worktree path from the operator's
 /// repo root + the task id. Pure function — separate so the
 /// dispatcher can probe the path (for an existing-worktree
@@ -115,9 +199,10 @@ pub fn worktree_path_for(repo_root: &Path, task_id: KanbanTaskId) -> PathBuf {
 /// refuse to apply onto a dirty task worktree — the patch is
 /// expected to land on a clean tree from HEAD.
 pub fn is_worktree_dirty(path: &Path) -> Result<bool> {
+    let git_path = verified_git_transport_path(path)?;
     let out = Command::new("git")
         .arg("-C")
-        .arg(path)
+        .arg(git_path)
         .arg("status")
         .arg("--porcelain")
         .output()
@@ -142,13 +227,15 @@ pub fn is_worktree_dirty(path: &Path) -> Result<bool> {
 /// task's patch.
 pub fn create_task_worktree(repo_root: &Path, task_id: KanbanTaskId) -> Result<PathBuf> {
     let path = worktree_path_for(repo_root, task_id);
+    let git_repo_root = verified_git_transport_path(repo_root)?;
+    let git_path = verified_git_transport_new_child_path(&path)?;
     let out = Command::new("git")
         .arg("-C")
-        .arg(repo_root)
+        .arg(git_repo_root)
         .arg("worktree")
         .arg("add")
         .arg("--detach")
-        .arg(&path)
+        .arg(git_path)
         .arg("HEAD")
         .output()
         .context("spawn git worktree add")?;
@@ -209,8 +296,9 @@ fn git_apply_bytes(
     check_only: bool,
     patch: &[u8],
 ) -> Result<std::process::Output> {
+    let git_worktree = verified_git_transport_path(worktree)?;
     let mut command = Command::new("git");
-    command.arg("-C").arg(worktree).arg("apply");
+    command.arg("-C").arg(git_worktree).arg("apply");
     if check_only {
         command.arg("--check");
     }
@@ -247,12 +335,17 @@ fn git_apply_bytes(
 /// fails when the worktree has uncommitted changes UNLESS
 /// `force` is true.
 pub fn cleanup_worktree(repo_root: &Path, worktree: &Path, force: bool) -> Result<()> {
+    let git_repo_root = verified_git_transport_path(repo_root)?;
+    let git_worktree = verified_git_transport_path(worktree)?;
     let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(repo_root).arg("worktree").arg("remove");
+    cmd.arg("-C")
+        .arg(git_repo_root)
+        .arg("worktree")
+        .arg("remove");
     if force {
         cmd.arg("--force");
     }
-    cmd.arg(worktree);
+    cmd.arg(git_worktree);
     let out = cmd.output().context("spawn git worktree remove")?;
     if !out.status.success() {
         anyhow::bail!(
@@ -604,6 +697,44 @@ pub(crate) fn patch_hash_bytes(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[cfg(windows)]
+    #[test]
+    fn git_transport_path_converts_only_verbatim_disk_and_unc_paths_without_loss() {
+        assert_eq!(
+            git_transport_path(Path::new(r"\\?\C:\repo\grüße")),
+            PathBuf::from(r"C:\repo\grüße")
+        );
+        assert_eq!(
+            git_transport_path(Path::new(r"\\?\UNC\server\share\repo\日本語")),
+            PathBuf::from(r"\\server\share\repo\日本語")
+        );
+        assert_eq!(
+            git_transport_path(Path::new(r"\\?\Volume{fixture}\repo")),
+            PathBuf::from(r"\\?\Volume{fixture}\repo")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn create_task_worktree_accepts_canonical_unicode_disk_path() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("grüße-日本語").join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_git_repo(&repo).unwrap();
+
+        // Windows canonicalize supplies the admitted verbatim path. The
+        // create call must transport it to Git as native Win32 without
+        // changing its physical identity.
+        let canonical_repo = std::fs::canonicalize(&repo).unwrap();
+        let worktree = create_task_worktree(&canonical_repo, KanbanTaskId(810)).unwrap();
+        assert!(worktree.exists());
+        cleanup_worktree(&canonical_repo, &worktree, true).unwrap();
+    }
 
     fn write_patch(dir: &Path, body: &str) -> PathBuf {
         let p = dir.join("change.patch");

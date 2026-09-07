@@ -178,6 +178,25 @@ pub struct Gate {
     /// This marker upgrades only `Confirm`; the policy's `Deny` floor remains
     /// final. The source is persisted in the permission audit frame.
     preconfirmed_source: Option<&'static str>,
+    audit_presentation: AuditPresentation,
+}
+
+#[derive(Clone, Copy, Default)]
+enum AuditPresentation {
+    #[default]
+    Canonical,
+    ReleasedResearch,
+}
+
+const RELEASED_RESEARCH_AUDIT_LABEL: &str = "released_research_search";
+const RELEASED_RESEARCH_DENIAL_LABEL: &str = "released_research_request_denied";
+
+struct AuditContext<'a> {
+    subject: Option<&'a str>,
+    lease_id: Option<&'a str>,
+    confirmation_source: Option<&'a str>,
+    request_binding_sha256: Option<&'a str>,
+    presentation: AuditPresentation,
 }
 
 impl Gate {
@@ -189,6 +208,7 @@ impl Gate {
             channel_timeout: Duration::from_secs(90),
             lease_ctx: None,
             preconfirmed_source: None,
+            audit_presentation: AuditPresentation::Canonical,
         }
     }
 
@@ -227,6 +247,15 @@ impl Gate {
     pub(crate) fn with_preconfirmed_confirmation(mut self, source: &'static str) -> Self {
         debug_assert!(!source.trim().is_empty());
         self.preconfirmed_source = (!source.trim().is_empty()).then_some(source);
+        self
+    }
+
+    /// Keep the real request for policy and confirmation, but persist only
+    /// provider-neutral labels for explicitly released external research.
+    /// The caller must supply its random audit correlation, never the private
+    /// topic-bearing permit binding. This changes no authorization decision.
+    pub(crate) fn with_released_research_audit(mut self) -> Self {
+        self.audit_presentation = AuditPresentation::ReleasedResearch;
         self
     }
 
@@ -424,10 +453,13 @@ impl Gate {
                 action,
                 self.policy.level(),
                 &final_decision,
-                subject,
-                lease_id.as_deref(),
-                confirmation_source,
-                request_binding_sha256,
+                AuditContext {
+                    subject,
+                    lease_id: lease_id.as_deref(),
+                    confirmation_source,
+                    request_binding_sha256,
+                    presentation: self.audit_presentation,
+                },
             )
             .await;
             if audit_required {
@@ -546,11 +578,36 @@ async fn audit(
     action: &Action,
     level: AutonomyLevel,
     decision: &Decision,
-    subject: Option<&str>,
-    lease_id: Option<&str>,
-    confirmation_source: Option<&str>,
-    explicit_request_binding_sha256: Option<&str>,
+    context: AuditContext<'_>,
 ) -> Result<()> {
+    let AuditContext {
+        subject,
+        lease_id,
+        confirmation_source,
+        request_binding_sha256: explicit_request_binding_sha256,
+        presentation,
+    } = context;
+    let projected_decision;
+    let action_label;
+    let decision = match presentation {
+        AuditPresentation::Canonical => {
+            action_label = format!("{action:?}");
+            decision
+        }
+        AuditPresentation::ReleasedResearch => {
+            anyhow::ensure!(
+                matches!(action, Action::ExternalHttpRequest { .. }),
+                "released-research audit presentation requires an external HTTP action"
+            );
+            action_label = RELEASED_RESEARCH_AUDIT_LABEL.to_owned();
+            projected_decision = match decision {
+                Decision::Allow => Decision::Allow,
+                Decision::Deny(_) => Decision::Deny(RELEASED_RESEARCH_DENIAL_LABEL.into()),
+                Decision::Confirm(_) => Decision::Confirm(RELEASED_RESEARCH_DENIAL_LABEL.into()),
+            };
+            &projected_decision
+        }
+    };
     let (event_type, reason): (u8, Option<&str>) = match decision {
         Decision::Allow => (EVENT_TYPE_PERMISSION_GRANTED, None),
         Decision::Deny(r) => (EVENT_TYPE_PERMISSION_DENIED, Some(r.as_str())),
@@ -603,7 +660,7 @@ async fn audit(
     )?;
     let payload = serde_json::to_vec(&serde_json::json!({
         "level": level.as_str(),
-        "action": format!("{action:?}"),
+        "action": action_label,
         "authorization_id": authorization_id,
         "request_binding_sha256": request_binding_sha256,
         "decision": decision.tag(),

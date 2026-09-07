@@ -26,3 +26,6 @@ PLAN/NEOTH_Context_Connector_Masterplan_2026-08-13.md whitespace=-trailing-space
 *.lock  text eol=lf
 packaging/**/fixtures/*.txt text eol=lf
 *.ps1  text eol=crlf
+# This vendor archive is checked against upstream SHA-256 file bytes. Disable
+# checkout conversion for every member, including extensionless metadata.
+SRC/vendor/arrayref/** -text

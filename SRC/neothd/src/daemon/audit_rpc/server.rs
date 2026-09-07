@@ -43,6 +43,11 @@ pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
     0x8F, // PTY_SESSION_ENDED      — `neoth terminal` closed a PTY session
     0x9B, // IDENTITY_MERGED        — `neoth identity merge` folded two identities
     0xBB, // OPERATOR_FEEDBACK      — chat detected an operator correction
+    // GOLD-LF-P1-05 — `neoth mcp call` must preserve the MCP adapter's
+    // compatibility outcome on the daemon-owned writer alongside its typed
+    // TrustDecision. These two payloads contain only server/tool metadata.
+    0xC0, // MCP_TOOL_CALLED
+    0xC1, // MCP_TOOL_REJECTED
     0xC8, // TODO_WRITE             — `neoth todo add/close` mutated an external task list
     0xCA, // CALENDAR_WRITE         — `neoth calendar add` wrote an external calendar event
     0xCB, // CALENDAR_WRITE_DENIED  — `neoth calendar add` refused (writes_enabled off)

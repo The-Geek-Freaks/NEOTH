@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::coding::retry::WorkerRetryPolicy;
@@ -121,13 +122,18 @@ pub enum ApplyOrigin {
     ChannelRequested,
 }
 
-impl ApplyOrigin {
-    /// True only for the origin that carries an explicit local operator
-    /// confirmation, i.e. the one allowed to degrade `Confirm` → Allow.
-    pub fn may_degrade_confirm(self) -> bool {
-        matches!(self, ApplyOrigin::CliConfirmed)
-    }
+/// Proof that the actual local CLI entry point parsed an `--apply` flag.
+///
+/// This is deliberately separate from [`ApplyOrigin`], which remains useful
+/// observable provenance but can be supplied by non-CLI callers.  No display
+/// label or origin value is authority to preconfirm a mutation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ApplyConfirmation {
+    LocalCliFlag,
+    Unattended,
+}
 
+impl ApplyOrigin {
     /// Stable wire/log name.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -169,6 +175,7 @@ pub struct DispatchApplyConfig {
     /// Origin of this apply request — gates whether `Confirm` may degrade
     /// to Allow (only `CliConfirmed`). See [`ApplyOrigin`].
     pub origin: ApplyOrigin,
+    confirmation: ApplyConfirmation,
     pub test_cmd: Option<String>,
     pub test_timeout: std::time::Duration,
     pub wal_writer: WalWriterRef,
@@ -183,6 +190,8 @@ pub struct DispatchApplyConfig {
     /// hard gate (fail-closed). When `None`, the gate is skipped
     /// (CLI one-shot operator-already-confirmed).
     pub autonomy_policy: Option<crate::permissions::AutonomyPolicySnapshot>,
+    #[cfg(test)]
+    test_pause: Option<std::sync::Arc<PatchApplyPause>>,
 }
 
 impl std::fmt::Debug for DispatchApplyConfig {
@@ -208,10 +217,46 @@ impl DispatchApplyConfig {
         Self {
             repo_root: repo_root.into(),
             origin,
+            confirmation: ApplyConfirmation::Unattended,
             test_cmd: None,
             test_timeout: std::time::Duration::from_secs(5 * 60),
             wal_writer: None,
             autonomy_policy: None,
+            #[cfg(test)]
+            test_pause: None,
+        }
+    }
+
+    /// Only the local CLI command boundary may set this marker.  It is
+    /// crate-private so source-channel strings and external request payloads
+    /// cannot manufacture it.
+    pub(crate) fn with_local_cli_confirmation(mut self) -> Self {
+        self.confirmation = ApplyConfirmation::LocalCliFlag;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_test_pause(mut self, pause: std::sync::Arc<PatchApplyPause>) -> Self {
+        self.test_pause = Some(pause);
+        self
+    }
+
+    #[cfg(test)]
+    async fn pause_for_test(&self, point: PatchApplyPausePoint) {
+        let pause = self
+            .test_pause
+            .as_ref()
+            .filter(|pause| pause.point == point)
+            .cloned();
+        if let Some(pause) = pause {
+            pause
+                .entered
+                .store(true, std::sync::atomic::Ordering::Release);
+            // One waiter only. `notify_one` retains a permit when the test
+            // has observed `entered` but has not yet subscribed, avoiding a
+            // lost wake-up between the atomic load and `notified().await`.
+            pause.entered_notify.notify_one();
+            pause.release.notified().await;
         }
     }
 
@@ -288,6 +333,14 @@ pub struct DispatchOutcome {
 /// futures and receives every durable task effect that completed first.
 pub trait DispatchCancellation {
     fn is_cancelled(&self) -> bool;
+
+    /// A thread-safe live probe for the narrow admitted-effect interval. The
+    /// async dispatcher still owns cancellation reporting; the blocking
+    /// worktree helper receives only this boolean capability so it can refuse
+    /// at its final pre-effect linearization point.
+    fn effect_cancellation_probe(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -686,6 +739,33 @@ async fn dispatch_session_with_apply_inner(
                     // rejection the task is treated as a retryable
                     // failure with git's stderr as the diagnosis hint.
                     if let Some(cfg) = apply_config {
+                        #[cfg(test)]
+                        cfg.pause_for_test(PatchApplyPausePoint::BeforeGate).await;
+                        // This is the cancellation linearization point before
+                        // any final PatchApplyToRepo decision. The accepted
+                        // worker result has not yet been authorized for a
+                        // worktree effect, so restore it to Backlog without
+                        // creating a new permission decision.
+                        if cancellation.is_some_and(|token| token.is_cancelled()) {
+                            let now_ns = now_unix_ns();
+                            store::patch_task_status(
+                                conn,
+                                task.task_id,
+                                TaskStatus::Backlog,
+                                now_ns,
+                            )
+                            .context("restore cancelled task before patch authorization")?;
+                            for (pending, _) in completed_batch {
+                                store::patch_task_status(
+                                    conn,
+                                    pending.task_id,
+                                    TaskStatus::Backlog,
+                                    now_ns,
+                                )
+                                .context("restore cancelled dispatch batch task to Backlog")?;
+                            }
+                            break 'dispatch;
+                        }
                         // Offload the blocking apply (git subprocesses +
                         // run_worktree_tests' process-poll loop with
                         // std::thread::sleep) to a blocking thread so it never
@@ -695,15 +775,57 @@ async fn dispatch_session_with_apply_inner(
                         // off the executor. All three args are Clone, so the
                         // 'static + Send closure clones them rather than
                         // borrowing `conn` (which is !Send).
-                        let apply_res = {
-                            let task_c = task.clone();
-                            let outcome_c = o.clone();
-                            let cfg_c = cfg.clone();
-                            tokio::task::spawn_blocking(move || {
-                                apply_patch_via_worktree(&task_c, &outcome_c, &cfg_c)
-                            })
-                            .await
-                            .unwrap_or_else(|e| Err(format!("apply task panicked: {e}")))
+                        let admission = authorize_patch_apply_before_worktree(&task, &o, cfg).await;
+                        #[cfg(test)]
+                        cfg.pause_for_test(PatchApplyPausePoint::AfterAdmission)
+                            .await;
+                        // Gate admission is durable history. A cancellation
+                        // that arrives after that await consumes no worktree
+                        // capability: preserve the decision, restore Backlog,
+                        // and do not start a blocking effect.
+                        if cancellation.is_some_and(|token| token.is_cancelled()) {
+                            let now_ns = now_unix_ns();
+                            store::patch_task_status(
+                                conn,
+                                task.task_id,
+                                TaskStatus::Backlog,
+                                now_ns,
+                            )
+                            .context("restore cancelled task after patch authorization")?;
+                            for (pending, _) in completed_batch {
+                                store::patch_task_status(
+                                    conn,
+                                    pending.task_id,
+                                    TaskStatus::Backlog,
+                                    now_ns,
+                                )
+                                .context("restore cancelled dispatch batch task to Backlog")?;
+                            }
+                            break 'dispatch;
+                        }
+                        let cancellation_probe =
+                            cancellation.and_then(|token| token.effect_cancellation_probe());
+                        let apply_res = match admission {
+                            // A NoPatch outcome has no worktree effect and therefore no
+                            // PatchApplyToRepo decision.
+                            Ok(None) => Ok(()),
+                            Ok(Some(admission)) => {
+                                let task_c = task.clone();
+                                let outcome_c = o.clone();
+                                let cfg_c = cfg.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    apply_admitted_patch_in_worktree(
+                                        admission,
+                                        &task_c,
+                                        &outcome_c,
+                                        &cfg_c,
+                                        cancellation_probe,
+                                    )
+                                })
+                                .await
+                                .unwrap_or_else(|e| Err(format!("apply task panicked: {e}")))
+                            }
+                            Err(error) => Err(error),
                         };
                         match apply_res {
                             Ok(()) => {
@@ -744,6 +866,30 @@ async fn dispatch_session_with_apply_inner(
                                     outcome.applied_task_ids.push(task.task_id.raw());
                                 }
                                 outcome.completed_task_ids.push(task.task_id.raw());
+                            }
+                            Err(diagnosis) if diagnosis == APPLY_CANCELLED_BEFORE_WORKTREE => {
+                                // The blocking helper was joined but observed cancellation
+                                // immediately before `create_task_worktree`; no effect was
+                                // started, so this task resumes as Backlog rather than entering
+                                // retry/block accounting.
+                                let now_ns = now_unix_ns();
+                                store::patch_task_status(
+                                    conn,
+                                    task.task_id,
+                                    TaskStatus::Backlog,
+                                    now_ns,
+                                )
+                                .context("restore cancelled admitted task to Backlog")?;
+                                for (pending, _) in completed_batch {
+                                    store::patch_task_status(
+                                        conn,
+                                        pending.task_id,
+                                        TaskStatus::Backlog,
+                                        now_ns,
+                                    )
+                                    .context("restore cancelled dispatch batch task to Backlog")?;
+                                }
+                                break 'dispatch;
                             }
                             Err(diagnosis) => {
                                 patch_spiral.record(task.task_id, false);
@@ -999,66 +1145,168 @@ fn pick_batch(
 /// `neoth code --cleanup-worktree <task_id>` (lands as a CLI
 /// follow-up). Tests + GUI surfaces in v0.3 add automatic
 /// cleanup on successful Review → Done transitions.
-fn apply_patch_via_worktree(
+/// Private capability created only after the authoritative Gate has appended
+/// its authenticated decision.  There is intentionally no public constructor
+/// and no raw-input worktree helper.
+struct AdmittedPatchApply {
+    target: crate::code_map::CanonicalRepoRoot,
+    task_id: KanbanTaskId,
+    accepted_patch_sha256: [u8; 32],
+    request_binding_sha256: String,
+}
+
+/// Internal outcome used only to distinguish a joined, pre-effect
+/// cancellation from an actual apply failure. It is never persisted or exposed
+/// as a worker diagnostic.
+const APPLY_CANCELLED_BEFORE_WORKTREE: &str = "patch apply cancelled before worktree creation";
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PatchApplyPausePoint {
+    BeforeGate,
+    AfterAdmission,
+}
+
+#[cfg(test)]
+struct PatchApplyPause {
+    point: PatchApplyPausePoint,
+    entered: std::sync::atomic::AtomicBool,
+    entered_notify: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+/// Perform the sole final decision immediately before the first worktree
+/// effect.  The Gate owns the legacy permission pair and typed HMAC-backed
+/// TrustDecision; this dispatcher must not append a second decision.
+async fn authorize_patch_apply_before_worktree(
     task: &KanbanTask,
     outcome: &AcceptedWorkerOutcome,
     cfg: &DispatchApplyConfig,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<Option<AdmittedPatchApply>, String> {
     if outcome.patch_state() == WorkerPatchState::NoPatch {
-        // Worker produced no patch — nothing to apply. Caller
-        // already promoted to Review based on the test summary.
-        return Ok(());
+        return Ok(None);
+    }
+    let patch = outcome
+        .patch_text()
+        .ok_or_else(|| "accepted patch outcome has no immutable patch bytes".to_string())?;
+    let target = crate::code_map::CanonicalRepoRoot::discover(&cfg.repo_root)
+        .map_err(|error| format!("canonical repository validation failed before apply: {error}"))?;
+    let policy = cfg.autonomy_policy.as_ref().ok_or_else(|| {
+        "patch apply requires an immutable autonomy policy before worktree creation".to_string()
+    })?;
+    let writer = cfg.wal_writer.as_deref().ok_or_else(|| {
+        "patch apply requires a home-backed permission audit writer before worktree creation"
+            .to_string()
+    })?;
+    let accepted_patch_sha256: [u8; 32] = Sha256::digest(patch.as_bytes()).into();
+    let binding = patch_apply_request_binding(
+        target.identity().as_str(),
+        task.task_id,
+        &accepted_patch_sha256,
+        cfg.origin,
+    );
+    let action = crate::permissions::Action::PatchApplyToRepo {
+        repo_root: target.path().to_path_buf(),
+        task_id: task.task_id.raw() as u64,
+    };
+    let mut gate = crate::permissions::Gate::for_policy(policy.clone())
+        .with_confirm(crate::permissions::ConfirmStrategy::FailClosed);
+    if cfg.confirmation == ApplyConfirmation::LocalCliFlag {
+        gate = gate.with_preconfirmed_confirmation("local_cli_code_apply_flag");
+    }
+    gate.check_with_audit_sink(
+        &action,
+        crate::permissions::PermissionAuditSink::Writer(writer),
+        true,
+        Some(&binding),
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "permission gate blocked apply for task {}: {error}",
+            task.task_id.raw()
+        )
+    })?;
+    Ok(Some(AdmittedPatchApply {
+        target,
+        task_id: task.task_id,
+        accepted_patch_sha256,
+        request_binding_sha256: binding,
+    }))
+}
+
+/// Stable, unambiguous binding for the physical repository, exact accepted
+/// patch bytes, task, and observable apply origin.  It deliberately excludes
+/// raw paths, titles, source labels, and provider content.
+fn patch_apply_request_binding(
+    repo_identity: &str,
+    task_id: KanbanTaskId,
+    accepted_patch_sha256: &[u8; 32],
+    origin: ApplyOrigin,
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"neoth.permissions.patch-apply.v1\0");
+    let identity = repo_identity.as_bytes();
+    digest.update(
+        u32::try_from(identity.len())
+            .unwrap_or(u32::MAX)
+            .to_be_bytes(),
+    );
+    digest.update(identity);
+    digest.update((task_id.raw() as u64).to_be_bytes());
+    digest.update(accepted_patch_sha256);
+    digest.update([match origin {
+        ApplyOrigin::CliConfirmed => 1,
+        ApplyOrigin::DaemonScheduled => 2,
+        ApplyOrigin::ChannelRequested => 3,
+    }]);
+    hex::encode(digest.finalize())
+}
+
+fn apply_admitted_patch_in_worktree(
+    admission: AdmittedPatchApply,
+    task: &KanbanTask,
+    outcome: &AcceptedWorkerOutcome,
+    cfg: &DispatchApplyConfig,
+    cancellation_probe: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> std::result::Result<(), String> {
+    let current_target = crate::code_map::CanonicalRepoRoot::discover(admission.target.path())
+        .map_err(|error| format!("repository changed after permission admission: {error}"))?;
+    if current_target != admission.target {
+        return Err("repository physical identity changed after permission admission".to_string());
+    }
+    if task.task_id != admission.task_id {
+        return Err("task changed after permission admission".to_string());
+    }
+    let patch = outcome
+        .patch_text()
+        .ok_or_else(|| "accepted patch outcome has no immutable patch bytes".to_string())?;
+    let patch_sha256: [u8; 32] = Sha256::digest(patch.as_bytes()).into();
+    if patch_sha256 != admission.accepted_patch_sha256 {
+        return Err("accepted patch changed after permission admission".to_string());
+    }
+    let binding = patch_apply_request_binding(
+        current_target.identity().as_str(),
+        task.task_id,
+        &patch_sha256,
+        cfg.origin,
+    );
+    if binding != admission.request_binding_sha256 {
+        return Err("patch apply request binding changed after permission admission".to_string());
     }
 
-    // Pick #6 Phase 4 defense-in-depth (Chorus Q1a). When the
-    // caller passed an autonomy level, run the permission gate
-    // BEFORE any IO. Strict denies outright; other levels are
-    // Confirm — degraded to Allow because the CLI already
-    // prompted via `--apply` (operator-confirmed once,
-    // dispatcher trusts that signal for the session).
-    if let Some(policy) = cfg.autonomy_policy.as_ref() {
-        use crate::permissions::{Action, Decision, evaluate};
-        let action = Action::PatchApplyToRepo {
-            repo_root: cfg.repo_root.clone(),
-            task_id: task.task_id.raw() as u64,
-        };
-        match evaluate(&action, policy) {
-            Decision::Allow => {}
-            Decision::Confirm(_) => {
-                // ADV review-D (Session 30): the Confirm→Allow degrade is
-                // ORIGIN-SENSITIVE. Only `CliConfirmed` carries an explicit
-                // local-operator confirmation (`neoth code --apply` at a
-                // TTY), so only it may proceed on Confirm. A
-                // `DaemonScheduled` / `ChannelRequested` apply has NO
-                // operator present, so a Confirm is a HARD gate — refuse
-                // (fail-closed) rather than inherit CLI trust. This routes
-                // through the caller's failure path (task → Blocked).
-                if !cfg.origin.may_degrade_confirm() {
-                    return Err(format!(
-                        "permission gate requires confirmation for task {} \
-                         but the apply origin is `{}` (no local operator to \
-                         confirm) — refusing unattended apply",
-                        task.task_id.raw(),
-                        cfg.origin.as_str()
-                    ));
-                }
-            }
-            Decision::Deny(reason) => {
-                return Err(format!(
-                    "permission gate denied apply for task {}: {reason}",
+    if cancellation_probe.is_some_and(|probe| probe.load(std::sync::atomic::Ordering::Acquire)) {
+        return Err(APPLY_CANCELLED_BEFORE_WORKTREE.to_string());
+    }
+
+    let wt_path =
+        crate::coding::worktree::create_task_worktree(current_target.path(), task.task_id)
+            .map_err(|e| {
+                format!(
+                    "worktree create failed for task {}: {e}",
                     task.task_id.raw()
-                ));
-            }
-        }
-    }
-
-    let wt_path = crate::coding::worktree::create_task_worktree(&cfg.repo_root, task.task_id)
-        .map_err(|e| {
-            format!(
-                "worktree create failed for task {}: {e}",
-                task.task_id.raw()
-            )
-        })?;
+                )
+            })?;
 
     // WS-BUG P1: the worktree path is deterministic per task_id, so leaking it
     // on ANY error path below made every retry fail at git "already checked
@@ -1099,7 +1347,7 @@ fn apply_patch_via_worktree(
             use crate::permissions::AutonomyLevel;
 
             let changed = crate::code_map::risk::patch_changed_files_from_text(patch_text);
-            let warnings = crate::code_map::risk::assess_edit_risk(&cfg.repo_root, &changed);
+            let warnings = crate::code_map::risk::assess_edit_risk(current_target.path(), &changed);
 
             // Determine override-lease status once (shared across all files in this patch).
             // Only consulted when autonomy is Elevated or Full — skip the I/O otherwise.
@@ -1250,7 +1498,8 @@ fn apply_patch_via_worktree(
     // recreate it. Success intentionally keeps it (see fn doc). Best-effort —
     // a cleanup failure is logged, not surfaced (the apply outcome is authoritative).
     if apply_result.is_err()
-        && let Err(e) = crate::coding::worktree::cleanup_worktree(&cfg.repo_root, &wt_path, true)
+        && let Err(e) =
+            crate::coding::worktree::cleanup_worktree(current_target.path(), &wt_path, true)
     {
         tracing::warn!(
             task_id = task.task_id.raw(),
@@ -1918,6 +2167,52 @@ mod tests {
         }
         fn name(&self) -> &'static str {
             self.name
+        }
+    }
+
+    #[derive(Clone)]
+    struct AtomicCancellation {
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl AtomicCancellation {
+        fn new() -> Self {
+            Self {
+                cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }
+        }
+
+        fn request(&self) {
+            self.cancelled
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    impl DispatchCancellation for AtomicCancellation {
+        fn is_cancelled(&self) -> bool {
+            self.cancelled.load(std::sync::atomic::Ordering::Acquire)
+        }
+
+        fn effect_cancellation_probe(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+            Some(Arc::clone(&self.cancelled))
+        }
+    }
+
+    fn patch_apply_pause(point: PatchApplyPausePoint) -> Arc<PatchApplyPause> {
+        Arc::new(PatchApplyPause {
+            point,
+            entered: std::sync::atomic::AtomicBool::new(false),
+            entered_notify: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        })
+    }
+
+    async fn wait_for_patch_apply_pause(pause: &PatchApplyPause) {
+        loop {
+            if pause.entered.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
+            pause.entered_notify.notified().await;
         }
     }
 
@@ -2673,7 +2968,8 @@ mod tests {
             }),
         );
 
-        let cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed);
+        let (writer, _writer_join) = authenticated_apply_writer(&dir.path().join("neoth-home"));
+        let cfg = local_test_apply_config(&repo, &writer);
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -2737,7 +3033,8 @@ mod tests {
             }),
         );
 
-        let cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed);
+        let (writer, _writer_join) = authenticated_apply_writer(&dir.path().join("neoth-home"));
+        let cfg = local_test_apply_config(&repo, &writer);
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -2785,6 +3082,97 @@ mod tests {
         }
     }
 
+    fn authenticated_apply_writer(
+        home: &std::path::Path,
+    ) -> (
+        std::sync::Arc<crate::wal::writer::WalWriterHandle>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let wal = home.join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = crate::wal::writer::unique_standalone_segment_path(&wal, "dispatch-test");
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
+            .expect("home-backed test audit writer");
+        (std::sync::Arc::new(writer), join)
+    }
+
+    fn local_test_apply_config(
+        repo: &std::path::Path,
+        writer: &std::sync::Arc<crate::wal::writer::WalWriterHandle>,
+    ) -> DispatchApplyConfig {
+        DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed)
+            .with_autonomy(crate::permissions::AutonomyLevel::Full)
+            .with_local_cli_confirmation()
+            .with_wal_writer(std::sync::Arc::clone(writer))
+    }
+
+    #[test]
+    fn patch_apply_binding_uses_physical_root_patch_task_and_origin() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let canonical = crate::code_map::CanonicalRepoRoot::discover(&first).unwrap();
+        let alias = crate::code_map::CanonicalRepoRoot::discover(&first.join(".")).unwrap();
+        let other = crate::code_map::CanonicalRepoRoot::discover(&second).unwrap();
+        let task = KanbanTaskId(42);
+        let patch: [u8; 32] = Sha256::digest(b"accepted patch").into();
+        let changed_patch: [u8; 32] = Sha256::digest(b"accepted patch changed").into();
+        let binding = patch_apply_request_binding(
+            canonical.identity().as_str(),
+            task,
+            &patch,
+            ApplyOrigin::CliConfirmed,
+        );
+        assert_eq!(
+            binding,
+            patch_apply_request_binding(
+                alias.identity().as_str(),
+                task,
+                &patch,
+                ApplyOrigin::CliConfirmed,
+            ),
+            "canonical spelling aliases bind identically"
+        );
+        assert_ne!(
+            binding,
+            patch_apply_request_binding(
+                other.identity().as_str(),
+                task,
+                &patch,
+                ApplyOrigin::CliConfirmed,
+            )
+        );
+        assert_ne!(
+            binding,
+            patch_apply_request_binding(
+                canonical.identity().as_str(),
+                task,
+                &changed_patch,
+                ApplyOrigin::CliConfirmed,
+            )
+        );
+        assert_ne!(
+            binding,
+            patch_apply_request_binding(
+                canonical.identity().as_str(),
+                KanbanTaskId(43),
+                &patch,
+                ApplyOrigin::CliConfirmed,
+            )
+        );
+        assert_ne!(
+            binding,
+            patch_apply_request_binding(
+                canonical.identity().as_str(),
+                task,
+                &patch,
+                ApplyOrigin::DaemonScheduled,
+            )
+        );
+    }
+
     #[tokio::test]
     async fn dispatch_session_with_apply_records_command_receipt_on_zero_exit() {
         if !git_available() {
@@ -2822,7 +3210,8 @@ mod tests {
             }),
         );
 
-        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed)
+        let (writer, _writer_join) = authenticated_apply_writer(&dir.path().join("neoth-home"));
+        let apply_cfg = local_test_apply_config(&repo, &writer)
             .with_test_cmd(always_pass_cmd_str())
             .with_test_timeout(std::time::Duration::from_secs(10));
         let outcome = dispatch_session_with_apply(
@@ -2876,7 +3265,8 @@ mod tests {
             }),
         );
 
-        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed)
+        let (writer, _writer_join) = authenticated_apply_writer(&dir.path().join("neoth-home"));
+        let apply_cfg = local_test_apply_config(&repo, &writer)
             .with_test_cmd(always_fail_cmd_str())
             .with_test_timeout(std::time::Duration::from_secs(10));
         let outcome = dispatch_session_with_apply(
@@ -2928,12 +3318,11 @@ mod tests {
         std::fs::create_dir_all(&repo).unwrap();
         init_repo(&repo).unwrap();
 
-        // Live WAL writer against a tempfile so we can verify
-        // the 0xD3 frame actually lands.
-        let wal_seg = dir.path().join("000001.wal");
-        let (writer, _wal_join) =
-            crate::wal::writer::spawn(wal_seg.clone()).expect("spawn wal writer");
-        let writer = std::sync::Arc::new(writer);
+        // Home-backed writer so the final Gate decision has its mandatory
+        // HMAC marker before the historical PATCH_APPLIED frame is emitted.
+        let home = dir.path().join("neoth-home");
+        let (writer, _wal_join) = authenticated_apply_writer(&home);
+        let wal_seg = home.join("wal");
 
         let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
@@ -2950,8 +3339,7 @@ mod tests {
             }),
         );
 
-        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed)
-            .with_wal_writer(std::sync::Arc::clone(&writer));
+        let apply_cfg = local_test_apply_config(&repo, &writer);
 
         // QU-10d: the dispatcher is now async — await it directly. The
         // prior spawn_blocking + Arc<Mutex<conn>> wrapper (needed when the
@@ -2974,7 +3362,12 @@ mod tests {
 
         // Read the segment back via the WAL reader + assert a
         // PATCH_APPLIED frame appears.
-        let bytes = std::fs::read(&wal_seg).expect("read wal segment");
+        let bytes = std::fs::read_dir(&wal_seg)
+            .expect("read home WAL directory")
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| std::fs::read(entry.path()).ok())
+            .flatten()
+            .collect::<Vec<_>>();
         // The 0xD3 byte appears in every PATCH_APPLIED frame's
         // event_type field. A more rigorous check would walk
         // the frames via the proper reader; this byte-presence
@@ -3045,11 +3438,14 @@ mod tests {
             }),
         );
 
-        // Use a path that does NOT need to exist — the gate
-        // fires before we ever touch the filesystem.
-        let fake_repo = dir.path().join("never-exists");
-        let apply_cfg = DispatchApplyConfig::new(&fake_repo, ApplyOrigin::CliConfirmed)
-            .with_autonomy(crate::permissions::AutonomyLevel::Strict);
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let home = dir.path().join("neoth-home");
+        let (writer, _writer_join) = authenticated_apply_writer(&home);
+        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed)
+            .with_autonomy(crate::permissions::AutonomyLevel::Strict)
+            .with_local_cli_confirmation()
+            .with_wal_writer(std::sync::Arc::clone(&writer));
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -3065,6 +3461,20 @@ mod tests {
         // worktree::create_task_worktree ran.
         let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
         assert!(!wt.exists(), "strict gate must run BEFORE worktree IO");
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(&home, "local")
+            .expect("strict denial is authenticated before the no-effect return");
+        assert!(matches!(
+            ledger.completeness,
+            crate::permissions::TrustLedgerCompleteness::Complete
+        ));
+        assert!(
+            !ledger.entries.is_empty(),
+            "each strict retry must retain a typed final decision"
+        );
+        assert!(ledger.entries.iter().all(|entry| {
+            entry.event.action == crate::permissions::ActionKind::PatchApplyToRepo
+                && entry.event.outcome == crate::permissions::TrustOutcome::Denied
+        }));
     }
 
     #[tokio::test]
@@ -3097,8 +3507,8 @@ mod tests {
             }),
         );
 
-        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed)
-            .with_autonomy(crate::permissions::AutonomyLevel::Full);
+        let (writer, _writer_join) = authenticated_apply_writer(&dir.path().join("neoth-home"));
+        let apply_cfg = local_test_apply_config(&repo, &writer);
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -3113,9 +3523,226 @@ mod tests {
             outcome.tasks_completed, 1,
             "full → confirm → allow → complete"
         );
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(
+            &dir.path().join("neoth-home"),
+            "local",
+        )
+        .expect("the allowed decision is HMAC-complete while the worktree exists");
+        assert_eq!(ledger.entries.len(), 1, "one final Gate decision per apply");
+        assert!(matches!(
+            ledger.entries[0].event.outcome,
+            crate::permissions::TrustOutcome::Allowed
+        ));
 
         let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
         let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
+    }
+
+    #[tokio::test]
+    async fn allowed_hmac_decision_is_complete_before_first_worktree_effect() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        let worker = CannedWorker {
+            outcome: green_outcome_with_real_patch(),
+            name: "pre-effect-ledger",
+        };
+        let accepted = WorkerContract::for_dispatch(&task, &worker, dir.path())
+            .validate_and_materialize(&task, &worker, green_outcome_with_real_patch())
+            .expect("fixture outcome crosses the normal accepted-patch boundary");
+        let home = dir.path().join("neoth-home");
+        let (writer, _writer_join) = authenticated_apply_writer(&home);
+        let cfg = local_test_apply_config(&repo, &writer);
+
+        let admission = authorize_patch_apply_before_worktree(&task, &accepted, &cfg)
+            .await
+            .expect("final Gate decision")
+            .expect("fixture has a patch");
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(&home, "local")
+            .expect("forced marker makes allowed evidence complete before apply");
+        assert!(matches!(
+            ledger.completeness,
+            crate::permissions::TrustLedgerCompleteness::Complete
+        ));
+        assert_eq!(ledger.entries.len(), 1);
+        assert!(matches!(
+            ledger.entries[0].event.outcome,
+            crate::permissions::TrustOutcome::Allowed
+        ));
+        let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+        assert!(!wt.exists(), "Gate admission itself has no worktree effect");
+
+        apply_admitted_patch_in_worktree(admission, &task, &accepted, &cfg, None)
+            .expect("only the admitted capability can create the worktree");
+        assert!(wt.exists());
+        let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
+    }
+
+    #[tokio::test]
+    async fn patch_apply_missing_required_writer_blocks_before_worktree() {
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: green_outcome(),
+                name: "missing-required-writer",
+            }),
+        );
+        let cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed)
+            .with_autonomy(crate::permissions::AutonomyLevel::Full)
+            .with_local_cli_confirmation();
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&cfg),
+        )
+        .await
+        .expect("missing audit writer becomes a task failure, not a dispatcher failure");
+        assert_eq!(outcome.tasks_completed, 0);
+        assert!(
+            !dir.path()
+                .join(format!(".neoth-task-{}", task_id.raw()))
+                .exists(),
+            "required audit absence must prevent the first worktree effect"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_worker_result_before_gate_restores_backlog_without_decision() {
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: green_outcome(),
+                name: "cancel-before-gate",
+            }),
+        );
+        let home = dir.path().join("neoth-home");
+        let (writer, _writer_join) = authenticated_apply_writer(&home);
+        let pause = patch_apply_pause(PatchApplyPausePoint::BeforeGate);
+        let cfg = local_test_apply_config(&repo, &writer).with_test_pause(Arc::clone(&pause));
+        let cancellation = AtomicCancellation::new();
+
+        let dispatch = dispatch_session_with_apply_cancellable(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&cfg),
+            &cancellation,
+        );
+        let request_cancel = async {
+            wait_for_patch_apply_pause(&pause).await;
+            cancellation.request();
+            pause.release.notify_one();
+        };
+        let (result, ()) = tokio::join!(dispatch, request_cancel);
+
+        let CancellableDispatchOutcome::Cancelled(receipt) = result.unwrap() else {
+            panic!("cancellation must return its joined effect receipt");
+        };
+        assert!(receipt.completed_task_ids.is_empty());
+        assert!(receipt.applied_task_ids.is_empty());
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(task.status, TaskStatus::Backlog);
+        assert!(
+            !dir.path()
+                .join(format!(".neoth-task-{}", task_id.raw()))
+                .exists()
+        );
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(&home, "local")
+            .expect("pre-Gate cancellation must leave no final permission decision");
+        assert!(ledger.entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_admission_preserves_history_but_consumes_no_worktree_effect() {
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: green_outcome(),
+                name: "cancel-after-admission",
+            }),
+        );
+        let home = dir.path().join("neoth-home");
+        let (writer, _writer_join) = authenticated_apply_writer(&home);
+        let pause = patch_apply_pause(PatchApplyPausePoint::AfterAdmission);
+        let cfg = local_test_apply_config(&repo, &writer).with_test_pause(Arc::clone(&pause));
+        let cancellation = AtomicCancellation::new();
+
+        let dispatch = dispatch_session_with_apply_cancellable(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&cfg),
+            &cancellation,
+        );
+        let request_cancel = async {
+            wait_for_patch_apply_pause(&pause).await;
+            cancellation.request();
+            pause.release.notify_one();
+        };
+        let (result, ()) = tokio::join!(dispatch, request_cancel);
+
+        let CancellableDispatchOutcome::Cancelled(receipt) = result.unwrap() else {
+            panic!("cancellation must return its joined effect receipt");
+        };
+        assert!(receipt.completed_task_ids.is_empty());
+        assert!(receipt.applied_task_ids.is_empty());
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(task.status, TaskStatus::Backlog);
+        assert!(
+            !dir.path()
+                .join(format!(".neoth-task-{}", task_id.raw()))
+                .exists()
+        );
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(&home, "local")
+            .expect("post-admission cancellation keeps the final decision as history");
+        assert_eq!(ledger.entries.len(), 1);
+        assert!(matches!(
+            ledger.entries[0].event.outcome,
+            crate::permissions::TrustOutcome::Allowed
+        ));
     }
 
     #[tokio::test]
@@ -3142,11 +3769,12 @@ mod tests {
             }),
         );
 
-        // Path need not exist — the origin gate denies before
-        // worktree::create_task_worktree ever runs.
-        let fake_repo = dir.path().join("never-exists");
-        let apply_cfg = DispatchApplyConfig::new(&fake_repo, ApplyOrigin::DaemonScheduled)
-            .with_autonomy(crate::permissions::AutonomyLevel::Full);
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let (writer, _writer_join) = authenticated_apply_writer(&dir.path().join("neoth-home"));
+        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::DaemonScheduled)
+            .with_autonomy(crate::permissions::AutonomyLevel::Full)
+            .with_wal_writer(std::sync::Arc::clone(&writer));
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -3169,22 +3797,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_origin_may_degrade_confirm_only_for_cli_confirmed() {
-        // Pure-logic guard: the trust asymmetry lives in one method, so
-        // pin it directly. Exactly ONE origin may degrade Confirm.
-        assert!(
-            ApplyOrigin::CliConfirmed.may_degrade_confirm(),
-            "CLI-confirmed apply carries explicit local-operator consent"
-        );
-        assert!(
-            !ApplyOrigin::DaemonScheduled.may_degrade_confirm(),
-            "daemon-scheduled apply has no operator → must not degrade"
-        );
-        assert!(
-            !ApplyOrigin::ChannelRequested.may_degrade_confirm(),
-            "channel-requested apply has no local auth → must not degrade"
-        );
-
+    fn apply_origin_is_observable_provenance_only() {
         // Stable wire/log names — these land in WAL diagnostics + Err
         // strings, so a rename is a breaking change worth a test.
         assert_eq!(ApplyOrigin::CliConfirmed.as_str(), "cli_confirmed");

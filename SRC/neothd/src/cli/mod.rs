@@ -132,6 +132,7 @@ pub mod ouro;
 pub mod paperless;
 #[cfg(test)]
 mod parity_drift;
+pub(crate) mod permission_audit;
 pub mod permissions;
 pub mod plugin;
 pub mod preset;

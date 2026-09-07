@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
-use crate::permissions::gate::ChannelAsker;
+use crate::permissions::gate::{ChannelAsker, PermissionAuditSink};
 use crate::permissions::ifc::{EgressProvenance, ExplicitExternalResearchRelease};
 use crate::permissions::{Action, AutonomyPolicySnapshot, ConfirmStrategy, Gate};
 use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
@@ -183,10 +183,27 @@ impl fmt::Debug for ExternalHttpPermit {
 #[async_trait::async_trait]
 pub trait ExternalHttpAuditSink: Send + Sync {
     async fn append_external_http(&self, subtype: ExtendedSubtype, payload: Vec<u8>) -> Result<()>;
+
+    /// Borrow the same owner used for lifecycle receipts. A missing destination
+    /// refuses a required decision before any HTTP intent or transport.
+    fn permission_audit_sink(&self) -> PermissionAuditSink<'_> {
+        PermissionAuditSink::None
+    }
+
+    /// Lightweight lifecycle fixtures explicitly exclude decision persistence;
+    /// real writers and every production build always require it.
+    #[cfg(test)]
+    fn requires_permission_audit(&self) -> bool {
+        true
+    }
 }
 
 #[async_trait::async_trait]
 impl ExternalHttpAuditSink for WalWriterHandle {
+    fn permission_audit_sink(&self) -> PermissionAuditSink<'_> {
+        PermissionAuditSink::Writer(self)
+    }
+
     async fn append_external_http(&self, subtype: ExtendedSubtype, payload: Vec<u8>) -> Result<()> {
         let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
             .event_subtype(subtype as u8)
@@ -206,6 +223,10 @@ struct DaemonAuditSink {
 #[async_trait::async_trait]
 #[cfg(not(test))]
 impl ExternalHttpAuditSink for DaemonAuditSink {
+    fn permission_audit_sink(&self) -> PermissionAuditSink<'_> {
+        PermissionAuditSink::DaemonRpc(&self.home)
+    }
+
     async fn append_external_http(&self, subtype: ExtendedSubtype, payload: Vec<u8>) -> Result<()> {
         crate::daemon::audit_rpc::try_post_audit_frame_with_subtype(
             &self.home,
@@ -569,9 +590,21 @@ impl ExternalHttpAuthorizer {
             if let Some(asker) = &self.channel_asker {
                 gate = gate.with_channel_asker(Arc::clone(asker));
             }
-            gate.check(&action, None)
-                .await
-                .context("external HTTP autonomy gate denied request")?;
+            if audit.is_operator_released_research() {
+                gate = gate.with_released_research_audit();
+            }
+            #[cfg(not(test))]
+            let audit_required = true;
+            #[cfg(test)]
+            let audit_required = self.sink.requires_permission_audit();
+            gate.check_with_audit_sink(
+                &action,
+                self.sink.permission_audit_sink(),
+                audit_required,
+                Some(&audit.request_binding_sha256),
+            )
+            .await
+            .context("external HTTP autonomy gate denied request")?;
             self.append_intent(&audit).await?;
         }
 
@@ -807,6 +840,10 @@ struct NoopAuditSink;
 #[cfg(test)]
 #[async_trait::async_trait]
 impl ExternalHttpAuditSink for NoopAuditSink {
+    fn requires_permission_audit(&self) -> bool {
+        false
+    }
+
     async fn append_external_http(
         &self,
         _subtype: ExtendedSubtype,
@@ -856,6 +893,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ExternalHttpAuditSink for RecordingSink {
+        fn requires_permission_audit(&self) -> bool {
+            false
+        }
+
         async fn append_external_http(
             &self,
             subtype: ExtendedSubtype,
@@ -922,6 +963,265 @@ mod tests {
         for marker in forbidden {
             assert!(!returned.contains(marker));
         }
+    }
+
+    fn persisted_http_events(home: &std::path::Path) -> Vec<(u8, u8, serde_json::Value)> {
+        use crate::wal::events::{EVENT_TYPE_PERMISSION_DENIED, EVENT_TYPE_PERMISSION_GRANTED};
+
+        let mut events = Vec::new();
+        crate::wal::scan::for_each_frame_at_home(
+            home,
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                let relevant = matches!(
+                    frame.header.event_type,
+                    EVENT_TYPE_PERMISSION_GRANTED | EVENT_TYPE_PERMISSION_DENIED
+                ) || (frame.header.event_type == EVENT_TYPE_EXTENDED
+                    && [
+                        ExtendedSubtype::TrustDecision as u8,
+                        ExtendedSubtype::ExternalHttpIntent as u8,
+                        ExtendedSubtype::ExternalHttpResult as u8,
+                    ]
+                    .contains(&frame.header.event_subtype));
+                let payload = if relevant {
+                    serde_json::from_slice(frame.payload)?
+                } else {
+                    serde_json::Value::Null
+                };
+                events.push((frame.header.event_type, frame.header.event_subtype, payload));
+                Ok(())
+            },
+        )
+        .unwrap();
+        events
+    }
+
+    #[tokio::test]
+    async fn released_http_seals_one_private_decision_before_intent_and_transport() {
+        use crate::permissions::{ActionKind, TrustLedger, TrustOutcome};
+        use crate::wal::events::{EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_PERMISSION_GRANTED};
+
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("wal")).unwrap();
+        let (writer, join) = crate::wal::writer::spawn_for_home(
+            home.path().join("wal/000001.wal"),
+            home.path().to_path_buf(),
+        )
+        .unwrap();
+        let asked = Arc::new(CountingAsker::approving());
+        let topic = "private research marker";
+        let auth = ExternalHttpAuthorizer::with_operator_released_channel_research_writer(
+            AutonomyPolicySnapshot::test_level(crate::permissions::AutonomyLevel::Standard),
+            writer.clone(),
+            Some(asked.clone()),
+            ExplicitExternalResearchRelease::test_for_exact_topic(topic),
+        );
+        auth.arm_operator_released_exact_topic(topic).unwrap();
+        let called = AtomicUsize::new(0);
+        auth.execute(
+            ExternalHttpRequest::get(
+                "https://api.search.brave.com/res/v1/web/search?q=private%20research%20marker",
+                ExternalHttpSurface::SearchBrave,
+            ),
+            |_permit| async {
+                let ledger = TrustLedger::replay_subject_at_home(home.path(), "local").unwrap();
+                // Only the authenticated decision must be visible here. The
+                // later normal HTTP intent can be an unsealed live WAL tail.
+                assert_eq!(ledger.entries.len(), 1);
+                assert_eq!(
+                    ledger.entries[0].event.action,
+                    ActionKind::ExternalHttpRequest
+                );
+                assert_eq!(ledger.entries[0].event.outcome, TrustOutcome::Allowed);
+                let events = persisted_http_events(home.path());
+                let trust = events
+                    .iter()
+                    .position(|(kind, subtype, _)| {
+                        *kind == EVENT_TYPE_EXTENDED
+                            && *subtype == ExtendedSubtype::TrustDecision as u8
+                    })
+                    .unwrap();
+                let intent = events
+                    .iter()
+                    .position(|(kind, subtype, _)| {
+                        *kind == EVENT_TYPE_EXTENDED
+                            && *subtype == ExtendedSubtype::ExternalHttpIntent as u8
+                    })
+                    .unwrap();
+                assert!(trust < intent);
+                assert!(
+                    events[trust + 1..intent]
+                        .iter()
+                        .any(|(kind, _, _)| *kind == EVENT_TYPE_COMPACTION_MARKER)
+                );
+                assert!(
+                    events[..trust]
+                        .iter()
+                        .any(|(kind, _, _)| *kind == EVENT_TYPE_PERMISSION_GRANTED)
+                );
+                assert!(!events.iter().any(|(kind, subtype, _)| {
+                    *kind == EVENT_TYPE_EXTENDED
+                        && *subtype == ExtendedSubtype::ExternalHttpResult as u8
+                }));
+                assert_eq!(
+                    ledger.entries[0].event.request_binding_sha256.as_deref(),
+                    events[intent].2["request_binding_sha256"].as_str()
+                );
+                called.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(called.load(Ordering::SeqCst), 1);
+        assert!(asked.reasons.lock().unwrap()[0].contains("https://api.search.brave.com"));
+        let events = persisted_http_events(home.path());
+        let compatibility = events
+            .iter()
+            .find(|(kind, _, _)| *kind == EVENT_TYPE_PERMISSION_GRANTED)
+            .unwrap();
+        assert_eq!(compatibility.2["action"], RELEASED_RESEARCH_AUDIT_LABEL);
+        assert!(compatibility.2["reason"].is_null());
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(kind, subtype, _)| {
+                    *kind == EVENT_TYPE_EXTENDED
+                        && *subtype == ExtendedSubtype::ExternalHttpResult as u8
+                })
+                .count(),
+            1
+        );
+        let persisted = serde_json::to_string(&events).unwrap();
+        for forbidden in [topic, "api.search.brave.com", "search_brave", "%20", "GET"] {
+            assert!(
+                !persisted.contains(forbidden),
+                "persisted private marker: {forbidden}"
+            );
+        }
+        drop(auth);
+        drop(writer);
+        join.await.unwrap();
+        assert_eq!(
+            TrustLedger::replay_subject_at_home(home.path(), "local")
+                .unwrap()
+                .entries
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn released_http_rejection_seals_one_redacted_decision_without_intent() {
+        use crate::permissions::{TrustLedger, TrustLedgerCompleteness, TrustOutcome};
+        use crate::wal::events::EVENT_TYPE_PERMISSION_DENIED;
+
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("wal")).unwrap();
+        let (writer, join) = crate::wal::writer::spawn_for_home(
+            home.path().join("wal/000001.wal"),
+            home.path().to_path_buf(),
+        )
+        .unwrap();
+        let auth = ExternalHttpAuthorizer::with_operator_released_channel_research_writer(
+            AutonomyPolicySnapshot::test_level(crate::permissions::AutonomyLevel::Standard),
+            writer.clone(),
+            Some(Arc::new(CountingAsker::rejecting())),
+            ExplicitExternalResearchRelease::test_for_exact_topic("refused topic"),
+        );
+        auth.arm_operator_released_exact_topic("refused topic")
+            .unwrap();
+        let called = AtomicBool::new(false);
+        let result = auth
+            .execute(
+                ExternalHttpRequest::get(
+                    "https://api.search.brave.com/res/v1/web/search?q=refused%20topic",
+                    ExternalHttpSurface::SearchBrave,
+                ),
+                |_permit| async {
+                    called.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .await;
+        assert_released_pretransport_error_is_coarse(
+            &result.unwrap_err(),
+            &["refused topic", "brave"],
+        );
+        assert!(!called.load(Ordering::SeqCst));
+        let ledger = TrustLedger::replay_subject_at_home(home.path(), "local").unwrap();
+        assert!(matches!(
+            ledger.completeness,
+            TrustLedgerCompleteness::Complete
+        ));
+        assert_eq!(ledger.entries.len(), 1);
+        assert_eq!(ledger.entries[0].event.outcome, TrustOutcome::Denied);
+        assert_eq!(
+            ledger.entries[0].event.reason_sha256.as_deref(),
+            Some(hex::encode(Sha256::digest(b"released_research_request_denied")).as_str())
+        );
+        let events = persisted_http_events(home.path());
+        let denied = events
+            .iter()
+            .find(|(kind, _, _)| *kind == EVENT_TYPE_PERMISSION_DENIED)
+            .unwrap();
+        assert_eq!(denied.2["action"], RELEASED_RESEARCH_AUDIT_LABEL);
+        assert_eq!(denied.2["reason"], "released_research_request_denied");
+        assert!(!events.iter().any(|(kind, subtype, _)| {
+            *kind == EVENT_TYPE_EXTENDED
+                && [
+                    ExtendedSubtype::ExternalHttpIntent as u8,
+                    ExtendedSubtype::ExternalHttpResult as u8,
+                ]
+                .contains(subtype)
+        }));
+        let persisted = serde_json::to_string(&events).unwrap();
+        for forbidden in ["refused topic", "api.search.brave.com", "search_brave"] {
+            assert!(!persisted.contains(forbidden));
+        }
+        drop(auth);
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn required_http_decision_failure_blocks_intent_and_transport() {
+        struct MissingDecisionSink(AtomicUsize);
+        #[async_trait::async_trait]
+        impl ExternalHttpAuditSink for MissingDecisionSink {
+            async fn append_external_http(&self, _: ExtendedSubtype, _: Vec<u8>) -> Result<()> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let missing = Arc::new(MissingDecisionSink(AtomicUsize::new(0)));
+        let called = AtomicBool::new(false);
+        for auth in [
+            authorizer(missing.clone()),
+            ExternalHttpAuthorizer::with_writer(
+                AutonomyPolicySnapshot::test_level(crate::permissions::AutonomyLevel::Standard),
+                ConfirmStrategy::AlwaysAllow,
+                crate::wal::writer::closed_test_writer(),
+            ),
+        ] {
+            assert!(
+                auth.execute(
+                    ExternalHttpRequest::get(
+                        "https://example.com/data",
+                        ExternalHttpSurface::Fetch
+                    ),
+                    |_permit| async {
+                        called.store(true, Ordering::SeqCst);
+                        Ok(())
+                    },
+                )
+                .await
+                .is_err()
+            );
+        }
+        assert_eq!(missing.0.load(Ordering::SeqCst), 0);
+        assert!(!called.load(Ordering::SeqCst));
     }
 
     #[tokio::test]

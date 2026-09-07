@@ -24,7 +24,8 @@
 //!   evaluation (before any gate runs).
 //! - `EXTENDED/SelfEditApplied` (0x02) emitted ONLY when all 5 gates pass
 //!   AND `--dry-run` is false.
-//! - Refused edits emit PROPOSED then nothing; the gap is the audit trail.
+//! - Refused edits emit `SelfEditRefused`; terminal live permission refusals
+//!   additionally use the canonical authenticated `TrustDecision` record.
 //!
 //! ## Hard-deny list
 //!
@@ -61,6 +62,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::cli::self_dev::SourceEditPreApplyPlan;
@@ -74,10 +76,20 @@ use crate::coding::worktree::{
 };
 use crate::config::FreedomConfig;
 use crate::config::ops::SelfEditConfig;
-use crate::permissions::{self, Action, Decision};
+use crate::permissions::{
+    self, Action, AutonomyPolicySnapshot, ConfirmStrategy, Decision, Gate, PermissionAuditSink,
+};
 use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 use crate::wal::types::EventFlags;
 use crate::wal::writer::WalWriterHandle;
+
+/// Exists only in test builds so an integration fixture can deterministically
+/// move Git state after the worktree/green-test gates but before the real final
+/// drift proof. Production has no corresponding callback or branch.
+#[cfg(test)]
+type PreFinalDriftHook = Option<Box<dyn FnOnce() + Send>>;
+#[cfg(not(test))]
+type PreFinalDriftHook = ();
 
 // ── Hard-deny path prefixes (always refused, regardless of allowlist) ─────────
 
@@ -263,6 +275,39 @@ pub(crate) async fn run_gate_stack(
     wal: Option<&WalWriterHandle>,
     source_edit_pre_apply_plan: Option<&SourceEditPreApplyPlan>,
 ) -> Result<SelfEditOutcome, GateError> {
+    #[cfg(test)]
+    let pre_final_drift_hook = None;
+    #[cfg(not(test))]
+    let pre_final_drift_hook = ();
+    run_gate_stack_with_live_apply(
+        diff_text,
+        cfg,
+        dry_run,
+        operator_acked,
+        wal,
+        source_edit_pre_apply_plan,
+        pre_final_drift_hook,
+        apply_to_live_tree,
+    )
+    .await
+}
+
+/// Internal live-apply seam. Production uses [`apply_to_live_tree`]; tests use
+/// the callback to inspect the required authenticated permission ledger at the
+/// exact point immediately before the mutation starts.
+async fn run_gate_stack_with_live_apply<F>(
+    diff_text: &str,
+    cfg: &FreedomConfig,
+    dry_run: bool,
+    operator_acked: bool,
+    wal: Option<&WalWriterHandle>,
+    source_edit_pre_apply_plan: Option<&SourceEditPreApplyPlan>,
+    _pre_final_drift_hook: PreFinalDriftHook,
+    live_apply: F,
+) -> Result<SelfEditOutcome, GateError>
+where
+    F: FnOnce(&Path, &str) -> anyhow::Result<()> + Send + 'static,
+{
     let self_edit_cfg = &cfg.coding.self_edit;
     let diff_bytes = diff_text.as_bytes();
     let diff_hash = diff_sha256(diff_bytes);
@@ -337,6 +382,28 @@ pub(crate) async fn run_gate_stack(
         Err(reason) => {
             audit.layer3_permission = LayerOutcome::Fail(reason.clone());
             info!(reason, "self_edit gate: layer3 permission refused");
+            if !dry_run {
+                let binding = self_source_preflight_refusal_binding(&diff_hash, &target_paths);
+                let refusal = match wal {
+                    Some(writer) => {
+                        record_terminal_self_source_refusal(
+                            &autonomy_policy,
+                            &Action::SelfSourceEdit {
+                                target_paths: target_paths.clone(),
+                            },
+                            writer,
+                            &binding,
+                        )
+                        .await
+                    }
+                    None => Err(required_self_source_audit_error()),
+                };
+                let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &audit).await;
+                return Err(match refusal {
+                    Err(error) => error,
+                    Ok(()) => GateError::Permission(reason),
+                });
+            }
             refuse!(audit, GateError::Permission(reason));
         }
     }
@@ -493,6 +560,28 @@ pub(crate) async fn run_gate_stack(
                 reason,
                 "self_edit gate: layer3 permission refused (git-truth re-check)"
             );
+            if !dry_run {
+                let binding = self_source_preflight_refusal_binding(&diff_hash, &real_paths);
+                let refusal = match wal {
+                    Some(writer) => {
+                        record_terminal_self_source_refusal(
+                            &autonomy_policy,
+                            &Action::SelfSourceEdit {
+                                target_paths: real_paths.clone(),
+                            },
+                            writer,
+                            &binding,
+                        )
+                        .await
+                    }
+                    None => Err(required_self_source_audit_error()),
+                };
+                let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &audit).await;
+                return Err(match refusal {
+                    Err(error) => error,
+                    Ok(()) => GateError::Permission(reason),
+                });
+            }
             refuse!(audit, GateError::Permission(reason));
         }
     }
@@ -545,6 +634,14 @@ pub(crate) async fn run_gate_stack(
                 "live apply requires a WAL writer — refusing to mutate the \
                  source tree without an audit trail (use dry_run to preview)"
             )));
+        }
+        // TEST-ONLY: deliberately adjacent to the real drift proof. The
+        // production type is `()`, and this block is absent outside tests.
+        #[cfg(test)]
+        if let Some(hook) = _pre_final_drift_hook {
+            tokio::task::spawn_blocking(hook)
+                .await
+                .expect("test pre-final drift hook panicked");
         }
         // ── M1 drift check: verify HEAD + index unchanged since snapshot ────
         // Between worktree-creation and this point another process could have
@@ -611,13 +708,32 @@ pub(crate) async fn run_gate_stack(
             }
         }
 
+        // This is the one permission decision that authorises the live sink.
+        // It intentionally follows every Git/proposal truth proof, so drift and
+        // malformed-preflight refusals do not mint a TrustDecision. Required
+        // evidence must be durable before the callback can mutate the tree.
+        let permission_result = authorize_live_self_source_apply(
+            &autonomy_policy,
+            operator_acked,
+            wal.expect("live self-source apply requires a WAL writer"),
+            &real_paths,
+            &diff_hash,
+            &base_snapshot,
+        )
+        .await;
+        if let Err(error) = permission_result {
+            audit.layer3_permission = LayerOutcome::Fail(error.to_string());
+            let _ = emit_wal(wal, ExtendedSubtype::SelfEditRefused, &audit).await;
+            return Err(error);
+        }
+
         // Apply the SAME in-memory bytes the gates validated (piped via stdin),
         // NOT a re-read of the on-disk file — closes the TOCTOU where the diff
         // file could be swapped between validation and the live apply. Runs in
         // the crate dir so `src/…` diff paths resolve.
         let cd = roots.crate_dir.clone();
         let dt = diff_text.to_string();
-        let applied = tokio::task::spawn_blocking(move || apply_to_live_tree(&cd, &dt))
+        let applied = tokio::task::spawn_blocking(move || live_apply(&cd, &dt))
             .await
             .map_err(|e| GateError::Worktree(format!("live-apply task panicked: {e}")))?;
         if let Err(e) = applied {
@@ -679,6 +795,130 @@ fn exact_authoritative_path_set(expected: &[String], actual: &[String]) -> bool 
     expected.sort();
     actual.sort();
     expected == actual
+}
+
+const SELF_SOURCE_PREFLIGHT_REFUSAL_DOMAIN: &[u8] = b"neoth:self-source-preflight-refusal:v1\0";
+const SELF_SOURCE_LIVE_APPLY_DOMAIN: &[u8] = b"neoth:self-source-live-apply:v1\0";
+
+/// Hash a finite sequence with explicit u64 count and byte-length framing.
+/// These bindings are opaque ledger commitments: no path, source-root, diff
+/// bytes, or operator text crosses into the authenticated TrustEvent.
+fn hash_self_source_binding(
+    domain: &[u8],
+    diff_hash: &str,
+    paths: &[String],
+    base: Option<&BaseShaSnapshot>,
+) -> String {
+    fn field(hasher: &mut Sha256, value: &[u8]) {
+        hasher.update((value.len() as u64).to_be_bytes());
+        hasher.update(value);
+    }
+
+    let mut sorted_paths = paths.to_vec();
+    sorted_paths.sort();
+
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    field(&mut hasher, diff_hash.as_bytes());
+    if let Some(base) = base {
+        field(&mut hasher, base.head_sha.as_bytes());
+        field(&mut hasher, base.index_tree.as_bytes());
+    }
+    hasher.update((sorted_paths.len() as u64).to_be_bytes());
+    for path in sorted_paths {
+        field(&mut hasher, path.as_bytes());
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn self_source_preflight_refusal_binding(diff_hash: &str, parser_paths: &[String]) -> String {
+    hash_self_source_binding(
+        SELF_SOURCE_PREFLIGHT_REFUSAL_DOMAIN,
+        diff_hash,
+        parser_paths,
+        None,
+    )
+}
+
+fn self_source_live_apply_binding(
+    diff_hash: &str,
+    real_paths: &[String],
+    base: &BaseShaSnapshot,
+) -> String {
+    hash_self_source_binding(
+        SELF_SOURCE_LIVE_APPLY_DOMAIN,
+        diff_hash,
+        real_paths,
+        Some(base),
+    )
+}
+
+fn required_self_source_audit_error() -> GateError {
+    GateError::Audit(anyhow::anyhow!(
+        "live self-source permission decision requires a WAL writer"
+    ))
+}
+
+fn map_required_permission_gate_error(error: permissions::gate::GateError) -> GateError {
+    match error {
+        permissions::gate::GateError::Denied(reason)
+        | permissions::gate::GateError::Aborted(reason) => GateError::Permission(reason),
+        permissions::gate::GateError::Unavailable(reason) => GateError::Audit(anyhow::anyhow!(
+            "required self-source permission evidence failed: {reason}"
+        )),
+    }
+}
+
+/// Record a terminal early refusal using the canonical permission Gate. This is
+/// intentionally only reached after Layer 3's pure check has already stopped
+/// the request, keeping no-`--yes` attempts ahead of worktree preparation.
+async fn record_terminal_self_source_refusal(
+    policy: &AutonomyPolicySnapshot,
+    action: &Action,
+    wal: &WalWriterHandle,
+    binding: &str,
+) -> Result<(), GateError> {
+    Gate::for_policy(policy.clone())
+        .with_confirm(ConfirmStrategy::FailClosed)
+        .check_with_audit_sink(
+            action,
+            PermissionAuditSink::Writer(wal),
+            true,
+            Some(binding),
+        )
+        .await
+        .map_err(map_required_permission_gate_error)
+}
+
+/// Final required permission boundary for the actual live apply. No caller
+/// metadata is promoted to identity: this is the canonical local CLI `--yes`
+/// acknowledgement and the Gate's default local subject only.
+async fn authorize_live_self_source_apply(
+    policy: &AutonomyPolicySnapshot,
+    operator_acked: bool,
+    wal: &WalWriterHandle,
+    real_paths: &[String],
+    diff_hash: &str,
+    base: &BaseShaSnapshot,
+) -> Result<(), GateError> {
+    let action = Action::SelfSourceEdit {
+        target_paths: real_paths.to_vec(),
+    };
+    let gate = Gate::for_policy(policy.clone()).with_confirm(ConfirmStrategy::FailClosed);
+    let gate = if operator_acked {
+        gate.with_preconfirmed_confirmation("cli_self_edit_yes")
+    } else {
+        gate
+    };
+    let binding = self_source_live_apply_binding(diff_hash, real_paths, base);
+    gate.check_with_audit_sink(
+        &action,
+        PermissionAuditSink::Writer(wal),
+        true,
+        Some(&binding),
+    )
+    .await
+    .map_err(map_required_permission_gate_error)
 }
 
 /// Canonical anti-loop sentinel (`~/.neoth/self_edit/last_apply`).
@@ -1383,7 +1623,10 @@ fn pseudo_task_id(diff_hash: &str) -> KanbanTaskId {
 mod tests {
     use super::*;
     use crate::config::ops::SelfEditConfig;
-    use crate::permissions::AutonomyLevel;
+    use crate::permissions::{
+        ActionKind, AutonomyLevel, TrustLedger, TrustLedgerCompleteness, TrustOutcome,
+        trust_ledger::LOCAL_SUBJECT,
+    };
 
     fn cfg_enabled(modules: &[&str]) -> SelfEditConfig {
         SelfEditConfig {
@@ -1666,6 +1909,32 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn self_source_decision_bindings_are_sorted_and_domain_separated() {
+        let paths = vec!["src/cli/b.rs".to_string(), "src/cli/a.rs".to_string()];
+        let reversed = vec!["src/cli/a.rs".to_string(), "src/cli/b.rs".to_string()];
+        let base = BaseShaSnapshot {
+            head_sha: "a".repeat(40),
+            index_tree: "b".repeat(40),
+        };
+        let preflight = self_source_preflight_refusal_binding(&"c".repeat(64), &paths);
+        assert_eq!(
+            preflight,
+            self_source_preflight_refusal_binding(&"c".repeat(64), &reversed),
+            "path order must not alter a finite path-set commitment"
+        );
+        let live = self_source_live_apply_binding(&"c".repeat(64), &paths, &base);
+        assert_ne!(
+            preflight, live,
+            "domains must keep early and live decisions distinct"
+        );
+        assert_eq!(live.len(), 64);
+        assert!(
+            live.bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        );
+    }
+
     // ── Reentrancy lock ──────────────────────────────────────────────────────
 
     #[test]
@@ -1747,6 +2016,21 @@ mod tests {
         git(&["commit", "-q", "-m", "init"]);
     }
 
+    fn count_extended_subtype(segment: &Path, subtype: ExtendedSubtype) -> usize {
+        let bytes = std::fs::read(segment).expect("read fixture WAL segment");
+        let mut count = 0;
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype == subtype as u8
+            {
+                count += 1;
+            }
+            Ok(())
+        })
+        .expect("scan fixture WAL segment");
+        count
+    }
+
     #[tokio::test]
     async fn dummy_comment_addition_passes_all_gates_and_applies() {
         if !git_available() {
@@ -1770,18 +2054,59 @@ mod tests {
         cfg.coding.self_edit.apply_cooldown_secs = 0;
         cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
 
-        // Live applies require a WAL writer (gate-enforced) — spawn one into
-        // the fixture tempdir so the applied-frame audit has somewhere to go.
-        let wal_seg = tmp.path().join("wal").join("self_edit_audit.wal");
+        // A home-bound writer supplies the marker-authenticated local ledger
+        // that must be complete before the live callback starts the effect.
+        let home = tmp.path().join("home");
+        let wal_seg = home.join("wal").join("000001.wal");
         std::fs::create_dir_all(wal_seg.parent().unwrap()).unwrap();
-        let (wal_handle, wal_join) =
-            crate::wal::writer::spawn(wal_seg).expect("fixture WAL writer");
+        let (wal_handle, wal_join) = crate::wal::writer::spawn_for_home(wal_seg, home.clone())
+            .expect("fixture home WAL writer");
+        let home_at_effect = home.clone();
 
-        let outcome = run_gate_stack(diff, &cfg, false, true, Some(&wal_handle), None)
-            .await
-            .expect("dummy.rs comment addition must pass all gates");
+        let outcome = run_gate_stack_with_live_apply(
+            diff,
+            &cfg,
+            false,
+            true,
+            Some(&wal_handle),
+            None,
+            None,
+            move |source_root, diff_text| {
+                let ledger = TrustLedger::replay_subject_at_home(&home_at_effect, LOCAL_SUBJECT)
+                    .expect("required allow must be complete before effect");
+                assert_eq!(ledger.completeness, TrustLedgerCompleteness::Complete);
+                assert_eq!(ledger.entries.len(), 1);
+                let decision = &ledger.entries[0].event;
+                assert_eq!(decision.action, ActionKind::SelfSourceEdit);
+                assert_eq!(decision.outcome, TrustOutcome::Allowed);
+                assert_eq!(
+                    decision.confirmation_source.as_deref(),
+                    Some("cli_self_edit_yes")
+                );
+                assert!(
+                    decision
+                        .request_binding_sha256
+                        .as_deref()
+                        .is_some_and(|binding| {
+                            binding.len() == 64
+                                && binding.bytes().all(|byte| {
+                                    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                                })
+                        }),
+                    "live permission binding must be canonical lower-hex: {decision:?}"
+                );
+                apply_to_live_tree(source_root, diff_text)
+            },
+        )
+        .await
+        .expect("dummy.rs comment addition must pass all gates");
         drop(wal_handle);
-        let _ = wal_join.await;
+        wal_join.await.expect("home WAL writer must stop cleanly");
+        let ledger = TrustLedger::replay_subject_at_home(&home, LOCAL_SUBJECT)
+            .expect("closed home ledger must replay");
+        assert_eq!(ledger.completeness, TrustLedgerCompleteness::Complete);
+        assert_eq!(ledger.entries.len(), 1, "no duplicate allow decision");
+        assert_eq!(ledger.entries[0].event.outcome, TrustOutcome::Allowed);
         assert_eq!(outcome.target_paths, vec!["src/cli/dummy.rs".to_string()]);
         assert!(!outcome.dry_run);
 
@@ -1804,6 +2129,118 @@ mod tests {
             listing.matches("worktree ").count(),
             1,
             "gate worktree leaked: {listing}"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_no_yes_is_authenticated_before_any_worktree_preparation() {
+        if !git_available() {
+            eprintln!("git not on PATH — skipping early refusal ledger test");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        init_fixture_repo(tmp.path());
+        let diff = "--- a/src/cli/dummy.rs\n\
+                    +++ b/src/cli/dummy.rs\n\
+                    @@ -1 +1,2 @@\n \
+                    fn dummy() {}\n\
+                    +// must never reach worktree preparation\n";
+        let mut cfg = FreedomConfig::default();
+        cfg.autonomy = AutonomyLevel::Elevated;
+        cfg.coding.self_edit.enabled = true;
+        cfg.coding.self_edit.allowed_modules = vec!["src/cli".to_string()];
+        cfg.coding.self_edit.require_green_tests = true;
+        cfg.coding.self_edit.apply_cooldown_secs = 0;
+        cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
+        let home = tmp.path().join("home");
+        let segment = home.join("wal").join("000001.wal");
+        std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.clone()).unwrap();
+
+        let error = run_gate_stack(diff, &cfg, false, false, Some(&writer), None)
+            .await
+            .expect_err("a live Confirm without --yes must stay early");
+        assert!(matches!(error, GateError::Permission(_)), "got: {error:?}");
+        drop(writer);
+        join.await.expect("home writer closes");
+        let ledger = TrustLedger::replay_subject_at_home(&home, LOCAL_SUBJECT).unwrap();
+        assert_eq!(ledger.completeness, TrustLedgerCompleteness::Complete);
+        assert_eq!(ledger.entries.len(), 1, "one terminal early denial");
+        let denial = &ledger.entries[0].event;
+        assert_eq!(denial.action, ActionKind::SelfSourceEdit);
+        assert_eq!(denial.outcome, TrustOutcome::Denied);
+        assert_eq!(denial.confirmation_source, None);
+        assert!(
+            !std::fs::read_to_string(tmp.path().join("src/cli/dummy.rs"))
+                .unwrap()
+                .contains("must never"),
+            "source must be unchanged"
+        );
+        let worktrees = std::process::Command::new("git")
+            .arg("-C")
+            .arg(tmp.path())
+            .args(["worktree", "list", "--porcelain"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&worktrees.stdout)
+                .matches("worktree ")
+                .count(),
+            1,
+            "no --yes must not create a worktree"
+        );
+    }
+
+    #[tokio::test]
+    async fn closed_required_permission_writer_blocks_before_live_effect() {
+        if !git_available() {
+            eprintln!("git not on PATH — skipping closed-writer pre-effect test");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        init_fixture_repo(tmp.path());
+        let diff = "--- a/src/cli/dummy.rs\n\
+                    +++ b/src/cli/dummy.rs\n\
+                    @@ -1 +1,2 @@\n \
+                    fn dummy() {}\n\
+                    +// blocked by closed permission writer\n";
+        let mut cfg = FreedomConfig::default();
+        cfg.autonomy = AutonomyLevel::Elevated;
+        cfg.coding.self_edit.enabled = true;
+        cfg.coding.self_edit.allowed_modules = vec!["src/cli".to_string()];
+        cfg.coding.self_edit.require_green_tests = true;
+        cfg.coding.self_edit.apply_cooldown_secs = 0;
+        cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
+        let home = tmp.path().join("home");
+        let segment = home.join("wal").join("000001.wal");
+        std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home).unwrap();
+        join.abort();
+        let _ = join.await;
+        let effect_ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed_effect = effect_ran.clone();
+        let error = run_gate_stack_with_live_apply(
+            diff,
+            &cfg,
+            false,
+            true,
+            Some(&writer),
+            None,
+            None,
+            move |_source_root, _diff_text| {
+                observed_effect.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await
+        .expect_err("closed required writer must refuse before live effect");
+        assert!(matches!(error, GateError::Audit(_)), "got: {error:?}");
+        assert!(!effect_ran.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(
+            !std::fs::read_to_string(tmp.path().join("src/cli/dummy.rs"))
+                .unwrap()
+                .contains("closed permission"),
+            "source must stay unchanged when permission evidence fails"
         );
     }
 
@@ -1916,8 +2353,12 @@ mod tests {
         cfg.coding.self_edit.require_green_tests = false;
         cfg.coding.self_edit.apply_cooldown_secs = 0;
         cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
+        let home = tmp.path().join("home");
+        let segment = home.join("wal").join("000001.wal");
+        std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.clone()).unwrap();
 
-        let err = run_gate_stack(diff, &cfg, false, true, None, None)
+        let err = run_gate_stack(diff, &cfg, false, true, Some(&writer), None)
             .await
             .expect_err("rename into src/wal/ must be refused by the git-truth guard");
         // Refused at the allowlist layer on git's REAL path set.
@@ -1929,6 +2370,14 @@ mod tests {
         assert!(
             !tmp.path().join("src/wal/evil.rs").exists(),
             "the rename must have been refused before touching the live tree"
+        );
+        drop(writer);
+        join.await.expect("home writer closes");
+        let ledger = TrustLedger::replay_subject_at_home(&home, LOCAL_SUBJECT).unwrap();
+        assert_eq!(ledger.completeness, TrustLedgerCompleteness::Complete);
+        assert!(
+            ledger.entries.is_empty(),
+            "non-permission git-truth refusal must not record TrustDecision: {ledger:?}"
         );
     }
 
@@ -2045,6 +2494,103 @@ mod tests {
         assert!(
             err.contains("staged index changed"),
             "expected 'staged index changed' in error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn final_git_drift_refuses_before_decision_or_live_effect() {
+        if !git_available() {
+            eprintln!("git not on PATH — skipping drift-ledger boundary test");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        init_fixture_repo(tmp.path());
+        let diff = "--- a/src/cli/dummy.rs\n\
+                    +++ b/src/cli/dummy.rs\n\
+                    @@ -1 +1,2 @@\n \
+                    fn dummy() {}\n\
+                    +// must be refused after final Git drift proof\n";
+        let mut cfg = FreedomConfig::default();
+        cfg.autonomy = AutonomyLevel::Elevated;
+        cfg.coding.self_edit.enabled = true;
+        cfg.coding.self_edit.allowed_modules = vec!["src/cli".to_string()];
+        cfg.coding.self_edit.require_green_tests = true;
+        cfg.coding.self_edit.apply_cooldown_secs = 0;
+        cfg.coding.self_edit.source_root = Some(tmp.path().to_path_buf());
+        let home = tmp.path().join("home");
+        let segment = home.join("wal").join("000001.wal");
+        std::fs::create_dir_all(segment.parent().unwrap()).unwrap();
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.clone()).unwrap();
+        let git_root = tmp.path().to_path_buf();
+        let effect_ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed_effect = effect_ran.clone();
+
+        // The test-only hook runs after Layer 5 but immediately before the
+        // production HEAD/index check. The commit makes the captured base stale
+        // without touching the requested dummy.rs effect target.
+        let drift_hook: PreFinalDriftHook = Some(Box::new(move || {
+            std::fs::write(
+                git_root.join("src/cli/concurrent.rs"),
+                "fn concurrent() {}\n",
+            )
+            .expect("write concurrent fixture source");
+            let committed = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&git_root)
+                .args(["add", "src/cli/concurrent.rs"])
+                .output()
+                .map(|output| output.status.success())
+                .unwrap_or(false)
+                && std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(&git_root)
+                    .args(["commit", "-q", "-m", "concurrent final-drift fixture"])
+                    .output()
+                    .map(|output| output.status.success())
+                    .unwrap_or(false);
+            assert!(committed, "must move HEAD in the final-drift test hook");
+        }));
+        let error = run_gate_stack_with_live_apply(
+            diff,
+            &cfg,
+            false,
+            true,
+            Some(&writer),
+            None,
+            drift_hook,
+            move |_source_root, _diff_text| {
+                observed_effect.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await
+        .expect_err("final HEAD drift must refuse the live apply");
+        assert!(matches!(error, GateError::StateDrift(_)), "got: {error:?}");
+        assert!(
+            !effect_ran.load(std::sync::atomic::Ordering::SeqCst),
+            "final drift must stop before the live effect callback"
+        );
+        assert!(
+            !std::fs::read_to_string(tmp.path().join("src/cli/dummy.rs"))
+                .unwrap()
+                .contains("must be refused"),
+            "the requested source diff must not apply"
+        );
+        drop(writer);
+        join.await.expect("home writer closes");
+        let ledger = TrustLedger::replay_subject_at_home(&home, LOCAL_SUBJECT).unwrap();
+        assert_eq!(ledger.completeness, TrustLedgerCompleteness::Complete);
+        assert!(
+            ledger.entries.is_empty(),
+            "final Git drift is a preflight mismatch, not a permission decision: {ledger:?}"
+        );
+        assert_eq!(
+            count_extended_subtype(
+                &home.join("wal").join("000001.wal"),
+                ExtendedSubtype::SelfEditApplied
+            ),
+            0,
+            "final Git drift must not emit SelfEditApplied"
         );
     }
 

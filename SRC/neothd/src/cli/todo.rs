@@ -21,8 +21,12 @@
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
+use sha2::{Digest, Sha256};
+use std::future::Future;
 
 use crate::cli::OutputFormat;
+use crate::cli::permission_audit::RequiredPermissionAudit;
+use crate::permissions::{Action, Gate};
 use crate::secret::SecretString;
 use crate::tools::{caldav, google_tasks, microsoft_todo, todoist};
 
@@ -87,9 +91,9 @@ pub enum TodoAction {
 }
 
 pub async fn run_todo(args: TodoArgs) -> Result<()> {
-    // P0: every external task WRITE (add/close on ANY backend — todoist, google,
-    // caldav, microsoft) routes through the SAME ExternalTaskWrite gate +
-    // `--dry-run` + fail-closed audit path. Previously only CalDAV was gated.
+    // `list` is read-only. `--dry-run` is deliberately handled before the
+    // required decision gate: it previews a prospective write but never
+    // acquires a production authorization or opens a provider connection.
     let provider = provider_name(args.provider);
     let action = match &args.action {
         TodoAction::List => None,
@@ -97,7 +101,6 @@ pub async fn run_todo(args: TodoArgs) -> Result<()> {
         TodoAction::Close { .. } => Some("close"),
     };
     if let Some(action) = action {
-        gate_external_task_write(args.yes, provider, action)?;
         if args.dry_run {
             let target = match &args.action {
                 TodoAction::Add { content } => content.as_str(),
@@ -120,6 +123,33 @@ pub async fn run_todo(args: TodoArgs) -> Result<()> {
             print_dry_run(&args, provider, action, target, &uid);
             return Ok(());
         }
+
+        let target = match &args.action {
+            TodoAction::Add { content } => content.as_str(),
+            TodoAction::Close { id } => id.as_str(),
+            TodoAction::List => unreachable!("write action was selected above"),
+        };
+        let request = todo_write_admission(&args, provider, action, target)?;
+        let binding = external_task_request_binding(provider, action, &request.private_request)?;
+        return execute_external_task_write(args.yes, provider, action, &binding, || async {
+            match args.provider {
+                TaskProvider::Todoist => run_todoist(&args).await,
+                TaskProvider::Google => run_google(&args).await,
+                TaskProvider::Caldav => {
+                    run_caldav_with_creds(
+                        &args,
+                        request.caldav_creds.as_ref().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "CalDAV write admission lost its bound credential snapshot"
+                            )
+                        })?,
+                    )
+                    .await
+                }
+                TaskProvider::Microsoft => run_microsoft(&args).await,
+            }
+        })
+        .await;
     }
     match args.provider {
         TaskProvider::Todoist => run_todoist(&args).await,
@@ -127,6 +157,100 @@ pub async fn run_todo(args: TodoArgs) -> Result<()> {
         TaskProvider::Caldav => run_caldav(&args).await,
         TaskProvider::Microsoft => run_microsoft(&args).await,
     }
+}
+
+/// The exact private request that the selected provider will mutate. This is
+/// hashed by [`external_task_request_binding`] before it reaches the typed
+/// decision event, so task text, ids, account selectors, and CalDAV URLs do
+/// not enter the Trust ledger in cleartext.
+struct TodoWriteAdmission {
+    private_request: Vec<u8>,
+    // CalDAV has a caller-configured destination. Retain the exact credential
+    // snapshot whose URL/account selector was hashed so the effect cannot be
+    // retargeted by a changed environment or credentials file after admission.
+    caldav_creds: Option<CaldavCreds>,
+}
+
+fn todo_write_admission(
+    args: &TodoArgs,
+    provider: &str,
+    action: &str,
+    target: &str,
+) -> Result<TodoWriteAdmission> {
+    let (destination, caldav_creds) = match args.provider {
+        // These provider surfaces have fixed API destinations and fixed
+        // default-list selectors. The mutable task title/id remains part of
+        // the private request below.
+        TaskProvider::Todoist => (
+            serde_json::json!({
+                "endpoint": "https://api.todoist.com/rest/v2/tasks",
+                "list_selector": "inbox_or_provider_default",
+            }),
+            None,
+        ),
+        TaskProvider::Google => (
+            serde_json::json!({
+                "endpoint": "https://tasks.googleapis.com/tasks/v1/lists/@default/tasks",
+                "list_selector": "@default",
+            }),
+            None,
+        ),
+        TaskProvider::Microsoft => (
+            serde_json::json!({
+                "endpoint": "https://graph.microsoft.com/v1.0/me/todo/lists",
+                "list_selector": "wellknown:defaultList",
+            }),
+            None,
+        ),
+        TaskProvider::Caldav => {
+            let creds = caldav_creds()?;
+            let resource = match &args.action {
+                TodoAction::Add { content } => {
+                    caldav::resource_url(&creds.url, &caldav::task_uid(content))
+                }
+                TodoAction::Close { id } => caldav::resource_url(&creds.url, id),
+                TodoAction::List => unreachable!("write action was selected above"),
+            };
+            (
+                serde_json::json!({
+                    "resource_url": resource,
+                    "account_selector": creds.username.clone(),
+                }),
+                Some(creds),
+            )
+        }
+    };
+    let private_request = serde_json::to_vec(&serde_json::json!({
+        "schema": 1,
+        "provider": provider,
+        "action": action,
+        "destination": destination,
+        "target": target,
+    }))
+    .context("serialize private task provider destination binding")?;
+    Ok(TodoWriteAdmission {
+        private_request,
+        caldav_creds,
+    })
+}
+
+/// SHA-256 binds the canonical provider/action and a hash of the private task
+/// target. The TrustDecision contains only this digest, never the task text or
+/// provider task id in cleartext.
+pub(crate) fn external_task_request_binding(
+    provider: &str,
+    action: &str,
+    private_request: impl AsRef<[u8]>,
+) -> Result<String> {
+    let target_sha256 = hex::encode(Sha256::digest(private_request.as_ref()));
+    let canonical = serde_json::to_vec(&serde_json::json!({
+        "schema": 1,
+        "provider": provider,
+        "action": action,
+        "target_sha256": target_sha256,
+    }))
+    .context("serialize external task permission request binding")?;
+    Ok(hex::encode(Sha256::digest(canonical)))
 }
 
 fn provider_name(p: TaskProvider) -> &'static str {
@@ -257,6 +381,13 @@ async fn run_google(args: &TodoArgs) -> Result<()> {
 
 async fn run_caldav(args: &TodoArgs) -> Result<()> {
     let creds = caldav_creds()?;
+    run_caldav_with_creds(args, &creds).await
+}
+
+/// Use a caller-supplied credential snapshot for admitted writes so the CalDAV
+/// collection hashed into the permission decision is also the collection the
+/// subsequent request reaches.
+async fn run_caldav_with_creds(args: &TodoArgs, creds: &CaldavCreds) -> Result<()> {
     match &args.action {
         TodoAction::List => {
             let tasks =
@@ -339,51 +470,111 @@ async fn run_caldav(args: &TodoArgs) -> Result<()> {
     }
 }
 
-/// P0 — gate an external task write (ANY backend) through the autonomy/consent
-/// layer + a fail-closed audit pre-flight. `Deny` bails; `Confirm` is satisfied
-/// by `--yes`, an interactive TTY y/n prompt, or otherwise bails (no silent
-/// network write). `Allow` proceeds. Under `required_for_oneshot_permission_
-/// events`, a live daemon with an unreachable audit-RPC listener REFUSES the
-/// write (the `0xC8 TODO_WRITE` frame couldn't land).
-pub(crate) fn gate_external_task_write(yes: bool, provider: &str, action: &str) -> Result<()> {
-    use crate::permissions::{Action, Decision, evaluate};
-    let cfg = crate::config::FreedomConfig::load_from_default_path_or_default()?;
+/// Run one external task mutation only after the required canonical decision
+/// has been durably recorded. Production callers and injected-effect tests use
+/// this same admission/effect path; the supplied effect is never polled when
+/// required audit delivery or policy evaluation fails.
+pub(crate) async fn execute_external_task_write<T, Effect, EffectFuture>(
+    yes: bool,
+    provider: &str,
+    action_name: &str,
+    request_binding_sha256: &str,
+    effect: Effect,
+) -> Result<T>
+where
+    Effect: FnOnce() -> EffectFuture,
+    EffectFuture: Future<Output = Result<T>>,
+{
+    let cfg = crate::config::FreedomConfig::load_from_default_path_or_default()
+        .context("load task-write autonomy policy")?;
     let home = crate::config::FreedomConfig::default_neoth_home();
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
-        Ok(Some(_))
-    );
-    crate::daemon::audit_rpc::enforce_required_audit(
-        cfg.audit_rpc.required_for_oneshot_permission_events,
-        daemon_live,
+    execute_external_task_write_at(
         &home,
+        cfg.autonomy_policy(),
+        yes,
+        provider,
+        action_name,
+        request_binding_sha256,
+        effect,
     )
-    .context("task write refused: required audit cannot be written")?;
-    let act = Action::ExternalTaskWrite {
-        provider: provider.into(),
-        action: action.into(),
+    .await
+}
+
+/// Explicit-home counterpart used by the production wrapper above and by
+/// narrow authenticated-WAL tests. It retains the audit writer until the
+/// supplied effect settles, then finalizes or aborts it on cancellation.
+pub(crate) async fn execute_external_task_write_at<T, Effect, EffectFuture>(
+    home: &std::path::Path,
+    policy: crate::permissions::AutonomyPolicySnapshot,
+    yes: bool,
+    provider: &str,
+    action_name: &str,
+    request_binding_sha256: &str,
+    effect: Effect,
+) -> Result<T>
+where
+    Effect: FnOnce() -> EffectFuture,
+    EffectFuture: Future<Output = Result<T>>,
+{
+    let audit = RequiredPermissionAudit::open(home, "external-task-permission")?;
+    let effect_result = execute_external_task_write_with_sink(
+        policy,
+        yes,
+        provider,
+        action_name,
+        request_binding_sha256,
+        audit.sink(),
+        effect,
+    )
+    .await;
+    let audit_result = audit.finish().await;
+    combine_external_task_effect_and_audit(effect_result, audit_result)
+}
+
+/// Core admission/effect ordering. This borrowed-sink form is intentionally
+/// shared by the owned-WAL production wrapper and failure-injection tests so a
+/// provider cannot be moved ahead of the Gate without breaking the behavior.
+pub(crate) async fn execute_external_task_write_with_sink<T, Effect, EffectFuture>(
+    policy: crate::permissions::AutonomyPolicySnapshot,
+    yes: bool,
+    provider: &str,
+    action_name: &str,
+    request_binding_sha256: &str,
+    sink: crate::permissions::PermissionAuditSink<'_>,
+    effect: Effect,
+) -> Result<T>
+where
+    Effect: FnOnce() -> EffectFuture,
+    EffectFuture: Future<Output = Result<T>>,
+{
+    let action = Action::ExternalTaskWrite {
+        provider: provider.to_owned(),
+        action: action_name.to_owned(),
     };
-    match evaluate(&act, &cfg.autonomy_policy()) {
-        Decision::Allow => Ok(()),
-        Decision::Deny(r) => anyhow::bail!("denied: {r}"),
-        Decision::Confirm(reason) => {
-            if yes {
-                return Ok(());
-            }
-            use std::io::IsTerminal;
-            if std::io::stdin().is_terminal() {
-                use crate::permissions::confirm::{ConfirmOutcome, confirm_interactive};
-                match confirm_interactive(&reason) {
-                    ConfirmOutcome::Approved => Ok(()),
-                    _ => anyhow::bail!("confirmation declined — task NOT written"),
-                }
-            } else {
-                anyhow::bail!(
-                    "{reason} — re-run with --yes (non-interactive) or from a terminal, \
-                     or raise autonomy to Elevated"
-                )
-            }
-        }
+    let gate = if yes {
+        Gate::for_policy(policy).with_preconfirmed_confirmation("cli_yes")
+    } else {
+        Gate::for_policy(policy).with_confirm(Gate::auto_confirm())
+    };
+    gate.check_with_audit_sink(&action, sink, true, Some(request_binding_sha256))
+        .await
+        .map_err(anyhow::Error::from)?;
+    effect().await
+}
+
+fn combine_external_task_effect_and_audit<T>(
+    effect_result: Result<T>,
+    audit_result: Result<()>,
+) -> Result<T> {
+    match (effect_result, audit_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(effect), Ok(())) => Err(effect),
+        (Ok(_), Err(audit)) => Err(audit).context(
+            "task provider write completed, but required permission audit finalization failed",
+        ),
+        (Err(effect), Err(audit)) => Err(effect).context(format!(
+            "task provider write failed and required permission audit finalization also failed: {audit:#}"
+        )),
     }
 }
 
@@ -805,6 +996,15 @@ impl TaskProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use crate::permissions::AutonomyLevel;
+
+    fn full_task_policy() -> crate::permissions::AutonomyPolicySnapshot {
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.autonomy = AutonomyLevel::Full;
+        cfg.autonomy_policy()
+    }
 
     #[test]
     fn resolve_todoist_token_prefers_explicit_arg() {
@@ -817,6 +1017,71 @@ mod tests {
     #[test]
     fn task_provider_default_is_todoist() {
         assert_eq!(TaskProvider::default_value(), TaskProvider::Todoist);
+    }
+
+    #[test]
+    fn external_task_binding_is_target_sensitive_and_opaque() {
+        let first = external_task_request_binding("todoist", "add", "private task text").unwrap();
+        let second =
+            external_task_request_binding("todoist", "add", "different private task").unwrap();
+        assert_eq!(first.len(), 64);
+        assert_ne!(
+            first, second,
+            "the final decision must bind its exact target"
+        );
+        assert!(
+            !first.contains("private"),
+            "the binding is an opaque digest"
+        );
+    }
+
+    #[tokio::test]
+    async fn todo_admission_writes_authenticated_ledger_before_injected_effect() {
+        let home = tempfile::tempdir().unwrap();
+        let binding = external_task_request_binding("todoist", "add", b"private title").unwrap();
+        let provider_called = AtomicBool::new(false);
+        execute_external_task_write_at(
+            home.path(),
+            full_task_policy(),
+            true,
+            "todoist",
+            "add",
+            &binding,
+            || async {
+                let ledger = crate::permissions::trust_ledger::TrustLedger::replay_subject_at_home(
+                    home.path(),
+                    crate::permissions::trust_ledger::LOCAL_SUBJECT,
+                )
+                .unwrap();
+                assert_eq!(ledger.entries.len(), 1);
+                provider_called.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert!(provider_called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn todo_dead_required_sink_cannot_reach_injected_provider() {
+        let binding = external_task_request_binding("todoist", "close", b"private-id").unwrap();
+        let provider_called = AtomicBool::new(false);
+        let admission = execute_external_task_write_with_sink(
+            full_task_policy(),
+            true,
+            "todoist",
+            "close",
+            &binding,
+            crate::permissions::PermissionAuditSink::Fail("dead test audit sink"),
+            || async {
+                provider_called.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await;
+        assert!(admission.is_err());
+        assert!(!provider_called.load(Ordering::SeqCst));
     }
 
     #[test]

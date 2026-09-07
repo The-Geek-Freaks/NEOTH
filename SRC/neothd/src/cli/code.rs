@@ -695,7 +695,7 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
             "fresh coding runs require --repo-root <REPO_ROOT> (or explicit --apply <REPO_ROOT>)",
         )?;
     let db_path = args.db.clone().unwrap_or_else(memstore::default_path);
-    let request = crate::coding::service::CodingStartRequest::new(
+    let mut request = crate::coding::service::CodingStartRequest::new(
         prompt,
         repository_root,
         args.source_channel.clone(),
@@ -704,6 +704,11 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
         args.apply.is_some(),
     )?
     .with_brainstorm_spec(spec.map(|spec| *spec));
+    // This is the actual local Clap command boundary.  The display-only
+    // `--source-channel` option intentionally has no bearing on this proof.
+    if args.apply.is_some() {
+        request = request.with_local_cli_apply_confirmation();
+    }
     let service = crate::coding::service::CodingService::spawn(
         crate::coding::service::CodingServiceConfig {
             database_path: db_path,
@@ -934,7 +939,9 @@ async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
     }
 
     let apply_cfg = args.apply.as_ref().map(|repo| {
-        let mut c = DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed);
+        let mut c = DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed)
+            .with_local_cli_confirmation()
+            .with_policy(cfg.autonomy_policy());
         if let Some(cmd) = cfg.coding.test_cmd.as_deref() {
             c = c
                 .with_test_cmd(cmd)

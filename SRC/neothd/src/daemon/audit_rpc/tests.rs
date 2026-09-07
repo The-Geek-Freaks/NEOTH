@@ -124,7 +124,7 @@ async fn recv_runtime_transition_for_home(
 
 #[test]
 fn allowlist_contains_exactly_the_oneshot_codes() {
-    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 40);
+    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 42);
     let mut unique_event_types = ALLOWED_CLIENT_EVENT_TYPES.to_vec();
     unique_event_types.sort_unstable();
     unique_event_types.dedup();
@@ -189,7 +189,8 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     // pull (0xD7/0xD8) — now forward instead of silently skipping when a
     // daemon owns the WAL.
     for c in [
-        0x2Cu8, 0x2D, 0x30, 0x31, 0x3D, 0x3E, 0x9B, 0xC8, 0xD2, 0xD7, 0xD8, 0xD9, 0xDE, 0xF5,
+        0x2Cu8, 0x2D, 0x30, 0x31, 0x3D, 0x3E, 0x9B, 0xC0, 0xC1, 0xC8, 0xD2, 0xD7, 0xD8, 0xD9, 0xDE,
+        0xF5,
     ] {
         assert!(
             is_allowed_client_event(c),
@@ -207,7 +208,7 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     );
     // Daemon-lifecycle / cluster / quota codes are NOT forwardable — and the
     // autonomy codes must NOT bleed into the neighbouring 0xA4.
-    for c in [0x10u8, 0x15, 0xA4, 0xAE, 0xAF, 0xE0, 0xF0] {
+    for c in [0x10u8, 0x15, 0xA4, 0xAE, 0xAF, 0xC2, 0xE0, 0xF0] {
         assert!(!is_allowed_client_event(c), "{c:#x} must be refused");
     }
 
@@ -225,6 +226,7 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     let skill_removal_result = crate::wal::events::ExtendedSubtype::SkillRemovalResult as u8;
     let skill_authority_decision =
         crate::wal::events::ExtendedSubtype::SkillAuthorityDecision as u8;
+    let trust_decision = crate::wal::events::ExtendedSubtype::TrustDecision as u8;
     // GOLD-LF-P1-01 — os_tools::gate reaches the WAL over this RPC route via
     // AuditSink::DaemonRpc, so its intent/result pairs are admitted. The
     // channel and media pairs are deliberately NOT here: they hold an
@@ -252,6 +254,7 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
             os_file_write_result,
             os_app_launch_intent,
             os_app_launch_result,
+            trust_decision,
         ]
     );
     assert!(is_allowed_client_event_pair(0x00, plugin_removal_intent));
@@ -267,6 +270,7 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     assert!(is_allowed_client_event_pair(0x00, os_file_write_result));
     assert!(is_allowed_client_event_pair(0x00, os_app_launch_intent));
     assert!(is_allowed_client_event_pair(0x00, os_app_launch_result));
+    assert!(is_allowed_client_event_pair(0x00, trust_decision));
     // The pairs with no client caller must stay OUT — this is the half of the
     // contract that actually bounds the surface.
     assert!(!is_allowed_client_event_pair(

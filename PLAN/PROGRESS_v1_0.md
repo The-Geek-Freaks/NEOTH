@@ -3,6 +3,27 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-07
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 4 required-decision checkpoint 2026-09-07:** required authenticated
+> trust admission now precedes Coding/self-source, external HTTP, one-shot MCP,
+> Todo/Calendar and self-activation effects. The final 19-input changed-source
+> manifest and selected runtime matrix are in
+> `docs/verification/gold-wave4-source-manifest.json` and
+> `docs/verification/gold-wave4-test-matrix.json`; the bounded verification
+> report is `docs/gold-wave4-verification.md`. The selected suite passes
+> **15/15 groups, 1,605 parent-harness test executions**; core check, strict
+> Clippy, workspace formatting, GUI check and both 6/0 controller harnesses
+> pass. Windows Git path transport, exact historic Codegraph registration and
+> cancel-safe mutation/audit ownership are included. The former editable
+> `source_channel=cli` GUI permission bypass is closed; a separate legitimate
+> GUI apply-confirmation flow remains open. P1-05 also remains open for durable
+> proactive/webhook admission/reconciliation, authenticated cluster-task
+> admission, required channel-reply audit and Obsidian preload. No checkbox
+> closes in this batch; counts remain **1,324 total / 1,006 complete / 316 open /
+> 2 partial = 318 raw blockers and 317 pre-tag blockers**. This is bounded local
+> evidence, not complete workspace, interactive GUI, provider, package, release
+> or exact-candidate CI/Security/CodeQL acceptance. Publication is to GitHub
+> `main`, following the operator's latest instruction.
+>
 > **Final Wave 3 source/test checkpoint 2026-09-06:** the final Repair 6 binary
 > contains 14,091 tests and has SHA-256
 > `360FD5F14C431306B6C344944AE8BC16DC25EE72E2F59221AF8FD193CD2DABB9`.
@@ -42,8 +63,8 @@
 > **448/448**, with overlap between groups. Strict Clippy remains blocked by
 > **15 existing diagnostics in seven unchanged baseline files**; no warning
 > suppression, real-provider, GUI/Buddy, packaging or release success is claimed.
-> Current machine count: **1,324 total / 1,002 complete / 320 open / 2 partial =
-> 322 raw blockers and 321 pre-tag blockers**. The unchanged blocker total
+> Current machine count: **1,324 total / 1,006 complete / 316 open / 2 partial =
+> 318 raw blockers and 317 pre-tag blockers**. The current blocker total
 > reflects splitting completed coding work from the still-required remainder.
 >
 - [x] **CRG-01 coding configuration:** independently validated one-shot
@@ -895,8 +916,9 @@
 > 3 REJECTED_STANDS and 5 scope-preserving semantic merges. The 52 canonical
 > recovery rows are exactly 23 P1 + 29 P2 and are bound one-to-one across the
 > source, machine-readable ledger and ROAD. A dependency-free mutation-tested
-> checker runs in required Gold CI. `GOLD-LF-INTEGRITY-01` and the fully wired
-> external-output boundary `GOLD-LF-P1-03` are closed: **2 done / 116
+> checker runs in required Gold CI. `GOLD-LF-INTEGRITY-01`, the fully wired
+> external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
+> WAL replay are closed: **3 done / 115
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

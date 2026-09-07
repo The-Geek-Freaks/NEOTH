@@ -1847,6 +1847,13 @@ pub(crate) struct WalWriterCompletion {
 }
 
 impl WalWriterCompletion {
+    /// A retained owner can abort the real writer even while a bounded wait
+    /// owns this completion value. This avoids cancellation detaching the
+    /// underlying join handle between `completion.take()` and its await.
+    pub(crate) fn abort_handle(&self) -> tokio::task::AbortHandle {
+        self.join.abort_handle()
+    }
+
     pub(crate) async fn wait(self) -> Result<(), WalError> {
         self.join.await.map_err(|error| {
             WalError::Io(std::io::Error::other(format!(

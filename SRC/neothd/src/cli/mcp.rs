@@ -14,8 +14,9 @@
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
+use sha2::{Digest, Sha256};
 
-use crate::cli::OutputFormat;
+use crate::cli::{OutputFormat, permission_audit::RequiredPermissionAudit};
 use crate::config::FreedomConfig;
 use crate::mcp::{
     GateError, McpClient, McpError, McpServers, ToolCallResult, list_tools_sanitized,
@@ -48,7 +49,7 @@ pub enum McpAction {
         #[arg(long, default_value = "{}")]
         args: String,
     },
-    /// Serve NEOTH's eight read-only codegraph tools over MCP stdio. Intended as
+    /// Serve NEOTH's nine read-only codegraph tools over MCP stdio. Intended as
     /// a subprocess entrypoint for MCP hosts; stdout contains protocol messages
     /// only. Run `codegraph-install` to register it in NEOTH itself.
     CodegraphServe {
@@ -433,31 +434,66 @@ fn is_trusted_generated_codegraph_identity(
         && server.autonomy_gate.is_none()
 }
 
+// These are complete historical built-in catalogues, kept independent of the
+// evolving current `TOOL_NAMES`. A migration may add later built-ins only when
+// the persisted codegraph subset exactly matches one of these releases.
+const LEGACY_CODEGRAPH_V6_TOOLS: &[&str] = &[
+    "codegraph_relevant_files",
+    "codegraph_extract_identifiers",
+    "codegraph_path_keywords",
+    "codegraph_callers",
+    "codegraph_callees",
+    "codegraph_outline",
+];
+
+const LEGACY_CODEGRAPH_V7_TOOLS: &[&str] = &[
+    "codegraph_relevant_files",
+    "codegraph_extract_identifiers",
+    "codegraph_path_keywords",
+    "codegraph_callers",
+    "codegraph_callees",
+    "codegraph_impact_radius",
+    "codegraph_outline",
+];
+
+const LEGACY_CODEGRAPH_V8_TOOLS: &[&str] = &[
+    "codegraph_relevant_files",
+    "codegraph_recall_v1",
+    "codegraph_extract_identifiers",
+    "codegraph_path_keywords",
+    "codegraph_callers",
+    "codegraph_callees",
+    "codegraph_impact_radius",
+    "codegraph_outline",
+];
+
+fn is_exact_legacy_codegraph_catalogue(tools: &[String]) -> bool {
+    [
+        LEGACY_CODEGRAPH_V6_TOOLS,
+        LEGACY_CODEGRAPH_V7_TOOLS,
+        LEGACY_CODEGRAPH_V8_TOOLS,
+    ]
+    .iter()
+    .any(|catalogue| {
+        let codegraph_count = tools
+            .iter()
+            .filter(|tool| tool.starts_with("codegraph_"))
+            .count();
+        codegraph_count == catalogue.len()
+            && catalogue.iter().all(|required| {
+                tools
+                    .iter()
+                    .filter(|tool| tool.as_str() == *required)
+                    .count()
+                    == 1
+            })
+    })
+}
+
 fn repair_legacy_codegraph_allowlist(
     existing: &mut crate::mcp::McpServerConfig,
     desired: &crate::mcp::McpServerConfig,
 ) -> bool {
-    // These are the only historical built-in catalogues that this migration
-    // trusts. v6 predated both `codegraph_recall_v1` and
-    // `codegraph_impact_radius`; v7 added impact analysis, but not recall.
-    const LEGACY_V6_TOOLS: &[&str] = &[
-        "codegraph_relevant_files",
-        "codegraph_extract_identifiers",
-        "codegraph_path_keywords",
-        "codegraph_callers",
-        "codegraph_callees",
-        "codegraph_outline",
-    ];
-    const LEGACY_V7_TOOLS: &[&str] = &[
-        "codegraph_relevant_files",
-        "codegraph_extract_identifiers",
-        "codegraph_path_keywords",
-        "codegraph_callers",
-        "codegraph_callees",
-        "codegraph_impact_radius",
-        "codegraph_outline",
-    ];
-
     // A historic tool catalogue is not a sufficient ownership proof: an
     // operator-owned or malicious lookalike might reuse it. Only the exact
     // generated launcher/invocation with the secure built-in gates can be
@@ -469,37 +505,17 @@ fn repair_legacy_codegraph_allowlist(
     let Some(tools) = existing.allow_tools.as_mut() else {
         return false;
     };
-    if !LEGACY_V6_TOOLS
-        .iter()
-        .all(|required| tools.iter().any(|tool| tool == required))
-    {
-        return false;
-    }
-    if tools
-        .iter()
-        .any(|tool| tool.starts_with("codegraph_") && !LEGACY_V7_TOOLS.contains(&tool.as_str()))
-    {
-        return false;
-    }
-    if LEGACY_V6_TOOLS
-        .iter()
-        .any(|known| tools.iter().filter(|tool| tool.as_str() == *known).count() != 1)
-        || tools
-            .iter()
-            .filter(|tool| tool.as_str() == "codegraph_impact_radius")
-            .count()
-            > 1
-    {
+    if !is_exact_legacy_codegraph_catalogue(tools) {
         return false;
     }
 
     // Rebuild the built-in portion in the current canonical order so a v6 or
-    // v7 registration receives every current tool. Preserve non-codegraph
-    // operator extras in their original order and leave all other settings
-    // untouched.
+    // v7 or v8 registration receives every current tool. Preserve only
+    // non-codegraph operator extras in their original order; an unrecognized
+    // `codegraph_*` entry never qualifies as a trusted historical catalogue.
     let custom_tools = std::mem::take(tools)
         .into_iter()
-        .filter(|tool| !LEGACY_V7_TOOLS.contains(&tool.as_str()))
+        .filter(|tool| !tool.starts_with("codegraph_"))
         .collect::<Vec<_>>();
     tools.extend(
         crate::mcp::codegraph_server::TOOL_NAMES
@@ -833,33 +849,143 @@ where
     F: FnOnce(crate::mcp::McpServerConfig) -> Fut,
     Fut: std::future::Future<Output = Result<McpClient, McpError>>,
 {
-    let preflight =
-        crate::mcp::gate::preflight_with_audit(cfg, tool, &policy, None, now_unix).await?;
     let instance_home = crate::config::FreedomConfig::default_neoth_home();
-    let authorized = crate::mcp::gate::authorize_preflight_with_audit(
+    invoke_cli_call_with_spawner_at_home(
+        cfg,
+        tool,
+        arguments,
+        policy,
+        now_unix,
+        &instance_home,
+        spawn,
+    )
+    .await
+}
+
+/// Explicit-home form of the production audit owner. Keeping this separate
+/// from the default-home adapter lets regression tests exercise the real
+/// daemon-or-standalone selection and bounded finalizer without mutating the
+/// process environment.
+async fn invoke_cli_call_with_spawner_at_home<F, Fut>(
+    cfg: &crate::mcp::McpServerConfig,
+    tool: &str,
+    arguments: serde_json::Value,
+    policy: crate::permissions::AutonomyPolicySnapshot,
+    now_unix: i64,
+    instance_home: &std::path::Path,
+    spawn: F,
+) -> Result<ToolCallResult, GateError>
+where
+    F: FnOnce(crate::mcp::McpServerConfig) -> Fut,
+    Fut: std::future::Future<Output = Result<McpClient, McpError>>,
+{
+    let audit = RequiredPermissionAudit::open(instance_home, "mcp-call").map_err(GateError::Wal)?;
+    let result = invoke_cli_call_with_spawner_and_audit_sink(
+        cfg,
+        tool,
+        arguments,
+        policy,
+        now_unix,
+        crate::mcp::gate::McpAuditSink::from_permission_sink(audit.sink()),
+        instance_home,
+        spawn,
+    )
+    .await;
+    let finish = audit.finish().await.map_err(GateError::Wal);
+    match (result, finish) {
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Ok(result), Ok(())) => Ok(result),
+    }
+}
+
+/// The audit-aware core is deliberately injectable: production obtains its
+/// only sink from `RequiredPermissionAudit`, while tests exercise the exact
+/// home-WAL boundary without provider network access.
+#[allow(clippy::too_many_arguments)]
+async fn invoke_cli_call_with_spawner_and_audit_sink<F, Fut>(
+    cfg: &crate::mcp::McpServerConfig,
+    tool: &str,
+    arguments: serde_json::Value,
+    policy: crate::permissions::AutonomyPolicySnapshot,
+    now_unix: i64,
+    sink: crate::mcp::gate::McpAuditSink<'_>,
+    instance_home: &std::path::Path,
+    spawn: F,
+) -> Result<ToolCallResult, GateError>
+where
+    F: FnOnce(crate::mcp::McpServerConfig) -> Fut,
+    Fut: std::future::Future<Output = Result<McpClient, McpError>>,
+{
+    let request_binding_sha256 = cli_mcp_request_binding(cfg, tool, &arguments)?;
+    let preflight = crate::mcp::gate::preflight_with_audit_sink(
+        cfg,
+        tool,
+        &policy,
+        sink,
+        now_unix,
+        Some(crate::permissions::trust_ledger::LOCAL_SUBJECT),
+        Some(&request_binding_sha256),
+    )
+    .await?;
+    let authorized = crate::mcp::gate::authorize_preflight_with_audit_sink(
         preflight,
         cfg,
         tool,
-        None,
+        sink,
         None,
         now_unix,
-        // GOLD-ADAPT-AWE-CODE-01 — CLI one-shot has no inbound identity.
-        None,
-        &instance_home,
+        Some(crate::permissions::trust_ledger::LOCAL_SUBJECT),
+        instance_home,
     )
     .await?;
     let mut client = spawn(cfg.clone()).await?;
-    crate::mcp::gate::invoke_authorized_with_audit(
+    crate::mcp::gate::invoke_authorized_with_audit_sink(
         &mut client,
         cfg,
         tool,
         arguments,
         authorized,
-        None,
+        sink,
         None,
         now_unix,
+        Some(&request_binding_sha256),
     )
     .await
+}
+
+/// SHA-256 commitment to the exact operator request. Object keys are sorted
+/// recursively before serialization, while arrays retain their semantic order.
+/// The WAL receives this digest only, never the tool arguments themselves.
+fn cli_mcp_request_binding(
+    cfg: &crate::mcp::McpServerConfig,
+    tool: &str,
+    arguments: &serde_json::Value,
+) -> Result<String, GateError> {
+    let request = serde_json::json!({
+        "server_id": cfg.id,
+        "tool": tool,
+        "arguments": canonicalize_json(arguments),
+    });
+    let bytes = serde_json::to_vec(&canonicalize_json(&request))
+        .map_err(|error| GateError::Mcp(McpError::Protocol(cfg.id.clone(), error.to_string())))?;
+    Ok(hex::encode(Sha256::digest(bytes)))
+}
+
+fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(canonicalize_json).collect())
+        }
+        serde_json::Value::Object(values) => {
+            let mut ordered = std::collections::BTreeMap::new();
+            for (key, value) in values {
+                ordered.insert(key.clone(), canonicalize_json(value));
+            }
+            serde_json::to_value(ordered).expect("canonical JSON map is serializable")
+        }
+        scalar => scalar.clone(),
+    }
 }
 
 #[cfg(test)]
@@ -908,10 +1034,354 @@ mod tests {
         (error, attempts.load(Ordering::SeqCst))
     }
 
+    fn home_audit_writer(
+        home: &std::path::Path,
+    ) -> (
+        crate::wal::writer::WalWriterHandle,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let wal = home.join("wal");
+        std::fs::create_dir_all(&wal).expect("create test home WAL directory");
+        crate::wal::writer::spawn_for_home(wal.join("000001.wal"), home.to_path_buf())
+            .expect("open authenticated test HOME-WAL writer")
+    }
+
+    async fn home_trust_entries(
+        home: &std::path::Path,
+        writer: crate::wal::writer::WalWriterHandle,
+        join: tokio::task::JoinHandle<()>,
+    ) -> Vec<crate::permissions::trust_ledger::TrustLedgerEntry> {
+        drop(writer);
+        join.await.expect("test HOME-WAL writer exits cleanly");
+        let replay = crate::permissions::trust_ledger::TrustLedger::replay_subject_at_home(
+            home,
+            crate::permissions::trust_ledger::LOCAL_SUBJECT,
+        )
+        .expect("replay authenticated HOME-WAL trust ledger");
+        assert!(matches!(
+            replay.completeness,
+            crate::permissions::trust_ledger::TrustLedgerCompleteness::Complete
+        ));
+        replay.entries
+    }
+
+    #[tokio::test]
+    async fn cli_call_audits_one_bound_allow_before_the_spawn_boundary() {
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join) = home_audit_writer(home.path());
+        let config = callable_server();
+        let args = serde_json::json!({"nested": {"z": 1, "a": true}});
+        let binding = cli_mcp_request_binding(&config, "read", &args).unwrap();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&attempts);
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .unwrap();
+
+        let error = invoke_cli_call_with_spawner_and_audit_sink(
+            &config,
+            "read",
+            args,
+            policy,
+            1_700_000_000,
+            crate::mcp::gate::McpAuditSink::Writer(&writer),
+            home.path(),
+            move |_| {
+                count.fetch_add(1, Ordering::SeqCst);
+                async {
+                    Err(McpError::Protocol(
+                        "test".into(),
+                        "stop after audited spawn boundary".into(),
+                    ))
+                }
+            },
+        )
+        .await
+        .expect_err("the injected spawn failure must surface after admission");
+        assert!(matches!(error, GateError::Mcp(_)));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+
+        let entries = home_trust_entries(home.path(), writer, join).await;
+        assert_eq!(entries.len(), 1, "one final typed allow is durable");
+        let event = &entries[0].event;
+        assert_eq!(
+            event.action,
+            crate::permissions::ActionKind::McpToolInvocation
+        );
+        assert_eq!(
+            event.outcome,
+            crate::permissions::trust_ledger::TrustOutcome::Allowed
+        );
+        assert_eq!(
+            event.request_binding_sha256.as_deref(),
+            Some(binding.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn cli_call_production_wrapper_finalizes_owned_home_wal_after_audited_spawn() {
+        let home = tempfile::tempdir().unwrap();
+        let config = callable_server();
+        let args = serde_json::json!({"nested": {"z": 1, "a": true}});
+        let binding = cli_mcp_request_binding(&config, "read", &args).unwrap();
+        let expected_binding = binding.clone();
+        let spawn_home = home.path().to_path_buf();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&attempts);
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .unwrap();
+
+        let error = invoke_cli_call_with_spawner_at_home(
+            &config,
+            "read",
+            args,
+            policy,
+            1_700_000_000,
+            home.path(),
+            move |_| {
+                let replay = crate::permissions::trust_ledger::TrustLedger::replay_subject_at_home(
+                    &spawn_home,
+                    crate::permissions::trust_ledger::LOCAL_SUBJECT,
+                )
+                .expect("the authenticated allow must be visible before spawn");
+                assert_eq!(
+                    replay.entries.len(),
+                    1,
+                    "exactly one typed decision precedes spawn"
+                );
+                let event = &replay.entries[0].event;
+                assert_eq!(
+                    event.action,
+                    crate::permissions::ActionKind::McpToolInvocation
+                );
+                assert_eq!(
+                    event.outcome,
+                    crate::permissions::trust_ledger::TrustOutcome::Allowed
+                );
+                assert_eq!(
+                    event.request_binding_sha256.as_deref(),
+                    Some(expected_binding.as_str())
+                );
+                count.fetch_add(1, Ordering::SeqCst);
+                async {
+                    Err(McpError::Protocol(
+                        "test".into(),
+                        "controlled audited spawn outcome".into(),
+                    ))
+                }
+            },
+        )
+        .await
+        .expect_err("the controlled spawn outcome must surface");
+
+        assert!(matches!(error, GateError::Mcp(_)));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        let replay = crate::permissions::trust_ledger::TrustLedger::replay_subject_at_home(
+            home.path(),
+            crate::permissions::trust_ledger::LOCAL_SUBJECT,
+        )
+        .expect("production wrapper finalizer must leave a replayable HOME-WAL");
+        assert!(matches!(
+            replay.completeness,
+            crate::permissions::trust_ledger::TrustLedgerCompleteness::Complete
+        ));
+        assert_eq!(replay.entries.len(), 1, "the owned session finalizes once");
+        assert_eq!(
+            replay.entries[0].event.request_binding_sha256.as_deref(),
+            Some(binding.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn cli_call_production_wrapper_live_daemon_rpc_failure_never_falls_back_or_spawns() {
+        let home = tempfile::tempdir().unwrap();
+        let _daemon_owner = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid"))
+            .expect("hold a real live-daemon pidfile lock for this HOME");
+        let selected = RequiredPermissionAudit::open(home.path(), "mcp-call")
+            .expect("live daemon selection itself is local and fallible");
+        assert!(matches!(
+            selected.sink(),
+            crate::permissions::PermissionAuditSink::DaemonRpc(_)
+        ));
+        selected
+            .finish()
+            .await
+            .expect("daemon audit session has no standalone finalizer");
+
+        let config = callable_server();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&attempts);
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .unwrap();
+        let error = invoke_cli_call_with_spawner_at_home(
+            &config,
+            "read",
+            serde_json::json!({}),
+            policy,
+            1_700_000_000,
+            home.path(),
+            move |_| {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { panic!("unavailable daemon audit RPC reached process spawn") }
+            },
+        )
+        .await
+        .expect_err("required daemon audit RPC failure must fail closed");
+
+        assert!(matches!(&error, GateError::Wal(_)), "{error:#}");
+        assert_eq!(attempts.load(Ordering::SeqCst), 0);
+        assert!(
+            !home.path().join("wal").exists(),
+            "a live daemon selection must never fall back to an owned WAL writer"
+        );
+    }
+
+    #[tokio::test]
+    async fn cli_call_audits_one_bound_deny_and_never_spawns() {
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join) = home_audit_writer(home.path());
+        let config = callable_server();
+        let args = serde_json::json!({"path": "secret"});
+        let binding = cli_mcp_request_binding(&config, "write", &args).unwrap();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&attempts);
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .unwrap();
+
+        let error = invoke_cli_call_with_spawner_and_audit_sink(
+            &config,
+            "write",
+            args,
+            policy,
+            1_700_000_000,
+            crate::mcp::gate::McpAuditSink::Writer(&writer),
+            home.path(),
+            move |_| {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { panic!("denied CLI MCP call reached process spawn") }
+            },
+        )
+        .await
+        .expect_err("allowlist deny is final before spawn");
+        assert!(matches!(error, GateError::NotInAllowlist { .. }));
+        assert_eq!(attempts.load(Ordering::SeqCst), 0);
+
+        let entries = home_trust_entries(home.path(), writer, join).await;
+        assert_eq!(entries.len(), 1, "one final typed deny is durable");
+        let event = &entries[0].event;
+        assert_eq!(
+            event.outcome,
+            crate::permissions::trust_ledger::TrustOutcome::Denied
+        );
+        assert_eq!(
+            event.request_binding_sha256.as_deref(),
+            Some(binding.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn cli_call_confirm_is_one_bound_deny_and_never_spawns() {
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join) = home_audit_writer(home.path());
+        let config = callable_server();
+        let args = serde_json::json!({"path": "needs-operator-confirm"});
+        let binding = cli_mcp_request_binding(&config, "read", &args).unwrap();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&attempts);
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Standard,
+        )
+        .unwrap();
+
+        let error = invoke_cli_call_with_spawner_and_audit_sink(
+            &config,
+            "read",
+            args,
+            policy,
+            1_700_000_000,
+            crate::mcp::gate::McpAuditSink::Writer(&writer),
+            home.path(),
+            move |_| {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { panic!("Confirm-gated CLI MCP call reached process spawn") }
+            },
+        )
+        .await
+        .expect_err("unleased confirmation must remain denied");
+        assert!(matches!(error, GateError::ConfirmRequired { .. }));
+        assert_eq!(attempts.load(Ordering::SeqCst), 0);
+
+        let entries = home_trust_entries(home.path(), writer, join).await;
+        assert_eq!(entries.len(), 1, "Confirm produces one final typed deny");
+        let event = &entries[0].event;
+        assert_eq!(
+            event.outcome,
+            crate::permissions::trust_ledger::TrustOutcome::Denied
+        );
+        assert_eq!(
+            event.request_binding_sha256.as_deref(),
+            Some(binding.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_required_cli_audit_blocks_spawn() {
+        let config = callable_server();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&attempts);
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .unwrap();
+        let error = invoke_cli_call_with_spawner_and_audit_sink(
+            &config,
+            "read",
+            serde_json::json!({}),
+            policy,
+            1_700_000_000,
+            crate::mcp::gate::McpAuditSink::Fail("forced required audit failure"),
+            std::path::Path::new("."),
+            move |_| {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { panic!("audit failure reached process spawn") }
+            },
+        )
+        .await
+        .expect_err("required audit failure must fail closed");
+        assert!(matches!(error, GateError::Wal(_)));
+        assert_eq!(attempts.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn cli_mcp_request_binding_is_canonical_and_exact() {
+        let config = callable_server();
+        let reordered = serde_json::json!({"z": [2, 1], "a": {"y": true, "x": null}});
+        let equivalent = serde_json::json!({"a": {"x": null, "y": true}, "z": [2, 1]});
+        assert_eq!(
+            cli_mcp_request_binding(&config, "read", &reordered).unwrap(),
+            cli_mcp_request_binding(&config, "read", &equivalent).unwrap(),
+        );
+        assert_ne!(
+            cli_mcp_request_binding(&config, "read", &reordered).unwrap(),
+            cli_mcp_request_binding(&config, "read", &serde_json::json!({"z": [1, 2]})).unwrap(),
+        );
+        assert_ne!(
+            cli_mcp_request_binding(&config, "read", &reordered).unwrap(),
+            cli_mcp_request_binding(&config, "other", &reordered).unwrap(),
+        );
+    }
+
     #[test]
     fn built_in_codegraph_registration_is_hardened_and_complete() {
         let config = codegraph_server_config(std::path::Path::new("neothd"), None);
-        assert_eq!(crate::mcp::codegraph_server::TOOL_NAMES.len(), 8);
+        assert_eq!(crate::mcp::codegraph_server::TOOL_NAMES.len(), 9);
         assert_eq!(config.id, "neoth-codegraph");
         assert_eq!(config.command, "neothd");
         assert_eq!(config.args, ["mcp", "codegraph-serve"]);
@@ -938,15 +1408,12 @@ mod tests {
     }
 
     #[test]
-    fn codegraph_registration_repairs_historic_v6_allowlist_to_current_eight_tools() {
+    fn codegraph_registration_repairs_historic_v6_allowlist_to_current_nine_tools() {
         let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
         let mut previous = desired.clone();
         previous.allow_tools = Some(
-            crate::mcp::codegraph_server::TOOL_NAMES
+            LEGACY_CODEGRAPH_V6_TOOLS
                 .iter()
-                .filter(|name| {
-                    **name != "codegraph_recall_v1" && **name != "codegraph_impact_radius"
-                })
                 .map(|name| (*name).to_string())
                 .collect(),
         );
@@ -969,18 +1436,17 @@ mod tests {
         assert_eq!(
             upsert_codegraph_server(&mut servers, &desired),
             CodegraphRegistrationOutcome::AlreadyCurrent,
-            "the repaired eight-tool registration must be idempotent"
+            "the repaired nine-tool registration must be idempotent"
         );
     }
 
     #[test]
-    fn codegraph_registration_repairs_historic_v7_allowlist_to_current_eight_tools() {
+    fn codegraph_registration_repairs_historic_v7_allowlist_to_current_nine_tools() {
         let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
         let mut previous = desired.clone();
         previous.allow_tools = Some(
-            crate::mcp::codegraph_server::TOOL_NAMES
+            LEGACY_CODEGRAPH_V7_TOOLS
                 .iter()
-                .filter(|name| **name != "codegraph_recall_v1")
                 .map(|name| (*name).to_string())
                 .collect(),
         );
@@ -1002,16 +1468,39 @@ mod tests {
     }
 
     #[test]
+    fn codegraph_registration_repairs_historic_v8_allowlist_to_current_nine_tools() {
+        let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
+        let mut previous = desired.clone();
+        previous.allow_tools = Some(
+            LEGACY_CODEGRAPH_V8_TOOLS
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        );
+        let mut servers = McpServers {
+            smart_loading: true,
+            servers: vec![previous],
+        };
+
+        assert_eq!(
+            upsert_codegraph_server(&mut servers, &desired),
+            CodegraphRegistrationOutcome::RepairedLegacy,
+            "the prior eight-tool registration must receive diff-impact"
+        );
+        assert_eq!(
+            servers.servers[0].allow_tools.as_deref().unwrap(),
+            crate::mcp::codegraph_server::TOOL_NAMES
+        );
+    }
+
+    #[test]
     fn codegraph_registration_repairs_trusted_legacy_catalogue_and_preserves_non_codegraph_extras()
     {
         let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
         let mut legacy = desired.clone();
         legacy.allow_tools = Some(
-            crate::mcp::codegraph_server::TOOL_NAMES
+            LEGACY_CODEGRAPH_V6_TOOLS
                 .iter()
-                .filter(|name| {
-                    **name != "codegraph_recall_v1" && **name != "codegraph_impact_radius"
-                })
                 .map(|name| (*name).to_string())
                 .chain(std::iter::once("operator_custom_tool".into()))
                 .collect(),
@@ -1044,7 +1533,7 @@ mod tests {
             &tools[crate::mcp::codegraph_server::TOOL_NAMES.len()..],
             ["operator_custom_tool"]
         );
-        assert_eq!(tools.len(), before.allow_tools.as_ref().unwrap().len() + 2);
+        assert_eq!(tools.len(), before.allow_tools.as_ref().unwrap().len() + 3);
         assert_eq!(
             upsert_codegraph_server(&mut servers, &desired),
             CodegraphRegistrationOutcome::Conflict,
@@ -1062,11 +1551,8 @@ mod tests {
         lookalike.smart_approve = false;
         lookalike.autonomy_gate = Some(crate::permissions::AutonomyLevel::Elevated);
         lookalike.allow_tools = Some(
-            crate::mcp::codegraph_server::TOOL_NAMES
+            LEGACY_CODEGRAPH_V6_TOOLS
                 .iter()
-                .filter(|name| {
-                    **name != "codegraph_recall_v1" && **name != "codegraph_impact_radius"
-                })
                 .map(|name| (*name).to_string())
                 .collect(),
         );
@@ -1087,11 +1573,8 @@ mod tests {
         let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
         let mut custom = desired.clone();
         custom.allow_tools = Some(
-            crate::mcp::codegraph_server::TOOL_NAMES
+            LEGACY_CODEGRAPH_V6_TOOLS
                 .iter()
-                .filter(|name| {
-                    **name != "codegraph_recall_v1" && **name != "codegraph_impact_radius"
-                })
                 .map(|name| (*name).to_string())
                 .chain(std::iter::once("codegraph_operator_extension".into()))
                 .collect(),

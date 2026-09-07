@@ -37,7 +37,7 @@ use crate::mcp::config::McpServerConfig;
 use crate::mcp::sanitizer::{
     SanitizerVerdict, sanitize_description, sanitize_schema_descriptions, sanitize_tool_name,
 };
-use crate::permissions::gate::{ConfirmStrategy, Gate};
+use crate::permissions::gate::{ConfirmStrategy, Gate, PermissionAuditSink};
 use crate::permissions::lease::LeaseStore;
 use crate::permissions::{Action, Decision, PolicyArgument, evaluate};
 use crate::wal::HeaderBuilder;
@@ -46,6 +46,69 @@ use crate::wal::events::{
     EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE,
 };
 use crate::wal::writer::WalWriterHandle;
+
+/// One MCP audit destination. The adapter owns both its legacy MCP evidence
+/// and its canonical typed TrustDecision, so a CLI must use the same sink for
+/// both records instead of opening a competing writer beside a live daemon.
+#[derive(Clone, Copy)]
+pub(crate) enum McpAuditSink<'a> {
+    None,
+    Writer(&'a WalWriterHandle),
+    DaemonRpc(&'a std::path::Path),
+    #[cfg(test)]
+    Fail(&'static str),
+}
+
+impl<'a> McpAuditSink<'a> {
+    pub(crate) fn from_permission_sink(sink: PermissionAuditSink<'a>) -> Self {
+        match sink {
+            PermissionAuditSink::None => Self::None,
+            PermissionAuditSink::Writer(writer) => Self::Writer(writer),
+            PermissionAuditSink::DaemonRpc(home) => Self::DaemonRpc(home),
+            #[cfg(test)]
+            PermissionAuditSink::Fail(message) => Self::Fail(message),
+        }
+    }
+
+    fn from_writer(writer: Option<&'a WalWriterHandle>) -> Self {
+        writer.map(Self::Writer).unwrap_or(Self::None)
+    }
+
+    fn is_present(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    fn permission_sink(self) -> PermissionAuditSink<'a> {
+        match self {
+            Self::None => PermissionAuditSink::None,
+            Self::Writer(writer) => PermissionAuditSink::Writer(writer),
+            Self::DaemonRpc(home) => PermissionAuditSink::DaemonRpc(home),
+            #[cfg(test)]
+            Self::Fail(message) => PermissionAuditSink::Fail(message),
+        }
+    }
+
+    async fn append_legacy(self, event_type: u8, payload: Vec<u8>) -> anyhow::Result<()> {
+        match self {
+            Self::None => Ok(()),
+            Self::Writer(writer) => {
+                let header = HeaderBuilder::new(event_type, &payload).build();
+                writer
+                    .append(header, payload)
+                    .await
+                    .context("append MCP audit frame")
+                    .map(|_| ())
+            }
+            Self::DaemonRpc(home) => {
+                crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload)
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error))
+            }
+            #[cfg(test)]
+            Self::Fail(message) => anyhow::bail!(message),
+        }
+    }
+}
 
 /// Errors surfaced by the MCP gate (preflight / authorize / invoke).
 ///
@@ -278,9 +341,10 @@ pub async fn list_tools_sanitized(client: &mut McpClient) -> Result<Vec<Sanitize
 /// Invoke a tool with the full security stack — allowlist → permission
 /// → snapshot → audit. Returns the raw [`ToolCallResult`] on success.
 ///
-/// `writer` is `Some` when called from the long-running daemon (chat
-/// loop) and `None` when called from a one-shot CLI. WAL emission is
-/// skipped when absent — the gate still enforces allowlist + permission.
+/// Legacy callers pass `writer` from the long-running daemon (chat loop), or
+/// `None` for a best-effort pure policy decision. One-shot effect boundaries
+/// use the generalized sink below, which is required to be either the
+/// daemon-owned audit RPC or one home-bound writer for the full invocation.
 ///
 /// `rollback_policy` is `Some` when the caller wants pre-call
 /// snapshot emission (A3-tail C, Konsens-decision #4). The snapshot
@@ -310,6 +374,7 @@ pub(crate) struct McpInvocationPreflight {
     action: Action,
     decision: Decision,
     policy_snapshot: crate::permissions::AutonomyPolicySnapshot,
+    request_binding_sha256: Option<String>,
 }
 
 impl McpInvocationPreflight {
@@ -327,11 +392,19 @@ impl McpInvocationPreflight {
 pub(crate) struct AuthorizedMcpInvocation {
     server_id: String,
     tool: String,
+    request_binding_sha256: Option<String>,
 }
 
 impl AuthorizedMcpInvocation {
-    fn matches(&self, cfg: &McpServerConfig, tool: &str) -> bool {
-        self.server_id == cfg.id && self.tool == tool
+    fn matches(
+        &self,
+        cfg: &McpServerConfig,
+        tool: &str,
+        request_binding_sha256: Option<&str>,
+    ) -> bool {
+        self.server_id == cfg.id
+            && self.tool == tool
+            && self.request_binding_sha256.as_deref() == request_binding_sha256
     }
 }
 
@@ -346,6 +419,30 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
     writer: Option<&WalWriterHandle>,
     now_unix: i64,
 ) -> Result<McpInvocationPreflight, GateError> {
+    preflight_with_audit_sink(
+        cfg,
+        tool,
+        policy,
+        McpAuditSink::from_writer(writer),
+        now_unix,
+        None,
+        None,
+    )
+    .await
+}
+
+/// Generalized preflight that keeps MCP compatibility evidence and the typed
+/// decision on one local writer or daemon-owned audit RPC.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn preflight_with_audit_sink<P: PolicyArgument + Copy>(
+    cfg: &McpServerConfig,
+    tool: &str,
+    policy: P,
+    sink: McpAuditSink<'_>,
+    now_unix: i64,
+    subject: Option<&str>,
+    request_binding_sha256: Option<&str>,
+) -> Result<McpInvocationPreflight, GateError> {
     let policy_snapshot = policy.policy_snapshot();
     let autonomy = policy_snapshot.level();
     let action = Action::McpToolInvocation {
@@ -355,9 +452,9 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
 
     if let Some(list) = cfg.allow_tools.as_ref() {
         if !list.iter().any(|candidate| candidate == tool) {
-            if let Some(writer) = writer {
+            if sink.is_present() {
                 emit_reject(
-                    writer,
+                    sink,
                     &cfg.id,
                     tool,
                     "tool not in allow_tools allowlist",
@@ -366,12 +463,13 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
                 .await
                 .map_err(GateError::Wal)?;
                 record_trust_decision(
-                    writer,
+                    sink,
                     &action,
                     autonomy,
                     &Decision::Deny("tool not in allow_tools allowlist".into()),
+                    subject,
                     None,
-                    None,
+                    request_binding_sha256,
                     now_unix,
                 )
                 .await?;
@@ -382,9 +480,9 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
             });
         }
     } else if !cfg.trust_all_tools {
-        if let Some(writer) = writer {
+        if sink.is_present() {
             emit_reject(
-                writer,
+                sink,
                 &cfg.id,
                 tool,
                 "no allow_tools list AND trust_all_tools=false (secure-by-default)",
@@ -393,12 +491,13 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
             .await
             .map_err(GateError::Wal)?;
             record_trust_decision(
-                writer,
+                sink,
                 &action,
                 autonomy,
                 &Decision::Deny("server has no allowlist and does not trust all tools".into()),
+                subject,
                 None,
-                None,
+                request_binding_sha256,
                 now_unix,
             )
             .await?;
@@ -412,9 +511,9 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
     if let Some(required) = cfg.autonomy_gate
         && !autonomy.meets_gate(required)
     {
-        if let Some(writer) = writer {
+        if sink.is_present() {
             emit_reject(
-                writer,
+                sink,
                 &cfg.id,
                 tool,
                 &format!(
@@ -427,12 +526,13 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
             .await
             .map_err(GateError::Wal)?;
             record_trust_decision(
-                writer,
+                sink,
                 &action,
                 autonomy,
                 &Decision::Deny("server autonomy gate requires a higher level".into()),
+                subject,
                 None,
-                None,
+                request_binding_sha256,
                 now_unix,
             )
             .await?;
@@ -447,12 +547,21 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
 
     let decision = evaluate(&action, policy);
     if let Decision::Deny(reason) = &decision {
-        if let Some(writer) = writer {
-            emit_reject(writer, &cfg.id, tool, &format!("deny: {reason}"), now_unix)
+        if sink.is_present() {
+            emit_reject(sink, &cfg.id, tool, &format!("deny: {reason}"), now_unix)
                 .await
                 .map_err(GateError::Wal)?;
-            record_trust_decision(writer, &action, autonomy, &decision, None, None, now_unix)
-                .await?;
+            record_trust_decision(
+                sink,
+                &action,
+                autonomy,
+                &decision,
+                subject,
+                None,
+                request_binding_sha256,
+                now_unix,
+            )
+            .await?;
         }
         return Err(GateError::PermissionDenied {
             server: cfg.id.clone(),
@@ -467,6 +576,7 @@ pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
         action,
         decision,
         policy_snapshot,
+        request_binding_sha256: request_binding_sha256.map(str::to_owned),
     })
 }
 
@@ -484,6 +594,33 @@ pub(crate) async fn authorize_preflight_with_audit(
     subject: Option<&str>,
     instance_home: &std::path::Path,
 ) -> Result<AuthorizedMcpInvocation, GateError> {
+    authorize_preflight_with_audit_sink(
+        preflight,
+        cfg,
+        tool,
+        McpAuditSink::from_writer(writer),
+        smart_approve,
+        now_unix,
+        subject,
+        instance_home,
+    )
+    .await
+}
+
+/// Resolve one preflight through its single MCP audit destination. Required
+/// callers use this entrypoint so no accepted decision can reach `spawn`
+/// without its matching typed record.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn authorize_preflight_with_audit_sink(
+    preflight: McpInvocationPreflight,
+    cfg: &McpServerConfig,
+    tool: &str,
+    sink: McpAuditSink<'_>,
+    smart_approve: Option<&crate::mcp::smart_approve::SmartApproveGrant>,
+    now_unix: i64,
+    subject: Option<&str>,
+    instance_home: &std::path::Path,
+) -> Result<AuthorizedMcpInvocation, GateError> {
     if !preflight.matches(cfg, tool) {
         return Err(GateError::PermissionDenied {
             server: cfg.id.clone(),
@@ -494,14 +631,15 @@ pub(crate) async fn authorize_preflight_with_audit(
 
     match preflight.decision {
         Decision::Allow => {
-            if let Some(writer) = writer {
+            if sink.is_present() {
                 record_trust_decision(
-                    writer,
+                    sink,
                     &preflight.action,
                     preflight.policy_snapshot.level(),
                     &Decision::Allow,
                     subject,
                     None,
+                    preflight.request_binding_sha256.as_deref(),
                     now_unix,
                 )
                 .await?;
@@ -519,17 +657,18 @@ pub(crate) async fn authorize_preflight_with_audit(
         }
         Decision::Confirm(reason) => {
             if cfg.smart_approve && smart_approve_is_readonly(smart_approve, cfg, tool) {
-                if let Some(writer) = writer {
-                    emit_readonly_allow(writer, &cfg.id, tool, now_unix)
+                if sink.is_present() {
+                    emit_readonly_allow(sink, &cfg.id, tool, now_unix)
                         .await
                         .map_err(GateError::Wal)?;
                     record_trust_decision(
-                        writer,
+                        sink,
                         &preflight.action,
                         preflight.policy_snapshot.level(),
                         &Decision::Allow,
                         subject,
                         Some("smart_approve_readonly"),
+                        preflight.request_binding_sha256.as_deref(),
                         now_unix,
                     )
                     .await?;
@@ -543,7 +682,15 @@ pub(crate) async fn authorize_preflight_with_audit(
                     let gate = Gate::for_policy(preflight.policy_snapshot)
                         .with_confirm(ConfirmStrategy::FailClosed)
                         .with_lease_snapshot(&store, subject, now_unix);
-                    match gate.check(&preflight.action, writer).await {
+                    match gate
+                        .check_with_audit_sink(
+                            &preflight.action,
+                            sink.permission_sink(),
+                            sink.is_present(),
+                            preflight.request_binding_sha256.as_deref(),
+                        )
+                        .await
+                    {
                         Ok(()) => {
                             tracing::info!(
                                 server = %cfg.id, tool = %tool, subject = %subject,
@@ -555,7 +702,7 @@ pub(crate) async fn authorize_preflight_with_audit(
                             | crate::permissions::gate::GateError::Aborted(_)
                             | crate::permissions::gate::GateError::Unavailable(_),
                         ) => {
-                            emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix).await?;
+                            emit_confirm_reject(sink, &cfg.id, tool, &reason, now_unix).await?;
                             return Err(GateError::ConfirmRequired {
                                 server: cfg.id.clone(),
                                 tool: tool.to_string(),
@@ -564,15 +711,16 @@ pub(crate) async fn authorize_preflight_with_audit(
                         }
                     }
                 } else {
-                    emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix).await?;
-                    if let Some(writer) = writer {
+                    emit_confirm_reject(sink, &cfg.id, tool, &reason, now_unix).await?;
+                    if sink.is_present() {
                         record_trust_decision(
-                            writer,
+                            sink,
                             &preflight.action,
                             preflight.policy_snapshot.level(),
                             &Decision::Deny(reason.clone()),
                             Some(subject),
                             None,
+                            preflight.request_binding_sha256.as_deref(),
                             now_unix,
                         )
                         .await?;
@@ -584,15 +732,16 @@ pub(crate) async fn authorize_preflight_with_audit(
                     });
                 }
             } else {
-                emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix).await?;
-                if let Some(writer) = writer {
+                emit_confirm_reject(sink, &cfg.id, tool, &reason, now_unix).await?;
+                if sink.is_present() {
                     record_trust_decision(
-                        writer,
+                        sink,
                         &preflight.action,
                         preflight.policy_snapshot.level(),
                         &Decision::Deny(reason.clone()),
                         subject,
                         None,
+                        preflight.request_binding_sha256.as_deref(),
                         now_unix,
                     )
                     .await?;
@@ -609,6 +758,7 @@ pub(crate) async fn authorize_preflight_with_audit(
     Ok(AuthorizedMcpInvocation {
         server_id: cfg.id.clone(),
         tool: tool.to_string(),
+        request_binding_sha256: preflight.request_binding_sha256,
     })
 }
 
@@ -627,7 +777,36 @@ pub(crate) async fn invoke_authorized_with_audit(
     rollback_policy: Option<&crate::config::RollbackConfig>,
     now_unix: i64,
 ) -> Result<ToolCallResult, GateError> {
-    if !authorized.matches(cfg, tool) {
+    invoke_authorized_with_audit_sink(
+        client,
+        cfg,
+        tool,
+        arguments,
+        authorized,
+        McpAuditSink::from_writer(writer),
+        rollback_policy,
+        now_unix,
+        None,
+    )
+    .await
+}
+
+/// Invoke a proof on its one audit destination. A CLI supplies the same
+/// pre-spawn binding used by authorization; any argument/tool drift is denied
+/// before the MCP client can touch the wire.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn invoke_authorized_with_audit_sink(
+    client: &mut McpClient,
+    cfg: &McpServerConfig,
+    tool: &str,
+    arguments: Value,
+    authorized: AuthorizedMcpInvocation,
+    sink: McpAuditSink<'_>,
+    rollback_policy: Option<&crate::config::RollbackConfig>,
+    now_unix: i64,
+    request_binding_sha256: Option<&str>,
+) -> Result<ToolCallResult, GateError> {
+    if !authorized.matches(cfg, tool, request_binding_sha256) {
         return Err(GateError::PermissionDenied {
             server: cfg.id.clone(),
             tool: tool.to_string(),
@@ -639,7 +818,7 @@ pub(crate) async fn invoke_authorized_with_audit(
         .map_err(|error| GateError::Mcp(McpError::Protocol(cfg.id.clone(), error.to_string())))?;
     let arguments_hash = format!("{:016x}", xxh3_64(&args_bytes));
 
-    if let (Some(policy), Some(writer)) = (rollback_policy, writer)
+    if let (Some(policy), McpAuditSink::Writer(writer)) = (rollback_policy, sink)
         && policy.should_capture("mcp_tool_invoke")
     {
         let target = format!("{}:{}", cfg.id, tool);
@@ -671,7 +850,7 @@ pub(crate) async fn invoke_authorized_with_audit(
         tool,
         arguments,
         &arguments_hash,
-        writer,
+        sink,
         now_unix,
     )
     .await
@@ -683,11 +862,11 @@ async fn call_tool_with_success_audit(
     tool: &str,
     arguments: Value,
     arguments_hash: &str,
-    writer: Option<&WalWriterHandle>,
+    sink: McpAuditSink<'_>,
     now_unix: i64,
 ) -> Result<ToolCallResult, GateError> {
     let mut result = client.call_tool(tool, arguments).await?;
-    if let Some(writer) = writer {
+    if sink.is_present() {
         let content_bytes: usize = result
             .content
             .iter()
@@ -698,7 +877,7 @@ async fn call_tool_with_success_audit(
             })
             .sum();
         emit_called(
-            writer,
+            sink,
             &cfg.id,
             tool,
             arguments_hash,
@@ -736,7 +915,7 @@ struct McpToolRejectedPayload<'a> {
 }
 
 async fn emit_called(
-    writer: &WalWriterHandle,
+    sink: McpAuditSink<'_>,
     server: &str,
     tool: &str,
     arguments_hash: &str,
@@ -753,12 +932,8 @@ async fn emit_called(
         ts_unix: now_unix,
     })
     .context("serialize MCP_TOOL_CALLED payload")?;
-    let header = HeaderBuilder::new(EVENT_TYPE_MCP_TOOL_CALLED, &payload).build();
-    writer
-        .append(header, payload)
+    sink.append_legacy(EVENT_TYPE_MCP_TOOL_CALLED, payload)
         .await
-        .context("append MCP_TOOL_CALLED frame")?;
-    Ok(())
 }
 
 /// GOLD-ADOPT-22 SmartApprove — is `tool` read-only by its DECLARED EFFECT?
@@ -778,7 +953,7 @@ fn smart_approve_is_readonly(
 /// GOLD-ADOPT-22 — audit a SmartApprove auto-approval
 /// (`RISK_GATE_ALLOWED_BY_READONLY_CACHE`). The args are never recorded.
 async fn emit_readonly_allow(
-    writer: &WalWriterHandle,
+    sink: McpAuditSink<'_>,
     server: &str,
     tool: &str,
     now_unix: i64,
@@ -791,13 +966,8 @@ async fn emit_readonly_allow(
         "ts_unix": now_unix,
     }))
     .context("serialize RISK_GATE_ALLOWED_BY_READONLY_CACHE payload")?;
-    let header =
-        HeaderBuilder::new(EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE, &payload).build();
-    writer
-        .append(header, payload)
+    sink.append_legacy(EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE, payload)
         .await
-        .context("append RISK_GATE_ALLOWED_BY_READONLY_CACHE frame")?;
-    Ok(())
 }
 
 /// SC-11 — enforce the ACTIVE SKILL's `tool_allowlist` at the MCP gate,
@@ -806,7 +976,7 @@ async fn emit_readonly_allow(
 /// [`invoke_authorized_with_audit`].
 /// The server-level allowlist in `preflight_with_audit` still runs after
 /// this — both layers must pass. A rejection is audited via the same
-/// `MCP_TOOL_REJECTED` (0xC0) frame as every other gate denial, so the
+/// `MCP_TOOL_REJECTED` (0xC1) frame as every other gate denial, so the
 /// WAL replay shows skill-scoped blocks alongside server-scoped ones.
 ///
 /// Semantics:
@@ -829,7 +999,7 @@ pub async fn enforce_skill_allowlist(
     }
     if let Some(w) = writer {
         emit_reject(
-            w,
+            McpAuditSink::Writer(w),
             server,
             tool,
             "tool not in active skill's tool_allowlist",
@@ -862,7 +1032,7 @@ pub async fn enforce_agent_allowlist(
     }
     if let Some(w) = writer {
         emit_reject(
-            w,
+            McpAuditSink::Writer(w),
             server,
             tool,
             "tool not in active sub-agent tools allowlist",
@@ -909,7 +1079,7 @@ pub async fn enforce_agent_denylist(
     }
     if let Some(w) = writer {
         emit_reject(
-            w,
+            McpAuditSink::Writer(w),
             server,
             tool,
             "tool in sub-agent disallowedTools denylist",
@@ -927,33 +1097,55 @@ pub async fn enforce_agent_denylist(
 /// Emit the closed TrustDecision that corresponds to this MCP gate's final
 /// policy result. The MCP domain event remains its own compatibility record.
 async fn record_trust_decision(
-    writer: &WalWriterHandle,
+    sink: McpAuditSink<'_>,
     action: &Action,
     autonomy: crate::permissions::AutonomyLevel,
     decision: &Decision,
     subject: Option<&str>,
     confirmation_source: Option<&str>,
+    request_binding_sha256: Option<&str>,
     now_unix: i64,
 ) -> Result<(), GateError> {
-    crate::permissions::trust_ledger::append_resolved_decision_to_writer(
-        writer,
-        crate::permissions::trust_ledger::ResolvedTrustDecision {
-            action,
-            autonomy_level: autonomy,
-            decision,
-            subject,
-            lease_id: None,
-            confirmation_source,
-            request_binding_sha256: None,
-            decided_at_ns: now_unix.max(0) as u64 * 1_000_000_000,
-        },
-    )
-    .await
-    .map_err(GateError::Wal)
+    let resolved = crate::permissions::trust_ledger::ResolvedTrustDecision {
+        action,
+        autonomy_level: autonomy,
+        decision,
+        subject,
+        lease_id: None,
+        confirmation_source,
+        request_binding_sha256,
+        decided_at_ns: now_unix.max(0) as u64 * 1_000_000_000,
+    };
+    match sink {
+        McpAuditSink::None => Ok(()),
+        McpAuditSink::Writer(writer) => {
+            crate::permissions::trust_ledger::append_resolved_decision_to_writer(writer, resolved)
+                .await
+                .map_err(GateError::Wal)
+        }
+        McpAuditSink::DaemonRpc(home) => {
+            let event = crate::permissions::trust_ledger::TrustEvent::from_resolved_decision(
+                resolved.action,
+                resolved.autonomy_level,
+                resolved.decision,
+                resolved.subject,
+                resolved.lease_id,
+                resolved.confirmation_source,
+                resolved.request_binding_sha256,
+                resolved.decided_at_ns,
+            )
+            .map_err(GateError::Wal)?;
+            crate::permissions::trust_ledger::append_to_daemon(home, &event)
+                .await
+                .map_err(GateError::Wal)
+        }
+        #[cfg(test)]
+        McpAuditSink::Fail(message) => Err(GateError::Wal(anyhow::anyhow!(message))),
+    }
 }
 
 async fn emit_reject(
-    writer: &WalWriterHandle,
+    sink: McpAuditSink<'_>,
     server: &str,
     tool: &str,
     reason: &str,
@@ -966,31 +1158,21 @@ async fn emit_reject(
         ts_unix: now_unix,
     })
     .context("serialize MCP_TOOL_REJECTED payload")?;
-    let header = HeaderBuilder::new(EVENT_TYPE_MCP_TOOL_REJECTED, &payload).build();
-    writer
-        .append(header, payload)
+    sink.append_legacy(EVENT_TYPE_MCP_TOOL_REJECTED, payload)
         .await
-        .context("append MCP_TOOL_REJECTED frame")?;
-    Ok(())
 }
 
 async fn emit_confirm_reject(
-    writer: Option<&WalWriterHandle>,
+    sink: McpAuditSink<'_>,
     server: &str,
     tool: &str,
     reason: &str,
     now_unix: i64,
 ) -> Result<(), GateError> {
-    if let Some(writer) = writer {
-        emit_reject(
-            writer,
-            server,
-            tool,
-            &format!("confirm: {reason}"),
-            now_unix,
-        )
-        .await
-        .map_err(GateError::Wal)?;
+    if sink.is_present() {
+        emit_reject(sink, server, tool, &format!("confirm: {reason}"), now_unix)
+            .await
+            .map_err(GateError::Wal)?;
     }
     Ok(())
 }
@@ -1307,7 +1489,7 @@ mod tests {
         let wal_path = dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
         emit_readonly_allow(
-            &writer,
+            McpAuditSink::Writer(&writer),
             "codegraph",
             "codegraph_relevant_files",
             1_700_000_000,
@@ -1344,6 +1526,83 @@ mod tests {
         assert!(
             found,
             "a RISK_GATE_ALLOWED_BY_READONLY_CACHE frame must be present"
+        );
+    }
+
+    #[tokio::test]
+    async fn home_wal_adapter_orders_one_bound_decision_before_called_outcome() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(wal.join("000001.wal"), home.path().to_path_buf())
+                .unwrap();
+        let binding = "a".repeat(64);
+        let action = Action::McpToolInvocation {
+            server_id: "filesystem".into(),
+            tool: "read_file".into(),
+        };
+        record_trust_decision(
+            McpAuditSink::Writer(&writer),
+            &action,
+            crate::permissions::AutonomyLevel::Full,
+            &Decision::Allow,
+            Some(crate::permissions::trust_ledger::LOCAL_SUBJECT),
+            None,
+            Some(&binding),
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+        emit_called(
+            McpAuditSink::Writer(&writer),
+            "filesystem",
+            "read_file",
+            "0000000000000001",
+            0,
+            false,
+            1_700_000_001,
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        let ledger = crate::permissions::trust_ledger::TrustLedger::replay_subject_at_home(
+            home.path(),
+            crate::permissions::trust_ledger::LOCAL_SUBJECT,
+        )
+        .unwrap();
+        assert_eq!(ledger.entries.len(), 1);
+        assert_eq!(
+            ledger.entries[0].event.request_binding_sha256.as_deref(),
+            Some(binding.as_str())
+        );
+        let mut event_types = Vec::new();
+        crate::wal::scan::for_each_frame_at_home(
+            home.path(),
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                event_types.push(frame.header.event_type);
+                Ok(())
+            },
+        )
+        .unwrap();
+        let decision_index = event_types
+            .iter()
+            .position(|event_type| *event_type == crate::wal::events::EVENT_TYPE_EXTENDED)
+            .unwrap();
+        let called_index = event_types
+            .iter()
+            .position(|event_type| *event_type == EVENT_TYPE_MCP_TOOL_CALLED)
+            .unwrap();
+        assert!(decision_index < called_index);
+        assert_eq!(
+            event_types
+                .iter()
+                .filter(|event_type| **event_type == EVENT_TYPE_MCP_TOOL_CALLED)
+                .count(),
+            1
         );
     }
 
@@ -1396,6 +1655,45 @@ mod tests {
         let mut cfg = base_cfg(Some(vec!["read_graph"]));
         cfg.smart_approve = true;
         assert!(!smart_approve_is_readonly(None, &cfg, "read_graph"));
+    }
+
+    #[tokio::test]
+    async fn bound_authorization_proof_refuses_request_digest_drift() {
+        let cfg = base_cfg(Some(vec!["read_graph"]));
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .unwrap();
+        let binding = "a".repeat(64);
+        let preflight = preflight_with_audit_sink(
+            &cfg,
+            "read_graph",
+            &policy,
+            McpAuditSink::None,
+            1_700_000_000,
+            Some(crate::permissions::trust_ledger::LOCAL_SUBJECT),
+            Some(&binding),
+        )
+        .await
+        .unwrap();
+        let authorized = authorize_preflight_with_audit_sink(
+            preflight,
+            &cfg,
+            "read_graph",
+            McpAuditSink::None,
+            None,
+            1_700_000_000,
+            Some(crate::permissions::trust_ledger::LOCAL_SUBJECT),
+            std::path::Path::new("."),
+        )
+        .await
+        .unwrap();
+        assert!(authorized.matches(&cfg, "read_graph", Some(&binding)));
+        assert!(
+            !authorized.matches(&cfg, "read_graph", Some(&"b".repeat(64))),
+            "a proof admitted for one canonical request must not authorize another"
+        );
+        assert!(!authorized.matches(&cfg, "other_tool", Some(&binding)));
     }
 
     #[test]
@@ -1504,7 +1802,7 @@ mod tests {
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
 
         emit_confirm_reject(
-            Some(&writer),
+            McpAuditSink::Writer(&writer),
             "filesystem",
             "write_file",
             "lease absent or expired",
