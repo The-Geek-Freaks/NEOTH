@@ -1,10 +1,34 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-09-13
+**Created:** 2026-05-24  **Last updated:** 2026-09-14
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
-> **Wave 20 account transport evidence — CURRENT IN PROGRESS 2026-09-13
-> (supersedes the earlier source-only note):** nine admitted files carry bound
+> **Waves 21–23 named Telegram account onboarding and macOS SQLite-path repair —
+> LOCALLY VALIDATED 2026-09-14:** eleven frozen Rust/Slint source files build
+> on W20 published `080131b4320ac3935d1f5d05e242295e5c3625a8`. Clippy PASS
+> 5m28/min204.39GiB/peak11.04; TestBuild PASS6m38/min200.47GiB/peak15.16;
+> selected602/0/0 in17.72s/catalogue14401; GUIcheckPASS2m32/min209GiB/peak6.56;
+> headlessGUI353/0/0 in1.30s/build4m51; fmt/GUIlint/selftest/docgen pass.
+> Contracts13 **PASS**157/0/0/build17.51s/min213.72GiB/peak1.49; 14 integration
+> targets total510 and Python19+11+8 **PASS**. W21–23 is **LOCALLY VALIDATED**.
+> W21 adds/replaces only the explicitly named
+> Telegram map entry through `channel account add telegram --account <id>` or
+> strict account-bearing private stdin. It probes the exact candidate before
+> commit, then uses paired-file/keychain transaction and CAS retry protection;
+> acknowledgement is secret-free. W22 exposes Settings → Channels **Add
+> account** for a valid map and exact fresh Telegram alongside explicit legacy
+> Configure, plus per-account **Edit** and exact **Test**; invalid maps are
+> CLI-repair-only. W23 supplies SQLite's physical trusted path while retaining
+> no-follow/identity checks; macOS CI remains required. No removal, pairing,
+> importer custody, native GUI acceptance, live delivery, or other transport
+> family claim. Binary SHA-256
+> `60BCA821635018CA6562280BE32D7A613EF8CBA77C257233BAC200C16833974F`,
+> 280314880 bytes. Publication identity is the Git commit containing its
+> receipt; no current macOS/full-CI/cross-platform acceptance claim. P1-16 OPEN;
+> counts 1324/1010/312/2 (314 raw; 313 pre-tag).
+>
+> **Wave 20 account transport evidence — LOCALLY VERIFIED 2026-09-13:** nine
+> admitted files carry bound
 > nonlegacy Telegram metadata through one complete authenticated home-WAL scan
 > to read-only evidence and Doctor flapping. TestBuild01 **PASS** 7m29s,
 > min182.78GiB/peak15.1; four real authenticated-WAL tests and unknown-outcome
@@ -22,7 +46,7 @@
 > **157/0/0**/build4m27/min205.11GiB/peak10.82; fmt/GUI lint/self-test **PASS**.
 > Binary SHA-256 `6B53DF7714F73FBEA15C1C093D1B82201550C21C1E14FDA9D50480C41D5FAE4E`,
 > 279900672 bytes; receipts 153 source inputs/14 executables. W20 is **LOCALLY
-> VERIFIED**; publication identity is the Git commit containing this receipt. No
+> VERIFIED** and published `080131b4320ac3935d1f5d05e242295e5c3625a8`. No
 > current-head full-CI/cross-platform acceptance claim. No new authority/routes/
 > credentials/retries/runtime-health
 > authority/physical delivery. P1-14/P1-16/P1-17 remain OPEN;

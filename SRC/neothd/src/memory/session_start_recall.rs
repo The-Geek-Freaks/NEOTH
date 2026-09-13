@@ -586,12 +586,12 @@ impl ExistingViewsReader {
             .file_name()
             .context("recall home has no final directory name")?
             .to_os_string();
-        // The bound parent has already been canonicalized from its trusted
-        // anchor and traversed with no-follow directory capabilities. Reuse
-        // that physical display namespace for SQLite: macOS `/var` is a
-        // system alias for `/private/var`, which SQLite rejects under
-        // SQLITE_OPEN_NOFOLLOW even when the bound home and leaf are real.
-        let home_display = home_parent.display_path.join(&home_name);
+        // The bound parent was reached from its canonical trusted anchor via
+        // no-follow directory capabilities. SQLite must receive that exact
+        // physical namespace: macOS `/var` is a system alias for
+        // `/private/var`, which SQLite rejects under SQLITE_OPEN_NOFOLLOW
+        // even when the opened home and leaf are real.
+        let home_display = home_parent.physical_display_path.join(&home_name);
         let home_open = crate::skills::store::open_bound_real_child_dir(
             &home_parent.dir,
             &home_name,

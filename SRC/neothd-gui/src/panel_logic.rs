@@ -2027,6 +2027,59 @@ pub fn build_channel_credential_request(
     encoded
 }
 
+/// Build W21's strict private-stdin envelope for one named Telegram account.
+/// The account is always explicit; a mapped account named `default` is an
+/// ordinary canonical ID and never a fallback to the legacy singleton.
+pub fn build_telegram_account_credential_request(
+    account: &str,
+    token: &str,
+    telegram_user_id: &str,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    let account_id = canonical_telegram_account_id(account)?;
+    if token.trim().is_empty() {
+        return Err("Telegram account token cannot be blank".to_string());
+    }
+    let user_id = canonical_positive_u64(telegram_user_id, "Telegram user ID")?;
+    let mut request = serde_json::json!({
+        "schema_version": 1,
+        "channel": "telegram",
+        "account": account_id.as_str(),
+        "telegram_user_id": user_id,
+        "token": token,
+    });
+    let mut body = Zeroizing::new(Vec::new());
+    let encoded = serde_json::to_writer(&mut *body, &request)
+        .map(|()| body)
+        .map_err(|error| format!("encode private Telegram account credential request: {error}"));
+    zeroize_json_strings(&mut request);
+    encoded
+}
+
+fn canonical_telegram_account_id(
+    raw: &str,
+) -> Result<neothd::channels::registry::ChannelAccountId, String> {
+    let account_id = neothd::channels::registry::ChannelAccountId::new(raw.trim().to_owned())
+        .map_err(|error| format!("invalid Telegram account id: {error}"))?;
+    if raw != account_id.as_str() {
+        return Err("Telegram account id must use its canonical spelling".to_string());
+    }
+    Ok(account_id)
+}
+
+fn canonical_positive_u64(raw: &str, label: &str) -> Result<u64, String> {
+    let canonical = raw.trim();
+    if canonical.is_empty() || !canonical.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(format!("{label} must be a canonical positive integer"));
+    }
+    let parsed = canonical
+        .parse::<u64>()
+        .map_err(|_| format!("{label} exceeds the supported range"))?;
+    if parsed == 0 || parsed.to_string() != canonical {
+        return Err(format!("{label} must be a canonical positive integer"));
+    }
+    Ok(parsed)
+}
+
 /// One channel row from `neoth channel list --output json`.
 ///
 /// The GUI deliberately consumes the daemon's canonical probe result instead
@@ -2448,6 +2501,48 @@ pub fn channel_account_test_command(
         .arg("--output")
         .arg("json");
     Ok(command)
+}
+
+/// Build the exact W21 private-stdin command for a named Telegram account.
+/// The GUI launcher adds its established environment scrubbing before spawn;
+/// this pure builder keeps argv and account validation headlessly testable.
+pub fn telegram_account_credential_command(
+    bin: &std::path::Path,
+    account: &str,
+) -> Result<std::process::Command, String> {
+    let account_id = canonical_telegram_account_id(account)?;
+    let mut command = std::process::Command::new(bin);
+    command
+        .arg("channel")
+        .arg("account")
+        .arg("set-credentials")
+        .arg("telegram")
+        .arg("--account")
+        .arg(account_id.as_str())
+        .arg("--output")
+        .arg("json")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    Ok(command)
+}
+
+/// Parse W21's secret-free named-account acknowledgement. It binds every
+/// returned identity field before the modal may clear its entered secrets.
+pub fn parse_telegram_account_saved(stdout: &[u8], expected_account: &str) -> Option<bool> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct TelegramAccountSavedAcknowledgement {
+        channel: String,
+        account: String,
+        saved: bool,
+    }
+
+    let expected_account = canonical_telegram_account_id(expected_account).ok()?;
+    let acknowledgement: TelegramAccountSavedAcknowledgement =
+        serde_json::from_slice(stdout).ok()?;
+    (acknowledgement.channel == "telegram" && acknowledgement.account == expected_account.as_str())
+        .then_some(acknowledgement.saved)
 }
 
 fn parse_channel_test_status_for_account(
@@ -9178,6 +9273,45 @@ mod tests {
     }
 
     #[test]
+    fn parse_channel_status_preserves_fresh_legacy_and_invalid_telegram_map_shapes() {
+        let payload = |status: &str, configured: bool, detail: &str| {
+            serde_json::json!({
+                "registry": { "schema_version": 1, "channels": [registry_row("telegram", &[])] },
+                "channels": [{
+                    "name": "telegram",
+                    "status": status,
+                    "configured": configured,
+                    "detail": detail,
+                }],
+                "configured": if configured { 1 } else { 0 },
+                "total": 1,
+            })
+        };
+
+        let fresh =
+            parse_channel_status(&payload("not_configured", false, "not configured").to_string())
+                .unwrap();
+        assert_eq!(fresh[0].name, "telegram");
+        assert_eq!(fresh[0].status, "not_configured");
+        assert!(!fresh[0].configured);
+        assert!(fresh[0].accounts.is_empty());
+
+        let legacy =
+            parse_channel_status(&payload("ok", true, "legacy singleton").to_string()).unwrap();
+        assert_eq!(legacy[0].status, "ok");
+        assert!(legacy[0].configured);
+        assert!(legacy[0].accounts.is_empty());
+
+        let invalid_map = parse_channel_status(
+            &payload("error", true, "Telegram account map is incomplete").to_string(),
+        )
+        .unwrap();
+        assert_eq!(invalid_map[0].status, "error");
+        assert!(invalid_map[0].configured);
+        assert!(invalid_map[0].accounts.is_empty());
+    }
+
+    #[test]
     fn parse_channel_status_rejects_invalid_telegram_account_children() {
         let account = |channel_id: &str, account_id: &str, runtime: &str| {
             serde_json::json!({
@@ -9326,6 +9460,104 @@ mod tests {
             channel_account_test_command(std::path::Path::new("neoth"), "telegram", "OPS_B")
                 .is_err(),
             "account validation follows the typed canonical-id contract"
+        );
+    }
+
+    #[test]
+    fn named_telegram_account_builder_emits_only_the_w21_envelope() {
+        let request = build_telegram_account_credential_request("ops_b", "bot-secret", "42")
+            .expect("canonical mapped account request");
+        let envelope: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
+        let object = envelope.as_object().expect("W21 envelope object");
+        assert_eq!(object.len(), 5);
+        assert_eq!(envelope["schema_version"], 1);
+        assert_eq!(envelope["channel"], "telegram");
+        assert_eq!(envelope["account"], "ops_b");
+        assert_eq!(envelope["telegram_user_id"], 42);
+        assert_eq!(envelope["token"], "bot-secret");
+        assert!(
+            envelope.get("fields").is_none(),
+            "the generic set-credentials envelope cannot become an account request"
+        );
+        assert!(
+            build_telegram_account_credential_request("default", "token", "42").is_ok(),
+            "mapped default is an explicit ordinary account"
+        );
+        let too_long = "a".repeat(65);
+        for invalid in ["", " ops_b", "ops_b ", "OPS_B", too_long.as_str()] {
+            assert!(
+                build_telegram_account_credential_request(invalid, "token", "42").is_err(),
+                "noncanonical account `{invalid}` must fail closed"
+            );
+        }
+        for invalid in ["", "0", "042", "owner", "18446744073709551616"] {
+            assert!(
+                build_telegram_account_credential_request("ops_b", "token", invalid).is_err(),
+                "noncanonical sender `{invalid}` must fail closed"
+            );
+        }
+        assert!(build_telegram_account_credential_request("ops_b", " \t\n", "42").is_err());
+    }
+
+    #[test]
+    fn named_telegram_account_command_and_ack_bind_the_exact_account() {
+        let token = "PROCESS_LIST_SECRET_SENTINEL";
+        let sender = "424242";
+        let command =
+            telegram_account_credential_command(std::path::Path::new("neoth"), "ops_b").unwrap();
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "channel".to_string(),
+                "account".to_string(),
+                "set-credentials".to_string(),
+                "telegram".to_string(),
+                "--account".to_string(),
+                "ops_b".to_string(),
+                "--output".to_string(),
+                "json".to_string(),
+            ]
+        );
+        assert!(
+            !args.iter().any(|arg| arg.contains(token) || arg == sender),
+            "token and sender belong only in the private stdin envelope"
+        );
+        assert!(
+            telegram_account_credential_command(std::path::Path::new("neoth"), "OPS_B").is_err()
+        );
+
+        assert_eq!(
+            parse_telegram_account_saved(
+                br#"{"channel":"telegram","account":"ops_b","saved":true}"#,
+                "ops_b"
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            parse_telegram_account_saved(
+                br#"{"channel":"telegram","account":"ops_a","saved":true}"#,
+                "ops_b"
+            ),
+            None
+        );
+        for acknowledgement in [
+            br#"{"channel":"telegram","saved":true}"#.as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","saved":true,"ok":true}"#.as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","saved":"true"}"#.as_slice(),
+            br#"not-json"#.as_slice(),
+        ] {
+            assert_eq!(parse_telegram_account_saved(acknowledgement, "ops_b"), None);
+        }
+        assert_eq!(
+            parse_telegram_account_saved(
+                br#"{"channel":"telegram","account":"ops_b","saved":false}"#,
+                "ops_b"
+            ),
+            Some(false)
         );
     }
 

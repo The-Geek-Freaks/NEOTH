@@ -210,6 +210,10 @@ fn inject_private_child_post_commit_validation_failure(target: &Path) -> Result<
 /// decisions use `dir`; `display_path` is reporting-only.
 pub(crate) struct BoundDirectory {
     pub(crate) dir: Dir,
+    /// Absolute physical namespace reached by the capability walk.  This is
+    /// suitable for APIs such as SQLite `SQLITE_OPEN_NOFOLLOW` that reject a
+    /// platform-owned alias even when the opened directory itself is real.
+    pub(crate) physical_display_path: PathBuf,
     pub(crate) display_path: PathBuf,
 }
 
@@ -1073,6 +1077,7 @@ fn walk_bound_directory_descendants(
     ensure_cap_directory_is_real(&current, label, absolute)?;
     Ok(Some(BoundDirectory {
         dir: current,
+        physical_display_path: current_display,
         display_path: absolute.to_path_buf(),
     }))
 }

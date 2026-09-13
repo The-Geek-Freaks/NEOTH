@@ -401,11 +401,13 @@ fn open_private_instance_directory(
             );
         };
         let child_path = current.display_path.join(name);
+        let child_physical_path = current.physical_display_path.join(name);
         let child = open_or_create_private_child_dir(&current.dir, name, &child_path)
             .with_context(|| format!("open or create private {label} {}", child_path.display()))?;
         harden_private_instance_directory(&child, &child_path)?;
         current = BoundDirectory {
             dir: child,
+            physical_display_path: child_physical_path,
             display_path: child_path,
         };
     }

@@ -802,6 +802,47 @@ pub struct Credentials {
     pub ssh_tunnels: Option<Vec<crate::transport::ssh_config::SshTunnelConfig>>,
 }
 
+/// Opaque credential-layer candidate for one named Telegram account.  This
+/// intentionally has no `Debug` implementation because it retains both the
+/// candidate token and the dynamic keychain preimage until commit or drop.
+pub(crate) struct PreparedTelegramAccountUpsert {
+    freedom_path: PathBuf,
+    credentials_path: PathBuf,
+    account_id: crate::channels::registry::ChannelAccountId,
+    keychain_mode: bool,
+    token: SecretString,
+    candidate: crate::config::RuntimeConfigPair,
+    freedom_before: FileSnapshot,
+    credentials_before: FileSnapshot,
+    freedom_after: FileSnapshot,
+    credentials_after: FileSnapshot,
+    /// Dynamic account keys plus the forbidden legacy singleton key.  Every
+    /// entry is compared at commit so a probe cannot validate a mixed account
+    /// generation.
+    dynamic_before: BTreeMap<String, Option<SecretString>>,
+}
+
+impl PreparedTelegramAccountUpsert {
+    /// The exact coherent generation that an external Telegram `getMe` probe
+    /// may inspect.  It is borrowed, never reconstructed by a facade.
+    pub(crate) fn candidate_pair(&self) -> &crate::config::RuntimeConfigPair {
+        &self.candidate
+    }
+
+    /// The only named account which this candidate may create or replace.
+    pub(crate) fn account_id(&self) -> &crate::channels::registry::ChannelAccountId {
+        &self.account_id
+    }
+}
+
+fn same_secret_snapshot(left: Option<&SecretString>, right: Option<&SecretString>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => left.expose() == right.expose(),
+        _ => false,
+    }
+}
+
 impl Credentials {
     /// Presence-only map guard for outbound rollout. It has no side effect on
     /// legacy Telegram fields or keychain material.
@@ -824,6 +865,320 @@ impl Credentials {
             None,
             |_| Ok(()),
         )
+    }
+
+    /// Stage one explicit Telegram account upsert for an external, read-only
+    /// candidate probe.  The returned value is deliberately opaque: it owns
+    /// the exact raw pair and keychain observations that `commit` must compare
+    /// after the probe, so callers cannot reconstruct a snapshot under a
+    /// different lock boundary.
+    pub(crate) fn prepare_telegram_account_upsert_at(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        account_id: crate::channels::registry::ChannelAccountId,
+        allowed_user_id: u64,
+        token: SecretString,
+    ) -> Result<PreparedTelegramAccountUpsert> {
+        Self::prepare_telegram_account_upsert_at_using_store(
+            freedom_path,
+            credentials_path,
+            account_id,
+            allowed_user_id,
+            token,
+            None,
+        )
+    }
+
+    /// Commit exactly the generation previously returned by
+    /// [`Self::prepare_telegram_account_upsert_at`].  A changed raw file or
+    /// any relevant dynamic keychain entry is a retry error before mutation.
+    pub(crate) fn commit_prepared_telegram_account_upsert_at(
+        prepared: PreparedTelegramAccountUpsert,
+    ) -> Result<()> {
+        Self::commit_prepared_telegram_account_upsert_at_using_fault_and_store(
+            prepared,
+            None,
+            |_| Ok(()),
+        )
+    }
+
+    fn prepare_telegram_account_upsert_at_using_store(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        account_id: crate::channels::registry::ChannelAccountId,
+        allowed_user_id: u64,
+        token: SecretString,
+        injected_store: Option<&dyn crate::config::keychain::SecretStore>,
+    ) -> Result<PreparedTelegramAccountUpsert> {
+        anyhow::ensure!(
+            allowed_user_id != 0,
+            "Telegram account allowed_user_id must be nonzero"
+        );
+        anyhow::ensure!(
+            !token.expose().trim().is_empty(),
+            "Telegram account token must be non-blank"
+        );
+        let freedom_dir = transaction_directory(freedom_path);
+        anyhow::ensure!(
+            freedom_dir == transaction_directory(credentials_path),
+            "freedom.yaml and credentials.yaml must be sibling files for a durable transaction"
+        );
+
+        with_dual_file_transaction_lock(freedom_path, || {
+            with_config_writer_guard(freedom_path, || {
+                with_legacy_pair_locks(freedom_path, credentials_path, || {
+                    let freedom_before = FileSnapshot::capture(freedom_path)?;
+                    let credentials_before = FileSnapshot::capture(credentials_path)?;
+                    let mut config =
+                        crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)
+                            .with_context(|| {
+                                format!(
+                                    "load {} for Telegram account upsert preparation",
+                                    freedom_path.display()
+                                )
+                            })?;
+                    let mut raw_credentials = Self::load_or_default_unlocked(credentials_path)
+                        .with_context(|| {
+                            format!(
+                                "load {} for Telegram account upsert preparation",
+                                credentials_path.display()
+                            )
+                        })?;
+                    anyhow::ensure!(
+                        config.telegram_token.is_none()
+                            && config.telegram_user_id.is_none()
+                            && raw_credentials.telegram_token.is_none(),
+                        "legacy Telegram scalar fields cannot coexist with a Telegram account upsert"
+                    );
+                    anyhow::ensure!(
+                        config
+                            .channel_accounts
+                            .telegram
+                            .keys()
+                            .eq(raw_credentials.channel_accounts.telegram.keys()),
+                        "Telegram account policy and raw credential keys must match exactly before upsert"
+                    );
+                    for (mapped_account, policy) in &config.channel_accounts.telegram {
+                        anyhow::ensure!(
+                            policy.allowed_user_id != 0,
+                            "telegram account `{mapped_account}` has an invalid allowed_user_id"
+                        );
+                    }
+
+                    let keychain_mode =
+                        config.secrets_backend == crate::config::SecretsBackend::Keychain;
+                    let opened_store =
+                        if keychain_mode && injected_store.is_none() {
+                            Some(crate::config::keychain::open_store().context(
+                                "open OS keychain for Telegram account upsert preparation",
+                            )?)
+                        } else {
+                            None
+                        };
+                    // File mode must not even inspect an injected store.
+                    let store = if keychain_mode {
+                        injected_store.or(opened_store.as_deref())
+                    } else {
+                        None
+                    };
+                    let mut dynamic_before = BTreeMap::new();
+                    if let Some(store) = store {
+                        // The legacy key is forbidden and is also part of the
+                        // commit CAS, preventing a concurrent scalar fallback.
+                        let legacy = store.get("telegram_token").context(
+                            "read legacy Telegram key during account upsert preparation",
+                        )?;
+                        anyhow::ensure!(
+                            legacy.is_none(),
+                            "legacy Telegram keychain token cannot coexist with a Telegram account upsert"
+                        );
+                        dynamic_before.insert("telegram_token".to_owned(), legacy);
+                        for mapped_account in config
+                            .channel_accounts
+                            .telegram
+                            .keys()
+                            .chain(std::iter::once(&account_id))
+                        {
+                            let key =
+                                crate::config::keychain::telegram_account_token_key(mapped_account);
+                            if dynamic_before.contains_key(&key) {
+                                continue;
+                            }
+                            let value = store.get(&key).with_context(|| {
+                                format!(
+                                    "read dynamic Telegram account token for `{mapped_account}` during upsert preparation"
+                                )
+                            })?;
+                            dynamic_before.insert(key, value);
+                        }
+                    }
+
+                    config.channel_accounts.telegram.insert(
+                        account_id.clone(),
+                        crate::config::TelegramAccountConfig { allowed_user_id },
+                    );
+                    raw_credentials.channel_accounts.telegram.insert(
+                        account_id.clone(),
+                        TelegramAccountCredentials {
+                            token: (!keychain_mode).then(|| token.clone()),
+                        },
+                    );
+
+                    let mut effective_credentials = raw_credentials.clone();
+                    if let Some(store) = store {
+                        crate::config::keychain::supplement_telegram_account_tokens(
+                            &mut effective_credentials,
+                            store,
+                        )?;
+                        effective_credentials
+                            .channel_accounts
+                            .telegram
+                            .get_mut(&account_id)
+                            .context("prepared Telegram account credential is missing")?
+                            .token = Some(token.clone());
+                    }
+                    let candidate = crate::config::RuntimeConfigPair {
+                        config: config.clone(),
+                        raw_credentials: raw_credentials.clone(),
+                        credentials: effective_credentials,
+                    };
+                    let accounts = candidate.authenticated_telegram_accounts()?;
+                    anyhow::ensure!(
+                        accounts
+                            .iter()
+                            .any(|account| account.channel_ref().account_id == account_id),
+                        "prepared Telegram account is not authenticated"
+                    );
+
+                    let freedom_body = render_freedom_preserving_unknown_yaml(
+                        &config,
+                        &freedom_before,
+                        InlineTelegramTokenPolicy::Preserve,
+                    )?;
+                    let freedom_after = FileSnapshot::Present(zeroize::Zeroizing::new(
+                        freedom_body.as_bytes().to_vec(),
+                    ));
+                    let credentials_after = raw_credentials
+                        .rendered_file_snapshot_preserving_unknown(
+                            credentials_path,
+                            &credentials_before,
+                        )?;
+                    Ok(PreparedTelegramAccountUpsert {
+                        freedom_path: freedom_path.to_path_buf(),
+                        credentials_path: credentials_path.to_path_buf(),
+                        account_id,
+                        keychain_mode,
+                        token,
+                        candidate,
+                        freedom_before,
+                        credentials_before,
+                        freedom_after,
+                        credentials_after,
+                        dynamic_before,
+                    })
+                })
+            })
+        })
+    }
+
+    fn commit_prepared_telegram_account_upsert_at_using_fault_and_store<H>(
+        prepared: PreparedTelegramAccountUpsert,
+        injected_store: Option<&dyn crate::config::keychain::SecretStore>,
+        fault: H,
+    ) -> Result<()>
+    where
+        H: FnMut(DualFileFaultPoint) -> Result<()>,
+    {
+        let freedom_dir = transaction_directory(&prepared.freedom_path);
+        anyhow::ensure!(
+            freedom_dir == transaction_directory(&prepared.credentials_path),
+            "prepared Telegram account paths are not sibling files"
+        );
+        with_dual_file_transaction_lock(&prepared.freedom_path, || {
+            with_config_writer_guard(&prepared.freedom_path, || {
+                with_legacy_pair_locks(&prepared.freedom_path, &prepared.credentials_path, || {
+                    let current_freedom = FileSnapshot::capture(&prepared.freedom_path)?;
+                    let current_credentials = FileSnapshot::capture(&prepared.credentials_path)?;
+                    anyhow::ensure!(
+                        current_freedom.same_as(&prepared.freedom_before)
+                            && current_credentials.same_as(&prepared.credentials_before),
+                        "Telegram account configuration changed after its reviewed candidate; retry the command"
+                    );
+                    let opened_store = if prepared.keychain_mode && injected_store.is_none() {
+                        Some(
+                            crate::config::keychain::open_store()
+                                .context("open OS keychain for Telegram account upsert commit")?,
+                        )
+                    } else {
+                        None
+                    };
+                    let store = if prepared.keychain_mode {
+                        injected_store.or(opened_store.as_deref())
+                    } else {
+                        None
+                    };
+                    if prepared.keychain_mode {
+                        let store = store.context("keychain account upsert has no secret store")?;
+                        for (key, expected) in &prepared.dynamic_before {
+                            let actual = store.get(key).with_context(|| {
+                                format!(
+                                    "read dynamic Telegram key `{key}` before account upsert commit"
+                                )
+                            })?;
+                            anyhow::ensure!(
+                                same_secret_snapshot(actual.as_ref(), expected.as_ref()),
+                                "Telegram account dynamic credential changed after its reviewed candidate; retry the command"
+                            );
+                        }
+                        let selected_key = crate::config::keychain::telegram_account_token_key(
+                            &prepared.account_id,
+                        );
+                        store.set(&selected_key, &prepared.token).context(
+                            "write dynamic Telegram account token before PREPARED pair publication",
+                        )?;
+                    }
+                    let publication = publish_prepared_file_pair(
+                        &prepared.freedom_path,
+                        &prepared.credentials_path,
+                        &freedom_dir,
+                        &prepared.freedom_before,
+                        &prepared.freedom_after,
+                        &prepared.credentials_before,
+                        &prepared.credentials_after,
+                        (),
+                        Some(|path: &Path, body: &[u8]| {
+                            crate::util::atomic_write::atomic_write_private(path, body)
+                                .with_context(|| format!("atomically write {}", path.display()))
+                        }),
+                        fault,
+                    );
+                    if let Err(error) = publication {
+                        if prepared.keychain_mode && !dual_file_target_publication_crossed(&error) {
+                            let store =
+                                store.context("keychain account upsert has no secret store")?;
+                            let selected_key = crate::config::keychain::telegram_account_token_key(
+                                &prepared.account_id,
+                            );
+                            let previous = prepared
+                                .dynamic_before
+                                .get(&selected_key)
+                                .context("prepared dynamic Telegram token snapshot is missing")?;
+                            let restored = match previous {
+                                Some(value) => store.set(&selected_key, value),
+                                None => store.delete(&selected_key),
+                            };
+                            if let Err(restore_error) = restored {
+                                return Err(error.context(format!(
+                                    "restore dynamic Telegram account token after recoverable pair failure: {restore_error:#}"
+                                )));
+                            }
+                        }
+                        return Err(error);
+                    }
+                    Ok(())
+                })
+            })
+        })
     }
 
     /// Move a legacy singleton into exactly one named Telegram account.
@@ -5967,5 +6322,368 @@ mod tests {
         c.write(&path).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    fn named_telegram_account(value: &str) -> crate::channels::registry::ChannelAccountId {
+        value.parse().expect("canonical test account id")
+    }
+
+    fn mapped_telegram_freedom_yaml(backend: &str) -> String {
+        format!(
+            "secrets_backend: {backend}\nchannel_accounts:\n  telegram:\n    ops_a:\n      allowed_user_id: 11\nfuture_extension:\n  preserve: true\n"
+        )
+    }
+
+    fn mapped_telegram_credentials_yaml(token: Option<&str>) -> String {
+        let token = token
+            .map(|token| format!("      token: {token}\n"))
+            .unwrap_or_else(|| "      token: null\n".to_owned());
+        format!(
+            "channel_accounts:\n  telegram:\n    ops_a:\n{token}future_secret:\n  preserve: exact\n"
+        )
+    }
+
+    #[test]
+    fn telegram_account_upsert_file_candidate_preserves_other_account_and_unknown_yaml() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom_path, mapped_telegram_freedom_yaml("file")).unwrap();
+        std::fs::write(
+            &credentials_path,
+            mapped_telegram_credentials_yaml(Some("ops-a-token")),
+        )
+        .unwrap();
+
+        let prepared = Credentials::prepare_telegram_account_upsert_at_using_store(
+            &freedom_path,
+            &credentials_path,
+            named_telegram_account("ops_b"),
+            22,
+            SecretString::from("ops-b-token"),
+            Some(&FailIfTouchedStore),
+        )
+        .unwrap();
+        assert_eq!(prepared.account_id().as_str(), "ops_b");
+        let candidate = prepared
+            .candidate_pair()
+            .authenticated_telegram_accounts()
+            .unwrap();
+        assert_eq!(candidate.len(), 2);
+        assert!(candidate.iter().any(|account| {
+            account.channel_ref().account_id.as_str() == "ops_a"
+                && account.token().expose() == "ops-a-token"
+        }));
+        assert!(candidate.iter().any(|account| {
+            account.channel_ref().account_id.as_str() == "ops_b"
+                && account.token().expose() == "ops-b-token"
+        }));
+
+        Credentials::commit_prepared_telegram_account_upsert_at_using_fault_and_store(
+            prepared,
+            Some(&FailIfTouchedStore),
+            |_| Ok(()),
+        )
+        .unwrap();
+        let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path).unwrap();
+        assert_eq!(pair.authenticated_telegram_accounts().unwrap().len(), 2);
+        let raw = std::fs::read_to_string(&credentials_path).unwrap();
+        assert!(raw.contains("preserve: exact"));
+        assert!(raw.contains("ops-a-token"));
+        assert!(raw.contains("ops-b-token"));
+    }
+
+    #[test]
+    fn telegram_account_upsert_refuses_zero_or_blank_before_any_file_or_store_access() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let zero = match Credentials::prepare_telegram_account_upsert_at_using_store(
+            &freedom_path,
+            &credentials_path,
+            named_telegram_account("ops_b"),
+            0,
+            SecretString::from("token"),
+            Some(&FailIfTouchedStore),
+        ) {
+            Ok(_) => panic!("zero sender must be refused"),
+            Err(error) => error,
+        };
+        assert!(zero.to_string().contains("nonzero"));
+        let blank = match Credentials::prepare_telegram_account_upsert_at_using_store(
+            &freedom_path,
+            &credentials_path,
+            named_telegram_account("ops_b"),
+            22,
+            SecretString::from(" \t "),
+            Some(&FailIfTouchedStore),
+        ) {
+            Ok(_) => panic!("blank token must be refused"),
+            Err(error) => error,
+        };
+        assert!(blank.to_string().contains("non-blank"));
+        assert!(!freedom_path.exists());
+        assert!(!credentials_path.exists());
+    }
+
+    #[test]
+    fn telegram_account_upsert_keychain_uses_dynamic_key_and_null_yaml_placeholder() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom_path, mapped_telegram_freedom_yaml("keychain")).unwrap();
+        std::fs::write(&credentials_path, mapped_telegram_credentials_yaml(None)).unwrap();
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        let ops_a_key =
+            crate::config::keychain::telegram_account_token_key(&named_telegram_account("ops_a"));
+        let ops_b_key =
+            crate::config::keychain::telegram_account_token_key(&named_telegram_account("ops_b"));
+        store
+            .set(&ops_a_key, &SecretString::from("ops-a-token"))
+            .unwrap();
+
+        let prepared = Credentials::prepare_telegram_account_upsert_at_using_store(
+            &freedom_path,
+            &credentials_path,
+            named_telegram_account("ops_b"),
+            22,
+            SecretString::from("ops-b-token"),
+            Some(&store),
+        )
+        .unwrap();
+        assert_eq!(
+            prepared
+                .candidate_pair()
+                .authenticated_telegram_accounts()
+                .unwrap()
+                .len(),
+            2
+        );
+        Credentials::commit_prepared_telegram_account_upsert_at_using_fault_and_store(
+            prepared,
+            Some(&store),
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.get(&ops_a_key).unwrap().unwrap().expose(),
+            "ops-a-token"
+        );
+        assert_eq!(
+            store.get(&ops_b_key).unwrap().unwrap().expose(),
+            "ops-b-token"
+        );
+        assert!(store.get("telegram_token").unwrap().is_none());
+        let persisted: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&credentials_path).unwrap()).unwrap();
+        assert!(persisted["channel_accounts"]["telegram"]["ops_b"]["token"].is_null());
+        assert_eq!(
+            persisted["future_secret"]["preserve"].as_str(),
+            Some("exact")
+        );
+    }
+
+    #[test]
+    fn telegram_account_upsert_commit_refuses_selected_or_unselected_dynamic_drift() {
+        for (changed_account, changed_token) in
+            [("ops_b", "raced-selected"), ("ops_a", "raced-other")]
+        {
+            let dir = tempdir().unwrap();
+            let freedom_path = dir.path().join("freedom.yaml");
+            let credentials_path = dir.path().join("credentials.yaml");
+            let freedom_before = mapped_telegram_freedom_yaml("keychain");
+            let credentials_before = mapped_telegram_credentials_yaml(None);
+            std::fs::write(&freedom_path, &freedom_before).unwrap();
+            std::fs::write(&credentials_path, &credentials_before).unwrap();
+            let store = crate::config::keychain::InMemorySecretStore::default();
+            let ops_a_key = crate::config::keychain::telegram_account_token_key(
+                &named_telegram_account("ops_a"),
+            );
+            store
+                .set(&ops_a_key, &SecretString::from("ops-a-token"))
+                .unwrap();
+            let prepared = Credentials::prepare_telegram_account_upsert_at_using_store(
+                &freedom_path,
+                &credentials_path,
+                named_telegram_account("ops_b"),
+                22,
+                SecretString::from("ops-b-token"),
+                Some(&store),
+            )
+            .unwrap();
+            let changed_key = crate::config::keychain::telegram_account_token_key(
+                &named_telegram_account(changed_account),
+            );
+            store
+                .set(&changed_key, &SecretString::from(changed_token))
+                .unwrap();
+
+            let error =
+                Credentials::commit_prepared_telegram_account_upsert_at_using_fault_and_store(
+                    prepared,
+                    Some(&store),
+                    |_| Ok(()),
+                )
+                .unwrap_err();
+            assert!(error.to_string().contains("reviewed candidate"));
+            assert_eq!(
+                std::fs::read_to_string(&freedom_path).unwrap(),
+                freedom_before
+            );
+            assert_eq!(
+                std::fs::read_to_string(&credentials_path).unwrap(),
+                credentials_before
+            );
+            assert_eq!(
+                store.get(&changed_key).unwrap().unwrap().expose(),
+                changed_token
+            );
+        }
+    }
+
+    #[test]
+    fn telegram_account_upsert_restores_selected_dynamic_snapshot_before_publication_boundary() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let freedom_before = mapped_telegram_freedom_yaml("keychain");
+        let credentials_before = mapped_telegram_credentials_yaml(None);
+        std::fs::write(&freedom_path, &freedom_before).unwrap();
+        std::fs::write(&credentials_path, &credentials_before).unwrap();
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        let ops_a_key =
+            crate::config::keychain::telegram_account_token_key(&named_telegram_account("ops_a"));
+        let ops_b_key =
+            crate::config::keychain::telegram_account_token_key(&named_telegram_account("ops_b"));
+        store
+            .set(&ops_a_key, &SecretString::from("ops-a-token"))
+            .unwrap();
+        store
+            .set(&ops_b_key, &SecretString::from("ops-b-before"))
+            .unwrap();
+        let prepared = Credentials::prepare_telegram_account_upsert_at_using_store(
+            &freedom_path,
+            &credentials_path,
+            named_telegram_account("ops_b"),
+            22,
+            SecretString::from("ops-b-target"),
+            Some(&store),
+        )
+        .unwrap();
+        let error = Credentials::commit_prepared_telegram_account_upsert_at_using_fault_and_store(
+            prepared,
+            Some(&store),
+            |point| {
+                if point == DualFileFaultPoint::CredentialsPublished {
+                    anyhow::bail!("injected first publication failure")
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(!dual_file_target_publication_crossed(&error));
+        assert_eq!(
+            store.get(&ops_b_key).unwrap().unwrap().expose(),
+            "ops-b-before"
+        );
+        let _ = crate::config::load_runtime_config_diagnostic_snapshot_using_store(
+            &freedom_path,
+            Some(&store),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&freedom_path).unwrap(),
+            freedom_before
+        );
+        assert_eq!(
+            std::fs::read_to_string(&credentials_path).unwrap(),
+            credentials_before
+        );
+    }
+
+    #[test]
+    fn telegram_account_upsert_after_boundary_fault_retains_target_for_recovery() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom_path, mapped_telegram_freedom_yaml("keychain")).unwrap();
+        std::fs::write(&credentials_path, mapped_telegram_credentials_yaml(None)).unwrap();
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        let ops_a = named_telegram_account("ops_a");
+        let ops_b = named_telegram_account("ops_b");
+        let ops_a_key = crate::config::keychain::telegram_account_token_key(&ops_a);
+        let ops_b_key = crate::config::keychain::telegram_account_token_key(&ops_b);
+        store
+            .set(&ops_a_key, &SecretString::from("ops-a-token"))
+            .unwrap();
+        store
+            .set(&ops_b_key, &SecretString::from("ops-b-before"))
+            .unwrap();
+        let prepared = Credentials::prepare_telegram_account_upsert_at_using_store(
+            &freedom_path,
+            &credentials_path,
+            ops_b.clone(),
+            22,
+            SecretString::from("ops-b-target"),
+            Some(&store),
+        )
+        .unwrap();
+
+        let error = Credentials::commit_prepared_telegram_account_upsert_at_using_fault_and_store(
+            prepared,
+            Some(&store),
+            |point| {
+                if point == DualFileFaultPoint::FreedomPublished {
+                    anyhow::bail!("injected after-boundary publication failure")
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(dual_file_target_publication_crossed(&error));
+        assert_eq!(
+            store.get(&ops_b_key).unwrap().unwrap().expose(),
+            "ops-b-target"
+        );
+        assert!(dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+
+        let _ = crate::config::load_runtime_config_diagnostic_snapshot_using_store(
+            &freedom_path,
+            Some(&store),
+        )
+        .unwrap();
+        assert!(!dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+        let raw_credentials = Credentials::load_or_default(&credentials_path).unwrap();
+        assert!(
+            raw_credentials
+                .channel_accounts
+                .telegram
+                .get(&ops_b)
+                .expect("recovered keychain account placeholder")
+                .token
+                .is_none()
+        );
+        let mut effective_credentials = raw_credentials.clone();
+        crate::config::keychain::supplement_telegram_account_tokens(
+            &mut effective_credentials,
+            &store,
+        )
+        .unwrap();
+        let config =
+            crate::config::FreedomConfig::load_public_from_path_unlocked(&freedom_path).unwrap();
+        let pair = crate::config::RuntimeConfigPair {
+            config,
+            raw_credentials,
+            credentials: effective_credentials,
+        };
+        let accounts = pair.authenticated_telegram_accounts().unwrap();
+        assert_eq!(accounts.len(), 2);
+        let selected = accounts
+            .iter()
+            .find(|account| account.channel_ref().account_id == ops_b)
+            .expect("recovered selected Telegram account");
+        assert_eq!(selected.allowed_user_id(), 22);
+        assert_eq!(selected.token().expose(), "ops-b-target");
     }
 }

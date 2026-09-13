@@ -1210,6 +1210,24 @@ pub struct ChannelAddFields {
 const CHANNEL_CREDENTIAL_SCHEMA_VERSION: u32 = 1;
 const MAX_CHANNEL_CREDENTIAL_STDIN_BYTES: u64 = 8 * 1024;
 
+/// Secret-bearing input for one explicit Telegram account. It deliberately
+/// does not derive Debug so tokens cannot enter diagnostics.
+struct TelegramAccountAddFields {
+    account_id: ChannelAccountId,
+    allowed_user_id: u64,
+    token: SecretString,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TelegramAccountCredentialEnvelope {
+    schema_version: u32,
+    channel: String,
+    account: ChannelAccountId,
+    telegram_user_id: u64,
+    token: SecretString,
+}
+
 /// Private machine-facing credential envelope used by the desktop GUI. Secret
 /// values arrive only over the child process' stdin and therefore never enter
 /// argv, shell history, or process-list command lines.
@@ -1430,6 +1448,46 @@ fn read_channel_credential_request_from(
         );
     }
     parse_channel_credential_request(&body)
+}
+
+fn read_telegram_account_credential_request_from(
+    reader: impl Read,
+    expected_channel: &str,
+    expected_account: &ChannelAccountId,
+) -> Result<TelegramAccountAddFields> {
+    let mut body = Zeroizing::new(Vec::new());
+    reader
+        .take(MAX_CHANNEL_CREDENTIAL_STDIN_BYTES + 1)
+        .read_to_end(&mut body)?;
+    anyhow::ensure!(
+        body.len() as u64 <= MAX_CHANNEL_CREDENTIAL_STDIN_BYTES,
+        "channel credential request exceeds {} bytes",
+        MAX_CHANNEL_CREDENTIAL_STDIN_BYTES
+    );
+    let request: TelegramAccountCredentialEnvelope =
+        serde_json::from_slice(&body).context("parse Telegram account credential request JSON")?;
+    anyhow::ensure!(
+        request.schema_version == CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+        "unsupported channel credential schema version"
+    );
+    anyhow::ensure!(
+        request.channel == "telegram" && expected_channel == "telegram",
+        "Telegram account credentials require canonical `telegram`"
+    );
+    anyhow::ensure!(
+        &request.account == expected_account,
+        "private Telegram account credential request account does not match --account"
+    );
+    anyhow::ensure!(
+        request.telegram_user_id != 0,
+        "telegram user ID must be a positive integer"
+    );
+    crate::cli::init::validate_telegram_token(request.token.expose())?;
+    Ok(TelegramAccountAddFields {
+        account_id: request.account,
+        allowed_user_id: request.telegram_user_id,
+        token: request.token,
+    })
 }
 
 /// B9 — a base URL field must be `http(s)://…` (fail fast on a bare host —
@@ -2068,6 +2126,111 @@ fn required_flags_for(channel_id: ChannelId) -> &'static str {
 /// ```
 pub async fn run_add(channel: &str, flags: &ChannelAddFlags, output: &OutputFormat) -> Result<()> {
     run_add_at(&FreedomConfig::default_neoth_home(), channel, flags, output).await
+}
+
+pub async fn run_account_add(
+    channel: &str,
+    account_id: ChannelAccountId,
+    allowed_user_id: u64,
+    token: String,
+    output: &OutputFormat,
+) -> Result<()> {
+    let fields = TelegramAccountAddFields {
+        account_id,
+        allowed_user_id,
+        token: SecretString::from(token),
+    };
+    run_telegram_account_add_at(
+        &FreedomConfig::default_neoth_home(),
+        channel,
+        fields,
+        output,
+    )
+    .await
+}
+
+pub async fn run_account_set_credentials(
+    channel: &str,
+    account_id: ChannelAccountId,
+    output: &OutputFormat,
+) -> Result<()> {
+    let fields = read_telegram_account_credential_request_from(
+        std::io::stdin().lock(),
+        channel,
+        &account_id,
+    )?;
+    run_telegram_account_add_at(
+        &FreedomConfig::default_neoth_home(),
+        channel,
+        fields,
+        output,
+    )
+    .await
+}
+
+async fn run_telegram_account_add_at(
+    home: &std::path::Path,
+    channel: &str,
+    fields: TelegramAccountAddFields,
+    output: &OutputFormat,
+) -> Result<()> {
+    run_telegram_account_add_at_with_probe(home, channel, fields, output, |binding| async move {
+        probe_telegram_account_binding_with(binding, |token, allowed_user_id| async move {
+            crate::channels::telegram::TelegramChannel::new(token, Some(allowed_user_id))
+                .validate()
+                .await
+        })
+        .await
+    })
+    .await
+}
+
+async fn run_telegram_account_add_at_with_probe<F, Fut>(
+    home: &std::path::Path,
+    channel: &str,
+    fields: TelegramAccountAddFields,
+    output: &OutputFormat,
+    probe: F,
+) -> Result<()>
+where
+    F: FnOnce(TelegramProbeBinding) -> Fut,
+    Fut: std::future::Future<Output = Result<ChannelTestResult>>,
+{
+    anyhow::ensure!(
+        channel == "telegram",
+        "account onboarding supports only canonical `telegram`"
+    );
+    anyhow::ensure!(
+        fields.allowed_user_id != 0,
+        "telegram user ID must be a positive integer"
+    );
+    crate::cli::init::validate_telegram_token(fields.token.expose())?;
+    let freedom_path = home.join("freedom.yaml");
+    let credentials_path = home.join("credentials.yaml");
+    let prepared = Credentials::prepare_telegram_account_upsert_at(
+        &freedom_path,
+        &credentials_path,
+        fields.account_id,
+        fields.allowed_user_id,
+        fields.token,
+    )?;
+    let account_id = prepared.account_id().clone();
+    let binding = resolve_telegram_probe_binding(prepared.candidate_pair(), Some(&account_id))?;
+    let result = probe(binding).await?;
+    anyhow::ensure!(
+        result.status == "ok",
+        "candidate Telegram account probe failed; no account state was saved"
+    );
+    Credentials::commit_prepared_telegram_account_upsert_at(prepared)?;
+    crate::cli::reload::request_reload_at(home).context("Telegram account storage committed, but the live-reload request failed; run `neoth reload`")?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({"channel":"telegram","account":account_id.as_str(),"saved":true})
+        ),
+        OutputFormat::Table => println!("telegram account `{}` saved", account_id.as_str()),
+    }
+    Ok(())
 }
 
 /// A validated, live-testable channel mutation that has not touched durable
@@ -5053,6 +5216,162 @@ mod tests {
             calls.load(Ordering::SeqCst),
             0,
             "non-Telegram flag must not probe"
+        );
+    }
+
+    #[test]
+    fn telegram_account_private_envelope_rejects_invalid_requests() {
+        let account = ChannelAccountId::new("ops_b").unwrap();
+        for body in [
+            b"{".as_slice(),
+            br#"{"schema_version":1,"channel":"telegram","account":"ops_b","telegram_user_id":0,"token":"x"}"#,
+            br#"{"schema_version":1,"channel":"slack","account":"ops_b","telegram_user_id":1,"token":"x"}"#,
+            br#"{"schema_version":1,"channel":"telegram","account":"other","telegram_user_id":1,"token":"x"}"#,
+            br#"{"schema_version":1,"channel":"telegram","account":"ops_b","telegram_user_id":1,"token":"x","extra":true}"#,
+        ] {
+            assert!(read_telegram_account_credential_request_from(std::io::Cursor::new(body), "telegram", &account).is_err());
+        }
+        let oversized = vec![b'x'; MAX_CHANNEL_CREDENTIAL_STDIN_BYTES as usize + 1];
+        assert!(
+            read_telegram_account_credential_request_from(
+                std::io::Cursor::new(oversized),
+                "telegram",
+                &account
+            )
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn telegram_account_candidate_probe_failures_do_not_commit_or_reload() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let freedom = home.path().join("freedom.yaml");
+        let credentials = home.path().join("credentials.yaml");
+        std::fs::write(&credentials, "provider_key: keep\n").unwrap();
+        let before_freedom = std::fs::read(&freedom).unwrap();
+        let before_credentials = std::fs::read(&credentials).unwrap();
+        let fields = TelegramAccountAddFields {
+            account_id: ChannelAccountId::new("ops_b").unwrap(),
+            allowed_user_id: 42,
+            token: SecretString::from(valid_tg_token()),
+        };
+        let error = run_telegram_account_add_at_with_probe(
+            home.path(),
+            "telegram",
+            fields,
+            &OutputFormat::Json,
+            |_binding| async { anyhow::bail!("injected getMe failure") },
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("injected getMe failure"));
+        assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
+        assert_eq!(std::fs::read(&credentials).unwrap(), before_credentials);
+        assert!(
+            !home
+                .path()
+                .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+                .exists()
+        );
+
+        let fields = TelegramAccountAddFields {
+            account_id: ChannelAccountId::new("ops_b").unwrap(),
+            allowed_user_id: 42,
+            token: SecretString::from(valid_tg_token()),
+        };
+        assert!(
+            run_telegram_account_add_at_with_probe(
+                home.path(),
+                "telegram",
+                fields,
+                &OutputFormat::Json,
+                |_binding| async {
+                    Ok(ChannelTestResult {
+                        channel: "telegram".into(),
+                        account: Some(ChannelAccountId::new("ops_b").unwrap()),
+                        status: "fail",
+                        detail: "rejected".into(),
+                    })
+                }
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
+        assert_eq!(std::fs::read(&credentials).unwrap(), before_credentials);
+    }
+
+    #[tokio::test]
+    async fn telegram_account_candidate_probe_selects_exact_account_before_commit() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let fields = TelegramAccountAddFields {
+            account_id: ChannelAccountId::new("ops_b").unwrap(),
+            allowed_user_id: 42,
+            token: SecretString::from(valid_tg_token()),
+        };
+        run_telegram_account_add_at_with_probe(
+            home.path(),
+            "telegram",
+            fields,
+            &OutputFormat::Json,
+            |binding| async move {
+                assert_eq!(binding.channel_ref.account_id.as_str(), "ops_b");
+                assert_eq!(binding.allowed_user_id, 42);
+                assert_eq!(binding.token.expose(), valid_tg_token());
+                Ok(ChannelTestResult {
+                    channel: "telegram".into(),
+                    account: Some(ChannelAccountId::new("ops_b").unwrap()),
+                    status: "ok",
+                    detail: "accepted".into(),
+                })
+            },
+        )
+        .await
+        .unwrap();
+        let pair =
+            crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
+                .unwrap();
+        assert!(
+            pair.authenticated_telegram_accounts()
+                .unwrap()
+                .iter()
+                .any(|account| account.channel_ref().account_id.as_str() == "ops_b")
+        );
+    }
+
+    #[tokio::test]
+    async fn telegram_account_candidate_stale_commit_never_overwrites_newer_file() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let freedom = home.path().join("freedom.yaml");
+        let fields = TelegramAccountAddFields {
+            account_id: ChannelAccountId::new("ops_b").unwrap(),
+            allowed_user_id: 42,
+            token: SecretString::from(valid_tg_token()),
+        };
+        let error = run_telegram_account_add_at_with_probe(
+            home.path(),
+            "telegram",
+            fields,
+            &OutputFormat::Json,
+            move |_binding| async move {
+                std::fs::write(&freedom, "future_extension: changed\n").unwrap();
+                Ok(ChannelTestResult {
+                    channel: "telegram".into(),
+                    account: Some(ChannelAccountId::new("ops_b").unwrap()),
+                    status: "ok",
+                    detail: "accepted".into(),
+                })
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("changed"));
+        assert_eq!(
+            std::fs::read_to_string(home.path().join("freedom.yaml")).unwrap(),
+            "future_extension: changed\n"
         );
     }
 

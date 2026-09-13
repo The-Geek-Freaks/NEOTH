@@ -1198,6 +1198,9 @@ pub enum ProviderAction {
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug)]
 pub enum ChannelAction {
+    /// Add or replace one explicitly named Telegram account without inferring a default.
+    #[command(subcommand)]
+    Account(ChannelAccountAction),
     /// Add a channel non-interactively (pass --token etc.) or interactively (stdin prompts).
     ///
     /// Pass at least the flags the channel requires to skip all prompts:
@@ -1313,6 +1316,52 @@ pub enum ChannelAction {
     },
     /// Remove a channel
     Remove { channel: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ChannelAccountAction {
+    /// Add or replace one named Telegram account after a read-only getMe probe.
+    Add {
+        channel: String,
+        #[arg(long)]
+        account: crate::channels::registry::ChannelAccountId,
+        #[arg(long)]
+        telegram_user_id: u64,
+        #[arg(long)]
+        token: RedactedCliSecret,
+    },
+    /// Read the named Telegram account token and policy from a strict private stdin envelope.
+    #[command(hide = true)]
+    SetCredentials {
+        channel: String,
+        #[arg(long)]
+        account: crate::channels::registry::ChannelAccountId,
+    },
+}
+
+/// Clap-parsed argv secret that preserves outer CLI Debug support without
+/// rendering its bytes into diagnostics or snapshots.
+#[derive(Clone)]
+pub struct RedactedCliSecret(String);
+
+impl RedactedCliSecret {
+    fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl std::str::FromStr for RedactedCliSecret {
+    type Err = std::convert::Infallible;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(Self(value.to_owned()))
+    }
+}
+
+impl std::fmt::Debug for RedactedCliSecret {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("RedactedCliSecret([REDACTED])")
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2015,6 +2064,27 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             self_dev::run(&home, args, None, global_output).await?;
         }
         Commands::Channel { action } => match action {
+            ChannelAction::Account(ChannelAccountAction::Add {
+                channel: ch,
+                account,
+                telegram_user_id,
+                token,
+            }) => {
+                channel::run_account_add(
+                    &ch,
+                    account,
+                    telegram_user_id,
+                    token.into_inner(),
+                    &global_output,
+                )
+                .await?;
+            }
+            ChannelAction::Account(ChannelAccountAction::SetCredentials {
+                channel: ch,
+                account,
+            }) => {
+                channel::run_account_set_credentials(&ch, account, &global_output).await?;
+            }
             ChannelAction::List => channel::run_list(&global_output)?,
             ChannelAction::Test {
                 channel: ch,
@@ -2347,5 +2417,62 @@ mod default_invocation_tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn channel_account_add_requires_explicit_typed_telegram_account() {
+        let parsed = Cli::try_parse_from([
+            "neoth",
+            "channel",
+            "account",
+            "add",
+            "telegram",
+            "--account",
+            "ops_b",
+            "--telegram-user-id",
+            "42",
+            "--token",
+            "123456789:token",
+        ])
+        .unwrap();
+        assert!(
+            matches!(parsed.command, Commands::Channel { action: ChannelAction::Account(ChannelAccountAction::Add { channel, account, telegram_user_id: 42, .. }) } if channel == "telegram" && account.as_str() == "ops_b")
+        );
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "channel",
+                "account",
+                "add",
+                "telegram",
+                "--telegram-user-id",
+                "42",
+                "--token",
+                "t"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn channel_account_add_debug_redacts_token_sentinel() {
+        let sentinel = "telegram-token-debug-sentinel";
+        let parsed = Cli::try_parse_from([
+            "neoth",
+            "channel",
+            "account",
+            "add",
+            "telegram",
+            "--account",
+            "ops_b",
+            "--telegram-user-id",
+            "42",
+            "--token",
+            sentinel,
+        ])
+        .unwrap();
+        let rendered = format!("{parsed:?}");
+        assert!(!rendered.contains(sentinel));
+        assert!(rendered.contains("[REDACTED]"));
     }
 }

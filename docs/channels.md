@@ -99,8 +99,30 @@ While a Telegram account map is active, the legacy flat `channel add telegram`,
 rejected. Reload compares account-qualified credentials and restarts only the
 changed Telegram adapter. Replies remain with the adapter that owns the inbound
 account; flat proactive Telegram and Cron Telegram announcement paths refuse to
-send while a map is active. Account-aware outbound routing is still incomplete,
-so this is not a full multi-account readiness claim.
+send while a map is active.
+
+Named Telegram accounts can now be added or replaced one at a time with
+`neoth channel account add telegram --account <id> --telegram-user-id <id>
+--token <secret>`. The account-specific `set-credentials` form reads a strict,
+account-bearing private-stdin JSON envelope; it accepts no unknown fields. Both
+paths probe the candidate's exact account before committing the paired
+configuration/credential update. A changed relevant file or named keychain
+value produces a retry error instead of overwriting newer account state; output
+is secret-free. The established legacy singleton must still be migrated
+explicitly before a map is added.
+
+Settings → Channels offers **Add account** for a valid map and for the exact
+fresh Telegram state, alongside the explicit legacy **Configure** choice. Each
+account row provides **Edit** and its exact-account **Test**. A malformed map is
+repair-only in the CLI; the GUI neither repairs it nor silently migrates it.
+The UI's account request stays in private stdin and accepts only the exact
+secret-free acknowledgement for that account.
+
+Account removal/retirement, pairing or importer custody, native GUI acceptance,
+other account families, and remaining account-aware outbound routing are still
+separate P1-16 work. W21–23 is locally validated: Rust, unit, headless-GUI,
+contract, and Python gates pass. Native GUI acceptance and macOS CI remain
+separate.
 
 ### Account-bound proactive Telegram routing (Wave 16; locally verified)
 
@@ -170,8 +192,8 @@ payload/order behavior. TestBuild02 **PASS** (4m07s; 183.27 GiB minimum free;
 and Clippy03 **PASS** are intermediate evidence. Final TestBuild03 **PASS**
 (3m49s; 202.66 GiB minimum free; 10.65 GiB peak), final selected **397/0/0**
 (catalogue 14,389), 13 integration targets **157/0/0**, and formatting/GUI
-lint/self-test pass. W20 is locally verified; its publication identity is the
-Git commit containing this receipt. No current-head full-CI or cross-platform
+lint/self-test pass. W20 is locally verified and published at
+`080131b4320ac3935d1f5d05e242295e5c3625a8`. No current-head full-CI or cross-platform
 acceptance is claimed. See
 [the W20 verification receipt](gold-wave20-verification.md).
 

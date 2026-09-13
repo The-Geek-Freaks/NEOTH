@@ -849,7 +849,9 @@ export component SettingsView inherits Rectangle {
     in property <[ChannelRow]> channels: [];
     in property <[string]> channel-types: [];
     in property <string> channel-status-error: "";
-    in property <int> channel-add-success-seq: 0;
+    in property <int> channel-editor-completion-generation: 0;
+    in property <bool> channel-editor-completion-is-account: false;
+    in property <string> channel-editor-completion-account: "";
     // DES-10 — live channel-activity feed (metadata only, no message bodies).
     in property <[ChannelActivityRow]> channel-activity: [];
     in property <[PluginRow]> plugins: [];
@@ -1126,11 +1128,12 @@ export component SettingsView inherits Rectangle {
     /// for a channel. Rust shells `neoth channel test|remove <name>`.
     callback channel-test-clicked(string);
     callback channel-account-test-clicked(string, string);
+    callback channel-account-save-clicked(string, string, string, int);
     callback channel-remove-clicked(string);
     /// GAP-19 — Add a new channel credential from the GUI.
     /// Args: channel_type + six typed fields + one boolean policy flag. Rust
     /// maps them to a private-stdin credential envelope for every registry channel.
-    callback channel-add-clicked(string, string, string, string, string, string, string, bool);
+    callback channel-add-clicked(string, string, string, string, string, string, string, bool, int);
     /// GUI-overhaul feature parity — Memory forget. Preview is a dry run
     /// (`neoth memory --forget <t>`); confirm wipes (`… --forget <t> --confirm`).
     callback memory-forget-preview-clicked(string);
@@ -1656,6 +1659,12 @@ export component SettingsView inherits Rectangle {
                 // credential set and the CLI commits it atomically.
                 property <bool> add-channel-open: false;
                 property <bool> form-editing: false;
+                property <bool> account-form-open: false;
+                property <bool> account-form-editing: false;
+                property <string> account-id: "";
+                property <string> account-token: "";
+                property <string> account-user-id: "";
+                property <int> editor-generation: 0;
                 property <int> type-index: 0;
                 property <string> selected-channel-type: type-index >= 0 && type-index < root.channel-types.length
                     ? root.channel-types[type-index]
@@ -1673,6 +1682,17 @@ export component SettingsView inherits Rectangle {
                 property <string> ch-f5: "";
                 property <string> ch-f6: "";
                 property <bool> ch-flag: false;
+                // The pre-existing positional registry projection is already
+                // authoritative for the generic form's type/secret binding.
+                // These guards prevent a valid named map or repair-only map
+                // from being sent through the intentionally flat command.
+                property <bool> selected-telegram-map-active: selected-channel-type == "telegram"
+                    && type-index >= 0 && type-index < root.channels.length
+                    && root.channels[type-index].accounts.length > 0;
+                property <bool> selected-telegram-repair-required: selected-channel-type == "telegram"
+                    && type-index >= 0 && type-index < root.channels.length
+                    && root.channels[type-index].status == "error"
+                    && root.channels[type-index].accounts.length == 0;
                 // The six value slots are shared by every adapter. Clear them
                 // whenever the effective registry selection changes so a
                 // secret cannot become visible or be submitted to another
@@ -1695,9 +1715,11 @@ export component SettingsView inherits Rectangle {
                         }
                     }
                 }
-                property <int> observed-success: root.channel-add-success-seq;
-                changed observed-success => {
-                    if observed-success > 0 {
+                property <int> observed-completion-generation: root.channel-editor-completion-generation;
+                changed observed-completion-generation => {
+                    if observed-completion-generation == editor-generation
+                        && !root.channel-editor-completion-is-account
+                        && add-channel-open {
                         add-channel-open = false;
                         form-editing = false;
                         ch-f1 = "";
@@ -1708,6 +1730,16 @@ export component SettingsView inherits Rectangle {
                         ch-f6 = "";
                         ch-flag = false;
                         type-index = 0;
+                    }
+                    if observed-completion-generation == editor-generation
+                        && root.channel-editor-completion-is-account
+                        && account-form-open
+                        && root.channel-editor-completion-account == account-id {
+                        account-form-open = false;
+                        account-form-editing = false;
+                        account-id = "";
+                        account-token = "";
+                        account-user-id = "";
                     }
                 }
                 PanelHeader {
@@ -1729,6 +1761,8 @@ export component SettingsView inherits Rectangle {
                         clicked => {
                             add-channel-open = false;
                             form-editing = false;
+                            account-form-open = false;
+                            account-form-editing = false;
                             type-index = 0;
                             ch-f1 = "";
                             ch-f2 = "";
@@ -1737,6 +1771,10 @@ export component SettingsView inherits Rectangle {
                             ch-f5 = "";
                             ch-f6 = "";
                             ch-flag = false;
+                            account-id = "";
+                            account-token = "";
+                            account-user-id = "";
+                            editor-generation = editor-generation + 1;
                             add-channel-open = true;
                         }
                     }
@@ -1745,9 +1783,74 @@ export component SettingsView inherits Rectangle {
                 // GAP-19 — inline Add channel form, toggled by the button above.
                 // Uses per-channel-type conditional field blocks to label fields correctly.
                 // type-index follows the daemon registry projection exactly.
-                if add-channel-open: Card {
+                if add-channel-open || account-form-open: Card {
                     shimmer: false;
-                    VerticalBox {
+                    if account-form-open: VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-base;
+                        Text {
+                            text: account-form-editing ? "EDIT TELEGRAM ACCOUNT" : "ADD TELEGRAM ACCOUNT";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            color: Theme.accent-green;
+                        }
+                        Text {
+                            text: account-form-editing
+                                ? "The account ID is fixed. Re-enter a bot token and allowed user ID; no existing secret or sender policy is shown."
+                                : "Add one explicitly named Telegram account to the active map. This never chooses a legacy default.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                            accessible-role: text;
+                            accessible-label: self.text;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "Account ID  e.g. ops_b";
+                            password: false;
+                            enabled: !account-form-editing;
+                            text <=> account-id;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "Bot token";
+                            password: true;
+                            text <=> account-token;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "Allowed user ID  e.g. 123456789";
+                            password: false;
+                            text <=> account-user-id;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            alignment: end;
+                            NeothButton {
+                                label: "Cancel";
+                                primary: false;
+                                clicked => {
+                                    account-form-open = false;
+                                    account-form-editing = false;
+                                    account-id = "";
+                                    account-token = "";
+                                    account-user-id = "";
+                                }
+                            }
+                            NeothButton {
+                                label: account-form-editing ? "Save changes" : "Add account";
+                                primary: true;
+                                enabled: account-id != "" && account-token != "" && account-user-id != "";
+                                clicked => {
+                                    root.channel-account-save-clicked(
+                                        account-id, account-token, account-user-id, editor-generation
+                                    );
+                                    // Values clear only after Rust receives the exact
+                                    // account-bound saved acknowledgement.
+                                }
+                            }
+                        }
+                    }
+                    if add-channel-open: VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-base;
 
@@ -1914,6 +2017,25 @@ export component SettingsView inherits Rectangle {
                             NeothLineEdit { placeholder-text: "wss:// relay URLs CSV (--channels-csv)"; password: ch-f2-secret; text <=> ch-f2; }
                         }
 
+                        if selected-telegram-map-active: Text {
+                            text: "This Telegram map has named accounts. Use Add account or Edit below; flat Telegram credentials are intentionally unavailable.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.accent-amber;
+                            wrap: word-wrap;
+                            accessible-role: text;
+                            accessible-label: self.text;
+                        }
+                        if selected-telegram-repair-required: Text {
+                            text: "This Telegram account map needs CLI repair before any credential change.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.accent-pink;
+                            wrap: word-wrap;
+                            accessible-role: text;
+                            accessible-label: self.text;
+                        }
+
                         // ── action row ────────────────────────────────────────
                         HorizontalLayout {
                             spacing: Theme.space-tight;
@@ -1937,11 +2059,14 @@ export component SettingsView inherits Rectangle {
                             NeothButton {
                                 label: form-editing ? "Save changes" : "Add";
                                 primary: true;
-                                enabled: selected-channel-type != "";
+                                enabled: selected-channel-type != ""
+                                    && !selected-telegram-map-active
+                                    && !selected-telegram-repair-required;
                                 clicked => {
                                     root.channel-add-clicked(
                                         selected-channel-type,
-                                        ch-f1, ch-f2, ch-f3, ch-f4, ch-f5, ch-f6, ch-flag
+                                        ch-f1, ch-f2, ch-f3, ch-f4, ch-f5, ch-f6, ch-flag,
+                                        editor-generation
                                     );
                                     // Keep values and the form open until Rust confirms
                                     // `saved:true`. Failed submissions remain editable.
@@ -2019,11 +2144,14 @@ export component SettingsView inherits Rectangle {
                             // configured channel. Test is a safe connectivity check;
                             // Remove deletes the credential, so it takes an inline
                             // confirm.
-                            if !confirming: NeothButton {
+                            if !confirming && !(c.name == "telegram"
+                                && (c.accounts.length > 0 || c.status == "error")): NeothButton {
                                 label: c.configured ? "Reconfigure" : "Configure";
                                 primary: false;
                                 clicked => {
                                     add-channel-open = false;
+                                    account-form-open = false;
+                                    account-form-editing = false;
                                     form-editing = c.configured;
                                     type-index = index;
                                     ch-f1 = "";
@@ -2033,6 +2161,10 @@ export component SettingsView inherits Rectangle {
                                     ch-f5 = "";
                                     ch-f6 = "";
                                     ch-flag = false;
+                                    account-id = "";
+                                    account-token = "";
+                                    account-user-id = "";
+                                    editor-generation = editor-generation + 1;
                                     add-channel-open = true;
                                 }
                             }
@@ -2042,7 +2174,25 @@ export component SettingsView inherits Rectangle {
                                 primary: false;
                                 clicked => { root.channel-test-clicked(c.name); }
                             }
-                            if c.configured && !confirming: NeothButton {
+                            if c.name == "telegram" && !confirming
+                                && (c.accounts.length > 0
+                                    || (!c.configured && c.status == "not_configured"
+                                        && c.accounts.length == 0)): NeothButton {
+                                label: "Add account";
+                                primary: false;
+                                clicked => {
+                                    add-channel-open = false;
+                                    form-editing = false;
+                                    account-form-editing = false;
+                                    account-id = "";
+                                    account-token = "";
+                                    account-user-id = "";
+                                    editor-generation = editor-generation + 1;
+                                    account-form-open = true;
+                                }
+                            }
+                            if c.configured && !confirming && !(c.name == "telegram"
+                                && (c.accounts.length > 0 || c.status == "error")): NeothButton {
                                 label: "Remove";
                                 primary: false;
                                 clicked => { confirming = true; }
@@ -2068,6 +2218,15 @@ export component SettingsView inherits Rectangle {
                                 primary: false;
                                 clicked => { confirming = false; }
                             }
+                            }
+                            if c.name == "telegram" && c.status == "error" && c.accounts.length == 0: Text {
+                                text: "Telegram account map requires CLI repair before credentials can change.";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.accent-pink;
+                                wrap: word-wrap;
+                                accessible-role: text;
+                                accessible-label: self.text;
                             }
                             if c.accounts.length > 0: VerticalBox {
                                 padding-left: Theme.space-8;
@@ -2111,6 +2270,20 @@ export component SettingsView inherits Rectangle {
                                         primary: false;
                                         clicked => {
                                             root.channel-account-test-clicked(c.name, account.account-id);
+                                        }
+                                    }
+                                    if c.configured && !confirming: NeothButton {
+                                        label: "Edit";
+                                        primary: false;
+                                        clicked => {
+                                            add-channel-open = false;
+                                            form-editing = false;
+                                            account-form-editing = true;
+                                            account-id = account.account-id;
+                                            account-token = "";
+                                            account-user-id = "";
+                                            editor-generation = editor-generation + 1;
+                                            account-form-open = true;
                                         }
                                     }
                                 }

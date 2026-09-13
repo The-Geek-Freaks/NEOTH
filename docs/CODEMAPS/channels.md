@@ -22,8 +22,18 @@ archive and media identifiers incorporate the bound account.
 Telegram now has a limited P1-16 account-map setup: policy maps hold an explicit
 `allowed_user_id`, credentials maps hold a matching token or a null
 keychain-backed placeholder, and legacy scalar fields cannot coexist with a
-map. Account-aware routing and the remaining multi-account surfaces are still
-open.
+map. W21 adds/replaces one explicitly named Telegram map account through
+`channel account add telegram --account <id>` or strict account-bearing private
+stdin. It probes the exact candidate before a paired file/keychain commit and
+uses a CAS retry boundary; acknowledgement is secret-free. W22 exposes Add
+account for a valid map and the exact fresh Telegram state beside explicit
+legacy Configure, with per-account Edit and exact Test. Invalid maps remain
+CLI-repair-only; the GUI does not silently migrate them.
+
+Account removal/retirement, pairing/importer custody, native GUI acceptance,
+other account families, and remaining account-aware routing remain open.
+W21–23 is locally validated: Rust, unit, headless-GUI, contract, and Python
+gates pass. Native GUI acceptance and macOS CI remain separate.
 
 `cli/channel.rs` performs `neoth channel migrate-legacy telegram --account
 <account-id>` as a paired migration with recovery cleanup. It does not expose
@@ -97,8 +107,8 @@ peak), Selected02 **394/0/0** before this repair, Python 19+11+8, and Clippy03
 **PASS** are intermediate evidence. Final TestBuild03 **PASS** (3m49s; 202.66
 GiB minimum free; 10.65 GiB peak), final selected **397/0/0** (catalogue
 14,389), 13 integration targets **157/0/0**, and formatting/GUI lint/self-test
-pass. The slice is locally verified; its publication identity is the Git commit
-containing this receipt. No current-head full-CI or cross-platform acceptance is
+pass. The slice is locally verified and published at
+`080131b4320ac3935d1f5d05e242295e5c3625a8`. No current-head full-CI or cross-platform acceptance is
 claimed; see
 [the provisional receipt](../gold-wave20-verification.md).
 

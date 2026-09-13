@@ -714,6 +714,7 @@ fn open_hygiene_directory(
     .ok_or(HygieneStoreError::SafeStoreUnavailable)?;
     verify_private_hygiene_directory(&home.dir)?;
     let reflections_path = neoth_home.join("reflections");
+    let reflections_physical_path = home.physical_display_path.join("reflections");
     let reflections = crate::skills::store::open_or_create_private_child_dir(
         &home.dir,
         OsStr::new("reflections"),
@@ -723,6 +724,7 @@ fn open_hygiene_directory(
     tighten_legacy_private_directory(&reflections_path, &reflections)?;
     verify_private_hygiene_directory(&reflections)?;
     let display_path = reflections_path.join("hygiene");
+    let physical_display_path = reflections_physical_path.join("hygiene");
     let dir = crate::skills::store::open_or_create_private_child_dir(
         &reflections,
         OsStr::new("hygiene"),
@@ -731,7 +733,11 @@ fn open_hygiene_directory(
     .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
     tighten_legacy_private_directory(&display_path, &dir)?;
     verify_private_hygiene_directory(&dir)?;
-    Ok(crate::skills::store::BoundDirectory { dir, display_path })
+    Ok(crate::skills::store::BoundDirectory {
+        dir,
+        physical_display_path,
+        display_path,
+    })
 }
 
 fn open_daily_admission_directory(
@@ -746,6 +752,7 @@ fn open_daily_admission_directory(
     .ok_or(HygieneStoreError::SafeStoreUnavailable)?;
     verify_private_hygiene_directory(&home.dir)?;
     let reflections_path = neoth_home.join("reflections");
+    let reflections_physical_path = home.physical_display_path.join("reflections");
     let reflections = crate::skills::store::open_or_create_private_child_dir(
         &home.dir,
         OsStr::new("reflections"),
@@ -755,6 +762,7 @@ fn open_daily_admission_directory(
     tighten_legacy_private_directory(&reflections_path, &reflections)?;
     verify_private_hygiene_directory(&reflections)?;
     let display_path = reflections_path.join("daily-admission");
+    let physical_display_path = reflections_physical_path.join("daily-admission");
     let dir = crate::skills::store::open_or_create_private_child_dir(
         &reflections,
         OsStr::new("daily-admission"),
@@ -767,7 +775,11 @@ fn open_daily_admission_directory(
     // namespace before its strict verification below.
     tighten_legacy_private_directory(&display_path, &dir)?;
     verify_private_hygiene_directory(&dir)?;
-    Ok(crate::skills::store::BoundDirectory { dir, display_path })
+    Ok(crate::skills::store::BoundDirectory {
+        dir,
+        physical_display_path,
+        display_path,
+    })
 }
 
 fn verify_private_hygiene_directory(directory: &cap_std::fs::Dir) -> Result<(), HygieneStoreError> {

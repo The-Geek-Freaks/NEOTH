@@ -10757,7 +10757,7 @@ fn main() -> Result<()> {
     // contains no secret values. On success the canonical channel inventory is
     // refreshed exactly like on_channel_remove.
     let weak_channel_add = window.as_weak();
-    window.on_channel_add(move |ctype, f1, f2, f3, f4, f5, f6, flag| {
+    window.on_channel_add(move |ctype, f1, f2, f3, f4, f5, f6, flag, editor_generation| {
         let ctype = ctype.to_string();
         let request_result = panel_logic::build_channel_credential_request(
             &ctype,
@@ -10847,9 +10847,108 @@ fn main() -> Result<()> {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = weak.upgrade() {
                                 apply_channels(&w, ch);
-                                w.set_channel_add_success_seq(
-                                    w.get_channel_add_success_seq().saturating_add(1),
+                                w.set_channel_editor_completion_is_account(false);
+                                w.set_channel_editor_completion_account("".into());
+                                w.set_channel_editor_completion_generation(editor_generation);
+                            }
+                        });
+                    }
+                });
+            }
+        }
+    });
+
+    // W22 — a mapped Telegram account is always named explicitly. This does
+    // not reuse the flat channel envelope, and successful acknowledgements are
+    // bound to the selected account before the modal receives its success cue.
+    let weak_channel_account_save = window.as_weak();
+    window.on_channel_account_save(move |account, token, telegram_user_id, editor_generation| {
+        let account = account.to_string();
+        let request_result = panel_logic::build_telegram_account_credential_request(
+            &account,
+            token.as_str(),
+            telegram_user_id.as_str(),
+        );
+        match request_result {
+            Err(hint) => {
+                push_toast(
+                    &weak_channel_account_save,
+                    "warn",
+                    "Save Telegram account",
+                    &hint,
+                );
+            }
+            Ok(request_body) => {
+                let weak = weak_channel_account_save.clone();
+                let account_for_worker = account.clone();
+                std::thread::spawn(move || {
+                    let result = persist_telegram_account_credentials_via_cli(
+                        &account_for_worker,
+                        request_body,
+                    );
+                    let (toast_kind, toast_title, toast_body, refresh) = match result {
+                        Ok(output) if output.status.success() => match panel_logic::parse_telegram_account_saved(
+                            &output.stdout,
+                            &account_for_worker,
+                        ) {
+                            Some(true) => (
+                                "success",
+                                "Telegram account saved",
+                                format!(
+                                    "Telegram account {account_for_worker} saved. Use Test for live connectivity proof."
+                                ),
+                                true,
+                            ),
+                            Some(false) => (
+                                "error",
+                                "Telegram account response invalid",
+                                format!(
+                                    "Telegram account {account_for_worker}: neoth reported saved=false."
+                                ),
+                                false,
+                            ),
+                            None => (
+                                "error",
+                                "Telegram account response invalid",
+                                format!(
+                                    "Telegram account {account_for_worker}: neoth returned a mismatched or invalid saved acknowledgement."
+                                ),
+                                false,
+                            ),
+                        },
+                        Ok(output) => {
+                            let detail = String::from_utf8_lossy(&output.stderr)
+                                .lines()
+                                .map(str::trim)
+                                .find(|line| !line.is_empty())
+                                .unwrap_or("unknown error")
+                                .to_string();
+                            (
+                                "error",
+                                "Telegram account save requires attention",
+                                format!("Telegram account {account_for_worker}: {detail}"),
+                                false,
+                            )
+                        }
+                        Err(detail) => (
+                            "error",
+                            "Telegram account save failed",
+                            format!("Telegram account {account_for_worker}: {detail}"),
+                            false,
+                        ),
+                    };
+
+                    let channels = refresh.then(fetch_channel_status);
+                    push_toast(&weak, toast_kind, toast_title, &toast_body);
+                    if let Some(channels) = channels {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(window) = weak.upgrade() {
+                                apply_channels(&window, channels);
+                                window.set_channel_editor_completion_is_account(true);
+                                window.set_channel_editor_completion_account(
+                                    account_for_worker.clone().into(),
                                 );
+                                window.set_channel_editor_completion_generation(editor_generation);
                             }
                         });
                     }
@@ -18253,6 +18352,23 @@ fn channel_credential_command(bin: &Path) -> std::process::Command {
     command
 }
 
+/// Build W21's account-specific private-stdin command while preserving the
+/// GUI's normal child environment, log suppression, and hidden console setup.
+fn telegram_account_credential_command(
+    bin: &Path,
+    account: &str,
+) -> Result<std::process::Command, String> {
+    let mut command = panel_logic::telegram_account_credential_command(bin, account)?;
+    scrub_gui_control_environment(&mut command);
+    command
+        .env("NO_COLOR", "1")
+        .env("RUST_LOG_STYLE", "never")
+        .env("CLICOLOR", "0")
+        .env("NEOTH_LOG", "error");
+    suppress_console_window(&mut command);
+    Ok(command)
+}
+
 fn channel_remove_command(bin: &Path, channel: &str) -> std::process::Command {
     let mut command = spawn_neothd_plain(bin);
     command
@@ -18297,6 +18413,45 @@ fn persist_channel_credentials_via_cli(
     child_result?
         .wait_with_output()
         .map_err(|error| format!("wait for private channel credential update: {error}"))
+}
+
+/// Send one named Telegram account envelope only through the account command's
+/// private stdin. Every child failure keeps the entered form values intact.
+fn persist_telegram_account_credentials_via_cli(
+    account: &str,
+    body: zeroize::Zeroizing<Vec<u8>>,
+) -> Result<std::process::Output, String> {
+    use std::io::Write as _;
+
+    let child_result = (|| {
+        let bin = which_neothd()
+            .ok_or_else(|| "NEOTH CLI not found; reinstall or repair PATH".to_string())?;
+        let mut child =
+            telegram_account_credential_command(&bin, account).and_then(|mut command| {
+                command
+                    .spawn()
+                    .map_err(|error| format!("start private Telegram account update: {error}"))
+            })?;
+        let write_result = child
+            .stdin
+            .take()
+            .ok_or_else(|| "open private Telegram account stdin".to_string())
+            .and_then(|mut stdin| {
+                stdin
+                    .write_all(body.as_slice())
+                    .map_err(|error| format!("write private Telegram account stdin: {error}"))
+            });
+        if let Err(error) = write_result {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        Ok(child)
+    })();
+    drop(body);
+    child_result?
+        .wait_with_output()
+        .map_err(|error| format!("wait for private Telegram account update: {error}"))
 }
 
 /// Run `neothd kanban list/show --output json` + group tasks by status.

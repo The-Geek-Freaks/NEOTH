@@ -307,6 +307,26 @@ Print one provider's full catalog with metadata
 
 Add, inspect, test, and remove messaging channels
 
+### `neoth channel account`
+
+Add or replace one explicitly named Telegram account without inferring a default
+
+#### `neoth channel account add`
+
+Add or replace one named Telegram account after a read-only getMe probe
+
+- `<CHANNEL>`
+- `--account <ACCOUNT>`
+- `--telegram-user-id <TELEGRAM_USER_ID>`
+- `--token <TOKEN>`
+
+#### `neoth channel account set-credentials` _(hidden)_
+
+Read the named Telegram account token and policy from a strict private stdin envelope
+
+- `<CHANNEL>`
+- `--account <ACCOUNT>`
+
 ### `neoth channel add`
 
 Add a channel non-interactively (pass --token etc.) or interactively (stdin prompts)
