@@ -73,8 +73,23 @@ pub struct RecallParityHarnessArgs {
     pub output: OutputFormat,
 }
 
+/// Minted by the explicit local recovery command, never by imported evidence.
+pub(crate) struct LocalTranscriptRecoverySubject(());
+
+impl LocalTranscriptRecoverySubject {
+    fn mint() -> Self {
+        Self(())
+    }
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum RecallParityHarnessOperation {
+    /// Resume exact pending transcript receipts for one local NEOTH home.
+    /// This grants no new mining opt-in and never relabels legacy transcripts.
+    ReconcileTranscripts {
+        #[arg(long, value_name = "DIR")]
+        home: PathBuf,
+    },
     /// Bind a fresh run directory to exact validated config/goldset bytes.
     Plan {
         #[arg(long, value_name = "DIR")]
@@ -243,6 +258,14 @@ pub enum RecallParityHarnessOperation {
 pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<()> {
     let output = args.output;
     let operation = args.operation;
+    if let RecallParityHarnessOperation::ReconcileTranscripts { home } = &operation {
+        let subject = LocalTranscriptRecoverySubject::mint();
+        let report =
+            crate::memory::transcript_mining_runtime::reconcile_local_transcripts(&subject, home)
+                .await?;
+        render_harness_json(&report, &output)?;
+        return Ok(());
+    }
     if let RecallParityHarnessOperation::CandidateEvidenceValidate {
         evidence_dir,
         expected_evidence_receipt_pubkey,
@@ -309,8 +332,9 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
             goldset,
             ..
         } => (grader_config, goldset),
-        RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
-            unreachable!("candidate evidence returns before config/goldset input loading")
+        RecallParityHarnessOperation::CandidateEvidenceValidate { .. }
+        | RecallParityHarnessOperation::ReconcileTranscripts { .. } => {
+            unreachable!("standalone operation returns before config/goldset input loading")
         }
     };
     let config_bytes = read_offline_input(grader_config, MAX_GRADER_CONFIG_BYTES, "grader config")?;
@@ -560,8 +584,9 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
             )?;
             render_harness_json(&report, &output)?;
         }
-        RecallParityHarnessOperation::CandidateEvidenceValidate { .. } => {
-            unreachable!("candidate evidence returns before config/goldset input loading")
+        RecallParityHarnessOperation::CandidateEvidenceValidate { .. }
+        | RecallParityHarnessOperation::ReconcileTranscripts { .. } => {
+            unreachable!("standalone operation returns before config/goldset input loading")
         }
     }
     Ok(())

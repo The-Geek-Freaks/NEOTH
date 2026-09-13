@@ -8,6 +8,11 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct MemoryConfig {
     pub vector_index: VectorIndexConfig,
+    /// Explicit local-chat opt-in to authenticated transcript provenance.
+    /// Omitted/null disables new mining bindings. Incognito always overrides it.
+    /// This limits mining eligibility, not the existing transcript retention.
+    #[serde(default)]
+    pub transcript_mining_retention: Option<TranscriptMiningRetention>,
     /// GOLD-ADOPT-21 - when `true`, NEOTH generates an LLM title for each
     /// completed `neoth chat` session (via the cheap `inference.utility_provider`)
     /// and stores it as the card's `display_name`, which the next-session banner
@@ -40,6 +45,7 @@ impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             vector_index: VectorIndexConfig::default(),
+            transcript_mining_retention: None,
             name_sessions: false,
             recall_shortcut: true,
             operator_md_extra_dirs: Vec::new(),
@@ -49,6 +55,15 @@ impl Default for MemoryConfig {
 
 fn default_recall_shortcut() -> bool {
     true
+}
+
+/// Finite eligibility windows for explicitly opted-in local operator turns.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptMiningRetention {
+    Minutes15,
+    Hours24,
+    Days30,
 }
 
 /// GOLD-WIRE-07 - similarity-recall vector-index backend selector.
@@ -89,6 +104,32 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::config::FreedomConfig;
+
+    #[test]
+    fn transcript_mining_requires_explicit_finite_opt_in() {
+        assert_eq!(MemoryConfig::default().transcript_mining_retention, None);
+        let absent: FreedomConfig = serde_yaml::from_str("{}").unwrap();
+        assert_eq!(absent.memory.transcript_mining_retention, None);
+        let null: MemoryConfig = serde_yaml::from_str("transcript_mining_retention: null").unwrap();
+        assert_eq!(null.transcript_mining_retention, None);
+        for (name, expected) in [
+            ("minutes15", TranscriptMiningRetention::Minutes15),
+            ("hours24", TranscriptMiningRetention::Hours24),
+            ("days30", TranscriptMiningRetention::Days30),
+        ] {
+            let config: MemoryConfig =
+                serde_yaml::from_str(&format!("transcript_mining_retention: {name}")).unwrap();
+            assert_eq!(config.transcript_mining_retention, Some(expected));
+        }
+        for invalid in ["forever", "true", "0", "365", "{}"] {
+            assert!(
+                serde_yaml::from_str::<MemoryConfig>(&format!(
+                    "transcript_mining_retention: {invalid}"
+                ))
+                .is_err()
+            );
+        }
+    }
 
     /// GR-039: `recall_shortcut` must default `true` on BOTH paths - the
     /// derived-struct path (missing `memory:` block -> Default::default())

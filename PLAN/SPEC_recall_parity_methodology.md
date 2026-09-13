@@ -173,8 +173,9 @@ Output per grader: `eval/grades-grader-{A,B,C,D}.jsonl` (100 lines each × 2 sys
 
 ### 4.1 P1-07 roster and complete-coverage gate (implemented component)
 
-This section describes the implemented scorer boundary. It does not change
-the still-open P1-07 roadmap checkbox or replace that item's acceptance proof.
+This section describes the scorer boundary accepted for P1-07 on 2026-09-13.
+Its configuration/matrix proof does not replace the separately open P1-08
+transcript provenance and complete workflow acceptance.
 
 `neoth recall-score` requires both `--grader-config <PATH>` and
 `--goldset <PATH>` for every scoring run. The file is a strict JSON object with

@@ -28,6 +28,7 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024; // 16 MiB sanity ceiling
 const CONTEXT_EVIDENCE_RECEIPT_AUTHORITY_SENTINEL: &str = ".context-evidence-receipt-authority";
 const TRUST_DECISION_AUTHORITY_SENTINEL: &str = ".trust-decision-authority";
+const TRANSCRIPT_MINING_AUTHORITY_SENTINEL: &str = ".transcript-mining-authority";
 #[cfg(test)]
 const TRUST_DECISION_AUTHORITY_ATTEMPT_ENV: &str = "NEOTH_TRUST_DECISION_AUTHORITY_ATTEMPT_FILE";
 // Keep the in-process side of the receipt authority deliberately bounded: one
@@ -43,6 +44,9 @@ static CONTEXT_EVIDENCE_RECEIPT_PROCESS_AUTHORITY: std::sync::LazyLock<
 // does not share Context Evidence's bounded side-ledger lock: the former
 // serializes a scan plus an optional write in authenticated *primary* WAL.
 static TRUST_DECISION_PROCESS_AUTHORITY: std::sync::LazyLock<
+    std::sync::Arc<tokio::sync::Mutex<()>>,
+> = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
+static TRANSCRIPT_MINING_PROCESS_AUTHORITY: std::sync::LazyLock<
     std::sync::Arc<tokio::sync::Mutex<()>>,
 > = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
 // Marker JSON uses only bounded integers plus a fixed 64-byte HMAC hex tag.
@@ -98,6 +102,27 @@ fn refuse_generic_durable_trust_decision(
             "generic TrustDecision payload is malformed or has an unsupported schema",
         ))),
     }
+}
+
+fn is_transcript_mining_proof_header(header: &EventHeaderV2) -> bool {
+    header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+        && matches!(
+            crate::wal::events::ExtendedSubtype::from_u8(header.event_subtype),
+            Some(
+                crate::wal::events::ExtendedSubtype::TranscriptMiningBound
+                    | crate::wal::events::ExtendedSubtype::TranscriptMiningRevoked
+            )
+        )
+}
+
+fn refuse_generic_transcript_mining_proof(header: &EventHeaderV2) -> Result<(), WalError> {
+    if is_transcript_mining_proof_header(header) {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Transcript Mining proof frames require the writer-owned append-once API",
+        )));
+    }
+    Ok(())
 }
 
 /// Immutable identity of a closed predecessor as observed through the
@@ -446,6 +471,10 @@ pub struct WriteRequest {
     /// an existing authenticated receipt is a successful terminal result
     /// without a new frame offset.
     trust_decision_once: Option<TrustDecisionOnce>,
+    /// Closed transcript-mining proof admission. Unlike a generic append, this
+    /// carries a persisted exact descriptor whose authenticated read-back is
+    /// the only successful terminal result.
+    transcript_mining_once: Option<TranscriptMiningOnce>,
     /// Generic WAL admission ownership. It remains pending from the successful
     /// pre-write quota decision until this request reaches a writer-terminal
     /// state, so an unrelated home-directory growth cannot consume it during a
@@ -513,6 +542,43 @@ struct TrustDecisionOnce {
             >,
         >,
     >,
+}
+
+struct TranscriptMiningOnce {
+    home: PathBuf,
+    expected: crate::wal::transcript_mining_once::TranscriptMiningDescriptor,
+    reply: Option<
+        oneshot::Sender<
+            std::result::Result<
+                crate::wal::transcript_mining_once::TranscriptMiningFrameReceipt,
+                crate::wal::transcript_mining_once::TranscriptMiningOnceError,
+            >,
+        >,
+    >,
+}
+
+impl TranscriptMiningOnce {
+    fn finish(
+        mut self,
+        outcome: std::result::Result<
+            crate::wal::transcript_mining_once::TranscriptMiningFrameReceipt,
+            crate::wal::transcript_mining_once::TranscriptMiningOnceError,
+        >,
+    ) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(outcome);
+        }
+    }
+}
+
+impl Drop for TranscriptMiningOnce {
+    fn drop(&mut self) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(Err(
+                crate::wal::transcript_mining_once::TranscriptMiningOnceError::Indeterminate,
+            ));
+        }
+    }
 }
 
 impl TrustDecisionOnce {
@@ -1349,6 +1415,7 @@ impl WalWriterHandle {
     ) -> Result<u64, WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
+        refuse_generic_transcript_mining_proof(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1366,6 +1433,7 @@ impl WalWriterHandle {
             force_authentication_marker,
             context_evidence_receipt_once: None,
             trust_decision_once: None,
+            transcript_mining_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1393,6 +1461,7 @@ impl WalWriterHandle {
     ) -> Result<u64, WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
+        refuse_generic_transcript_mining_proof(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1410,6 +1479,7 @@ impl WalWriterHandle {
             force_authentication_marker: false,
             context_evidence_receipt_once: None,
             trust_decision_once: None,
+            transcript_mining_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1489,6 +1559,7 @@ impl WalWriterHandle {
                 quota_reservation,
             }),
             trust_decision_once: None,
+            transcript_mining_once: None,
             quota_admission: None,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1543,6 +1614,135 @@ impl WalWriterHandle {
         }
     }
 
+    pub(crate) async fn append_planned_raw_text_once(
+        &self,
+        home: &Path,
+        expected: crate::wal::transcript_mining_once::PlannedRawTextDescriptor,
+    ) -> std::result::Result<
+        crate::wal::transcript_mining_once::TranscriptMiningFrameReceipt,
+        crate::wal::transcript_mining_once::TranscriptMiningOnceError,
+    > {
+        self.append_transcript_mining_once(
+            home,
+            crate::wal::transcript_mining_once::TranscriptMiningDescriptor::raw(expected),
+        )
+        .await
+    }
+
+    pub(crate) async fn append_planned_mining_outbox_once(
+        &self,
+        home: &Path,
+        expected: crate::wal::transcript_mining_once::PlannedMiningOutboxDescriptor,
+    ) -> std::result::Result<
+        crate::wal::transcript_mining_once::TranscriptMiningFrameReceipt,
+        crate::wal::transcript_mining_once::TranscriptMiningOnceError,
+    > {
+        self.append_transcript_mining_once(
+            home,
+            crate::wal::transcript_mining_once::TranscriptMiningDescriptor::outbox(expected),
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn verify_planned_raw_text_exact(
+        &self,
+        home: &Path,
+        expected: &crate::wal::transcript_mining_once::PlannedRawTextDescriptor,
+    ) -> std::result::Result<
+        crate::wal::transcript_mining_once::TranscriptMiningFrameReceipt,
+        crate::wal::transcript_mining_once::TranscriptMiningOnceError,
+    > {
+        let _ = self;
+        crate::wal::transcript_mining_once::verify_exact_at_home(
+            home,
+            &crate::wal::transcript_mining_once::TranscriptMiningDescriptor::raw(expected.clone()),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn verify_planned_mining_outbox_exact(
+        &self,
+        home: &Path,
+        expected: &crate::wal::transcript_mining_once::PlannedMiningOutboxDescriptor,
+    ) -> std::result::Result<
+        crate::wal::transcript_mining_once::TranscriptMiningFrameReceipt,
+        crate::wal::transcript_mining_once::TranscriptMiningOnceError,
+    > {
+        let _ = self;
+        crate::wal::transcript_mining_once::verify_exact_at_home(
+            home,
+            &crate::wal::transcript_mining_once::TranscriptMiningDescriptor::outbox(
+                expected.clone(),
+            ),
+        )
+    }
+
+    async fn append_transcript_mining_once(
+        &self,
+        home: &Path,
+        expected: crate::wal::transcript_mining_once::TranscriptMiningDescriptor,
+    ) -> std::result::Result<
+        crate::wal::transcript_mining_once::TranscriptMiningFrameReceipt,
+        crate::wal::transcript_mining_once::TranscriptMiningOnceError,
+    > {
+        let writer = self.clone();
+        let home = home.to_path_buf();
+        let owner = tokio::task::spawn_blocking(move || {
+            writer.append_transcript_mining_once_blocking(&home, expected)
+        });
+        match owner.await {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                Err(crate::wal::transcript_mining_once::TranscriptMiningOnceError::Indeterminate)
+            }
+        }
+    }
+
+    fn append_transcript_mining_once_blocking(
+        &self,
+        home: &Path,
+        expected: crate::wal::transcript_mining_once::TranscriptMiningDescriptor,
+    ) -> std::result::Result<
+        crate::wal::transcript_mining_once::TranscriptMiningFrameReceipt,
+        crate::wal::transcript_mining_once::TranscriptMiningOnceError,
+    > {
+        use crate::wal::transcript_mining_once::TranscriptMiningOnceError;
+        if !self.authentication_markers_enabled {
+            return Err(TranscriptMiningOnceError::Indeterminate);
+        }
+        let header = expected.header();
+        let payload = expected.payload();
+        let (ack_tx, _ack_rx_drop) = oneshot::channel();
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let request = WriteRequest {
+            header,
+            payload,
+            ack: ack_tx,
+            force_authentication_marker: true,
+            context_evidence_receipt_once: None,
+            trust_decision_once: None,
+            transcript_mining_once: Some(TranscriptMiningOnce {
+                home: home.to_path_buf(),
+                expected,
+                reply: Some(reply_tx),
+            }),
+            quota_admission: None,
+            #[cfg(test)]
+            test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)]
+            test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+        };
+        if let Err(mut error) = self.tx.blocking_send(request)
+            && let Some(once) = error.0.transcript_mining_once.take()
+        {
+            once.finish(Err(TranscriptMiningOnceError::Indeterminate));
+        }
+        reply_rx
+            .blocking_recv()
+            .unwrap_or(Err(TranscriptMiningOnceError::Indeterminate))
+    }
+
     /// Blocking owner for [`Self::append_trust_decision_once`].  This is kept
     /// private to the WAL handle so consumers cannot create a side queue or
     /// combine an external scan with a later generic append.
@@ -1586,6 +1786,7 @@ impl WalWriterHandle {
                 expected,
                 reply: Some(reply_tx),
             }),
+            transcript_mining_once: None,
             quota_admission: None,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1663,6 +1864,7 @@ impl WalWriterHandle {
     pub fn try_append_sync(&self, header: EventHeaderV2, payload: Vec<u8>) -> Result<(), WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
+        refuse_generic_transcript_mining_proof(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1680,6 +1882,7 @@ impl WalWriterHandle {
             force_authentication_marker: false,
             context_evidence_receipt_once: None,
             trust_decision_once: None,
+            transcript_mining_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1712,6 +1915,7 @@ impl WalWriterHandle {
     ) -> Result<(), WalError> {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
+        refuse_generic_transcript_mining_proof(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1733,6 +1937,7 @@ impl WalWriterHandle {
             force_authentication_marker: false,
             context_evidence_receipt_once: None,
             trust_decision_once: None,
+            transcript_mining_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -3127,6 +3332,47 @@ struct TrustDecisionAuthority {
     _file_guard: std::fs::File,
 }
 
+fn transcript_mining_authority_sentinel(home: &Path) -> PathBuf {
+    home.join("wal").join(TRANSCRIPT_MINING_AUTHORITY_SENTINEL)
+}
+
+async fn acquire_transcript_mining_authority(
+    home: &Path,
+) -> Result<TranscriptMiningAuthority, WalError> {
+    let process_authority = std::sync::Arc::clone(&*TRANSCRIPT_MINING_PROCESS_AUTHORITY);
+    let process_guard = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        process_authority.lock_owned(),
+    )
+    .await
+    .map_err(|_| {
+        compaction_recovery_error("TranscriptMining process authority remained busy for >5s")
+    })?;
+    let sentinel = transcript_mining_authority_sentinel(home);
+    let file_guard =
+        tokio::task::spawn_blocking(move || super::redact::lock_segment_for_rewrite(&sentinel))
+            .await
+            .map_err(|error| {
+                compaction_recovery_error(format!(
+                    "TranscriptMining authority task failed: {error}"
+                ))
+            })?
+            .map_err(|error| {
+                compaction_recovery_error(format!(
+                    "acquire capability-bound TranscriptMining authority: {error:#}"
+                ))
+            })?;
+    Ok(TranscriptMiningAuthority {
+        _process_guard: process_guard,
+        _file_guard: file_guard,
+    })
+}
+
+struct TranscriptMiningAuthority {
+    _process_guard: tokio::sync::OwnedMutexGuard<()>,
+    _file_guard: std::fs::File,
+}
+
 fn canonical_home_matches(expected: &Path, authoritative: &Path) -> Result<bool, WalError> {
     let expected = std::fs::canonicalize(expected).map_err(WalError::Io)?;
     let authoritative = std::fs::canonicalize(authoritative).map_err(WalError::Io)?;
@@ -4110,6 +4356,8 @@ async fn run_writer(
     while let Some(mut req) = rx.recv().await {
         let is_receipt = is_context_evidence_receipt_header(&req.header);
         let mut trust_decision_once = req.trust_decision_once.take();
+        let mut transcript_mining_once = req.transcript_mining_once.take();
+        let is_transcript_mining_proof = is_transcript_mining_proof_header(&req.header);
         let is_durable_trust_decision = if is_trust_decision_header(&req.header) {
             match crate::permissions::trust_ledger::is_durable_trust_admission_payload(&req.payload)
             {
@@ -4130,10 +4378,22 @@ async fn run_writer(
         } else {
             false
         };
+        // RAW_TEXT remains a normal generic WAL event, but the closed
+        // transcript-mining owner may also carry one exact planned RAW_TEXT
+        // descriptor.  The reserved Bound/Revoked subtypes, in contrast,
+        // must *always* carry that owner.  Treating only the reserved
+        // subtypes as mining-owned here rejected every valid RAW once request
+        // before its authenticated lookup and collapsed its private reply to
+        // Indeterminate.
+        let transcript_mining_once_matches_frame = is_transcript_mining_proof
+            || req.header.event_type == crate::wal::events::EVENT_TYPE_RAW_TEXT;
         if is_receipt != req.context_evidence_receipt_once.is_some()
             || (is_receipt && req.force_authentication_marker)
             || is_durable_trust_decision != trust_decision_once.is_some()
             || (trust_decision_once.is_some() && !req.force_authentication_marker)
+            || (is_transcript_mining_proof && transcript_mining_once.is_none())
+            || (transcript_mining_once.is_some() && !transcript_mining_once_matches_frame)
+            || (transcript_mining_once.is_some() && !req.force_authentication_marker)
         {
             if let Some(admission) = req.quota_admission.take() {
                 admission.settle();
@@ -4143,6 +4403,110 @@ async fn run_writer(
                 "closed authenticated append-once request omitted its matching authority",
             ))));
             continue;
+        }
+        let mut transcript_mining_authority = None;
+        if let Some(once) = transcript_mining_once.take() {
+            let requested_home = once.home.clone();
+            let authoritative_home = hmac_home.clone();
+            let homes_match = match tokio::task::spawn_blocking(move || {
+                canonical_home_matches(&requested_home, &authoritative_home)
+            })
+            .await
+            {
+                Ok(Ok(value)) => value,
+                _ => false,
+            };
+            let expected_header = once.expected.header();
+            let expected_payload = once.expected.payload();
+            if !homes_match || expected_header != req.header || expected_payload != req.payload {
+                once.finish(Err(
+                    crate::wal::transcript_mining_once::TranscriptMiningOnceError::Indeterminate,
+                ));
+                continue;
+            }
+            let authority = match acquire_transcript_mining_authority(&hmac_home).await {
+                Ok(authority) => authority,
+                Err(_) => {
+                    once.finish(Err(crate::wal::transcript_mining_once::TranscriptMiningOnceError::Indeterminate));
+                    continue;
+                }
+            };
+            let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key) else {
+                once.finish(Err(
+                    crate::wal::transcript_mining_once::TranscriptMiningOnceError::Indeterminate,
+                ));
+                drop(authority);
+                continue;
+            };
+            validate_hmac_writer_authority(hmac_authority.as_ref())?;
+            if compaction_state.frames() > 0
+                && emit_compaction_marker(&mut state, compaction_state, key, None)
+                    .await
+                    .is_err()
+            {
+                once.finish(Err(
+                    crate::wal::transcript_mining_once::TranscriptMiningOnceError::Indeterminate,
+                ));
+                drop(authority);
+                return Err(compaction_recovery_error(
+                    "TranscriptMining authority could not close owned HMAC tail",
+                ));
+            }
+            pending_unsynced = false;
+            let lookup_home = hmac_home.clone();
+            let lookup_expected = once.expected.clone();
+            match tokio::task::spawn_blocking(move || {
+                crate::wal::transcript_mining_once::lookup_exact_at_home(
+                    &lookup_home,
+                    &lookup_expected,
+                )
+            })
+            .await
+            {
+                Ok(crate::wal::transcript_mining_once::Lookup::Exact(receipt)) => {
+                    once.finish(Ok(receipt));
+                    drop(authority);
+                    continue;
+                }
+                Ok(crate::wal::transcript_mining_once::Lookup::Conflict) => {
+                    once.finish(Err(
+                        crate::wal::transcript_mining_once::TranscriptMiningOnceError::Conflict,
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(crate::wal::transcript_mining_once::Lookup::Duplicate) => {
+                    once.finish(Err(
+                        crate::wal::transcript_mining_once::TranscriptMiningOnceError::Duplicate,
+                    ));
+                    drop(authority);
+                    continue;
+                }
+                Ok(crate::wal::transcript_mining_once::Lookup::AbsentComplete) => {
+                    let observed_at_unix = match i64::try_from(crate::time::now_unix_secs()) {
+                        Ok(value) => value,
+                        Err(_) => {
+                            once.finish(Err(
+                                crate::wal::transcript_mining_once::TranscriptMiningOnceError::Indeterminate,
+                            ));
+                            drop(authority);
+                            continue;
+                        }
+                    };
+                    if let Some(expired) = once.expected.expired_absent(observed_at_unix) {
+                        once.finish(Err(crate::wal::transcript_mining_once::TranscriptMiningOnceError::ExpiredAbsent(expired)));
+                        drop(authority);
+                        continue;
+                    }
+                    req.transcript_mining_once = Some(once);
+                    transcript_mining_authority = Some(authority);
+                }
+                _ => {
+                    once.finish(Err(crate::wal::transcript_mining_once::TranscriptMiningOnceError::Indeterminate));
+                    drop(authority);
+                    continue;
+                }
+            }
         }
         validate_hmac_writer_authority(hmac_authority.as_ref())?;
         if let Some(mut once) = req.context_evidence_receipt_once.take() {
@@ -4555,6 +4919,21 @@ async fn run_writer(
                         crate::permissions::trust_ledger::TrustDecisionOnceOutcome::AppendedExact,
                     ));
                 }
+                if let Some(once) = req.transcript_mining_once.take() {
+                    let lookup_home = hmac_home.clone();
+                    let lookup_expected = once.expected.clone();
+                    let outcome = match tokio::task::spawn_blocking(move || {
+                        crate::wal::transcript_mining_once::lookup_exact_at_home(
+                            &lookup_home, &lookup_expected,
+                        )
+                    }).await {
+                        Ok(crate::wal::transcript_mining_once::Lookup::Exact(receipt)) => Ok(receipt),
+                        Ok(crate::wal::transcript_mining_once::Lookup::Conflict) => Err(crate::wal::transcript_mining_once::TranscriptMiningOnceError::Conflict),
+                        Ok(crate::wal::transcript_mining_once::Lookup::Duplicate) => Err(crate::wal::transcript_mining_once::TranscriptMiningOnceError::Duplicate),
+                        _ => Err(crate::wal::transcript_mining_once::TranscriptMiningOnceError::Indeterminate),
+                    };
+                    once.finish(outcome);
+                }
                 if req.ack.send(Ok(written_at)).is_err() {
                     tracing::debug!(
                         offset = written_at,
@@ -4563,6 +4942,7 @@ async fn run_writer(
                 }
                 drop(context_evidence_receipt_authority);
                 drop(trust_decision_authority);
+                drop(transcript_mining_authority);
             }
             Err(e) => {
                 error!(error = %e, "WAL frame write failed");
@@ -4583,6 +4963,7 @@ async fn run_writer(
                 }
                 drop(context_evidence_receipt_authority);
                 drop(trust_decision_authority);
+                drop(transcript_mining_authority);
                 // Continue; next caller may still succeed (e.g. transient ENOSPC clears).
             }
         }
@@ -4839,6 +5220,322 @@ async fn write_only(file: &mut File, frame: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn planned_raw_descriptor(payload: &[u8]) -> crate::wal::PlannedRawTextDescriptor {
+        let header =
+            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_RAW_TEXT, payload)
+                .build();
+        crate::wal::PlannedRawTextDescriptor::from_persisted(
+            &header.to_le_bytes(),
+            Sha256::digest(header.to_le_bytes()).into(),
+            payload.to_vec(),
+            Sha256::digest(payload).into(),
+        )
+        .expect("valid planned RAW_TEXT descriptor")
+    }
+
+    fn planned_bound_descriptor() -> crate::wal::PlannedMiningOutboxDescriptor {
+        let payload = br#"{"schema_version":1,"lifecycle_id":"lifecycle-01","provenance_id":"provenance-01","subject":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","raw_frame":{"raw_turn_row_id":7,"raw_frame_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},"raw_text_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","source_kind":"operator_raw_text_v1","retention":"hours24","privacy_disposition":"mining_permitted","lifecycle":"active","issued_at_unix":100,"expires_at_unix":4102444800}"#;
+        let header =
+            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, payload)
+                .event_subtype(crate::wal::events::ExtendedSubtype::TranscriptMiningBound as u8)
+                .build();
+        crate::wal::PlannedMiningOutboxDescriptor::from_persisted(
+            &header.to_le_bytes(),
+            Sha256::digest(header.to_le_bytes()).into(),
+            payload.to_vec(),
+            Sha256::digest(payload).into(),
+        )
+        .expect("valid canonical planned bound descriptor")
+    }
+
+    fn expired_bound_descriptor() -> crate::wal::PlannedMiningOutboxDescriptor {
+        let payload = br#"{"schema_version":1,"lifecycle_id":"lifecycle-expired","provenance_id":"provenance-expired","subject":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","raw_frame":{"raw_turn_row_id":8,"raw_frame_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},"raw_text_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","source_kind":"operator_raw_text_v1","retention":"hours24","privacy_disposition":"mining_permitted","lifecycle":"active","issued_at_unix":100,"expires_at_unix":101}"#;
+        let header =
+            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, payload)
+                .event_subtype(crate::wal::events::ExtendedSubtype::TranscriptMiningBound as u8)
+                .build();
+        crate::wal::PlannedMiningOutboxDescriptor::from_persisted(
+            &header.to_le_bytes(),
+            Sha256::digest(header.to_le_bytes()).into(),
+            payload.to_vec(),
+            Sha256::digest(payload).into(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn transcript_mining_proof_subtypes_refuse_every_generic_writer_entry() {
+        for subtype in [
+            crate::wal::events::ExtendedSubtype::TranscriptMiningBound,
+            crate::wal::events::ExtendedSubtype::TranscriptMiningRevoked,
+        ] {
+            let header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_EXTENDED,
+                b"canonical-proof",
+            )
+            .event_subtype(subtype as u8)
+            .build();
+            let error = refuse_generic_transcript_mining_proof(&header)
+                .expect_err("reserved transcript proof must not enter generic queue");
+            assert!(error.to_string().contains("append-once"));
+        }
+    }
+
+    #[tokio::test]
+    async fn transcript_mining_once_roundtrips_exact_raw_and_canonical_bound() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("mining-once-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let raw = planned_raw_descriptor(b"mining operator input");
+        let raw_receipt = writer
+            .append_planned_raw_text_once(home.path(), raw.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            writer
+                .verify_planned_raw_text_exact(home.path(), &raw)
+                .unwrap(),
+            raw_receipt
+        );
+        assert_ne!(raw_receipt.location_sha256(), [0; 32]);
+
+        let bound = planned_bound_descriptor();
+        let bound_receipt = writer
+            .append_planned_mining_outbox_once(home.path(), bound.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            writer
+                .verify_planned_mining_outbox_exact(home.path(), &bound)
+                .unwrap(),
+            bound_receipt
+        );
+        assert_ne!(
+            bound_receipt.location_sha256(),
+            raw_receipt.location_sha256()
+        );
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn transcript_mining_reserved_bound_rejects_actual_generic_handles() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("mining-bypass-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let descriptor = planned_bound_descriptor();
+        let expected = crate::wal::transcript_mining_once::TranscriptMiningDescriptor::outbox(
+            descriptor.clone(),
+        );
+        let header = expected.header();
+        let payload = expected.payload();
+        assert!(writer.append(header, payload.clone()).await.is_err());
+        assert!(
+            writer
+                .append_authenticated(header, payload.clone())
+                .await
+                .is_err()
+        );
+        assert!(writer.try_append_sync(header, payload.clone()).is_err());
+        assert!(writer.append_no_ack(header, payload).await.is_err());
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn transcript_mining_expired_absent_bound_never_appends() {
+        use crate::wal::TranscriptMiningOnceError;
+
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("mining-expired-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let descriptor = expired_bound_descriptor();
+        let token = match writer
+            .append_planned_mining_outbox_once(home.path(), descriptor.clone())
+            .await
+        {
+            Err(TranscriptMiningOnceError::ExpiredAbsent(token)) => token,
+            other => panic!("expected expired absence, got {other:?}"),
+        };
+        assert_ne!(token.operation_descriptor_sha256(), [0; 32]);
+        assert!(token.observed_at_unix() >= 101);
+        assert!(
+            writer
+                .verify_planned_mining_outbox_exact(home.path(), &descriptor)
+                .is_err()
+        );
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn transcript_mining_raw_conflict_and_duplicate_fail_closed() {
+        use crate::wal::TranscriptMiningOnceError;
+
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("mining-conflict-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let conflict = planned_raw_descriptor(b"planned raw value");
+        let conflict_expected =
+            crate::wal::transcript_mining_once::TranscriptMiningDescriptor::raw(conflict.clone());
+        writer
+            .append(conflict_expected.header(), b"different raw val".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(
+            writer
+                .append_planned_raw_text_once(home.path(), conflict)
+                .await
+                .unwrap_err(),
+            TranscriptMiningOnceError::Conflict,
+        );
+
+        let duplicate = planned_raw_descriptor(b"duplicate raw val");
+        let duplicate_expected =
+            crate::wal::transcript_mining_once::TranscriptMiningDescriptor::raw(duplicate.clone());
+        writer
+            .append_planned_raw_text_once(home.path(), duplicate.clone())
+            .await
+            .unwrap();
+        writer
+            .append(duplicate_expected.header(), duplicate_expected.payload())
+            .await
+            .unwrap();
+        assert_eq!(
+            writer
+                .append_planned_raw_text_once(home.path(), duplicate)
+                .await
+                .unwrap_err(),
+            TranscriptMiningOnceError::Duplicate,
+        );
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn transcript_mining_once_survives_caller_cancellation_and_restart() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let segment = wal.join("mining-cancel-000001.wal");
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let gate = TestAckGate::once(crate::wal::events::EVENT_TYPE_RAW_TEXT);
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let descriptor = planned_raw_descriptor(b"cancellation retained raw");
+        let caller_writer = writer.clone();
+        let caller_home = home.path().to_path_buf();
+        let caller_descriptor = descriptor.clone();
+        let caller = tokio::spawn(async move {
+            caller_writer
+                .append_planned_raw_text_once(&caller_home, caller_descriptor)
+                .await
+        });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            gate.wait_until_durable(),
+        )
+        .await
+        .expect("append-once request must reach the durable-before-ack hook");
+        caller.abort();
+        gate.release();
+        drop(writer);
+        tokio::time::timeout(std::time::Duration::from_secs(10), join)
+            .await
+            .expect("writer must finish after releasing the acknowledgement hook")
+            .unwrap();
+
+        let (writer, join) = spawn_test_writer_at_home(
+            segment,
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        assert!(
+            writer
+                .append_planned_raw_text_once(home.path(), descriptor)
+                .await
+                .is_ok()
+        );
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn transcript_mining_once_refuses_foreign_incomplete_prefix() {
+        use crate::wal::TranscriptMiningOnceError;
+
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (foreign, foreign_join) = spawn_test_writer_at_home(
+            wal.join("mining-foreign-live-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("mining-owned-000001.wal"),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .unwrap();
+        foreign
+            .append(batchable_header_for(1, 901), vec![b'x'])
+            .await
+            .unwrap();
+        assert_eq!(
+            writer
+                .append_planned_raw_text_once(
+                    home.path(),
+                    planned_raw_descriptor(b"foreign tail plan")
+                )
+                .await
+                .unwrap_err(),
+            TranscriptMiningOnceError::Indeterminate,
+        );
+        drop(writer);
+        drop(foreign);
+        join.await.unwrap();
+        foreign_join.await.unwrap();
+    }
 
     #[test]
     fn rotation_policy_refuses_segments_larger_than_recovery_can_reopen() {
@@ -6875,6 +7572,7 @@ mod tests {
                 force_authentication_marker: false,
                 context_evidence_receipt_once: None,
                 trust_decision_once: None,
+                transcript_mining_once: None,
                 quota_admission: Some(quota_admission),
                 test_ack_gate: None,
                 test_receipt_decision_gate: None,

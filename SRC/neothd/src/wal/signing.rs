@@ -270,15 +270,28 @@ fn private_sibling(parent: &Path, name: &str, field: &str) -> Result<PathBuf> {
 fn load_existing_signing_key(path: &Path) -> Result<SigningKey> {
     let body =
         std::fs::read(path).with_context(|| format!("read signing key {}", path.display()))?;
-    let raw = crate::wal::compaction::maybe_unwrap_dpapi(&body, path)?;
+    signing_key_from_storage(&body, path)
+}
+
+fn signing_key_from_storage(body: &[u8], display: &Path) -> Result<SigningKey> {
+    let raw = crate::wal::compaction::maybe_unwrap_dpapi(body, display)?;
     let seed: Zeroizing<[u8; 32]> = Zeroizing::new(raw.as_slice().try_into().map_err(|_| {
         anyhow::anyhow!(
             "signing key at {} is not 32 bytes ({} given) — refusing to use a malformed key",
-            path.display(),
+            display.display(),
             raw.len(),
         )
     })?);
     Ok(SigningKey::from_bytes(&seed))
+}
+
+/// Decode a caller-owned, already bounded signing-key body without reopening
+/// its path. Home-WAL scanners use this under their retained directory
+/// capability before evaluating a signed key-rotation audit.
+pub(crate) fn signing_pubkey_from_storage(body: &[u8], display: &Path) -> Option<String> {
+    signing_key_from_storage(body, display)
+        .ok()
+        .map(|key| pubkey_b64(&key))
 }
 
 fn fresh_signing_key() -> Result<SigningKey> {
@@ -445,12 +458,24 @@ pub(crate) fn trusted_signing_pubkeys(
     segments: &[PathBuf],
     current_key_path: &Path,
 ) -> BTreeSet<String> {
-    let Some(current) = load_signing_pubkey_if_present(current_key_path) else {
+    trusted_signing_pubkeys_from_valid_transitions(
+        load_signing_pubkey_if_present(current_key_path),
+        &collect_valid_proof_key_rotations(segments),
+    )
+}
+
+/// Pure predecessor-chain walk over already validated transition metadata.
+/// The bounded home-WAL scanner supplies that metadata from capability-relative
+/// reads, while offline callers may retain [`trusted_signing_pubkeys`] above.
+pub(crate) fn trusted_signing_pubkeys_from_valid_transitions(
+    current: Option<String>,
+    transitions: &[ProofKeyRotationPayload],
+) -> BTreeSet<String> {
+    let Some(current) = current else {
         return BTreeSet::new();
     };
     let mut trusted = BTreeSet::from([current.clone()]);
     let mut cursor = current;
-    let transitions = collect_valid_proof_key_rotations(segments);
     loop {
         let mut predecessors = transitions
             .iter()

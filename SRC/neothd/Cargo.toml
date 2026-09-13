@@ -585,7 +585,7 @@ teloxide     = { version = "0.17", default-features = false, features = ["ctrlc_
 # native lib with us — two rusqlite majors cannot coexist (cargo forbids two
 # crates linking the same native lib). Bumping here is the single source of the
 # sqlite version across the whole workspace.
-rusqlite     = { version = "0.37", features = ["bundled"] }
+rusqlite     = { version = "0.37", features = ["bundled", "functions"] }
 
 # V10-08 (Workstream E) — HNSW embedding index. Pure-Rust approximate nearest-
 # neighbour index. Replaces the O(N) cosine scan in memory/embeddings.rs for

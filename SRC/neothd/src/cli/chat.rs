@@ -21,6 +21,11 @@ impl LocalChatCommunicationSubject {
     fn mint() -> Self {
         Self(())
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self::mint()
+    }
 }
 use crate::providers::{self, CompletionChunk, Provider, Request};
 use crate::wal::events::{
@@ -5601,6 +5606,7 @@ async fn run_post_reply_pipelines(
     profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry,
     chat_ts_unix: i64,
     current_session_id: String,
+    operator_transcript_persisted: bool,
     prompt_token_estimate: u32,
     turn_journal: Option<crate::recovery::turn_journal::TurnJournal>,
     // GOLD-CCPARITY-ONCE: session-scoped once-guard threaded from run_chat_with
@@ -6706,13 +6712,15 @@ async fn run_post_reply_pipelines(
         let db_path = first_tour_home.join("views.db");
         match crate::memory::store::open(&db_path) {
             Ok(conn) => {
-                crate::memory::transcript_store::insert_turn_best_effort(
-                    &conn,
-                    &current_session_id,
-                    "operator",
-                    chat_ts_unix,
-                    &prompt,
-                );
+                if !operator_transcript_persisted {
+                    crate::memory::transcript_store::insert_turn_best_effort(
+                        &conn,
+                        &current_session_id,
+                        "operator",
+                        chat_ts_unix,
+                        &prompt,
+                    );
+                }
                 crate::memory::transcript_store::insert_turn_best_effort(
                     &conn,
                     &current_session_id,
@@ -7384,6 +7392,7 @@ async fn run_chat_with_consent(
     // prompts at rest match the existing trust boundary.
     // ODY-09: incognito turns skip RAW_TEXT entirely — no prompt content in WAL.
     // An INCOGNITO_TURN (0xF7) audit anchor is written instead.
+    let mut operator_transcript_persisted = false;
     let raw_event_id = if args.incognito {
         // ODY-09: no prompt stored; raw_event_id=0 signals "no anchor" to the
         // profile-learning pipeline (extract_window gates on valid non-zero ids).
@@ -7400,6 +7409,29 @@ async fn run_chat_with_consent(
             .await
             .context("persist incognito audit anchor")?;
         0i64
+    } else if let Some(retention) = config.memory.transcript_mining_retention {
+        let subject = LocalChatCommunicationSubject::mint();
+        let persisted = crate::memory::transcript_mining_runtime::persist_local_operator_turn(
+            &subject,
+            &first_tour_home,
+            &writer,
+            retention,
+            &current_session_id,
+            &prompt,
+            chat_ts_unix,
+        )
+        .await;
+        match persisted {
+            Ok(event_id) => {
+                operator_transcript_persisted = true;
+                event_id
+            }
+            Err(error) => {
+                drop(writer);
+                let _ = writer_join.await;
+                return Err(error.context("persist opted-in operator transcript provenance"));
+            }
+        }
     } else {
         let raw_header = crate::wal::make_header(EVENT_TYPE_RAW_TEXT, prompt.as_bytes());
         // Capture the event_id before the header moves into `append` — the
@@ -7907,6 +7939,7 @@ async fn run_chat_with_consent(
         profile_extensions,
         chat_ts_unix,
         current_session_id,
+        operator_transcript_persisted,
         prompt_token_estimate,
         turn_journal,
         &once_guard,
@@ -15495,6 +15528,158 @@ modes:
         }
     }
 
+    async fn run_transcript_provenance_chat(
+        home: &std::path::Path,
+        opted_in: bool,
+        incognito: bool,
+    ) -> Result<()> {
+        crate::consent::grant(home, ProviderKind::ClaudeCli)?;
+        let mut config = FreedomConfig {
+            operator_id: Some("local-operator".into()),
+            language_primary: Some("en".into()),
+            language_code: Some("en".into()),
+            provider_kind: Some(ProviderKind::ClaudeCli),
+            provider_binary: Some("claude".into()),
+            provider_model: Some("claude-opus-4-7".into()),
+            autonomy: UNPRICED_TEST_PROVIDER_AUTONOMY,
+            review_gate_enabled: false,
+            steps_completed: vec![1, 2, 3, 4, 5, 6, 7],
+            ..Default::default()
+        };
+        config.memory.recall_shortcut = false;
+        config.council.disabled = Some(true);
+        if opted_in {
+            config.memory.transcript_mining_retention =
+                Some(crate::config::memory::TranscriptMiningRetention::Hours24);
+        }
+        let args = ChatArgs {
+            message: Some("Fresh local operator input, byte exact: ä\nline two.".into()),
+            config: Some(home.join("freedom.yaml")),
+            wal_segment: Some(canonical_test_wal(home, "transcript-provenance-chat")),
+            incognito,
+            ..test_chat_args_default()
+        };
+        run_chat_with(
+            args,
+            config,
+            &MockProvider {
+                reply: "Recorded reply.".into(),
+            },
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn transcript_mining_chat_opt_in_binds_one_operator_row_without_post_reply_duplicate() {
+        let home = tempdir().unwrap();
+        run_transcript_provenance_chat(home.path(), true, false)
+            .await
+            .unwrap();
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let operator_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM raw_turns WHERE role='operator'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let agent_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM raw_turns WHERE role='agent'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!((operator_count, agent_count), (1, 1));
+        let text: String = conn
+            .query_row(
+                "SELECT text FROM raw_turns WHERE role='operator'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(text, "Fresh local operator input, byte exact: ä\nline two.");
+        let bound_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transcript_mining_provenance WHERE lifecycle='active'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(bound_count, 1);
+        let mut raw = 0;
+        let mut bound = 0;
+        crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
+            home.path(),
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                raw += usize::from(frame.header.event_type == EVENT_TYPE_RAW_TEXT);
+                bound += usize::from(
+                    frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && frame.header.event_subtype
+                            == crate::wal::events::ExtendedSubtype::TranscriptMiningBound as u8,
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!((raw, bound), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn transcript_mining_chat_default_stays_legacy_unbound() {
+        let home = tempdir().unwrap();
+        run_transcript_provenance_chat(home.path(), false, false)
+            .await
+            .unwrap();
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let modern: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM raw_turns WHERE transcript_mining_authority_epoch=1 OR transcript_mining_raw_frame_plan_epoch=1",
+            [], |r| r.get(0),
+        ).unwrap();
+        let bindings: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transcript_mining_provenance",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!((modern, bindings), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn transcript_mining_chat_incognito_overrides_configured_opt_in() {
+        let home = tempdir().unwrap();
+        run_transcript_provenance_chat(home.path(), true, true)
+            .await
+            .unwrap();
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        for table in [
+            "raw_turns",
+            "transcript_mining_provenance",
+            "transcript_mining_raw_frame_plan",
+            "transcript_mining_wal_outbox",
+        ] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(count, 0, "Incognito populated {table}");
+        }
+        crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
+            home.path(),
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                assert_ne!(frame.header.event_type, EVENT_TYPE_RAW_TEXT);
+                assert!(
+                    !(frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && matches!(frame.header.event_subtype, 0x28 | 0x29))
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+    }
+
     #[tokio::test]
     async fn chat_writes_request_and_response_frames() {
         let dir = tempdir().unwrap();
@@ -15637,10 +15822,114 @@ modes:
             crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED,
         );
 
-        let rest = &rest[perm.header.total_len as usize..];
-        let dec1 = decode_frame(rest).expect("decode PROVIDER_REQUEST frame");
-        assert_eq!(dec1.header.event_type, EVENT_TYPE_PROVIDER_REQUEST);
-        let req_payload: serde_json::Value = serde_json::from_slice(dec1.payload).unwrap();
+        // Typed permission metadata and the mandatory HMAC marker can be
+        // interposed here. Parse the complete tail, then assert the semantic
+        // provider sequence rather than treating physical adjacency as a
+        // provider contract.
+        let mut tail = &rest[perm.header.total_len as usize..];
+        let mut tail_frames = Vec::new();
+        while !tail.is_empty() {
+            let frame = decode_frame(tail).expect("decode post-permission frame");
+            tail_frames.push((
+                frame.header.event_type,
+                frame.header.event_subtype,
+                frame.payload.to_vec(),
+            ));
+            tail = &tail[frame.header.total_len as usize..];
+        }
+        let extended = crate::wal::events::EVENT_TYPE_EXTENDED;
+        let trust_subtype = crate::wal::events::ExtendedSubtype::TrustDecision as u8;
+        let agreement_subtype =
+            crate::wal::events::ExtendedSubtype::CouncilAgreementEvaluated as u8;
+        let request_index = tail_frames
+            .iter()
+            .position(|(event_type, _, _)| *event_type == EVENT_TYPE_PROVIDER_REQUEST)
+            .expect("PROVIDER_REQUEST must follow permission");
+        let response_index = tail_frames
+            .iter()
+            .position(|(event_type, _, _)| *event_type == EVENT_TYPE_PROVIDER_RESPONSE)
+            .expect("PROVIDER_RESPONSE must follow request");
+        assert!(
+            request_index < response_index,
+            "provider response must follow its request"
+        );
+        assert_eq!(
+            tail_frames
+                .iter()
+                .filter(|(event_type, _, _)| *event_type == EVENT_TYPE_PROVIDER_REQUEST)
+                .count(),
+            1,
+            "fixture must issue one provider request"
+        );
+        assert_eq!(
+            tail_frames
+                .iter()
+                .filter(|(event_type, _, _)| *event_type == EVENT_TYPE_PROVIDER_RESPONSE)
+                .count(),
+            1,
+            "fixture must record one provider response"
+        );
+        let trust_decisions: Vec<_> = tail_frames
+            .iter()
+            .filter(|(event_type, subtype, _)| *event_type == extended && *subtype == trust_subtype)
+            .collect();
+        assert_eq!(
+            trust_decisions.len(),
+            1,
+            "one provider Gate audit is required"
+        );
+        assert!(
+            tail_frames
+                .iter()
+                .position(|(event_type, subtype, _)| {
+                    *event_type == extended && *subtype == trust_subtype
+                })
+                .expect("TrustDecision must be present")
+                < request_index,
+            "TrustDecision must precede the provider request"
+        );
+        let trust_event =
+            crate::permissions::trust_ledger::TrustEvent::decode(&trust_decisions[0].2)
+                .expect("decode provider Gate audit");
+        // This unpriced MockProvider uses the normal request-bound cost Gate.
+        // Its schema-1 audit is distinct from the schema-2 durable admission
+        // protocol used for durable tool authorization.
+        assert_eq!(
+            trust_event.schema_version,
+            crate::permissions::trust_ledger::TRUST_EVENT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            trust_event.outcome,
+            crate::permissions::trust_ledger::TrustOutcome::Allowed
+        );
+        assert_eq!(trust_event.autonomy_level, UNPRICED_TEST_PROVIDER_AUTONOMY);
+        let permission_payload: serde_json::Value =
+            serde_json::from_slice(perm.payload).expect("decode provider permission payload");
+        let request_binding = trust_event
+            .request_binding_sha256
+            .as_deref()
+            .expect("provider Gate audit must bind the actual request");
+        assert_eq!(
+            permission_payload["request_binding_sha256"],
+            request_binding
+        );
+        assert_eq!(
+            permission_payload["authorization_id"].as_str(),
+            trust_event.authorization_id.as_deref()
+        );
+        let agreements: Vec<_> = tail_frames
+            .iter()
+            .filter(|(event_type, subtype, _)| {
+                *event_type == extended && *subtype == agreement_subtype
+            })
+            .collect();
+        assert_eq!(
+            agreements.len(),
+            0,
+            "a skipped council must not emit a fabricated agreement audit"
+        );
+        let req_payload: serde_json::Value =
+            serde_json::from_slice(&tail_frames[request_index].2).unwrap();
         assert_eq!(req_payload["provider"], "mock");
         // The operator id is hashed into the WAL now, not written in the clear.
         // Asserting the plaintext back would undo that privacy change, so pin
@@ -15658,10 +15947,8 @@ modes:
         assert_eq!(req_payload["model_source"], "freedom");
         assert_eq!(req_payload["wire_model"], "claude-opus-4-7");
 
-        let rest = &rest[dec1.header.total_len as usize..];
-        let dec2 = decode_frame(rest).expect("decode response frame");
-        assert_eq!(dec2.header.event_type, EVENT_TYPE_PROVIDER_RESPONSE);
-        let resp_payload: serde_json::Value = serde_json::from_slice(dec2.payload).unwrap();
+        let resp_payload: serde_json::Value =
+            serde_json::from_slice(&tail_frames[response_index].2).unwrap();
         assert_eq!(resp_payload["provider"], "mock");
         assert_eq!(resp_payload["model"], "claude-opus-4-7");
         assert_eq!(resp_payload["invocation_id"], req_payload["invocation_id"]);
@@ -15672,11 +15959,9 @@ modes:
         // REFUSAL_OBSERVED frame. The audit trail stays empty of false
         // positives so operators can grep for actual refusals without
         // wading through noise.
-        let rest = &rest[dec2.header.total_len as usize..];
-        if !rest.is_empty() {
-            let after = decode_frame(rest).expect("decode after-response frame");
+        for (event_type, _, _) in &tail_frames {
             assert_ne!(
-                after.header.event_type,
+                *event_type,
                 crate::wal::events::EVENT_TYPE_REFUSAL_OBSERVED,
                 "clean reply must not emit REFUSAL_OBSERVED"
             );

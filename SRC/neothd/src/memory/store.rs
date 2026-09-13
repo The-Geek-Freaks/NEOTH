@@ -126,7 +126,7 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v35: persist the first operator decision for a profile-resolution request.
 /// v36: establish the sealed transcript-mining provenance prerequisite.
 /// v37: add post-v37 exact raw-frame plans without promoting any v36 row.
-pub const SCHEMA_VERSION: i64 = 37;
+pub const SCHEMA_VERSION: i64 = 38;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -819,6 +819,136 @@ pub(crate) const TRANSCRIPT_MINING_V37_TRIGGERS_SQL: &str = r#"
     END;
 "#;
 
+/// Stage 3b replaces only the deliberately-unreachable reservation paths with
+/// an operation-specific connection-local attestor. Normal application
+/// connections register the same scalar names with default-deny behavior.
+pub(crate) const TRANSCRIPT_MINING_V38_TRIGGERS_SQL: &str = r#"
+    DROP TRIGGER IF EXISTS transcript_mining_plan_stage3a_reserved;
+    DROP TRIGGER IF EXISTS transcript_mining_plan_immutable;
+    DROP TRIGGER IF EXISTS transcript_mining_lifecycle_fenced;
+    DROP TRIGGER IF EXISTS transcript_mining_outbox_terminal;
+    DROP TRIGGER IF EXISTS transcript_mining_receipt_binding_matches;
+    CREATE TRIGGER transcript_mining_raw_turn_stage3b_birth_guard BEFORE INSERT ON raw_turns
+    WHEN (NEW.transcript_mining_authority_epoch=1 OR NEW.transcript_mining_raw_frame_plan_epoch=1)
+      AND NOT (NEW.role='operator' AND NEW.transcript_mining_authority_epoch=1 AND NEW.transcript_mining_raw_frame_plan_epoch=1
+               AND neoth_transcript_mining_attestor_birth()=1)
+    BEGIN SELECT RAISE(ABORT, 'transcript mining attestor required for modern raw birth'); END;
+    CREATE TRIGGER transcript_mining_witness_stage3b_guard BEFORE INSERT ON transcript_mining_modern_raw_witness
+    WHEN neoth_transcript_mining_attestor_birth()<>1
+    BEGIN SELECT RAISE(ABORT, 'transcript mining attestor required for modern witness'); END;
+    CREATE TRIGGER transcript_mining_plan_stage3b_guard BEFORE INSERT ON transcript_mining_raw_frame_plan
+    WHEN neoth_transcript_mining_attestor('prepare',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256) <> 1
+    BEGIN SELECT RAISE(ABORT, 'transcript mining attestor required for frame plan'); END;
+    CREATE TRIGGER transcript_mining_provenance_stage3b_guard BEFORE INSERT ON transcript_mining_provenance
+    WHEN COALESCE((SELECT neoth_transcript_mining_attestor('prepare',delivery_lease_id,delivery_descriptor_sha256) FROM transcript_mining_raw_frame_plan WHERE provenance_id=NEW.provenance_id),0) <> 1
+    BEGIN SELECT RAISE(ABORT, 'transcript mining attestor required for provenance'); END;
+    CREATE TRIGGER transcript_mining_outbox_stage3b_guard BEFORE INSERT ON transcript_mining_wal_outbox
+    WHEN neoth_transcript_mining_attestor('raw_receipt',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256) <> 1
+      AND neoth_transcript_mining_attestor('revocation_prepare',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256) <> 1
+    BEGIN SELECT RAISE(ABORT, 'transcript mining attestor required for outbox'); END;
+    CREATE TRIGGER transcript_mining_plan_stage3b_transition BEFORE UPDATE ON transcript_mining_raw_frame_plan
+    WHEN NOT (OLD.frame_plan_id IS NEW.frame_plan_id AND OLD.provenance_id IS NEW.provenance_id
+      AND OLD.lifecycle_id IS NEW.lifecycle_id AND OLD.raw_turn_id IS NEW.raw_turn_id
+      AND OLD.raw_event_type IS NEW.raw_event_type AND OLD.raw_event_subtype IS NEW.raw_event_subtype
+      AND OLD.planned_wal_format_version IS NEW.planned_wal_format_version
+      AND OLD.planned_event_schema_version IS NEW.planned_event_schema_version
+      AND OLD.planned_event_id IS NEW.planned_event_id AND OLD.planned_hlc_physical_ns IS NEW.planned_hlc_physical_ns
+      AND OLD.planned_hlc_logical IS NEW.planned_hlc_logical
+      AND OLD.planned_header IS NEW.planned_header AND OLD.planned_header_sha256 IS NEW.planned_header_sha256
+      AND OLD.planned_at_unix IS NEW.planned_at_unix AND ((OLD.state='planned' AND NEW.state='verified'
+        AND NEW.raw_frame_sha256 IS NOT NULL AND NEW.raw_frame_delivered_at_unix IS NOT NULL
+        AND neoth_transcript_mining_attestor('raw_receipt',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256)=1) OR (OLD.state='planned' AND NEW.state='cancelled'
+        AND NEW.raw_frame_sha256 IS NULL AND NEW.raw_frame_delivered_at_unix IS NULL AND NEW.cancelled_at_unix IS NOT NULL
+        AND NOT EXISTS(SELECT 1 FROM raw_turns WHERE id=OLD.raw_turn_id)
+        AND EXISTS(SELECT 1 FROM transcript_mining_revocation_receipts AS r
+                   WHERE r.provenance_id=OLD.provenance_id AND r.lifecycle_id=OLD.lifecycle_id
+                     AND r.raw_turn_id=OLD.raw_turn_id AND r.revocation='raw_turn_deleted'
+                     AND r.lifecycle='cancelled' AND r.occurred_at_unix=NEW.cancelled_at_unix))
+        OR (OLD.state='verified' AND NEW.state='verified' AND OLD.raw_frame_sha256 IS NEW.raw_frame_sha256
+            AND OLD.raw_frame_delivered_at_unix IS NEW.raw_frame_delivered_at_unix
+            AND OLD.raw_receipt_location_sha256 IS NEW.raw_receipt_location_sha256
+            AND OLD.cancelled_at_unix IS NEW.cancelled_at_unix
+            AND OLD.delivery_lease='bound_pending' AND NEW.delivery_lease='none'
+            AND (neoth_transcript_mining_attestor('bound_receipt',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256)=1
+                 OR neoth_transcript_mining_attestor('raw_receipt',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256)=1
+                 OR neoth_transcript_mining_attestor('expire_absence',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256)=1))))
+    BEGIN SELECT RAISE(ABORT, 'raw frame plan immutable or invalid attested transition'); END;
+    CREATE TRIGGER transcript_mining_plan_stage3b_lease_guard BEFORE UPDATE OF delivery_lease,delivery_lease_id,delivery_descriptor_sha256 ON transcript_mining_raw_frame_plan
+    WHEN neoth_transcript_mining_attestor('raw_receipt',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256) <> 1
+      AND neoth_transcript_mining_attestor('bound_receipt',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256) <> 1
+      AND neoth_transcript_mining_attestor('expire_absence',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256) <> 1
+    BEGIN SELECT RAISE(ABORT, 'transcript mining attestor required for raw lease'); END;
+    CREATE TRIGGER transcript_mining_lifecycle_stage3b_transition BEFORE UPDATE OF lifecycle,revoked_at_unix,terminal_cause ON transcript_mining_provenance
+    WHEN NOT ((OLD.lifecycle='pending' AND NEW.lifecycle='active' AND NEW.revoked_at_unix IS NULL AND NEW.terminal_cause IS NULL
+      AND COALESCE((SELECT neoth_transcript_mining_attestor('bound_receipt',delivery_lease_id,delivery_descriptor_sha256) FROM transcript_mining_wal_outbox WHERE provenance_id=OLD.provenance_id AND lifecycle_id=OLD.lifecycle_id AND logical_subtype='bound'),0)=1 AND EXISTS(SELECT 1 FROM transcript_mining_wal_outbox WHERE provenance_id=OLD.provenance_id AND lifecycle_id=OLD.lifecycle_id AND logical_subtype='bound' AND state='delivered' AND length(delivered_frame_sha256)=32))
+      OR (OLD.lifecycle='pending' AND NEW.lifecycle='cancelled' AND NEW.terminal_cause='raw_turn_deleted'
+          AND NOT EXISTS(SELECT 1 FROM raw_turns WHERE id=OLD.raw_turn_id)
+          AND EXISTS(SELECT 1 FROM transcript_mining_delete_context WHERE raw_turn_id=OLD.raw_turn_id
+                     AND terminal_cause=NEW.terminal_cause AND occurred_at_unix=NEW.revoked_at_unix))
+      OR (OLD.lifecycle='pending' AND NEW.lifecycle='cancelled' AND NEW.terminal_cause='retention_expired'
+          AND NEW.revoked_at_unix IS NOT NULL AND NEW.revoked_at_unix>=OLD.expires_at_unix
+          AND (COALESCE((SELECT neoth_transcript_mining_attestor('expire_absence',delivery_lease_id,delivery_descriptor_sha256) FROM transcript_mining_wal_outbox WHERE provenance_id=OLD.provenance_id AND lifecycle_id=OLD.lifecycle_id AND logical_subtype='bound'),0)=1
+               OR COALESCE((SELECT neoth_transcript_mining_attestor('bound_receipt',delivery_lease_id,delivery_descriptor_sha256) FROM transcript_mining_wal_outbox WHERE provenance_id=OLD.provenance_id AND lifecycle_id=OLD.lifecycle_id AND logical_subtype='bound'),0)=1
+               OR COALESCE((SELECT neoth_transcript_mining_attestor('raw_receipt',delivery_lease_id,delivery_descriptor_sha256) FROM transcript_mining_raw_frame_plan WHERE provenance_id=OLD.provenance_id AND lifecycle_id=OLD.lifecycle_id),0)=1))
+      OR (OLD.lifecycle='active' AND NEW.lifecycle='revoked' AND NEW.terminal_cause='raw_turn_deleted'
+          AND NOT EXISTS(SELECT 1 FROM raw_turns WHERE id=OLD.raw_turn_id)
+          AND EXISTS(SELECT 1 FROM transcript_mining_delete_context WHERE raw_turn_id=OLD.raw_turn_id
+                     AND terminal_cause=NEW.terminal_cause AND occurred_at_unix=NEW.revoked_at_unix))
+      OR (OLD.lifecycle='active' AND NEW.lifecycle='revoked' AND NEW.terminal_cause='retention_expired'
+          AND NEW.revoked_at_unix>=OLD.expires_at_unix
+          AND COALESCE((SELECT neoth_transcript_mining_attestor('expire_active',delivery_lease_id,delivery_descriptor_sha256)
+                        FROM transcript_mining_wal_outbox WHERE provenance_id=OLD.provenance_id
+                          AND lifecycle_id=OLD.lifecycle_id AND logical_subtype='bound' AND state='delivered'),0)=1)
+      OR (NEW.lifecycle=OLD.lifecycle AND NEW.revoked_at_unix IS OLD.revoked_at_unix AND NEW.terminal_cause IS OLD.terminal_cause))
+    BEGIN SELECT RAISE(ABORT, 'mining lifecycle transition forbidden'); END;
+    CREATE TRIGGER transcript_mining_receipt_binding_matches
+    BEFORE INSERT ON transcript_mining_revocation_receipts
+    WHEN NOT EXISTS (
+        SELECT 1 FROM transcript_mining_provenance AS p
+        WHERE p.provenance_id=NEW.provenance_id AND p.lifecycle_id=NEW.lifecycle_id
+          AND p.raw_turn_id=NEW.raw_turn_id AND p.lifecycle=NEW.lifecycle
+          AND p.terminal_cause=NEW.revocation AND p.revoked_at_unix=NEW.occurred_at_unix
+          AND p.lifecycle IN ('revoked','cancelled')
+          AND ((NEW.revocation='raw_turn_deleted'
+                AND NOT EXISTS(SELECT 1 FROM raw_turns WHERE id=p.raw_turn_id)
+                AND EXISTS(SELECT 1 FROM transcript_mining_delete_context AS c
+                           WHERE c.raw_turn_id=p.raw_turn_id AND c.terminal_cause=NEW.revocation
+                             AND c.occurred_at_unix=NEW.occurred_at_unix))
+               OR (NEW.revocation='retention_expired' AND NEW.occurred_at_unix>=p.expires_at_unix
+                   AND (COALESCE((SELECT neoth_transcript_mining_attestor('raw_receipt',delivery_lease_id,delivery_descriptor_sha256)
+                                  FROM transcript_mining_raw_frame_plan WHERE provenance_id=p.provenance_id AND lifecycle_id=p.lifecycle_id),0)=1
+                        OR COALESCE((SELECT neoth_transcript_mining_attestor('bound_receipt',delivery_lease_id,delivery_descriptor_sha256)
+                                     FROM transcript_mining_wal_outbox WHERE provenance_id=p.provenance_id AND lifecycle_id=p.lifecycle_id AND logical_subtype='bound'),0)=1
+                        OR COALESCE((SELECT neoth_transcript_mining_attestor('expire_absence',delivery_lease_id,delivery_descriptor_sha256)
+                                     FROM transcript_mining_wal_outbox WHERE provenance_id=p.provenance_id AND lifecycle_id=p.lifecycle_id AND logical_subtype='bound'),0)=1
+                        OR COALESCE((SELECT neoth_transcript_mining_attestor('expire_active',delivery_lease_id,delivery_descriptor_sha256)
+                                     FROM transcript_mining_wal_outbox WHERE provenance_id=p.provenance_id AND lifecycle_id=p.lifecycle_id AND logical_subtype='bound' AND state='delivered'),0)=1)))
+    )
+    BEGIN SELECT RAISE(ABORT, 'receipt requires matching authenticated terminal cause'); END;
+    CREATE TRIGGER transcript_mining_outbox_stage3b_terminal BEFORE UPDATE OF state,delivered_at_unix,delivered_frame_sha256,delivered_receipt_location_sha256 ON transcript_mining_wal_outbox
+    WHEN NOT ((OLD.state='pending' AND NEW.state='delivered' AND NEW.delivered_at_unix IS NOT NULL
+      AND NEW.delivered_frame_sha256 IS NOT NULL AND length(NEW.delivered_frame_sha256)=32
+      AND NEW.delivered_receipt_location_sha256 IS NOT NULL
+      AND length(NEW.delivered_receipt_location_sha256)=32
+      AND (neoth_transcript_mining_attestor('bound_receipt',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256)=1 OR neoth_transcript_mining_attestor('revocation_receipt',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256)=1))
+      OR (OLD.state='pending' AND NEW.state='cancelled' AND NEW.delivered_at_unix IS NULL AND NEW.delivered_frame_sha256 IS NULL
+          AND NEW.delivered_receipt_location_sha256 IS NULL
+          AND neoth_transcript_mining_attestor('expire_absence',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256)=1)
+      OR (NEW.state=OLD.state AND NEW.delivered_at_unix IS OLD.delivered_at_unix AND NEW.delivered_frame_sha256 IS OLD.delivered_frame_sha256
+          AND NEW.delivered_receipt_location_sha256 IS OLD.delivered_receipt_location_sha256))
+    BEGIN SELECT RAISE(ABORT, 'mining outbox terminal state immutable'); END;
+    CREATE TRIGGER transcript_mining_outbox_stage3b_descriptor_guard BEFORE UPDATE OF planned_header,planned_header_sha256,delivery_lease,delivery_lease_id,delivery_descriptor_sha256 ON transcript_mining_wal_outbox
+    WHEN neoth_transcript_mining_attestor('raw_receipt',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256) <> 1
+      AND neoth_transcript_mining_attestor('bound_receipt',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256) <> 1
+      AND neoth_transcript_mining_attestor('expire_absence',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256) <> 1
+      AND neoth_transcript_mining_attestor('revocation_receipt',NEW.delivery_lease_id,NEW.delivery_descriptor_sha256) <> 1
+    BEGIN SELECT RAISE(ABORT, 'transcript mining attestor required for outbox descriptor'); END;
+    CREATE TRIGGER transcript_mining_raw_turn_delete_busy_while_leased BEFORE DELETE ON raw_turns
+    WHEN EXISTS(SELECT 1 FROM transcript_mining_raw_frame_plan WHERE raw_turn_id=OLD.id AND delivery_lease<>'none')
+      OR EXISTS(SELECT 1 FROM transcript_mining_wal_outbox AS o JOIN transcript_mining_provenance AS p ON p.provenance_id=o.provenance_id WHERE p.raw_turn_id=OLD.id AND o.delivery_lease<>'none')
+    BEGIN SELECT RAISE(ABORT, 'transcript mining delivery lease is busy'); END;
+"#;
+
 /// `<NEOTH_HOME>/views.db`, falling back to `~/.neoth/views.db`.
 ///
 /// Standalone CLI commands use this path too, so it must share the exact home
@@ -1401,6 +1531,7 @@ fn open_with_prepared_history_target_and_hook(
         Connection::open(path)
     }
     .with_context(|| format!("open SQLite db {}", path.display()))?;
+    install_transcript_mining_default_deny(&conn)?;
     if let Some(file) = witness {
         verify_fresh_history_path_identity(path, file)
             .context("rebind prepared private History database after SQLite open")?;
@@ -1511,6 +1642,30 @@ fn open_with_prepared_history_target_and_hook(
     }
 
     Ok(conn)
+}
+
+/// Every ordinary views connection registers explicit deny functions.  SQLite
+/// resolves trigger functions while preparing even a legacy epoch-0 statement,
+/// so leaving them absent would break normal transcript storage rather than
+/// merely rejecting protected mutations.  `TranscriptMiningStore` replaces
+/// these connection-local functions on its private attestor connection.
+fn install_transcript_mining_default_deny(conn: &Connection) -> Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    conn.create_scalar_function(
+        "neoth_transcript_mining_attestor",
+        3,
+        FunctionFlags::SQLITE_UTF8,
+        |_| Ok(0_i64),
+    )
+    .context("install transcript mining default attestor deny")?;
+    conn.create_scalar_function(
+        "neoth_transcript_mining_attestor_birth",
+        0,
+        FunctionFlags::SQLITE_UTF8,
+        |_| Ok(0_i64),
+    )
+    .context("install transcript mining default birth deny")?;
+    Ok(())
 }
 
 /// NN-MEM-01 — pin / unpin a hot-tier episode. Pinned episodes are
@@ -2370,6 +2525,8 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         .context("apply v37 transcript mining metadata tables")?;
     conn.execute_batch(TRANSCRIPT_MINING_V37_TRIGGERS_SQL)
         .context("apply v37 transcript mining metadata triggers")?;
+    crate::memory::migrations::migration_v37_to_v38(conn)
+        .context("apply v38 transcript mining schema and attestor triggers")?;
     // SPEC-11 merge tombstone — idempotent column add for an `idx_human_identity`
     // created before the `merged_into` column existed. `CREATE TABLE IF NOT
     // EXISTS` never alters an existing table, so back-fill the column here;
@@ -2914,20 +3071,19 @@ mod tests {
             )
             .unwrap();
         assert_eq!(history_tables, 0);
-        assert_eq!(version, 37);
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]
-    fn on_disk_v37_open_migrates_only_the_empty_history_journal() {
+    fn on_disk_current_views_open_migrates_only_the_empty_history_journal() {
         let dir = tempdir().unwrap();
         let parent = dir.path().join("history");
         std::fs::create_dir(&parent).unwrap();
         make_private_history_directory(&parent).unwrap();
-        let path = parent.join("v37.db");
+        let path = parent.join("current-views.db");
         let conn = open(&path).unwrap();
         conn.execute_batch(
-            "UPDATE meta SET value='37' WHERE key='schema_version';
-             INSERT INTO meta(key,value) VALUES('history_migration_sentinel','preserve-me');",
+            "INSERT INTO meta(key,value) VALUES('history_migration_sentinel','preserve-me');",
         )
         .unwrap();
         drop(conn);
@@ -3120,7 +3276,7 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(foreign_keys, 1);
-        assert_eq!(versions, ("37".to_string(), "1".to_string()));
+        assert_eq!(versions, (SCHEMA_VERSION.to_string(), "1".to_string()));
         assert_eq!(journal_tables, 2);
         assert_eq!(
             history_indexes,

@@ -109,11 +109,11 @@ pub mod store;
 /// as a follow-up once the ingress summarise path consumes it.
 pub mod summarize_prompt;
 pub mod tiers;
-/// GOLD-LF-P1-08 stages 1–2: the sealed metadata-only payload contract is
-/// unit-test compiled until later work deliberately wires an authenticated
-/// production producer and reader.
-#[cfg(test)]
+/// GOLD-LF-P1-08: sealed metadata-only payload contract. Construction stays
+/// crate-private and is reachable only from the authenticated Stage-3b store.
 pub(crate) mod transcript_mining_provenance;
+pub(crate) mod transcript_mining_runtime;
+pub(crate) mod transcript_mining_store;
 /// GOLD-ADAPT-ODY-26 — raw-turn persistence + FTS5 search with before/after
 /// context rows. `neoth recall --transcript <query>` surface.
 pub mod transcript_store;

@@ -249,7 +249,7 @@ EM-02b — CalDAV calendar. `list` reports VEVENTs in the configured collection;
 
 ### `neoth calendar add`
 
-Add (PUT) a new event. Gated + audited (`0xC8`) like every external write; idempotent by `(summary, start)` so a re-run never duplicates
+Add (PUT) a new event. Gated and decision-audited like every external write; idempotent by `(summary, start)` so a re-run never duplicates
 
 - `<SUMMARY>` — Event title (SUMMARY)
 - `--start <START>` — RFC-3339 / iCal start, e.g. `2026-05-30T09:00:00Z` or `2026-05-30` (date-only = all-day)
@@ -1977,7 +1977,7 @@ Idempotently register the built-in codegraph stdio server in `~/.neoth/mcp_serve
 
 ### `neoth mcp codegraph-serve`
 
-Serve NEOTH's eight read-only codegraph tools over MCP stdio. Intended as a subprocess entrypoint for MCP hosts; stdout contains protocol messages only. Run `codegraph-install` to register it in NEOTH itself
+Serve NEOTH's nine read-only codegraph tools over MCP stdio. Intended as a subprocess entrypoint for MCP hosts; stdout contains protocol messages only. Run `codegraph-install` to register it in NEOTH itself
 
 - `--db <DB>` — Override the persisted code-map database path
 
@@ -3036,6 +3036,12 @@ Bind a fresh run directory to exact validated config/goldset bytes
 - `--run-dir <DIR>`
 - `--grader-config <PATH>`
 - `--goldset <PATH>`
+
+### `neoth recall-parity-harness reconcile-transcripts`
+
+Resume exact pending transcript receipts for one local NEOTH home. This grants no new mining opt-in and never relabels legacy transcripts
+
+- `--home <DIR>`
 
 ### `neoth recall-parity-harness report`
 

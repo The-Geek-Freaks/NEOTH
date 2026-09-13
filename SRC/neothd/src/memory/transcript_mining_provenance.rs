@@ -144,6 +144,24 @@ pub(crate) enum FiniteRetention {
     Days30,
 }
 
+impl FiniteRetention {
+    pub(crate) const fn sql_name(self) -> &'static str {
+        match self {
+            Self::Minutes15 => "minutes15",
+            Self::Hours24 => "hours24",
+            Self::Days30 => "days30",
+        }
+    }
+
+    pub(crate) const fn lifetime_seconds(self) -> i64 {
+        match self {
+            Self::Minutes15 => 15 * 60,
+            Self::Hours24 => 24 * 60 * 60,
+            Self::Days30 => 30 * 24 * 60 * 60,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PrivacyDisposition {
@@ -218,6 +236,74 @@ pub(crate) struct TranscriptMiningRevokedV1 {
 }
 
 impl TranscriptMiningBoundV1 {
+    pub(crate) fn raw_frame_sha256(&self) -> [u8; 32] {
+        self.raw_frame.raw_frame_sha256.0
+    }
+
+    /// Copy the immutable reference only after the caller has authenticated
+    /// this exact Bound payload. No mutable raw-plan projection is required.
+    pub(crate) fn revocation_payload(
+        &self,
+        revocation: MiningRevocation,
+        lifecycle: MiningLifecycle,
+        revoked_at_unix: i64,
+    ) -> Result<Vec<u8>> {
+        use sha2::{Digest as _, Sha256};
+        let bound_sha256: [u8; 32] = Sha256::digest(self.encode()?).into();
+        TranscriptMiningRevokedV1::from_attested_store(
+            self.lifecycle_id.0.clone(),
+            self.provenance_id.0.clone(),
+            self.subject.0.0,
+            self.raw_frame.raw_turn_row_id.0,
+            self.raw_frame.raw_frame_sha256.0,
+            bound_sha256,
+            revocation,
+            lifecycle,
+            revoked_at_unix,
+        )?
+        .encode()
+    }
+    pub(crate) const fn expires_at_unix(&self) -> i64 {
+        self.expires_at_unix
+    }
+    /// Validate canonical metadata from the guarded SQLite projection.
+    /// Constructing this payload does not mint ingress or WAL receipt authority.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep canonical metadata fields explicit at the guarded store boundary"
+    )]
+    pub(crate) fn from_attested_store(
+        lifecycle_id: String,
+        provenance_id: String,
+        subject_sha256: [u8; 32],
+        raw_turn_row_id: i64,
+        raw_frame_sha256: [u8; 32],
+        raw_text_sha256: [u8; 32],
+        retention: FiniteRetention,
+        issued_at_unix: i64,
+        expires_at_unix: i64,
+    ) -> Result<Self> {
+        let value = Self {
+            schema_version: TRANSCRIPT_MINING_PAYLOAD_SCHEMA_VERSION,
+            lifecycle_id: MiningLifecycleId::parse(lifecycle_id)?,
+            provenance_id: MiningProvenanceId::parse(provenance_id)?,
+            subject: AuthenticatedMiningSubject::from_verified_digest(Sha256Digest(subject_sha256)),
+            raw_frame: RawFrameReference {
+                raw_turn_row_id: RawTurnRowId::parse(raw_turn_row_id)?,
+                raw_frame_sha256: Sha256Digest(raw_frame_sha256),
+            },
+            raw_text_sha256: Sha256Digest(raw_text_sha256),
+            source_kind: TranscriptMiningSourceKind::OperatorRawTextV1,
+            retention,
+            privacy_disposition: PrivacyDisposition::MiningPermitted,
+            lifecycle: MiningLifecycle::Active,
+            issued_at_unix,
+            expires_at_unix,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
     fn validate(&self) -> Result<()> {
         self.lifecycle_id.validate()?;
         self.provenance_id.validate()?;
@@ -275,6 +361,40 @@ impl TranscriptMiningBoundV1 {
 }
 
 impl TranscriptMiningRevokedV1 {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep canonical metadata fields explicit at the guarded store boundary"
+    )]
+    pub(crate) fn from_attested_store(
+        lifecycle_id: String,
+        provenance_id: String,
+        subject_sha256: [u8; 32],
+        raw_turn_row_id: i64,
+        raw_frame_sha256: [u8; 32],
+        bound_payload_sha256: [u8; 32],
+        revocation: MiningRevocation,
+        lifecycle: MiningLifecycle,
+        revoked_at_unix: i64,
+    ) -> Result<Self> {
+        let value = Self {
+            schema_version: TRANSCRIPT_MINING_PAYLOAD_SCHEMA_VERSION,
+            lifecycle_id: MiningLifecycleId::parse(lifecycle_id)?,
+            provenance_id: MiningProvenanceId::parse(provenance_id)?,
+            subject: AuthenticatedMiningSubject::from_verified_digest(Sha256Digest(subject_sha256)),
+            raw_frame: RawFrameReference {
+                raw_turn_row_id: RawTurnRowId::parse(raw_turn_row_id)?,
+                raw_frame_sha256: Sha256Digest(raw_frame_sha256),
+            },
+            bound_payload_sha256: Sha256Digest(bound_payload_sha256),
+            revocation,
+            privacy_disposition: PrivacyDisposition::Revoked,
+            lifecycle,
+            revoked_at_unix,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
     fn validate(&self) -> Result<()> {
         self.lifecycle_id.validate()?;
         self.provenance_id.validate()?;

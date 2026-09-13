@@ -3,6 +3,19 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 10 component accepted 2026-09-13 — GOLD-LF-P1-08 Stage 3b:**
+> finite local opt-in now drives exact authenticated RAW_TEXT/Bound delivery,
+> persisted retry descriptors and guarded SQLite V38 leases. Lost ACKs,
+> deletion, four expiry boundaries, archived-key recovery and damaged raw-plan
+> bookkeeping are covered. The WAL scanner preserves its resource limits
+> while validating signed key rotations. **242 selected tests pass**, plus
+> one parent-owned cross-process child; Core, strict Clippy, workspace format
+> and independent review pass. Evidence: `docs/gold-wave10-verification.md`
+> and its sixteen-input source manifest/test matrix. Final test build: one
+> job, Idle, four logical CPUs, at least 218.44 GiB RAM free. P1-08 remains
+> open for candidate export, labeling and the full grading workflow; counts
+> below are unchanged. Publication targets GitHub main directly.
+>
 > **Wave 9 completion 2026-09-13 — GOLD-LF-P1-06:** the production Council
 > now evaluates factual claims, recommendations and risks with explicit
 > 50/30/20 weights and conservative textual identity. Nested debates preserve

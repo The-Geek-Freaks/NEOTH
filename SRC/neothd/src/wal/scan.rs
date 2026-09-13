@@ -41,6 +41,7 @@ const LEGACY_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024 + 104;
 const LEGACY_SEAL_ENVELOPE_BYTES: usize = 1024 * 1024;
 pub(crate) const LEGACY_SAFE_MAX_SEGMENT_PHYSICAL_BYTES: usize =
     LEGACY_ROTATION_TARGET_BYTES + LEGACY_MAX_FRAME_BYTES + LEGACY_SEAL_ENVELOPE_BYTES;
+const MAX_DISCOVERED_PROOF_KEY_ROTATIONS: usize = 4096;
 
 /// Bounded work contract for security-sensitive instance-home scans.
 #[derive(Clone, Copy, Debug)]
@@ -145,6 +146,26 @@ struct AuthenticatedHomeSegmentProof {
     header_len: usize,
     authenticated_through: usize,
     allow_torn_tail: bool,
+}
+
+/// Fixed metadata retained from the bounded signing-transition discovery pass.
+/// It pins every transition to the exact segment the later authenticated pass
+/// accepts, so a path replacement cannot lend trust to different bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SigningDiscoverySegmentProof {
+    name: OsString,
+    parsed: ParsedSegmentHeader,
+    physical_len: u64,
+    physical_sha256_hex: String,
+}
+
+impl SigningDiscoverySegmentProof {
+    fn matches_authenticated(&self, segment: &AuthenticatedHomeSegment) -> bool {
+        self.name == segment.name
+            && self.parsed == segment.parsed
+            && self.physical_len == segment.physical_len
+            && self.physical_sha256_hex == segment.physical_sha256_hex
+    }
 }
 
 impl AuthenticatedHomeSegment {
@@ -814,6 +835,144 @@ fn enumerate_home_segments(
     Ok(segments)
 }
 
+fn is_hmac_rotation_segment_name(name: &std::ffi::OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    let Some(namespace) = name.strip_suffix("-hmac-key-rotate-000001.wal") else {
+        return false;
+    };
+    uuid::Uuid::parse_str(namespace).is_ok()
+}
+
+fn discover_bounded_signing_transitions(
+    root: &crate::skills::store::BoundDirectory,
+    segment_key: Option<&crate::wal::crypto::WalSegmentKey>,
+    segments: &[HomeSegmentName],
+    limits: HomeWalScanLimits,
+) -> Result<(
+    Vec<SigningDiscoverySegmentProof>,
+    Vec<crate::wal::signing::ProofKeyRotationPayload>,
+)> {
+    let mut total_physical = 0u64;
+    let mut total_logical = 0u64;
+    let mut identities = Vec::with_capacity(segments.len());
+    let mut transitions = Vec::new();
+    for (_, sequence, name) in segments {
+        let display = root.display_path.join(name);
+        let raw = crate::skills::store::read_regular_file_bounded(
+            &root.dir,
+            name,
+            &display,
+            limits.max_segment_physical_bytes,
+        )
+        .with_context(|| {
+            format!(
+                "read bounded signing-transition segment {}",
+                display.display()
+            )
+        })?;
+        total_physical = total_physical
+            .checked_add(raw.len() as u64)
+            .context("signing-transition physical-byte counter overflow")?;
+        anyhow::ensure!(
+            total_physical <= limits.max_total_physical_bytes,
+            "signing-transition discovery exceeds the {}-byte aggregate physical limit",
+            limits.max_total_physical_bytes
+        );
+        let parsed = parse_segment_header(&raw).with_context(|| {
+            format!(
+                "parse signing-transition segment header {}",
+                display.display()
+            )
+        })?;
+        anyhow::ensure!(
+            parsed.segment_seq() == *sequence,
+            "signing-transition segment {} header sequence {} differs from file sequence {sequence}",
+            display.display(),
+            parsed.segment_seq()
+        );
+        let (header_len, logical) = logical_segment_bytes_with_key_capped(
+            &raw,
+            segment_key,
+            limits.max_segment_logical_bytes,
+        )
+        .with_context(|| {
+            format!(
+                "reconstruct bounded signing-transition segment {}",
+                display.display()
+            )
+        })?;
+        total_logical = total_logical
+            .checked_add(logical.len() as u64)
+            .context("signing-transition logical-byte counter overflow")?;
+        anyhow::ensure!(
+            total_logical <= limits.max_total_logical_bytes,
+            "signing-transition discovery exceeds the {}-byte aggregate logical limit",
+            limits.max_total_logical_bytes
+        );
+        let mut cursor = header_len;
+        while cursor < logical.len() {
+            let Ok(frame) = decode_frame(&logical[cursor..]) else {
+                break;
+            };
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8
+                && let Ok(payload) = serde_json::from_slice::<
+                    crate::wal::signing::ProofKeyRotationPayload,
+                >(frame.payload)
+                && payload.validate().is_ok()
+            {
+                anyhow::ensure!(
+                    transitions.len() < MAX_DISCOVERED_PROOF_KEY_ROTATIONS,
+                    "signing-transition discovery exceeds the {}-transition limit",
+                    MAX_DISCOVERED_PROOF_KEY_ROTATIONS
+                );
+                transitions.push(payload);
+            }
+            let total = frame.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        identities.push(SigningDiscoverySegmentProof {
+            name: name.clone(),
+            parsed,
+            physical_len: u64::try_from(raw.len())
+                .context("signing-transition physical length exceeds u64")?,
+            physical_sha256_hex: hex::encode(Sha256::digest(&raw)),
+        });
+    }
+    Ok((identities, transitions))
+}
+
+fn bounded_current_signing_pubkey(
+    root: &crate::skills::store::BoundDirectory,
+) -> Result<Option<String>> {
+    let name = std::ffi::OsStr::new("signing.key");
+    let display = root.display_path.join(name);
+    match root.dir.symlink_metadata(name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("inspect bounded signing key {}", display.display()))
+        }
+        Ok(_) => {
+            let body = crate::skills::store::read_regular_file_bounded(
+                &root.dir,
+                name,
+                &display,
+                MAX_HOME_KEY_BYTES,
+            )
+            .with_context(|| format!("read bounded signing key {}", display.display()))?;
+            Ok(crate::wal::signing::signing_pubkey_from_storage(
+                &body, &display,
+            ))
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn load_authenticated_home_segment(
     root: &crate::skills::store::BoundDirectory,
@@ -874,22 +1033,25 @@ fn load_authenticated_home_segment(
         "WAL scan exceeds the {}-byte aggregate logical limit",
         limits.max_total_logical_bytes
     );
-    let is_strict_rotation_evidence = require_complete_authentication
-        && is_complete_hmac_rotation_evidence(
+    let is_signed_rotation_evidence = if is_hmac_rotation_segment_name(name) {
+        is_complete_hmac_rotation_evidence(
             name,
             &logical,
             header_len,
             trusted_rotation_signers
-                .context("strict rotation signers are missing under strict authentication")?,
+                .context("rotation signers are missing during authenticated WAL scan")?,
         )
         .with_context(|| {
             format!(
-                "validate signed HMAC-key rotation evidence before retention {}",
+                "validate signed HMAC-key rotation evidence before authenticated scan {}",
                 display.display()
             )
-        })?;
+        })?
+    } else {
+        false
+    };
     let allow_torn_tail = ends_namespace && !parsed.is_sealed() && !require_complete_authentication;
-    let authenticated_through = if is_strict_rotation_evidence {
+    let authenticated_through = if is_signed_rotation_evidence {
         logical.len()
     } else {
         crate::wal::writer::verify_existing_compaction_marker_windows(
@@ -961,13 +1123,33 @@ where
             &loaded_verification_keys
         }
     };
-    let trusted_rotation_signers = require_complete_authentication.then(|| {
-        let paths = segments
-            .iter()
-            .map(|(_, _, name)| root.display_path.join(name))
-            .collect::<Vec<_>>();
-        crate::wal::signing::trusted_signing_pubkeys(&paths, &root.display_path.join("signing.key"))
-    });
+    // A signed HMAC-key rotation audit is an authenticated terminal segment in
+    // both strict-retention and authenticated-prefix scans. Prefix readers
+    // therefore need the proof-key predecessor chain before accepting 0xD9,
+    // but discovery itself must stay inside this retained root and its bounded
+    // segment limits. The later authenticated pass pins every discovered
+    // transition to the same physical segment identity before it may grant
+    // signed-rotation completeness.
+    let rotation_present = segments
+        .iter()
+        .any(|(_, _, name)| is_hmac_rotation_segment_name(name));
+    let (signing_discovery, trusted_rotation_signers) = if rotation_present {
+        let (discovery, transitions) =
+            discover_bounded_signing_transitions(&root, segment_key.as_ref(), &segments, limits)?;
+        let current = bounded_current_signing_pubkey(&root)?;
+        let trusted = crate::wal::signing::trusted_signing_pubkeys_from_valid_transitions(
+            current,
+            &transitions,
+        );
+        (Some(discovery), Some(trusted))
+    } else {
+        (None, None)
+    };
+    let authenticated_segments = enumerate_home_segments(&root, &wal_path, limits)?;
+    anyhow::ensure!(
+        authenticated_segments == segments,
+        "WAL namespace changed between signing-transition discovery and authentication"
+    );
     // Pass 1 proves the complete retained history while keeping at most one
     // reconstructed segment alive.  No callback may observe a prefix until
     // every namespace, marker window and predecessor link has validated.
@@ -975,10 +1157,10 @@ where
     let mut total_logical = 0u64;
     let mut authenticated_proofs = Vec::with_capacity(segments.len());
     let mut previous_proof: Option<AuthenticatedHomeSegmentProof> = None;
-    for index in 0..segments.len() {
-        let (namespace, sequence, name) = &segments[index];
-        let ends_namespace =
-            index + 1 == segments.len() || segments[index + 1].0.as_deref() != namespace.as_deref();
+    for index in 0..authenticated_segments.len() {
+        let (namespace, sequence, name) = &authenticated_segments[index];
+        let ends_namespace = index + 1 == authenticated_segments.len()
+            || authenticated_segments[index + 1].0.as_deref() != namespace.as_deref();
         let authenticated = load_authenticated_home_segment(
             &root,
             segment_key.as_ref(),
@@ -993,6 +1175,12 @@ where
             &mut total_physical,
             &mut total_logical,
         )?;
+        if let Some(discovery) = signing_discovery.as_ref() {
+            anyhow::ensure!(
+                discovery[index].matches_authenticated(&authenticated),
+                "WAL segment changed between signing-transition discovery and authentication"
+            );
+        }
         if let Some(previous) = previous_proof.as_ref()
             && previous.namespace == authenticated.namespace
         {
@@ -1013,7 +1201,7 @@ where
     // authority.
     let callback_segments = enumerate_home_segments(&root, &wal_path, limits)?;
     anyhow::ensure!(
-        callback_segments == segments,
+        callback_segments == authenticated_segments,
         "WAL namespace changed between authentication and callback passes"
     );
     total_physical = 0;
@@ -1100,13 +1288,7 @@ fn is_complete_hmac_rotation_evidence(
     header_len: usize,
     trusted_signers: &std::collections::BTreeSet<String>,
 ) -> Result<bool> {
-    let Some(name) = name.to_str() else {
-        return Ok(false);
-    };
-    let Some(namespace) = name.strip_suffix("-hmac-key-rotate-000001.wal") else {
-        return Ok(false);
-    };
-    if uuid::Uuid::parse_str(namespace).is_err() {
+    if !is_hmac_rotation_segment_name(name) {
         return Ok(false);
     }
     let bytes = logical
@@ -2411,6 +2593,127 @@ mod tests {
         let authenticated_after_rotation = scan_authenticated();
         assert!(authenticated_after_rotation.contains(&0x44));
         assert!(!authenticated_after_rotation.contains(&0x45));
+    }
+
+    #[tokio::test]
+    async fn authenticated_prefix_treats_real_signed_hmac_rotation_as_complete_or_fails_closed() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        fs::create_dir_all(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.path().to_path_buf())
+            .expect("start old-key writer");
+        let payload = b"old-key authenticated frame";
+        writer
+            .append_authenticated(HeaderBuilder::new(0x44, payload).build(), payload.to_vec())
+            .await
+            .expect("close old-key frame with a marker");
+        drop(writer);
+        join.await.expect("finish old-key writer");
+
+        crate::cli::security::rotate_hmac_key_with_audit(
+            home.path(),
+            &wal.join("hmac.key"),
+            &[0x91; 32],
+            crate::cli::security::HmacKeyMutationMode::RotateExisting,
+            Some(wal.join("hmac.key.1700000000.archive")),
+        )
+        .await
+        .expect("emit the signed rotation audit before replacing the active key");
+
+        let mut saw_rotation = false;
+        let scan = for_each_authenticated_prefix_frame_at_home(
+            home.path(),
+            HomeWalScanLimits::default(),
+            |_, frame| {
+                saw_rotation |=
+                    frame.header.event_type == crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED;
+                Ok(())
+            },
+        )
+        .expect("signed rotation audit is an authenticated prefix boundary");
+        assert!(
+            scan.complete,
+            "rotation audit must permit a later absence proof"
+        );
+        assert!(
+            saw_rotation,
+            "authenticated prefix includes signed rotation audit"
+        );
+
+        let physical_sizes = fs::read_dir(&wal)
+            .expect("enumerate real-rotation WAL fixture")
+            .flatten()
+            .filter_map(|entry| {
+                (entry.path().extension().and_then(|value| value.to_str()) == Some("wal")).then(
+                    || {
+                        entry
+                            .metadata()
+                            .expect("read fixture segment metadata")
+                            .len()
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let total_physical = physical_sizes.iter().copied().sum::<u64>();
+        let total_logical = scan
+            .boundaries
+            .iter()
+            .map(|boundary| u64::try_from(boundary.logical_len).expect("fixture logical length"))
+            .sum::<u64>();
+        for (label, limits) in [
+            (
+                "aggregate physical",
+                HomeWalScanLimits {
+                    max_total_physical_bytes: total_physical - 1,
+                    ..HomeWalScanLimits::default()
+                },
+            ),
+            (
+                "aggregate logical",
+                HomeWalScanLimits {
+                    max_total_logical_bytes: total_logical - 1,
+                    ..HomeWalScanLimits::default()
+                },
+            ),
+            (
+                "per-segment physical",
+                HomeWalScanLimits {
+                    max_segment_physical_bytes: usize::try_from(
+                        physical_sizes
+                            .iter()
+                            .copied()
+                            .max()
+                            .expect("rotation segments exist")
+                            - 1,
+                    )
+                    .expect("fixture segment size fits usize"),
+                    ..HomeWalScanLimits::default()
+                },
+            ),
+        ] {
+            let mut callbacks = 0usize;
+            assert!(
+                for_each_authenticated_prefix_frame_at_home(home.path(), limits, |_, _| {
+                    callbacks += 1;
+                    Ok(())
+                })
+                .is_err(),
+                "{label} ceiling must reject the real signed-rotation fixture"
+            );
+            assert_eq!(callbacks, 0, "{label} ceiling must fail before callbacks");
+        }
+
+        fs::remove_file(wal.join("signing.key")).expect("remove the rotation trust root");
+        assert!(
+            for_each_authenticated_prefix_frame_at_home(
+                home.path(),
+                HomeWalScanLimits::default(),
+                |_, _| Ok(()),
+            )
+            .is_err(),
+            "a rotation-shaped segment without its trusted signing proof cannot prove absence"
+        );
     }
 
     #[test]

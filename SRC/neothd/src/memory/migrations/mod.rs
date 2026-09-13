@@ -285,6 +285,12 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "GOLD-LF-P1-08 stage 3a: exact raw-frame plans, transaction-local deletion causes, and subtype-safe outbox admission",
         run: migration_v36_to_v37,
     },
+    Migration {
+        from: 37,
+        to: 38,
+        description: "GOLD-LF-P1-08 Stage 3b: transcript mining delivery lease",
+        run: migration_v37_to_v38,
+    },
 ];
 
 /// v35 → v36: establish only modern transcript-mining provenance. This must
@@ -662,6 +668,84 @@ fn migration_v36_to_v37(conn: &Connection) -> Result<()> {
 
     conn.execute_batch(TRANSCRIPT_MINING_V37_TRIGGERS_SQL)
         .context("v37 install transcript mining integrity triggers")?;
+    Ok(())
+}
+
+/// Stage 3b persists exact opaque leases and outbox headers, then replaces the
+/// Stage-3a reservation triggers with the connection-local attestor gates.
+/// Existing v37 rows have no authenticable outbox header and remain inert;
+/// migration never turns them into authority.
+pub(crate) fn migration_v37_to_v38(conn: &Connection) -> Result<()> {
+    let has = |table: &str, column: &str| -> Result<bool> {
+        Ok(conn
+            .prepare(&format!("PRAGMA table_info({table})"))?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .iter()
+            .any(|name| name == column))
+    };
+    for (table, sql) in [
+        (
+            "transcript_mining_raw_frame_plan",
+            "ALTER TABLE transcript_mining_raw_frame_plan ADD COLUMN delivery_lease TEXT NOT NULL DEFAULT 'none' CHECK(delivery_lease IN ('none','raw_pending','bound_pending','revocation_pending'))",
+        ),
+        (
+            "transcript_mining_wal_outbox",
+            "ALTER TABLE transcript_mining_wal_outbox ADD COLUMN delivery_lease TEXT NOT NULL DEFAULT 'none' CHECK(delivery_lease IN ('none','bound_pending','revocation_pending'))",
+        ),
+    ] {
+        if !has(table, "delivery_lease")? {
+            conn.execute_batch(sql)?;
+        }
+    }
+    for (table, column, sql) in [
+        (
+            "transcript_mining_raw_frame_plan",
+            "delivery_lease_id",
+            "ALTER TABLE transcript_mining_raw_frame_plan ADD COLUMN delivery_lease_id TEXT CHECK(delivery_lease_id IS NULL OR (length(delivery_lease_id) BETWEEN 1 AND 64 AND delivery_lease_id NOT GLOB '*[^a-z0-9_-]*'))",
+        ),
+        (
+            "transcript_mining_raw_frame_plan",
+            "delivery_descriptor_sha256",
+            "ALTER TABLE transcript_mining_raw_frame_plan ADD COLUMN delivery_descriptor_sha256 BLOB CHECK(delivery_descriptor_sha256 IS NULL OR length(delivery_descriptor_sha256)=32)",
+        ),
+        (
+            "transcript_mining_wal_outbox",
+            "delivery_lease_id",
+            "ALTER TABLE transcript_mining_wal_outbox ADD COLUMN delivery_lease_id TEXT CHECK(delivery_lease_id IS NULL OR (length(delivery_lease_id) BETWEEN 1 AND 64 AND delivery_lease_id NOT GLOB '*[^a-z0-9_-]*'))",
+        ),
+        (
+            "transcript_mining_wal_outbox",
+            "delivery_descriptor_sha256",
+            "ALTER TABLE transcript_mining_wal_outbox ADD COLUMN delivery_descriptor_sha256 BLOB CHECK(delivery_descriptor_sha256 IS NULL OR length(delivery_descriptor_sha256)=32)",
+        ),
+        (
+            "transcript_mining_wal_outbox",
+            "planned_header",
+            "ALTER TABLE transcript_mining_wal_outbox ADD COLUMN planned_header BLOB CHECK(planned_header IS NULL OR length(planned_header)=96)",
+        ),
+        (
+            "transcript_mining_wal_outbox",
+            "planned_header_sha256",
+            "ALTER TABLE transcript_mining_wal_outbox ADD COLUMN planned_header_sha256 BLOB CHECK(planned_header_sha256 IS NULL OR length(planned_header_sha256)=32)",
+        ),
+        (
+            "transcript_mining_raw_frame_plan",
+            "raw_receipt_location_sha256",
+            "ALTER TABLE transcript_mining_raw_frame_plan ADD COLUMN raw_receipt_location_sha256 BLOB CHECK(raw_receipt_location_sha256 IS NULL OR length(raw_receipt_location_sha256)=32)",
+        ),
+        (
+            "transcript_mining_wal_outbox",
+            "delivered_receipt_location_sha256",
+            "ALTER TABLE transcript_mining_wal_outbox ADD COLUMN delivered_receipt_location_sha256 BLOB CHECK(delivered_receipt_location_sha256 IS NULL OR length(delivered_receipt_location_sha256)=32)",
+        ),
+    ] {
+        if !has(table, column)? {
+            conn.execute_batch(sql)?;
+        }
+    }
+    conn.execute_batch(crate::memory::store::TRANSCRIPT_MINING_V38_TRIGGERS_SQL)
+        .context("v38 install transcript mining attestor triggers")?;
     Ok(())
 }
 
@@ -3255,8 +3339,23 @@ mod tests {
             "all v36 raw rows stay pre-plan epoch"
         );
 
-        let fresh_home = tempfile::tempdir().unwrap();
-        let fresh = crate::memory::store::open(&fresh_home.path().join("views.db")).unwrap();
+        // Compare this explicit historical target with an empty v37 schema,
+        // not the current store version, which may add later migrations.
+        let fresh = Connection::open_in_memory().unwrap();
+        fresh
+            .execute_batch(
+                "PRAGMA foreign_keys=ON;
+             CREATE TABLE raw_turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                ts_unix INTEGER NOT NULL,
+                text TEXT NOT NULL
+             );",
+            )
+            .unwrap();
+        migration_v35_to_v36(&fresh).unwrap();
+        migration_v36_to_v37(&fresh).unwrap();
         let raw_turn_columns = |database: &Connection| {
             database
                 .prepare("SELECT name,type,\"notnull\",pk FROM pragma_table_info('raw_turns') ORDER BY cid")
@@ -4444,5 +4543,200 @@ mod tests {
         assert_eq!(achieved, target);
         let stamped = current_version(&conn).unwrap();
         assert_eq!(stamped, target);
+    }
+
+    #[test]
+    fn migration_v37_to_v38_preserves_real_v37_rows_and_installs_default_deny_gates() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE raw_turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                ts_unix INTEGER NOT NULL,
+                text TEXT NOT NULL
+             );",
+        )
+        .unwrap();
+        migration_v35_to_v36(&conn).unwrap();
+        migration_v36_to_v37(&conn).unwrap();
+
+        // Released v37 has none of the additive v38 columns.
+        let has_column = |table: &str, column: &str| {
+            conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name=?2")
+                .unwrap()
+                .exists([table, column])
+                .unwrap()
+        };
+        for (table, column) in [
+            ("transcript_mining_raw_frame_plan", "delivery_lease"),
+            ("transcript_mining_raw_frame_plan", "delivery_lease_id"),
+            (
+                "transcript_mining_raw_frame_plan",
+                "delivery_descriptor_sha256",
+            ),
+            (
+                "transcript_mining_raw_frame_plan",
+                "raw_receipt_location_sha256",
+            ),
+            ("transcript_mining_wal_outbox", "delivery_lease"),
+            ("transcript_mining_wal_outbox", "delivery_lease_id"),
+            ("transcript_mining_wal_outbox", "delivery_descriptor_sha256"),
+            ("transcript_mining_wal_outbox", "planned_header"),
+            ("transcript_mining_wal_outbox", "planned_header_sha256"),
+            (
+                "transcript_mining_wal_outbox",
+                "delivered_receipt_location_sha256",
+            ),
+        ] {
+            assert!(
+                !has_column(table, column),
+                "pre-v38 fixture exposes {table}.{column}"
+            );
+        }
+
+        // This is an old-v37 fixture constructed from the real migration and
+        // exact released columns.  Only the Stage-3a reservation and
+        // immutable-plan guards are removed while inserting existing data.
+        conn.execute_batch(
+            "BEGIN;
+             DROP TRIGGER transcript_mining_plan_stage3a_reserved;
+             DROP TRIGGER transcript_mining_plan_immutable;
+             INSERT INTO raw_turns
+                (session_id,role,ts_unix,text,transcript_mining_authority_epoch,
+                 transcript_mining_raw_frame_plan_epoch)
+             VALUES ('v37-session','operator',10,'v37 text',1,1);
+             INSERT INTO transcript_mining_modern_raw_witness
+                (raw_turn_id,subject_sha256,raw_role,source_kind,witnessed_at_unix)
+             VALUES (1,zeroblob(32),'operator','operator_raw_text_v1',10);
+             INSERT INTO transcript_mining_raw_frame_plan
+                (frame_plan_id,provenance_id,lifecycle_id,raw_turn_id,
+                 raw_event_type,raw_event_subtype,planned_wal_format_version,
+                 planned_event_schema_version,planned_event_id,planned_hlc_physical_ns,
+                 planned_hlc_logical,planned_header,planned_header_sha256,state,
+                 planned_at_unix)
+             VALUES ('v37-plan','v37-provenance','v37-lifecycle',1,1,0,2,4,
+                 X'0100000000000000',X'0200000000000000',3,zeroblob(96),
+                 X'1111111111111111111111111111111111111111111111111111111111111111',
+                 'planned',10);
+             INSERT INTO transcript_mining_provenance
+                (provenance_id,lifecycle_id,raw_turn_id,raw_session_sha256,
+                 raw_text_sha256,raw_role,source_kind,retention,lifecycle,
+                 created_at_unix,expires_at_unix)
+             VALUES ('v37-provenance','v37-lifecycle',1,zeroblob(32),zeroblob(32),
+                 'operator','operator_raw_text_v1','hours24','pending',10,4000000000);
+             UPDATE transcript_mining_raw_frame_plan
+             SET state='verified',raw_frame_sha256=X'2222222222222222222222222222222222222222222222222222222222222222',
+                 raw_frame_delivered_at_unix=11
+             WHERE frame_plan_id='v37-plan';
+             INSERT INTO transcript_mining_wal_outbox
+                (outbox_id,provenance_id,lifecycle_id,logical_subtype,event_subtype,
+                 payload,payload_sha256,state,enqueued_at_unix)
+             VALUES ('v37-outbox','v37-provenance','v37-lifecycle','bound',40,X'42',
+                 X'3333333333333333333333333333333333333333333333333333333333333333',
+                 'pending',12);
+             COMMIT;",
+        )
+        .unwrap();
+        conn.execute_batch(TRANSCRIPT_MINING_V37_TRIGGERS_SQL)
+            .unwrap();
+
+        migration_v37_to_v38(&conn).unwrap();
+        type PreservedV37Row = (String, Vec<u8>, i64, Vec<u8>, String, Vec<u8>, i64);
+        let preserved: PreservedV37Row = conn
+            .query_row(
+                "SELECT f.state,f.raw_frame_sha256,f.raw_frame_delivered_at_unix,
+                        f.planned_header_sha256,o.state,o.payload,o.enqueued_at_unix
+                 FROM transcript_mining_raw_frame_plan f
+                 JOIN transcript_mining_wal_outbox o ON o.provenance_id=f.provenance_id",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(preserved.0, "verified");
+        assert_eq!(preserved.1, vec![0x22; 32]);
+        assert_eq!(preserved.2, 11);
+        assert_eq!(preserved.3, vec![0x11; 32]);
+        assert_eq!(preserved.4, "pending");
+        assert_eq!(preserved.5, vec![0x42]);
+        assert_eq!(preserved.6, 12);
+        type AddedV38Columns = (
+            String,
+            Option<String>,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+            String,
+            Option<String>,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+        );
+        let added: AddedV38Columns = conn
+            .query_row(
+                "SELECT f.delivery_lease,f.delivery_lease_id,f.delivery_descriptor_sha256,
+                        f.raw_receipt_location_sha256,o.delivery_lease,o.delivery_lease_id,
+                        o.delivery_descriptor_sha256,o.planned_header,o.planned_header_sha256,
+                        o.delivered_receipt_location_sha256
+                 FROM transcript_mining_raw_frame_plan f
+                 JOIN transcript_mining_wal_outbox o ON o.provenance_id=f.provenance_id",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(added.0, "none");
+        assert_eq!(added.4, "none");
+        assert!(added.1.is_none() && added.2.is_none() && added.3.is_none());
+        assert!(
+            added.5.is_none()
+                && added.6.is_none()
+                && added.7.is_none()
+                && added.8.is_none()
+                && added.9.is_none()
+        );
+
+        conn.create_scalar_function(
+            "neoth_transcript_mining_attestor",
+            3,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            |_| Ok(0i64),
+        )
+        .unwrap();
+        assert!(conn.execute(
+            "UPDATE transcript_mining_raw_frame_plan SET delivery_lease='raw_pending' WHERE frame_plan_id='v37-plan'",
+            [],
+        ).is_err());
+        assert!(conn.execute(
+            "UPDATE transcript_mining_wal_outbox SET state='delivered',delivered_at_unix=13,delivered_frame_sha256=zeroblob(32) WHERE outbox_id='v37-outbox'",
+            [],
+        ).is_err());
+        assert!(conn.execute(
+            "UPDATE transcript_mining_provenance SET lifecycle='active' WHERE provenance_id='v37-provenance'",
+            [],
+        ).is_err());
     }
 }

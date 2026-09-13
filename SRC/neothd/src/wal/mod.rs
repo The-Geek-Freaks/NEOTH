@@ -45,6 +45,8 @@ pub mod segment_header;
 /// KF-03 — operator proof-bundle signing key (ed25519, DAU-safe auto-managed).
 pub mod signing;
 pub mod snapshot;
+/// Stage-3b closed descriptors for authenticated transcript-mining proof frames.
+pub(crate) mod transcript_mining_once;
 pub mod types;
 /// Round-3 v0.4 QU-08 — derived read-only views over the WAL
 /// indexer's SQLite tables. Starts with `episode` (60-min temporal-
@@ -66,6 +68,11 @@ pub mod writer;
 // upstream consumer uses yet make the build output noisy and hide real
 // regressions. Re-exports get added here as wired-up Day-by-Day.
 pub use builder::{HeaderBuilder, make_header};
+#[allow(unused_imports)]
+pub(crate) use transcript_mining_once::{
+    ExpiredMiningFrameReceipt, PlannedMiningOutboxDescriptor, PlannedRawTextDescriptor,
+    TranscriptMiningFrameReceipt, TranscriptMiningOnceError,
+};
 pub use types::EventFlags;
 #[cfg(test)]
 pub use writer::spawn;

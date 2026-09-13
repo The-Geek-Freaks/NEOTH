@@ -1,0 +1,89 @@
+{
+  "schema": "neoth-gold-source-manifest/v1",
+  "item": "GOLD-LF-P1-08",
+  "stage": "3b",
+  "baseCommit": "22ac400e2d8c665fd066d905d83e24f463e3e68d",
+  "recordedUtc": "2026-09-13T10:52:17Z",
+  "files": [
+    {
+      "path": "SRC/neothd/src/config/memory.rs",
+      "bytes": 8030,
+      "sha256": "41129BD8C33AEEDA78649BE892666D0AB9130F067805621D4D9EEBC97C7B3705"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "bytes": 853088,
+      "sha256": "F012F8BCF7C5888640ADBBE588B68B5B161FA00945DC1FC8D76DCF96ED624531"
+    },
+    {
+      "path": "SRC/neothd/src/cli/recall_score.rs",
+      "bytes": 42782,
+      "sha256": "4286490636DD28DF8DC4D9CD3E6B2608E9F33A88F9BF97DB62AF327CFB356DBE"
+    },
+    {
+      "path": "SRC/neothd/src/memory/mod.rs",
+      "bytes": 6434,
+      "sha256": "27C77F60C5E5C4C994770787E93FDE0BAE967B9F40DB4392ED26B05322F1875C"
+    },
+    {
+      "path": "SRC/neothd/src/memory/store.rs",
+      "bytes": 190588,
+      "sha256": "4285AF15E2B8FC3A2598F1CB71BA3607BE31F587E5D4152F9BDB27BD3B92F2F6"
+    },
+    {
+      "path": "SRC/neothd/src/memory/migrations/mod.rs",
+      "bytes": 211169,
+      "sha256": "E2793F179068D245DBA5FB2E1237139275AD4F582C126065700A5F1322E84AFD"
+    },
+    {
+      "path": "SRC/neothd/src/memory/transcript_mining_provenance.rs",
+      "bytes": 21694,
+      "sha256": "DBABD814B0729566D5375D0CC0F1CB15D7C755DA290E467D9863312AA0441276"
+    },
+    {
+      "path": "SRC/neothd/src/memory/transcript_mining_store.rs",
+      "bytes": 53876,
+      "sha256": "827545DEC7E76BA2BBB2E76EFD78C06BDC8E7B0303BC6103F342F649A1089E59"
+    },
+    {
+      "path": "SRC/neothd/src/memory/transcript_mining_runtime.rs",
+      "bytes": 10193,
+      "sha256": "A6E50C9E06C85EA216DAD44C9932E47198A4EC7CC14D8696CF92CEACA213E63D"
+    },
+    {
+      "path": "SRC/neothd/src/memory/transcript_mining_store_tests.rs",
+      "bytes": 26698,
+      "sha256": "8DDA28A48F982697647F86A7DF2F9CC7489723114CBB28F26F9E25FC9D4E415B"
+    },
+    {
+      "path": "SRC/neothd/src/wal/mod.rs",
+      "bytes": 5799,
+      "sha256": "2B53F5A3027567F9477C0B7B60C2BCE2DAF51C467BEB1B385BCB228F1D98699D"
+    },
+    {
+      "path": "SRC/neothd/src/wal/writer.rs",
+      "bytes": 384640,
+      "sha256": "93384370EC87A10F970FE6FA407C591297F5EFD60AB1EDEBE73BCC520A97FC66"
+    },
+    {
+      "path": "SRC/neothd/src/wal/transcript_mining_once.rs",
+      "bytes": 19022,
+      "sha256": "7CAE94EAF5BF5DC69CE91949ECC6F9F3D60E284A074E132830FA418F2C543B42"
+    },
+    {
+      "path": "SRC/neothd/src/wal/scan.rs",
+      "bytes": 140625,
+      "sha256": "36515C1B65C36FB1B056E0DE62429F0E1B4BFA587AD71218DD954A0FBF05684E"
+    },
+    {
+      "path": "SRC/neothd/src/wal/signing.rs",
+      "bytes": 47159,
+      "sha256": "A7D9B448C350DBE81E76F36EB3E31948E1DBC0A138A239D9982422DC50915880"
+    },
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "bytes": 45369,
+      "sha256": "1CB66DF511C3597704295BA4A2DCCC3145ED26F8FC2EE08D209DC6ECDFAF70C7"
+    }
+  ]
+}

@@ -2,12 +2,17 @@
 
 ## Status
 
-Accepted for stages 1–3a only. Stage 3a is schema and contract work through
-schema v37; it deliberately adds no RPC, publisher, WAL append/drain,
-activation, forget, snapshot, miner, benchmark, dispatcher, labeler, grader,
-report, or release gate. This record does not close `GOLD-LF-P1-08`.
+Accepted through Stage 3b on 2026-09-13. Stages 1–3a established the V37
+schema and contract; Stage 3b adds the V38 local producer, authenticated
+WAL delivery/recovery and guarded lifecycle transitions described below.
+This record does not close `GOLD-LF-P1-08` or attest the complete mining,
+labeling, grading and release workflow.
 
 ## Authority boundary
+
+The V38 producer contract and its accepted scope are recorded at the end of
+this ADR. Exact source and runtime evidence is in
+`docs/gold-wave10-verification.md`; P1-08 remains open.
 
 `raw_turns` remains the sole authority for retained operator/agent text. WAL
 frames remain the sole authority for immutable WAL event bytes. A transcript
@@ -171,3 +176,69 @@ locator, append at-least-once, read back/authenticate, CAS the state, and
 handle unknown outcomes without duplicate-on-heuristic recovery. It must
 preserve expiry and revocation monotonicity and must not grant mining,
 labeling, or release-gating authority merely because this schema exists.
+
+## Stage 3b implementation contract — v38, accepted 2026-09-13
+
+The preceding sections retain the accepted v37 boundary. V38 adds one fresh
+local CLI producer, not a historical transcript upgrader. New local operator
+turns require an explicit finite `memory.transcript_mining_retention` value
+(`minutes15`, `hours24`, or `days30`). Missing/null disables new bindings;
+Incognito bypasses the producer. Agent turns, imports and background input do
+not receive the opaque local chat capability.
+
+A prepare transaction creates the sole operator raw row, both birth epochs,
+modern witness and immutable RAW_TEXT descriptor. The private store connection
+holds the home-bound HMAC authority and commits with synchronous FULL. Normal
+SQLite connections register default-deny attestor functions. Scoped grants
+bind one closed operation to opaque lease IDs and immutable descriptor hashes;
+they do not accept a caller-provided `verified` flag. Persistent leases make
+raw deletion busy while an append outcome is owned or unknown.
+
+The writer admits the exact planned RAW_TEXT through its private once queue,
+forces an authentication marker and re-reads the authenticated physical frame.
+Its proof allows the store to prepare one canonical metadata-only Bound
+(`0x28`) with its exact header and payload. A second independently authenticated
+append/readback allows a transaction to mark delivered, activate the binding
+and release the lease. The normal post-reply path adds only the agent row.
+Physical frame/location hashes remain distinct from the immutable operation
+digest, which covers the persisted header/payload digests with its own domain.
+
+Recovery uses the original descriptor, never a replacement header or an
+approximate timestamp/content match. It is serialized by writer ownership and
+the home authority lock. Exact authenticated evidence is reusable after an
+unknown ACK; conflicts, duplicates and incomplete foreign prefixes cannot
+prove absence. Archived HMAC keys verify the original prepared subject after
+rotation. The explicit `recall-parity-harness reconcile-transcripts --home`
+command can settle existing work after opt-in is disabled; its capability
+cannot prepare a new raw birth.
+
+Expiry is monotonic across every delivery boundary. An expired RAW receipt
+cancels provenance before preparing Bound. A Bound absent from a complete
+authenticated prefix is cancelled only with the writer's typed expired-absence
+proof; the writer never newly appends that expired Bound. A Bound already in
+the WAL remains detectable after expiry and requires its separate revocation.
+Late Bound acknowledgements cannot activate an expired binding. Existing
+active expiry and raw deletion create immutable local terminal receipts.
+The fixed Revoked (`0x29`) outbox authenticates the delivered Bound and matching
+terminal receipt independently of whether raw-plan bookkeeping remains usable.
+
+Readers reconstitute the canonical binding from the current eligible operator
+row, witness, epochs and lifecycle, then authenticate both exact physical WAL
+frames and their retained receipts. An `active`/`verified`/`delivered` SQLite
+flag alone grants no mining authority. Receipt frame/location fields and
+terminal transitions reject ordinary SQL modification, including NULL writes.
+
+The released V37 table definition remains unchanged. Fresh databases and old
+V37 databases use the same additive V38 migration. Historical rows retain NULL
+new metadata and `none` leases; no header, physical proof or authority is
+fabricated for them. Ordinary legacy transcript insertion/deletion remains
+available. These connection guards address normal application write paths;
+they do not isolate a hostile process with unrestricted database and key-file
+access as the same local operator.
+
+The frozen sixteen-input source set passes 242 selected runtime tests plus
+one parent-owned cross-process child, affected Core check, strict Clippy,
+workspace formatting and independent review. The source and executable
+hashes and exact test names are retained in `docs/verification/gold-wave10-*.json`.
+Candidate export, operator labels, shadow runs, live grader execution and
+the complete reproducible release report remain separate P1-08 work.
