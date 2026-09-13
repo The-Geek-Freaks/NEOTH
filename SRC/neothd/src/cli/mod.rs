@@ -1295,8 +1295,13 @@ pub enum ChannelAction {
     SetCredentials,
     /// List configured channels
     List,
-    /// Run a read-only live probe; returns typed skipped/unavailable when no safe probe exists
-    Test { channel: String },
+    /// Run a read-only live probe; Telegram account maps require --account.
+    Test {
+        channel: String,
+        /// Exact configured Telegram account to probe. Never inferred from a map.
+        #[arg(long)]
+        account: Option<crate::channels::registry::ChannelAccountId>,
+    },
     /// Move the admitted legacy Telegram singleton into one named inbound account.
     /// This does not enable account-aware outbound routing.
     MigrateLegacy {
@@ -2011,7 +2016,15 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Channel { action } => match action {
             ChannelAction::List => channel::run_list(&global_output)?,
-            ChannelAction::Test { channel: ch } => channel::run_test(&ch, &global_output).await?,
+            ChannelAction::Test {
+                channel: ch,
+                account,
+            } => match account {
+                Some(account) => {
+                    channel::run_test_with_account(&ch, account, &global_output).await?
+                }
+                None => channel::run_test(&ch, &global_output).await?,
+            },
             ChannelAction::Add {
                 channel: ch,
                 telegram_user_id,
@@ -2310,5 +2323,29 @@ mod default_invocation_tests {
             } if channel == "telegram" && account == "family_chat"
         ));
         assert!(Cli::try_parse_from(["neoth", "channel", "migrate-legacy", "telegram"]).is_err());
+    }
+
+    #[test]
+    fn channel_test_parses_a_validated_explicit_account() {
+        let parsed =
+            Cli::try_parse_from(["neoth", "channel", "test", "telegram", "--account", "ops_a"])
+                .unwrap();
+        assert!(matches!(
+            parsed.command,
+            Commands::Channel {
+                action: ChannelAction::Test { channel, account: Some(account) }
+            } if channel == "telegram" && account.as_str() == "ops_a"
+        ));
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "channel",
+                "test",
+                "telegram",
+                "--account",
+                "not an account",
+            ])
+            .is_err()
+        );
     }
 }

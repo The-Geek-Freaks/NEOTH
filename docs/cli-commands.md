@@ -353,9 +353,10 @@ Read one strict, bounded channel credential envelope from stdin
 
 ### `neoth channel test`
 
-Run a read-only live probe; returns typed skipped/unavailable when no safe probe exists
+Run a read-only live probe; Telegram account maps require --account
 
 - `<CHANNEL>`
+- `--account <ACCOUNT>` — Exact configured Telegram account to probe. Never inferred from a map
 
 ## `neoth chat`
 

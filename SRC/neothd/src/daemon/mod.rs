@@ -38,6 +38,7 @@ pub mod backup_retention;
 /// each collector tick inside `spawn_self_improvement_collector_loop`. Emits
 /// `0x0F CAPABILITY_EVOLVER_RAN`. Companion CLI surface: `neoth self-dev scan`.
 pub mod capability_evolver;
+pub mod channel_runtime_health;
 /// GOLD-ADAPT-HERMES-03 — Mid-run clarification gate. When a worker hits an
 /// ambiguity it calls [`clarify::ClarificationGate::park`], which parks the
 /// run in `Waiting` state and surfaces a [`clarify::ClarificationRequest`].

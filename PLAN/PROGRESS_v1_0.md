@@ -3,6 +3,24 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 17 account CLI, runtime health and CI repairs — LOCALLY VERIFIED;
+> full CI pending 2026-09-13:** account-list/test and exact-instance runtime
+> projection independently reviewed. TestBuild02 PASS3m45/min193.86GiB/peak10.45;
+> selected **404/0/1** in19.52s plus one explicitly invoked audit-RPC child;
+> all 13 integration targets **157/0/0**. Final Clippy05 **PASS**
+> 4m33/min192.86GiB/peak10.80. Format/GUI lint/self-test, generated CLI reference
+> and Python **19+11+8+6** pass. Exact 107-input/14-executable receipts:
+> `docs/gold-wave17-verification.md` and `docs/verification/gold-wave17-*.json`.
+> Retained Windows fixture failure is repaired and reviewed; only transient
+> OS32 is allowed during writes, with the exact final row required after join.
+> CI15 is terminal; its credential/import, keychain fixture, watcher window and
+> History sidecar repairs are included. macOS now has 90/105-minute test/job
+> budgets after CI15 compiled 74m30 and timed out after test startup without a
+> test summary. One new full CI is due after publication. Wave16 is on main
+> with Preflight/Code Quality passed. W18 GUI and W19 connect are reviewed
+> candidates for the next shared build. Counts/P1-16 stay unchanged; no live
+> Telegram, native GUI or cross-platform acceptance is claimed.
+>
 > **Wave 16 account-bound proactive delivery — LOCALLY ACCEPTED; full CI
 > outstanding 2026-09-13:** sixteen production files plus one source gate
 > cover `proactive route --account`, stored binding, fresh coherent admission

@@ -10,7 +10,12 @@
 //! message. The view is assembled from `freedom.yaml` + `credentials.yaml`; the
 //! probe itself does no IO, so it is trivially testable and can't leak a token.
 
-use crate::channels::{ChannelKind, registry::channel_descriptors};
+use anyhow::Result;
+
+use crate::channels::{
+    ChannelKind,
+    registry::{ChannelId, ChannelRef, channel_descriptors},
+};
 
 /// Health verdict for one channel adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -61,6 +66,37 @@ pub struct ChannelHealth {
     pub channel: &'static str,
     pub status: ProbeStatus,
     pub message: String,
+}
+
+/// Secret-free static readiness for one explicit Telegram account. This is a
+/// configuration projection only; it never asserts adapter or daemon liveness.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct TelegramAccountProbe {
+    pub channel_ref: ChannelRef,
+    pub status: ProbeStatus,
+    pub detail: String,
+}
+
+/// Project the same exact account bundles that the daemon accepts, without
+/// exposing a token or an allowed-user id. Invalid or partial maps remain an
+/// error for the caller: fabricating usable-looking child rows would hide the
+/// configuration fault.
+pub(crate) fn telegram_account_probes(
+    pair: &crate::config::RuntimeConfigPair,
+) -> Result<Vec<TelegramAccountProbe>> {
+    let accounts = pair.authenticated_telegram_accounts()?;
+    Ok(accounts
+        .into_iter()
+        .filter(|account| {
+            !account.is_legacy_singleton()
+                && account.channel_ref().channel_id == ChannelId::Telegram
+        })
+        .map(|account| TelegramAccountProbe {
+            channel_ref: account.channel_ref().clone(),
+            status: ProbeStatus::Ok,
+            detail: "configured account; readiness is static only".to_string(),
+        })
+        .collect())
 }
 
 /// Credential-presence view the pure probe classifies. Booleans only — assembled
@@ -592,6 +628,81 @@ pub fn misconfigured(v: &ChannelCredsView) -> Vec<ChannelHealth> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channels::registry::ChannelAccountId;
+    use crate::config::TelegramAccountConfig;
+    use crate::config::credentials::{Credentials, TelegramAccountCredentials};
+
+    fn mapped_pair(entries: &[(&str, u64, Option<&str>)]) -> crate::config::RuntimeConfigPair {
+        let mut pair = crate::config::RuntimeConfigPair {
+            config: crate::config::FreedomConfig::default(),
+            raw_credentials: Credentials::default(),
+            credentials: Credentials::default(),
+        };
+        for &(account, allowed_user_id, token) in entries {
+            let account = ChannelAccountId::new(account).unwrap();
+            pair.config
+                .channel_accounts
+                .telegram
+                .insert(account.clone(), TelegramAccountConfig { allowed_user_id });
+            let credentials = TelegramAccountCredentials {
+                token: token.map(crate::secret::SecretString::from),
+            };
+            pair.raw_credentials
+                .channel_accounts
+                .telegram
+                .insert(account.clone(), credentials.clone());
+            pair.credentials
+                .channel_accounts
+                .telegram
+                .insert(account, credentials);
+        }
+        pair
+    }
+
+    #[test]
+    fn telegram_account_projection_is_sorted_and_secret_free() {
+        let pair = mapped_pair(&[
+            ("ops_b", 222, Some("token-b-secret")),
+            ("default", 333, Some("token-default-secret")),
+            ("ops_a", 111, Some("token-a-secret")),
+        ]);
+        let rows = telegram_account_probes(&pair).unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.channel_ref.account_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["default", "ops_a", "ops_b"]
+        );
+        assert!(rows.iter().all(|row| row.status == ProbeStatus::Ok));
+        let encoded = serde_json::to_string(&rows).unwrap();
+        for forbidden in [
+            "token-a-secret",
+            "token-b-secret",
+            "token-default-secret",
+            "111",
+            "222",
+            "333",
+        ] {
+            assert!(
+                !encoded.contains(forbidden),
+                "projection leaked {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn telegram_account_projection_refuses_invalid_maps_without_rows() {
+        let mut mismatched = mapped_pair(&[("ops_a", 11, Some("token-a"))]);
+        mismatched.credentials.channel_accounts.telegram.clear();
+        assert!(telegram_account_probes(&mismatched).is_err());
+
+        assert!(telegram_account_probes(&mapped_pair(&[("ops_a", 0, Some("token-a"))])).is_err());
+        assert!(telegram_account_probes(&mapped_pair(&[("ops_a", 11, Some("  "))])).is_err());
+
+        let mut legacy_plus_map = mapped_pair(&[("ops_a", 11, Some("token-a"))]);
+        legacy_plus_map.config.telegram_token = Some(crate::secret::SecretString::from("legacy"));
+        assert!(telegram_account_probes(&legacy_plus_map).is_err());
+    }
 
     #[test]
     fn telegram_states() {

@@ -100,6 +100,49 @@ fn email_ingest_schedule_change(
     (live_interval != current_interval || (!was_enabled && live.enabled)).then_some(live_interval)
 }
 
+/// Best-effort projection of the supervisor-owned Telegram adapter fleet.
+/// This records local task ownership only. It never implies a successful
+/// remote Telegram authentication or delivery.
+fn publish_channel_runtime_health(
+    health: Option<&crate::daemon::channel_runtime_health::ChannelRuntimeHealthWriter>,
+    tags: &std::collections::BTreeMap<
+        crate::channels::registry::ChannelRef,
+        crate::daemon::channel_runtime_health::BindingTag,
+    >,
+    tasks: &std::sync::Arc<std::sync::Mutex<crate::cli::serve_tasks::ChannelFleet>>,
+    failed_channels: &std::collections::HashSet<crate::channels::registry::ChannelRef>,
+    credentials_valid: bool,
+    provider_available: bool,
+) {
+    let Some(health) = health else {
+        return;
+    };
+    let running = {
+        let fleet = tasks.lock().expect("channel_tasks mutex poisoned");
+        tags.keys()
+            .filter(|channel_ref| {
+                fleet
+                    .get(*channel_ref)
+                    .is_some_and(|handles| handles.iter().any(|handle| !handle.is_finished()))
+            })
+            .cloned()
+            .collect()
+    };
+    let accounts = crate::cli::serve_tasks::runtime_health_account_states(
+        tags,
+        &running,
+        failed_channels,
+        credentials_valid,
+        provider_available,
+    );
+    if let Err(error) = health.publish(
+        crate::daemon::channel_runtime_health::ProjectionLifecycle::Serving,
+        accounts,
+    ) {
+        warn!(error = %error, "channel runtime-health projection publish failed; readers will report unknown");
+    }
+}
+
 // GOLD-ARCH-01: the channel-side inbound pipeline now lives in `serve_pipeline`.
 
 #[derive(Args, Debug, Clone)]
@@ -165,6 +208,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 config_path.display()
             )
         })?;
+    let initial_health_tags = {
+        let authenticated = runtime_config.authenticated_telegram_accounts()?;
+        crate::cli::serve_tasks::runtime_health_binding_tags(&authenticated)
+    };
     let telegram_accounts = crate::cli::serve_tasks::telegram_account_bundles(&runtime_config)
         .context("validated Telegram account bundles cannot be derived from runtime config pair")?;
     let config = runtime_config.config;
@@ -1081,6 +1128,45 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &views_executor, // GOLD-ADAPT-TRAIL-04: multi-reader executor
     );
 
+    // The audit endpoint nonce is already committed to the held PID lock above.
+    // Construct the projection only after initial adapter ownership is known.
+    let initial_health_running = initial_health_tags
+        .keys()
+        .filter(|channel_ref| {
+            channel_tasks
+                .get(*channel_ref)
+                .is_some_and(|handles| handles.iter().any(|handle| !handle.is_finished()))
+        })
+        .cloned()
+        .collect();
+    let initial_health_accounts = crate::cli::serve_tasks::runtime_health_account_states(
+        &initial_health_tags,
+        &initial_health_running,
+        &std::collections::HashSet::new(),
+        true,
+        shared_provider.is_some(),
+    );
+    let channel_runtime_health =
+        match crate::daemon::channel_runtime_health::ChannelRuntimeHealthWriter::new(
+            &neoth_home,
+            std::process::id(),
+            crate::daemon::audit_rpc::instance_commitment_for_nonce(&audit_endpoint_nonce),
+        ) {
+            Ok(writer) => Some(std::sync::Arc::new(writer)),
+            Err(error) => {
+                warn!(error = %error, "channel runtime-health projection initialization failed; readers will report unknown");
+                None
+            }
+        };
+    if let Some(channel_runtime_health) = channel_runtime_health.as_ref()
+        && let Err(error) = channel_runtime_health.publish(
+            crate::daemon::channel_runtime_health::ProjectionLifecycle::Serving,
+            initial_health_accounts,
+        )
+    {
+        warn!(error = %error, "channel runtime-health initial publish failed; readers will report unknown");
+    }
+
     // ── 5b-bis. Credential-aware adapter fleet reconciler ─────────────────
     //
     // Channel credentials are immutable inside an adapter instance. Watch the
@@ -1111,6 +1197,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         let confirm_bus = confirm_bus.clone();
         let views_executor = views_executor.clone();
         let channel_config_path = config_path.clone();
+        let channel_runtime_health = channel_runtime_health.clone();
         tokio::spawn(async move {
             const CREDENTIAL_POLL: std::time::Duration = std::time::Duration::from_millis(750);
             const RELOAD_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
@@ -1118,6 +1205,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             let mut tick = tokio::time::interval(CREDENTIAL_POLL);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut known_fingerprints = initial_channel_fingerprints;
+            let mut known_health_tags = initial_health_tags;
             let mut credentials_valid = true;
             let mut failed_channels = std::collections::HashSet::new();
             let mut channel_generations: std::collections::HashMap<
@@ -1134,6 +1222,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 std::sync::Arc<FreedomConfig>,
                 crate::config::credentials::Credentials,
                 Vec<crate::cli::serve_tasks::TelegramAccountBundle>,
+                std::collections::BTreeMap<
+                    crate::channels::registry::ChannelRef,
+                    crate::daemon::channel_runtime_health::BindingTag,
+                >,
                 bool,
             );
             let mut pending: Option<PendingChannelReload> = None;
@@ -1208,6 +1300,49 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             );
                         }
                         credentials_valid = false;
+                        publish_channel_runtime_health(
+                            channel_runtime_health.as_deref(),
+                            &known_health_tags,
+                            &tasks,
+                            &failed_channels,
+                            false,
+                            shared_provider.is_some(),
+                        );
+                        continue;
+                    }
+                };
+                let fresh_health_tags = match fresh_runtime.authenticated_telegram_accounts() {
+                    Ok(authenticated) => {
+                        crate::cli::serve_tasks::runtime_health_binding_tags(&authenticated)
+                    }
+                    Err(load_error) => {
+                        pending = None;
+                        if credentials_valid {
+                            let old: Vec<tokio::task::JoinHandle<()>> = {
+                                let mut guard = tasks.lock().expect("channel_tasks mutex poisoned");
+                                std::mem::take(&mut *guard)
+                                    .into_values()
+                                    .flatten()
+                                    .collect()
+                            };
+                            for handle in &old {
+                                handle.abort();
+                            }
+                            for handle in old {
+                                let _ = handle.await;
+                            }
+                        }
+                        failed_channels.extend(known_fingerprints.keys().cloned());
+                        credentials_valid = false;
+                        error!(error = %load_error, "validated Telegram account generation became unusable; all channel adapters stopped fail-closed");
+                        publish_channel_runtime_health(
+                            channel_runtime_health.as_deref(),
+                            &known_health_tags,
+                            &tasks,
+                            &failed_channels,
+                            false,
+                            shared_provider.is_some(),
+                        );
                         continue;
                     }
                 };
@@ -1235,6 +1370,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             failed_channels.extend(known_fingerprints.keys().cloned());
                             credentials_valid = false;
                             error!(error = %load_error, "validated Telegram account generation became unusable; all channel adapters stopped fail-closed");
+                            publish_channel_runtime_health(
+                                channel_runtime_health.as_deref(),
+                                &known_health_tags,
+                                &tasks,
+                                &failed_channels,
+                                false,
+                                shared_provider.is_some(),
+                            );
                             continue;
                         }
                     };
@@ -1274,17 +1417,25 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 );
                 let retry_latched = pending
                     .as_ref()
-                    .is_some_and(|(_, _, _, _, _, retry)| *retry);
+                    .is_some_and(|(_, _, _, _, _, _, retry)| *retry);
                 let retry_failed = (explicit_retry || retry_latched) && !failed_channels.is_empty();
                 if credentials_valid && fresh_fingerprints == known_fingerprints && !retry_failed {
                     pending = None;
+                    publish_channel_runtime_health(
+                        channel_runtime_health.as_deref(),
+                        &known_health_tags,
+                        &tasks,
+                        &failed_channels,
+                        true,
+                        shared_provider.is_some(),
+                    );
                     continue;
                 }
 
                 let same_candidate =
                     pending
                         .as_ref()
-                        .is_some_and(|(_, fingerprints, _, _, _, retry)| {
+                        .is_some_and(|(_, fingerprints, _, _, _, _, retry)| {
                             *fingerprints == fresh_fingerprints && *retry == retry_failed
                         });
                 if !same_candidate {
@@ -1294,13 +1445,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         fresh_config,
                         fresh_creds,
                         fresh_telegram_accounts,
+                        fresh_health_tags,
                         retry_failed,
                     ));
                     continue;
                 }
                 if pending
                     .as_ref()
-                    .is_some_and(|(since, _, _, _, _, _)| since.elapsed() < RELOAD_DEBOUNCE)
+                    .is_some_and(|(since, _, _, _, _, _, _)| since.elapsed() < RELOAD_DEBOUNCE)
                 {
                     continue;
                 }
@@ -1310,6 +1462,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     fresh_config,
                     fresh_creds,
                     fresh_telegram_accounts,
+                    fresh_health_tags,
                     retry_failed,
                 ) = pending.take().expect("candidate checked above");
                 let mut changed = if credentials_valid {
@@ -1404,7 +1557,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     );
                 }
                 known_fingerprints = new_fingerprints;
+                known_health_tags = fresh_health_tags;
                 credentials_valid = true;
+                publish_channel_runtime_health(
+                    channel_runtime_health.as_deref(),
+                    &known_health_tags,
+                    &tasks,
+                    &failed_channels,
+                    true,
+                    shared_provider.is_some(),
+                );
             }
         })
     };
@@ -2522,6 +2684,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         worker_watch_handle,
         channel_tasks,
         channel_supervisor_task,
+        channel_runtime_health,
         dispatch_join,
         cron_task,
         cron_fleet,

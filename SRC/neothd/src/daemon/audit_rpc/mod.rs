@@ -77,6 +77,10 @@ pub use client::{
     is_reachable, mint_fullauto_token, mint_jobs_run_token, try_post_audit_frame,
     try_post_audit_frame_with_subtype,
 };
+pub(crate) use client::{
+    DaemonInstanceProof, InstanceCommitment, authenticated_live_instance,
+    instance_commitment_for_nonce,
+};
 #[cfg(feature = "cluster")]
 pub use client::{
     membership_confirm, membership_invite, membership_legacy_pending, membership_revocation_status,

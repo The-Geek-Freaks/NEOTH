@@ -5061,6 +5061,65 @@ pub(crate) fn telegram_account_bundles(
     Ok(bundles)
 }
 
+/// Private equality tags for the exact validated Telegram account bindings.
+/// These are deliberately separate from the non-durable `u64` reconciler
+/// fingerprints: the health projection uses tags only to reject an old
+/// lifecycle statement after a token, sender, provenance, or account rotation.
+pub(crate) fn runtime_health_binding_tags(
+    accounts: &[crate::config::AuthenticatedTelegramAccount],
+) -> std::collections::BTreeMap<ChannelRef, crate::daemon::channel_runtime_health::BindingTag> {
+    accounts
+        .iter()
+        .map(|account| {
+            (
+                account.channel_ref().clone(),
+                crate::daemon::channel_runtime_health::BindingTag::from_authenticated_telegram_account(
+                    account,
+                ),
+            )
+        })
+        .collect()
+}
+
+/// Derive only the owned adapter lifecycle for current Telegram bindings.
+/// `Running` means an installed, non-finished local adapter task; it is never
+/// a claim that Telegram accepted credentials or delivered a remote message.
+pub(crate) fn runtime_health_account_states(
+    tags: &std::collections::BTreeMap<
+        ChannelRef,
+        crate::daemon::channel_runtime_health::BindingTag,
+    >,
+    running: &std::collections::BTreeSet<ChannelRef>,
+    failed: &std::collections::HashSet<ChannelRef>,
+    credentials_valid: bool,
+    provider_available: bool,
+) -> std::collections::BTreeMap<
+    ChannelRef,
+    (
+        crate::daemon::channel_runtime_health::AccountRuntimeState,
+        crate::daemon::channel_runtime_health::BindingTag,
+    ),
+> {
+    use crate::daemon::channel_runtime_health::AccountRuntimeState;
+
+    tags.iter()
+        .map(|(channel_ref, tag)| {
+            let state = if !credentials_valid {
+                AccountRuntimeState::CredentialsInvalid
+            } else if failed.contains(channel_ref) {
+                AccountRuntimeState::Failed
+            } else if running.contains(channel_ref) {
+                AccountRuntimeState::Running
+            } else if !provider_available {
+                AccountRuntimeState::ConfiguredNotStarted
+            } else {
+                AccountRuntimeState::Failed
+            };
+            (channel_ref.clone(), (state, tag.clone()))
+        })
+        .collect()
+}
+
 pub(crate) fn spawn_channel_run<C: Channel + 'static>(
     channel: C,
     handler: PipelineHandler,
@@ -7327,6 +7386,10 @@ pub(crate) struct BackgroundHandles {
     /// The fleet supervisor itself — aborted BEFORE the channel tasks
     /// so a reload racing shutdown can't respawn into a dying daemon.
     pub channel_supervisor_task: JoinHandle<()>,
+    /// Read-only lifecycle projection written only by the channel supervisor
+    /// and marked stopping/stopped by the ordered daemon shutdown boundary.
+    pub channel_runtime_health:
+        Option<std::sync::Arc<crate::daemon::channel_runtime_health::ChannelRuntimeHealthWriter>>,
     pub dispatch_join: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
     pub cron_task: Option<JoinHandle<()>>,
     /// ZF-06 — fleet map + supervisor; replaces 21 individual cron handles.
@@ -7458,6 +7521,7 @@ pub(crate) async fn shutdown_background_tasks(
         worker_watch_handle,
         channel_tasks,
         channel_supervisor_task,
+        channel_runtime_health,
         dispatch_join,
         cron_task,
         cron_fleet,
@@ -7532,6 +7596,14 @@ pub(crate) async fn shutdown_background_tasks(
 
     // Abort the fleet supervisor BEFORE the channel tasks — a reload
     // racing shutdown must not respawn adapters into a dying daemon.
+    if let Some(channel_runtime_health) = channel_runtime_health.as_ref()
+        && let Err(error) = channel_runtime_health.publish(
+            crate::daemon::channel_runtime_health::ProjectionLifecycle::Stopping,
+            std::collections::BTreeMap::new(),
+        )
+    {
+        warn!(error = %error, "channel runtime-health stopping projection publish failed");
+    }
     crate::cli::serve_tasks::abort_join(channel_supervisor_task).await;
 
     // Abort channel tasks first so they stop generating new WAL frames.
@@ -7547,6 +7619,14 @@ pub(crate) async fn shutdown_background_tasks(
     }
     for task in channel_tasks {
         let _ = task.await; // ignore JoinError on aborted tasks
+    }
+    if let Some(channel_runtime_health) = channel_runtime_health.as_ref()
+        && let Err(error) = channel_runtime_health.publish(
+            crate::daemon::channel_runtime_health::ProjectionLifecycle::Stopped,
+            std::collections::BTreeMap::new(),
+        )
+    {
+        warn!(error = %error, "channel runtime-health stopped projection publish failed");
     }
 
     // COR-34: drain in-flight Meta webhook fan-out tasks (DISPATCH_GATE-bounded,
@@ -8544,6 +8624,8 @@ mod tests {
             // G1's joined-and-active watcher set and record the requested
             // boundary.
             let missing_g2_root = home.path().join("unavailable-g2-repository");
+            let g1_reconciliation_interval_secs =
+                g1.code_map.lifecycle.reconciliation_interval_secs;
             let mut g2 = g1;
             g2.code_map.lifecycle.managed_roots = vec![missing_g2_root.clone()];
             std::fs::write(&config_path, serde_yaml::to_string(&g2)?)?;
@@ -8586,8 +8668,8 @@ mod tests {
             // A G1 write after rejected G2 activation must still lead the
             // original worker to publish a newer durable generation.
             std::fs::write(g1_root.join("lib.rs"), "pub fn generation_two() {}\n")?;
-            let refresh_deadline =
-                std::time::Instant::now() + std::time::Duration::from_secs(15);
+            let refresh_deadline = std::time::Instant::now()
+                + std::time::Duration::from_secs(g1_reconciliation_interval_secs + 5);
             loop {
                 let state = crate::code_map::inspect(
                     &home.path().join("code_map.db"),
@@ -8606,7 +8688,7 @@ mod tests {
                 }
                 anyhow::ensure!(
                     std::time::Instant::now() < refresh_deadline,
-                    "G1 watcher stopped after unavailable G2 activation; durable index generation did not advance past {g1_generation}"
+                    "G1 active watcher did not publish a durable code-map generation past {g1_generation} within its configured event-or-periodic observation window"
                 );
                 tokio::time::sleep(std::time::Duration::from_millis(25)).await;
             }
@@ -10295,6 +10377,175 @@ mod channel_reconcile_tests {
             ChannelKind::Telegram,
             ChannelAccountId::new(account).unwrap(),
         )
+    }
+
+    #[tokio::test]
+    async fn runtime_health_projection_reaps_owned_fleet_and_defers_rotated_tag_until_rebuild() {
+        use crate::daemon::channel_runtime_health::AccountRuntimeState;
+
+        let account_a = telegram_account("account-a");
+        let account_b = telegram_account("account-b");
+        let mut runtime = crate::config::RuntimeConfigPair {
+            config: FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        for (channel_ref, allowed_user_id, token) in
+            [(&account_a, 11, "a-token"), (&account_b, 22, "b-token")]
+        {
+            runtime.config.channel_accounts.telegram.insert(
+                channel_ref.account_id.clone(),
+                crate::config::TelegramAccountConfig { allowed_user_id },
+            );
+            let entry = crate::config::credentials::TelegramAccountCredentials {
+                token: Some(SecretString::from(token)),
+            };
+            runtime
+                .raw_credentials
+                .channel_accounts
+                .telegram
+                .insert(channel_ref.account_id.clone(), entry.clone());
+            runtime
+                .credentials
+                .channel_accounts
+                .telegram
+                .insert(channel_ref.account_id.clone(), entry);
+        }
+        let authenticated = runtime.authenticated_telegram_accounts().unwrap();
+        let tags = runtime_health_binding_tags(&authenticated);
+        let mut fleet = ChannelFleet::new();
+        fleet
+            .entry(account_a.clone())
+            .or_default()
+            .push(tokio::spawn(async {}));
+        let (_keep_b_alive, wait_b) = tokio::sync::oneshot::channel::<()>();
+        fleet
+            .entry(account_b.clone())
+            .or_default()
+            .push(tokio::spawn(async move {
+                let _ = wait_b.await;
+            }));
+        tokio::task::yield_now().await;
+        let finished: Vec<_> = fleet
+            .iter()
+            .filter(|(_, handles)| handles.iter().any(|handle| handle.is_finished()))
+            .map(|(channel_ref, _)| channel_ref.clone())
+            .collect();
+        assert_eq!(finished, vec![account_a.clone()]);
+        for handle in fleet.remove(&account_a).unwrap() {
+            handle.await.unwrap();
+        }
+        let failed = std::collections::HashSet::from([account_a.clone()]);
+        let running = fleet
+            .iter()
+            .filter(|(_, handles)| handles.iter().any(|handle| !handle.is_finished()))
+            .map(|(channel_ref, _)| channel_ref.clone())
+            .collect();
+        let states = runtime_health_account_states(&tags, &running, &failed, true, true);
+        assert_eq!(states[&account_a].0, AccountRuntimeState::Failed);
+        assert_eq!(states[&account_b].0, AccountRuntimeState::Running);
+
+        // A replacement candidate is debounced while the old A adapter still
+        // runs. Its fresh tag must not be published against that old handle.
+        fleet
+            .entry(account_a.clone())
+            .or_default()
+            .push(tokio::spawn(async { std::future::pending::<()>().await }));
+        runtime
+            .credentials
+            .channel_accounts
+            .telegram
+            .get_mut(&account_a.account_id)
+            .unwrap()
+            .token = Some(SecretString::from("a-rotated"));
+        runtime
+            .raw_credentials
+            .channel_accounts
+            .telegram
+            .get_mut(&account_a.account_id)
+            .unwrap()
+            .token = Some(SecretString::from("a-rotated"));
+        let rotated_authenticated = runtime.authenticated_telegram_accounts().unwrap();
+        let rotated_tags = runtime_health_binding_tags(&rotated_authenticated);
+        assert!(
+            tags[&account_a] != rotated_tags[&account_a],
+            "rotating A must derive a distinct opaque binding tag"
+        );
+        let pending_running = fleet
+            .iter()
+            .filter(|(_, handles)| handles.iter().any(|handle| !handle.is_finished()))
+            .map(|(channel_ref, _)| channel_ref.clone())
+            .collect();
+        let pending = runtime_health_account_states(
+            &tags,
+            &pending_running,
+            &std::collections::HashSet::new(),
+            true,
+            true,
+        );
+        assert_eq!(pending[&account_a].0, AccountRuntimeState::Running);
+        assert!(
+            pending[&account_a].1 == tags[&account_a],
+            "the pending old A handle must retain its old opaque tag"
+        );
+        assert_eq!(pending[&account_b].0, AccountRuntimeState::Running);
+        assert!(
+            pending[&account_b].1 == tags[&account_b],
+            "unmodified B must retain its opaque tag during A debounce"
+        );
+        for handle in fleet.remove(&account_a).unwrap() {
+            handle.abort();
+            let _ = handle.await;
+        }
+        fleet
+            .entry(account_a.clone())
+            .or_default()
+            .push(tokio::spawn(async { std::future::pending::<()>().await }));
+        let rebuilt_running = fleet.keys().cloned().collect();
+        let rebuilt = runtime_health_account_states(
+            &rotated_tags,
+            &rebuilt_running,
+            &std::collections::HashSet::new(),
+            true,
+            true,
+        );
+        assert_eq!(rebuilt[&account_a].0, AccountRuntimeState::Running);
+        assert!(
+            rebuilt[&account_a].1 == rotated_tags[&account_a],
+            "the replacement A handle must publish only its new opaque tag"
+        );
+
+        let invalid = runtime_health_account_states(&tags, &running, &failed, false, true);
+        assert_eq!(
+            invalid[&account_a].0,
+            AccountRuntimeState::CredentialsInvalid
+        );
+        assert_eq!(
+            invalid[&account_b].0,
+            AccountRuntimeState::CredentialsInvalid
+        );
+
+        let no_provider = runtime_health_account_states(
+            &tags,
+            &std::collections::BTreeSet::new(),
+            &std::collections::HashSet::new(),
+            true,
+            false,
+        );
+        assert_eq!(
+            no_provider[&account_a].0,
+            AccountRuntimeState::ConfiguredNotStarted
+        );
+        assert_eq!(
+            no_provider[&account_b].0,
+            AccountRuntimeState::ConfiguredNotStarted
+        );
+        for handles in fleet.into_values() {
+            for handle in handles {
+                handle.abort();
+                let _ = handle.await;
+            }
+        }
     }
 
     #[test]

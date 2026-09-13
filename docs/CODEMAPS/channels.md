@@ -59,6 +59,33 @@ without a send and cannot bind A work to B. A historical unbound Telegram item
 continues through the legacy flat path only while the effective map is empty.
 This Telegram-only slice does not establish full multi-account readiness.
 
+## Account readiness and live-instance projection
+
+`cli/channel.rs::run_list` derives Telegram account children from the coherent
+authenticated config/credential pair. They are secret-free static readiness
+records: a valid map produces one `ChannelRef` child with an `ok` configured
+state, while partial or mismatched maps fail rather than inventing usable rows.
+
+`neoth channel test telegram --account <account-id>` selects exactly one mapped
+bundle and runs the existing read-only Telegram validator. An active map requires
+the flag and never infers `default`; an unknown account fails before probing.
+`--account` is rejected for non-Telegram channels and for legacy scalar Telegram,
+which keeps its existing no-account test path.
+
+`daemon/channel_runtime_health.rs` adds a private bounded runtime projection for
+the same `ChannelRef` children. `serve.rs` publishes it from the owned fleet;
+the list reader merges it only after the exact binding tags, current home, and
+authenticated live daemon-instance proof match. It can report `running`,
+`configured_not_started`, `failed`, `inactive`, or `credentials_invalid`.
+Missing, stale, unreadable, mismatched, or unproven data is **unknown** rather
+than a negative readiness result: table output says unknown and JSON omits the
+optional runtime field. The projection is observation only, never authority or
+credential material.
+
+This Wave 17 slice is reviewed and locally verified by focused unit and
+integration checks; see [the receipt](../gold-wave17-verification.md).
+Cross-platform CI and live Telegram acceptance remain separate.
+
 ## Architecture
 
 ```

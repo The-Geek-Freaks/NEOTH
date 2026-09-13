@@ -34,7 +34,16 @@ fn generation(database: &Path, root: &Path) -> LifecycleGeneration {
 }
 
 fn wait_for_generation_after(database: &Path, root: &Path, previous: i64) -> LifecycleGeneration {
-    let deadline = Instant::now() + WAIT_TIMEOUT;
+    wait_for_generation_after_with_timeout(database, root, previous, WAIT_TIMEOUT)
+}
+
+fn wait_for_generation_after_with_timeout(
+    database: &Path,
+    root: &Path,
+    previous: i64,
+    timeout: Duration,
+) -> LifecycleGeneration {
+    let deadline = Instant::now() + timeout;
     loop {
         let snapshot = generation(database, root);
         if snapshot.index_generation > previous {
@@ -242,7 +251,12 @@ fn rejected_lifecycle_candidate_leaves_the_accepted_watcher_set_and_epoch_intact
     );
 
     fs::write(root.join("lib.rs"), "pub fn still_accepted() {}\n").unwrap();
-    let after = wait_for_generation_after(&database, &root, before.index_generation);
+    let after = wait_for_generation_after_with_timeout(
+        &database,
+        &root,
+        before.index_generation,
+        Duration::from_secs(accepted.reconciliation_interval_secs + 5),
+    );
     assert!(after.index_generation > before.index_generation);
     assert!(after.graph_generation >= before.graph_generation);
     watchers.shutdown().unwrap();

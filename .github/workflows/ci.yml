@@ -276,22 +276,25 @@ jobs:
   platform-tests:
     name: ${{ matrix.os }} tests / Rust 1.91
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: ${{ matrix.job_timeout_minutes }}
     env:
       CARGO_BUILD_JOBS: 4
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Wave15 CI 34770336792: macOS spent 74m30 compiling, leaving only ~30s for tests under the old 75m step limit.
           - os: macos-14
             test_threads: 4
             junit_name: macos
-            nextest_timeout_minutes: 75
+            job_timeout_minutes: 105
+            nextest_timeout_minutes: 90
           - os: windows-2022
             # Localhost port-binding tests race on Windows under parallel
             # process execution; serial execution preserves the real contract.
             test_threads: 1
             junit_name: windows
+            job_timeout_minutes: 90
             nextest_timeout_minutes: 50
     steps:
       - name: Checkout

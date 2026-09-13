@@ -8,6 +8,27 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Wave 17 account CLI, runtime health and CI repairs — LOCALLY VERIFIED;
+full CI pending (2026-09-13):** exact account-list/test and authenticated
+same-instance runtime projection are independently reviewed. TestBuild02
+**PASS** 3m45/min193.86GiB/peak10.45; selected tests **404/0/1** in19.52s plus
+one explicitly invoked, separately validated audit-RPC child. All 13 integration
+targets **157/0/0** pass. Final Clippy05 **PASS** 4m33/min192.86GiB/peak10.80;
+formatting, GUI lint/self-test, generated CLI docs and Python **19+11+8+6** pass.
+The 107-input/14-executable receipts are in
+`docs/gold-wave17-verification.md` and `docs/verification/gold-wave17-*.json`.
+The retained Selected01 failure was a Windows sharing violation; its reviewed
+fixture permits only transient OS32 during writes and proves the exact final
+row after writer completion. Other binding rotations preserve matching rows.
+This batch also repairs the Wave15 credential field/import failures, isolated
+keychain fixtures, watcher observation windows and preexisting History sidecar
+admission. macOS CI15 compiled for 74m30 then exhausted its test-step budget
+after startup without an assertion summary; macOS now has 90/105-minute
+test/job budgets. CI15 is terminal; one fresh full CI is due after publication.
+Wave16 is on main with automatic Preflight/Code Quality passed. Reviewed W18
+GUI and W19 connect consumers will share the next build round. No live Telegram,
+native GUI or cross-platform acceptance follows. Counts and P1-16 are unchanged.
+
 **Wave 16 account-bound proactive delivery — LOCALLY ACCEPTED; full CI
 outstanding (2026-09-13):** sixteen production files plus one source gate
 implement the Telegram account-bound route/queue/delivery contract, with explicit

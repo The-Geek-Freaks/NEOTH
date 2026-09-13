@@ -5269,7 +5269,13 @@ mod tests {
         );
         assert!(dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
 
-        let recovered = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+        let recovered = crate::config::load_runtime_config_diagnostic_snapshot_using_store(
+            &freedom_path,
+            Some(&store),
+        )
+        .unwrap()
+        .config
+        .expect("recovered legacy Telegram config");
         assert!(recovered.channel_accounts.telegram.is_empty());
         assert_eq!(recovered.telegram_user_id, Some(424242));
         assert_eq!(
@@ -5323,7 +5329,13 @@ mod tests {
         );
         assert!(dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
 
-        let recovered = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+        let recovered = crate::config::load_runtime_config_diagnostic_snapshot_using_store(
+            &freedom_path,
+            Some(&store),
+        )
+        .unwrap()
+        .config
+        .expect("recovered migrated Telegram config");
         assert!(recovered.telegram_token.is_none());
         assert!(recovered.telegram_user_id.is_none());
         assert!(

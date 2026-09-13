@@ -1113,6 +1113,21 @@ fn prepare_private_history_target(path: &Path) -> Result<PreparedHistoryTarget> 
         prepare_existing_private_history_sidecars(path)?;
         Ok(PreparedHistoryTarget::Existing(file))
     } else {
+        for sidecar in sqlite_sidecar_paths(path) {
+            match std::fs::symlink_metadata(&sidecar) {
+                Ok(_) => anyhow::bail!(
+                    "fresh private History database has a preexisting SQLite sidecar {}",
+                    sidecar.display()
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error).with_context(|| {
+                    format!(
+                        "inspect SQLite sidecar {} before creating fresh private History database",
+                        sidecar.display()
+                    )
+                }),
+            }
+        }
         Ok(PreparedHistoryTarget::Fresh(create_private_history_file(
             path,
         )?))
@@ -3551,6 +3566,47 @@ mod tests {
 
         assert!(open_private_history(&path).is_err());
         assert_eq!(std::fs::metadata(path).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn preexisting_sidecar_blocks_fresh_history_birth_on_every_platform() {
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let root = tempdir().unwrap();
+            let parent = root.path().join("private-history");
+            std::fs::create_dir(&parent).unwrap();
+            make_private_history_directory(&parent).unwrap();
+            let database = parent.join("history.db");
+            let sidecar = PathBuf::from(format!("{}{}", database.display(), suffix));
+            std::fs::write(&sidecar, b"preexisting-sidecar").unwrap();
+            let before = std::fs::read(&sidecar).unwrap();
+
+            assert!(open_private_history(&database).is_err(), "suffix={suffix}");
+            assert!(!database.exists(), "suffix={suffix}");
+            assert_eq!(std::fs::read(&sidecar).unwrap(), before, "suffix={suffix}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_sidecar_symlink_blocks_fresh_history_birth() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir().unwrap();
+        let parent = root.path().join("private-history");
+        std::fs::create_dir(&parent).unwrap();
+        make_private_history_directory(&parent).unwrap();
+        let database = parent.join("history.db");
+        let sidecar = sqlite_sidecar_paths(&database)[0].clone();
+        symlink(parent.join("missing-target"), &sidecar).unwrap();
+
+        assert!(open_private_history(&database).is_err());
+        assert!(!database.exists());
+        assert!(
+            std::fs::symlink_metadata(&sidecar)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[cfg(unix)]

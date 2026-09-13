@@ -102,7 +102,7 @@ account; flat proactive Telegram and Cron Telegram announcement paths refuse to
 send while a map is active. Account-aware outbound routing is still incomplete,
 so this is not a full multi-account readiness claim.
 
-### Account-bound proactive Telegram routing (Wave 16; validation pending)
+### Account-bound proactive Telegram routing (Wave 16; locally verified)
 
 `neoth proactive route --default --channel telegram --account <account-id>`
 selects an explicit Telegram
@@ -142,6 +142,7 @@ Matrix, Twitch, and Nostr) without the full wizard:
 neoth channel list                 # which channels are configured right now
 neoth channel add telegram         # prompts for token + exact numeric sender ID
 neoth channel test telegram        # live read-only credential check (no message sent)
+neoth channel test telegram --account <account-id>  # one mapped Telegram account
 neoth channel remove telegram      # clear token + sender policy
 ```
 
@@ -161,8 +162,33 @@ neoth channel remove telegram      # clear token + sender policy
   nick is stateful and could collide with the live adapter. Matrix password-only
   auth is likewise `unavailable`; use a device-bound access token for a safe
   live probe.
+- **Mapped Telegram `test`** requires an exact account: run
+  `neoth channel test telegram --account <account-id>`. The account is never
+  inferred from an active map, including `default`; an unknown or invalid map
+  fails before a probe. `--account` is rejected for non-Telegram channels and
+  for the legacy scalar Telegram singleton, where the existing no-account test
+  remains the valid path.
 - **`list`** / **`remove`** show and clear configured state. All four accept
   `--output json`.
+
+For a valid Telegram account map, `channel list` emits one secret-free child
+per configured `ChannelRef`. This is **static readiness**: it proves the
+matching policy and effective credential bundle are usable, not that an adapter
+or daemon is live. A partial or mismatched map remains an error instead of
+producing usable-looking account children.
+
+When a matching local daemon instance publishes a current private runtime
+projection, the same child can additionally report `running`,
+`configured_not_started`, `failed`, `inactive`, or `credentials_invalid`.
+The projection is accepted only for the exact current account binding and live
+daemon instance. A missing, stale, mismatched, unreadable, or unproven
+projection is **unknown**, while the static account readiness stays visible;
+JSON omits the optional runtime field in that case. Runtime projection is
+observational only and is not credential or authorization evidence.
+
+Wave 17 is locally verified by the focused unit and integration checks recorded
+in [its verification receipt](gold-wave17-verification.md). Full cross-platform
+CI and live Telegram acceptance remain separate.
 
 Messaging-channel credentials live in `credentials.yaml` or the selected
 keychain backend. While `neoth serve` is running, its reconciler watches the

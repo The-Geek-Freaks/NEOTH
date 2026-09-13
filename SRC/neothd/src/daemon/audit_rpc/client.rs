@@ -9,6 +9,7 @@ use std::path::Path;
 use anyhow::Context as _;
 use anyhow::Result;
 use base64::Engine;
+use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::sidecar::read_sidecar;
@@ -47,17 +48,35 @@ pub(crate) enum AuditRpcHealthError {
     Body { bytes: usize },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InstanceCommitment(pub(crate) String);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DaemonInstanceProof {
+    pub(crate) daemon_pid: u32,
+    pub(crate) instance_commitment: InstanceCommitment,
+}
+
+pub(crate) fn instance_commitment_for_nonce(nonce: &str) -> InstanceCommitment {
+    let mut digest = Sha256::new();
+    digest.update(b"neoth/channel-runtime-health-instance/v1");
+    digest.update(nonce.as_bytes());
+    InstanceCommitment(hex::encode(digest.finalize()))
+}
+
 /// Authenticated same-user IPC health probe. Sidecar/PID checks bind discovery
 /// to the live daemon incarnation; the transport additionally proves the OS
 /// user before the bearer is sent.
 pub fn is_reachable(home: &Path) -> bool {
-    health_check(home).is_ok()
+    authenticated_live_instance(home).is_ok()
 }
 
 /// Run the same fail-closed reachability probe as [`is_reachable`], preserving
 /// the rejection category for diagnostics. This never sends the bearer until
 /// strict sidecar and exact PID/nonce/lock ownership checks have succeeded.
-pub(crate) fn health_check(home: &Path) -> std::result::Result<(), AuditRpcHealthError> {
+pub(crate) fn authenticated_live_instance(
+    home: &Path,
+) -> std::result::Result<DaemonInstanceProof, AuditRpcHealthError> {
     let sidecar =
         read_sidecar(home).map_err(|error| AuditRpcHealthError::Sidecar(error.to_string()))?;
     if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
@@ -82,7 +101,16 @@ pub(crate) fn health_check(home: &Path) -> std::result::Result<(), AuditRpcHealt
         HEALTH_CHECK_EXCHANGE_TIMEOUT,
     )
     .map_err(|error| AuditRpcHealthError::TransportOrPeer(error.to_string()))?;
-    validate_health_response(response)
+    validate_health_response(response)?;
+    Ok(DaemonInstanceProof {
+        daemon_pid: sidecar.pid,
+        instance_commitment: instance_commitment_for_nonce(&sidecar.endpoint_nonce),
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn health_check(home: &Path) -> std::result::Result<(), AuditRpcHealthError> {
+    authenticated_live_instance(home).map(|_| ())
 }
 
 fn validate_health_response(response: Vec<u8>) -> std::result::Result<(), AuditRpcHealthError> {
@@ -773,5 +801,20 @@ mod tests {
             HEALTH_CHECK_EXCHANGE_TIMEOUT,
             std::time::Duration::from_secs(1)
         );
+    }
+
+    #[test]
+    fn instance_commitment_is_stable_for_one_nonce_and_changes_with_the_boot_nonce() {
+        let first = instance_commitment_for_nonce("first-test-boot-nonce");
+        assert_eq!(
+            first,
+            instance_commitment_for_nonce("first-test-boot-nonce")
+        );
+        assert_ne!(
+            first,
+            instance_commitment_for_nonce("second-test-boot-nonce")
+        );
+        assert_eq!(first.0.len(), 64);
+        assert!(first.0.bytes().all(|byte| byte.is_ascii_hexdigit()));
     }
 }

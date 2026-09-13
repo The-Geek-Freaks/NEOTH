@@ -5,7 +5,7 @@
 //!   never the secret values**.
 //! - `import --file <path>` merges a credentials.yaml-shaped file into the
 //!   canonical one: every SET field in the imported file overwrites the
-//!   existing value; fields absent (or empty) in the import are left
+//!   existing value; fields absent (or empty account maps) in the import are left
 //!   untouched. The merge is field-agnostic (serde mapping overlay) so new
 //!   credential fields need no change here, and it NEVER prints secret values
 //!   — only the names of the keys it imported.
@@ -106,18 +106,31 @@ pub enum CredentialAction {
 /// serialized mapping for KEY NAMES ONLY — the values (plaintext secrets) are
 /// never returned, logged, or printed.
 fn set_key_names(creds: &Credentials) -> Result<Vec<String>> {
-    creds.configured_field_names()
+    let mut names = creds.configured_field_names()?;
+    // `#[serde(default)]` serializes the absent account map as `{}`. It is not
+    // an operator-configured credential field until it contains an account.
+    if creds.channel_accounts.telegram.is_empty() {
+        names.retain(|name| name != "channel_accounts");
+    }
+    Ok(names)
 }
 
 /// Overlay every SET (non-null) field of `incoming` onto `existing`,
-/// field-agnostically (new credential fields need no change here). Returns the
+/// field-agnostically, except for the serde-default account map. Returns the
 /// merged credentials plus the sorted NAMES of the keys taken from `incoming`.
 /// Values are never returned or logged.
 fn merge_credentials(
     existing: &Credentials,
     incoming: &Credentials,
 ) -> Result<(Credentials, Vec<String>)> {
-    existing.merge_present_fields(incoming)
+    let (mut merged, mut imported) = existing.merge_present_fields(incoming)?;
+    // The default map is emitted as `{}` even when absent in the import, so it
+    // must not erase an existing account map.
+    if incoming.channel_accounts.telegram.is_empty() {
+        merged.channel_accounts = existing.channel_accounts.clone();
+        imported.retain(|name| name != "channel_accounts");
+    }
+    Ok((merged, imported))
 }
 
 /// Split `imported` keys into (added, overwritten) relative to the keys
@@ -1275,6 +1288,12 @@ ssh_tunnels:
     }
 
     #[test]
+    fn set_key_names_lists_non_empty_account_map() {
+        let c = creds("channel_accounts:\n  telegram:\n    default:\n      token: T\n");
+        assert_eq!(set_key_names(&c).unwrap(), vec!["channel_accounts"]);
+    }
+
+    #[test]
     fn merge_overwrites_set_fields_and_keeps_untouched_ones() {
         let existing = creds("provider_key: OLD\nslack_bot_token: KEEP\n");
         let incoming = creds("provider_key: NEW\ntelegram_token: TOK\n");
@@ -1787,11 +1806,43 @@ ssh_tunnels:
     }
 
     #[test]
+    fn merge_with_non_empty_account_map_imports_and_replaces_it() {
+        let existing = creds("channel_accounts:\n  telegram:\n    default:\n      token: OLD\n");
+        let incoming = creds("channel_accounts:\n  telegram:\n    default:\n      token: NEW\n");
+        let (merged, imported) = merge_credentials(&existing, &incoming).unwrap();
+        assert_eq!(imported, vec!["channel_accounts"]);
+        assert_eq!(merged.channel_accounts.telegram.len(), 1);
+        assert_eq!(
+            merged
+                .channel_accounts
+                .telegram
+                .get(&"default".parse().unwrap())
+                .and_then(|account| account.token.as_ref())
+                .map(|token| token.expose()),
+            Some("NEW")
+        );
+    }
+
+    #[test]
     fn merge_with_empty_incoming_changes_nothing() {
-        let existing = creds("provider_key: P\n");
+        let existing = creds(
+            "provider_key: P\nchannel_accounts:\n  telegram:\n    default:\n      token: T\n",
+        );
         let incoming = creds("{}");
         let (merged, imported) = merge_credentials(&existing, &incoming).unwrap();
         assert!(imported.is_empty());
-        assert_eq!(set_key_names(&merged).unwrap(), vec!["provider_key"]);
+        assert_eq!(
+            set_key_names(&merged).unwrap(),
+            vec!["channel_accounts", "provider_key"]
+        );
+        assert_eq!(
+            merged
+                .channel_accounts
+                .telegram
+                .get(&"default".parse().unwrap())
+                .and_then(|account| account.token.as_ref())
+                .map(|token| token.expose()),
+            Some("T")
+        );
     }
 }

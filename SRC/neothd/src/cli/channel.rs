@@ -8,20 +8,23 @@
 //! The mutating sub-actions (`add`/`test`/`remove`) cover all registered
 //! channel kinds; `list` drives from the same probe as `neoth status`.
 
-use std::io::Read;
+use std::{collections::BTreeMap, io::Read};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use crate::channels::probe::{ChannelCredsView, ProbeStatus, probe_all};
+use crate::channels::probe::{
+    ChannelCredsView, ProbeStatus, TelegramAccountProbe, probe_all, telegram_account_probes,
+};
 use crate::channels::registry::{
-    CHANNEL_REGISTRY_SCHEMA_VERSION, ChannelAccountId, ChannelId, channel_descriptors,
+    CHANNEL_REGISTRY_SCHEMA_VERSION, ChannelAccountId, ChannelId, ChannelRef, channel_descriptors,
     resolve_channel_id, validate_registry,
 };
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::config::credentials::Credentials;
+use crate::daemon::channel_runtime_health::{AccountRuntimeState, BindingTag, read_active};
 use crate::secret::SecretString;
 
 fn known_channel_names() -> String {
@@ -60,6 +63,25 @@ pub struct ChannelStatus {
     /// Operator-readable note: what is set, or exactly what to set. Names the
     /// config/credential key — never the secret value.
     pub detail: String,
+    /// Explicit Telegram account readiness. Omitted for every legacy root row
+    /// and for invalid account maps so existing JSON consumers retain their
+    /// top-level registry shape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accounts: Vec<ChannelAccountStatus>,
+}
+
+/// One secret-free explicit account row nested below Telegram's stable registry
+/// row. It is static configuration readiness, never a daemon-liveness claim.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ChannelAccountStatus {
+    pub channel_ref: ChannelRef,
+    pub status: ProbeStatus,
+    pub detail: String,
+    /// Supervisor-owned local adapter state for this exact current binding.
+    /// Omitted when no fresh, live projection can prove it, so configuration
+    /// alone never becomes a runtime claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
 }
 
 /// Honest configured-state of every messaging channel. Delegates to
@@ -69,40 +91,47 @@ pub struct ChannelStatus {
 /// other than `NotConfigured` or `Unavailable` (includes partial errors so
 /// operators can see credentials that need repair).
 pub fn channel_statuses(cfg: &FreedomConfig, creds: &Credentials) -> Vec<ChannelStatus> {
-    let view = ChannelCredsView::from_config(Some(cfg), creds);
-    let telegram_map_policy = cfg.telegram_account_map_active();
-    let telegram_map_credentials = creds.telegram_account_map_active();
-    // Use the exact authenticated-account projection that the daemon startup
-    // consumes. Map presence alone cannot prove a usable binding: each policy
-    // key needs its matching non-blank effective credential and nonzero sender.
-    let telegram_map_live_inbound = crate::config::RuntimeConfigPair {
+    let pair = crate::config::RuntimeConfigPair {
         config: cfg.clone(),
         raw_credentials: creds.clone(),
         credentials: creds.clone(),
-    }
-    .authenticated_telegram_accounts()
-    .map(|accounts| {
-        !accounts.is_empty()
-            && accounts
-                .iter()
-                .all(|account| !account.is_legacy_singleton())
-    })
-    .unwrap_or(false);
+    };
+    channel_statuses_for_pair(&pair)
+}
+
+fn channel_statuses_for_pair(pair: &crate::config::RuntimeConfigPair) -> Vec<ChannelStatus> {
+    let cfg = &pair.config;
+    let creds = &pair.credentials;
+    let view = ChannelCredsView::from_config(Some(cfg), creds);
+    let telegram_map_active = cfg.telegram_account_map_active()
+        || creds.telegram_account_map_active()
+        || pair.raw_credentials.telegram_account_map_active();
+    let telegram_accounts = telegram_account_probes(pair);
     probe_all(&view)
         .into_iter()
         .map(|h| {
-            if h.channel == ChannelId::Telegram.as_str()
-                && (telegram_map_policy || telegram_map_credentials)
-            {
+            if h.channel == ChannelId::Telegram.as_str() && telegram_map_active {
+                let accounts = telegram_accounts
+                    .as_ref()
+                    .map(|accounts| {
+                        accounts
+                            .iter()
+                            .map(channel_account_status)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let valid_map = matches!(&telegram_accounts, Ok(accounts) if !accounts.is_empty());
                 return ChannelStatus {
                     name: h.channel,
-                    status: if telegram_map_live_inbound { ProbeStatus::Ok } else { ProbeStatus::Error },
+                    status: if valid_map { ProbeStatus::Ok } else { ProbeStatus::Error },
                     configured: true,
-                    detail: if telegram_map_live_inbound {
-                        "Telegram account map configured: inbound accounts are live-capable; outbound account routing is pending.".to_owned()
+                    detail: if valid_map {
+                        "Telegram account map configured; per-account readiness is static only."
+                            .to_owned()
                     } else {
-                        "Telegram account map is invalid or partially configured: matching policy, nonzero sender, and non-empty credentials are required before inbound startup; outbound account routing is pending.".to_owned()
+                        "Telegram account map is invalid or partial; no account is usable until matching policy, nonzero sender, and non-empty credentials are configured.".to_owned()
                     },
+                    accounts,
                 };
             }
             ChannelStatus {
@@ -113,14 +142,23 @@ pub fn channel_statuses(cfg: &FreedomConfig, creds: &Credentials) -> Vec<Channel
                     ProbeStatus::NotConfigured | ProbeStatus::Unavailable
                 ),
                 detail: h.message,
+                accounts: Vec::new(),
             }
         })
         .collect()
 }
 
-/// Migrate the one admitted legacy Telegram singleton into a named inbound
-/// account. This creates one authenticated inbound account only; outbound
-/// account routing remains deliberately pending.
+fn channel_account_status(probe: &TelegramAccountProbe) -> ChannelAccountStatus {
+    ChannelAccountStatus {
+        channel_ref: probe.channel_ref.clone(),
+        status: probe.status,
+        detail: probe.detail.clone(),
+        runtime: None,
+    }
+}
+
+/// Migrate the one admitted legacy Telegram singleton into one exact named
+/// configured account. The migration itself does not infer or alter routes.
 pub fn run_migrate_legacy(channel: &str, account: &str, output: &OutputFormat) -> Result<()> {
     run_migrate_legacy_at(
         &FreedomConfig::default_neoth_home(),
@@ -166,13 +204,13 @@ fn run_migrate_legacy_at(
             serde_json::json!({
                 "channel": "telegram",
                 "account": account_id.as_str(),
-                "inbound": "live_capable",
-                "outbound": "pending",
+                "inbound": "configured_account",
+                "account_probe": "available",
                 "migrated_legacy_singleton": true,
             })
         ),
         OutputFormat::Table => println!(
-            "Migrated legacy Telegram singleton to inbound account `{}`. Inbound is live-capable; outbound account routing is pending.",
+            "Migrated legacy Telegram singleton to configured account `{}`. Static account listing and explicit read-only probing are available.",
             account_id.as_str()
         ),
     }
@@ -199,17 +237,107 @@ fn run_list_at(home: &std::path::Path, output: &OutputFormat) -> Result<()> {
 
 pub(crate) fn load_channel_statuses_at(home: &std::path::Path) -> Result<Vec<ChannelStatus>> {
     let config_path = home.join("freedom.yaml");
-    let (config, credentials) = crate::config::load_optional_runtime_config_pair_from_path(
-        &config_path,
-    )
+    let pair = if config_path
+        .try_exists()
+        .with_context(|| format!("check runtime configuration path {}", config_path.display()))?
+    {
+        crate::config::load_runtime_config_pair_from_path(&config_path)
+    } else {
+        crate::config::load_optional_runtime_config_pair_from_path(&config_path).map(
+            |(config, credentials)| crate::config::RuntimeConfigPair {
+                config: config.unwrap_or_default(),
+                raw_credentials: credentials.clone(),
+                credentials,
+            },
+        )
+    }
     .with_context(|| {
         format!(
-            "load coherent config and effective credentials at {} — file/keychain cannot be read; \
-                 repair it before running `neoth channel list`",
+            "load coherent config and credentials at {} — file/keychain cannot be read; \
+             repair it before running `neoth channel list`",
             config_path.display()
         )
     })?;
-    Ok(channel_statuses(&config.unwrap_or_default(), &credentials))
+    Ok(channel_statuses_with_runtime_at(home, &pair))
+}
+
+/// Add a bounded local daemon projection to the static inventory. The status
+/// builder stays pure; only this home-scoped list path reads local state.
+fn channel_statuses_with_runtime_at(
+    home: &std::path::Path,
+    pair: &crate::config::RuntimeConfigPair,
+) -> Vec<ChannelStatus> {
+    channel_statuses_with_runtime(pair, |current_tags| read_active(home, current_tags))
+}
+
+/// Pure merge seam for the synchronous health reader. The callback receives
+/// only opaque exact-binding tags, never a token or permitted sender value.
+fn channel_statuses_with_runtime<F>(
+    pair: &crate::config::RuntimeConfigPair,
+    read: F,
+) -> Vec<ChannelStatus>
+where
+    F: FnOnce(
+        &BTreeMap<ChannelRef, BindingTag>,
+    ) -> Option<BTreeMap<ChannelRef, AccountRuntimeState>>,
+{
+    let mut rows = channel_statuses_for_pair(pair);
+    let Some(current_tags) = current_telegram_runtime_tags(pair) else {
+        return rows;
+    };
+    if let Some(observations) = read(&current_tags) {
+        merge_runtime_health(&mut rows, &observations);
+    }
+    rows
+}
+
+/// Current tags derive from the same coherent, authenticated account bundle
+/// as the static map rows. Legacy Telegram retains its historical top-level
+/// representation and therefore receives no account runtime child.
+fn current_telegram_runtime_tags(
+    pair: &crate::config::RuntimeConfigPair,
+) -> Option<BTreeMap<ChannelRef, BindingTag>> {
+    if !telegram_account_map_active(pair) {
+        return None;
+    }
+    let accounts = pair.authenticated_telegram_accounts().ok()?;
+    Some(
+        accounts
+            .iter()
+            .filter(|account| !account.is_legacy_singleton())
+            .map(|account| {
+                (
+                    account.channel_ref().clone(),
+                    BindingTag::from_authenticated_telegram_account(account),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn merge_runtime_health(
+    rows: &mut [ChannelStatus],
+    observations: &BTreeMap<ChannelRef, AccountRuntimeState>,
+) {
+    for account in rows.iter_mut().flat_map(|row| &mut row.accounts) {
+        account.runtime = observations
+            .get(&account.channel_ref)
+            .map(runtime_label)
+            .map(str::to_owned);
+    }
+}
+
+/// Unknown and stale observations deliberately omit the optional child field.
+/// Table rendering calls that absence `unknown`; JSON keeps P1's static map
+/// shape unless a live, exact binding has a supervisor-owned state to report.
+fn runtime_label(state: &AccountRuntimeState) -> &'static str {
+    match state {
+        AccountRuntimeState::Running => "running",
+        AccountRuntimeState::ConfiguredNotStarted => "configured_not_started",
+        AccountRuntimeState::Failed => "failed",
+        AccountRuntimeState::Inactive => "inactive",
+        AccountRuntimeState::CredentialsInvalid => "credentials_invalid",
+    }
 }
 
 /// Render the inventory as table or JSON. Returned as a String so it is
@@ -232,16 +360,37 @@ fn render(rows: &[ChannelStatus], output: &OutputFormat) -> Result<String> {
         OutputFormat::Table => {
             let mut out = String::new();
             out.push_str("# Messaging channels\n\n");
-            out.push_str(&format!("{:<22} {:<18}  detail\n", "channel", "status"));
             out.push_str(&format!(
-                "{:<22} {:<18}  {}\n",
+                "{:<22} {:<18} {:<24}  detail\n",
+                "channel", "readiness", "runtime"
+            ));
+            out.push_str(&format!(
+                "{:<22} {:<18} {:<24}  {}\n",
                 "-".repeat(22),
                 "-".repeat(18),
+                "-".repeat(24),
                 "-".repeat(40)
             ));
             for r in rows {
                 let status = format!("{} {}", r.status.glyph(), r.status.as_str());
-                out.push_str(&format!("{:<22} {:<18}  {}\n", r.name, status, r.detail));
+                out.push_str(&format!(
+                    "{:<22} {:<18} {:<24}  {}\n",
+                    r.name, status, "-", r.detail
+                ));
+                for account in &r.accounts {
+                    let status = format!("{} {}", account.status.glyph(), account.status.as_str());
+                    out.push_str(&format!(
+                        "  {:<20} {:<18} {:<24}  {}\n",
+                        format!(
+                            "{}/{}",
+                            account.channel_ref.channel_id.as_str(),
+                            account.channel_ref.account_id.as_str()
+                        ),
+                        status,
+                        account.runtime.as_deref().unwrap_or("unknown"),
+                        account.detail
+                    ));
+                }
             }
             out.push_str(&format!(
                 "\n{} of {} channels configured. Use `neoth channel add <name>` and `neoth channel test <name>`.\n",
@@ -378,6 +527,11 @@ fn plan_channel_test_for_id(
 #[derive(Debug, Clone, Serialize)]
 pub struct ChannelTestResult {
     pub channel: String,
+    /// The exact explicit Telegram account used for this map-mode probe.
+    /// Omitted for legacy Telegram and every other channel, preserving the
+    /// established JSON result shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<ChannelAccountId>,
     /// `ok` (live check passed) / `fail` (live check failed) / `skipped`
     /// (not configured) / `unavailable` (no safe live probe or missing runtime).
     pub status: &'static str,
@@ -393,6 +547,21 @@ pub struct ChannelTestResult {
 /// network-free + secret-free.
 pub async fn run_test(name: &str, output: &OutputFormat) -> Result<()> {
     let result = test_channel(name).await?;
+    print!("{}", render_test(&result, output)?);
+    match channel_test_exit_code(result.status) {
+        None => Ok(()),
+        Some(code) => Err(crate::QuietExit(code).into()),
+    }
+}
+
+/// Account-aware CLI entrypoint. The existing no-account wrapper remains the
+/// GUI/slash-compatible legacy surface.
+pub async fn run_test_with_account(
+    name: &str,
+    account: ChannelAccountId,
+    output: &OutputFormat,
+) -> Result<()> {
+    let result = test_channel_with_account(name, account).await?;
     print!("{}", render_test(&result, output)?);
     match channel_test_exit_code(result.status) {
         None => Ok(()),
@@ -418,12 +587,29 @@ pub(crate) async fn test_channel(name: &str) -> Result<ChannelTestResult> {
     test_channel_at(&FreedomConfig::default_neoth_home(), name).await
 }
 
+pub(crate) async fn test_channel_with_account(
+    name: &str,
+    account: ChannelAccountId,
+) -> Result<ChannelTestResult> {
+    test_channel_at_with_account(&FreedomConfig::default_neoth_home(), name, Some(account)).await
+}
+
 /// Home-scoped credential verification for action/GUI callers. Config and
 /// credentials both fail closed; a corrupt freedom.yaml must never be replaced
 /// by permissive defaults while deciding which credential is active.
 pub(crate) async fn test_channel_at(
     home: &std::path::Path,
     name: &str,
+) -> Result<ChannelTestResult> {
+    test_channel_at_with_account(home, name, None).await
+}
+
+/// Account-aware sibling for the CLI. The two-argument wrapper above remains
+/// the legacy GUI contract.
+pub(crate) async fn test_channel_at_with_account(
+    home: &std::path::Path,
+    name: &str,
+    requested_account: Option<ChannelAccountId>,
 ) -> Result<ChannelTestResult> {
     let channel_id = resolve_operator_channel(name)?;
     let config_path = home.join("freedom.yaml");
@@ -434,7 +620,120 @@ pub(crate) async fn test_channel_at(
             config_path.display()
         )
     })?;
+    if let Some(result) = test_account_probe_with(
+        channel_id,
+        &pair,
+        requested_account,
+        |token, allowed_user_id| async move {
+            crate::channels::telegram::TelegramChannel::new(token, Some(allowed_user_id))
+                .validate()
+                .await
+        },
+    )
+    .await?
+    {
+        return Ok(result);
+    }
     test_channel_candidate_for_id(channel_id, &pair.config, &pair.credentials).await
+}
+
+/// Account-aware test dispatch shared by the production CLI and focused tests.
+/// It invokes the validator only after an exact map binding succeeds; `None`
+/// means the caller should retain its existing legacy/non-Telegram test path.
+async fn test_account_probe_with<F, Fut>(
+    channel_id: ChannelId,
+    pair: &crate::config::RuntimeConfigPair,
+    requested_account: Option<ChannelAccountId>,
+    validate: F,
+) -> Result<Option<ChannelTestResult>>
+where
+    F: FnOnce(SecretString, u64) -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<String, crate::channels::ChannelError>>,
+{
+    if requested_account.is_some() && channel_id != ChannelId::Telegram {
+        anyhow::bail!("--account is supported only for the canonical `telegram` channel");
+    }
+    if channel_id == ChannelId::Telegram && telegram_account_map_active(pair) {
+        let binding = resolve_telegram_probe_binding(pair, requested_account.as_ref())?;
+        return probe_telegram_account_binding_with(binding, validate)
+            .await
+            .map(Some);
+    }
+    if requested_account.is_some() {
+        anyhow::bail!(
+            "--account is invalid for legacy scalar Telegram; omit it to test the legacy singleton"
+        );
+    }
+    Ok(None)
+}
+
+struct TelegramProbeBinding {
+    channel_ref: ChannelRef,
+    token: SecretString,
+    allowed_user_id: u64,
+}
+
+fn telegram_account_map_active(pair: &crate::config::RuntimeConfigPair) -> bool {
+    pair.config.telegram_account_map_active()
+        || pair.credentials.telegram_account_map_active()
+        || pair.raw_credentials.telegram_account_map_active()
+}
+
+/// Select exactly one authenticated configured account. Map mode never
+/// interprets an omitted or legacy `default` as a selection.
+fn resolve_telegram_probe_binding(
+    pair: &crate::config::RuntimeConfigPair,
+    requested_account: Option<&ChannelAccountId>,
+) -> Result<TelegramProbeBinding> {
+    anyhow::ensure!(
+        telegram_account_map_active(pair),
+        "Telegram account selection requires an explicit configured account map"
+    );
+    let requested_account = requested_account.context(
+        "Telegram account map is active; pass `neoth channel test telegram --account <id>`",
+    )?;
+    let accounts = pair.authenticated_telegram_accounts().map_err(|_| {
+        anyhow::anyhow!(
+            "Telegram account map is invalid; repair matching policy, sender, and credential entries before probing"
+        )
+    })?;
+    let account = accounts
+        .into_iter()
+        .find(|account| {
+            !account.is_legacy_singleton()
+                && account.channel_ref()
+                    == &ChannelRef::new(ChannelId::Telegram, requested_account.clone())
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!("Telegram account `{requested_account}` is not configured")
+        })?;
+    Ok(TelegramProbeBinding {
+        channel_ref: account.channel_ref().clone(),
+        token: account.token().clone(),
+        allowed_user_id: account.allowed_user_id(),
+    })
+}
+
+async fn probe_telegram_account_binding_with<F, Fut>(
+    binding: TelegramProbeBinding,
+    validate: F,
+) -> Result<ChannelTestResult>
+where
+    F: FnOnce(SecretString, u64) -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<String, crate::channels::ChannelError>>,
+{
+    let account_id = binding.channel_ref.account_id.clone();
+    Ok(
+        match validate(binding.token, binding.allowed_user_id).await {
+            Ok(user) => account_result(
+                ok("telegram".to_string(), format!("bot @{user}")),
+                account_id,
+            ),
+            Err(error) => {
+                account_result(fail("telegram".to_string(), error.to_string()), account_id)
+            }
+        },
+    )
 }
 
 /// Verify an in-memory candidate without persisting it first. This is the
@@ -797,6 +1096,7 @@ where
 fn ok(channel: String, detail: String) -> ChannelTestResult {
     ChannelTestResult {
         channel,
+        account: None,
         status: "ok",
         detail,
     }
@@ -809,6 +1109,7 @@ fn fail(channel: String, detail: String) -> ChannelTestResult {
     let detail = crate::security::redact::redact_text(&detail);
     ChannelTestResult {
         channel,
+        account: None,
         status: "fail",
         detail,
     }
@@ -816,6 +1117,7 @@ fn fail(channel: String, detail: String) -> ChannelTestResult {
 fn skipped(channel: String, detail: String) -> ChannelTestResult {
     ChannelTestResult {
         channel,
+        account: None,
         status: "skipped",
         detail,
     }
@@ -824,9 +1126,15 @@ fn skipped(channel: String, detail: String) -> ChannelTestResult {
 fn unavailable(channel: String, detail: String) -> ChannelTestResult {
     ChannelTestResult {
         channel,
+        account: None,
         status: "unavailable",
         detail,
     }
+}
+
+fn account_result(mut result: ChannelTestResult, account: ChannelAccountId) -> ChannelTestResult {
+    result.account = Some(account);
+    result
 }
 
 fn render_test(r: &ChannelTestResult, output: &OutputFormat) -> Result<String> {
@@ -841,7 +1149,12 @@ fn render_test(r: &ChannelTestResult, output: &OutputFormat) -> Result<String> {
                 "unavailable" => "⊘",
                 _ => "–",
             };
-            Ok(format!("{glyph} {} — {}\n", r.channel, r.detail))
+            let target = r
+                .account
+                .as_ref()
+                .map(|account| format!("{}/{}", r.channel, account.as_str()))
+                .unwrap_or_else(|| r.channel.clone());
+            Ok(format!("{glyph} {target} — {}\n", r.detail))
         }
     }
 }
@@ -3104,6 +3417,7 @@ mod tests {
     fn render_test_table_and_json() {
         let r = ChannelTestResult {
             channel: "telegram".to_string(),
+            account: None,
             status: "ok",
             detail: "bot @neoth".to_string(),
         };
@@ -3116,9 +3430,26 @@ mod tests {
             serde_json::from_str(&render_test(&r, &OutputFormat::Json).unwrap()).unwrap();
         assert_eq!(j["status"], "ok");
         assert_eq!(j["channel"], "telegram");
+        assert!(
+            j.get("account").is_none(),
+            "legacy result shape is unchanged"
+        );
+        let bound = account_result(
+            r.clone(),
+            ChannelAccountId::new("ops_a").expect("valid account id"),
+        );
+        let bound_json: serde_json::Value =
+            serde_json::from_str(&render_test(&bound, &OutputFormat::Json).unwrap()).unwrap();
+        assert_eq!(bound_json["account"], "ops_a");
+        assert!(
+            render_test(&bound, &OutputFormat::Table)
+                .unwrap()
+                .contains("telegram/ops_a")
+        );
         // A failed/skipped status renders its own glyph.
         let f = ChannelTestResult {
             channel: "slack".to_string(),
+            account: None,
             status: "fail",
             detail: "bad token".to_string(),
         };
@@ -3129,6 +3460,7 @@ mod tests {
         );
         let s = ChannelTestResult {
             channel: "discord".to_string(),
+            account: None,
             status: "skipped",
             detail: "no field".to_string(),
         };
@@ -4181,11 +4513,11 @@ mod tests {
             .unwrap();
         assert_eq!(status.status, ProbeStatus::Ok);
         assert!(status.configured);
-        assert!(status.detail.contains("inbound accounts are live-capable"));
-        assert!(
-            status
-                .detail
-                .contains("outbound account routing is pending")
+        assert!(status.detail.contains("readiness is static only"));
+        assert_eq!(status.accounts.len(), 1);
+        assert_eq!(
+            status.accounts[0].channel_ref.account_id.as_str(),
+            "family_chat"
         );
         assert!(!status.detail.contains("legacy-token"));
     }
@@ -4237,6 +4569,35 @@ mod tests {
             .into_iter()
             .find(|row| row.name == "telegram")
             .unwrap()
+    }
+
+    fn telegram_probe_pair(
+        policy: &[(&str, u64)],
+        credentials: &[(&str, Option<&str>)],
+    ) -> crate::config::RuntimeConfigPair {
+        let mut config = FreedomConfig::default();
+        let mut creds = Credentials::default();
+        for &(account, sender) in policy {
+            config.channel_accounts.telegram.insert(
+                ChannelAccountId::new(account).unwrap(),
+                TelegramAccountConfig {
+                    allowed_user_id: sender,
+                },
+            );
+        }
+        for &(account, token) in credentials {
+            creds.channel_accounts.telegram.insert(
+                ChannelAccountId::new(account).unwrap(),
+                TelegramAccountCredentials {
+                    token: token.map(SecretString::from),
+                },
+            );
+        }
+        crate::config::RuntimeConfigPair {
+            config,
+            raw_credentials: creds.clone(),
+            credentials: creds,
+        }
     }
 
     fn write_telegram_account_map(
@@ -4379,10 +4740,8 @@ mod tests {
         ] {
             assert_eq!(status.status, ProbeStatus::Error);
             assert!(status.configured);
-            assert!(
-                status.detail.contains("not live-capable")
-                    || status.detail.contains("invalid or partially")
-            );
+            assert!(status.detail.contains("invalid or partial"));
+            assert!(status.accounts.is_empty());
         }
 
         let status = telegram_map_status(
@@ -4393,7 +4752,308 @@ mod tests {
             ],
         );
         assert_eq!(status.status, ProbeStatus::Ok);
-        assert!(status.detail.contains("inbound accounts are live-capable"));
+        assert!(status.detail.contains("readiness is static only"));
+        assert_eq!(
+            status
+                .accounts
+                .iter()
+                .map(|account| account.channel_ref.account_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["account-a", "account-b"]
+        );
+        assert!(
+            status
+                .accounts
+                .iter()
+                .all(|account| account.runtime.is_none()),
+            "the pure static helper must never infer a runtime state"
+        );
+        let json = serde_json::to_value(&status).unwrap();
+        assert!(
+            json["accounts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|account| account.get("runtime").is_none()),
+            "the optional runtime child must preserve P1 static JSON until a live match exists"
+        );
+    }
+
+    fn account_runtime<'rows>(
+        rows: &'rows [ChannelStatus],
+        account_id: &str,
+    ) -> Option<&'rows str> {
+        rows.iter()
+            .find(|row| row.name == "telegram")
+            .and_then(|row| {
+                row.accounts
+                    .iter()
+                    .find(|account| account.channel_ref.account_id.as_str() == account_id)
+            })
+            .and_then(|account| account.runtime.as_deref())
+    }
+
+    #[test]
+    fn runtime_merge_projects_only_exact_current_account_states() {
+        let pair = telegram_probe_pair(
+            &[("account-a", 11), ("account-b", 22)],
+            &[
+                ("account-a", Some("token-a")),
+                ("account-b", Some("token-b")),
+            ],
+        );
+
+        let rows = channel_statuses_with_runtime(&pair, |tags| {
+            assert_eq!(tags.len(), 2, "only current authenticated bindings tag");
+            Some(
+                tags.keys()
+                    .map(|reference| {
+                        let state = match reference.account_id.as_str() {
+                            "account-a" => AccountRuntimeState::Running,
+                            "account-b" => AccountRuntimeState::ConfiguredNotStarted,
+                            unexpected => panic!("unexpected current account {unexpected}"),
+                        };
+                        (reference.clone(), state)
+                    })
+                    .collect(),
+            )
+        });
+
+        let telegram = rows.iter().find(|row| row.name == "telegram").unwrap();
+        assert_eq!(
+            telegram.status,
+            ProbeStatus::Ok,
+            "static readiness remains separate"
+        );
+        assert_eq!(account_runtime(&rows, "account-a"), Some("running"));
+        assert_eq!(
+            account_runtime(&rows, "account-b"),
+            Some("configured_not_started")
+        );
+        let rendered = render(&rows, &OutputFormat::Table).unwrap();
+        assert!(rendered.contains("readiness"));
+        assert!(rendered.contains("runtime"));
+    }
+
+    #[test]
+    fn runtime_merge_keeps_matching_b_when_rotated_a_is_not_reported() {
+        let pair = telegram_probe_pair(
+            &[("account-a", 11), ("account-b", 22)],
+            &[
+                ("account-a", Some("token-a")),
+                ("account-b", Some("token-b")),
+            ],
+        );
+
+        let rows = channel_statuses_with_runtime(&pair, |tags| {
+            let b = tags
+                .keys()
+                .find(|reference| reference.account_id.as_str() == "account-b")
+                .unwrap()
+                .clone();
+            Some(BTreeMap::from([(b, AccountRuntimeState::Failed)]))
+        });
+
+        assert_eq!(
+            account_runtime(&rows, "account-a"),
+            None,
+            "a changed or absent tag is unknown, never borrowed from B"
+        );
+        assert_eq!(account_runtime(&rows, "account-b"), Some("failed"));
+    }
+
+    #[test]
+    fn runtime_merge_without_live_daemon_keeps_every_account_unknown() {
+        let pair = telegram_probe_pair(
+            &[("account-a", 11), ("account-b", 22)],
+            &[
+                ("account-a", Some("token-a")),
+                ("account-b", Some("token-b")),
+            ],
+        );
+
+        let rows = channel_statuses_with_runtime(&pair, |tags| {
+            assert_eq!(tags.len(), 2);
+            None
+        });
+
+        assert_eq!(account_runtime(&rows, "account-a"), None);
+        assert_eq!(account_runtime(&rows, "account-b"), None);
+        let rendered = render(&rows, &OutputFormat::Table).unwrap();
+        assert!(rendered.contains("unknown"));
+    }
+
+    #[tokio::test]
+    async fn telegram_map_probe_requires_an_exact_account_and_uses_its_binding() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let pair = telegram_probe_pair(
+            &[("ops_b", 22), ("default", 33), ("ops_a", 11)],
+            &[
+                ("ops_b", Some("token-b")),
+                ("default", Some("token-default")),
+                ("ops_a", Some("token-a")),
+            ],
+        );
+        assert!(resolve_telegram_probe_binding(&pair, None).is_err());
+        assert!(
+            resolve_telegram_probe_binding(&pair, Some(&ChannelAccountId::new("removed").unwrap()))
+                .is_err()
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let spy_calls = Arc::clone(&calls);
+        let result = test_account_probe_with(
+            ChannelId::Telegram,
+            &pair,
+            Some(ChannelAccountId::new("ops_a").unwrap()),
+            move |token, allowed_user_id| async move {
+                spy_calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(token.expose(), "token-a");
+                assert_eq!(allowed_user_id, 11);
+                Ok("ops_a_bot".to_owned())
+            },
+        )
+        .await
+        .unwrap()
+        .expect("configured map account selects a validator");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.account.unwrap().as_str(), "ops_a");
+        assert!(!result.detail.contains("token-a"));
+        assert!(!result.detail.contains("11"));
+
+        let named_default =
+            resolve_telegram_probe_binding(&pair, Some(&ChannelAccountId::default_account()))
+                .unwrap();
+        assert_eq!(named_default.channel_ref.account_id.as_str(), "default");
+        assert_eq!(named_default.allowed_user_id, 33);
+    }
+
+    #[tokio::test]
+    async fn account_probe_refusals_do_not_invoke_the_validator() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let configured_map = telegram_probe_pair(&[("ops_a", 11)], &[("ops_a", Some("token-a"))]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let spy_calls = Arc::clone(&calls);
+        assert!(
+            test_account_probe_with(
+                ChannelId::Telegram,
+                &configured_map,
+                None,
+                move |_, _| async move {
+                    spy_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok("unexpected".to_owned())
+                }
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "map omission must not probe"
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let spy_calls = Arc::clone(&calls);
+        assert!(
+            test_account_probe_with(
+                ChannelId::Telegram,
+                &configured_map,
+                Some(ChannelAccountId::new("removed").unwrap()),
+                move |_, _| async move {
+                    spy_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok("unexpected".to_owned())
+                },
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "unknown account must not probe"
+        );
+
+        let mut invalid_map = telegram_probe_pair(&[("ops_a", 11)], &[("ops_a", Some("token-a"))]);
+        invalid_map.credentials.channel_accounts.telegram.clear();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let spy_calls = Arc::clone(&calls);
+        assert!(
+            test_account_probe_with(
+                ChannelId::Telegram,
+                &invalid_map,
+                Some(ChannelAccountId::new("ops_a").unwrap()),
+                move |_, _| async move {
+                    spy_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok("unexpected".to_owned())
+                },
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "invalid map must not probe"
+        );
+
+        let mut legacy = FreedomConfig::default();
+        legacy.telegram_token = Some(SecretString::from("legacy-token"));
+        legacy.telegram_user_id = Some(9);
+        let legacy_pair = crate::config::RuntimeConfigPair {
+            config: legacy,
+            raw_credentials: Credentials::default(),
+            credentials: Credentials::default(),
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let spy_calls = Arc::clone(&calls);
+        assert!(
+            test_account_probe_with(
+                ChannelId::Telegram,
+                &legacy_pair,
+                Some(ChannelAccountId::default_account()),
+                move |_, _| async move {
+                    spy_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok("unexpected".to_owned())
+                },
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "legacy flag must not probe"
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let spy_calls = Arc::clone(&calls);
+        assert!(
+            test_account_probe_with(
+                ChannelId::Slack,
+                &legacy_pair,
+                Some(ChannelAccountId::new("ops_a").unwrap()),
+                move |_, _| async move {
+                    spy_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok("unexpected".to_owned())
+                },
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "non-Telegram flag must not probe"
+        );
     }
 
     #[tokio::test]
