@@ -2293,12 +2293,28 @@ mod tests {
 
         gate.release();
         blocker.await.unwrap().unwrap();
-        for _ in 0..100 {
-            if scan_skill_mutation_audit_count(home.path(), &binding, false).unwrap() == 1 {
-                break;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match scan_skill_mutation_audit_count(home.path(), &binding, false) {
+                    Ok(1) => break,
+                    Ok(0) => tokio::time::sleep(Duration::from_millis(10)).await,
+                    Err(error)
+                        if error.to_string().contains(
+                            "WAL segment changed between authentication and callback passes",
+                        ) =>
+                    {
+                        // The queued append can land between the scanner's two
+                        // authenticated passes. This test waits for a stable
+                        // snapshot; production continues to reject that pass.
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    Err(error) => panic!("unexpected Skill mutation WAL scan error: {error:#}"),
+                    Ok(count) => panic!("invalid exact Skill intent count: {count}"),
+                }
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        })
+        .await
+        .expect("queued exact Skill intent must become visible in a stable bounded WAL snapshot");
         assert_eq!(
             scan_skill_mutation_audit_count(home.path(), &binding, false).unwrap(),
             1,

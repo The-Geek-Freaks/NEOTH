@@ -171,6 +171,17 @@ pub(crate) fn plan_delivery(
     }
     let dest = routing.destinations.for_channel(channel);
     match channel {
+        // Flat proactive items and routing carry only a channel name, never a
+        // ChannelRef. Account-map mode must therefore stay ledger-only until
+        // account-aware routing, queued items, and receipts exist; choosing a
+        // singleton/default/first map key here would send through the wrong
+        // account. Check both halves so a damaged partial pair fails closed.
+        "telegram"
+            if config.telegram_account_map_active()
+                || credentials.telegram_account_map_active() =>
+        {
+            DeliveryRoute::SidecarOnly
+        }
         "telegram" => match (&config.telegram_token, config.telegram_user_id) {
             (Some(_token), Some(uid)) => DeliveryRoute::Telegram {
                 chat_id: uid.to_string(),
@@ -1568,6 +1579,33 @@ mod tests {
         crate::config::credentials::Credentials::default()
     }
 
+    fn config_with_telegram_account_map() -> FreedomConfig {
+        serde_yaml::from_str(
+            r#"
+autonomy: elevated
+telegram_token: legacy-bot-token
+telegram_user_id: 123456
+channel_accounts:
+  telegram:
+    account_a:
+      allowed_user_id: 123456
+"#,
+        )
+        .expect("account-map test config")
+    }
+
+    fn creds_with_telegram_account_map() -> crate::config::credentials::Credentials {
+        serde_yaml::from_str(
+            r#"
+channel_accounts:
+  telegram:
+    account_b:
+      token: account-b-bot-token
+"#,
+        )
+        .expect("account-map test credentials")
+    }
+
     #[test]
     fn plan_delivery_strict_suppresses() {
         // Strict autonomy denies daemon-initiated outbound regardless of
@@ -1615,6 +1653,40 @@ mod tests {
             DeliveryRoute::Telegram {
                 chat_id: "123456".to_string()
             }
+        );
+    }
+
+    #[test]
+    fn plan_delivery_telegram_account_maps_are_sidecar_only_without_account_selection() {
+        // The public-map case deliberately includes legacy fields. Validation
+        // rejects that persisted pair, but the planner must still fail closed
+        // if it is ever handed a partial or stale in-memory configuration.
+        let public_map = config_with_telegram_account_map();
+        assert_eq!(
+            plan_delivery(
+                "telegram",
+                AutonomyLevel::Elevated,
+                &public_map,
+                &default_rt(),
+                &default_creds(),
+            ),
+            DeliveryRoute::SidecarOnly,
+            "a public Telegram account map must not select legacy/default account egress",
+        );
+
+        // The secret-map half alone also blocks delivery. This protects the
+        // outbound seam if a pair is damaged between atomic config writes.
+        let legacy = cfg_with_telegram(AutonomyLevel::Elevated);
+        assert_eq!(
+            plan_delivery(
+                "telegram",
+                AutonomyLevel::Elevated,
+                &legacy,
+                &default_rt(),
+                &creds_with_telegram_account_map(),
+            ),
+            DeliveryRoute::SidecarOnly,
+            "a secret Telegram account map must not select legacy/default account egress",
         );
     }
 

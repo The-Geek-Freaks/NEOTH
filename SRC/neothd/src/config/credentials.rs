@@ -17,6 +17,7 @@
 //! open on unix; icacls grant:r owner on Windows).
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -469,6 +470,18 @@ fn encode_credentials_yaml(path: &Path, body: &str) -> Result<FileSnapshot> {
 /// need to keep an empty key around.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
+pub struct TelegramAccountCredentials {
+    pub token: Option<SecretString>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ChannelAccountCredentials {
+    pub telegram: BTreeMap<crate::channels::registry::ChannelAccountId, TelegramAccountCredentials>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Credentials {
     /// LLM provider API key — OpenAI, Gemini, or compat endpoint.
     pub provider_key: Option<SecretString>,
@@ -482,6 +495,9 @@ pub struct Credentials {
     pub azure_tts_api_key: Option<SecretString>,
     /// Telegram bot token from @BotFather.
     pub telegram_token: Option<SecretString>,
+    /// Account-owned Telegram secrets. Empty preserves the legacy singleton.
+    #[serde(default)]
+    pub channel_accounts: ChannelAccountCredentials,
     /// OMI-MULTIMODAL-01 — OMI Developer API key (`omi_dev_*`) for importing
     /// conversations from the configured Developer API endpoint.
     #[serde(default)]
@@ -787,6 +803,234 @@ pub struct Credentials {
 }
 
 impl Credentials {
+    /// Presence-only map guard for outbound rollout. It has no side effect on
+    /// legacy Telegram fields or keychain material.
+    pub fn telegram_account_map_active(&self) -> bool {
+        !self.channel_accounts.telegram.is_empty()
+    }
+
+    /// Commit the only permitted legacy-to-account Telegram binding. Both
+    /// public admission policy and the effective legacy token move through the
+    /// existing PREPARED pair transaction; no historical runtime state is read.
+    pub(crate) fn migrate_legacy_telegram_to_account_at(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        account_id: crate::channels::registry::ChannelAccountId,
+    ) -> Result<()> {
+        Self::migrate_legacy_telegram_to_account_at_using_fault_and_store(
+            freedom_path,
+            credentials_path,
+            account_id,
+            None,
+            |_| Ok(()),
+        )
+    }
+
+    /// Move a legacy singleton into exactly one named Telegram account.
+    ///
+    /// The OS store is necessarily external to the durable pair journal.  We
+    /// therefore snapshot its dynamic account key before staging the exact
+    /// file images, write the dynamic value before the journal can become
+    /// visible, and restore that snapshot only while recovery is guaranteed
+    /// to choose the old pair.  Once the target publication boundary has been
+    /// crossed, recovery may commit the new pair, so the dynamic value must
+    /// remain the new one.
+    fn migrate_legacy_telegram_to_account_at_using_fault_and_store<H>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        account_id: crate::channels::registry::ChannelAccountId,
+        injected_store: Option<&dyn crate::config::keychain::SecretStore>,
+        fault: H,
+    ) -> Result<()>
+    where
+        H: FnMut(DualFileFaultPoint) -> Result<()>,
+    {
+        let freedom_dir = transaction_directory(freedom_path);
+        anyhow::ensure!(
+            freedom_dir == transaction_directory(credentials_path),
+            "freedom.yaml and credentials.yaml must be sibling files for a durable transaction"
+        );
+
+        with_dual_file_transaction_lock(freedom_path, || {
+            with_config_writer_guard(freedom_path, || {
+                with_legacy_pair_locks(freedom_path, credentials_path, || {
+                    let freedom_before = FileSnapshot::capture(freedom_path)?;
+                    let credentials_before = FileSnapshot::capture(credentials_path)?;
+                    // Do not use the effective loader here: migration precedence is
+                    // intentionally the raw inline value, then credentials.yaml,
+                    // then the matching legacy OS-store key.
+                    let mut config =
+                        crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)
+                            .with_context(|| {
+                                format!(
+                                    "load {} for legacy Telegram account migration",
+                                    freedom_path.display()
+                                )
+                            })?;
+                    let mut credentials = Self::load_or_default_unlocked(credentials_path)
+                        .with_context(|| {
+                            format!(
+                                "load {} for legacy Telegram account migration",
+                                credentials_path.display()
+                            )
+                        })?;
+                    let keychain_mode =
+                        config.secrets_backend == crate::config::SecretsBackend::Keychain;
+                    let opened_store =
+                        if keychain_mode && injected_store.is_none() {
+                            Some(crate::config::keychain::open_store().context(
+                                "open OS keychain for legacy Telegram account migration",
+                            )?)
+                        } else {
+                            None
+                        };
+                    // File mode must never touch an OS store, including when a
+                    // test injects one to prove that boundary.
+                    let store = if keychain_mode {
+                        injected_store.or(opened_store.as_deref())
+                    } else {
+                        None
+                    };
+                    let dynamic_key =
+                        crate::config::keychain::telegram_account_token_key(&account_id);
+                    let committed_target = keychain_mode
+                        && config.telegram_token.is_none()
+                        && config.telegram_user_id.is_none()
+                        && config.channel_accounts.telegram.len() == 1
+                        && config
+                            .channel_accounts
+                            .telegram
+                            .get(&account_id)
+                            .is_some_and(|policy| policy.allowed_user_id != 0)
+                        && credentials.telegram_token.is_none()
+                        && credentials.channel_accounts.telegram.len() == 1
+                        && credentials
+                            .channel_accounts
+                            .telegram
+                            .get(&account_id)
+                            .is_some_and(|account| account.token.is_none());
+                    if !config.channel_accounts.telegram.is_empty()
+                        || !credentials.channel_accounts.telegram.is_empty()
+                    {
+                        if committed_target {
+                            // A prior call can fail only after the pair has
+                            // committed but before the legacy singleton key is
+                            // removed.  Do not rewrite the durable pair on a
+                            // retry: its account map is already authoritative.
+                            let store = store.expect("keychain committed target opens a store");
+                            let dynamic_token = store.get(&dynamic_key).context(
+                                "read committed Telegram account token before retrying legacy key cleanup",
+                            )?;
+                            anyhow::ensure!(
+                                dynamic_token
+                                    .as_ref()
+                                    .is_some_and(|token| !token.expose().trim().is_empty()),
+                                "refusing legacy Telegram key cleanup: committed account `{}` has no non-blank dynamic token",
+                                account_id
+                            );
+                            store.delete("telegram_token").context(
+                                "Telegram account migration already committed, but legacy key cleanup failed; rerun the same migration to retry cleanup without rewriting the committed pair",
+                            )?;
+                            return Ok(());
+                        }
+                        anyhow::bail!(
+                            "Telegram account map or account credentials already configured"
+                        );
+                    }
+                    let dynamic_before = store
+                        .map(|store| store.get(&dynamic_key))
+                        .transpose()?
+                        .flatten();
+                    let legacy_before = store
+                        .map(|store| store.get("telegram_token"))
+                        .transpose()?
+                        .flatten();
+
+                    let allowed_user_id = config
+                        .telegram_user_id
+                        .take()
+                        .context("legacy telegram_user_id is missing")?;
+                    anyhow::ensure!(allowed_user_id != 0, "legacy telegram_user_id is invalid");
+                    let token = config
+                        .telegram_token
+                        .take()
+                        .or_else(|| credentials.telegram_token.take())
+                        .or(legacy_before.clone())
+                        .context("legacy Telegram token is missing")?;
+                    // A higher-precedence inline token still retires a lower
+                    // legacy credentials.yaml singleton; account maps never
+                    // fall back to either scalar form.
+                    credentials.telegram_token = None;
+                    config.channel_accounts.telegram.insert(
+                        account_id.clone(),
+                        crate::config::TelegramAccountConfig { allowed_user_id },
+                    );
+                    credentials.channel_accounts.telegram.insert(
+                        account_id,
+                        TelegramAccountCredentials {
+                            token: (!keychain_mode).then(|| token.clone()),
+                        },
+                    );
+
+                    let freedom_body = render_freedom_preserving_unknown_yaml(
+                        &config,
+                        &freedom_before,
+                        InlineTelegramTokenPolicy::Remove,
+                    )?;
+                    let freedom_after = FileSnapshot::Present(zeroize::Zeroizing::new(
+                        freedom_body.as_bytes().to_vec(),
+                    ));
+                    let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(
+                        credentials_path,
+                        &credentials_before,
+                    )?;
+
+                    if let Some(store) = store {
+                        store.set(&dynamic_key, &token).context(
+                            "write dynamic Telegram account token before PREPARED pair publication",
+                        )?;
+                    }
+                    let publication = publish_prepared_file_pair(
+                        freedom_path,
+                        credentials_path,
+                        &freedom_dir,
+                        &freedom_before,
+                        &freedom_after,
+                        &credentials_before,
+                        &credentials_after,
+                        (),
+                        Some(|path: &Path, body: &[u8]| {
+                            crate::util::atomic_write::atomic_write_private(path, body)
+                                .with_context(|| format!("atomically write {}", path.display()))
+                        }),
+                        fault,
+                    );
+                    if let Err(error) = publication {
+                        if let Some(store) = store
+                            && !dual_file_target_publication_crossed(&error)
+                        {
+                            let restored = match dynamic_before {
+                                Some(value) => store.set(&dynamic_key, &value),
+                                None => store.delete(&dynamic_key),
+                            };
+                            if let Err(restore_error) = restored {
+                                return Err(error.context(format!(
+                                    "restore dynamic Telegram account token after recoverable pair failure: {restore_error:#}"
+                                )));
+                            }
+                        }
+                        return Err(error);
+                    }
+                    if let Some(store) = store {
+                        store.delete("telegram_token").context(
+                            "Telegram account migration already committed its config/credential pair, but legacy key cleanup failed; rerun the same migration to retry cleanup without rewriting the committed pair",
+                        )?;
+                    }
+                    Ok(())
+                })
+            })
+        })
+    }
     /// Secure default for existing credentials files that predate the field.
     pub fn matrix_requires_encryption(&self) -> bool {
         self.matrix_require_encryption.unwrap_or(true)
@@ -852,6 +1096,11 @@ impl Credentials {
                         store.as_ref(),
                     )
                     .context("supplement credentials from OS keychain")?;
+                    crate::config::keychain::supplement_telegram_account_tokens(
+                        &mut credentials,
+                        store.as_ref(),
+                    )
+                    .context("supplement Telegram account credentials from OS keychain")?;
                 }
                 Err(error) => tracing::warn!(
                     %error,
@@ -1197,6 +1446,7 @@ impl Credentials {
             elevenlabs_tts_api_key,
             azure_tts_api_key,
             telegram_token,
+            channel_accounts,
             omi_developer_api_key,
             omi_ingest_token,
             inference_left_key,
@@ -1282,6 +1532,7 @@ impl Credentials {
             && elevenlabs_tts_api_key.is_none()
             && azure_tts_api_key.is_none()
             && telegram_token.is_none()
+            && channel_accounts.telegram.is_empty()
             && omi_developer_api_key.is_none()
             && omi_ingest_token.is_none()
             && inference_left_key.is_none()
@@ -2948,6 +3199,7 @@ pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::keychain::SecretStore;
 
     fn ephemeral_test_secret() -> String {
         uuid::Uuid::new_v4().to_string()
@@ -4634,6 +4886,550 @@ mod tests {
             "sk-roundtrip"
         );
         assert!(loaded.telegram_token.is_none());
+    }
+
+    fn legacy_telegram_freedom_yaml(backend: &str, inline_token: Option<&str>) -> String {
+        let token = inline_token
+            .map(|value| format!("telegram_token: {value}\n"))
+            .unwrap_or_default();
+        format!(
+            "secrets_backend: {backend}\ntelegram_user_id: 424242\n{token}future_extension:\n  nested: preserve-me\n"
+        )
+    }
+
+    fn telegram_account_id() -> crate::channels::registry::ChannelAccountId {
+        "primary".parse().expect("canonical test account id")
+    }
+
+    fn committed_keychain_telegram_pair(allowed_user_id: u64) -> (String, &'static [u8]) {
+        (
+            format!(
+                "secrets_backend: keychain\nchannel_accounts:\n  telegram:\n    primary:\n      allowed_user_id: {allowed_user_id}\nfuture_extension: preserve\n"
+            ),
+            b"channel_accounts:\n  telegram:\n    primary:\n      token: null\nfuture_secret: preserve\n",
+        )
+    }
+
+    fn assert_cleanup_refused_without_pair_rewrite(
+        allowed_user_id: u64,
+        dynamic_token: Option<&str>,
+    ) {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let (freedom_before, credentials_before) =
+            committed_keychain_telegram_pair(allowed_user_id);
+        std::fs::write(&freedom_path, &freedom_before).unwrap();
+        std::fs::write(&credentials_path, credentials_before).unwrap();
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        let account_id = telegram_account_id();
+        let dynamic_key = crate::config::keychain::telegram_account_token_key(&account_id);
+        store
+            .set("telegram_token", &SecretString::from("legacy-must-remain"))
+            .unwrap();
+        if let Some(dynamic_token) = dynamic_token {
+            store
+                .set(&dynamic_key, &SecretString::from(dynamic_token))
+                .unwrap();
+        }
+
+        let error = Credentials::migrate_legacy_telegram_to_account_at_using_fault_and_store(
+            &freedom_path,
+            &credentials_path,
+            account_id,
+            Some(&store),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("already configured")
+                || error.to_string().contains("no non-blank dynamic token"),
+            "unexpected cleanup refusal: {error:#}"
+        );
+        assert_eq!(
+            store.get("telegram_token").unwrap().unwrap().expose(),
+            "legacy-must-remain"
+        );
+        assert_eq!(
+            std::fs::read(&freedom_path).unwrap(),
+            freedom_before.as_bytes()
+        );
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            credentials_before
+        );
+    }
+
+    struct FailIfTouchedStore;
+
+    impl crate::config::keychain::SecretStore for FailIfTouchedStore {
+        fn get(&self, _key: &str) -> Result<Option<SecretString>> {
+            anyhow::bail!("file-mode migration must not read the OS store")
+        }
+
+        fn set(&self, _key: &str, _value: &SecretString) -> Result<()> {
+            anyhow::bail!("file-mode migration must not write the OS store")
+        }
+
+        fn delete(&self, _key: &str) -> Result<()> {
+            anyhow::bail!("file-mode migration must not delete from the OS store")
+        }
+
+        fn backend_name(&self) -> &'static str {
+            "fail-if-touched"
+        }
+    }
+
+    struct FailLegacyDeleteOnceStore {
+        inner: crate::config::keychain::InMemorySecretStore,
+        fail_legacy_delete: std::sync::Mutex<bool>,
+    }
+
+    impl Default for FailLegacyDeleteOnceStore {
+        fn default() -> Self {
+            Self {
+                inner: crate::config::keychain::InMemorySecretStore::default(),
+                fail_legacy_delete: std::sync::Mutex::new(true),
+            }
+        }
+    }
+
+    impl crate::config::keychain::SecretStore for FailLegacyDeleteOnceStore {
+        fn get(&self, key: &str) -> Result<Option<SecretString>> {
+            self.inner.get(key)
+        }
+
+        fn set(&self, key: &str, value: &SecretString) -> Result<()> {
+            self.inner.set(key, value)
+        }
+
+        fn delete(&self, key: &str) -> Result<()> {
+            if key == "telegram_token" {
+                let mut fail = self
+                    .fail_legacy_delete
+                    .lock()
+                    .expect("delete-fault store lock poisoned");
+                if *fail {
+                    *fail = false;
+                    anyhow::bail!("injected one-time legacy Telegram delete failure");
+                }
+            }
+            self.inner.delete(key)
+        }
+
+        fn backend_name(&self) -> &'static str {
+            "fail-legacy-delete-once"
+        }
+    }
+
+    #[test]
+    fn legacy_telegram_file_migration_uses_inline_precedence_and_preserves_unknown_yaml() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            legacy_telegram_freedom_yaml("file", Some("inline-wins")),
+        )
+        .unwrap();
+        std::fs::write(
+            &credentials_path,
+            "telegram_token: credentials-loses\nfuture_secret:\n  nested: preserve-too\n",
+        )
+        .unwrap();
+
+        Credentials::migrate_legacy_telegram_to_account_at_using_fault_and_store(
+            &freedom_path,
+            &credentials_path,
+            telegram_account_id(),
+            Some(&FailIfTouchedStore),
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        let persisted_freedom: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom_path).unwrap()).unwrap();
+        assert!(persisted_freedom["telegram_token"].is_null());
+        assert!(persisted_freedom["telegram_user_id"].is_null());
+        assert_eq!(
+            persisted_freedom["future_extension"]["nested"].as_str(),
+            Some("preserve-me")
+        );
+        let credentials = Credentials::load_or_default(&credentials_path).unwrap();
+        assert!(credentials.telegram_token.is_none());
+        assert_eq!(
+            credentials
+                .channel_accounts
+                .telegram
+                .get(&telegram_account_id())
+                .and_then(|entry| entry.token.as_ref())
+                .map(SecretString::expose),
+            Some("inline-wins")
+        );
+        let raw_credentials: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&credentials_path).unwrap()).unwrap();
+        assert_eq!(
+            raw_credentials["future_secret"]["nested"].as_str(),
+            Some("preserve-too")
+        );
+        let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path).unwrap();
+        let accounts = pair.authenticated_telegram_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].token().expose(), "inline-wins");
+    }
+
+    #[test]
+    fn legacy_telegram_keychain_migration_uses_singleton_only_after_file_sources() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            legacy_telegram_freedom_yaml("keychain", None),
+        )
+        .unwrap();
+        std::fs::write(&credentials_path, "future_secret: preserve\n").unwrap();
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        let account_id = telegram_account_id();
+        let dynamic_key = crate::config::keychain::telegram_account_token_key(&account_id);
+        store
+            .set(&dynamic_key, &SecretString::from("dynamic-before"))
+            .unwrap();
+        store
+            .set("telegram_token", &SecretString::from("legacy-store-token"))
+            .unwrap();
+
+        Credentials::migrate_legacy_telegram_to_account_at_using_fault_and_store(
+            &freedom_path,
+            &credentials_path,
+            account_id.clone(),
+            Some(&store),
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        let credentials = Credentials::load_or_default(&credentials_path).unwrap();
+        assert!(credentials.telegram_token.is_none());
+        assert!(
+            credentials
+                .channel_accounts
+                .telegram
+                .get(&account_id)
+                .expect("keychain account placeholder")
+                .token
+                .is_none(),
+            "keychain mode persists an explicit null placeholder, never a file token"
+        );
+        assert_eq!(
+            store.get(&dynamic_key).unwrap().unwrap().expose(),
+            "legacy-store-token"
+        );
+        assert!(store.get("telegram_token").unwrap().is_none());
+        let mut effective = credentials.clone();
+        crate::config::keychain::supplement_telegram_account_tokens(&mut effective, &store)
+            .unwrap();
+        assert_eq!(
+            effective
+                .channel_accounts
+                .telegram
+                .get(&account_id)
+                .and_then(|entry| entry.token.as_ref())
+                .map(SecretString::expose),
+            Some("legacy-store-token")
+        );
+        let raw_credentials = std::fs::read_to_string(&credentials_path).unwrap();
+        assert!(raw_credentials.contains("future_secret"));
+    }
+
+    #[test]
+    fn legacy_telegram_keychain_prefers_inline_then_credentials_then_singleton() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            legacy_telegram_freedom_yaml("keychain", Some("inline-wins")),
+        )
+        .unwrap();
+        std::fs::write(&credentials_path, "telegram_token: credentials-loses\n").unwrap();
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        let account_id = telegram_account_id();
+        let dynamic_key = crate::config::keychain::telegram_account_token_key(&account_id);
+        store
+            .set("telegram_token", &SecretString::from("store-loses"))
+            .unwrap();
+
+        Credentials::migrate_legacy_telegram_to_account_at_using_fault_and_store(
+            &freedom_path,
+            &credentials_path,
+            account_id.clone(),
+            Some(&store),
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.get(&dynamic_key).unwrap().unwrap().expose(),
+            "inline-wins"
+        );
+        assert!(store.get("telegram_token").unwrap().is_none());
+        let credentials = Credentials::load_or_default(&credentials_path).unwrap();
+        assert!(credentials.telegram_token.is_none());
+        assert!(
+            credentials
+                .channel_accounts
+                .telegram
+                .get(&account_id)
+                .expect("keychain account placeholder")
+                .token
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn legacy_telegram_keychain_uses_credentials_before_singleton() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            legacy_telegram_freedom_yaml("keychain", None),
+        )
+        .unwrap();
+        std::fs::write(&credentials_path, "telegram_token: credentials-wins\n").unwrap();
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        let account_id = telegram_account_id();
+        let dynamic_key = crate::config::keychain::telegram_account_token_key(&account_id);
+        store
+            .set("telegram_token", &SecretString::from("store-loses"))
+            .unwrap();
+
+        Credentials::migrate_legacy_telegram_to_account_at_using_fault_and_store(
+            &freedom_path,
+            &credentials_path,
+            account_id,
+            Some(&store),
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.get(&dynamic_key).unwrap().unwrap().expose(),
+            "credentials-wins"
+        );
+        assert!(store.get("telegram_token").unwrap().is_none());
+        assert!(
+            Credentials::load_or_default(&credentials_path)
+                .unwrap()
+                .telegram_token
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn legacy_telegram_first_publication_failure_restores_dynamic_snapshot_and_pair() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let freedom_before = legacy_telegram_freedom_yaml("keychain", Some("inline-target"));
+        let credentials_before = b"future_secret: preserve\n".to_vec();
+        std::fs::write(&freedom_path, &freedom_before).unwrap();
+        std::fs::write(&credentials_path, &credentials_before).unwrap();
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        let account_id = telegram_account_id();
+        let dynamic_key = crate::config::keychain::telegram_account_token_key(&account_id);
+        store
+            .set(&dynamic_key, &SecretString::from("dynamic-before"))
+            .unwrap();
+        store
+            .set("telegram_token", &SecretString::from("legacy-must-remain"))
+            .unwrap();
+
+        let error = Credentials::migrate_legacy_telegram_to_account_at_using_fault_and_store(
+            &freedom_path,
+            &credentials_path,
+            account_id,
+            Some(&store),
+            |point| {
+                if point == DualFileFaultPoint::CredentialsPublished {
+                    anyhow::bail!("injected first publication failure");
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(!dual_file_target_publication_crossed(&error));
+        assert_eq!(
+            store.get(&dynamic_key).unwrap().unwrap().expose(),
+            "dynamic-before"
+        );
+        assert_eq!(
+            store.get("telegram_token").unwrap().unwrap().expose(),
+            "legacy-must-remain"
+        );
+        assert!(dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+
+        let recovered = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+        assert!(recovered.channel_accounts.telegram.is_empty());
+        assert_eq!(recovered.telegram_user_id, Some(424242));
+        assert_eq!(
+            std::fs::read_to_string(&freedom_path).unwrap(),
+            freedom_before
+        );
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            credentials_before
+        );
+        assert!(!dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+    }
+
+    #[test]
+    fn legacy_telegram_after_boundary_fault_retains_dynamic_target_for_recovery() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            legacy_telegram_freedom_yaml("keychain", Some("inline-target")),
+        )
+        .unwrap();
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        let account_id = telegram_account_id();
+        let dynamic_key = crate::config::keychain::telegram_account_token_key(&account_id);
+        store
+            .set(&dynamic_key, &SecretString::from("dynamic-before"))
+            .unwrap();
+        store
+            .set("telegram_token", &SecretString::from("legacy-stale"))
+            .unwrap();
+
+        let error = Credentials::migrate_legacy_telegram_to_account_at_using_fault_and_store(
+            &freedom_path,
+            &credentials_path,
+            account_id.clone(),
+            Some(&store),
+            |point| {
+                if point == DualFileFaultPoint::FreedomPublished {
+                    anyhow::bail!("injected after-boundary failure");
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(dual_file_target_publication_crossed(&error));
+        assert_eq!(
+            store.get(&dynamic_key).unwrap().unwrap().expose(),
+            "inline-target"
+        );
+        assert!(dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+
+        let recovered = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+        assert!(recovered.telegram_token.is_none());
+        assert!(recovered.telegram_user_id.is_none());
+        assert!(
+            recovered
+                .channel_accounts
+                .telegram
+                .contains_key(&account_id)
+        );
+        assert!(
+            Credentials::load_or_default(&credentials_path)
+                .unwrap()
+                .channel_accounts
+                .telegram
+                .get(&account_id)
+                .expect("recovered keychain placeholder")
+                .token
+                .is_none()
+        );
+        assert!(!dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+    }
+
+    #[test]
+    fn legacy_telegram_post_commit_cleanup_retries_without_rewriting_pair() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            legacy_telegram_freedom_yaml("keychain", Some("inline-target")),
+        )
+        .unwrap();
+        let store = FailLegacyDeleteOnceStore::default();
+        let account_id = telegram_account_id();
+        let dynamic_key = crate::config::keychain::telegram_account_token_key(&account_id);
+        store
+            .set("telegram_token", &SecretString::from("legacy-stale"))
+            .unwrap();
+
+        let error = Credentials::migrate_legacy_telegram_to_account_at_using_fault_and_store(
+            &freedom_path,
+            &credentials_path,
+            account_id.clone(),
+            Some(&store),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("already committed"));
+        assert!(store.get("telegram_token").unwrap().is_some());
+        assert_eq!(
+            store.get(&dynamic_key).unwrap().unwrap().expose(),
+            "inline-target"
+        );
+        let freedom_after_commit = std::fs::read(&freedom_path).unwrap();
+        let credentials_after_commit = std::fs::read(&credentials_path).unwrap();
+
+        // A stale scalar singleton must not be reintroduced into a mapped
+        // runtime generation while its delete retry is pending.
+        let raw_credentials = Credentials::load_or_default(&credentials_path).unwrap();
+        let mut effective_credentials = raw_credentials.clone();
+        crate::config::keychain::supplement_from_store(&mut effective_credentials, &store).unwrap();
+        crate::config::keychain::supplement_telegram_account_tokens(
+            &mut effective_credentials,
+            &store,
+        )
+        .unwrap();
+        assert!(effective_credentials.telegram_token.is_none());
+        let config =
+            crate::config::FreedomConfig::load_public_from_path_unlocked(&freedom_path).unwrap();
+        let pair = crate::config::RuntimeConfigPair {
+            config,
+            raw_credentials,
+            credentials: effective_credentials,
+        };
+        let accounts = pair.authenticated_telegram_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].token().expose(), "inline-target");
+
+        Credentials::migrate_legacy_telegram_to_account_at_using_fault_and_store(
+            &freedom_path,
+            &credentials_path,
+            account_id,
+            Some(&store),
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert!(store.get("telegram_token").unwrap().is_none());
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), freedom_after_commit);
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            credentials_after_commit
+        );
+    }
+
+    #[test]
+    fn legacy_telegram_cleanup_rejects_zero_allowed_user_id_without_delete() {
+        assert_cleanup_refused_without_pair_rewrite(0, Some("valid-dynamic-token"));
+    }
+
+    #[test]
+    fn legacy_telegram_cleanup_rejects_missing_dynamic_token_without_delete() {
+        assert_cleanup_refused_without_pair_rewrite(424242, None);
+    }
+
+    #[test]
+    fn legacy_telegram_cleanup_rejects_blank_dynamic_token_without_delete() {
+        assert_cleanup_refused_without_pair_rewrite(424242, Some("   "));
     }
 
     fn legacy_ssh_freedom_yaml(password: &str) -> String {

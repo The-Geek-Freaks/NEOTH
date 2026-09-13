@@ -48,6 +48,7 @@ pub(crate) use instance_paths::InstancePaths;
 // The boot-time `cli/serve.rs` permission check warns if the file is
 // readable by anyone other than the operator.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -122,6 +123,263 @@ pub(crate) struct RuntimeConfigPair {
     pub raw_credentials: credentials::Credentials,
     /// Effective credentials after applying this generation's backend policy.
     pub credentials: credentials::Credentials,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TelegramAccountConfig {
+    pub allowed_user_id: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ChannelAccountConfig {
+    pub telegram: BTreeMap<crate::channels::registry::ChannelAccountId, TelegramAccountConfig>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TelegramAccountOrigin {
+    LegacySingleton,
+    ConfiguredAccount,
+}
+
+pub(crate) struct AuthenticatedTelegramAccount {
+    channel_ref: crate::channels::registry::ChannelRef,
+    token: crate::secret::SecretString,
+    allowed_user_id: u64,
+    origin: TelegramAccountOrigin,
+}
+
+impl AuthenticatedTelegramAccount {
+    pub(crate) fn channel_ref(&self) -> &crate::channels::registry::ChannelRef {
+        &self.channel_ref
+    }
+    pub(crate) fn token(&self) -> &crate::secret::SecretString {
+        &self.token
+    }
+    pub(crate) fn allowed_user_id(&self) -> u64 {
+        self.allowed_user_id
+    }
+    pub(crate) fn is_legacy_singleton(&self) -> bool {
+        self.origin == TelegramAccountOrigin::LegacySingleton
+    }
+}
+
+impl RuntimeConfigPair {
+    pub(crate) fn authenticated_telegram_accounts(
+        &self,
+    ) -> Result<Vec<AuthenticatedTelegramAccount>> {
+        let accounts = &self.config.channel_accounts.telegram;
+        let secrets = &self.credentials.channel_accounts.telegram;
+        let map_active = !accounts.is_empty()
+            || !secrets.is_empty()
+            || self.raw_credentials.telegram_account_map_active();
+        if !map_active {
+            // Legacy partial installations never started a Telegram adapter.
+            // Preserve that behavior without stopping other configured channels.
+            return match (
+                self.config.telegram_token.clone(),
+                self.config.telegram_user_id,
+            ) {
+                (Some(token), Some(allowed_user_id))
+                    if allowed_user_id != 0 && !token.expose_secret().trim().is_empty() =>
+                {
+                    Ok(vec![AuthenticatedTelegramAccount {
+                        channel_ref: crate::channels::registry::ChannelRef::default_account(
+                            crate::channels::registry::ChannelId::Telegram,
+                        ),
+                        token,
+                        allowed_user_id,
+                        origin: TelegramAccountOrigin::LegacySingleton,
+                    }])
+                }
+                _ => Ok(Vec::new()),
+            };
+        }
+        anyhow::ensure!(
+            self.config.telegram_token.is_none()
+                && self.config.telegram_user_id.is_none()
+                && self.credentials.telegram_token.is_none()
+                && self.raw_credentials.telegram_token.is_none(),
+            "legacy Telegram fields cannot coexist with channel_accounts.telegram"
+        );
+        anyhow::ensure!(
+            accounts.keys().eq(secrets.keys()),
+            "Telegram account policy and credential keys must match exactly"
+        );
+        anyhow::ensure!(
+            !accounts.is_empty(),
+            "Telegram account map has no effective policy and credentials"
+        );
+        let mut resolved = Vec::with_capacity(accounts.len());
+        for (account_id, policy) in accounts {
+            anyhow::ensure!(
+                policy.allowed_user_id != 0,
+                "telegram account `{account_id}` has an invalid allowed_user_id"
+            );
+            let token = secrets
+                .get(account_id)
+                .and_then(|entry| entry.token.as_ref())
+                .with_context(|| {
+                    format!("telegram account `{account_id}` has no credential token")
+                })?;
+            anyhow::ensure!(
+                !token.expose_secret().trim().is_empty(),
+                "telegram account `{account_id}` has an empty credential token"
+            );
+            resolved.push(AuthenticatedTelegramAccount {
+                channel_ref: crate::channels::registry::ChannelRef::new(
+                    crate::channels::registry::ChannelId::Telegram,
+                    account_id.clone(),
+                ),
+                token: token.clone(),
+                allowed_user_id: policy.allowed_user_id,
+                origin: TelegramAccountOrigin::ConfiguredAccount,
+            });
+        }
+        Ok(resolved)
+    }
+}
+
+#[cfg(test)]
+mod telegram_account_tests {
+    use super::*;
+    use crate::channels::registry::{ChannelAccountId, ChannelId, ChannelRef};
+
+    fn pair() -> RuntimeConfigPair {
+        RuntimeConfigPair {
+            config: FreedomConfig::default(),
+            raw_credentials: credentials::Credentials::default(),
+            credentials: credentials::Credentials::default(),
+        }
+    }
+
+    fn add_account(pair: &mut RuntimeConfigPair, id: &str, user: u64, token: Option<&str>) {
+        let id = ChannelAccountId::new(id).unwrap();
+        pair.config.channel_accounts.telegram.insert(
+            id.clone(),
+            TelegramAccountConfig {
+                allowed_user_id: user,
+            },
+        );
+        let entry = credentials::TelegramAccountCredentials {
+            token: token.map(|value| crate::secret::SecretString::new(value.to_owned())),
+        };
+        pair.raw_credentials
+            .channel_accounts
+            .telegram
+            .insert(id.clone(), entry.clone());
+        pair.credentials.channel_accounts.telegram.insert(id, entry);
+    }
+
+    #[test]
+    fn legacy_complete_pair_retains_only_the_default_singleton_origin() {
+        let mut pair = pair();
+        pair.config.telegram_token = Some(crate::secret::SecretString::new("legacy-token".into()));
+        pair.config.telegram_user_id = Some(42);
+        let accounts = pair.authenticated_telegram_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(
+            accounts[0].channel_ref(),
+            &ChannelRef::default_account(ChannelId::Telegram)
+        );
+        assert_eq!(accounts[0].allowed_user_id(), 42);
+        assert_eq!(accounts[0].token().expose_secret(), "legacy-token");
+        assert!(accounts[0].is_legacy_singleton());
+    }
+
+    #[test]
+    fn absent_or_partial_legacy_configuration_keeps_telegram_disabled() {
+        let mut pair = pair();
+        assert!(pair.authenticated_telegram_accounts().unwrap().is_empty());
+        pair.config.telegram_user_id = Some(42);
+        assert!(pair.authenticated_telegram_accounts().unwrap().is_empty());
+        pair.config.telegram_user_id = None;
+        pair.config.telegram_token = Some(crate::secret::SecretString::new("legacy-token".into()));
+        assert!(pair.authenticated_telegram_accounts().unwrap().is_empty());
+        pair.config.telegram_user_id = Some(0);
+        assert!(pair.authenticated_telegram_accounts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn configured_accounts_are_sorted_bound_and_never_legacy_even_when_named_default() {
+        let mut pair = pair();
+        add_account(&mut pair, "default", 33, Some("default-token"));
+        add_account(&mut pair, "account-b", 22, Some("b-token"));
+        add_account(&mut pair, "account-a", 11, Some("a-token"));
+        let accounts = pair.authenticated_telegram_accounts().unwrap();
+        assert_eq!(accounts.len(), 3);
+        for (account, (id, user, token)) in accounts.iter().zip([
+            ("account-a", 11, "a-token"),
+            ("account-b", 22, "b-token"),
+            ("default", 33, "default-token"),
+        ]) {
+            assert_eq!(
+                account.channel_ref(),
+                &ChannelRef::new(ChannelId::Telegram, ChannelAccountId::new(id).unwrap())
+            );
+            assert_eq!(account.allowed_user_id(), user);
+            assert_eq!(account.token().expose_secret(), token);
+            assert!(!account.is_legacy_singleton());
+        }
+    }
+
+    #[test]
+    fn policy_only_secret_only_and_extra_secret_entries_are_rejected() {
+        let mut pair = pair();
+        add_account(&mut pair, "account-a", 11, Some("a-token"));
+        let config = pair.config.clone();
+        let credentials = pair.credentials.clone();
+        pair.config.channel_accounts.telegram.clear();
+        assert!(pair.authenticated_telegram_accounts().is_err());
+        pair.config = config;
+        pair.credentials.channel_accounts.telegram.clear();
+        assert!(pair.authenticated_telegram_accounts().is_err());
+        pair.credentials = credentials;
+        pair.credentials.channel_accounts.telegram.insert(
+            ChannelAccountId::new("unbound-account").unwrap(),
+            credentials::TelegramAccountCredentials {
+                token: Some(crate::secret::SecretString::new("unbound-token".into())),
+            },
+        );
+        assert!(pair.authenticated_telegram_accounts().is_err());
+    }
+
+    #[test]
+    fn configured_accounts_reject_zero_users_missing_empty_and_whitespace_tokens() {
+        for token in [None, Some(""), Some(" \t ")] {
+            let mut pair = pair();
+            add_account(&mut pair, "account-a", 11, token);
+            assert!(pair.authenticated_telegram_accounts().is_err());
+        }
+        let mut pair = pair();
+        add_account(&mut pair, "account-a", 0, Some("a-token"));
+        assert!(pair.authenticated_telegram_accounts().is_err());
+    }
+
+    #[test]
+    fn any_legacy_field_conflicts_with_an_explicit_account_map() {
+        for field in 0..4 {
+            let mut pair = pair();
+            add_account(&mut pair, "account-a", 11, Some("a-token"));
+            match field {
+                0 => pair.config.telegram_user_id = Some(11),
+                1 => {
+                    pair.config.telegram_token =
+                        Some(crate::secret::SecretString::new("legacy".into()))
+                }
+                2 => {
+                    pair.credentials.telegram_token =
+                        Some(crate::secret::SecretString::new("legacy".into()))
+                }
+                _ => {
+                    pair.raw_credentials.telegram_token =
+                        Some(crate::secret::SecretString::new("legacy".into()))
+                }
+            }
+            assert!(pair.authenticated_telegram_accounts().is_err());
+        }
+    }
 }
 
 fn merge_effective_credentials(config: &mut FreedomConfig, credentials: &credentials::Credentials) {
@@ -746,6 +1004,10 @@ pub struct FreedomConfig {
     pub telegram_token: Option<SecretString>,
     #[serde(default)]
     pub telegram_user_id: Option<u64>,
+    /// Explicit authenticated inbound account policies. Empty retains the
+    /// legacy singleton fields until `channel migrate-legacy` commits a binding.
+    #[serde(default)]
+    pub channel_accounts: ChannelAccountConfig,
     /// Local bind port for the WhatsApp / Meta webhook listener. Defaults
     /// to `None` (listener uses 8443). The listener always binds to
     /// `127.0.0.1` — TLS terminates at the operator's reverse proxy.
@@ -2033,6 +2295,11 @@ fn mutate_public_freedom_source<T>(
 }
 
 impl FreedomConfig {
+    /// Presence-only map guard for outbound rollout. Legacy scalar state is
+    /// deliberately not inferred, migrated, or cleared here.
+    pub fn telegram_account_map_active(&self) -> bool {
+        !self.channel_accounts.telegram.is_empty()
+    }
     /// Immutable point-in-time autonomy policy for one permission decision.
     ///
     /// Reload-aware callers must obtain a fresh snapshot from their active

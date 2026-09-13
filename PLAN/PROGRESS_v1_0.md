@@ -3,6 +3,28 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 15 account maps and recovery locally accepted 2026-09-13:** sixteen
+> source files cover Telegram maps,
+> keychain migration/cleanup recovery, per-account fleet/reload, flat outbound/
+> CLI guards, macOS physical-parent `NOFOLLOW`, and three Linux-lint repairs.
+> TestBuild02 **PASS**: 3m56s, min 195.89 GiB free, peak 10.40 GiB. SelectedFINAL
+> **PASS** 1119/0/0 in 40.34s from catalogue 14324; fresh binary SHA-256
+> `092543A364567956CC48C8255E3FEAC4C255F2DEC603DF40A201FA1958FBD805`.
+> AccountConfigContracts (13 targets) **PASS** 156/0/0; build 5m14s, min 196.16
+> GiB, peak 10.80 GiB. Post-delta Clippy03 **PASS** 3m01s, min 199.45 GiB,
+> peak 6.49 GiB; final fmt/GUI lint/self-test pass. Earlier Core02 preceded the
+> test-only and Linux/GUI delta; fresh TestBuild+Clippy cover it. Independent
+> account/migration review is **APPROVE**; macOS, corrected Linux-three-site,
+> and test-fix reviews are **CLEAR**. The 89-input/14-executable exact source
+> receipts are `docs/verification/gold-wave15-{source-manifest,test-matrix}.json`.
+> P1-16 remains OPEN; counts 1324/1010/312/2 (314 raw; 313 pre-tag blockers).
+> Python integrity / roadmap release / release evidence checks pass **19/11/8**.
+> No full-CI, cross-platform,
+> GUI-link, or macOS-runtime claim; current-head CI has not run. Older Wave14 CI
+> `34766600264` retains Linux lint failures; Windows `103748563885` succeeded
+> (full-workspace nextest), while macOS `103748563923` remains running. No
+> replacement manual CI starts before that macOS evidence is terminal.
+>
 > **Wave 14 first account identity locally accepted 2026-09-13:** anchored
 > `ChannelRef`, V39 aliases, narrow admitted legacy claim, scoped state/media,
 > rate limits, lease subjects and receipts are implemented. Final selected tests

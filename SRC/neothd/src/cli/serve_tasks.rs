@@ -5029,7 +5029,37 @@ pub(crate) fn spawn_foreign_indexer(
 /// `#[async_trait]` boxes a `Send` future), so the generic spawn is sound.
 /// Pure relocation of the identical `tokio::spawn(channel.run(handler))` +
 /// `channel_tasks.push(task)` block the adapters inlined.
-pub(crate) type ChannelFleet = std::collections::HashMap<ChannelKind, Vec<JoinHandle<()>>>;
+/// Running inbound adapters keyed by their authenticated account identity.
+/// Singleton adapters use `ChannelRef::default_account`; Telegram account-map
+/// entries never share a lifecycle bucket with another account.
+pub(crate) type ChannelFleet = std::collections::HashMap<ChannelRef, Vec<JoinHandle<()>>>;
+
+/// Runtime-only projection of the validated configuration pair. This keeps the
+/// effective token, admission policy, and legacy provenance inseparable until
+/// adapter construction; callers cannot build one from an inbound envelope.
+#[derive(Clone)]
+pub(crate) struct TelegramAccountBundle {
+    pub(crate) channel_ref: ChannelRef,
+    token: crate::secret::SecretString,
+    allowed_user_id: u64,
+    legacy_singleton: bool,
+}
+
+pub(crate) fn telegram_account_bundles(
+    runtime: &crate::config::RuntimeConfigPair,
+) -> anyhow::Result<Vec<TelegramAccountBundle>> {
+    let bundles = runtime
+        .authenticated_telegram_accounts()?
+        .into_iter()
+        .map(|account| TelegramAccountBundle {
+            channel_ref: account.channel_ref().clone(),
+            token: account.token().clone(),
+            allowed_user_id: account.allowed_user_id(),
+            legacy_singleton: account.is_legacy_singleton(),
+        })
+        .collect();
+    Ok(bundles)
+}
 
 pub(crate) fn spawn_channel_run<C: Channel + 'static>(
     channel: C,
@@ -5043,7 +5073,10 @@ pub(crate) fn spawn_channel_run<C: Channel + 'static>(
             tracing::error!(error = %e, "{label} channel task exited with error");
         }
     });
-    channel_tasks.entry(kind).or_default().push(task);
+    channel_tasks
+        .entry(ChannelRef::default_account(kind))
+        .or_default()
+        .push(task);
 }
 
 /// Shared-ownership twin used by edit-capable adapters. The receive loop and
@@ -5062,7 +5095,25 @@ pub(crate) fn spawn_shared_channel_run<C: Channel + 'static>(
             tracing::error!(error = %error, "{label} channel task exited with error");
         }
     });
-    channel_tasks.entry(kind).or_default().push(task);
+    channel_tasks
+        .entry(ChannelRef::default_account(kind))
+        .or_default()
+        .push(task);
+}
+
+fn spawn_shared_channel_run_for_ref<C: Channel + 'static>(
+    channel: Arc<C>,
+    handler: PipelineHandler,
+    channel_ref: ChannelRef,
+    label: &'static str,
+    channel_tasks: &mut ChannelFleet,
+) {
+    let task = tokio::spawn(async move {
+        if let Err(error) = channel.run(handler).await {
+            tracing::error!(error = %error, "{label} channel task exited with error");
+        }
+    });
+    channel_tasks.entry(channel_ref).or_default().push(task);
 }
 
 /// Clone only one adapter's credential surface. Reconciliation can then reuse
@@ -5232,6 +5283,7 @@ pub(crate) fn channel_credential_fingerprints(
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn changed_channel_credentials(
     old: &std::collections::HashMap<ChannelKind, u64>,
     new: &std::collections::HashMap<ChannelKind, u64>,
@@ -5239,6 +5291,84 @@ pub(crate) fn changed_channel_credentials(
     crate::channels::registry::channel_ids()
         .filter(|kind| old.get(kind) != new.get(kind))
         .collect()
+}
+
+/// Account-keyed reload fingerprint. Legacy adapters retain the default account
+/// key; Telegram uses only the validated runtime bundles so a shadowed legacy
+/// token cannot reanimate an account-map adapter.
+pub(crate) fn channel_account_fingerprints(
+    config: &FreedomConfig,
+    credentials: &crate::config::credentials::Credentials,
+    telegram_accounts: &[TelegramAccountBundle],
+    neoth_home: &std::path::Path,
+) -> std::collections::HashMap<ChannelRef, u64> {
+    use std::hash::Hasher as _;
+    use zeroize::Zeroize as _;
+
+    let mut fingerprints = channel_credential_fingerprints(config, credentials, neoth_home)
+        .into_iter()
+        .filter(|(kind, _)| *kind != ChannelKind::Telegram)
+        .map(|(kind, fingerprint)| (ChannelRef::default_account(kind), fingerprint))
+        .collect::<std::collections::HashMap<_, _>>();
+    for account in telegram_accounts {
+        let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+        hasher.write(b"neoth/telegram-account-fingerprint/v1");
+        hasher.write(account.channel_ref.channel_id.as_str().as_bytes());
+        hasher.write(account.channel_ref.account_id.as_str().as_bytes());
+        hasher.write_u64(account.allowed_user_id);
+        hasher.write_u8(u8::from(account.legacy_singleton));
+        let mut token = account.token.expose().as_bytes().to_vec();
+        hasher.write(&token);
+        token.zeroize();
+        fingerprints.insert(account.channel_ref.clone(), hasher.finish());
+    }
+    fingerprints
+}
+
+pub(crate) fn changed_channel_accounts(
+    old: &std::collections::HashMap<ChannelRef, u64>,
+    new: &std::collections::HashMap<ChannelRef, u64>,
+) -> Vec<ChannelRef> {
+    let mut changed = old
+        .keys()
+        .chain(new.keys())
+        .filter(|channel_ref| old.get(*channel_ref) != new.get(*channel_ref))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    changed.sort();
+    changed
+}
+
+/// After a malformed effective generation stopped the fleet fail-closed, every
+/// previously running and every newly configured account must be reconciled.
+/// A diff alone is insufficient: an unchanged account still needs restarting
+/// because its prior handle was deliberately removed during the failure.
+pub(crate) fn recovery_channel_accounts(
+    old: &std::collections::HashMap<ChannelRef, u64>,
+    new: &std::collections::HashMap<ChannelRef, u64>,
+) -> Vec<ChannelRef> {
+    old.keys()
+        .chain(new.keys())
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+pub(crate) fn channel_account_runtime_expected(
+    config: &FreedomConfig,
+    credentials: &crate::config::credentials::Credentials,
+    telegram_accounts: &[TelegramAccountBundle],
+    channel_ref: &ChannelRef,
+) -> bool {
+    if channel_ref.channel_id == ChannelKind::Telegram {
+        return telegram_accounts
+            .iter()
+            .any(|account| account.channel_ref == *channel_ref);
+    }
+    channel_runtime_expected(config, credentials, channel_ref.channel_id)
 }
 
 pub(crate) fn channel_runtime_expected(
@@ -5269,6 +5399,7 @@ pub(crate) fn channel_runtime_expected(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_channel_adapters(
     config: &FreedomConfig,
+    telegram_accounts: &[TelegramAccountBundle],
     shared_provider: &Option<Arc<dyn Provider>>,
     writer: &WalWriterHandle,
     provider_meter: &crate::providers::meter::Meter,
@@ -5280,7 +5411,7 @@ pub(crate) fn spawn_channel_adapters(
     dispatch_join: &Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
     creds: &crate::config::credentials::Credentials,
     channel_tasks: &mut ChannelFleet,
-    only: Option<ChannelKind>,
+    only: Option<&ChannelRef>,
     // GOLD-ADAPT-GOOSE-03: shared approval bus passed into every channel handler.
     // When `Some`, channel permission gates switch to Channel confirm strategy
     // (suspend/resume via UUID elicitation). `None` = fail-closed (pre-GOOSE-03).
@@ -5289,73 +5420,70 @@ pub(crate) fn spawn_channel_adapters(
     // calls in channel handlers use a pool reader (non-serialising).
     views_executor: &Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
 ) {
-    let selected_credentials = only.map(|kind| credentials_for_channel(creds, kind));
+    let selected_credentials =
+        only.map(|channel_ref| credentials_for_channel(creds, channel_ref.channel_id));
     let creds = selected_credentials.as_ref().unwrap_or(creds);
-    let telegram_token = config
-        .telegram_token
-        .clone()
-        .or_else(|| creds.telegram_token.clone());
-    if only.is_none_or(|kind| kind == ChannelKind::Telegram)
-        && let (Some(telegram_token), Some(user_id), Some(provider)) = (
-            telegram_token.clone(),
-            config.telegram_user_id,
-            shared_provider.as_ref(),
-        )
-    {
-        // SF-03: hand the adapter the daemon's WAL writer so allowlist-rejected
-        // senders are audited via `0x3B CHANNEL_GATE_REJECTED`.
-        let channel = Arc::new(
-            crate::channels::telegram::TelegramChannel::new(telegram_token, Some(user_id))
+    let selected_telegram_accounts = telegram_accounts
+        .iter()
+        .filter(|account| only.is_none_or(|channel_ref| channel_ref == &account.channel_ref));
+    if only.is_none_or(|channel_ref| channel_ref.channel_id == ChannelKind::Telegram) {
+        for account in selected_telegram_accounts {
+            let Some(provider) = shared_provider.as_ref() else {
+                warn!(
+                    channel = %account.channel_ref.channel_id.as_str(),
+                    account = %account.channel_ref.account_id,
+                    status = "CONFIGURED-NOT-STARTED",
+                    "Telegram account configured but provider unavailable; channel not started"
+                );
+                continue;
+            };
+            // SF-03: hand the adapter the daemon's WAL writer so allowlist-rejected
+            // senders are audited via `0x3B CHANNEL_GATE_REJECTED`.
+            let channel = Arc::new(
+                crate::channels::telegram::TelegramChannel::new(
+                    account.token.clone(),
+                    Some(account.allowed_user_id),
+                )
                 .with_gate_writer(writer.clone()),
-        );
-        let live_channel: Arc<dyn Channel> = channel.clone();
-        let handler: PipelineHandler = build_live_channel_handler(
-            AuthenticatedInboundBinding::for_legacy_telegram_singleton(
-                AdmittedLegacyTelegramSingleton { sender_id: user_id },
-            ),
-            provider.clone(),
-            live_channel,
-            config,
-            writer,
-            provider_meter,
-            rate_limiter,
-            segment_path,
-            neoth_home,
-            shared_views_conn,
-            reload_controller,
-            confirm_bus.clone(),
-            views_executor.clone(),
-        );
-        spawn_shared_channel_run(
-            channel,
-            handler,
-            ChannelKind::Telegram,
-            "Telegram",
-            channel_tasks,
-        );
-        info!(
-            channel = "telegram",
-            status = "LIVE",
-            "channel: spawned (polling loop)"
-        );
-    } else if only.is_none_or(|kind| kind == ChannelKind::Telegram)
-        && telegram_token.is_some()
-        && config.telegram_user_id.is_none()
-    {
-        warn!(
-            channel = "telegram",
-            status = "CONFIGURED-NOT-STARTED",
-            "Telegram token configured but telegram_user_id is missing; refusing an open inbound adapter"
-        );
-    } else if only.is_none_or(|kind| kind == ChannelKind::Telegram)
-        && telegram_token.is_some()
-        && shared_provider.is_none()
-    {
-        warn!(
-            channel = "telegram",
-            status = "CONFIGURED-NOT-STARTED",
-            "Telegram token configured but provider unavailable; channel not started"
-        );
+            );
+            let live_channel: Arc<dyn Channel> = channel.clone();
+            let handler: PipelineHandler = build_live_channel_handler(
+                if account.legacy_singleton {
+                    AuthenticatedInboundBinding::for_legacy_telegram_singleton(
+                        AdmittedLegacyTelegramSingleton {
+                            sender_id: account.allowed_user_id,
+                        },
+                    )
+                } else {
+                    AuthenticatedInboundBinding::for_account(account.channel_ref.clone())
+                },
+                provider.clone(),
+                live_channel,
+                config,
+                writer,
+                provider_meter,
+                rate_limiter,
+                segment_path,
+                neoth_home,
+                shared_views_conn,
+                reload_controller,
+                confirm_bus.clone(),
+                views_executor.clone(),
+            );
+            spawn_shared_channel_run_for_ref(
+                channel,
+                handler,
+                account.channel_ref.clone(),
+                "Telegram",
+                channel_tasks,
+            );
+            info!(
+                channel = %account.channel_ref.channel_id.as_str(),
+                account = %account.channel_ref.account_id,
+                status = "LIVE",
+                "channel: spawned (polling loop)"
+            );
+        }
     }
 
     // R4-P1 honest channel-bootstrap status logging: every channel gets an
@@ -6284,7 +6412,7 @@ pub(crate) fn spawn_channel_adapters(
                 }
             });
             channel_tasks
-                .entry(ChannelKind::WhatsAppBusiness)
+                .entry(ChannelRef::default_account(ChannelKind::WhatsAppBusiness))
                 .or_default()
                 .push(task);
             info!(
@@ -6502,7 +6630,7 @@ pub(crate) fn spawn_channel_adapters(
                 }
             });
             channel_tasks
-                .entry(ChannelKind::Line)
+                .entry(ChannelRef::default_account(ChannelKind::Line))
                 .or_default()
                 .push(task);
             info!(
@@ -10159,7 +10287,112 @@ mod vault_containment_tests {
 #[cfg(test)]
 mod channel_reconcile_tests {
     use super::*;
+    use crate::channels::registry::{ChannelAccountId, ChannelRef};
     use crate::secret::SecretString;
+
+    fn telegram_account(account: &str) -> ChannelRef {
+        ChannelRef::new(
+            ChannelKind::Telegram,
+            ChannelAccountId::new(account).unwrap(),
+        )
+    }
+
+    #[test]
+    fn account_diff_restarts_only_the_exact_changed_or_added_ref() {
+        let account_a = telegram_account("account-a");
+        let account_b = telegram_account("account-b");
+        let before =
+            std::collections::HashMap::from([(account_a.clone(), 10), (account_b.clone(), 20)]);
+        let after =
+            std::collections::HashMap::from([(account_a.clone(), 11), (account_b.clone(), 20)]);
+        assert_eq!(changed_channel_accounts(&before, &after), vec![account_a]);
+
+        let removed = std::collections::HashMap::from([(account_b.clone(), 20)]);
+        assert_eq!(
+            changed_channel_accounts(&after, &removed),
+            vec![telegram_account("account-a")]
+        );
+    }
+
+    #[test]
+    fn recovery_reconciles_old_new_and_unchanged_account_refs() {
+        let account_a = telegram_account("account-a");
+        let account_b = telegram_account("account-b");
+        let old_a = std::collections::HashMap::from([(account_a.clone(), 1)]);
+        let new_b = std::collections::HashMap::from([(account_b.clone(), 2)]);
+        assert_eq!(
+            recovery_channel_accounts(&old_a, &new_b),
+            vec![account_a.clone(), account_b.clone()],
+            "A -> malformed -> B must start B without another reload"
+        );
+        let same_a = std::collections::HashMap::from([(account_a.clone(), 1)]);
+        assert_eq!(
+            recovery_channel_accounts(&old_a, &same_a),
+            vec![account_a],
+            "unchanged A must restart after its fail-closed stop"
+        );
+        let empty = std::collections::HashMap::new();
+        assert_eq!(
+            recovery_channel_accounts(&empty, &new_b),
+            vec![account_b],
+            "an initially empty fleet must start newly valid B"
+        );
+    }
+
+    #[tokio::test]
+    async fn fleet_keeps_two_telegram_accounts_in_independent_handle_buckets() {
+        let account_a = telegram_account("account-a");
+        let account_b = telegram_account("account-b");
+        let mut fleet = ChannelFleet::new();
+        fleet
+            .entry(account_a.clone())
+            .or_default()
+            .push(tokio::spawn(async {}));
+        fleet
+            .entry(account_b.clone())
+            .or_default()
+            .push(tokio::spawn(async {}));
+
+        assert_eq!(fleet.len(), 2);
+        let a_handles = fleet.remove(&account_a).unwrap();
+        assert_eq!(a_handles.len(), 1);
+        for handle in a_handles {
+            handle.await.unwrap();
+        }
+        assert!(fleet.contains_key(&account_b));
+        for handle in fleet.remove(&account_b).unwrap() {
+            handle.await.unwrap();
+        }
+    }
+
+    #[test]
+    fn account_fingerprint_distinguishes_legacy_and_migrated_default() {
+        let config = FreedomConfig::default();
+        let credentials = crate::config::credentials::Credentials::default();
+        let home = tempfile::tempdir().unwrap();
+        let default_ref = ChannelRef::default_account(ChannelKind::Telegram);
+        let legacy = TelegramAccountBundle {
+            channel_ref: default_ref.clone(),
+            token: SecretString::from("token"),
+            allowed_user_id: 7,
+            legacy_singleton: true,
+        };
+        let migrated_default = TelegramAccountBundle {
+            channel_ref: default_ref,
+            token: SecretString::from("token"),
+            allowed_user_id: 7,
+            legacy_singleton: false,
+        };
+        let legacy_fingerprint =
+            channel_account_fingerprints(&config, &credentials, &[legacy], home.path());
+        let migrated_fingerprint =
+            channel_account_fingerprints(&config, &credentials, &[migrated_default], home.path());
+        assert_eq!(
+            changed_channel_accounts(&legacy_fingerprint, &migrated_fingerprint),
+            vec![ChannelRef::default_account(ChannelKind::Telegram)],
+            "legacy authority provenance must be part of the restart fingerprint"
+        );
+    }
 
     #[test]
     fn fingerprints_restart_only_the_credential_owner() {

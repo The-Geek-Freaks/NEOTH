@@ -105,6 +105,39 @@ pub const SECRET_FIELD_KEYS: &[&str] = &[
 
 const SSH_TUNNELS_SECRET_FIELD: &str = "ssh_tunnels";
 
+/// Stable dynamic OS-store key for an account-owned Telegram credential.
+/// `ChannelAccountId` is already validated, so no user-supplied delimiter can
+/// escape this namespace.
+pub(crate) fn telegram_account_token_key(
+    account_id: &crate::channels::registry::ChannelAccountId,
+) -> String {
+    format!("channel-account/telegram/{}/token", account_id.as_str())
+}
+
+/// Fill only absent account tokens. File credentials retain established
+/// precedence over keychain values and a store error is surfaced to the caller.
+pub(crate) fn supplement_telegram_account_tokens(
+    credentials: &mut crate::config::credentials::Credentials,
+    store: &dyn SecretStore,
+) -> Result<()> {
+    for (account_id, account) in &mut credentials.channel_accounts.telegram {
+        if account.token.is_none() {
+            account.token = store.get(&telegram_account_token_key(account_id))?;
+        }
+    }
+    Ok(())
+}
+
+fn telegram_account_tokens(
+    credentials: &crate::config::credentials::Credentials,
+) -> impl Iterator<Item = (&crate::channels::registry::ChannelAccountId, &SecretString)> {
+    credentials
+        .channel_accounts
+        .telegram
+        .iter()
+        .filter_map(|(account_id, account)| account.token.as_ref().map(|token| (account_id, token)))
+}
+
 fn scalar_secret_field_keys() -> impl Iterator<Item = &'static str> {
     SECRET_FIELD_KEYS
         .iter()
@@ -735,8 +768,8 @@ impl MigrationReport {
     }
 }
 
-/// Move all scalar `SecretString` fields plus the compound SSH authority from
-/// `creds` into `store`.
+/// Move all scalar `SecretString` fields, configured dynamic Telegram account
+/// tokens, and the compound SSH authority from `creds` into `store`.
 ///
 /// On success the returned `Credentials` has those fields blanked (`None`).
 /// The caller is responsible for:
@@ -793,6 +826,38 @@ pub fn migrate_to_keychain(
                     moved.push(field.to_string());
                 }
             }
+        }
+    }
+
+    // Account tokens deliberately do not enter SECRET_FIELD_KEYS: their OS
+    // namespace is derived from the already-validated account identifier.
+    // Snapshot each exact target before overwrite so a later account failure
+    // restores its own prior value rather than deleting unrelated authority.
+    for (account_id, secret) in telegram_account_tokens(creds) {
+        let key = telegram_account_token_key(account_id);
+        if dry_run {
+            moved.push(key);
+            continue;
+        }
+        let previous = match store.get(&key) {
+            Ok(previous) => previous,
+            Err(error) => {
+                failed.push((key, format!("snapshot existing keychain value: {error}")));
+                continue;
+            }
+        };
+        match store.set(&key, secret) {
+            Ok(()) => {
+                blanked
+                    .channel_accounts
+                    .telegram
+                    .get_mut(account_id)
+                    .expect("cloned Telegram account disappeared during migration")
+                    .token = None;
+                moved.push(key.clone());
+                previous_values.push((key, previous));
+            }
+            Err(error) => failed.push((key, error.to_string())),
         }
     }
 
@@ -873,8 +938,9 @@ pub fn migrate_to_keychain(
     Ok((blanked, report))
 }
 
-/// Phase 1 of a `--to file` migration: read every scalar secret plus the
-/// compound SSH authority from `store` into a `Credentials` struct. **This
+/// Phase 1 of a `--to file` migration: read every scalar secret, configured
+/// dynamic Telegram account placeholder, plus the compound SSH authority from
+/// `store` into a `Credentials` struct. **This
 /// function performs no keychain deletes** — deleting a secret before
 /// `credentials.yaml` is durably written
 /// (or a later read failing after an earlier delete, or a crash in between)
@@ -918,6 +984,32 @@ pub fn migrate_to_file(
                 // Purge the actual OS-store key after the file is durable. For
                 // upgraded installs this may be the legacy alias.
                 moved.push(source_key);
+            }
+        }
+    }
+
+    // A non-null file token is an emergency override and is never replaced.
+    // A null token is the account's explicit keychain-backed placeholder, so
+    // read exactly its dynamic key and only advertise that owned key for purge.
+    for (account_id, account) in &creds.channel_accounts.telegram {
+        let key = telegram_account_token_key(account_id);
+        if account.token.is_some() {
+            skipped.push(key);
+            continue;
+        }
+        match store.get(&key) {
+            Err(error) => failed.push((key, error.to_string())),
+            Ok(None) => skipped.push(key),
+            Ok(Some(secret)) => {
+                if !dry_run {
+                    populated
+                        .channel_accounts
+                        .telegram
+                        .get_mut(account_id)
+                        .expect("cloned Telegram account disappeared during migration")
+                        .token = Some(secret);
+                }
+                moved.push(key);
             }
         }
     }
@@ -985,6 +1077,13 @@ pub fn supplement_from_store(
     store: &dyn SecretStore,
 ) -> Result<()> {
     for field in scalar_secret_field_keys() {
+        // Once account-map mode is present, the legacy singleton is not an
+        // admissible fallback. Its post-commit cleanup may be retried later;
+        // reading it here would manufacture a conflicting scalar credential.
+        // Do not erase an inline scalar value: validation owns that conflict.
+        if field == "telegram_token" && !creds.channel_accounts.telegram.is_empty() {
+            continue;
+        }
         if secret_field(creds, field).is_some() {
             continue;
         }
@@ -1022,7 +1121,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::config::credentials::Credentials;
+    use crate::config::credentials::{Credentials, TelegramAccountCredentials};
     use crate::secret::SecretString;
     use crate::transport::ssh_config::{SshAuth, SshEndpoint, SshTunnelConfig};
 
@@ -1049,6 +1148,29 @@ mod tests {
             max_retries: 5,
             retry_delay: Duration::from_secs(2),
         }
+    }
+
+    fn account_credentials(entries: &[(&str, Option<&str>)]) -> Credentials {
+        let mut credentials = Credentials::default();
+        for (id, token) in entries {
+            credentials.channel_accounts.telegram.insert(
+                id.parse().expect("canonical test account id"),
+                TelegramAccountCredentials {
+                    token: token.map(SecretString::from),
+                },
+            );
+        }
+        credentials
+    }
+
+    fn account_key(credentials: &Credentials, id: &str) -> String {
+        let account_id = credentials
+            .channel_accounts
+            .telegram
+            .keys()
+            .find(|account_id| account_id.as_str() == id)
+            .expect("configured test account");
+        telegram_account_token_key(account_id)
     }
 
     struct FailOnSetStore {
@@ -1633,5 +1755,218 @@ mod tests {
             decode_ssh_tunnels_secret(&store.inner.get(SSH_TUNNELS_SECRET_FIELD).unwrap().unwrap())
                 .unwrap();
         assert_eq!(restored, previous_ssh.ssh_tunnels.unwrap());
+    }
+
+    #[test]
+    fn telegram_account_keychain_migration_isolated_per_configured_account() {
+        let store = InMemorySecretStore::default();
+        let credentials =
+            account_credentials(&[("alpha", Some("alpha-file")), ("beta", Some("beta-file"))]);
+        let alpha = account_key(&credentials, "alpha");
+        let beta = account_key(&credentials, "beta");
+        store
+            .set("telegram_token", &SecretString::from("legacy-must-stay"))
+            .unwrap();
+
+        let (blanked, report) = migrate_to_keychain(&credentials, &store, false).unwrap();
+        assert!(report.is_clean());
+        assert_eq!(store.get(&alpha).unwrap().unwrap().expose(), "alpha-file");
+        assert_eq!(store.get(&beta).unwrap().unwrap().expose(), "beta-file");
+        assert_eq!(
+            store.get("telegram_token").unwrap().unwrap().expose(),
+            "legacy-must-stay"
+        );
+        assert!(
+            blanked
+                .channel_accounts
+                .telegram
+                .values()
+                .all(|account| account.token.is_none())
+        );
+    }
+
+    #[test]
+    fn telegram_account_write_failure_restores_exact_prior_dynamic_values() {
+        struct FailOnDynamicSetStore {
+            inner: InMemorySecretStore,
+            fail_key: String,
+        }
+        impl SecretStore for FailOnDynamicSetStore {
+            fn get(&self, key: &str) -> Result<Option<SecretString>> {
+                self.inner.get(key)
+            }
+            fn set(&self, key: &str, value: &SecretString) -> Result<()> {
+                if key == self.fail_key {
+                    anyhow::bail!("injected dynamic write failure")
+                }
+                self.inner.set(key, value)
+            }
+            fn delete(&self, key: &str) -> Result<()> {
+                self.inner.delete(key)
+            }
+            fn backend_name(&self) -> &'static str {
+                "dynamic-failing test store"
+            }
+        }
+
+        let credentials =
+            account_credentials(&[("alpha", Some("alpha-new")), ("beta", Some("beta-new"))]);
+        let alpha = account_key(&credentials, "alpha");
+        let beta = account_key(&credentials, "beta");
+        let store = FailOnDynamicSetStore {
+            inner: InMemorySecretStore::default(),
+            fail_key: beta.clone(),
+        };
+        store
+            .inner
+            .set(&alpha, &SecretString::from("alpha-before"))
+            .unwrap();
+        store
+            .inner
+            .set(&beta, &SecretString::from("beta-before"))
+            .unwrap();
+
+        let (unchanged, report) = migrate_to_keychain(&credentials, &store, false).unwrap();
+        assert!(!report.is_clean());
+        assert!(report.moved.is_empty());
+        assert_eq!(unchanged.channel_accounts.telegram.len(), 2);
+        assert_eq!(
+            store.inner.get(&alpha).unwrap().unwrap().expose(),
+            "alpha-before"
+        );
+        assert_eq!(
+            store.inner.get(&beta).unwrap().unwrap().expose(),
+            "beta-before"
+        );
+    }
+
+    #[test]
+    fn telegram_account_file_token_overrides_while_null_placeholder_supplements_and_migrates() {
+        let store = InMemorySecretStore::default();
+        let credentials = account_credentials(&[("alpha", Some("alpha-file")), ("beta", None)]);
+        let alpha = account_key(&credentials, "alpha");
+        let beta = account_key(&credentials, "beta");
+        store
+            .set(&alpha, &SecretString::from("alpha-store"))
+            .unwrap();
+        store.set(&beta, &SecretString::from("beta-store")).unwrap();
+
+        let mut effective = credentials.clone();
+        supplement_telegram_account_tokens(&mut effective, &store).unwrap();
+        assert_eq!(
+            effective
+                .channel_accounts
+                .telegram
+                .values()
+                .find(|entry| entry
+                    .token
+                    .as_ref()
+                    .is_some_and(|token| token.expose() == "alpha-file"))
+                .unwrap()
+                .token
+                .as_ref()
+                .unwrap()
+                .expose(),
+            "alpha-file"
+        );
+        assert!(effective.channel_accounts.telegram.values().any(|entry| {
+            entry
+                .token
+                .as_ref()
+                .is_some_and(|token| token.expose() == "beta-store")
+        }));
+
+        let (populated, report) = migrate_to_file(&credentials, &store, false).unwrap();
+        assert!(report.moved.contains(&beta));
+        assert!(!report.moved.contains(&alpha));
+        assert!(report.skipped.contains(&alpha));
+        assert!(populated.channel_accounts.telegram.values().any(|entry| {
+            entry
+                .token
+                .as_ref()
+                .is_some_and(|token| token.expose() == "alpha-file")
+        }));
+        assert!(populated.channel_accounts.telegram.values().any(|entry| {
+            entry
+                .token
+                .as_ref()
+                .is_some_and(|token| token.expose() == "beta-store")
+        }));
+    }
+
+    #[test]
+    fn telegram_account_purge_only_removes_reported_owned_dynamic_keys() {
+        let store = InMemorySecretStore::default();
+        let credentials = account_credentials(&[("alpha", None)]);
+        let alpha = account_key(&credentials, "alpha");
+        let unowned = "channel-account/telegram/unconfigured/token";
+        store
+            .set(&alpha, &SecretString::from("alpha-store"))
+            .unwrap();
+        store
+            .set(unowned, &SecretString::from("must-remain"))
+            .unwrap();
+
+        let (_, report) = migrate_to_file(&credentials, &store, false).unwrap();
+        assert_eq!(report.moved, vec![alpha.clone()]);
+        assert!(purge_from_keychain(&store, &report.moved).is_empty());
+        assert!(store.get(&alpha).unwrap().is_none());
+        assert_eq!(store.get(unowned).unwrap().unwrap().expose(), "must-remain");
+    }
+
+    #[test]
+    fn mapped_telegram_credentials_never_read_stale_legacy_singleton_during_recovery() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct LegacySingletonTrapStore {
+            inner: InMemorySecretStore,
+            legacy_reads: AtomicUsize,
+        }
+        impl SecretStore for LegacySingletonTrapStore {
+            fn get(&self, key: &str) -> Result<Option<SecretString>> {
+                if key == "telegram_token" {
+                    self.legacy_reads.fetch_add(1, Ordering::SeqCst);
+                    anyhow::bail!("stale legacy singleton must not be read in account-map mode")
+                }
+                self.inner.get(key)
+            }
+            fn set(&self, key: &str, value: &SecretString) -> Result<()> {
+                self.inner.set(key, value)
+            }
+            fn delete(&self, key: &str) -> Result<()> {
+                self.inner.delete(key)
+            }
+            fn backend_name(&self) -> &'static str {
+                "legacy-singleton trap store"
+            }
+        }
+
+        let mut credentials = account_credentials(&[("alpha", None)]);
+        let alpha = account_key(&credentials, "alpha");
+        let store = LegacySingletonTrapStore {
+            inner: InMemorySecretStore::default(),
+            legacy_reads: AtomicUsize::new(0),
+        };
+        store
+            .inner
+            .set(&alpha, &SecretString::from("alpha-dynamic"))
+            .unwrap();
+
+        supplement_from_store(&mut credentials, &store).unwrap();
+        supplement_telegram_account_tokens(&mut credentials, &store).unwrap();
+        assert_eq!(store.legacy_reads.load(Ordering::SeqCst), 0);
+        assert!(credentials.telegram_token.is_none());
+        assert!(
+            credentials
+                .channel_accounts
+                .telegram
+                .values()
+                .any(|account| {
+                    account
+                        .token
+                        .as_ref()
+                        .is_some_and(|token| token.expose() == "alpha-dynamic")
+                })
+        );
     }
 }

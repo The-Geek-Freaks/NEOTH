@@ -47,10 +47,9 @@ Every channel should pass through:
 ## Account identity and channel leases
 
 The daemon binds each inbound handler to a canonical channel and account at
-adapter startup. Current singleton configurations use the `default` account;
-configuring multiple accounts is still pending. A message cannot choose a
-different binding. Identity aliases, inbound session keys, media references,
-rate-limit buckets and channel-originated lease subjects include that binding.
+adapter startup. A message cannot choose a different binding. Identity aliases,
+inbound session keys, media references, rate-limit buckets and channel-originated
+lease subjects include that binding.
 
 Existing identity aliases remain visible as `legacy-unbound` in
 `neoth identity list`. They are not automatically assigned to `default`.
@@ -75,6 +74,33 @@ subject with a tool-specific lease such as `mcp_tool:server:tool`.
 Existing bare-sender leases do not cover these account-qualified requests;
 regrant any needed lease using the helper. A grant for one account cannot
 authorize the same sender on another account.
+
+### Telegram account maps (P1-16 in progress)
+
+Telegram is the current account-map surface. Each configured account has an
+explicit public `allowed_user_id` and a matching credential token. The token is
+either present in the credentials file or represented there by a null
+placeholder whose account-specific keychain value is loaded at runtime. A
+partial, mismatched, blank, or zero-ID map is rejected; legacy scalar Telegram
+fields cannot coexist with a map.
+
+Migrate an admitted legacy Telegram singleton with:
+
+```powershell
+neoth channel migrate-legacy telegram --account <account-id>
+```
+
+The command commits the paired policy and credential migration before cleanup.
+If later cleanup fails, retrying completes cleanup against that committed pair.
+Its output never prints token material.
+
+While a Telegram account map is active, the legacy flat `channel add telegram`,
+`channel remove telegram`, and `channel set-credentials telegram` mutations are
+rejected. Reload compares account-qualified credentials and restarts only the
+changed Telegram adapter. Replies remain with the adapter that owns the inbound
+account; flat proactive Telegram and Cron Telegram announcement paths refuse to
+send while a map is active. Account-aware outbound routing is still incomplete,
+so this is not a full multi-account readiness claim.
 
 ## Managing channels from the CLI
 

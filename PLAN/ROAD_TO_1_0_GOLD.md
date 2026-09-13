@@ -8,6 +8,38 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Wave 15 account maps and recovery locally accepted (2026-09-13):** sixteen
+source files implement Telegram
+account maps, keychain-aware migration/cleanup recovery, per-account fleet and
+reload, flat outbound/CLI legacy-mutation guards, macOS recall physical-parent
+`NOFOLLOW` repairs, and three Linux-lint repairs. TestBuild02 **PASS**: 3m56s,
+195.89 GiB minimum free, 10.40 GiB peak. SelectedFINAL **PASS**: 1,119/0/0 in
+40.34s from a 14,324-test catalogue; fresh binary SHA-256 is
+`092543A364567956CC48C8255E3FEAC4C255F2DEC603DF40A201FA1958FBD805`.
+AccountConfigContracts (13 targets) **PASS**: 156/0/0; build 5m14s, 196.16 GiB
+minimum free, 10.80 GiB peak. Post-delta Clippy03 **PASS**: 3m01s, 199.45 GiB
+minimum free, 6.49 GiB peak. Final fmt, GUI lint and self-test pass.
+
+Core02's earlier 1m43s result preceded test-only fixture repairs and the final
+Linux/GUI delta; the fresh TestBuild and Clippy cover that Core path. The brief
+failure history is retained in `docs/gold-wave15-verification.md`: three new
+flat-guard fixtures found expectation/context rendering defects, and a blocked
+Linux proposal would have removed test-used surfaces. Independent account/
+migration review is **APPROVE**; macOS and corrected Linux three-site reviews
+are **CLEAR**; the test-fix review is **CLEAR**. Exact source evidence is in
+`docs/verification/gold-wave15-{source-manifest,test-matrix}.json` (89 inputs,
+14 executables), built from fresh logs with every selected name matched to the
+catalogue and every selected terminal result verified despite CLI stdout interleaving.
+
+P1-16 remains **OPEN**; counts remain **1,010 complete / 312 open / 2 partial**
+(314 raw; 313 pre-tag blockers). Python integrity, roadmap release and release
+evidence checks pass **19/11/8**; no full-CI, cross-platform, GUI-link, or
+macOS-runtime claim is made.
+Current-head CI has not run. The older Wave 14 CI `34766600264` retains three
+Linux lint failures; Windows `103748563885` is successful (full-workspace
+nextest), while macOS `103748563923` remains running. No replacement manual CI
+is started until that macOS evidence reaches a terminal state.
+
 **Wave 14 first account identity locally accepted (2026-09-13):** startup
 anchors `ChannelRef`; V39 separates account-qualified aliases, and an opaque
 admitted-singleton token permits only the exact legacy Telegram operator claim.

@@ -3453,7 +3453,8 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!((version.as_str(), history_tables), ("37", 0));
+        assert_eq!(version, SCHEMA_VERSION.to_string());
+        assert_eq!(history_tables, 0);
     }
 
     #[cfg(unix)]
@@ -3487,8 +3488,17 @@ mod tests {
         make_private_history_directory(&parent).unwrap();
         let history = parent.join("history.db");
         let legacy = open(&history).unwrap();
+        // A genuine v38 predecessor lacks the two v39 identity tables. Stamping
+        // the current Stage-3b schema as v36 would invent a downgrade and collide
+        // with the already-installed v38 triggers before the intended rebind.
         legacy
-            .execute("UPDATE meta SET value='36' WHERE key='schema_version'", [])
+            .execute_batch(
+                "DROP TABLE idx_human_identity_aliases_v2;\
+                 DROP TABLE idx_human_identity_legacy_claims;",
+            )
+            .unwrap();
+        legacy
+            .execute("UPDATE meta SET value='38' WHERE key='schema_version'", [])
             .unwrap();
         drop(legacy);
         let views = root.path().join("views.db");
@@ -3526,7 +3536,8 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!((version.as_str(), history_tables), ("37", 0));
+        assert_eq!(version, SCHEMA_VERSION.to_string());
+        assert_eq!(history_tables, 0);
     }
 
     #[test]

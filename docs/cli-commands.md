@@ -334,6 +334,13 @@ Add a channel non-interactively (pass --token etc.) or interactively (stdin prom
 
 List configured channels
 
+### `neoth channel migrate-legacy`
+
+Move the admitted legacy Telegram singleton into one named inbound account. This does not enable account-aware outbound routing
+
+- `<CHANNEL>` — Must be the canonical channel id `telegram`
+- `--account <ACCOUNT>` — Validated account id that receives the legacy inbound binding
+
 ### `neoth channel remove`
 
 Remove a channel

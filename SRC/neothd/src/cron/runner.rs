@@ -364,6 +364,14 @@ async fn validate_delivery_target(
                     "delivery.thread is not supported by the selected channel adapter; provider call blocked"
                 );
             }
+            if delivery.channel.eq_ignore_ascii_case("telegram")
+                && (config.telegram_account_map_active()
+                    || credentials.telegram_account_map_active())
+            {
+                anyhow::bail!(
+                    "Telegram account-map delivery is not supported until account-aware routing is available; provider call blocked"
+                );
+            }
             if delivery.channel.eq_ignore_ascii_case("keet") {
                 if delivery.recipient.is_some() {
                     anyhow::bail!(
@@ -1416,6 +1424,79 @@ mod workstream_c_tests {
             execution: Default::default(),
             depends_on: vec![],
         }
+    }
+
+    fn config_with_telegram_account_map() -> crate::config::FreedomConfig {
+        serde_yaml::from_str(
+            r#"
+telegram_user_id: 123456
+channel_accounts:
+  telegram:
+    account_a:
+      allowed_user_id: 123456
+"#,
+        )
+        .expect("account-map test config")
+    }
+
+    fn creds_with_telegram_account_map() -> crate::config::credentials::Credentials {
+        serde_yaml::from_str(
+            r#"
+channel_accounts:
+  telegram:
+    account_b:
+      token: account-b-bot-token
+"#,
+        )
+        .expect("account-map test credentials")
+    }
+
+    #[tokio::test]
+    async fn telegram_account_map_rejects_flat_cron_delivery_before_route_or_provider() {
+        let home = tempdir().unwrap();
+
+        // Both current flat forms fail before routing is read: explicit legacy
+        // recipients and backward-compatible channel-only jobs have no
+        // ChannelRef with which to choose an account.
+        for recipient in [None, Some("123456".to_string())] {
+            let mut job = delivery_job("telegram");
+            job.delivery.as_mut().unwrap().recipient = recipient;
+            let error = validate_delivery_target(
+                home.path(),
+                &job,
+                &config_with_telegram_account_map(),
+                &crate::config::credentials::Credentials::default(),
+            )
+            .await
+            .expect_err("map-mode Telegram delivery must be refused before any provider work");
+            assert!(
+                format!("{error:#}").contains("Telegram account-map delivery"),
+                "unexpected refusal: {error:#}"
+            );
+        }
+
+        // The secret map is independently authoritative for the same
+        // fail-closed decision, even if the public half is absent/damaged.
+        let error = validate_delivery_target(
+            home.path(),
+            &delivery_job("telegram"),
+            &crate::config::FreedomConfig::default(),
+            &creds_with_telegram_account_map(),
+        )
+        .await
+        .expect_err("secret-side map must block flat Telegram delivery");
+        assert!(format!("{error:#}").contains("Telegram account-map delivery"));
+
+        // Legacy channel-only jobs preserve their existing admission path when
+        // no account map is active.
+        validate_delivery_target(
+            home.path(),
+            &delivery_job("telegram"),
+            &crate::config::FreedomConfig::default(),
+            &crate::config::credentials::Credentials::default(),
+        )
+        .await
+        .expect("legacy channel-only Telegram delivery remains admissible");
     }
 
     #[test]

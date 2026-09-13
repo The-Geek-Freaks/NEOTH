@@ -19669,22 +19669,20 @@ fn start_code_map_lifecycle_config_apply(
     );
 
     std::thread::spawn(move || {
-        let result = (|| -> Result<neothd::code_map::CodeMapLifecycleConfigApplyReceipt> {
-            let patch = neothd::code_map::CodeMapLifecycleConfigPatch {
-                enabled: Some(enabled),
-                debounce_millis: Some(debounce_millis),
-                reconciliation_interval_secs: Some(reconciliation_interval_secs),
-                add_managed_roots: if enabled {
-                    vec![PathBuf::from(&root)]
-                } else {
-                    Vec::new()
-                },
-                remove_managed_roots: Vec::new(),
-                disable_if_no_managed_roots: false,
-            };
-            let home = neothd::config::FreedomConfig::default_neoth_home();
-            neothd::code_map::apply_code_map_lifecycle_config_patch(&home, patch)
-        })();
+        let patch = neothd::code_map::CodeMapLifecycleConfigPatch {
+            enabled: Some(enabled),
+            debounce_millis: Some(debounce_millis),
+            reconciliation_interval_secs: Some(reconciliation_interval_secs),
+            add_managed_roots: if enabled {
+                vec![PathBuf::from(&root)]
+            } else {
+                Vec::new()
+            },
+            remove_managed_roots: Vec::new(),
+            disable_if_no_managed_roots: false,
+        };
+        let home = neothd::config::FreedomConfig::default_neoth_home();
+        let result = neothd::code_map::apply_code_map_lifecycle_config_patch(&home, patch);
         let _ = slint::invoke_from_event_loop(move || {
             if CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
                 != revision

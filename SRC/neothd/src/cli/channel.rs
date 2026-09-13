@@ -16,8 +16,8 @@ use zeroize::Zeroizing;
 
 use crate::channels::probe::{ChannelCredsView, ProbeStatus, probe_all};
 use crate::channels::registry::{
-    CHANNEL_REGISTRY_SCHEMA_VERSION, ChannelId, channel_descriptors, resolve_channel_id,
-    validate_registry,
+    CHANNEL_REGISTRY_SCHEMA_VERSION, ChannelAccountId, ChannelId, channel_descriptors,
+    resolve_channel_id, validate_registry,
 };
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
@@ -70,18 +70,113 @@ pub struct ChannelStatus {
 /// operators can see credentials that need repair).
 pub fn channel_statuses(cfg: &FreedomConfig, creds: &Credentials) -> Vec<ChannelStatus> {
     let view = ChannelCredsView::from_config(Some(cfg), creds);
+    let telegram_map_policy = cfg.telegram_account_map_active();
+    let telegram_map_credentials = creds.telegram_account_map_active();
+    // Use the exact authenticated-account projection that the daemon startup
+    // consumes. Map presence alone cannot prove a usable binding: each policy
+    // key needs its matching non-blank effective credential and nonzero sender.
+    let telegram_map_live_inbound = crate::config::RuntimeConfigPair {
+        config: cfg.clone(),
+        raw_credentials: creds.clone(),
+        credentials: creds.clone(),
+    }
+    .authenticated_telegram_accounts()
+    .map(|accounts| {
+        !accounts.is_empty()
+            && accounts
+                .iter()
+                .all(|account| !account.is_legacy_singleton())
+    })
+    .unwrap_or(false);
     probe_all(&view)
         .into_iter()
-        .map(|h| ChannelStatus {
-            name: h.channel,
-            status: h.status,
-            configured: !matches!(
-                h.status,
-                ProbeStatus::NotConfigured | ProbeStatus::Unavailable
-            ),
-            detail: h.message,
+        .map(|h| {
+            if h.channel == ChannelId::Telegram.as_str()
+                && (telegram_map_policy || telegram_map_credentials)
+            {
+                return ChannelStatus {
+                    name: h.channel,
+                    status: if telegram_map_live_inbound { ProbeStatus::Ok } else { ProbeStatus::Error },
+                    configured: true,
+                    detail: if telegram_map_live_inbound {
+                        "Telegram account map configured: inbound accounts are live-capable; outbound account routing is pending.".to_owned()
+                    } else {
+                        "Telegram account map is invalid or partially configured: matching policy, nonzero sender, and non-empty credentials are required before inbound startup; outbound account routing is pending.".to_owned()
+                    },
+                };
+            }
+            ChannelStatus {
+                name: h.channel,
+                status: h.status,
+                configured: !matches!(
+                    h.status,
+                    ProbeStatus::NotConfigured | ProbeStatus::Unavailable
+                ),
+                detail: h.message,
+            }
         })
         .collect()
+}
+
+/// Migrate the one admitted legacy Telegram singleton into a named inbound
+/// account. This creates one authenticated inbound account only; outbound
+/// account routing remains deliberately pending.
+pub fn run_migrate_legacy(channel: &str, account: &str, output: &OutputFormat) -> Result<()> {
+    run_migrate_legacy_at(
+        &FreedomConfig::default_neoth_home(),
+        channel,
+        account,
+        output,
+    )
+}
+
+fn run_migrate_legacy_at(
+    home: &std::path::Path,
+    channel: &str,
+    account: &str,
+    output: &OutputFormat,
+) -> Result<()> {
+    if channel.trim() != ChannelId::Telegram.as_str() {
+        anyhow::bail!(
+            "legacy migration supports only canonical `telegram`; `{}` is unsupported",
+            channel.trim()
+        );
+    }
+    let account_id =
+        ChannelAccountId::new(account.trim().to_owned()).context("invalid Telegram account id")?;
+    let freedom_path = home.join("freedom.yaml");
+    let credentials_path = home.join("credentials.yaml");
+    Credentials::migrate_legacy_telegram_to_account_at(
+        &freedom_path,
+        &credentials_path,
+        account_id.clone(),
+    )
+    .with_context(|| "migrate the admitted legacy Telegram singleton atomically")?;
+
+    let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path)
+        .context("validate the migrated Telegram account pair")?;
+    let accounts = pair.authenticated_telegram_accounts()?;
+    anyhow::ensure!(
+        accounts.len() == 1 && accounts[0].channel_ref().account_id == account_id,
+        "migrated Telegram account was not the sole authenticated inbound account"
+    );
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "channel": "telegram",
+                "account": account_id.as_str(),
+                "inbound": "live_capable",
+                "outbound": "pending",
+                "migrated_legacy_singleton": true,
+            })
+        ),
+        OutputFormat::Table => println!(
+            "Migrated legacy Telegram singleton to inbound account `{}`. Inbound is live-capable; outbound account routing is pending.",
+            account_id.as_str()
+        ),
+    }
+    Ok(())
 }
 
 /// Count of configured channels — small helper the renderers share.
@@ -2318,6 +2413,25 @@ struct ChannelStateFingerprint {
     keychain: Option<[u8; 32]>,
 }
 
+/// Flat Telegram actions predate named inbound accounts. Once either side of
+/// the account map exists, changing legacy fields could claim a removal or
+/// replacement while the mapped adapter remains configured. Account-selecting
+/// mutation is deliberately a later CLI surface.
+fn reject_flat_telegram_mutation_when_account_map_active(
+    channel_id: ChannelId,
+    config: &FreedomConfig,
+    credentials: &Credentials,
+) -> Result<()> {
+    if channel_id == ChannelId::Telegram
+        && (config.telegram_account_map_active() || credentials.telegram_account_map_active())
+    {
+        anyhow::bail!(
+            "flat `channel add/remove telegram` and `channel set-credentials` cannot modify a configured Telegram account map; use an account-selecting command"
+        );
+    }
+    Ok(())
+}
+
 fn persist_channel_replacement_at(
     home: &std::path::Path,
     channel_id: ChannelId,
@@ -2342,6 +2456,7 @@ fn persist_channel_replacement_at(
         };
     let mut keychain_snapshot = None;
     let mut apply = |config: &FreedomConfig, credentials: &mut Credentials| -> Result<()> {
+        reject_flat_telegram_mutation_when_account_map_active(channel_id, config, credentials)?;
         if config_fingerprint(config)? != initial_config_fingerprint {
             anyhow::bail!(
                 "channel config changed while `{}` credentials were being prepared; no state changed — retry",
@@ -2616,6 +2731,7 @@ pub(crate) fn run_remove_at(
     let mut remove_credentials = |config: &FreedomConfig,
                                   credentials: &mut Credentials|
      -> Result<bool> {
+        reject_flat_telegram_mutation_when_account_map_active(channel_id, config, credentials)?;
         let mut removed = false;
         if config_fingerprint(config)? != expected_config {
             anyhow::bail!(
@@ -2707,7 +2823,9 @@ pub(crate) fn run_remove_at(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::channels::registry::channel_ids;
+    use crate::channels::registry::{ChannelAccountId, channel_ids};
+    use crate::config::TelegramAccountConfig;
+    use crate::config::credentials::TelegramAccountCredentials;
 
     const TEST_KEET_TOPIC: &str = "nk1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     const TEST_KEET_SENDER: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -4030,6 +4148,252 @@ mod tests {
             serde_yaml::to_string(&FreedomConfig::default()).unwrap(),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn migrate_legacy_telegram_moves_only_inbound_binding_and_status_is_honest() {
+        let home = tempfile::tempdir().unwrap();
+        let mut config = FreedomConfig::default();
+        config.telegram_user_id = Some(42);
+        config.telegram_token = Some(SecretString::from("123:legacy-token"));
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config).unwrap(),
+        )
+        .unwrap();
+        Credentials::default()
+            .write(&home.path().join("credentials.yaml"))
+            .unwrap();
+
+        run_migrate_legacy_at(home.path(), "telegram", "family_chat", &OutputFormat::Json).unwrap();
+
+        let pair =
+            crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
+                .unwrap();
+        let accounts = pair.authenticated_telegram_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].channel_ref().account_id.as_str(), "family_chat");
+        assert!(!accounts[0].is_legacy_singleton());
+        assert_eq!(accounts[0].allowed_user_id(), 42);
+        let status = channel_statuses(&pair.config, &pair.credentials)
+            .into_iter()
+            .find(|row| row.name == "telegram")
+            .unwrap();
+        assert_eq!(status.status, ProbeStatus::Ok);
+        assert!(status.configured);
+        assert!(status.detail.contains("inbound accounts are live-capable"));
+        assert!(
+            status
+                .detail
+                .contains("outbound account routing is pending")
+        );
+        assert!(!status.detail.contains("legacy-token"));
+    }
+
+    #[test]
+    fn migrate_legacy_refuses_alias_or_non_telegram_channel_before_file_access() {
+        let home = tempfile::tempdir().unwrap();
+        for channel in ["Telegram", "slack"] {
+            let error =
+                run_migrate_legacy_at(home.path(), channel, "family_chat", &OutputFormat::Json)
+                    .unwrap_err()
+                    .to_string();
+            assert!(error.contains("canonical `telegram`"));
+        }
+        let error = run_migrate_legacy_at(
+            home.path(),
+            "telegram",
+            "not an account",
+            &OutputFormat::Json,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("invalid Telegram account id"));
+    }
+
+    fn telegram_map_status(
+        policy: &[(&str, u64)],
+        credentials: &[(&str, Option<&str>)],
+    ) -> ChannelStatus {
+        let mut config = FreedomConfig::default();
+        let mut creds = Credentials::default();
+        for &(account, sender) in policy {
+            config.channel_accounts.telegram.insert(
+                ChannelAccountId::new(account).unwrap(),
+                TelegramAccountConfig {
+                    allowed_user_id: sender,
+                },
+            );
+        }
+        for &(account, token) in credentials {
+            creds.channel_accounts.telegram.insert(
+                ChannelAccountId::new(account).unwrap(),
+                TelegramAccountCredentials {
+                    token: token.map(SecretString::from),
+                },
+            );
+        }
+        channel_statuses(&config, &creds)
+            .into_iter()
+            .find(|row| row.name == "telegram")
+            .unwrap()
+    }
+
+    fn write_telegram_account_map(
+        home: &std::path::Path,
+        policy_active: bool,
+        credentials_active: bool,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let freedom_path = home.join("freedom.yaml");
+        let credentials_path = home.join("credentials.yaml");
+        let account = ChannelAccountId::new("account-a").unwrap();
+        let mut config = FreedomConfig::default();
+        if policy_active {
+            config.channel_accounts.telegram.insert(
+                account.clone(),
+                TelegramAccountConfig {
+                    allowed_user_id: 11,
+                },
+            );
+        }
+        std::fs::write(&freedom_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        // Keep a real unrelated credential file even when Telegram has only
+        // a public map; an entirely empty Credentials store is omitted on disk.
+        let mut credentials = Credentials {
+            discord_bot_token: Some(SecretString::from("unrelated-discord-token")),
+            ..Default::default()
+        };
+        if credentials_active {
+            credentials.channel_accounts.telegram.insert(
+                account,
+                TelegramAccountCredentials {
+                    token: Some(SecretString::from("account-a-token")),
+                },
+            );
+        }
+        credentials.write(&credentials_path).unwrap();
+        (freedom_path, credentials_path)
+    }
+
+    fn assert_telegram_map_files_unchanged(
+        freedom_path: &std::path::Path,
+        credentials_path: &std::path::Path,
+        before_freedom: &[u8],
+        before_credentials: &[u8],
+    ) {
+        assert_eq!(std::fs::read(freedom_path).unwrap(), before_freedom);
+        assert_eq!(std::fs::read(credentials_path).unwrap(), before_credentials);
+    }
+
+    #[tokio::test]
+    async fn flat_telegram_add_rejects_a_public_account_map_without_writing() {
+        let home = tempfile::tempdir().unwrap();
+        let (freedom_path, credentials_path) = write_telegram_account_map(home.path(), true, false);
+        let before_freedom = std::fs::read(&freedom_path).unwrap();
+        let before_credentials = std::fs::read(&credentials_path).unwrap();
+        let error = run_add_at(
+            home.path(),
+            "telegram",
+            &ChannelAddFlags {
+                telegram_user_id: Some(99),
+                token: Some(valid_tg_token()),
+                ..Default::default()
+            },
+            &OutputFormat::Json,
+        )
+        .await
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(
+            error.contains("cannot modify a configured Telegram account map"),
+            "{error}"
+        );
+        assert_telegram_map_files_unchanged(
+            &freedom_path,
+            &credentials_path,
+            &before_freedom,
+            &before_credentials,
+        );
+    }
+
+    #[test]
+    fn flat_telegram_remove_rejects_a_secret_account_map_without_writing() {
+        let home = tempfile::tempdir().unwrap();
+        let (freedom_path, credentials_path) = write_telegram_account_map(home.path(), false, true);
+        let before_freedom = std::fs::read(&freedom_path).unwrap();
+        let before_credentials = std::fs::read(&credentials_path).unwrap();
+        let error = run_remove_at(home.path(), "telegram", &OutputFormat::Json).unwrap_err();
+        let error = format!("{error:#}");
+        assert!(
+            error.contains("cannot modify a configured Telegram account map"),
+            "{error}"
+        );
+        assert_telegram_map_files_unchanged(
+            &freedom_path,
+            &credentials_path,
+            &before_freedom,
+            &before_credentials,
+        );
+    }
+
+    #[test]
+    fn json_telegram_replacement_rejects_an_account_map_without_writing() {
+        let home = tempfile::tempdir().unwrap();
+        let (freedom_path, credentials_path) = write_telegram_account_map(home.path(), true, true);
+        let before_freedom = std::fs::read(&freedom_path).unwrap();
+        let before_credentials = std::fs::read(&credentials_path).unwrap();
+        let request = serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "telegram",
+            "fields": {
+                "telegram_user_id": 99,
+                "token": valid_tg_token(),
+            },
+        });
+        let error = run_set_credentials_from(
+            home.path(),
+            std::io::Cursor::new(serde_json::to_vec(&request).unwrap()),
+            &OutputFormat::Json,
+        )
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(
+            error.contains("cannot modify a configured Telegram account map"),
+            "{error}"
+        );
+        assert_telegram_map_files_unchanged(
+            &freedom_path,
+            &credentials_path,
+            &before_freedom,
+            &before_credentials,
+        );
+    }
+
+    #[test]
+    fn channel_status_requires_the_runtime_authenticated_account_projection() {
+        for status in [
+            telegram_map_status(&[("account-a", 11)], &[("account-b", Some("b-token"))]),
+            telegram_map_status(&[("account-a", 0)], &[("account-a", Some("a-token"))]),
+            telegram_map_status(&[("account-a", 11)], &[("account-a", None)]),
+            telegram_map_status(&[("account-a", 11)], &[("account-a", Some(" \t "))]),
+        ] {
+            assert_eq!(status.status, ProbeStatus::Error);
+            assert!(status.configured);
+            assert!(
+                status.detail.contains("not live-capable")
+                    || status.detail.contains("invalid or partially")
+            );
+        }
+
+        let status = telegram_map_status(
+            &[("account-a", 11), ("account-b", 22)],
+            &[
+                ("account-a", Some("a-token")),
+                ("account-b", Some("b-token")),
+            ],
+        );
+        assert_eq!(status.status, ProbeStatus::Ok);
+        assert!(status.detail.contains("inbound accounts are live-capable"));
     }
 
     #[tokio::test]

@@ -93,9 +93,11 @@ pub(crate) use sidecar::read_sidecar;
 pub(crate) use sidecar::write_sidecar;
 pub use sidecar::{SidecarGuard, remove_sidecar, sidecar_path};
 pub use token::{init_rpc_token, read_rpc_token, rpc_token_path};
-pub(crate) use transport::homes_same_identity;
 #[cfg(test)]
-pub(crate) use transport::{AuditEndpointV2, endpoint_for_home};
+pub(crate) use transport::AuditEndpointV2;
+#[cfg(all(test, windows))]
+pub(crate) use transport::endpoint_for_home;
+pub(crate) use transport::homes_same_identity;
 
 /// Closed same-user transport for a descriptor already resolved by Gate and
 /// durably retained by its caller. This carries no raw action/body/recipient

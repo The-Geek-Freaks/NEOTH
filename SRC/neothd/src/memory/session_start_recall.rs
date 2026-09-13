@@ -586,7 +586,12 @@ impl ExistingViewsReader {
             .file_name()
             .context("recall home has no final directory name")?
             .to_os_string();
-        let home_display = home.to_path_buf();
+        // The bound parent has already been canonicalized from its trusted
+        // anchor and traversed with no-follow directory capabilities. Reuse
+        // that physical display namespace for SQLite: macOS `/var` is a
+        // system alias for `/private/var`, which SQLite rejects under
+        // SQLITE_OPEN_NOFOLLOW even when the bound home and leaf are real.
+        let home_display = home_parent.display_path.join(&home_name);
         let home_open = crate::skills::store::open_bound_real_child_dir(
             &home_parent.dir,
             &home_name,
@@ -804,6 +809,60 @@ mod tests {
             }
             _ => panic!("seeded read-only recall was not ready"),
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn macos_reader_uses_bound_physical_parent_for_nofollow_sqlite_open() {
+        let _gate = preload_test_gate().lock().await;
+        let home = seeded_home();
+        let expected_display =
+            std::fs::canonicalize(home.path().parent().expect("temp home has a real parent"))
+                .expect("canonicalize existing trusted temp parent")
+                .join(home.path().file_name().expect("temp home has a final name"));
+
+        let reader = ExistingViewsReader::open_existing(home.path())
+            .expect("bound no-follow reader must accept a real tempfile home")
+            .expect("seeded views database must be discovered");
+        assert_eq!(reader.home_display, expected_display);
+        assert!(
+            reader
+                .conn
+                .query_row("SELECT count(*) FROM idx_episode", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("live read-only SQLite query through physical display path")
+                > 0
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_reader_rejects_symlinked_home_and_views_leaf() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("test root");
+        let real_home = root.path().join("real-home");
+        std::fs::create_dir(&real_home).expect("create real home");
+        drop(
+            crate::memory::store::open(&real_home.join("views.db"))
+                .expect("create real views database"),
+        );
+        let home_link = root.path().join("home-link");
+        symlink(&real_home, &home_link).expect("create home symlink");
+        assert!(
+            ExistingViewsReader::open_existing(&home_link).is_err(),
+            "reader must reject a symlinked home before SQLite open"
+        );
+
+        let leaf_home = root.path().join("leaf-home");
+        std::fs::create_dir(&leaf_home).expect("create leaf home");
+        let linked_leaf = root.path().join("linked-views.db");
+        std::fs::write(&linked_leaf, b"not a SQLite database").expect("create regular link target");
+        symlink(&linked_leaf, leaf_home.join("views.db")).expect("create views symlink");
+        assert!(
+            ExistingViewsReader::open_existing(&leaf_home).is_err(),
+            "reader must reject a symlinked views.db before SQLite open"
+        );
     }
 
     #[tokio::test]

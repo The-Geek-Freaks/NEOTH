@@ -165,6 +165,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 config_path.display()
             )
         })?;
+    let telegram_accounts = crate::cli::serve_tasks::telegram_account_bundles(&runtime_config)
+        .context("validated Telegram account bundles cannot be derived from runtime config pair")?;
     let config = runtime_config.config;
     let creds = runtime_config.credentials;
     #[cfg(feature = "cluster")]
@@ -1062,6 +1064,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let confirm_bus = Some(confirm_bus);
     crate::cli::serve_tasks::spawn_channel_adapters(
         &config,
+        &telegram_accounts,
         &shared_provider,
         &writer,
         &provider_meter,
@@ -1086,8 +1089,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // and restart only adapters whose inputs changed. Stop-before-start avoids
     // duplicate pollers and webhook port collisions. A corrupt credential store
     // is fail-closed: the old fleet is stopped instead of retaining stale keys.
-    let initial_channel_fingerprints =
-        crate::cli::serve_tasks::channel_credential_fingerprints(&config, &creds, &neoth_home);
+    let initial_channel_fingerprints = crate::cli::serve_tasks::channel_account_fingerprints(
+        &config,
+        &creds,
+        &telegram_accounts,
+        &neoth_home,
+    );
     let channel_tasks = std::sync::Arc::new(std::sync::Mutex::new(channel_tasks));
     let channel_supervisor_task: tokio::task::JoinHandle<()> = {
         let mut gen_rx = reload_controller.subscribe_generation();
@@ -1103,27 +1110,30 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         let dispatch_join = std::sync::Arc::clone(&dispatch_join);
         let confirm_bus = confirm_bus.clone();
         let views_executor = views_executor.clone();
+        let channel_config_path = config_path.clone();
         tokio::spawn(async move {
             const CREDENTIAL_POLL: std::time::Duration = std::time::Duration::from_millis(750);
             const RELOAD_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
 
-            let credentials_path = channel_neoth_home.join("credentials.yaml");
             let mut tick = tokio::time::interval(CREDENTIAL_POLL);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut known_fingerprints = initial_channel_fingerprints;
             let mut credentials_valid = true;
             let mut failed_channels = std::collections::HashSet::new();
             let mut channel_generations: std::collections::HashMap<
-                crate::channels::ChannelKind,
+                crate::channels::registry::ChannelRef,
                 u64,
-            > = crate::channels::registry::channel_ids()
-                .map(|kind| (kind, 0))
+            > = known_fingerprints
+                .keys()
+                .cloned()
+                .map(|channel_ref| (channel_ref, 0))
                 .collect();
             type PendingChannelReload = (
                 std::time::Instant,
-                std::collections::HashMap<crate::channels::ChannelKind, u64>,
+                std::collections::HashMap<crate::channels::registry::ChannelRef, u64>,
                 std::sync::Arc<FreedomConfig>,
                 crate::config::credentials::Credentials,
+                Vec<crate::cli::serve_tasks::TelegramAccountBundle>,
                 bool,
             );
             let mut pending: Option<PendingChannelReload> = None;
@@ -1143,19 +1153,19 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 // A completed adapter is not healthy. Reap it once and leave it
                 // stopped until its credential changes or an explicit reload
                 // requests a retry; never create a hot failure/restart loop.
-                let finished: Vec<crate::channels::ChannelKind> = {
+                let finished: Vec<crate::channels::registry::ChannelRef> = {
                     let guard = tasks.lock().expect("channel_tasks mutex poisoned");
                     guard
                         .iter()
                         .filter(|(_, handles)| handles.iter().any(|handle| handle.is_finished()))
-                        .map(|(kind, _)| *kind)
+                        .map(|(channel_ref, _)| channel_ref.clone())
                         .collect()
                 };
-                for kind in finished {
+                for channel_ref in finished {
                     let handles = tasks
                         .lock()
                         .expect("channel_tasks mutex poisoned")
-                        .remove(&kind)
+                        .remove(&channel_ref)
                         .unwrap_or_default();
                     for handle in &handles {
                         handle.abort();
@@ -1163,19 +1173,18 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     for handle in handles {
                         let _ = handle.await;
                     }
-                    failed_channels.insert(kind);
+                    failed_channels.insert(channel_ref.clone());
                     error!(
-                        channel = kind.as_str(),
+                        channel = %channel_ref.channel_id.as_str(),
+                        account = %channel_ref.account_id,
                         "channel adapter stopped unexpectedly; it remains unhealthy until credentials change or `neoth reload` retries it"
                     );
                 }
 
-                let fresh_config = reload_controller.latest();
-                let fresh_creds = match crate::config::credentials::Credentials::load_effective(
-                    &credentials_path,
-                    fresh_config.secrets_backend,
+                let fresh_runtime = match crate::config::load_runtime_config_pair_from_path(
+                    &channel_config_path,
                 ) {
-                    Ok(credentials) => credentials,
+                    Ok(runtime) => runtime,
                     Err(load_error) => {
                         pending = None;
                         if credentials_valid {
@@ -1192,7 +1201,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             for handle in old {
                                 let _ = handle.await;
                             }
-                            failed_channels.extend(crate::channels::registry::channel_ids());
+                            failed_channels.extend(known_fingerprints.keys().cloned());
                             error!(
                                 error = %load_error,
                                 "effective credential store became unreadable; all channel adapters stopped fail-closed"
@@ -1202,30 +1211,70 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         continue;
                     }
                 };
+                let fresh_telegram_accounts =
+                    match crate::cli::serve_tasks::telegram_account_bundles(&fresh_runtime) {
+                        Ok(accounts) => accounts,
+                        Err(load_error) => {
+                            pending = None;
+                            if credentials_valid {
+                                let old: Vec<tokio::task::JoinHandle<()>> = {
+                                    let mut guard =
+                                        tasks.lock().expect("channel_tasks mutex poisoned");
+                                    std::mem::take(&mut *guard)
+                                        .into_values()
+                                        .flatten()
+                                        .collect()
+                                };
+                                for handle in &old {
+                                    handle.abort();
+                                }
+                                for handle in old {
+                                    let _ = handle.await;
+                                }
+                            }
+                            failed_channels.extend(known_fingerprints.keys().cloned());
+                            credentials_valid = false;
+                            error!(error = %load_error, "validated Telegram account generation became unusable; all channel adapters stopped fail-closed");
+                            continue;
+                        }
+                    };
+                let fresh_config = std::sync::Arc::new(fresh_runtime.config);
+                let fresh_creds = fresh_runtime.credentials;
                 if shared_provider.is_some() {
                     let running: std::collections::HashSet<_> = tasks
                         .lock()
                         .expect("channel_tasks mutex poisoned")
                         .keys()
-                        .copied()
+                        .cloned()
                         .collect();
-                    for kind in crate::channels::registry::channel_ids() {
-                        if crate::cli::serve_tasks::channel_runtime_expected(
+                    for channel_ref in crate::cli::serve_tasks::channel_account_fingerprints(
+                        &fresh_config,
+                        &fresh_creds,
+                        &fresh_telegram_accounts,
+                        &channel_neoth_home,
+                    )
+                    .into_keys()
+                    {
+                        if crate::cli::serve_tasks::channel_account_runtime_expected(
                             &fresh_config,
                             &fresh_creds,
-                            kind,
-                        ) && !running.contains(&kind)
+                            &fresh_telegram_accounts,
+                            &channel_ref,
+                        ) && !running.contains(&channel_ref)
                         {
-                            failed_channels.insert(kind);
+                            failed_channels.insert(channel_ref);
                         }
                     }
                 }
-                let fresh_fingerprints = crate::cli::serve_tasks::channel_credential_fingerprints(
+                let fresh_fingerprints = crate::cli::serve_tasks::channel_account_fingerprints(
                     &fresh_config,
                     &fresh_creds,
+                    &fresh_telegram_accounts,
                     &channel_neoth_home,
                 );
-                let retry_latched = pending.as_ref().is_some_and(|(_, _, _, _, retry)| *retry);
+                let retry_latched = pending
+                    .as_ref()
+                    .is_some_and(|(_, _, _, _, _, retry)| *retry);
                 let retry_failed = (explicit_retry || retry_latched) && !failed_channels.is_empty();
                 if credentials_valid && fresh_fingerprints == known_fingerprints && !retry_failed {
                     pending = None;
@@ -1235,7 +1284,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 let same_candidate =
                     pending
                         .as_ref()
-                        .is_some_and(|(_, fingerprints, _, _, retry)| {
+                        .is_some_and(|(_, fingerprints, _, _, _, retry)| {
                             *fingerprints == fresh_fingerprints && *retry == retry_failed
                         });
                 if !same_candidate {
@@ -1244,37 +1293,47 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         fresh_fingerprints,
                         fresh_config,
                         fresh_creds,
+                        fresh_telegram_accounts,
                         retry_failed,
                     ));
                     continue;
                 }
                 if pending
                     .as_ref()
-                    .is_some_and(|(since, _, _, _, _)| since.elapsed() < RELOAD_DEBOUNCE)
+                    .is_some_and(|(since, _, _, _, _, _)| since.elapsed() < RELOAD_DEBOUNCE)
                 {
                     continue;
                 }
-                let (_, new_fingerprints, fresh_config, fresh_creds, retry_failed) =
-                    pending.take().expect("candidate checked above");
+                let (
+                    _,
+                    new_fingerprints,
+                    fresh_config,
+                    fresh_creds,
+                    fresh_telegram_accounts,
+                    retry_failed,
+                ) = pending.take().expect("candidate checked above");
                 let mut changed = if credentials_valid {
-                    crate::cli::serve_tasks::changed_channel_credentials(
+                    crate::cli::serve_tasks::changed_channel_accounts(
                         &known_fingerprints,
                         &new_fingerprints,
                     )
                 } else {
-                    crate::channels::registry::channel_ids().collect()
+                    crate::cli::serve_tasks::recovery_channel_accounts(
+                        &known_fingerprints,
+                        &new_fingerprints,
+                    )
                 };
                 if retry_failed {
-                    changed.extend(failed_channels.iter().copied());
-                    changed.sort_unstable_by_key(|kind| kind.as_str());
+                    changed.extend(failed_channels.iter().cloned());
+                    changed.sort();
                     changed.dedup();
                 }
 
-                for kind in changed {
+                for channel_ref in changed {
                     let old = tasks
                         .lock()
                         .expect("channel_tasks mutex poisoned")
-                        .remove(&kind)
+                        .remove(&channel_ref)
                         .unwrap_or_default();
                     for handle in &old {
                         handle.abort();
@@ -1286,6 +1345,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     let mut replacement = crate::cli::serve_tasks::ChannelFleet::new();
                     crate::cli::serve_tasks::spawn_channel_adapters(
                         &fresh_config,
+                        &fresh_telegram_accounts,
                         &shared_provider,
                         &writer,
                         &provider_meter,
@@ -1297,29 +1357,32 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         &dispatch_join,
                         &fresh_creds,
                         &mut replacement,
-                        Some(kind),
+                        Some(&channel_ref),
                         &confirm_bus,
                         &views_executor,
                     );
-                    let replacement = replacement.remove(&kind).unwrap_or_default();
+                    let replacement = replacement.remove(&channel_ref).unwrap_or_default();
                     let task_count = replacement.len();
                     if replacement.is_empty() {
                         if shared_provider.is_some()
-                            && crate::cli::serve_tasks::channel_runtime_expected(
+                            && crate::cli::serve_tasks::channel_account_runtime_expected(
                                 &fresh_config,
                                 &fresh_creds,
-                                kind,
+                                &fresh_telegram_accounts,
+                                &channel_ref,
                             )
                         {
-                            failed_channels.insert(kind);
+                            failed_channels.insert(channel_ref.clone());
                             warn!(
-                                channel = kind.as_str(),
+                                channel = %channel_ref.channel_id.as_str(),
+                                account = %channel_ref.account_id,
                                 "channel reconciliation produced no running adapter; runtime status remains unhealthy"
                             );
                         } else {
-                            failed_channels.remove(&kind);
+                            failed_channels.remove(&channel_ref);
                             info!(
-                                channel = kind.as_str(),
+                                channel = %channel_ref.channel_id.as_str(),
+                                account = %channel_ref.account_id,
                                 "channel reconciliation left adapter inactive by configuration"
                             );
                         }
@@ -1327,13 +1390,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         tasks
                             .lock()
                             .expect("channel_tasks mutex poisoned")
-                            .insert(kind, replacement);
-                        failed_channels.remove(&kind);
+                            .insert(channel_ref.clone(), replacement);
+                        failed_channels.remove(&channel_ref);
                     }
-                    let generation = channel_generations.entry(kind).or_default();
+                    let generation = channel_generations.entry(channel_ref.clone()).or_default();
                     *generation = generation.saturating_add(1);
                     info!(
-                        channel = kind.as_str(),
+                        channel = %channel_ref.channel_id.as_str(),
+                        account = %channel_ref.account_id,
                         generation = *generation,
                         tasks = task_count,
                         "channel credential generation reconciled"

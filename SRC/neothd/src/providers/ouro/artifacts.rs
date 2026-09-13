@@ -1165,8 +1165,25 @@ mod tests {
         std::fs::write(&external, b"external bytes must never be digested").unwrap();
         symlink(&external, &weights).unwrap();
 
+        let link_metadata = std::fs::symlink_metadata(&weights).unwrap();
+        assert!(
+            link_metadata.file_type().is_symlink(),
+            "fixture must replace the retained artifact with a symlink"
+        );
+        let direct_error = ensure_regular_artifact_path(&weights)
+            .expect_err("the no-follow artifact boundary must reject the symlink before a digest");
+        assert!(
+            direct_error.to_string().contains("regular file"),
+            "unexpected direct no-follow error: {direct_error:#}"
+        );
+
         let error = resolve_existing_generation(dir.path())
             .expect_err("orphan artifact symlink must not be adopted");
-        assert!(error.to_string().contains("regular file"));
+        assert!(
+            error
+                .chain()
+                .any(|cause| cause.to_string().contains("regular file")),
+            "orphan adoption must preserve its rejected-artifact cause: {error:#}"
+        );
     }
 }

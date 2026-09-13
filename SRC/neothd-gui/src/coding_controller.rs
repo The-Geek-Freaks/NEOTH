@@ -258,6 +258,7 @@ impl CodingController {
     /// completion. A queued stale Cancel click is a no-op, so it can never
     /// target a run started later by Settings or Buddy. The terminal bridge
     /// must still await the service receipt and then call [`Self::finish`].
+    #[cfg(test)]
     pub async fn request_cancel(
         &self,
         expected_revision: u64,

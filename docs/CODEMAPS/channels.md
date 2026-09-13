@@ -19,8 +19,20 @@ merge. Claim UUID/time remain historical facts across a merge.
 MCP authorization, and `neoth lease channel-subject`. Pipeline session, profile,
 archive and media identifiers incorporate the bound account.
 
-Configuration, credential ownership, outbound routing and account-management
-surfaces remain later P1-16 work; this slice does not expose multi-account setup.
+Telegram now has a limited P1-16 account-map setup: policy maps hold an explicit
+`allowed_user_id`, credentials maps hold a matching token or a null
+keychain-backed placeholder, and legacy scalar fields cannot coexist with a
+map. Account-aware routing and the remaining multi-account surfaces are still
+open.
+
+`cli/channel.rs` performs `neoth channel migrate-legacy telegram --account
+<account-id>` as a paired migration with recovery cleanup. It does not expose
+secret material. When a map is active, legacy flat Telegram add/remove/
+set-credentials mutations fail before writing. `serve.rs` and `serve_tasks.rs`
+fingerprint and reconcile Telegram by `ChannelRef`, restarting only an affected
+account adapter. Inbound replies stay with the owning adapter. Flat proactive
+Telegram and Cron announcement paths refuse mapped configuration; this does
+not provide complete account-aware outbound routing.
 
 ## Architecture
 

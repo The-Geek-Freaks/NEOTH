@@ -1297,6 +1297,15 @@ pub enum ChannelAction {
     List,
     /// Run a read-only live probe; returns typed skipped/unavailable when no safe probe exists
     Test { channel: String },
+    /// Move the admitted legacy Telegram singleton into one named inbound account.
+    /// This does not enable account-aware outbound routing.
+    MigrateLegacy {
+        /// Must be the canonical channel id `telegram`.
+        channel: String,
+        /// Validated account id that receives the legacy inbound binding.
+        #[arg(long)]
+        account: String,
+    },
     /// Remove a channel
     Remove { channel: String },
 }
@@ -2045,6 +2054,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 channel::run_add(&ch, &flags, &global_output).await?;
             }
             ChannelAction::SetCredentials => channel::run_set_credentials(&global_output)?,
+            ChannelAction::MigrateLegacy {
+                channel: ch,
+                account,
+            } => channel::run_migrate_legacy(&ch, &account, &global_output)?,
             ChannelAction::Remove { channel: ch } => channel::run_remove(&ch, &global_output)?,
         },
         Commands::Plugin(mut args) => {
@@ -2277,5 +2290,25 @@ mod default_invocation_tests {
             None,
             "headless fallback must leave the one-time desktop choice unanswered"
         );
+    }
+
+    #[test]
+    fn channel_migrate_legacy_requires_canonical_channel_and_account_flag() {
+        let parsed = Cli::try_parse_from([
+            "neoth",
+            "channel",
+            "migrate-legacy",
+            "telegram",
+            "--account",
+            "family_chat",
+        ])
+        .unwrap();
+        assert!(matches!(
+            parsed.command,
+            Commands::Channel {
+                action: ChannelAction::MigrateLegacy { channel, account }
+            } if channel == "telegram" && account == "family_chat"
+        ));
+        assert!(Cli::try_parse_from(["neoth", "channel", "migrate-legacy", "telegram"]).is_err());
     }
 }
