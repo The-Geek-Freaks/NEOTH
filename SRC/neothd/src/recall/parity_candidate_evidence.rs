@@ -14,6 +14,10 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+use crate::recall::local_candidate_evidence::{
+    CandidateEvidenceUseContext, LOCAL_CANDIDATE_EVIDENCE_CUSTODY_FILE, MAX_LOCAL_CUSTODY_BYTES,
+};
+
 const MANIFEST_FILE: &str = "candidate-evidence-manifest.json";
 const SOURCE_FILE: &str = "source.evidence";
 const CANDIDATES_FILE: &str = "candidates.jsonl";
@@ -43,6 +47,7 @@ pub const MAX_CANDIDATE_EVIDENCE_PUBKEY_BYTES: usize = 128;
 pub enum CandidateEvidenceSourceKind {
     TranscriptExport,
     WalExport,
+    AuthenticatedLocalTranscriptBoundV1,
 }
 
 /// The fixed-name manifest binds the unrendered raw source and candidate JSONL.
@@ -57,6 +62,10 @@ pub struct CandidateEvidenceManifest {
     pub source_bytes: usize,
     pub candidates_sha256: String,
     pub candidate_count: usize,
+    /// Required only for authenticated local transcript evidence. Omitting this
+    /// field preserves the canonical bytes of legacy imported manifests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_custody_sha256: Option<String>,
 }
 
 /// One opaque span selected by the external candidate miner. No prompt,
@@ -86,6 +95,10 @@ pub struct CandidateEvidenceReceiptBody {
     pub source_bytes: usize,
     pub candidates_sha256: String,
     pub candidate_count: usize,
+    /// Required only for authenticated local transcript evidence. Its omission
+    /// keeps legacy detached receipt payload bytes stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_custody_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +139,11 @@ impl SignedCandidateEvidenceReceipt {
         validate_sha256(
             &body.candidates_sha256,
             "candidate evidence receipt candidates_sha256",
+        )?;
+        validate_local_custody_shape(
+            body.source_kind,
+            body.local_custody_sha256.as_deref(),
+            "candidate evidence receipt local_custody_sha256",
         )?;
         if body.source_bytes == 0
             || body.source_bytes > MAX_CANDIDATE_SOURCE_BYTES
@@ -182,6 +200,7 @@ pub struct ValidatedCandidateEvidence {
     manifest_bytes: Vec<u8>,
     receipt_bytes: Vec<u8>,
     candidate_bytes: Vec<u8>,
+    local_custody_bytes: Option<Vec<u8>>,
     expected_receipt_pubkey_b64: String,
     expected_receipt_pubkey_sha256: String,
 }
@@ -227,6 +246,12 @@ impl ValidatedCandidateEvidence {
         &self.candidate_bytes
     }
 
+    /// Exact local custody sidecar bytes are retained only for the explicitly
+    /// authenticated local source kind and only after context validation.
+    pub fn local_custody_bytes(&self) -> Option<&[u8]> {
+        self.local_custody_bytes.as_deref()
+    }
+
     /// Canonical base64 encoding of the explicit, decoded Ed25519 public key
     /// used to verify the receipt. This public value is retained only so a
     /// bound run can re-verify its immutable receipt on every reopen.
@@ -263,11 +288,21 @@ pub struct CandidateEvidenceSummary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PersistedCandidateEvidenceMetadata {
     candidate_ids: Vec<String>,
+    source_kind: CandidateEvidenceSourceKind,
+    local_custody_sha256: Option<String>,
 }
 
 impl PersistedCandidateEvidenceMetadata {
     pub(crate) fn candidate_ids(&self) -> &[String] {
         &self.candidate_ids
+    }
+
+    pub(crate) fn source_kind(&self) -> CandidateEvidenceSourceKind {
+        self.source_kind
+    }
+
+    pub(crate) fn local_custody_sha256(&self) -> Option<&str> {
+        self.local_custody_sha256.as_deref()
     }
 }
 
@@ -311,6 +346,21 @@ pub fn load_imported_candidate_evidence(
     evidence_dir: &Path,
     expected_receipt_pubkey_b64: &str,
 ) -> Result<ValidatedCandidateEvidence> {
+    load_candidate_evidence_with_context(
+        evidence_dir,
+        expected_receipt_pubkey_b64,
+        &CandidateEvidenceUseContext::external_only(),
+    )
+}
+
+/// Consume candidate evidence under an explicit use context. Authenticated
+/// local transcript bundles require their custody sidecar to be bounded,
+/// digest-bound, and accepted by that context before their evidence is usable.
+pub(crate) fn load_candidate_evidence_with_context(
+    evidence_dir: &Path,
+    expected_receipt_pubkey_b64: &str,
+    context: &CandidateEvidenceUseContext,
+) -> Result<ValidatedCandidateEvidence> {
     let bundle = BoundCandidateEvidence::open(evidence_dir)?;
     let manifest_bytes = bundle.read_child(MANIFEST_FILE, MAX_CANDIDATE_RECORD_BYTES)?;
     let manifest: CandidateEvidenceManifest = serde_json::from_slice(&manifest_bytes)
@@ -343,6 +393,28 @@ pub fn load_imported_candidate_evidence(
     }
     validate_candidate_spans(&candidates, &source)?;
 
+    let local_custody_bytes = if manifest.source_kind
+        == CandidateEvidenceSourceKind::AuthenticatedLocalTranscriptBoundV1
+    {
+        let custody_bytes = bundle.read_child(
+            LOCAL_CANDIDATE_EVIDENCE_CUSTODY_FILE,
+            MAX_LOCAL_CUSTODY_BYTES,
+        )?;
+        let custody_sha256 = manifest
+            .local_custody_sha256
+            .as_deref()
+            .context("authenticated local candidate evidence lacks custody digest")?;
+        if sha256_bytes(&custody_bytes) != custody_sha256 {
+            anyhow::bail!(
+                "local candidate evidence custody bytes do not match manifest provenance"
+            );
+        }
+        context.validate_local_custody(&custody_bytes, &manifest, &candidates)?;
+        Some(custody_bytes)
+    } else {
+        None
+    };
+
     Ok(ValidatedCandidateEvidence {
         manifest,
         candidates,
@@ -351,6 +423,7 @@ pub fn load_imported_candidate_evidence(
         manifest_bytes,
         receipt_bytes,
         candidate_bytes,
+        local_custody_bytes,
         expected_receipt_pubkey_b64,
         expected_receipt_pubkey_sha256,
     })
@@ -399,24 +472,30 @@ fn validate_receipt_matches_manifest(
         || body.source_bytes != manifest.source_bytes
         || body.candidates_sha256 != manifest.candidates_sha256
         || body.candidate_count != manifest.candidate_count
+        || body.local_custody_sha256 != manifest.local_custody_sha256
     {
         anyhow::bail!("signed candidate evidence receipt does not exactly bind this manifest");
     }
     Ok(())
 }
 
-/// Revalidate the immutable metadata retained by an anchor-ingested run. This
-/// intentionally does not retain or reopen `source.evidence`; the original
-/// intake verified every span against that raw source before persistence, while
-/// the run preserves only the signature-bound candidate membership vector.
-pub(crate) fn validate_persisted_candidate_evidence_metadata(
+/// Revalidate persisted evidence using the same local-custody context required
+/// at initial intake. Callers reopening authenticated local evidence must
+/// provide the exact bounded custody bytes retained with the run.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the explicit immutable byte and trust inputs distinct from the live use context"
+)]
+pub(crate) fn validate_persisted_candidate_evidence_metadata_with_context(
     manifest_bytes: &[u8],
     receipt_bytes: &[u8],
     candidate_bytes: &[u8],
+    local_custody_bytes: Option<&[u8]>,
     expected_receipt_pubkey_b64: &str,
     expected_manifest_sha256: &str,
     expected_receipt_sha256: &str,
     expected_receipt_pubkey_sha256: &str,
+    context: &CandidateEvidenceUseContext,
 ) -> Result<PersistedCandidateEvidenceMetadata> {
     validate_sha256(expected_manifest_sha256, "persisted candidate manifest")?;
     validate_sha256(expected_receipt_sha256, "persisted candidate receipt")?;
@@ -448,11 +527,37 @@ pub(crate) fn validate_persisted_candidate_evidence_metadata(
     if candidates.len() != manifest.candidate_count {
         anyhow::bail!("persisted candidate vector count does not match signed manifest");
     }
+    match manifest.source_kind {
+        CandidateEvidenceSourceKind::AuthenticatedLocalTranscriptBoundV1 => {
+            let custody_bytes = local_custody_bytes
+                .context("persisted authenticated local candidate evidence lacks custody bytes")?;
+            if custody_bytes.len() > MAX_LOCAL_CUSTODY_BYTES {
+                anyhow::bail!("persisted local candidate custody exceeds bounded contract");
+            }
+            let custody_sha256 = manifest
+                .local_custody_sha256
+                .as_deref()
+                .context("persisted authenticated local candidate evidence lacks custody digest")?;
+            if sha256_bytes(custody_bytes) != custody_sha256 {
+                anyhow::bail!(
+                    "persisted local candidate custody does not match signed manifest SHA256"
+                );
+            }
+            context.validate_local_custody(custody_bytes, &manifest, &candidates)?;
+        }
+        CandidateEvidenceSourceKind::TranscriptExport | CandidateEvidenceSourceKind::WalExport => {
+            if local_custody_bytes.is_some() {
+                anyhow::bail!("legacy candidate evidence cannot retain local custody bytes");
+            }
+        }
+    }
     Ok(PersistedCandidateEvidenceMetadata {
         candidate_ids: candidates
             .into_iter()
             .map(|candidate| candidate.candidate_id)
             .collect(),
+        source_kind: manifest.source_kind,
+        local_custody_sha256: manifest.local_custody_sha256,
     })
 }
 
@@ -487,6 +592,11 @@ fn validate_manifest(manifest: &CandidateEvidenceManifest) -> Result<()> {
         &manifest.candidates_sha256,
         "candidate evidence candidates_sha256",
     )?;
+    validate_local_custody_shape(
+        manifest.source_kind,
+        manifest.local_custody_sha256.as_deref(),
+        "candidate evidence local_custody_sha256",
+    )?;
     if manifest.source_bytes == 0 || manifest.source_bytes > MAX_CANDIDATE_SOURCE_BYTES {
         anyhow::bail!("candidate evidence source_bytes exceeds the bounded source contract");
     }
@@ -494,6 +604,23 @@ fn validate_manifest(manifest: &CandidateEvidenceManifest) -> Result<()> {
         anyhow::bail!("candidate evidence candidate_count exceeds the bounded record contract");
     }
     Ok(())
+}
+
+fn validate_local_custody_shape(
+    source_kind: CandidateEvidenceSourceKind,
+    local_custody_sha256: Option<&str>,
+    field: &str,
+) -> Result<()> {
+    match (source_kind, local_custody_sha256) {
+        (CandidateEvidenceSourceKind::AuthenticatedLocalTranscriptBoundV1, Some(digest)) => {
+            validate_sha256(digest, field)
+        }
+        (CandidateEvidenceSourceKind::AuthenticatedLocalTranscriptBoundV1, None) => {
+            anyhow::bail!("authenticated local candidate evidence requires {field}")
+        }
+        (_, Some(_)) => anyhow::bail!("legacy candidate evidence must not contain {field}"),
+        (_, None) => Ok(()),
+    }
 }
 
 fn parse_candidates(bytes: &[u8]) -> Result<Vec<MinedCandidate>> {
@@ -632,6 +759,7 @@ mod tests {
                 source_bytes: source.len(),
                 candidates_sha256: sha256_bytes(&candidate_bytes),
                 candidate_count: candidates.len(),
+                local_custody_sha256: None,
             },
             candidate_bytes,
         )
@@ -707,6 +835,7 @@ mod tests {
                 source_bytes: manifest.source_bytes,
                 candidates_sha256: manifest.candidates_sha256.clone(),
                 candidate_count: manifest.candidate_count,
+                local_custody_sha256: manifest.local_custody_sha256.clone(),
             },
             signature_b64: String::new(),
         };
@@ -731,6 +860,7 @@ mod tests {
             manifest_bytes: Vec::new(),
             receipt_bytes: Vec::new(),
             candidate_bytes: Vec::new(),
+            local_custody_bytes: None,
             expected_receipt_pubkey_b64: String::new(),
             expected_receipt_pubkey_sha256: "c".repeat(64),
         });
@@ -785,6 +915,72 @@ mod tests {
     }
 
     #[test]
+    fn legacy_canonical_payloads_omit_local_custody_digest() {
+        let source = b"0123456789";
+        let candidates = vec![candidate("cand-a", source, 0, 2)];
+        let (manifest, _) = bundle(source, &candidates);
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        let (receipt, _) = signed_receipt(&manifest, &manifest_bytes);
+        assert!(
+            !String::from_utf8(manifest_bytes)
+                .unwrap()
+                .contains("local_custody")
+        );
+        assert!(
+            !String::from_utf8(receipt.canonical_bytes().unwrap())
+                .unwrap()
+                .contains("local_custody")
+        );
+    }
+
+    #[test]
+    fn local_custody_digest_is_required_and_receipt_bound() {
+        let source = b"0123456789";
+        let candidates = vec![candidate("cand-a", source, 0, 2)];
+        let (mut manifest, _) = bundle(source, &candidates);
+        manifest.source_kind = CandidateEvidenceSourceKind::AuthenticatedLocalTranscriptBoundV1;
+        assert!(validate_manifest(&manifest).is_err());
+
+        manifest.local_custody_sha256 = Some("a".repeat(64));
+        validate_manifest(&manifest).unwrap();
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        let (mut receipt, _) = signed_receipt(&manifest, &manifest_bytes);
+        validate_receipt_matches_manifest(&receipt, &manifest, &manifest_bytes).unwrap();
+        receipt.body.local_custody_sha256 = Some("b".repeat(64));
+        assert!(validate_receipt_matches_manifest(&receipt, &manifest, &manifest_bytes).is_err());
+
+        manifest.source_kind = CandidateEvidenceSourceKind::TranscriptExport;
+        assert!(validate_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn imported_loader_rejects_local_evidence_without_local_context() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = b"0123456789";
+        let candidates = vec![candidate("cand-a", source, 0, 2)];
+        let (mut manifest, candidate_bytes) = bundle(source, &candidates);
+        let custody_bytes = br#"{\"local\":\"custody\"}"#;
+        manifest.source_kind = CandidateEvidenceSourceKind::AuthenticatedLocalTranscriptBoundV1;
+        manifest.local_custody_sha256 = Some(sha256_bytes(custody_bytes));
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        let (receipt, public_key) = signed_receipt(&manifest, &manifest_bytes);
+        std::fs::write(directory.path().join(MANIFEST_FILE), manifest_bytes).unwrap();
+        std::fs::write(
+            directory.path().join(RECEIPT_FILE),
+            serde_json::to_vec(&receipt).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(directory.path().join(SOURCE_FILE), source).unwrap();
+        std::fs::write(directory.path().join(CANDIDATES_FILE), candidate_bytes).unwrap();
+        std::fs::write(
+            directory.path().join(LOCAL_CANDIDATE_EVIDENCE_CUSTODY_FILE),
+            custody_bytes,
+        )
+        .unwrap();
+        assert!(load_imported_candidate_evidence(directory.path(), &public_key).is_err());
+    }
+
+    #[test]
     fn operator_link_requires_all_twenty_labels_and_verified_candidate_provenance() {
         let anchor_bytes = operator_anchor_bytes();
         let anchor = load_operator_anchor_bytes(
@@ -804,6 +1000,7 @@ mod tests {
                 source_bytes: 100,
                 candidates_sha256: "b".repeat(64),
                 candidate_count: 20,
+                local_custody_sha256: None,
             },
             candidates: (0..20)
                 .map(|index| MinedCandidate {
@@ -818,6 +1015,7 @@ mod tests {
             manifest_bytes: Vec::new(),
             receipt_bytes: Vec::new(),
             candidate_bytes: Vec::new(),
+            local_custody_bytes: None,
             expected_receipt_pubkey_b64: String::new(),
             expected_receipt_pubkey_sha256: "f".repeat(64),
         };

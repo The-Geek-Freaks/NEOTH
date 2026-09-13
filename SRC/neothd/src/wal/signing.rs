@@ -762,6 +762,21 @@ pub fn prepare_signing_key_rotation(key_path: &Path) -> Result<PreparedProofKeyR
     })
 }
 
+/// Load an existing proof-signing key while holding its normal key lock and
+/// completing only a pending transaction that already owns this key. Unlike
+/// [`load_or_init_signing_key`], this entrypoint never creates a parent
+/// directory or a fresh signing key. A missing or malformed key therefore
+/// rejects local evidence export. A busy key rejects this attempt for retry.
+pub(crate) fn load_existing_signing_key_with_recovery(path: &Path) -> Result<SigningKey> {
+    // The blocking initializer creates missing parent directories. This
+    // existing-only path must not repair or create a disappeared namespace.
+    let _lock =
+        crate::util::locked_file::try_lock_file_once(&key_lock_path(path), "proof signing key")?
+            .context("proof signing key is busy; retry local evidence export")?;
+    let _ = recover_pending_rotation_locked(path)?;
+    load_existing_signing_key(path)
+}
+
 /// Load the operator's ed25519 signing key, generating + persisting a fresh
 /// one on first use. DAU-safe: zero interaction. Mirrors
 /// [`crate::wal::compaction::load_or_init_key`] — fail-closed if the OS RNG is
@@ -939,6 +954,44 @@ mod tests {
     }
 
     #[test]
+    fn existing_signing_key_loader_reads_existing_material_without_reinitializing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wal").join("signing.key");
+        let original = load_or_init_signing_key(&path).unwrap();
+
+        let existing = load_existing_signing_key_with_recovery(&path).unwrap();
+        assert_eq!(pubkey_b64(&existing), pubkey_b64(&original));
+        let message = b"existing proof-signing authority";
+        assert!(
+            verify_b64(
+                &pubkey_b64(&existing),
+                &sign_b64(&existing, message),
+                message
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn existing_signing_key_loader_refuses_missing_key_without_initializing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wal").join("signing.key");
+
+        assert!(
+            load_existing_signing_key_with_recovery(&path).is_err(),
+            "a missing proof key must reject read-only consumption"
+        );
+        assert!(
+            !path.exists(),
+            "the existing-only signing loader must never initialize signing.key"
+        );
+        assert!(
+            !path.parent().unwrap().exists(),
+            "the existing-only loader must not create a missing parent"
+        );
+    }
+
+    #[test]
     fn load_rejects_malformed_seed_length() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("signing.key");
@@ -1106,7 +1159,7 @@ mod tests {
         let unaudited = prepare_signing_key_rotation(&key_path).unwrap();
         let unaudited_archive = unaudited.archive_path().to_path_buf();
         drop(unaudited); // Simulate process death before the audit append.
-        let recovered_old = load_or_init_signing_key(&key_path).unwrap();
+        let recovered_old = load_existing_signing_key_with_recovery(&key_path).unwrap();
         assert_eq!(pubkey_b64(&recovered_old), old_public);
         assert!(!unaudited_archive.exists());
 
@@ -1119,7 +1172,7 @@ mod tests {
             .unwrap()
             .expect("durable pending transition is completed, not repeated");
         assert_eq!(recovered.payload, payload);
-        let recovered_new = load_or_init_signing_key(&key_path).unwrap();
+        let recovered_new = load_existing_signing_key_with_recovery(&key_path).unwrap();
         assert_eq!(pubkey_b64(&recovered_new), payload.new_public_key);
         assert!(
             archive.exists(),

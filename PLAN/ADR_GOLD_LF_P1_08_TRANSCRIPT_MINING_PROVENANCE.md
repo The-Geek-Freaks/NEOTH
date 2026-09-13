@@ -6,7 +6,9 @@ Accepted through Stage 3b on 2026-09-13. Stages 1–3a established the V37
 schema and contract; Stage 3b adds the V38 local producer, authenticated
 WAL delivery/recovery and guarded lifecycle transitions described below.
 This record does not close `GOLD-LF-P1-08` or attest the complete mining,
-labeling, grading and release workflow.
+labeling, grading and release workflow. Wave 11 Stage 4 local candidate export
+is **COMPONENT ACCEPTED** on 2026-09-13; exact evidence is recorded in
+`docs/gold-wave11-verification.md`. P1-08 remains open.
 
 ## Authority boundary
 
@@ -242,3 +244,47 @@ workspace formatting and independent review. The source and executable
 hashes and exact test names are retained in `docs/verification/gold-wave10-*.json`.
 Candidate export, operator labels, shadow runs, live grader execution and
 the complete reproducible release report remain separate P1-08 work.
+
+## Wave 11 Stage 4 — explicit local candidate export (component accepted)
+
+Stage 4 adds an existing-home, read-only candidate list/export path to the
+offline harness. `list-local-candidates` reveals bounded metadata for active,
+unexpired authenticated bindings. `export-local-candidates` accepts only an
+explicit UTF-8 JSONL vector, sorted by unique canonical candidate ID, where
+each row selects one `provenance_id` and a nonempty UTF-8-aligned
+`raw_offset`/optional `source_len` span. It does not discover, infer, backfill,
+or label candidates.
+
+The command requires an explicit `--local-evidence-home` and an out-of-band
+`--expected-evidence-receipt-pubkey` matching that home's existing WAL signing
+key. It opens the home and `views.db` read-only, holds no serializable home or
+birth authority, and cannot mint a local ingress, recovery subject, WAL frame,
+or mining authorization. Its artifact parent must already exist; the target is
+an absolute path with no `.` or `..` navigation component. The output directory
+is create-new/idempotent only for byte-identical retries. A single-attempt
+export lock reports busy for concurrent mutation and the caller retries later;
+it does not block or initialize a parent namespace. It contains the
+selected-text `source.evidence`, `candidates.jsonl`, a bounded
+`candidate-evidence-local-custody.json`, manifest, and detached receipt.
+`source.evidence` is a deliberate copy of the selected spans; Stage 4 makes no
+automatic purge promise.
+
+The custody sidecar binds candidate IDs, opaque provenance/lifecycle IDs,
+selected ranges and span hashes, timing, and RAW/Bound frame custody. It does
+not persist the home path or raw database row ID. Manifest and receipt bind its
+SHA-256; legacy source kinds retain compatible absence by omitting the optional
+local-custody field rather than serializing `null`.
+
+Every local consumer dynamically revalidates this signed artifact against the
+current authenticated home: initial candidate validation, anchor intake, and
+all later run reopen paths that consume the resulting evidence. The check
+requires the exact selected source, active unexpired lifecycle, matching
+RAW/Bound frames and custody, plus an unchanged read-only state version.
+Deletion, revocation, expiry, absent/altered custody, changed source span, or
+a concurrent state transition rejects the operation before derived state is
+written. A signature is durable identity evidence, never durable permission.
+
+This stage remains subordinate to the lifecycle rules above: it creates no
+terminal receipt, revocation, deletion, provenance birth, provider result, or
+release verdict. `GOLD-LF-P1-08` remains **OPEN** pending real operator labels,
+a shadow run, live four-grader evidence, and methodology acceptance.

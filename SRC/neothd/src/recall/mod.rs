@@ -10,6 +10,7 @@ pub mod conversational;
 /// (file formats), `parity` (pure kappa/parity/divergence math), `parity_run`
 /// (the grade→report aggregator). Consumed by `neoth recall score`.
 pub mod goldset;
+pub(crate) mod local_candidate_evidence;
 pub mod parity;
 /// GOLD-LF-P1-08 — strict offline operator calibration-anchor validation and
 /// deterministic shared-family bias assessment.

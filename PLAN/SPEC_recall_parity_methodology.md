@@ -10,18 +10,67 @@ the provider/family configuration gate, not live network provider origin.
 An offline P1-08 pipeline also exists in `cli/recall_score.rs` and
 `recall/parity_harness.rs`: candidate validation, operator-anchor ingest,
 four-grader batch planning, Ed25519-attested result ingest, family-bias output,
-and a bound gate report. This is a source-inspection statement, not a claim
-that the current Wave 3 tests executed that pipeline or validated real provider
-origins. Live goldset extraction, transcript/WAL producer provenance,
-shadow-run execution, and the complete reproducible P1-08 release workflow
-remain open. The transcript-provenance ADR separately accepts only stages
-1–3a; offline grading receipts do not supply its missing producer authority.
+and a bound gate report. Wave 11 executes this pipeline with real local RAW/Bound
+fixtures and signed offline grader fixtures; this does not validate real
+provider origins. Wave 10 accepts local transcript/WAL producer provenance,
+and Wave 11 accepts explicit local candidate export and downstream custody
+revalidation. Real operator labeling, shadow-run execution, live four-grader
+evidence and the complete reproducible P1-08 release workflow remain open.
 Underlying multi-tier recall (hot+warm+cold+groundtruth)
 it evaluates is SHIPPED at `SRC/neothd/src/memory/{store, tiers, consolidate,
 groundtruth}.rs` + `cli/recall.rs`.
 
+Wave 11 Stage 4 authenticated local candidate export is **COMPONENT ACCEPTED**;
+see `docs/gold-wave11-verification.md` and its source/test receipts. It does not
+supply complete workflow acceptance or release authority; P1-08 remains open.
+
 > Status: DESIGN (eval methodology). Fixes: H6 (test_all_three_agree_and_wrong unfalsifiable), H7 (grader-family bias via 4-grader cross-family protocol).
 > Binds to Day 77-79 of RUNBOOK_phase3_cutover.md.
+
+---
+
+## Local candidate-evidence intake — Wave 11 Stage 4
+
+This component-accepted intake path begins with an explicit local
+selection; it does not mine or rank transcripts automatically. The operator
+lists active candidates and supplies a JSONL selection vector, then exports it
+with the existing home's expected WAL signing public key:
+
+```powershell
+neoth recall-parity-harness list-local-candidates --local-evidence-home C:\path\to\neoth-home
+neoth recall-parity-harness export-local-candidates --local-evidence-home C:\path\to\neoth-home --selections C:\path\to\selections.jsonl --bundle-id wave11-local-01 --evidence-dir C:\path\to\wave11-local-01 --expected-evidence-receipt-pubkey <base64-ed25519-public-key>
+```
+
+Each selection line is a closed JSON object with `candidate_id`,
+`provenance_id`, optional `raw_offset` (default zero), and optional
+`source_len` (the remainder when omitted). Candidate IDs are sorted and unique;
+spans must be nonempty and align to complete UTF-8 characters. The resulting
+`source.evidence` is a copy of exactly those chosen spans, not a reference to a
+database row and not a promise that source data will be purged automatically.
+The artifact parent must already exist, and the absolute `--evidence-dir` may
+not contain `.` or `..` navigation components. Export uses a single-attempt
+lock: a busy result means retry later; it neither blocks nor initializes a
+parent namespace.
+
+The signed manifest/receipt bind the candidate vector and the bounded local
+custody sidecar. That sidecar contains opaque provenance/lifecycle IDs, selected
+ranges, hashes, timing, and RAW/Bound frame custody. It contains neither the
+local home path nor a raw-row ID. Its optional digest is absent for compatible
+legacy evidence; serializers omit the field rather than writing `null`.
+
+An artifact signed at export time remains usable only while every local
+consumer can dynamically revalidate it against the supplied existing home.
+Candidate validation, anchor ingest, and all subsequent run-reopen consumers
+check the custody sidecar, selected text, active/unexpired lifecycle, exact
+RAW/Bound proofs, and stable read-only state. Source deletion, revocation,
+expiry, altered custody/span, or concurrent state change rejects consumption;
+the signature is not perpetual authority. The path is read-only for the home
+and cannot mint a transcript birth, recovery authority, provider work, labels,
+or a release decision.
+
+P1-08 remains **OPEN**: real operator labels, a shadow run, live four-grader
+evidence, and methodology acceptance still govern whether this methodology can
+be accepted.
 
 ---
 

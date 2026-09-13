@@ -358,7 +358,7 @@ fn read_source_for_diff_file(
         GitDiffSource::WorkingTree => read_git_blob(root, "HEAD", path),
         GitDiffSource::Staged if !deleted => read_git_blob(root, ":", path),
         GitDiffSource::Staged => read_git_blob(root, "HEAD", path),
-        GitDiffSource::Committed { base, target } if !deleted => read_git_blob(root, target, path),
+        GitDiffSource::Committed { target, .. } if !deleted => read_git_blob(root, target, path),
         GitDiffSource::Committed { base, .. } => read_git_blob(root, base, path),
         // A caller-provided stdin diff has no authenticated base/target tree.
         // Current bytes can only serve additions/modifications; deletions stay

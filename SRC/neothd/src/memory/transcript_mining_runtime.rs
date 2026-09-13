@@ -6,8 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use hmac::{Hmac, Mac};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use sha2::Sha256;
 
 use crate::config::memory::TranscriptMiningRetention;
@@ -36,6 +37,31 @@ pub(crate) struct AuthenticatedLocalIngress {
 }
 
 impl AuthenticatedLocalIngress {
+    fn for_existing_reader(home: &Path) -> Result<Option<Self>> {
+        let home = home
+            .canonicalize()
+            .context("bind existing transcript evidence home")?;
+        let Some(authority) = crate::cli::security::acquire_existing_hmac_writer_authority(
+            &home,
+            &home.join("wal").join("hmac.key"),
+        )
+        .context("acquire existing transcript evidence authority")?
+        else {
+            return Ok(None);
+        };
+        authority.validate_namespace_binding()?;
+        let subject_sha256 = subject_mac(&authority.active_key)?
+            .finalize()
+            .into_bytes()
+            .into();
+        Ok(Some(Self {
+            home,
+            subject_sha256,
+            retention: None,
+            authority,
+        }))
+    }
+
     pub(crate) fn from_local_chat(
         subject: &crate::cli::chat::LocalChatCommunicationSubject,
         home: &Path,
@@ -122,6 +148,174 @@ fn subject_mac(key: &[u8]) -> Result<Hmac<Sha256>> {
         Hmac::<Sha256>::new_from_slice(key).context("derive local transcript mining subject")?;
     mac.update(b"NEOTH/transcript-mining/local-interactive-subject/v1");
     Ok(mac)
+}
+
+/// Existing-only, read-only local evidence access. This value cannot expose a
+/// birth capability or mutate the transcript lifecycle. The home and key lease
+/// are transient and never enter a candidate artifact or serializable report.
+pub(crate) struct AuthenticatedLocalTranscriptReader {
+    ingress: AuthenticatedLocalIngress,
+    conn: Connection,
+    root: crate::skills::store::BoundDirectory,
+    views: crate::skills::store::BoundChildObject,
+}
+
+impl AuthenticatedLocalTranscriptReader {
+    pub(crate) fn home(&self) -> &Path {
+        self.ingress.home()
+    }
+
+    pub(crate) fn revalidation_token(&self) -> Result<i64> {
+        self.validate_namespace()?;
+        super::transcript_mining_store::views_data_version(&self.conn)
+    }
+
+    pub(crate) fn list_active_ids(&self, limit: usize) -> Result<Vec<String>> {
+        ensure!(
+            (1..=512).contains(&limit),
+            "local candidate listing limit must be between 1 and 512"
+        );
+        self.validate_namespace()?;
+        let mut statement = self.conn.prepare(
+            "SELECT provenance_id FROM transcript_mining_provenance
+             WHERE lifecycle='active' AND terminal_cause IS NULL AND expires_at_unix>?1
+             ORDER BY created_at_unix DESC,provenance_id LIMIT ?2",
+        )?;
+        statement
+            .query_map(rusqlite::params![current_unix()?, limit as i64], |row| {
+                row.get(0)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("list bounded local transcript provenance")
+    }
+
+    pub(crate) fn open_existing(home: &Path) -> Result<Option<Self>> {
+        let Some(ingress) = AuthenticatedLocalIngress::for_existing_reader(home)? else {
+            return Ok(None);
+        };
+        let root = crate::skills::store::open_bound_directory_from_trusted_anchor(
+            ingress
+                .home()
+                .parent()
+                .context("transcript home has no parent")?,
+            ingress.home(),
+            false,
+            "local transcript evidence",
+        )?
+        .context("transcript evidence home is absent")?;
+        let name = std::ffi::OsStr::new("views.db");
+        match root.dir.symlink_metadata(name) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error).context("inspect existing transcript database"),
+            Ok(_) => {}
+        }
+        let display = root.display_path.join(name);
+        let (_file, views) =
+            crate::skills::store::open_bound_regular_file(&root.dir, name, &display)?;
+        let conn = Connection::open_with_flags(
+            &display,
+            OpenFlags::SQLITE_OPEN_READ_ONLY
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )
+        .context("open transcript evidence database read-only")?;
+        conn.pragma_update(None, "query_only", true)?;
+        let reader = Self {
+            ingress,
+            conn,
+            root,
+            views,
+        };
+        reader.validate_namespace()?;
+        Ok(Some(reader))
+    }
+
+    fn validate_namespace(&self) -> Result<()> {
+        self.ingress.validate()?;
+        ensure!(
+            self.views.matches_regular_file_child_readonly(
+                &self.root.dir,
+                std::ffi::OsStr::new("views.db"),
+                &self.root.display_path.join("views.db"),
+            )?,
+            "transcript evidence database identity changed"
+        );
+        Ok(())
+    }
+
+    /// A byte bound is checked inside the same snapshot before loading text.
+    /// Another connection's commit invalidates the result, including a delete
+    /// or revocation while WAL authentication was reading retained segments.
+    pub(crate) fn read_active(
+        &self,
+        provenance_id: &str,
+        max_text_bytes: usize,
+    ) -> Result<Option<super::transcript_mining_store::AuthenticatedTranscriptProjection>> {
+        self.read_active_revalidated(provenance_id, max_text_bytes, || Ok(()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn read_active_with_test_hook(
+        &self,
+        provenance_id: &str,
+        max_text_bytes: usize,
+        after_proof: impl FnOnce() -> Result<()>,
+    ) -> Result<Option<super::transcript_mining_store::AuthenticatedTranscriptProjection>> {
+        self.read_active_revalidated(provenance_id, max_text_bytes, after_proof)
+    }
+
+    fn read_active_revalidated(
+        &self,
+        provenance_id: &str,
+        max_text_bytes: usize,
+        after_proof: impl FnOnce() -> Result<()>,
+    ) -> Result<Option<super::transcript_mining_store::AuthenticatedTranscriptProjection>> {
+        self.validate_namespace()?;
+        let before = super::transcript_mining_store::views_data_version(&self.conn)?;
+        let transaction = self.conn.unchecked_transaction()?;
+        let now = current_unix()?;
+        let raw_turn_id: Option<i64> = transaction
+            .query_row(
+                "SELECT p.raw_turn_id FROM transcript_mining_provenance p
+             JOIN raw_turns r ON r.id=p.raw_turn_id
+             WHERE p.provenance_id=?1 AND p.lifecycle='active'
+               AND p.terminal_cause IS NULL AND p.expires_at_unix>?2
+               AND length(CAST(r.text AS BLOB))<=?3",
+                rusqlite::params![
+                    provenance_id,
+                    now,
+                    i64::try_from(max_text_bytes)
+                        .context("transcript evidence text bound exceeds i64")?
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("select active local transcript evidence")?;
+        let projection = match raw_turn_id {
+            Some(raw_turn_id) => super::transcript_mining_store::authenticate_active_binding(
+                &transaction,
+                &self.ingress,
+                raw_turn_id,
+                now,
+            )?,
+            None => None,
+        };
+        after_proof()?;
+        transaction.commit()?;
+        self.validate_namespace()?;
+        if super::transcript_mining_store::views_data_version(&self.conn)? != before {
+            anyhow::bail!("transcript state changed during evidence authentication; retry");
+        }
+        let Some(projection) = projection else {
+            return Ok(None);
+        };
+        if projection.provenance_id() != provenance_id
+            || projection.expires_at_unix() <= current_unix()?
+        {
+            return Ok(None);
+        }
+        Ok(Some(projection))
+    }
 }
 
 /// Persist the fresh operator row and both independently authenticated frames

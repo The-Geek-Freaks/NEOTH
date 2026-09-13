@@ -236,6 +236,18 @@ pub(crate) struct TranscriptMiningRevokedV1 {
 }
 
 impl TranscriptMiningBoundV1 {
+    pub(crate) fn provenance_id(&self) -> &str {
+        &self.provenance_id.0
+    }
+
+    pub(crate) fn lifecycle_id(&self) -> &str {
+        &self.lifecycle_id.0
+    }
+
+    pub(crate) const fn issued_at_unix(&self) -> i64 {
+        self.issued_at_unix
+    }
+
     pub(crate) fn raw_frame_sha256(&self) -> [u8; 32] {
         self.raw_frame.raw_frame_sha256.0
     }

@@ -2944,6 +2944,8 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 
 GOLD-LF-P1-08 — plan, ingest, and report a strictly offline, SHA256-bound recall-parity evaluation run. This report is derived evidence only and does not replace the fail-closed recall-score gate
 
+- `--local-evidence-home <DIR>` — Existing local home used to revalidate retained transcript custody. Required for local evidence; never persisted into evaluation artifacts
+
 ### `neoth recall-parity-harness anchor-ingest`
 
 Bind one complete 20-query × two-system operator-anchor label set to a previously signature-verified candidate-evidence bundle. The resulting run artifact remains non-gate-eligible and contains no raw source text
@@ -3020,6 +3022,15 @@ Verify a bounded imported transcript/WAL candidate-evidence bundle and render on
 - `--evidence-dir <DIR>`
 - `--expected-evidence-receipt-pubkey <BASE64>` — Out-of-band Ed25519 public key for the immutable candidate-evidence receipt. The key is never accepted from the mutable evidence bundle
 
+### `neoth recall-parity-harness export-local-candidates`
+
+Export explicit JSONL selections from retained authenticated local turns. Each row supplies candidate_id, provenance_id and optional raw_offset/source_len
+
+- `--selections <PATH>`
+- `--bundle-id <ID>`
+- `--evidence-dir <DIR>`
+- `--expected-evidence-receipt-pubkey <BASE64>` — Out-of-band public key of this home's existing WAL signing key
+
 ### `neoth recall-parity-harness ingest`
 
 Ingest one complete, explicit, offline grade sheet for exactly one grader
@@ -3028,6 +3039,12 @@ Ingest one complete, explicit, offline grade sheet for exactly one grader
 - `--grader-config <PATH>`
 - `--goldset <PATH>`
 - `--grades <PATH>`
+
+### `neoth recall-parity-harness list-local-candidates`
+
+List authenticated, unexpired local source IDs and metadata for selection
+
+- `--limit <LIMIT>`
 
 ### `neoth recall-parity-harness plan`
 

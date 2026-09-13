@@ -1407,6 +1407,18 @@ fn try_acquire_existing_hmac_writer_authority(
     }))
 }
 
+/// Load-only HMAC authority for a consumer that must never initialize or
+/// recover the local key namespace. The returned authority retains the shared
+/// writer lease for the complete consumption lifetime. `None` means there is
+/// no currently admissible existing authority (missing key or pending
+/// rotation); malformed existing state remains an error.
+pub(crate) fn acquire_existing_hmac_writer_authority(
+    home: &Path,
+    key_path: &Path,
+) -> Result<Option<HmacWriterAuthority>> {
+    try_acquire_existing_hmac_writer_authority(home, key_path)
+}
+
 /// Retain a shared cross-process HMAC lease for the complete normal-writer
 /// lifetime. Established writers take the load-only fast path and therefore
 /// coexist. A pending rotation or genuinely absent first-start key drops the
@@ -3112,6 +3124,55 @@ mod tests {
     }
 
     #[test]
+    fn existing_hmac_authority_never_initializes_and_retains_its_shared_lease() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let key_path = wal_dir.join("hmac.key");
+
+        assert!(
+            acquire_existing_hmac_writer_authority(home.path(), &key_path)
+                .unwrap()
+                .is_none(),
+            "a missing key is not authority for read-only consumption"
+        );
+        assert!(
+            !key_path.exists(),
+            "read-only authority admission must never initialize hmac.key"
+        );
+
+        let active = [0x31; 32];
+        crate::wal::compaction::rewrap_key(&key_path, &active).unwrap();
+        let authority = acquire_existing_hmac_writer_authority(home.path(), &key_path)
+            .unwrap()
+            .expect("an existing readable key admits a shared authority");
+        assert_eq!(authority.active_key, active);
+        assert_eq!(
+            authority.verification_keys.first().map(Vec::as_slice),
+            Some(active.as_slice())
+        );
+        authority.validate_namespace_binding().unwrap();
+    }
+
+    #[test]
+    fn existing_hmac_authority_rejects_malformed_key_without_replacing_it() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let key_path = wal_dir.join("hmac.key");
+        std::fs::write(&key_path, [0x55; 15]).unwrap();
+
+        let error = acquire_existing_hmac_writer_authority(home.path(), &key_path)
+            .err()
+            .expect("malformed existing HMAC material must reject admission");
+        assert!(!format!("{error:#}").is_empty());
+        assert!(
+            key_path.exists(),
+            "read-only authority admission must not replace malformed key material"
+        );
+    }
+
+    #[test]
     fn writer_admission_recovers_a_pending_rotation_before_taking_the_shared_fast_path() {
         let home = TempDir::new().unwrap();
         let wal_dir = home.path().join("wal");
@@ -3151,6 +3212,21 @@ mod tests {
         .unwrap();
         crate::wal::compaction::write_new_home_key_sibling(home.path(), &staged_path, &replacement)
             .unwrap();
+
+        assert!(
+            acquire_existing_hmac_writer_authority(home.path(), &key_path)
+                .expect("pending journal is a valid rejected read-only state")
+                .is_none(),
+            "existing-only authority must not recover a pending HMAC rotation"
+        );
+        assert!(
+            journal_path.exists(),
+            "read-only admission must retain the pending recovery journal"
+        );
+        assert!(
+            staged_path.exists(),
+            "read-only admission must retain the pending replacement"
+        );
 
         let authority = acquire_hmac_writer_authority(home.path(), &key_path)
             .expect("writer admission must serialize and recover pending state");

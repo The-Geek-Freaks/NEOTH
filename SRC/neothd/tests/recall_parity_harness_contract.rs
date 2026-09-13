@@ -366,9 +366,8 @@ fn attested_batch_result_ingest_is_bound_resumable_and_non_gate() {
         "attested imports must bind their retained directory capability through the shared helper"
     );
     let directory_open = STORE
-        .split("pub(crate) fn open_real_child_dir")
-        .nth(1)
-        .and_then(|tail| tail.split("fn readonly_real_directory_identity").next())
+        .split_once("pub(crate) fn open_real_child_dir(")
+        .and_then(|(_, tail)| tail.split_once("\n}\n").map(|(body, _)| body))
         .expect("shared real-directory opener source");
     assert!(
         directory_open.contains("parent.open_dir_nofollow(name)"),
@@ -439,7 +438,7 @@ fn attested_family_bias_export_is_read_only_pinned_and_non_gate() {
         "candidate_vector",
         "anchor_link",
         "binding_artifact",
-        "group.revalidate(run)?",
+        "group.revalidate(run, context)?",
     ] {
         assert!(
             HARNESS.contains(required),
@@ -547,9 +546,12 @@ fn attested_gate_report_is_the_only_full_evidence_publish_transition() {
         .nth(1)
         .and_then(|tail| tail.split("run.replace_child_if_matches").next())
         .expect("attested gate state publish fence");
+    assert!(state_publish.contains(
+        "anchor_group.revalidate(run, context)?;\n            results.revalidate(run)?;"
+    ));
     assert!(
-        state_publish
-            .contains("anchor_group.revalidate(run)?;\n            results.revalidate(run)?;")
+        gate.matches("anchor_group.revalidate(&run, context)?;")
+            .count()
+            >= 2
     );
-    assert!(gate.matches("anchor_group.revalidate(&run)?;").count() >= 2);
 }

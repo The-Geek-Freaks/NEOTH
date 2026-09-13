@@ -22,6 +22,9 @@ use crate::recall::goldset::{
 use crate::recall::parity_run::{ParityRunResult, compute_parity_run};
 use crate::recall::{
     goldset::{MAX_GOLDSET_BYTES, MAX_GRADER_CONFIG_BYTES},
+    local_candidate_evidence::{
+        CandidateEvidenceUseContext, export_local_candidates, list_local_candidates,
+    },
     parity_anchor::{
         MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES, load_operator_anchor_bytes,
         summarize_operator_anchor,
@@ -29,12 +32,17 @@ use crate::recall::{
     parity_batch_plan::{
         MAX_FOUR_GRADER_BATCH_BYTES, parse_signed_four_grader_batch_result_receipt,
     },
-    parity_candidate_evidence::{load_imported_candidate_evidence, summarize_candidate_evidence},
+    parity_candidate_evidence::{
+        MAX_CANDIDATE_RECORD_BYTES, load_candidate_evidence_with_context,
+        summarize_candidate_evidence,
+    },
     parity_harness::{
-        build_attested_parity_gate_report, build_report, ingest_attested_four_grader_batch_results,
-        ingest_offline_grades, ingest_operator_anchor_evidence, plan_four_grader_batch, plan_run,
-        read_offline_input, summarize_attested_four_grader_family_bias,
-        validate_attested_four_grader_batch_results,
+        build_attested_parity_gate_report_with_context, build_report_with_context,
+        ingest_attested_four_grader_batch_results_with_context, ingest_offline_grades_with_context,
+        ingest_operator_anchor_evidence_with_context, plan_four_grader_batch_with_context,
+        plan_run_with_context, read_offline_input,
+        summarize_attested_four_grader_family_bias_with_context,
+        validate_attested_four_grader_batch_results_with_context,
     },
     parity_import_receipt::{MAX_PARITY_IMPORT_RECEIPT_BYTES, parse_signed_parity_import_receipt},
 };
@@ -63,10 +71,15 @@ pub struct RecallScoreArgs {
 }
 
 /// GOLD-LF-P1-08 — fully offline evaluation-run evidence pipeline. Every
-/// operation requires explicit local inputs; it has no provider, network, or
-/// WAL authority, and its derived report cannot replace `recall-score`'s gate.
+/// operation requires explicit local inputs and invokes no provider or network.
+/// Local transcript recovery and authenticated evidence use require an explicit
+/// home; imported evidence grants neither transcript access nor recovery authority.
 #[derive(Args, Debug, Clone)]
 pub struct RecallParityHarnessArgs {
+    /// Existing local home used to revalidate retained transcript custody.
+    /// Required for local evidence; never persisted into evaluation artifacts.
+    #[arg(long = "local-evidence-home", global = true, value_name = "DIR")]
+    pub local_evidence_home: Option<PathBuf>,
     #[command(subcommand)]
     pub operation: RecallParityHarnessOperation,
     #[arg(skip)]
@@ -84,6 +97,24 @@ impl LocalTranscriptRecoverySubject {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum RecallParityHarnessOperation {
+    /// List authenticated, unexpired local source IDs and metadata for selection.
+    ListLocalCandidates {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Export explicit JSONL selections from retained authenticated local turns.
+    /// Each row supplies candidate_id, provenance_id and optional raw_offset/source_len.
+    ExportLocalCandidates {
+        #[arg(long, value_name = "PATH")]
+        selections: PathBuf,
+        #[arg(long, value_name = "ID")]
+        bundle_id: String,
+        #[arg(long, value_name = "DIR")]
+        evidence_dir: PathBuf,
+        /// Out-of-band public key of this home's existing WAL signing key.
+        #[arg(long = "expected-evidence-receipt-pubkey", value_name = "BASE64")]
+        expected_evidence_receipt_pubkey: String,
+    },
     /// Resume exact pending transcript receipts for one local NEOTH home.
     /// This grants no new mining opt-in and never relabels legacy transcripts.
     ReconcileTranscripts {
@@ -266,13 +297,46 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
         render_harness_json(&report, &output)?;
         return Ok(());
     }
+    let context = CandidateEvidenceUseContext::open(args.local_evidence_home.as_deref())?;
+    match &operation {
+        RecallParityHarnessOperation::ListLocalCandidates { limit } => {
+            let candidates = list_local_candidates(&context, *limit)?;
+            render_harness_json(&serde_json::json!({ "candidates": candidates }), &output)?;
+            return Ok(());
+        }
+        RecallParityHarnessOperation::ExportLocalCandidates {
+            selections,
+            bundle_id,
+            evidence_dir,
+            expected_evidence_receipt_pubkey,
+        } => {
+            let bytes = read_offline_input(
+                selections,
+                MAX_CANDIDATE_RECORD_BYTES as u64,
+                "local candidate selections",
+            )?;
+            let summary = export_local_candidates(
+                &context,
+                &bytes,
+                bundle_id,
+                evidence_dir,
+                expected_evidence_receipt_pubkey,
+            )?;
+            render_harness_json(&summary, &output)?;
+            return Ok(());
+        }
+        _ => {}
+    }
     if let RecallParityHarnessOperation::CandidateEvidenceValidate {
         evidence_dir,
         expected_evidence_receipt_pubkey,
     } = &operation
     {
-        let evidence =
-            load_imported_candidate_evidence(evidence_dir, expected_evidence_receipt_pubkey)?;
+        let evidence = load_candidate_evidence_with_context(
+            evidence_dir,
+            expected_evidence_receipt_pubkey,
+            &context,
+        )?;
         render_harness_json(&summarize_candidate_evidence(&evidence), &output)?;
         return Ok(());
     }
@@ -333,7 +397,9 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
             ..
         } => (grader_config, goldset),
         RecallParityHarnessOperation::CandidateEvidenceValidate { .. }
-        | RecallParityHarnessOperation::ReconcileTranscripts { .. } => {
+        | RecallParityHarnessOperation::ReconcileTranscripts { .. }
+        | RecallParityHarnessOperation::ListLocalCandidates { .. }
+        | RecallParityHarnessOperation::ExportLocalCandidates { .. } => {
             unreachable!("standalone operation returns before config/goldset input loading")
         }
     };
@@ -344,7 +410,14 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
     let entries = crate::recall::goldset::load_goldset_bytes(&goldset_bytes, "harness --goldset")?;
     match operation {
         RecallParityHarnessOperation::Plan { run_dir, .. } => {
-            let manifest = plan_run(&run_dir, &config, &config_bytes, &entries, &goldset_bytes)?;
+            let manifest = plan_run_with_context(
+                &run_dir,
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                &context,
+            )?;
             render_harness_json(&manifest, &output)?;
         }
         RecallParityHarnessOperation::Ingest {
@@ -355,13 +428,14 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 crate::recall::goldset::MAX_GRADES_BYTES,
                 "grade sheet",
             )?;
-            let state = ingest_offline_grades(
+            let state = ingest_offline_grades_with_context(
                 &run_dir,
                 &config,
                 &config_bytes,
                 &entries,
                 &goldset_bytes,
                 &grade_bytes,
+                &context,
             )?;
             render_harness_json(&state, &output)?;
         }
@@ -377,7 +451,7 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 "signed parity import receipt",
             )?;
             let signed_receipt = parse_signed_parity_import_receipt(&receipt_bytes)?;
-            let report = build_report(
+            let report = build_report_with_context(
                 &run_dir,
                 &config,
                 &config_bytes,
@@ -385,6 +459,7 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 &goldset_bytes,
                 &signed_receipt,
                 &expected_receipt_pubkey,
+                &context,
             )?;
             render_harness_json(&report, &output)?;
         }
@@ -403,7 +478,7 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 "signed parity import receipt",
             )?;
             let signed_receipt = parse_signed_parity_import_receipt(&receipt_bytes)?;
-            let report = build_report(
+            let report = build_report_with_context(
                 &run_dir,
                 &config,
                 &config_bytes,
@@ -411,6 +486,7 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 &goldset_bytes,
                 &signed_receipt,
                 &expected_receipt_pubkey,
+                &context,
             )?;
             render_harness_json(&report, &output)?;
         }
@@ -438,8 +514,11 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
             operator_anchor_link,
             ..
         } => {
-            let candidate_evidence =
-                load_imported_candidate_evidence(&evidence_dir, &expected_evidence_receipt_pubkey)?;
+            let candidate_evidence = load_candidate_evidence_with_context(
+                &evidence_dir,
+                &expected_evidence_receipt_pubkey,
+                &context,
+            )?;
             let anchor_bytes = read_offline_input(
                 &operator_anchor,
                 crate::recall::goldset::MAX_GRADES_BYTES,
@@ -450,7 +529,7 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 MAX_OPERATOR_ANCHOR_EVIDENCE_LINK_BYTES as u64,
                 "operator anchor evidence link",
             )?;
-            let binding = ingest_operator_anchor_evidence(
+            let binding = ingest_operator_anchor_evidence_with_context(
                 &run_dir,
                 &config,
                 &config_bytes,
@@ -459,6 +538,7 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 &candidate_evidence,
                 &anchor_bytes,
                 &link_bytes,
+                &context,
             )?;
             render_harness_json(&binding, &output)?;
         }
@@ -472,13 +552,14 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 MAX_FOUR_GRADER_BATCH_BYTES as u64,
                 "four-grader batch input digests",
             )?;
-            let plan = plan_four_grader_batch(
+            let plan = plan_four_grader_batch_with_context(
                 &run_dir,
                 &config,
                 &config_bytes,
                 &entries,
                 &goldset_bytes,
                 &input_bytes,
+                &context,
             )?;
             render_harness_json(&plan.export()?, &output)?;
         }
@@ -505,7 +586,7 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                     )
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let summary = validate_attested_four_grader_batch_results(
+            let summary = validate_attested_four_grader_batch_results_with_context(
                 &run_dir,
                 &config,
                 &config_bytes,
@@ -514,6 +595,7 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 &receipt,
                 &expected_batch_result_pubkey,
                 &result_bytes,
+                &context,
             )?;
             render_harness_json(&summary, &output)?;
         }
@@ -540,7 +622,7 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                     )
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let binding = ingest_attested_four_grader_batch_results(
+            let binding = ingest_attested_four_grader_batch_results_with_context(
                 &run_dir,
                 &config,
                 &config_bytes,
@@ -549,16 +631,18 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 &receipt,
                 &expected_batch_result_pubkey,
                 &result_bytes,
+                &context,
             )?;
             render_harness_json(&binding, &output)?;
         }
         RecallParityHarnessOperation::BatchFamilyBias { run_dir, .. } => {
-            let summary = summarize_attested_four_grader_family_bias(
+            let summary = summarize_attested_four_grader_family_bias_with_context(
                 &run_dir,
                 &config,
                 &config_bytes,
                 &entries,
                 &goldset_bytes,
+                &context,
             )?;
             render_harness_json(&summary.export()?, &output)?;
         }
@@ -573,7 +657,7 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 MAX_PARITY_IMPORT_RECEIPT_BYTES as u64,
                 "signed attested gate import receipt",
             )?;
-            let report = build_attested_parity_gate_report(
+            let report = build_attested_parity_gate_report_with_context(
                 &run_dir,
                 &config,
                 &config_bytes,
@@ -581,11 +665,14 @@ pub async fn run_recall_parity_harness(args: RecallParityHarnessArgs) -> Result<
                 &goldset_bytes,
                 &receipt_bytes,
                 &expected_receipt_pubkey,
+                &context,
             )?;
             render_harness_json(&report, &output)?;
         }
         RecallParityHarnessOperation::CandidateEvidenceValidate { .. }
-        | RecallParityHarnessOperation::ReconcileTranscripts { .. } => {
+        | RecallParityHarnessOperation::ReconcileTranscripts { .. }
+        | RecallParityHarnessOperation::ListLocalCandidates { .. }
+        | RecallParityHarnessOperation::ExportLocalCandidates { .. } => {
             unreachable!("standalone operation returns before config/goldset input loading")
         }
     }
@@ -1049,6 +1136,68 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn local_candidate_cli_parses_explicit_home_and_selections_without_grader_inputs() {
+        let cli = Cli::try_parse_from([
+            "neoth",
+            "recall-parity-harness",
+            "export-local-candidates",
+            "--local-evidence-home",
+            "local-home",
+            "--selections",
+            "selected.jsonl",
+            "--bundle-id",
+            "local-01",
+            "--evidence-dir",
+            "evidence",
+            "--expected-evidence-receipt-pubkey",
+            "out-of-band-key",
+        ])
+        .unwrap();
+        let Commands::RecallParityHarness(args) = cli.command else {
+            panic!("expected harness");
+        };
+        assert_eq!(args.local_evidence_home, Some(PathBuf::from("local-home")));
+        let RecallParityHarnessOperation::ExportLocalCandidates {
+            selections,
+            bundle_id,
+            ..
+        } = args.operation
+        else {
+            panic!("expected local export");
+        };
+        assert_eq!(selections, PathBuf::from("selected.jsonl"));
+        assert_eq!(bundle_id, "local-01");
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "recall-parity-harness",
+                "export-local-candidates",
+                "--local-evidence-home",
+                "local-home",
+                "--bundle-id",
+                "local-01",
+                "--evidence-dir",
+                "evidence",
+                "--expected-evidence-receipt-pubkey",
+                "key",
+            ])
+            .is_err(),
+            "local export must never infer source selections"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_candidate_listing_requires_explicit_home_without_creating_one() {
+        let cli = Cli::try_parse_from(["neoth", "recall-parity-harness", "list-local-candidates"])
+            .unwrap();
+        let Commands::RecallParityHarness(args) = cli.command else {
+            panic!("expected harness");
+        };
+        let error = run_recall_parity_harness(args).await.unwrap_err();
+        assert!(format!("{error:#}").contains("requires --local-evidence-home"));
     }
 
     #[test]

@@ -24,6 +24,9 @@ use super::{
         EXPECTED_GOLDSET_QUERIES, GoldsetEntry, GradedSystem, GraderFamily, GraderGrade,
         MAX_GRADERS, MAX_GRADES_BYTES, ValidatedGraderConfigFile,
     },
+    local_candidate_evidence::{
+        CandidateEvidenceUseContext, LOCAL_CANDIDATE_EVIDENCE_CUSTODY_FILE, MAX_LOCAL_CUSTODY_BYTES,
+    },
     parity::Dimension,
     parity_anchor::{
         FAMILY_BIAS_THRESHOLD, OPERATOR_ANCHOR_QUERY_COUNT, ValidatedOperatorAnchor,
@@ -37,7 +40,8 @@ use super::{
         SignedFourGraderBatchResultReceipt, parse_four_grader_input_digests, validate_plan_shape,
     },
     parity_candidate_evidence::{
-        ValidatedCandidateEvidence, validate_persisted_candidate_evidence_metadata,
+        CandidateEvidenceSourceKind, ValidatedCandidateEvidence,
+        validate_persisted_candidate_evidence_metadata_with_context,
     },
     parity_import_receipt::{
         MAX_PARITY_IMPORT_RECEIPT_BYTES, SignedParityImportReceipt,
@@ -61,6 +65,7 @@ const CANDIDATE_EVIDENCE_MANIFEST_FILE: &str = "candidate-evidence-manifest.json
 const CANDIDATE_EVIDENCE_RECEIPT_FILE: &str = "candidate-evidence-receipt.json";
 const CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE: &str = "candidate-evidence-receipt-pubkey.txt";
 const CANDIDATE_EVIDENCE_CANDIDATES_FILE: &str = "candidate-evidence-candidates.jsonl";
+const CANDIDATE_EVIDENCE_LOCAL_CUSTODY_FILE: &str = LOCAL_CANDIDATE_EVIDENCE_CUSTODY_FILE;
 const FOUR_GRADER_BATCH_INPUT_FILE: &str = "four-grader-batch-input-digests.json";
 const FOUR_GRADER_BATCH_PLAN_FILE: &str = "four-grader-batch-plan.json";
 const FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE: &str = "four-grader-batch-result-receipt.json";
@@ -318,6 +323,8 @@ pub struct OperatorAnchorRunBinding {
     pub candidate_receipt_sha256: String,
     pub candidate_receipt_pubkey_sha256: String,
     pub candidate_vector_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_local_custody_sha256: Option<String>,
     pub label_record_count: usize,
     pub linked_candidate_count: usize,
     pub operator_labels_complete: bool,
@@ -517,15 +524,47 @@ pub fn plan_run(
     goldset: &[GoldsetEntry],
     goldset_bytes: &[u8],
 ) -> Result<ParityRunManifest> {
+    plan_run_with_context(
+        run_dir,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        &CandidateEvidenceUseContext::external_only(),
+    )
+}
+
+pub(crate) fn plan_run_with_context(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    context: &CandidateEvidenceUseContext,
+) -> Result<ParityRunManifest> {
     let run = BoundParityRun::open_or_create(run_dir)?;
-    let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
-    validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    let manifest = plan_run_locked(
+        &run,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        context,
+    )?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?;
     validate_four_grader_batch_result_artifacts_if_present(
         &run,
         &manifest,
         grader_config,
         goldset,
+        context,
     )?;
     Ok(manifest)
 }
@@ -536,6 +575,7 @@ fn plan_run_locked(
     config_bytes: &[u8],
     goldset: &[GoldsetEntry],
     goldset_bytes: &[u8],
+    context: &CandidateEvidenceUseContext,
 ) -> Result<ParityRunManifest> {
     verify_bound_inputs(grader_config, config_bytes, goldset, goldset_bytes)?;
     if goldset.len() != EXPECTED_GOLDSET_QUERIES {
@@ -573,6 +613,13 @@ fn plan_run_locked(
                 );
             }
             let state = empty_state_for_manifest(&stored)?;
+            validate_operator_anchor_artifacts_if_present(
+                run,
+                &stored,
+                grader_config,
+                goldset,
+                context,
+            )?;
             run.create_child(STATE_FILE, &serde_json::to_vec(&state)?)?;
             state
         } else {
@@ -634,8 +681,44 @@ pub fn ingest_operator_anchor_evidence(
     operator_anchor_bytes: &[u8],
     operator_anchor_link_bytes: &[u8],
 ) -> Result<OperatorAnchorRunBinding> {
+    ingest_operator_anchor_evidence_with_context(
+        run_dir,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        candidate_evidence,
+        operator_anchor_bytes,
+        operator_anchor_link_bytes,
+        &CandidateEvidenceUseContext::external_only(),
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Preserve the public import inputs while adding the explicit live use context"
+)]
+pub(crate) fn ingest_operator_anchor_evidence_with_context(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    candidate_evidence: &ValidatedCandidateEvidence,
+    operator_anchor_bytes: &[u8],
+    operator_anchor_link_bytes: &[u8],
+    context: &CandidateEvidenceUseContext,
+) -> Result<OperatorAnchorRunBinding> {
+    validate_candidate_evidence_use(candidate_evidence, context)?;
     let run = BoundParityRun::open_or_create(run_dir)?;
-    let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
+    let manifest = plan_run_locked(
+        &run,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        context,
+    )?;
     let anchor = load_operator_anchor_bytes(
         operator_anchor_bytes,
         "bound operator anchor import",
@@ -657,57 +740,106 @@ pub fn ingest_operator_anchor_evidence(
         anchor.grades().len(),
     )?;
 
+    validate_candidate_evidence_use(candidate_evidence, context)?;
     create_immutable_run_child(
         &run,
         CANDIDATE_EVIDENCE_MANIFEST_FILE,
         candidate_evidence.manifest_bytes(),
         1024 * 1024,
     )?;
+    validate_candidate_evidence_use(candidate_evidence, context)?;
     create_immutable_run_child(
         &run,
         CANDIDATE_EVIDENCE_CANDIDATES_FILE,
         candidate_evidence.candidate_bytes(),
         1024 * 1024,
     )?;
+    validate_candidate_evidence_use(candidate_evidence, context)?;
     create_immutable_run_child(
         &run,
         CANDIDATE_EVIDENCE_RECEIPT_FILE,
         candidate_evidence.receipt_bytes(),
         64 * 1024,
     )?;
+    validate_candidate_evidence_use(candidate_evidence, context)?;
     create_immutable_run_child(
         &run,
         CANDIDATE_EVIDENCE_RECEIPT_PUBKEY_FILE,
         candidate_evidence.expected_receipt_pubkey_b64().as_bytes(),
         128,
     )?;
+    if let Some(custody_bytes) = candidate_evidence.local_custody_bytes() {
+        validate_candidate_evidence_use(candidate_evidence, context)?;
+        create_immutable_run_child(
+            &run,
+            CANDIDATE_EVIDENCE_LOCAL_CUSTODY_FILE,
+            custody_bytes,
+            MAX_LOCAL_CUSTODY_BYTES,
+        )?;
+    }
+    validate_candidate_evidence_use(candidate_evidence, context)?;
     create_immutable_run_child(
         &run,
         OPERATOR_ANCHOR_FILE,
         operator_anchor_bytes,
         MAX_GRADES_BYTES as usize,
     )?;
+    validate_candidate_evidence_use(candidate_evidence, context)?;
     create_immutable_run_child(
         &run,
         OPERATOR_ANCHOR_LINK_FILE,
         operator_anchor_link_bytes,
         64 * 1024,
     )?;
+    validate_candidate_evidence_use(candidate_evidence, context)?;
     create_immutable_run_child(
         &run,
         OPERATOR_ANCHOR_BINDING_FILE,
         &serde_json::to_vec(&binding).context("serialize operator anchor run binding")?,
         64 * 1024,
     )?;
-    validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?;
     validate_four_grader_batch_result_artifacts_if_present(
         &run,
         &manifest,
         grader_config,
         goldset,
+        context,
     )?;
     Ok(binding)
+}
+
+fn validate_candidate_evidence_use(
+    candidate_evidence: &ValidatedCandidateEvidence,
+    context: &CandidateEvidenceUseContext,
+) -> Result<()> {
+    match candidate_evidence.manifest().source_kind {
+        CandidateEvidenceSourceKind::AuthenticatedLocalTranscriptBoundV1 => {
+            let custody = candidate_evidence
+                .local_custody_bytes()
+                .context("authenticated local candidate evidence lacks custody bytes")?;
+            context.validate_local_custody(
+                custody,
+                candidate_evidence.manifest(),
+                candidate_evidence.candidates(),
+            )?;
+        }
+        CandidateEvidenceSourceKind::TranscriptExport | CandidateEvidenceSourceKind::WalExport => {
+            if candidate_evidence.local_custody_bytes().is_some()
+                || candidate_evidence.manifest().local_custody_sha256.is_some()
+            {
+                anyhow::bail!("legacy candidate evidence must not carry local custody");
+            }
+        }
+    }
+    Ok(())
 }
 
 fn operator_anchor_binding(
@@ -733,6 +865,7 @@ fn operator_anchor_binding(
             .expected_receipt_pubkey_sha256()
             .to_owned(),
         candidate_vector_sha256: sha256_bytes(candidate_evidence.candidate_bytes()),
+        candidate_local_custody_sha256: candidate_evidence.manifest().local_custody_sha256.clone(),
         label_record_count,
         linked_candidate_count,
         operator_labels_complete: true,
@@ -845,9 +978,15 @@ fn validate_operator_anchor_artifacts_if_present(
     manifest: &ParityRunManifest,
     grader_config: &ValidatedGraderConfigFile,
     goldset: &[GoldsetEntry],
+    context: &CandidateEvidenceUseContext,
 ) -> Result<()> {
-    let _ =
-        load_validated_operator_anchor_artifacts_if_present(run, manifest, grader_config, goldset)?;
+    let _ = load_validated_operator_anchor_artifacts_if_present(
+        run,
+        manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     Ok(())
 }
 
@@ -858,6 +997,7 @@ fn load_validated_operator_anchor_artifacts_if_present(
     manifest: &ParityRunManifest,
     grader_config: &ValidatedGraderConfigFile,
     goldset: &[GoldsetEntry],
+    context: &CandidateEvidenceUseContext,
 ) -> Result<Option<ValidatedOperatorAnchorEvidenceGroup>> {
     let artifact_contracts = [
         (CANDIDATE_EVIDENCE_MANIFEST_FILE, 1024 * 1024),
@@ -872,7 +1012,15 @@ fn load_validated_operator_anchor_artifacts_if_present(
         .iter()
         .map(|(name, max_bytes)| read_bound_immutable_run_child(run, name, *max_bytes))
         .collect::<Result<Vec<_>>>()?;
+    let custody = read_bound_immutable_run_child(
+        run,
+        CANDIDATE_EVIDENCE_LOCAL_CUSTODY_FILE,
+        MAX_LOCAL_CUSTODY_BYTES,
+    )?;
     if present.iter().all(Option::is_none) {
+        if custody.is_some() {
+            anyhow::bail!("orphan local custody exists without an operator anchor evidence group");
+        }
         return Ok(None);
     }
     if present.iter().any(Option::is_none) {
@@ -891,18 +1039,34 @@ fn load_validated_operator_anchor_artifacts_if_present(
     let binding: OperatorAnchorRunBinding = serde_json::from_slice(&binding_bytes.bytes)
         .map_err(|_| anyhow::anyhow!("parse immutable operator anchor run binding"))?;
     validate_operator_anchor_binding(&binding, manifest)?;
-    let candidate_metadata = validate_persisted_candidate_evidence_metadata(
+    let candidate_metadata = validate_persisted_candidate_evidence_metadata_with_context(
         &candidate_manifest.bytes,
         &candidate_receipt.bytes,
         &candidate_vector.bytes,
+        custody.as_ref().map(|artifact| artifact.bytes.as_slice()),
         std::str::from_utf8(&candidate_receipt_pubkey.bytes)
             .map_err(|_| anyhow::anyhow!("persisted candidate receipt public key is not UTF-8"))?,
         &binding.candidate_manifest_sha256,
         &binding.candidate_receipt_sha256,
         &binding.candidate_receipt_pubkey_sha256,
+        context,
     )?;
     if sha256_bytes(&candidate_vector.bytes) != binding.candidate_vector_sha256 {
         anyhow::bail!("operator anchor binding candidate vector SHA256 mismatch");
+    }
+    if candidate_metadata.source_kind()
+        == CandidateEvidenceSourceKind::AuthenticatedLocalTranscriptBoundV1
+    {
+        if binding.candidate_local_custody_sha256.as_deref()
+            != candidate_metadata.local_custody_sha256()
+            || custody.is_none()
+        {
+            anyhow::bail!(
+                "operator anchor binding local custody does not match persisted candidate evidence"
+            );
+        }
+    } else if binding.candidate_local_custody_sha256.is_some() || custody.is_some() {
+        anyhow::bail!("legacy operator anchor evidence must not retain local custody");
     }
     let anchor = load_operator_anchor_bytes(
         &anchor_bytes.bytes,
@@ -930,12 +1094,14 @@ fn load_validated_operator_anchor_artifacts_if_present(
         candidate_receipt,
         candidate_receipt_pubkey,
         candidate_vector,
+        local_custody: custody,
         anchor_artifact: anchor_bytes,
         anchor_link: link_bytes,
         binding_artifact: binding_bytes,
         anchor,
+        binding,
     };
-    group.revalidate(run)?;
+    group.revalidate(run, context)?;
     Ok(Some(group))
 }
 
@@ -947,14 +1113,20 @@ struct ValidatedOperatorAnchorEvidenceGroup {
     candidate_receipt: BoundImmutableRunChild,
     candidate_receipt_pubkey: BoundImmutableRunChild,
     candidate_vector: BoundImmutableRunChild,
+    local_custody: Option<BoundImmutableRunChild>,
     anchor_artifact: BoundImmutableRunChild,
     anchor_link: BoundImmutableRunChild,
     binding_artifact: BoundImmutableRunChild,
     anchor: ValidatedOperatorAnchor,
+    binding: OperatorAnchorRunBinding,
 }
 
 impl ValidatedOperatorAnchorEvidenceGroup {
-    fn revalidate(&self, run: &BoundParityRun) -> Result<()> {
+    fn revalidate(
+        &self,
+        run: &BoundParityRun,
+        context: &CandidateEvidenceUseContext,
+    ) -> Result<()> {
         for (name, child) in [
             (CANDIDATE_EVIDENCE_MANIFEST_FILE, &self.candidate_manifest),
             (CANDIDATE_EVIDENCE_RECEIPT_FILE, &self.candidate_receipt),
@@ -969,6 +1141,24 @@ impl ValidatedOperatorAnchorEvidenceGroup {
         ] {
             child.revalidate(run, name)?;
         }
+        if let Some(custody) = &self.local_custody {
+            custody.revalidate(run, CANDIDATE_EVIDENCE_LOCAL_CUSTODY_FILE)?;
+        }
+        validate_persisted_candidate_evidence_metadata_with_context(
+            &self.candidate_manifest.bytes,
+            &self.candidate_receipt.bytes,
+            &self.candidate_vector.bytes,
+            self.local_custody
+                .as_ref()
+                .map(|artifact| artifact.bytes.as_slice()),
+            std::str::from_utf8(&self.candidate_receipt_pubkey.bytes).map_err(|_| {
+                anyhow::anyhow!("persisted candidate receipt public key is not UTF-8")
+            })?,
+            &self.binding.candidate_manifest_sha256,
+            &self.binding.candidate_receipt_sha256,
+            &self.binding.candidate_receipt_pubkey_sha256,
+            context,
+        )?;
         run.revalidate_lock()
     }
 }
@@ -999,6 +1189,9 @@ fn validate_operator_anchor_binding(
     ] {
         validate_sha256(value, label)?;
     }
+    if let Some(value) = &binding.candidate_local_custody_sha256 {
+        validate_sha256(value, "candidate local custody")?;
+    }
     Ok(())
 }
 
@@ -1013,9 +1206,42 @@ pub fn plan_four_grader_batch(
     goldset_bytes: &[u8],
     input_digest_bytes: &[u8],
 ) -> Result<FourGraderBatchPlan> {
+    plan_four_grader_batch_with_context(
+        run_dir,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        input_digest_bytes,
+        &CandidateEvidenceUseContext::external_only(),
+    )
+}
+
+pub(crate) fn plan_four_grader_batch_with_context(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    input_digest_bytes: &[u8],
+    context: &CandidateEvidenceUseContext,
+) -> Result<FourGraderBatchPlan> {
     let run = BoundParityRun::open_or_create(run_dir)?;
-    let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
-    validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    let manifest = plan_run_locked(
+        &run,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        context,
+    )?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     let inputs = parse_four_grader_input_digests(input_digest_bytes)?;
     let anchor_binding =
         read_bound_immutable_run_child(&run, OPERATOR_ANCHOR_BINDING_FILE, 64 * 1024)?
@@ -1032,6 +1258,13 @@ pub fn plan_four_grader_batch(
     )?;
     anchor_binding.revalidate(&run, OPERATOR_ANCHOR_BINDING_FILE)?;
     run.revalidate_lock()?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     create_immutable_run_child(
         &run,
         FOUR_GRADER_BATCH_INPUT_FILE,
@@ -1040,6 +1273,13 @@ pub fn plan_four_grader_batch(
     )?;
     anchor_binding.revalidate(&run, OPERATOR_ANCHOR_BINDING_FILE)?;
     run.revalidate_lock()?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     create_immutable_run_child(
         &run,
         FOUR_GRADER_BATCH_PLAN_FILE,
@@ -1053,6 +1293,14 @@ pub fn plan_four_grader_batch(
         &manifest,
         grader_config,
         goldset,
+        context,
+    )?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
     )?;
     Ok(verified.plan)
 }
@@ -1072,10 +1320,44 @@ pub fn validate_attested_four_grader_batch_results(
     expected_receipt_pubkey_b64: &str,
     result_bytes: &[Vec<u8>],
 ) -> Result<FourGraderBatchResultSummary> {
+    validate_attested_four_grader_batch_results_with_context(
+        run_dir,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        receipt,
+        expected_receipt_pubkey_b64,
+        result_bytes,
+        &CandidateEvidenceUseContext::external_only(),
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Preserve the public attestation inputs while adding the explicit live use context"
+)]
+pub(crate) fn validate_attested_four_grader_batch_results_with_context(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    receipt: &SignedFourGraderBatchResultReceipt,
+    expected_receipt_pubkey_b64: &str,
+    result_bytes: &[Vec<u8>],
+    context: &CandidateEvidenceUseContext,
+) -> Result<FourGraderBatchResultSummary> {
     let run = BoundParityRun::open_existing(run_dir)?;
     let manifest =
         load_existing_run_manifest(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
-    validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     let verified_plan = validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?
         .context("attested batch results require an immutable four-grader batch plan")?;
     let plan = &verified_plan.plan;
@@ -1084,6 +1366,7 @@ pub fn validate_attested_four_grader_batch_results(
         &manifest,
         grader_config,
         goldset,
+        context,
     )?;
     if result_bytes.len() != FOUR_GRADER_COUNT {
         anyhow::bail!("attested batch result verification requires exactly four result files");
@@ -1144,6 +1427,13 @@ pub fn validate_attested_four_grader_batch_results(
         gate_eligible: false,
     };
     verified_plan.revalidate(&run)?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     Ok(summary)
 }
 
@@ -1161,10 +1451,44 @@ pub fn ingest_attested_four_grader_batch_results(
     expected_receipt_pubkey_b64: &str,
     result_bytes: &[Vec<u8>],
 ) -> Result<FourGraderBatchResultBinding> {
+    ingest_attested_four_grader_batch_results_with_context(
+        run_dir,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        receipt,
+        expected_receipt_pubkey_b64,
+        result_bytes,
+        &CandidateEvidenceUseContext::external_only(),
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Preserve the public attestation inputs while adding the explicit live use context"
+)]
+pub(crate) fn ingest_attested_four_grader_batch_results_with_context(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    receipt: &SignedFourGraderBatchResultReceipt,
+    expected_receipt_pubkey_b64: &str,
+    result_bytes: &[Vec<u8>],
+    context: &CandidateEvidenceUseContext,
+) -> Result<FourGraderBatchResultBinding> {
     let run = BoundParityRun::open_existing(run_dir)?;
     let manifest =
         load_existing_run_manifest(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
-    validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     let verified_plan = validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?
         .context("attested batch result ingest requires an immutable four-grader batch plan")?;
     let (results, canonical_pubkey, receipt_pubkey_sha256) = validate_batch_result_inputs(
@@ -1197,6 +1521,13 @@ pub fn ingest_attested_four_grader_batch_results(
         serde_json::to_vec(receipt).context("serialize attested batch result receipt")?;
     for (index, (_, bytes)) in results.iter().enumerate() {
         verified_plan.revalidate(&run)?;
+        validate_operator_anchor_artifacts_if_present(
+            &run,
+            &manifest,
+            grader_config,
+            goldset,
+            context,
+        )?;
         create_immutable_run_child(
             &run,
             &batch_result_file_name(index),
@@ -1205,6 +1536,13 @@ pub fn ingest_attested_four_grader_batch_results(
         )?;
     }
     verified_plan.revalidate(&run)?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     create_immutable_run_child(
         &run,
         FOUR_GRADER_BATCH_RESULT_RECEIPT_FILE,
@@ -1212,6 +1550,13 @@ pub fn ingest_attested_four_grader_batch_results(
         64 * 1024,
     )?;
     verified_plan.revalidate(&run)?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     create_immutable_run_child(
         &run,
         FOUR_GRADER_BATCH_RESULT_PUBKEY_FILE,
@@ -1221,6 +1566,13 @@ pub fn ingest_attested_four_grader_batch_results(
     let mut imports = Vec::with_capacity(FOUR_GRADER_COUNT);
     for (artifact, bytes) in &results {
         verified_plan.revalidate(&run)?;
+        validate_operator_anchor_artifacts_if_present(
+            &run,
+            &manifest,
+            grader_config,
+            goldset,
+            context,
+        )?;
         let record = ImportedGradeFile {
             grader_id: artifact.grader_id.clone(),
             source_sha256: artifact.result_sha256.clone(),
@@ -1234,6 +1586,13 @@ pub fn ingest_attested_four_grader_batch_results(
         state.imported_grades = imports.clone();
         state.report_sha256 = None;
         verified_plan.revalidate(&run)?;
+        validate_operator_anchor_artifacts_if_present(
+            &run,
+            &manifest,
+            grader_config,
+            goldset,
+            context,
+        )?;
         run.replace_child_if_matches(STATE_FILE, &state_bytes, &serde_json::to_vec(&state)?)?;
     }
     let state_evidence_sha256 = sha256_json(&state_evidence(&state))?;
@@ -1252,6 +1611,13 @@ pub fn ingest_attested_four_grader_batch_results(
         gate_eligible: false,
     };
     verified_plan.revalidate(&run)?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     create_immutable_run_child(
         &run,
         FOUR_GRADER_BATCH_RESULT_BINDING_FILE,
@@ -1263,6 +1629,14 @@ pub fn ingest_attested_four_grader_batch_results(
         &manifest,
         grader_config,
         goldset,
+        context,
+    )?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
     )?;
     Ok(binding)
 }
@@ -1398,12 +1772,14 @@ fn validate_four_grader_batch_result_artifacts_if_present(
     manifest: &ParityRunManifest,
     grader_config: &ValidatedGraderConfigFile,
     goldset: &[GoldsetEntry],
+    context: &CandidateEvidenceUseContext,
 ) -> Result<()> {
     let _ = load_validated_four_grader_batch_result_artifacts_if_present(
         run,
         manifest,
         grader_config,
         goldset,
+        context,
     )?;
     Ok(())
 }
@@ -1413,7 +1789,9 @@ fn load_validated_four_grader_batch_result_artifacts_if_present(
     manifest: &ParityRunManifest,
     grader_config: &ValidatedGraderConfigFile,
     goldset: &[GoldsetEntry],
+    context: &CandidateEvidenceUseContext,
 ) -> Result<Option<ValidatedAttestedFourGraderBatchResults>> {
+    validate_operator_anchor_artifacts_if_present(run, manifest, grader_config, goldset, context)?;
     let mut artifacts = (0..FOUR_GRADER_COUNT)
         .map(|index| {
             read_bound_immutable_run_child(
@@ -1601,6 +1979,24 @@ pub fn summarize_attested_four_grader_family_bias(
     goldset: &[GoldsetEntry],
     goldset_bytes: &[u8],
 ) -> Result<AttestedFamilyBiasSummary> {
+    summarize_attested_four_grader_family_bias_with_context(
+        run_dir,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        &CandidateEvidenceUseContext::external_only(),
+    )
+}
+
+pub(crate) fn summarize_attested_four_grader_family_bias_with_context(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    context: &CandidateEvidenceUseContext,
+) -> Result<AttestedFamilyBiasSummary> {
     let run = BoundParityRun::open_existing(run_dir)?;
     let manifest =
         load_existing_run_manifest(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
@@ -1609,6 +2005,7 @@ pub fn summarize_attested_four_grader_family_bias(
         &manifest,
         grader_config,
         goldset,
+        context,
     )?
     .context("attested family-bias summary requires a complete operator anchor provenance group")?;
     let results = load_validated_four_grader_batch_result_artifacts_if_present(
@@ -1616,6 +2013,7 @@ pub fn summarize_attested_four_grader_family_bias(
         &manifest,
         grader_config,
         goldset,
+        context,
     )?
     .context("attested family-bias summary requires a complete batch result group")?;
     if sha256_bytes(&anchor_group.anchor_artifact.bytes) != results.plan.plan.operator_anchor_sha256
@@ -1628,7 +2026,7 @@ pub fn summarize_attested_four_grader_family_bias(
         &anchor_group,
         &results,
     )?;
-    anchor_group.revalidate(&run)?;
+    anchor_group.revalidate(&run, context)?;
     results.revalidate(&run)?;
     run.revalidate_lock()?;
     Ok(summary)
@@ -1673,6 +2071,28 @@ pub fn build_attested_parity_gate_report(
     import_receipt_bytes: &[u8],
     expected_import_receipt_pubkey_b64: &str,
 ) -> Result<AttestedParityGateReport> {
+    build_attested_parity_gate_report_with_context(
+        run_dir,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        import_receipt_bytes,
+        expected_import_receipt_pubkey_b64,
+        &CandidateEvidenceUseContext::external_only(),
+    )
+}
+
+pub(crate) fn build_attested_parity_gate_report_with_context(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    import_receipt_bytes: &[u8],
+    expected_import_receipt_pubkey_b64: &str,
+    context: &CandidateEvidenceUseContext,
+) -> Result<AttestedParityGateReport> {
     let run = BoundParityRun::open_existing(run_dir)?;
     let manifest =
         load_existing_run_manifest(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
@@ -1681,6 +2101,7 @@ pub fn build_attested_parity_gate_report(
         &manifest,
         grader_config,
         goldset,
+        context,
     )?
     .context("attested gate report requires complete operator anchor provenance")?;
     let results = load_validated_four_grader_batch_result_artifacts_if_present(
@@ -1688,6 +2109,7 @@ pub fn build_attested_parity_gate_report(
         &manifest,
         grader_config,
         goldset,
+        context,
     )?
     .context("attested gate report requires complete attested four-grader results")?;
     if sha256_bytes(&anchor_group.anchor_artifact.bytes) != results.plan.plan.operator_anchor_sha256
@@ -1759,27 +2181,29 @@ pub fn build_attested_parity_gate_report(
         family_bias_summary_sha256: report.family_bias_summary_sha256.clone(),
         gate_eligible,
     };
-    anchor_group.revalidate(&run)?;
+    anchor_group.revalidate(&run, context)?;
     results.revalidate(&run)?;
     publish_attested_gate_report(
         &run,
         &anchor_group,
-        &results,
+        results,
         &report_bytes,
         import_receipt_bytes,
         &canonical_pubkey,
         &publication,
+        context,
     )?;
-    anchor_group.revalidate(&run)?;
+    anchor_group.revalidate(&run, context)?;
     let reopened = load_validated_four_grader_batch_result_artifacts_if_present(
         &run,
         &manifest,
         grader_config,
         goldset,
+        context,
     )?
     .context("attested gate report state changed during publication")?;
     validate_attested_gate_publication_if_present(&run, &manifest, &reopened, &report)?;
-    anchor_group.revalidate(&run)?;
+    anchor_group.revalidate(&run, context)?;
     reopened.revalidate(&run)?;
     run.revalidate_lock()?;
     Ok(report)
@@ -1848,11 +2272,12 @@ fn ensure_finite_gate_metric(value: f64, label: &str) -> Result<()> {
 fn publish_attested_gate_report(
     run: &BoundParityRun,
     anchor_group: &ValidatedOperatorAnchorEvidenceGroup,
-    results: &ValidatedAttestedFourGraderBatchResults,
+    results: ValidatedAttestedFourGraderBatchResults,
     report_bytes: &[u8],
     import_receipt_bytes: &[u8],
     canonical_pubkey: &str,
     publication: &AttestedParityGatePublicationReceipt,
+    context: &CandidateEvidenceUseContext,
 ) -> Result<()> {
     let report_sha256 = sha256_bytes(report_bytes);
     if results
@@ -1863,10 +2288,10 @@ fn publish_attested_gate_report(
     {
         anyhow::bail!("attested gate report refuses a stale state report binding");
     }
-    anchor_group.revalidate(run)?;
+    anchor_group.revalidate(run, context)?;
     results.revalidate(run)?;
     create_immutable_run_child(run, ATTESTED_GATE_REPORT_FILE, report_bytes, 64 * 1024)?;
-    anchor_group.revalidate(run)?;
+    anchor_group.revalidate(run, context)?;
     results.revalidate(run)?;
     create_immutable_run_child(
         run,
@@ -1874,7 +2299,7 @@ fn publish_attested_gate_report(
         import_receipt_bytes,
         MAX_PARITY_IMPORT_RECEIPT_BYTES,
     )?;
-    anchor_group.revalidate(run)?;
+    anchor_group.revalidate(run, context)?;
     results.revalidate(run)?;
     create_immutable_run_child(
         run,
@@ -1882,7 +2307,7 @@ fn publish_attested_gate_report(
         canonical_pubkey.as_bytes(),
         128,
     )?;
-    anchor_group.revalidate(run)?;
+    anchor_group.revalidate(run, context)?;
     results.revalidate(run)?;
     create_immutable_run_child(
         run,
@@ -1894,11 +2319,17 @@ fn publish_attested_gate_report(
         None => {
             let mut next = results.state.clone();
             next.report_sha256 = Some(report_sha256);
-            anchor_group.revalidate(run)?;
+            anchor_group.revalidate(run, context)?;
             results.revalidate(run)?;
+            // The state is intentionally replaceable. Its retained identity
+            // denies DELETE sharing on Windows, so release only this pin after
+            // final validation. Keep every immutable result proof pinned; the
+            // conditional replacement still verifies these exact prior bytes.
+            let expected_state_bytes = results.state_artifact.bytes.clone();
+            drop(results.state_artifact);
             run.replace_child_if_matches(
                 STATE_FILE,
-                &results.state_artifact.bytes,
+                &expected_state_bytes,
                 &serde_json::to_vec(&next).context("serialize attested gate state transition")?,
             )?;
         }
@@ -2460,15 +2891,49 @@ pub fn ingest_offline_grades(
     goldset_bytes: &[u8],
     grade_bytes: &[u8],
 ) -> Result<ParityRunState> {
+    ingest_offline_grades_with_context(
+        run_dir,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        grade_bytes,
+        &CandidateEvidenceUseContext::external_only(),
+    )
+}
+
+pub(crate) fn ingest_offline_grades_with_context(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    grade_bytes: &[u8],
+    context: &CandidateEvidenceUseContext,
+) -> Result<ParityRunState> {
     let run = BoundParityRun::open_or_create(run_dir)?;
-    let manifest = plan_run_locked(&run, grader_config, config_bytes, goldset, goldset_bytes)?;
-    validate_operator_anchor_artifacts_if_present(&run, &manifest, grader_config, goldset)?;
+    let manifest = plan_run_locked(
+        &run,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        context,
+    )?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     validate_four_grader_batch_plan_if_present(&run, &manifest, grader_config)?;
     validate_four_grader_batch_result_artifacts_if_present(
         &run,
         &manifest,
         grader_config,
         goldset,
+        context,
     )?;
     let state_bytes = run.read_child(STATE_FILE, 1024 * 1024)?;
     let mut state = load_state_for_manifest(&run, &manifest)?;
@@ -2486,6 +2951,13 @@ pub fn ingest_offline_grades(
         .find(|entry| entry.grader_id == grader_id)
     {
         if existing.source_sha256 == source_sha256 && existing.record_count == grades.len() {
+            validate_operator_anchor_artifacts_if_present(
+                &run,
+                &manifest,
+                grader_config,
+                goldset,
+                context,
+            )?;
             return Ok(state);
         }
         anyhow::bail!("grader {grader_id:?} already has a different imported grade artifact");
@@ -2499,6 +2971,13 @@ pub fn ingest_offline_grades(
         source_sha256: source_sha256.clone(),
         record_count: grades.len(),
     };
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     let imports = run.open_or_create_imports_locked()?;
     let import_name = format!("{source_sha256}.jsonl");
     let import_display = run.child_display(IMPORTS_DIR).join(&import_name);
@@ -2520,6 +2999,13 @@ pub fn ingest_offline_grades(
             // `atomic_write_private_child_create_new` stages privately and
             // creates the immutable import exactly once through `imports`.
             run.revalidate_lock()?;
+            validate_operator_anchor_artifacts_if_present(
+                &run,
+                &manifest,
+                grader_config,
+                goldset,
+                context,
+            )?;
             crate::skills::store::atomic_write_private_child_create_new(
                 &imports,
                 std::ffi::OsStr::new(&import_name),
@@ -2547,7 +3033,21 @@ pub fn ingest_offline_grades(
         .imported_grades
         .sort_by(|a, b| a.grader_id.cmp(&b.grader_id));
     state.report_sha256 = None;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     run.replace_child_if_matches(STATE_FILE, &state_bytes, &serde_json::to_vec(&state)?)?;
+    validate_operator_anchor_artifacts_if_present(
+        &run,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     Ok(state)
 }
 
@@ -2562,6 +3062,28 @@ pub fn build_report(
     receipt: &SignedParityImportReceipt,
     expected_receipt_pubkey_b64: &str,
 ) -> Result<ParityHarnessReport> {
+    build_report_with_context(
+        run_dir,
+        grader_config,
+        config_bytes,
+        goldset,
+        goldset_bytes,
+        receipt,
+        expected_receipt_pubkey_b64,
+        &CandidateEvidenceUseContext::external_only(),
+    )
+}
+
+pub(crate) fn build_report_with_context(
+    run_dir: &Path,
+    grader_config: &ValidatedGraderConfigFile,
+    config_bytes: &[u8],
+    goldset: &[GoldsetEntry],
+    goldset_bytes: &[u8],
+    receipt: &SignedParityImportReceipt,
+    expected_receipt_pubkey_b64: &str,
+    context: &CandidateEvidenceUseContext,
+) -> Result<ParityHarnessReport> {
     let run_dir = BoundParityRun::open_or_create(run_dir)?;
     let manifest = plan_run_locked(
         &run_dir,
@@ -2569,14 +3091,22 @@ pub fn build_report(
         config_bytes,
         goldset,
         goldset_bytes,
+        context,
     )?;
-    validate_operator_anchor_artifacts_if_present(&run_dir, &manifest, grader_config, goldset)?;
+    validate_operator_anchor_artifacts_if_present(
+        &run_dir,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     validate_four_grader_batch_plan_if_present(&run_dir, &manifest, grader_config)?;
     validate_four_grader_batch_result_artifacts_if_present(
         &run_dir,
         &manifest,
         grader_config,
         goldset,
+        context,
     )?;
     reject_legacy_report_mutation_after_attested_gate(&run_dir)?;
     let state_bytes = run_dir.read_child(STATE_FILE, 1024 * 1024)?;
@@ -2639,12 +3169,33 @@ pub fn build_report(
     };
     let report_sha256 = sha256_json(&report)?;
     let report_bytes = serde_json::to_vec(&report)?;
+    validate_operator_anchor_artifacts_if_present(
+        &run_dir,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     match run_dir.read_child_if_present(REPORT_FILE, 1024 * 1024)? {
         Some(old) => run_dir.replace_child_if_matches(REPORT_FILE, &old, &report_bytes)?,
         None => run_dir.create_child(REPORT_FILE, &report_bytes)?,
     }
     state.report_sha256 = Some(report_sha256);
+    validate_operator_anchor_artifacts_if_present(
+        &run_dir,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     run_dir.replace_child_if_matches(STATE_FILE, &state_bytes, &serde_json::to_vec(&state)?)?;
+    validate_operator_anchor_artifacts_if_present(
+        &run_dir,
+        &manifest,
+        grader_config,
+        goldset,
+        context,
+    )?;
     Ok(report)
 }
 
@@ -3159,6 +3710,7 @@ mod tests {
             source_bytes: source.len(),
             candidates_sha256: sha256_bytes(&candidate_bytes),
             candidate_count: candidates.len(),
+            local_custody_sha256: None,
         };
         let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
         let signer = ed25519_dalek::SigningKey::from_bytes(&[29; 32]);
@@ -3173,6 +3725,7 @@ mod tests {
                 source_bytes: manifest.source_bytes,
                 candidates_sha256: manifest.candidates_sha256.clone(),
                 candidate_count: manifest.candidate_count,
+                local_custody_sha256: None,
             },
             signature_b64: String::new(),
         };
@@ -3193,6 +3746,398 @@ mod tests {
         let pubkey = crate::wal::signing::pubkey_b64(&signer);
         let evidence = load_imported_candidate_evidence(directory.path(), &pubkey).unwrap();
         (directory, evidence, pubkey)
+    }
+
+    #[tokio::test]
+    async fn local_anchor_revalidation_rejects_revoked_source_without_mutating_run() {
+        use crate::recall::local_candidate_evidence::export_local_candidates;
+        use crate::recall::local_candidate_evidence::tests::{
+            initialize_fixture_signing_key, local_evidence_fixture,
+        };
+        use crate::recall::parity_batch_plan::{
+            FOUR_GRADER_BATCH_INPUT_PURPOSE, FOUR_GRADER_BATCH_RESULT_RECEIPT_PURPOSE,
+            FourGraderBatchResultReceiptBody, FourGraderInputDigest,
+        };
+        use crate::recall::parity_candidate_evidence::load_candidate_evidence_with_context;
+
+        fn assert_local_rejection<T>(result: Result<T>) {
+            let error = result
+                .err()
+                .expect("revoked local evidence must reject this consumer");
+            assert!(
+                format!("{error:#}")
+                    .contains("local transcript evidence is absent, expired, revoked"),
+                "consumer must reject current custody, not an unrelated invalid input: {error:#}"
+            );
+        }
+        fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+            fn visit(root: &Path, current: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
+                for entry in std::fs::read_dir(current).unwrap() {
+                    let path = entry.unwrap().path();
+                    if path.is_dir() {
+                        visit(root, &path, files);
+                    } else {
+                        files.insert(
+                            path.strip_prefix(root).unwrap().to_path_buf(),
+                            std::fs::read(path).unwrap(),
+                        );
+                    }
+                }
+            }
+            let mut files = BTreeMap::new();
+            visit(root, root, &mut files);
+            files
+        }
+        let mut fixture = local_evidence_fixture("abcdefghijklmnopqrstuvwx").await;
+        let signing_pubkey = initialize_fixture_signing_key(fixture.home.path());
+        let export_root = tempfile::tempdir().unwrap();
+        let export_dir = export_root.path().join("local-anchor");
+        let selections = (0..20).map(|index| format!(
+            "{{\"candidate_id\":\"cand-{index:03}\",\"provenance_id\":\"{}\",\"raw_offset\":{index},\"source_len\":1}}", fixture.provenance_id
+        )).collect::<Vec<_>>().join("\n").into_bytes();
+        export_local_candidates(
+            &fixture.context,
+            &selections,
+            "local-anchor-fixture",
+            &export_dir,
+            &signing_pubkey,
+        )
+        .unwrap();
+        let evidence =
+            load_candidate_evidence_with_context(&export_dir, &signing_pubkey, &fixture.context)
+                .unwrap();
+        let run = tempfile::tempdir().unwrap();
+        let mut config_file = GraderConfigFile {
+            schema_version: 1,
+            graders: roster().graders().to_vec(),
+        };
+        for index in 2..4 {
+            config_file.graders.push(GraderConfig {
+                grader_id: format!("shared-{index}"),
+                provider: GraderProvider::Openai,
+                model_id: format!("model-{index}"),
+                family: GraderFamily::AnthropicOpenaiGoogle,
+            });
+        }
+        let config_bytes = serde_json::to_vec(&config_file).unwrap();
+        let config = config_file.into_validated().unwrap();
+        let entries = goldset();
+        let goldset_bytes = entries
+            .iter()
+            .map(|entry| serde_json::to_string(entry).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes();
+        let (anchor_bytes, link_bytes) = operator_anchor_inputs(&evidence);
+        let rejected_parent = tempfile::tempdir().unwrap();
+        let rejected_run = rejected_parent.path().join("must-not-exist");
+        assert!(
+            ingest_operator_anchor_evidence_with_context(
+                &rejected_run,
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                &evidence,
+                &anchor_bytes,
+                &link_bytes,
+                &CandidateEvidenceUseContext::external_only()
+            )
+            .is_err()
+        );
+        assert!(
+            !rejected_run.exists(),
+            "missing local context cannot create a run"
+        );
+        ingest_operator_anchor_evidence_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &evidence,
+            &anchor_bytes,
+            &link_bytes,
+            &fixture.context,
+        )
+        .unwrap();
+        let manifest = plan_run_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &fixture.context,
+        )
+        .unwrap();
+        let mut ids = config
+            .graders()
+            .iter()
+            .map(|grader| grader.grader_id.clone())
+            .collect::<Vec<_>>();
+        ids.sort();
+        let inputs = FourGraderInputDigestFile {
+            schema_version: 1,
+            purpose: FOUR_GRADER_BATCH_INPUT_PURPOSE.into(),
+            inputs: ids
+                .iter()
+                .map(|id| FourGraderInputDigest {
+                    grader_id: id.clone(),
+                    prompt_sha256: sha256_bytes(b"explicit fixture prompt"),
+                    input_sha256: sha256_bytes(id.as_bytes()),
+                })
+                .collect(),
+        };
+        let input_bytes = serde_json::to_vec(&inputs).unwrap();
+        let batch_plan = plan_four_grader_batch_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &input_bytes,
+            &fixture.context,
+        )
+        .unwrap();
+        let result_bytes = ids.iter().map(|id| grades(id)).collect::<Vec<_>>();
+        let signer = ed25519_dalek::SigningKey::from_bytes(&[47; 32]);
+        let result_key = crate::wal::signing::pubkey_b64(&signer);
+        let mut receipt = SignedFourGraderBatchResultReceipt {
+            body: FourGraderBatchResultReceiptBody {
+                schema_version: 1,
+                purpose: FOUR_GRADER_BATCH_RESULT_RECEIPT_PURPOSE.into(),
+                run_id: manifest.run_id.clone(),
+                run_manifest_sha256: sha256_json(&manifest).unwrap(),
+                batch_plan_sha256: batch_plan.canonical_sha256().unwrap(),
+                results: ids
+                    .iter()
+                    .zip(&result_bytes)
+                    .map(|(id, bytes)| FourGraderBatchResultArtifact {
+                        grader_id: id.clone(),
+                        result_sha256: sha256_bytes(bytes),
+                        record_count: 200,
+                    })
+                    .collect(),
+            },
+            signature_b64: String::new(),
+        };
+        receipt.signature_b64 =
+            crate::wal::signing::sign_b64(&signer, &receipt.canonical_bytes().unwrap());
+        validate_attested_four_grader_batch_results_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &receipt,
+            &result_key,
+            &result_bytes,
+            &fixture.context,
+        )
+        .unwrap();
+        let results = ingest_attested_four_grader_batch_results_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &receipt,
+            &result_key,
+            &result_bytes,
+            &fixture.context,
+        )
+        .unwrap();
+        ingest_offline_grades_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &result_bytes[0],
+            &fixture.context,
+        )
+        .unwrap();
+        let (import_receipt, import_key) =
+            signed_receipt(&manifest, results.imported_grades.clone());
+        let import_bytes = serde_json::to_vec(&import_receipt).unwrap();
+        // Ordinary derived reports and attested gate reports intentionally own
+        // separate report-state transitions. Exercise both on valid local runs.
+        let legacy_run = tempfile::tempdir().unwrap();
+        ingest_operator_anchor_evidence_with_context(
+            legacy_run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &evidence,
+            &anchor_bytes,
+            &link_bytes,
+            &fixture.context,
+        )
+        .unwrap();
+        let legacy_manifest = plan_run_with_context(
+            legacy_run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &fixture.context,
+        )
+        .unwrap();
+        for bytes in &result_bytes {
+            ingest_offline_grades_with_context(
+                legacy_run.path(),
+                &config,
+                &config_bytes,
+                &entries,
+                &goldset_bytes,
+                bytes,
+                &fixture.context,
+            )
+            .unwrap();
+        }
+        let (legacy_receipt, legacy_key) =
+            signed_receipt(&legacy_manifest, results.imported_grades.clone());
+        build_report_with_context(
+            legacy_run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &legacy_receipt,
+            &legacy_key,
+            &fixture.context,
+        )
+        .unwrap();
+        summarize_attested_four_grader_family_bias_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &fixture.context,
+        )
+        .unwrap();
+        let gate = build_attested_parity_gate_report_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &import_bytes,
+            &import_key,
+            &fixture.context,
+        )
+        .unwrap();
+        assert!(
+            !gate.gate_eligible,
+            "fixture graders disagree with operator calibration; valid custody cannot override quality policy"
+        );
+        let before = snapshot(run.path());
+        let legacy_before = snapshot(legacy_run.path());
+        fixture.revoke().await;
+        assert_local_rejection(ingest_operator_anchor_evidence_with_context(
+            &rejected_run,
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &evidence,
+            &anchor_bytes,
+            &link_bytes,
+            &fixture.context,
+        ));
+        assert!(
+            !rejected_run.exists(),
+            "revoked local evidence cannot create a run"
+        );
+        assert_local_rejection(plan_run_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &fixture.context,
+        ));
+        assert_local_rejection(plan_four_grader_batch_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &input_bytes,
+            &fixture.context,
+        ));
+        assert_local_rejection(validate_attested_four_grader_batch_results_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &receipt,
+            &result_key,
+            &result_bytes,
+            &fixture.context,
+        ));
+        assert_local_rejection(ingest_attested_four_grader_batch_results_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &receipt,
+            &result_key,
+            &result_bytes,
+            &fixture.context,
+        ));
+        assert_local_rejection(ingest_offline_grades_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &result_bytes[0],
+            &fixture.context,
+        ));
+        assert_local_rejection(build_report_with_context(
+            legacy_run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &legacy_receipt,
+            &legacy_key,
+            &fixture.context,
+        ));
+        assert_local_rejection(summarize_attested_four_grader_family_bias_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &fixture.context,
+        ));
+        assert_local_rejection(build_attested_parity_gate_report_with_context(
+            run.path(),
+            &config,
+            &config_bytes,
+            &entries,
+            &goldset_bytes,
+            &import_bytes,
+            &import_key,
+            &fixture.context,
+        ));
+        assert_eq!(
+            snapshot(run.path()),
+            before,
+            "all nine rejected consumers preserve every run artifact"
+        );
+        assert_eq!(
+            snapshot(legacy_run.path()),
+            legacy_before,
+            "revoked ordinary report preserves its separate run"
+        );
+        fixture.shutdown().await;
     }
 
     fn operator_anchor_inputs(evidence: &ValidatedCandidateEvidence) -> (Vec<u8>, Vec<u8>) {

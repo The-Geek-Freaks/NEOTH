@@ -70,6 +70,7 @@ mod tests;
 
 pub(crate) use client::try_post_skill_mutation_frame;
 pub(crate) use client::try_post_trust_decision_once;
+#[cfg(windows)]
 pub(crate) use client::verified_daemon_endpoint_nonce;
 pub use client::{
     AuditRpcClientError, consume_fullauto_token, consume_jobs_run_token, enforce_required_audit,

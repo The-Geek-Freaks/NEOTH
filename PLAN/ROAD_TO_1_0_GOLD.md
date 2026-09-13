@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Wave 11 component accepted (2026-09-13):** P1-08 Stage 4 now exports explicitly
+selected authenticated local transcript spans with signed custody. All nine
+persisted harness consumers revalidate current source eligibility; revoked,
+expired, deleted or changed evidence cannot authorize later artifacts.
+**443 selected tests plus one parent-owned child pass**, together with ten
+harness contracts, Core check, strict Clippy, formatting and independent review.
+Evidence: `docs/gold-wave11-verification.md` and its eighteen-input source/test
+receipts. Compilation uses one job, Idle priority and four logical CPUs; the
+final build retained at least 216.95 GiB free RAM. P1-08 stays OPEN for real
+operator labels, shadow/live-grader execution and methodology acceptance.
+Counts remain **1,009 complete / 313 open / 2 partial**. The preceding full CI
+run `34753681098` failed; three baseline compile repairs are included here and
+the twenty Windows failures form the next focused repair batch.
+
 **Wave 10 component accepted (2026-09-13):** P1-08 Stage 3b now binds fresh,
 explicitly opted-in local operator transcripts to authenticated RAW_TEXT and
 Bound WAL frames. Exact descriptor recovery, persistent delivery leases,

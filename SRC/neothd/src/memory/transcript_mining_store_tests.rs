@@ -94,6 +94,71 @@ async fn activate(
     raw_turn_id
 }
 
+#[tokio::test]
+async fn local_candidate_reader_rejects_delete_committed_during_authenticated_snapshot() {
+    use crate::memory::transcript_mining_runtime::AuthenticatedLocalTranscriptReader;
+    let home = make_home();
+    let mut store = open_store(home.path());
+    let (writer, join) = start_writer(home.path(), "reader-race");
+    let text = "retained operator source";
+    let id = activate(
+        &mut store,
+        &writer,
+        home.path(),
+        "reader-race",
+        text,
+        now_unix(),
+    )
+    .await;
+    let provenance: String = store
+        .conn
+        .query_row(
+            "SELECT provenance_id FROM transcript_mining_provenance WHERE raw_turn_id=?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let reader = AuthenticatedLocalTranscriptReader::open_existing(home.path())
+        .unwrap()
+        .unwrap();
+    assert!(
+        reader
+            .read_active(&provenance, text.len() - 1)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        reader
+            .read_active(&provenance, text.len())
+            .unwrap()
+            .unwrap()
+            .operator_text(),
+        text
+    );
+    let concurrent = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+    let result = reader.read_active_with_test_hook(&provenance, text.len(), || {
+        assert_eq!(
+            concurrent.execute("DELETE FROM raw_turns WHERE id=?1", [id])?,
+            1
+        );
+        Ok(())
+    });
+    assert!(
+        result.is_err(),
+        "a valid old snapshot must not survive a concurrent committed deletion"
+    );
+    assert!(format!("{:#}", result.err().unwrap()).contains("state changed"));
+    assert!(
+        reader
+            .read_active(&provenance, text.len())
+            .unwrap()
+            .is_none()
+    );
+    drop(reader);
+    drop(store);
+    stop_writer(writer, join).await;
+}
+
 fn count_mining_frames(home: &std::path::Path) -> (usize, usize) {
     let mut raws = 0;
     let mut bounds = 0;

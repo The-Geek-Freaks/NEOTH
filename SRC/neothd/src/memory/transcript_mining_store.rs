@@ -28,6 +28,52 @@ type ActiveBindingRow = (
     Vec<u8>,
 );
 
+/// Immutable digests copied only from an authenticated physical frame receipt.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TranscriptMiningFrameCustody {
+    pub(crate) header_sha256: [u8; 32],
+    pub(crate) payload_sha256: [u8; 32],
+    pub(crate) frame_sha256: [u8; 32],
+    pub(crate) location_sha256: [u8; 32],
+    pub(crate) operation_sha256: [u8; 32],
+}
+
+/// Text is returned only after the canonical RAW/Bound proof. No Debug or
+/// serialization implementation may accidentally expose it in a safe report.
+pub(crate) struct AuthenticatedTranscriptProjection {
+    provenance_id: String,
+    lifecycle_id: String,
+    operator_text: String,
+    created_at_unix: i64,
+    expires_at_unix: i64,
+    raw: TranscriptMiningFrameCustody,
+    bound: TranscriptMiningFrameCustody,
+}
+
+impl AuthenticatedTranscriptProjection {
+    pub(crate) fn provenance_id(&self) -> &str {
+        &self.provenance_id
+    }
+    pub(crate) fn lifecycle_id(&self) -> &str {
+        &self.lifecycle_id
+    }
+    pub(crate) fn operator_text(&self) -> &str {
+        &self.operator_text
+    }
+    pub(crate) const fn created_at_unix(&self) -> i64 {
+        self.created_at_unix
+    }
+    pub(crate) const fn expires_at_unix(&self) -> i64 {
+        self.expires_at_unix
+    }
+    pub(crate) const fn raw(&self) -> &TranscriptMiningFrameCustody {
+        &self.raw
+    }
+    pub(crate) const fn bound(&self) -> &TranscriptMiningFrameCustody {
+        &self.bound
+    }
+}
+
 pub(crate) struct PreparedRaw {
     event_id: i64,
     raw_turn_id: i64,
@@ -856,155 +902,209 @@ impl TranscriptMiningStore {
     /// mining: both exact physical frames are re-read through the authenticated
     /// WAL prefix and compared with the persisted receipts and lifecycle.
     pub(crate) fn active_binding_is_usable(&self, raw_turn_id: i64, now: i64) -> Result<bool> {
-        let row: Result<ActiveBindingRow> = self.conn.query_row(
-            "SELECT f.planned_header,f.planned_header_sha256,r.text,p.raw_text_sha256,f.raw_frame_sha256,
-                    o.planned_header,o.planned_header_sha256,o.payload,o.payload_sha256,o.delivered_frame_sha256
-             FROM transcript_mining_provenance p JOIN transcript_mining_raw_frame_plan f ON f.provenance_id=p.provenance_id
-             JOIN raw_turns r ON r.id=p.raw_turn_id JOIN transcript_mining_wal_outbox o ON o.provenance_id=p.provenance_id AND o.logical_subtype='bound'
-             WHERE p.raw_turn_id=?1 AND p.lifecycle='active' AND p.expires_at_unix>?2 AND p.terminal_cause IS NULL
-               AND f.state='verified' AND f.delivery_lease='none' AND o.state='delivered' AND o.delivery_lease='none'", params![raw_turn_id,now], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?))).map_err(Into::into);
-        let Ok((
-            raw_header,
-            raw_header_sha,
-            text,
-            text_sha,
-            raw_frame_sha,
-            bound_header,
-            bound_header_sha,
-            bound_payload,
-            bound_payload_sha,
-            bound_frame_sha,
-        )) = row
-        else {
-            return Ok(false);
-        };
-        let raw_header_sha: [u8; 32] = match raw_header_sha.try_into() {
-            Ok(v) => v,
-            Err(_) => return Ok(false),
-        };
-        let text_sha: [u8; 32] = match text_sha.try_into() {
-            Ok(v) => v,
-            Err(_) => return Ok(false),
-        };
-        let raw_frame_sha: [u8; 32] = match raw_frame_sha.try_into() {
-            Ok(v) => v,
-            Err(_) => return Ok(false),
-        };
-        let bound_header_sha: [u8; 32] = match bound_header_sha.try_into() {
-            Ok(v) => v,
-            Err(_) => return Ok(false),
-        };
-        let bound_payload_sha: [u8; 32] = match bound_payload_sha.try_into() {
-            Ok(v) => v,
-            Err(_) => return Ok(false),
-        };
-        let bound_frame_sha: [u8; 32] = match bound_frame_sha.try_into() {
-            Ok(v) => v,
-            Err(_) => return Ok(false),
-        };
-        let subject: Result<Vec<u8>> = self.conn.query_row(
-            "SELECT subject_sha256 FROM transcript_mining_modern_raw_witness WHERE raw_turn_id=?1",
-            [raw_turn_id], |row| row.get(0),
-        ).map_err(Into::into);
-        let Ok(subject) = subject else {
-            return Ok(false);
-        };
-        let Ok(subject) = <[u8; 32]>::try_from(subject) else {
-            return Ok(false);
-        };
-        if !self.ingress.accepts_subject_sha256(&subject)? {
-            return Ok(false);
-        }
-        // Rebuild the only canonical bound payload that this exact DB row may
-        // authorize.  Merely finding two authentic frames is insufficient:
-        // a corrupted SQLite projection must not be able to point row B at a
-        // valid binding frame that belongs to row A.
-        let canonical: Result<Vec<u8>> = self.conn.query_row(
-            "SELECT p.lifecycle_id,p.provenance_id,w.subject_sha256,p.raw_turn_id,f.raw_frame_sha256,p.raw_text_sha256,p.retention,p.created_at_unix,p.expires_at_unix
-             FROM transcript_mining_provenance p JOIN transcript_mining_modern_raw_witness w ON w.raw_turn_id=p.raw_turn_id
-             JOIN transcript_mining_raw_frame_plan f ON f.provenance_id=p.provenance_id AND f.lifecycle_id=p.lifecycle_id AND f.raw_turn_id=p.raw_turn_id
-             JOIN raw_turns r ON r.id=p.raw_turn_id
-             WHERE p.raw_turn_id=?1 AND p.raw_role='operator' AND p.source_kind='operator_raw_text_v1'
-               AND r.role='operator' AND r.transcript_mining_authority_epoch=1 AND r.transcript_mining_raw_frame_plan_epoch=1
-               AND w.raw_role='operator' AND w.source_kind='operator_raw_text_v1'", [raw_turn_id], |row| {
-                let lifecycle: String=row.get(0)?; let provenance: String=row.get(1)?;
-                let subject: Vec<u8>=row.get(2)?; let raw_id:i64=row.get(3)?; let frame:Vec<u8>=row.get(4)?; let text:Vec<u8>=row.get(5)?; let retention:String=row.get(6)?; let created:i64=row.get(7)?; let expires:i64=row.get(8)?;
-                let subject:[u8;32]=subject.try_into().map_err(|_|rusqlite::Error::InvalidQuery)?;
-                let frame:[u8;32]=frame.try_into().map_err(|_|rusqlite::Error::InvalidQuery)?;
-                let text:[u8;32]=text.try_into().map_err(|_|rusqlite::Error::InvalidQuery)?;
-                TranscriptMiningBoundV1::from_attested_store(lifecycle,provenance,subject,raw_id,frame,text,parse_retention(&retention).map_err(|_|rusqlite::Error::InvalidQuery)?,created,expires).and_then(|v|v.encode()).map_err(|_|rusqlite::Error::InvalidQuery)
-            }).map_err(Into::into);
-        let Ok(canonical) = canonical else {
-            return Ok(false);
-        };
-        if canonical != bound_payload {
-            return Ok(false);
-        }
-        let raw = match PlannedRawTextDescriptor::from_persisted(
-            &raw_header,
-            raw_header_sha,
-            text.into_bytes(),
-            text_sha,
-        ) {
-            Ok(v) => v,
-            Err(_) => return Ok(false),
-        };
-        let bound = match PlannedMiningOutboxDescriptor::from_persisted(
-            &bound_header,
-            bound_header_sha,
-            bound_payload,
-            bound_payload_sha,
-        ) {
-            Ok(v) => v,
-            Err(_) => return Ok(false),
-        };
-        let raw_receipt = match crate::wal::transcript_mining_once::verify_exact_at_home(
-            self.ingress.home(),
-            &crate::wal::transcript_mining_once::TranscriptMiningDescriptor::raw(raw),
-        ) {
-            Ok(v) => v,
-            Err(_) => return Ok(false),
-        };
-        let bound_receipt = match crate::wal::transcript_mining_once::verify_exact_at_home(
-            self.ingress.home(),
-            &crate::wal::transcript_mining_once::TranscriptMiningDescriptor::outbox(bound),
-        ) {
-            Ok(v) => v,
-            Err(_) => return Ok(false),
-        };
-        let locations = self.conn.query_row(
-            "SELECT f.raw_receipt_location_sha256,f.delivery_descriptor_sha256,
-                    o.delivered_receipt_location_sha256,o.delivery_descriptor_sha256
-             FROM transcript_mining_provenance p
-             JOIN transcript_mining_raw_frame_plan f ON f.provenance_id=p.provenance_id
-               AND f.lifecycle_id=p.lifecycle_id AND f.raw_turn_id=p.raw_turn_id
-             JOIN transcript_mining_wal_outbox o ON o.provenance_id=p.provenance_id
-               AND o.lifecycle_id=p.lifecycle_id AND o.logical_subtype='bound'
-             WHERE p.raw_turn_id=?1",
-            [raw_turn_id],
-            |r| {
-                Ok((
-                    r.get::<_, Vec<u8>>(0)?,
-                    r.get::<_, Vec<u8>>(1)?,
-                    r.get::<_, Vec<u8>>(2)?,
-                    r.get::<_, Vec<u8>>(3)?,
-                ))
-            },
-        );
-        let Ok((raw_location, raw_descriptor, bound_location, bound_descriptor)) = locations else {
-            return Ok(false);
-        };
-        Ok(raw_receipt.frame_sha256() == raw_frame_sha
-            && raw_receipt.payload_sha256() == text_sha
-            && bound_receipt.frame_sha256() == bound_frame_sha
-            && bound_receipt.payload_sha256() == bound_payload_sha
-            && raw_receipt.location_sha256().as_slice() == raw_location
-            && bound_receipt.location_sha256().as_slice() == bound_location
-            && descriptor_digest(&raw_header_sha, &text_sha).as_slice() == raw_descriptor
-            && descriptor_digest(&bound_header_sha, &bound_payload_sha).as_slice()
-                == bound_descriptor)
+        let version = views_data_version(&self.conn)?;
+        let transaction = self.conn.unchecked_transaction()?;
+        let projection =
+            authenticate_active_binding(&transaction, &self.ingress, raw_turn_id, now)?;
+        transaction.commit()?;
+        self.ingress.validate()?;
+        Ok(views_data_version(&self.conn)? == version && projection.is_some())
     }
 }
+/// The caller retains a consistent SQLite snapshot for every canonical query.
+/// The writer's boolean reader and the local evidence reader share this exact
+/// verifier; the text-bearing projection cannot bypass either WAL receipt.
+pub(crate) fn authenticate_active_binding(
+    conn: &Connection,
+    ingress: &AuthenticatedLocalIngress,
+    raw_turn_id: i64,
+    now: i64,
+) -> Result<Option<AuthenticatedTranscriptProjection>> {
+    ingress.validate()?;
+    let row: Result<ActiveBindingRow> = conn.query_row(
+        "SELECT f.planned_header,f.planned_header_sha256,r.text,p.raw_text_sha256,f.raw_frame_sha256,
+                o.planned_header,o.planned_header_sha256,o.payload,o.payload_sha256,o.delivered_frame_sha256
+         FROM transcript_mining_provenance p JOIN transcript_mining_raw_frame_plan f ON f.provenance_id=p.provenance_id
+         JOIN raw_turns r ON r.id=p.raw_turn_id JOIN transcript_mining_wal_outbox o ON o.provenance_id=p.provenance_id AND o.logical_subtype='bound'
+         WHERE p.raw_turn_id=?1 AND p.lifecycle='active' AND p.expires_at_unix>?2 AND p.terminal_cause IS NULL
+           AND f.state='verified' AND f.delivery_lease='none' AND o.state='delivered' AND o.delivery_lease='none'", params![raw_turn_id,now], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?))).map_err(Into::into);
+    let Ok((
+        raw_header,
+        raw_header_sha,
+        text,
+        text_sha,
+        raw_frame_sha,
+        bound_header,
+        bound_header_sha,
+        bound_payload,
+        bound_payload_sha,
+        bound_frame_sha,
+    )) = row
+    else {
+        return Ok(None);
+    };
+    let raw_header_sha: [u8; 32] = match raw_header_sha.try_into() {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let text_sha: [u8; 32] = match text_sha.try_into() {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let raw_frame_sha: [u8; 32] = match raw_frame_sha.try_into() {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let bound_header_sha: [u8; 32] = match bound_header_sha.try_into() {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let bound_payload_sha: [u8; 32] = match bound_payload_sha.try_into() {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let bound_frame_sha: [u8; 32] = match bound_frame_sha.try_into() {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let subject: Result<Vec<u8>> = conn
+        .query_row(
+            "SELECT subject_sha256 FROM transcript_mining_modern_raw_witness WHERE raw_turn_id=?1",
+            [raw_turn_id],
+            |row| row.get(0),
+        )
+        .map_err(Into::into);
+    let Ok(subject) = subject else {
+        return Ok(None);
+    };
+    let Ok(subject) = <[u8; 32]>::try_from(subject) else {
+        return Ok(None);
+    };
+    if !ingress.accepts_subject_sha256(&subject)? {
+        return Ok(None);
+    }
+    // Rebuild the only canonical bound payload that this exact DB row may
+    // authorize.  Merely finding two authentic frames is insufficient:
+    // a corrupted SQLite projection must not be able to point row B at a
+    // valid binding frame that belongs to row A.
+    let canonical: Result<Vec<u8>> = conn.query_row(
+        "SELECT p.lifecycle_id,p.provenance_id,w.subject_sha256,p.raw_turn_id,f.raw_frame_sha256,p.raw_text_sha256,p.retention,p.created_at_unix,p.expires_at_unix
+         FROM transcript_mining_provenance p JOIN transcript_mining_modern_raw_witness w ON w.raw_turn_id=p.raw_turn_id
+         JOIN transcript_mining_raw_frame_plan f ON f.provenance_id=p.provenance_id AND f.lifecycle_id=p.lifecycle_id AND f.raw_turn_id=p.raw_turn_id
+         JOIN raw_turns r ON r.id=p.raw_turn_id
+         WHERE p.raw_turn_id=?1 AND p.raw_role='operator' AND p.source_kind='operator_raw_text_v1'
+           AND r.role='operator' AND r.transcript_mining_authority_epoch=1 AND r.transcript_mining_raw_frame_plan_epoch=1
+           AND w.raw_role='operator' AND w.source_kind='operator_raw_text_v1'", [raw_turn_id], |row| {
+            let lifecycle: String=row.get(0)?; let provenance: String=row.get(1)?;
+            let subject: Vec<u8>=row.get(2)?; let raw_id:i64=row.get(3)?; let frame:Vec<u8>=row.get(4)?; let text:Vec<u8>=row.get(5)?; let retention:String=row.get(6)?; let created:i64=row.get(7)?; let expires:i64=row.get(8)?;
+            let subject:[u8;32]=subject.try_into().map_err(|_|rusqlite::Error::InvalidQuery)?;
+            let frame:[u8;32]=frame.try_into().map_err(|_|rusqlite::Error::InvalidQuery)?;
+            let text:[u8;32]=text.try_into().map_err(|_|rusqlite::Error::InvalidQuery)?;
+            TranscriptMiningBoundV1::from_attested_store(lifecycle,provenance,subject,raw_id,frame,text,parse_retention(&retention).map_err(|_|rusqlite::Error::InvalidQuery)?,created,expires).and_then(|v|v.encode()).map_err(|_|rusqlite::Error::InvalidQuery)
+        }).map_err(Into::into);
+    let Ok(canonical) = canonical else {
+        return Ok(None);
+    };
+    if canonical != bound_payload {
+        return Ok(None);
+    }
+    let raw = match PlannedRawTextDescriptor::from_persisted(
+        &raw_header,
+        raw_header_sha,
+        text.as_bytes().to_vec(),
+        text_sha,
+    ) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let bound = match PlannedMiningOutboxDescriptor::from_persisted(
+        &bound_header,
+        bound_header_sha,
+        bound_payload,
+        bound_payload_sha,
+    ) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let raw_receipt = match crate::wal::transcript_mining_once::verify_exact_at_home(
+        ingress.home(),
+        &crate::wal::transcript_mining_once::TranscriptMiningDescriptor::raw(raw),
+    ) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let bound_receipt = match crate::wal::transcript_mining_once::verify_exact_at_home(
+        ingress.home(),
+        &crate::wal::transcript_mining_once::TranscriptMiningDescriptor::outbox(bound),
+    ) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let locations = conn.query_row(
+        "SELECT f.raw_receipt_location_sha256,f.delivery_descriptor_sha256,
+                o.delivered_receipt_location_sha256,o.delivery_descriptor_sha256
+         FROM transcript_mining_provenance p
+         JOIN transcript_mining_raw_frame_plan f ON f.provenance_id=p.provenance_id
+           AND f.lifecycle_id=p.lifecycle_id AND f.raw_turn_id=p.raw_turn_id
+         JOIN transcript_mining_wal_outbox o ON o.provenance_id=p.provenance_id
+           AND o.lifecycle_id=p.lifecycle_id AND o.logical_subtype='bound'
+         WHERE p.raw_turn_id=?1",
+        [raw_turn_id],
+        |r| {
+            Ok((
+                r.get::<_, Vec<u8>>(0)?,
+                r.get::<_, Vec<u8>>(1)?,
+                r.get::<_, Vec<u8>>(2)?,
+                r.get::<_, Vec<u8>>(3)?,
+            ))
+        },
+    );
+    let Ok((raw_location, raw_descriptor, bound_location, bound_descriptor)) = locations else {
+        return Ok(None);
+    };
+    if !(raw_receipt.frame_sha256() == raw_frame_sha
+        && raw_receipt.payload_sha256() == text_sha
+        && bound_receipt.frame_sha256() == bound_frame_sha
+        && bound_receipt.payload_sha256() == bound_payload_sha
+        && raw_receipt.location_sha256().as_slice() == raw_location
+        && bound_receipt.location_sha256().as_slice() == bound_location
+        && descriptor_digest(&raw_header_sha, &text_sha).as_slice() == raw_descriptor
+        && descriptor_digest(&bound_header_sha, &bound_payload_sha).as_slice() == bound_descriptor)
+    {
+        return Ok(None);
+    }
+    let binding = TranscriptMiningBoundV1::decode(&canonical)?;
+    Ok(Some(AuthenticatedTranscriptProjection {
+        provenance_id: binding.provenance_id().to_owned(),
+        lifecycle_id: binding.lifecycle_id().to_owned(),
+        operator_text: text,
+        created_at_unix: binding.issued_at_unix(),
+        expires_at_unix: binding.expires_at_unix(),
+        raw: TranscriptMiningFrameCustody {
+            header_sha256: raw_header_sha,
+            payload_sha256: text_sha,
+            frame_sha256: raw_frame_sha,
+            location_sha256: raw_receipt.location_sha256(),
+            operation_sha256: descriptor_digest(&raw_header_sha, &text_sha),
+        },
+        bound: TranscriptMiningFrameCustody {
+            header_sha256: bound_header_sha,
+            payload_sha256: bound_payload_sha,
+            frame_sha256: bound_frame_sha,
+            location_sha256: bound_receipt.location_sha256(),
+            operation_sha256: descriptor_digest(&bound_header_sha, &bound_payload_sha),
+        },
+    }))
+}
+
+/// On one retained connection, a change detects another connection's commit.
+/// Read this outside the snapshot before and after WAL authentication so a
+/// stale SQLite snapshot cannot conceal concurrent revocation or deletion.
+pub(crate) fn views_data_version(conn: &Connection) -> Result<i64> {
+    conn.pragma_query_value(None, "data_version", |row| row.get(0))
+        .context("read transcript projection database version")
+}
+
 struct VerifiedStoredBound {
     payload: TranscriptMiningBoundV1,
     payload_sha256: [u8; 32],

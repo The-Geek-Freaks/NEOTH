@@ -960,8 +960,6 @@ impl ContextStore {
         }
         let scope = self.scope(account);
         let batch_digest = scope.pseudonym(&self.lookup_key, b"batch", &batch.source_batch_key.0);
-        #[cfg(not(windows))]
-        let store_path = &self.path;
         for recovery_attempt in 0..=MAX_MAINTENANCE_RECOVERY_ATTEMPTS {
             let tx = self
                 .conn
@@ -1070,7 +1068,7 @@ impl ContextStore {
                 }
             };
             #[cfg(not(windows))]
-            let footprint = physical_store_footprint(store_path)?;
+            let footprint = physical_store_footprint(&self.path)?;
             ensure_store_limits_with(&tx, footprint, &scope, &newly_claimed, limits)?;
             ensure_scope_limits(&tx, &self.lookup_key, &scope, &newly_claimed)?;
             for operation in &newly_claimed {

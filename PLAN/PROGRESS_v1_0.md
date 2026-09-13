@@ -3,6 +3,19 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 11 component accepted 2026-09-13 — GOLD-LF-P1-08 Stage 4:** explicit
+> local candidate export binds selected spans to authenticated RAW/Bound custody.
+> All nine persisted harness consumers revalidate current eligibility; source
+> deletion, expiry, revocation or mutation rejects later artifact transitions.
+> **443 selected tests pass**, plus one parent-owned child and ten harness
+> contracts. Core, strict Clippy, formatting and independent review pass.
+> Evidence: `docs/gold-wave11-verification.md` and its eighteen-input manifest
+> and exact test matrix. Final build: one job, Idle, four logical CPUs, minimum
+> 216.95 GiB RAM free. P1-08 remains open for real labels, shadow/live graders
+> and methodology acceptance; counts remain 1009/313/2. Full CI on Wave 10
+> failed (`34753681098`); three baseline compile repairs are included here,
+> with twenty Windows failures queued for the next focused repair batch.
+>
 > **Wave 10 component accepted 2026-09-13 — GOLD-LF-P1-08 Stage 3b:**
 > finite local opt-in now drives exact authenticated RAW_TEXT/Bound delivery,
 > persisted retry descriptors and guarded SQLite V38 leases. Lost ACKs,
