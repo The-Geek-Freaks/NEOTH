@@ -132,8 +132,8 @@ fn durable_discovery_precedes_listener_admission() {
         .expect("Unix bind_and_serve must exist");
     let end = start
         + RPC[start..]
-            .find("/// Windows and other non-Unix targets")
-            .expect("Unix bind_and_serve must end before the unavailable stub");
+            .find("#[cfg(windows)]\npub(crate) async fn bind_and_serve(")
+            .expect("Unix bind_and_serve must end before Windows pipe binding");
     let bind = &RPC[start..end];
     let publish = bind
         .find("write_sidecar(home, &endpoint, &endpoint_nonce)")
@@ -209,13 +209,11 @@ fn lifecycle_is_pid_bound_fatal_and_reload_cannot_split_authority() {
 }
 
 #[test]
-fn windows_is_explicitly_unavailable_without_a_weaker_fallback() {
-    assert!(
-        RPC.contains("Windows and other non-Unix targets deliberately expose no connector-control")
-    );
+fn windows_connector_control_is_private_pipe_only_without_tcp_fallback() {
+    assert!(RPC.contains("#[cfg(windows)]\npub(crate) async fn bind_and_serve"));
+    assert!(RPC.contains("windows_private_ipc::Listener"));
+    assert!(RPC.contains("pub(crate) struct WindowsClient"));
     assert!(RPC.contains("no TCP fallback exists"));
-    assert!(RPC.contains("#[cfg(not(unix))]\npub(crate) async fn bind_and_serve"));
-    assert!(SERVE.contains("private connector-control RPC unavailable on this platform"));
 }
 
 #[test]

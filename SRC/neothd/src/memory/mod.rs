@@ -100,6 +100,8 @@ pub mod self_wiki;
 /// codex / gemini → ground-truth candidates). `neoth import session`.
 pub mod session_import;
 pub mod session_search;
+/// Bounded, existing-only recall preparation for a local chat session.
+pub(crate) mod session_start_recall;
 pub mod snapshot_refresh;
 pub mod source_weight;
 pub mod store;

@@ -1,0 +1,78 @@
+{
+  "schema": "neoth-gold-source-manifest/v1",
+  "item": "GOLD-LF-P1-11+wave13-ci-repairs",
+  "baseCommit": "990080844a3cdd8d23ec312a37a48d3c61aeb7c9",
+  "recordedUtc": "2026-09-13T14:23:44.369545+00:00",
+  "files": [
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "bytes": 45388,
+      "sha256": "B2DE7BBC70735A5CE3CA4D143E05CB6BB6F90C1BF41B9E623E4915973310D130"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "bytes": 371518,
+      "sha256": "DBFD9688EB561001A857202B0649E2F2D18948026AD5E335818B400502D9376E"
+    },
+    {
+      "path": "SRC/neothd/src/memory/session_start_recall.rs",
+      "bytes": 44027,
+      "sha256": "7F6D5B86558D6FF63D544D099703C83C10F276B0D5FE54C5F05CAA232D291A71"
+    },
+    {
+      "path": "SRC/neothd/src/memory/mod.rs",
+      "bytes": 6543,
+      "sha256": "2F7570359D12A6FB90F83CAE36939B107DFF341E6560D46E62DF31BC8C7B2982"
+    },
+    {
+      "path": "SRC/neothd/src/memory/recall_gate.rs",
+      "bytes": 8373,
+      "sha256": "550F0B5C1DE9DA5C539D277346EC5BB0CF24337E2A8704CCED1C2A668D9A9835"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "bytes": 871806,
+      "sha256": "7B52CD1F9674AA7137E90653061DDD1555AB4A17E91D3B4D269A04D9797A8832"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
+      "bytes": 29876,
+      "sha256": "3138830CBC7A1DC45843B5001D22F2885E2BC7A833D7DB740EF7A01F7A22504E"
+    },
+    {
+      "path": "SRC/neothd/src/wal/hlc.rs",
+      "bytes": 12966,
+      "sha256": "5CF39D9607A703AE1F4CB64087E46F3F086BEB6D18CD6F9B40D3F838C7E9E891"
+    },
+    {
+      "path": "SRC/neothd-gui/src/trusted_probe_supervisor.rs",
+      "bytes": 55168,
+      "sha256": "67BC3672630DBF236A68992E2BDCBAFFF04B7CC627E20E610E3D8E523D7A2768"
+    },
+    {
+      "path": "SRC/neothd/tests/attachment_wiring_source_gate.rs",
+      "bytes": 6480,
+      "sha256": "14686FA3AB12B309D51F5470A6CB6AE6715E56C19903B5223E0B8E671DD7ACB1"
+    },
+    {
+      "path": "SRC/neothd/tests/connector_control_rpc_contract.rs",
+      "bytes": 12330,
+      "sha256": "BA1F60190B7134521DD2542B7F98F0926D836B01BCF1EFE40DD202E640619207"
+    },
+    {
+      "path": "SRC/neothd/tests/context_store_contract.rs",
+      "bytes": 6663,
+      "sha256": "CFB28F587E9AD82342257B1251C674740342A4AAC2EAB9ECCA76625265B2C6EA"
+    },
+    {
+      "path": "SRC/neothd/tests/council_factual_check_prompt_framing_contract.rs",
+      "bytes": 12579,
+      "sha256": "E9091FBD3145459919B990EE991A2DCFE7D3856BBB630AD58BE2A4E994EA4A65"
+    },
+    {
+      "path": "SRC/neothd/tests/transcript_mining_provenance_contract.rs",
+      "bytes": 10999,
+      "sha256": "DD2111D5FF05CF5D4336F328671EFB2F0CCD9D8492F38D6835FF0EDCB570642E"
+    }
+  ]
+}

@@ -405,6 +405,7 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
 /// back out because the later phases still consume them.
 struct PromptBundle {
     combined_system: Option<String>,
+    context_preload_notice: Option<ContextPreloadNotice>,
     /// Owning authority capability retained until this turn's dispatch
     /// finishes. Derived strings alone are not execution authority.
     skill_route_guard: Option<crate::skills::resolver::ResolvedSkillRoute>,
@@ -1899,6 +1900,10 @@ struct PromptBuildContext<'a> {
     writer: &'a crate::wal::writer::WalWriterHandle,
     current_path: &'a std::path::Path,
     attachment_contexts: Option<&'a crate::pipeline::AttachmentContextBatch>,
+    session_recall: Option<(
+        crate::memory::session_start_recall::SessionStartRecallPreload,
+        &'a str,
+    )>,
 }
 
 /// Optional prompt-routing decisions resolved before prompt assembly starts.
@@ -1920,6 +1925,7 @@ async fn build_prompt_bundle(
         writer,
         current_path,
         attachment_contexts,
+        session_recall,
     } = context;
     let PromptBuildOptions {
         // GOLD-CCPARITY-SKILLVIS-01 — lowercased skill id for an explicit
@@ -1974,6 +1980,7 @@ async fn build_prompt_bundle(
         return Ok((
             PromptBundle {
                 combined_system,
+                context_preload_notice: None,
                 skill_route_guard: None,
                 skill_route_report: crate::skills::resolver::SkillRouteReport {
                     outcome: crate::skills::resolver::SkillRouteOutcome::NoMatch,
@@ -2519,11 +2526,8 @@ async fn build_prompt_bundle(
     // so recall stays off the ARCH-02 replay-determinism surface. Best-effort.
     // ODY-09: incognito turns skip Block::D recall injection — no memory surfaces
     // on this turn, so the operator's intent stays ephemeral end-to-end.
-    let recall_block = if args.incognito {
-        None
-    } else {
-        maybe_recall_block(&prompt, &home).await
-    };
+    let (recall_block, context_preload_notice) =
+        consume_session_recall(session_recall, &prompt, &home).await;
 
     // ── GOLD-ADAPT-MEM-12 — session-guidance block (recent hindsight sessions
     // + open fact-contradictions), folded above the recall block as session-
@@ -2684,6 +2688,7 @@ async fn build_prompt_bundle(
     Ok((
         PromptBundle {
             combined_system,
+            context_preload_notice: Some(context_preload_notice),
             skill_route_guard: selected_skill_route,
             skill_route_report,
             budget_items,
@@ -3913,6 +3918,85 @@ fn write_authenticated_stream_notice(
     })
     .map_err(std::io::Error::other)?;
     write_stream_control_line(&mut output, Some(control_token), &notice)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ContextPreloadNotice {
+    Loading,
+    Ready,
+    NoData,
+    Stale,
+    Failed,
+}
+
+impl ContextPreloadNotice {
+    fn text(self) -> &'static str {
+        match self {
+            Self::Loading => "Preparing recalled context for this request...",
+            Self::Ready => "Recalled context is prepared for this request.",
+            Self::NoData => "No recalled context is needed or available for this request.",
+            Self::Stale => {
+                "Memory changed during preparation; continuing without recalled context."
+            }
+            Self::Failed => {
+                "Context preparation is unavailable; continuing without recalled context."
+            }
+        }
+    }
+}
+
+fn write_authenticated_context_preload_notice(
+    output: impl std::io::Write,
+    control_token: &str,
+    session_binding: &str,
+    state: ContextPreloadNotice,
+) -> std::io::Result<()> {
+    use sha2::{Digest, Sha256};
+
+    let mut hash = Sha256::new();
+    hash.update(b"neoth.context-preload.notice.v1\0");
+    hash.update(session_binding.as_bytes());
+    hash.update([state as u8]);
+    let id = format!("{:x}", hash.finalize());
+    write_authenticated_stream_notice(
+        output,
+        control_token,
+        "operator_notice",
+        &id,
+        state.text(),
+        false,
+    )
+}
+
+fn write_context_preload_notice(
+    stream: bool,
+    control_token: Option<&str>,
+    session_binding: &str,
+    state: ContextPreloadNotice,
+) -> std::io::Result<()> {
+    match control_token {
+        Some(token) => write_authenticated_context_preload_notice(
+            std::io::stdout().lock(),
+            token,
+            session_binding,
+            state,
+        ),
+        None => write_chat_notice(stream, format_args!("[neoth:context] {}", state.text())),
+    }
+}
+
+fn context_preload_session_binding(operator_id: Option<&str>, session_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hash = Sha256::new();
+    hash.update(b"neoth.context-preload.session.v1\0");
+    hash.update([u8::from(operator_id.is_some())]);
+    let operator = operator_id.unwrap_or_default();
+    hash.update((operator.len() as u64).to_le_bytes());
+    hash.update(operator.as_bytes());
+    hash.update((session_id.len() as u64).to_le_bytes());
+    hash.update(session_id.as_bytes());
+    format!("{:x}", hash.finalize())
 }
 
 struct StreamDoneMetadata<'a> {
@@ -7519,6 +7603,31 @@ async fn run_chat_with_consent(
     });
     let intent_bundle_hash = crate::skills::versioning::prompt_bundle_hash_hex(&bundle_entries);
 
+    // Start after this turn's authenticated transcript delivery has committed,
+    // so that delivery cannot invalidate our own SQLite snapshot. Incognito
+    // never constructs a preloader or reads the existing recall store.
+    let recall_binding =
+        context_preload_session_binding(config.operator_id.as_deref(), &current_session_id);
+    let session_recall = if args.incognito {
+        None
+    } else {
+        write_context_preload_notice(
+            args.stream,
+            stream_control_token.as_ref().map(|token| token.as_str()),
+            &recall_binding,
+            ContextPreloadNotice::Loading,
+        )?;
+        Some((
+            crate::memory::session_start_recall::start_session_recall_preload(
+                &LocalChatCommunicationSubject::mint(),
+                first_tour_home.clone(),
+                &recall_binding,
+                &prompt,
+            ),
+            recall_binding.as_str(),
+        ))
+    };
+
     // ── Operator context + skills load — K-Perf-4 parallel resource load ──
     // Both reads hit the filesystem and are mutually independent: operator_md
     // assembles ~/.neoth/NEOTH.md + project + rules + memory, skills walks
@@ -7542,6 +7651,7 @@ async fn run_chat_with_consent(
     let (
         PromptBundle {
             combined_system,
+            context_preload_notice,
             skill_route_guard: _skill_route_guard,
             skill_route_report,
             budget_items,
@@ -7569,6 +7679,7 @@ async fn run_chat_with_consent(
             writer: &writer,
             current_path: &prompt_current_path,
             attachment_contexts: attachment_contexts.as_ref(),
+            session_recall,
         },
         PromptBuildOptions {
             slash_skill_name,
@@ -7577,6 +7688,15 @@ async fn run_chat_with_consent(
         },
     )
     .await?;
+
+    if let Some(state) = context_preload_notice {
+        write_context_preload_notice(
+            args.stream,
+            stream_control_token.as_ref().map(|token| token.as_str()),
+            &recall_binding,
+            state,
+        )?;
+    }
 
     // Authenticated GUI/Buddy consumers receive the exact shared typed route
     // report once, before any local action or provider delta. Terminal streams
@@ -10493,33 +10613,63 @@ fn render_guidance_block(
     Some(s)
 }
 
-/// GOLD-WIRE Block::D + GOLD-ADAPT-MEM-09 — auto-recall episode block for
-/// [`build_prompt_bundle`]. On a non-trivial chat turn, fold the operator's
-/// most-relevant stored episodes into the system prompt so the model answers
-/// with continuity instead of cold. [`crate::memory::recall_gate::classify_recall_need`]
-/// gates it: greetings / status / identity (Skip-tier) pay no DB hit.
-///
-/// **Scope — CLI/TTY path only.** This runs inside `build_prompt_bundle`, the
-/// local-`neoth chat` assembler the operator already owns, so reading their own
-/// memory back into the prompt needs no per-sender authorization. The autonomous
-/// channel path (`serve_pipeline.rs`) keeps its stricter GOLD-WIRE-02b
-/// provable-operator gate and does NOT call this.
-///
-/// Best-effort: Skip-tier / missing DB / query error / no hits → `None`, never
-/// fails the turn. Production resolves the episode store from the operator's
-/// HOME (mirrors [`maybe_repo_context_recall`]); see [`maybe_recall_block_at`]
-/// for the explicit-path test variant.
-async fn maybe_recall_block(
+/// Consume one local session's prepared recall into the canonical Block D.
+/// Failed or stale preparation never starts a second, unbounded database read.
+async fn consume_session_recall(
+    prepared: Option<(
+        crate::memory::session_start_recall::SessionStartRecallPreload,
+        &str,
+    )>,
     prompt: &str,
-    neoth_home: &std::path::Path,
-) -> Option<crate::pipeline::RenderedUntrustedContext> {
-    let db_path = neoth_home.join("views.db");
-    maybe_recall_block_at(prompt, &db_path).await
+    home: &std::path::Path,
+) -> (
+    Option<crate::pipeline::RenderedUntrustedContext>,
+    ContextPreloadNotice,
+) {
+    use crate::memory::session_start_recall::{RecallPreloadEmpty, SessionStartRecallOutcome};
+    let Some((mut preload, binding)) = prepared else {
+        return (None, ContextPreloadNotice::NoData);
+    };
+    match preload
+        .consume(
+            &LocalChatCommunicationSubject::mint(),
+            home,
+            binding,
+            prompt,
+        )
+        .await
+    {
+        SessionStartRecallOutcome::Ready { mut output } => {
+            let rendered = render_preloaded_recall(&mut output);
+            // Count the complete canonical envelope, including its policy and
+            // metadata. UTF-8 byte count is the project's conservative token
+            // upper bound, so this also proves the 16 KiB wire ceiling.
+            if crate::tokens::budget::count_tokens_upper_bound(rendered.as_str()) > 8192 {
+                (None, ContextPreloadNotice::Failed)
+            } else {
+                (Some(rendered), ContextPreloadNotice::Ready)
+            }
+        }
+        SessionStartRecallOutcome::NoData(reason) => {
+            if reason == RecallPreloadEmpty::Empty
+                && crate::memory::recall_gate::classify_recall_need(prompt)
+                    == crate::memory::recall_gate::RecallTier::Multi
+            {
+                crate::analytics::babel::signals::emit(
+                    crate::analytics::babel::signals::SignalKind::MemoryRecallMiss,
+                );
+            }
+            (None, ContextPreloadNotice::NoData)
+        }
+        SessionStartRecallOutcome::Stale(_reason) => (None, ContextPreloadNotice::Stale),
+        SessionStartRecallOutcome::Failed(_reason) => (None, ContextPreloadNotice::Failed),
+    }
 }
 
 /// Test-friendly inner: resolve the episode store at an explicit path instead
 /// of through `HOME` / `USERPROFILE` (avoids env-var mutation in tests that
 /// would race under parallel execution). Same best-effort contract.
+#[cfg(test)]
 async fn maybe_recall_block_at(
     prompt: &str,
     db_path: &std::path::Path,
@@ -10537,7 +10687,7 @@ async fn maybe_recall_block_at(
     // mirroring `answer_conversational_recall`. A JoinError degrades to None.
     let prompt_owned = prompt.to_string();
     let db_owned = db_path.to_path_buf();
-    let output = match tokio::task::spawn_blocking(move || {
+    let mut output = match tokio::task::spawn_blocking(move || {
         recall_lanes_for_block(&db_owned, &prompt_owned, recall_tier == RecallTier::Multi)
     })
     .await
@@ -10545,14 +10695,22 @@ async fn maybe_recall_block_at(
         Ok(Ok(Some(output))) => output,
         Ok(Ok(None)) | Ok(Err(_)) | Err(_) => return None,
     };
-    Some(
-        crate::pipeline::UntrustedContext::new(
-            crate::pipeline::UntrustedContextClass::Memory,
-            "memory:cli-auto-recall",
-            render_recall_block_layered(&output),
-        )
-        .render(),
+    Some(render_preloaded_recall(&mut output))
+}
+
+/// Render the same untrusted memory envelope for session-start preparation and
+/// the direct helper fixtures. Deduplication is deterministic and preserves
+/// canonical facts ahead of matching episodes.
+pub(crate) fn render_preloaded_recall(
+    output: &mut crate::cli::recall::RecallOutput,
+) -> crate::pipeline::RenderedUntrustedContext {
+    dedup_recall_lanes(output);
+    crate::pipeline::UntrustedContext::new(
+        crate::pipeline::UntrustedContextClass::Memory,
+        "memory:cli-auto-recall",
+        render_recall_block_layered(output),
     )
+    .render()
 }
 
 /// GOLD-ADAPT-JV-MEM-10 — three-lane recall for the auto-recall block: canonical
@@ -10561,6 +10719,7 @@ async fn maybe_recall_block_at(
 /// empty (a non-Skip turn that recalls nothing suppresses Block::D entirely).
 /// Best-effort: a DB open error → `None`. Synchronous (rusqlite) — call inside
 /// `spawn_blocking`.
+#[cfg(test)]
 fn recall_lanes_for_block(
     db_path: &std::path::Path,
     prompt: &str,
@@ -13213,6 +13372,68 @@ mod tests {
     }
 
     #[test]
+    fn context_preload_notices_use_ephemeral_authenticated_operator_contract() {
+        let token = "0123456789abcdef0123456789abcdef";
+        let binding = context_preload_session_binding(Some("private operator"), "private session");
+        let mut ids = std::collections::HashSet::new();
+        for state in [
+            ContextPreloadNotice::Loading,
+            ContextPreloadNotice::Ready,
+            ContextPreloadNotice::NoData,
+            ContextPreloadNotice::Stale,
+            ContextPreloadNotice::Failed,
+        ] {
+            let mut bytes = Vec::new();
+            write_authenticated_context_preload_notice(&mut bytes, token, &binding, state).unwrap();
+            let wire = String::from_utf8(bytes).unwrap();
+            let frame: serde_json::Value = serde_json::from_str(
+                wire.lines()
+                    .find_map(|line| line.strip_prefix(CHAT_STREAM_CONTROL_PREFIX))
+                    .expect("authenticated notice record"),
+            )
+            .unwrap();
+            assert_eq!(frame["neoth_stream"], "notice");
+            assert_eq!(frame["kind"], "operator_notice");
+            assert_eq!(frame["protocol_version"], CHAT_STREAM_PROTOCOL_VERSION);
+            assert_eq!(frame["request_id"], stream_request_id(token));
+            assert_eq!(frame["control_token"], token);
+            assert_eq!(frame["durable"], false);
+            let id = frame["id"].as_str().unwrap();
+            assert_eq!(id.len(), 64);
+            assert!(
+                id.bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            );
+            assert!(
+                ids.insert(id.to_owned()),
+                "state transitions must remain distinct notices"
+            );
+            assert!(!wire.contains("private operator"));
+            assert!(!wire.contains("private session"));
+            assert!(!wire.contains(&binding));
+        }
+    }
+
+    #[test]
+    fn context_preload_session_binding_separates_subject_and_session() {
+        let values = [
+            context_preload_session_binding(None, "session"),
+            context_preload_session_binding(Some(""), "session"),
+            context_preload_session_binding(Some("operator"), "session"),
+            context_preload_session_binding(Some("operator"), "other-session"),
+            context_preload_session_binding(Some("a"), "bc"),
+            context_preload_session_binding(Some("ab"), "c"),
+        ];
+        assert_eq!(
+            values
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            values.len()
+        );
+    }
+
+    #[test]
     fn provider_done_frame_is_token_bound_and_carries_no_reply_text() {
         let line = stream_provider_done_line(
             Some("0123456789abcdef0123456789abcdef"),
@@ -15678,6 +15899,140 @@ modes:
             },
         )
         .unwrap();
+    }
+
+    type CapturedFirstRequest = (String, Option<String>);
+
+    struct FirstRequestCapturingProvider {
+        first_request: Arc<std::sync::Mutex<Option<CapturedFirstRequest>>>,
+    }
+
+    #[async_trait]
+    impl Provider for FirstRequestCapturingProvider {
+        fn name(&self) -> &'static str {
+            "first-request-capture"
+        }
+
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            let mut first = self.first_request.lock().expect("first request mutex");
+            if first.is_none() {
+                *first = Some((req.prompt.clone(), req.system.clone()));
+            }
+            Ok(Completion {
+                termination: Default::default(),
+                text: "captured reply".into(),
+                identity: Default::default(),
+                model: "capture-1".into(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                usage_measurements: None,
+            })
+        }
+    }
+
+    fn seed_preloaded_recall_episode(home: &std::path::Path, marker: &str) {
+        let conn = crate::memory::store::open(&home.join("views.db"))
+            .expect("create populated recall views database");
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (9999999, 1, 1000, ?1, 'preloaded-falcon', 0.9, 0)",
+            rusqlite::params![format!("project falcon context {marker}")],
+        )
+        .expect("seed matching retained recall episode");
+        drop(conn);
+    }
+
+    async fn run_preloaded_recall_chat(
+        home: &std::path::Path,
+        transcript_mining_optin: bool,
+        incognito: bool,
+    ) -> (String, Option<String>) {
+        crate::consent::grant(home, ProviderKind::ClaudeCli).expect("grant test consent");
+        let mut config = FreedomConfig {
+            operator_id: Some("local-operator".into()),
+            language_primary: Some("en".into()),
+            language_code: Some("en".into()),
+            provider_kind: Some(ProviderKind::ClaudeCli),
+            provider_binary: Some("claude".into()),
+            provider_model: Some("claude-opus-4-7".into()),
+            autonomy: UNPRICED_TEST_PROVIDER_AUTONOMY,
+            review_gate_enabled: false,
+            steps_completed: vec![1, 2, 3, 4, 5, 6, 7],
+            ..Default::default()
+        };
+        config.memory.recall_shortcut = false;
+        config.council.disabled = Some(true);
+        if transcript_mining_optin {
+            config.memory.transcript_mining_retention =
+                Some(crate::config::memory::TranscriptMiningRetention::Hours24);
+        }
+        let first_request = Arc::new(std::sync::Mutex::new(None));
+        let provider = FirstRequestCapturingProvider {
+            first_request: Arc::clone(&first_request),
+        };
+        let args = ChatArgs {
+            message: Some("project falcon context".into()),
+            config: Some(home.join("freedom.yaml")),
+            wal_segment: Some(canonical_test_wal(home, "preloaded-recall-chat")),
+            incognito,
+            ..test_chat_args_default()
+        };
+        run_chat_with(args, config, &provider)
+            .await
+            .expect("run chat through real first provider request");
+        first_request
+            .lock()
+            .expect("first request mutex")
+            .clone()
+            .expect("provider must receive a first request")
+    }
+
+    #[tokio::test]
+    async fn chat_preloads_retained_recall_before_first_provider_request_for_both_mining_modes() {
+        const MARKER: &str = "P1_11_UNIQUE_FALCON_RECALL_MARKER";
+        for transcript_mining_optin in [false, true] {
+            let home = tempdir().expect("test home");
+            seed_preloaded_recall_episode(home.path(), MARKER);
+            let (prompt, system) =
+                run_preloaded_recall_chat(home.path(), transcript_mining_optin, false).await;
+            let system = system.expect("recalled memory must be in the typed system envelope");
+            assert_eq!(prompt, "project falcon context");
+            assert!(
+                system.contains("\"class\":\"memory\""),
+                "typed memory class missing: {system}"
+            );
+            assert!(
+                system.contains("\"source_id\":\"memory:cli-auto-recall\""),
+                "typed memory source missing: {system}"
+            );
+            assert_eq!(
+                system.matches(MARKER).count(),
+                1,
+                "recalled marker must appear exactly once: {system}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_incognito_never_preloads_populated_retained_recall_into_first_provider_request() {
+        const MARKER: &str = "P1_11_UNIQUE_FALCON_RECALL_MARKER";
+        let home = tempdir().expect("test home");
+        seed_preloaded_recall_episode(home.path(), MARKER);
+        let (prompt, system) = run_preloaded_recall_chat(home.path(), true, true).await;
+        let system = system.unwrap_or_default();
+        assert_eq!(prompt, "project falcon context");
+        assert!(
+            !prompt.contains(MARKER) && !system.contains(MARKER),
+            "incognito leaked recalled episode"
+        );
+        assert!(
+            !system.contains("memory:cli-auto-recall"),
+            "incognito emitted a memory envelope: {system}"
+        );
     }
 
     #[tokio::test]
@@ -18189,6 +18544,7 @@ modes:
                 writer: &writer,
                 current_path: &repo,
                 attachment_contexts: None,
+                session_recall: None,
             },
             PromptBuildOptions {
                 slash_skill_name: None,
@@ -18252,6 +18608,7 @@ modes:
                 writer: &writer,
                 current_path: dir.path(),
                 attachment_contexts: None,
+                session_recall: None,
             },
             PromptBuildOptions {
                 slash_skill_name: None,
@@ -18264,6 +18621,10 @@ modes:
         writer_join.await.unwrap();
 
         let bundle = result.0;
+        assert!(
+            bundle.context_preload_notice.is_none(),
+            "Incognito must emit no preload status"
+        );
         assert_eq!(
             bundle.mcp_catalogue_slot,
             McpCatalogueSlot::from_enriched(&bundle.budget_items)
@@ -18845,6 +19206,13 @@ modes:
             ..test_chat_args_default()
         };
         let (writer, writer_join) = wal_spawn(home.join("prompt-build.wal")).unwrap();
+        let recall_binding = context_preload_session_binding(None, "adversarial-fixture");
+        let prepared_recall = crate::memory::session_start_recall::start_session_recall_preload(
+            &LocalChatCommunicationSubject::mint(),
+            home.clone(),
+            &recall_binding,
+            "adversarial memory marker",
+        );
         let result = build_prompt_bundle(
             FreedomConfig::default(),
             "adversarial memory marker".to_owned(),
@@ -18855,6 +19223,7 @@ modes:
                 writer: &writer,
                 current_path: dir.path(),
                 attachment_contexts: None,
+                session_recall: Some((prepared_recall, &recall_binding)),
             },
             PromptBuildOptions {
                 slash_skill_name: None,

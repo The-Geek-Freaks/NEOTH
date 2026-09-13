@@ -1,7 +1,7 @@
 # Memory Codemap — Embedding Store
 
-**Last Updated:** 2026-05-15
-**Entry Points:** `SRC/neothd/src/memory/embeddings.rs`, `SRC/neothd/src/memory/store.rs`
+**Last Updated:** 2026-09-13
+**Entry Points:** `SRC/neothd/src/memory/embeddings.rs`, `SRC/neothd/src/memory/store.rs`, `SRC/neothd/src/memory/session_start_recall.rs`
 
 ## Architecture
 
@@ -29,6 +29,7 @@ idx_embedding (SQLite table, schema v6)
 |--------|---------|-------------|
 | `memory/embeddings.rs` | CRUD for `idx_embedding` table | `upsert`, `find_similar`, `delete`, `count`, `SimilarHit` |
 | `memory/store.rs` | Open / migrate views.db | `open`, `default_path` |
+| `memory/session_start_recall.rs` | Existing-only bounded local recall preparation after RAW delivery and before the first provider prompt; stale/failed work is not retried from the prompt path and Incognito does not construct it | internal `start_session_recall_preload`, `SessionStartRecallPreload` |
 | `memory/migrations/mod.rs` | Schema migration chain v3 → v6 | (internal) |
 
 ## Schema

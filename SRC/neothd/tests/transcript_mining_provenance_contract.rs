@@ -1,35 +1,19 @@
-//! Behavioral contracts for GOLD-LF-P1-08 stages 1–3a only.
+//! Behavioral contracts for GOLD-LF-P1-08 stages 1–3b only.
 //!
-//! The migration module owns the v35/v36 fixture and rollback coverage because
+//! The migration module owns the v35/v36/v37/v38 fixture and rollback coverage because
 //! its table builders are deliberately private. This external test opens the
-//! real fresh v37 database and exercises the installed SQLite contract. The
+//! real current database and exercises the installed SQLite contract. The
 //! source-level negative contracts remain additive: schema reservation must
 //! not accidentally create runtime mining authority or retain raw text.
 
 use neothd::memory::store;
 use rusqlite::Connection;
 
-fn fresh_v37_connection() -> (tempfile::TempDir, Connection) {
-    let home = tempfile::tempdir().expect("temporary v37 views directory");
+fn fresh_current_connection() -> (tempfile::TempDir, Connection) {
+    let home = tempfile::tempdir().expect("temporary current views directory");
     let connection =
-        store::open(&home.path().join("views.db")).expect("open fresh v37 views database");
+        store::open(&home.path().join("views.db")).expect("open fresh current views database");
     (home, connection)
-}
-
-fn insert_fresh_witnessed_raw_turn(connection: &Connection) {
-    connection
-        .execute_batch(
-            r#"
-            INSERT INTO raw_turns
-                (session_id, role, ts_unix, text, transcript_mining_authority_epoch,
-                 transcript_mining_raw_frame_plan_epoch)
-            VALUES ('stage3a-session', 'operator', 1, 'stage3a raw text', 1, 1);
-            INSERT INTO transcript_mining_modern_raw_witness
-                (raw_turn_id, subject_sha256, raw_role, source_kind, witnessed_at_unix)
-            VALUES (1, zeroblob(32), 'operator', 'operator_raw_text_v1', 1);
-            "#,
-        )
-        .expect("seed only a fresh witnessed raw turn");
 }
 
 fn assert_rejected_with(connection: &Connection, sql: &str, expected_reason: &str) {
@@ -44,8 +28,8 @@ fn assert_rejected_with(connection: &Connection, sql: &str, expected_reason: &st
 }
 
 #[test]
-fn fresh_v37_database_reserves_plan_payload_and_all_proof_states() {
-    let (_home, connection) = fresh_v37_connection();
+fn fresh_current_database_requires_stage3b_attestation_for_all_proof_births() {
+    let (_home, connection) = fresh_current_connection();
     let schema_version: String = connection
         .query_row(
             "SELECT value FROM meta WHERE key = 'schema_version'",
@@ -53,7 +37,11 @@ fn fresh_v37_database_reserves_plan_payload_and_all_proof_states() {
             |row| row.get(0),
         )
         .expect("fresh schema version");
-    assert_eq!(schema_version, "37");
+    assert_eq!(schema_version, store::SCHEMA_VERSION.to_string());
+    assert!(
+        store::SCHEMA_VERSION >= 38,
+        "Stage 3b requires v38 or later"
+    );
 
     for table in [
         "transcript_mining_provenance",
@@ -70,26 +58,21 @@ fn fresh_v37_database_reserves_plan_payload_and_all_proof_states() {
                 |row| row.get(0),
             )
             .expect("inspect installed P1-08 table");
-        assert_eq!(table_count, 1, "fresh v37 must install {table}");
+        assert_eq!(table_count, 1, "fresh current schema must install {table}");
     }
-    let reservation_gate_count: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master
-             WHERE type = 'trigger' AND name = 'transcript_mining_plan_stage3a_reserved'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("inspect Stage-3a plan reservation gate");
-    assert_eq!(reservation_gate_count, 1);
 
-    insert_fresh_witnessed_raw_turn(&connection);
-
-    // Keep the deferred provenance FK open while invoking the admission gate.
-    // Without the Stage-3a gate this INSERT would succeed at statement time,
-    // so its exact error proves the gate rather than a later FK check.
-    connection
-        .execute_batch("BEGIN")
-        .expect("begin ordinary plan admission probe");
+    // Fresh ordinary connections install default-deny scalar functions. The
+    // Stage 3b triggers must reject before direct SQL can invent a protected
+    // raw birth, plan, provenance row, or outbox row.
+    assert_rejected_with(
+        &connection,
+        "INSERT INTO raw_turns
+             (session_id, role, ts_unix, text,
+              transcript_mining_authority_epoch,
+              transcript_mining_raw_frame_plan_epoch)
+         VALUES ('ordinary-birth', 'operator', 1, 'ordinary raw', 1, 1)",
+        "transcript mining attestor required for modern raw birth",
+    );
     assert_rejected_with(
         &connection,
         "INSERT INTO transcript_mining_raw_frame_plan
@@ -102,11 +85,8 @@ fn fresh_v37_database_reserves_plan_payload_and_all_proof_states() {
                          1, 0, 2, 4, zeroblob(8), zeroblob(8), 0,
                          CAST(CAST('secret' AS BLOB) || zeroblob(90) AS BLOB),
                          zeroblob(32), 1)",
-        "stage 3a reserves raw frame plan creation for authenticated attestation",
+        "transcript mining attestor required for frame plan",
     );
-    connection
-        .execute_batch("ROLLBACK")
-        .expect("rollback ordinary plan admission probe");
     assert_eq!(
         connection
             .query_row(
@@ -114,7 +94,7 @@ fn fresh_v37_database_reserves_plan_payload_and_all_proof_states() {
                 [],
                 |row| row.get::<_, i64>(0),
             )
-            .expect("count reserved plans"),
+            .expect("count ordinary plans"),
         0,
     );
 
@@ -127,7 +107,7 @@ fn fresh_v37_database_reserves_plan_payload_and_all_proof_states() {
                  VALUES ('active-provenance', 'active-lifecycle', 1, zeroblob(32),
                          zeroblob(32), 'operator', 'operator_raw_text_v1', 'hours24',
                          'active', 1, 4000000000)",
-        "provenance requires a fresh planned raw frame",
+        "transcript mining attestor required for provenance",
     );
     assert_eq!(
         connection
@@ -146,7 +126,7 @@ fn fresh_v37_database_reserves_plan_payload_and_all_proof_states() {
                      payload, payload_sha256, enqueued_at_unix)
                  VALUES ('pending-bound', 'ordinary-provenance', 'ordinary-lifecycle',
                          'bound', 40, CAST('secret' AS BLOB), zeroblob(32), 1)",
-        "bound outbox requires verified live binding",
+        "transcript mining attestor required for outbox",
     );
     assert_rejected_with(
         &connection,
@@ -157,7 +137,7 @@ fn fresh_v37_database_reserves_plan_payload_and_all_proof_states() {
                  VALUES ('delivered-bound', 'ordinary-provenance', 'ordinary-lifecycle',
                          'bound', 40, CAST('secret' AS BLOB), zeroblob(32), 'delivered',
                          1, 2, zeroblob(32))",
-        "bound outbox requires verified live binding",
+        "transcript mining attestor required for outbox",
     );
     assert_rejected_with(
         &connection,
@@ -168,7 +148,7 @@ fn fresh_v37_database_reserves_plan_payload_and_all_proof_states() {
                  VALUES ('revoked-bound', 'ordinary-provenance', 'ordinary-lifecycle',
                          'revoked', 41, CAST('secret' AS BLOB), zeroblob(32), zeroblob(32),
                          'missing-receipt', 1)",
-        "revoked outbox requires terminal receipt and delivered binding",
+        "transcript mining attestor required for outbox",
     );
     assert_eq!(
         connection
@@ -177,7 +157,7 @@ fn fresh_v37_database_reserves_plan_payload_and_all_proof_states() {
                 [],
                 |row| row.get::<_, i64>(0),
             )
-            .expect("count reserved outbox rows"),
+            .expect("count ordinary outbox rows"),
         0,
     );
 }
@@ -246,12 +226,15 @@ fn migration_contract_keeps_legacy_unbound_and_raw_text_out_of_provenance() {
     assert!(migration.contains("from: 36,"));
     assert!(migration.contains("to: 37,"));
     assert!(migration.contains("fn migration_v36_to_v37"));
+    assert!(migration.contains("from: 37,"));
+    assert!(migration.contains("to: 38,"));
+    assert!(migration.contains("fn migration_v37_to_v38"));
     assert!(migration.contains("CREATE TABLE IF NOT EXISTS transcript_mining_provenance"));
     assert!(migration.contains("transcript_mining_raw_turn_deleted"));
     assert!(
         migration.contains("WHERE raw_turn_id = OLD.id AND lifecycle IN ('pending', 'active')")
     );
-    assert!(store.contains("pub const SCHEMA_VERSION: i64 = 37;"));
+    assert!(store.contains("pub const SCHEMA_VERSION: i64 ="));
     assert!(store.contains("CREATE TABLE IF NOT EXISTS transcript_mining_wal_outbox"));
 
     let migration_provenance = provenance_table(migration);

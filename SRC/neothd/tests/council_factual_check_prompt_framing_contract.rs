@@ -5,6 +5,7 @@ const FACTUAL_CHECK: &str = include_str!("../src/council/factual_check.rs");
 const ORCHESTRATOR: &str = include_str!("../src/council/orchestrator.rs");
 
 const TRY_EMBED_GROUND_TRUTH_TAG_DECLARATION: &str = "pubfntry_embed_ground_truth_tag(prompt:&str,assertions:&[FactualAssertion],)->Result<String,crate::security::PromptBuildError>";
+const TRY_EMBED_GROUND_TRUTH_TAG_WITH_INSTRUCTIONS_DECLARATION: &str = "pub(super)fntry_embed_ground_truth_tag_with_instructions(prompt:&str,assertions:&[FactualAssertion],instructions:&'staticstr,)->Result<String,crate::security::PromptBuildError>";
 const FACTUAL_CONTRADICTION_CHECK_DECLARATION: &str = "pubfnfactual_contradiction_check(response:&str,assertions:&[FactualAssertion],negation_markers:&[&str],window_chars:usize,)->FactualCheckOutcome";
 
 fn function_body(source: &str, signature: &str) -> String {
@@ -239,10 +240,19 @@ fn factual_check_has_separate_typed_question_and_assertion_purposes() {
 
 #[test]
 fn factual_check_serializes_each_provider_bound_value_once_without_raw_fallback() {
-    let builder = public_function_body(
+    let public_wrapper = public_function_body(
         FACTUAL_CHECK,
         "try_embed_ground_truth_tag",
         TRY_EMBED_GROUND_TRUTH_TAG_DECLARATION,
+    );
+    assert!(
+        public_wrapper.contains("try_embed_ground_truth_tag_with_instructions(prompt, assertions,")
+    );
+    assert!(!public_wrapper.contains("serialize_untrusted_prompt("));
+    let builder = public_function_body(
+        FACTUAL_CHECK,
+        "try_embed_ground_truth_tag_with_instructions",
+        TRY_EMBED_GROUND_TRUTH_TAG_WITH_INSTRUCTIONS_DECLARATION,
     );
     assert_eq!(
         builder.matches("serialize_untrusted_prompt(").count(),
@@ -274,13 +284,19 @@ fn factual_check_serializes_each_provider_bound_value_once_without_raw_fallback(
 
 #[test]
 fn orchestrator_rejects_framing_before_provider_scheduling_or_budget_charge() {
-    let preflight = function_body(ORCHESTRATOR, "pub async fn run_debate_with_depth_budget(");
-    let validate = preflight
+    let public_wrapper = function_body(ORCHESTRATOR, "pub async fn run_debate_with_depth_budget(");
+    assert!(public_wrapper.contains("run_debate_inner("));
+    assert!(public_wrapper.contains("DebateMode::Legacy"));
+    let preflight = function_body(ORCHESTRATOR, "async fn run_debate_inner(");
+    let legacy_validate = preflight
         .find("try_embed_ground_truth_tag(prompt, assertions)")
+        .unwrap();
+    let validate = preflight
+        .find("try_embed_ground_truth_tag_with_instructions(")
         .unwrap();
     let scheduler = preflight.find("let mut tasks: FuturesUnordered").unwrap();
     let provider = preflight.find("run_one(").unwrap();
-    assert!(validate < scheduler && scheduler < provider);
+    assert!(legacy_validate < scheduler && validate < scheduler && scheduler < provider);
     assert!(preflight.contains("Verdict::QuorumFailed"));
     assert!(!preflight.contains("Cow::Borrowed(prompt)"));
 }

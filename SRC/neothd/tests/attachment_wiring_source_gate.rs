@@ -104,7 +104,7 @@ fn typed_attachment_batch_reaches_main_agent_and_slash_builders() {
     );
 
     assert!(CHAT.contains("attachment_contexts: attachment_contexts.cloned()"));
-    assert!(CHAT.contains("attachment_contexts: agent_raw_layers.attachment_contexts.as_ref()"));
+    assert!(CHAT.contains("attachment_contexts: layers.attachment_contexts.as_ref()"));
     assert!(CHAT.contains("attachment_contexts: attachment_contexts.as_ref()"));
 
     let custom_slash = between(

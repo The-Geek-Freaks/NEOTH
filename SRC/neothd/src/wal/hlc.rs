@@ -85,6 +85,7 @@ pub(crate) fn compare_event_headers_for_replay(
 /// the authenticated receive transaction has committed. The caller must not
 /// hold a database or membership lock while acquiring the independent clock
 /// mutex, keeping the writer's lock order one-way.
+#[cfg(any(feature = "cluster", test))]
 pub(crate) fn merge_global_hlc_after_authenticated_receive(
     peer_header: &EventHeaderV2,
 ) -> Result<(), HlcError> {

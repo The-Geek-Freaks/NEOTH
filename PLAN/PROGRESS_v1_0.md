@@ -3,6 +3,21 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 13 P1-11 accepted 2026-09-13:** session-start local recall starts
+> after RAW delivery through an existing-only read-only `views.db` reader and
+> is consumed by the first provider request under the unchanged fresh policy.
+> Loading/ready/no-data/stale/failed notices are visible; stale or unavailable
+> preparation continues without a second prompt-path query. Incognito creates
+> neither preloader nor notice, while normal chat journaling remains unchanged.
+> Selected03 passed 265/0/0 in 8.67s; TestBuild04 passed in 7m34s (one job,
+> Idle, four logical CPUs, at least 208.33 GiB free RAM, 12.11 GiB peak).
+> Final gate detail is in `docs/gold-wave13-verification.md`. Full CI
+> `34758135622` failed on its older commit. Its known compile failures and
+> 30 tests across five affected targets are repaired locally; exact new-SHA
+> cross-platform CI remains pending. P1-08 remains open
+> for real inputs. Current counts: 1324 total / 1010 complete / 312 open /
+> 2 partial = 314 raw blockers and 313 pre-tag blockers.
+>
 > **Wave 12 local CI repair accepted 2026-09-13:** SQLite fixture registration,
 > private Windows hygiene storage, schema/CLI/MCP contracts and exact typed
 > provider-audit linkage are repaired. **359 module tests and two native
@@ -1033,14 +1048,15 @@
 > source, machine-readable ledger and ROAD. A dependency-free mutation-tested
 > checker runs in required Gold CI. `GOLD-LF-INTEGRITY-01`, the fully wired
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
-> WAL replay, P1-05 trust decisions, P1-06 agreement and P1-07 family gate are closed: **6 done / 112
+> WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
+> P1-11 bounded context preparation are closed: **7 done / 111
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable
 > patches before persistence or apply. No other recovered feature or
 > Plan-001/002/003 leaf was closed by the inventory repair.
 >
-> `GOLD-LF-P1-20` is implemented but deliberately remains one of those 116
+> `GOLD-LF-P1-20` is implemented but deliberately remains one of those 111
 > open tasks until exact-head CI proves the cross-platform/release boundary.
 > The desktop derives sidebar previews and selected-session history from the
 > canonical read-only `raw_turns` store, re-sanitizes every displayed role,

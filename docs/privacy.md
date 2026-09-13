@@ -80,6 +80,18 @@ command.
 | Skills and plugins | `~/.neoth/skills/`, plugin registry, capability ledger |
 | Backups | `~/.neoth/backups/` unless configured otherwise; `credentials.yaml` is excluded by default |
 
+## Session-start local recall
+
+For a normal chat, NEOTH may prepare existing local recall while it assembles
+the prompt. The prepared block is recall-only and uses the same fresh policy
+that normal recall uses; it neither depends on transcript-mining opt-in nor
+changes normal chat journaling or audit behavior. A status notice reports
+whether the prepared recall was available, empty, stale, or unavailable.
+
+If the prepared result is stale or unavailable, chat continues without that
+prepared block. Incognito constructs neither the recall preloader nor its
+status notice.
+
 ## Tool-output boundary and explicit raw local artifacts
 
 Text returned by an MCP peer is measured at the wire boundary, then passed

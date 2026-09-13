@@ -112,15 +112,36 @@ fn context_store_contract_enforces_typed_content_free_receipts_and_preflight_lim
 }
 
 #[test]
-fn context_store_contract_fails_closed_for_unsafe_paths_and_unwired_windows_vfs() {
+fn context_store_contract_fails_closed_for_unsafe_paths_and_windows_vfs() {
     let source = include_str!("../src/context_graph/mod.rs");
     assert!(source.contains("SQLITE_OPEN_NOFOLLOW"));
     assert!(source.contains("reject_database_sidecars(&path)?"));
     assert!(source.contains("context store parent must already exist and be private"));
-    assert!(source.contains("fn open_windows_context_store_unwired"));
-    assert!(source.contains("capability-bound SQLite VFS"));
-    assert!(source.contains("identity-pinned context.db and WAL/SHM sidecars"));
-    assert!(source.contains("reject every reparse ancestor and leaf"));
-    assert!(source.contains("retain the appropriate no-delete handles through quota and"));
-    assert!(source.contains("Do not weaken this boundary into pre-open/post-open path checks"));
+    let windows_open = source
+        .split_once("fn open_windows_context_store(")
+        .expect("Windows store must use the dedicated VFS")
+        .1
+        .split_once("\nstruct Scope {")
+        .expect("Windows open function boundary")
+        .0;
+    for required in [
+        "open_absolute_bound_directory(parent, false,",
+        "PinnedContextDirectory::duplicate_verified_handle(&bound.dir)?",
+        "ContextStoreVfs::register(directory, MAX_STORE_BYTES as u64)?",
+        "Connection::open_with_flags_and_vfs(",
+        "vfs.name()",
+        "_windows_vfs: vfs",
+    ] {
+        assert!(
+            windows_open.contains(required),
+            "missing Windows VFS binding: {required}"
+        );
+    }
+    let handles = include_str!("../src/context_graph/windows_vfs/handles.rs");
+    assert!(handles.contains("identity_of(&directory, true)?"));
+    assert!(handles.contains("verify_private_directory_handle_dacl(&directory)?"));
+    assert!(handles.contains("FILE_SHARE_READ | FILE_SHARE_WRITE,"));
+    assert!(handles.contains("identity_of(&file, false)?"));
+    assert!(handles.contains("verify_private_file_handle(&file)?"));
+    assert!(!handles.contains("FILE_SHARE_DELETE"));
 }

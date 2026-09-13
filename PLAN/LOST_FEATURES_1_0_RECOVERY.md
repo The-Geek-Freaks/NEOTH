@@ -194,8 +194,14 @@
   Quelle: PLAN/FEATURE_EVAL.md C#16. Kein show_thinking/stream-reasoning-Pfad
   in chat.rs/Providern. Integration: dispatch_provider-Streaming-Pfad.
 - **C-6 Death of the Prompt (Proaktive Kontext-Vorbereitung)** `[CODEX]` `GOLD-LF-P1-11`
-  Quelle: PLAN/FEATURE_EVAL.md C#6. Kein context_prefetch/PreloadContext.
-  Integration: serve_pipeline Session-Start oder neuer `daemon/context_preloader.rs`.
+  Quelle: PLAN/FEATURE_EVAL.md C#6. **Recovered local CLI evidence (Wave 13):**
+  `memory/session_start_recall.rs` now prepares bounded authoritative recall
+  after a normal chat's RAW delivery and `cli/chat.rs` consumes it at the first
+  provider prompt. The generic existing-only reader is read-only/no-follow/
+  `query_only`, binds the local session before one consumption, and rechecks
+  file identity plus `data_version`; stale/failure continues without a second
+  read. Incognito creates neither this reader nor its status notice. This is a
+  local CLI recovery, not a daemon prefetch sidecar or a cross-platform claim.
 - **ARS-3 Citation-Live-Lookup (Crossref/OpenAlex/SemanticScholar)** `[CODEX]` `GOLD-LF-P1-12`
   Quelle: PLAN/QUELLEN_ADOPT_academic_2026-05-21.md#3.2. citation_check ist
   offline-only (recall.rs:82). Research: Outbound-HTTP-Allowlist-Scope vorab klären.

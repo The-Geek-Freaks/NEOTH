@@ -9,6 +9,8 @@
 //! The module has no networking surface. Callers retain binary/argv authority;
 //! this module receives an already-built [`std::process::Command`].
 
+#[cfg(unix)]
+use std::io::Read as _;
 use std::io::Write as _;
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
