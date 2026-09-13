@@ -86,6 +86,29 @@ This Wave 17 slice is reviewed and locally verified by focused unit and
 integration checks; see [the receipt](../gold-wave17-verification.md).
 Cross-platform CI and live Telegram acceptance remain separate.
 
+## Settings and Connect account views
+
+The W18-19 GUI surface routes the canonical account-status projection through
+`panel_logic.rs`, `main.rs`, `settings.slint`, and `main.slint`. **Settings →
+Channels** renders nested Telegram account rows with static configured state and
+an optional read-only runtime field; it has no account-creation, pairing, or
+migration UI. Its selected-account test parses the core result only when the
+returned account exactly matches the selected row, so an `ops_a` result cannot
+be presented as `ops_b`.
+
+`cli/connect.rs` consumes the same canonical list projection. `neoth connect
+telegram --account ops_b` shows one exact configured account and directs the
+operator to the corresponding read-only channel test. A map overview enumerates
+accounts but does not infer `default`. An active invalid/partial map becomes a
+repair-only state with no usable or testable account; legacy no-map Telegram
+keeps its compatible no-account detail path.
+
+This compound slice is independently reviewed and locally verified: GUI
+test-source check, 175 core and 350 actual GUI parser/action tests, final Clippy,
+formatting and GUI lint pass. Native rendering and live delivery remain
+separate. Exact evidence is recorded in
+[`gold-wave18-19-verification.md`](../gold-wave18-19-verification.md).
+
 ## Architecture
 
 ```

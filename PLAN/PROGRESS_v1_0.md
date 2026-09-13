@@ -3,6 +3,20 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Waves 18–19 GUI/connect account consumers — LOCALLY VERIFIED;
+> full CI pending 2026-09-13:** six independently reviewed files on published
+> Wave17 `ad4c4826`. Nested account rows/exact selected Telegram test and canonical
+> connect views, invalid maps repair-only, legacy JSON preserved. Core **175/0/0**
+> and actual GUI parser/action **350/0/0** pass. TestBuild01 PASS5m26/min189.98GiB/
+> peak12.52; final GUI check PASS1m47/min195.19GiB/peak6.67 without monolith link;
+> Clippy02 PASS2m45/min193.00GiB/peak8.25. Format/GUI lint/self-test and generated
+> CLI docs pass. Reviewed lint expectations stay in the headless harness only.
+> Exact 149-input/2-executable receipts: `docs/gold-wave18-19-verification.md`.
+> W17 full CI [34777552729](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34777552729)
+> runs on its own exact commit; Preflight/Code Quality passed. Native/live
+> acceptance and P1-16/count closure remain outstanding. W20 transport-evidence
+> candidate is independently reviewed for the next batch.
+>
 > **Wave 17 account CLI, runtime health and CI repairs — LOCALLY VERIFIED;
 > full CI pending 2026-09-13:** account-list/test and exact-instance runtime
 > projection independently reviewed. TestBuild02 PASS3m45/min193.86GiB/peak10.45;

@@ -715,6 +715,7 @@ Show whether cua-driver is installed + enabled as an MCP server
 UX-01 — discover messaging channels + how to connect them. Read-only post-wizard on-ramp: shows which channels (Telegram, Slack, WhatsApp, …) are connected + the steps to wire the rest
 
 - `<CHANNEL>` — Show one channel's status + its detailed multi-line on-ramp (e.g. `neoth connect telegram`). Omit to list every channel
+- `--account <ACCOUNT>` — Inspect one explicitly configured Telegram account. Map-mode Telegram never treats an omitted account or the literal `default` as a fallback
 
 ## `neoth consent`
 

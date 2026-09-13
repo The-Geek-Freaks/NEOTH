@@ -186,6 +186,33 @@ projection is **unknown**, while the static account readiness stays visible;
 JSON omits the optional runtime field in that case. Runtime projection is
 observational only and is not credential or authorization evidence.
 
+### Settings and `connect` account views (W18-19; locally verified)
+
+**Settings → Channels** shows a Telegram account map as nested, secret-free
+account rows. Each row separates its static configured state from the optional,
+read-only runtime observation above. The panel can run the read-only Telegram
+test only for the exact selected account and refuses to present a result for a
+different account as that selection. It does not create accounts, pair devices,
+or offer a migration workflow.
+
+For operator detail, use an explicit account ID:
+
+```powershell
+neoth connect telegram --account ops_b
+```
+
+The map overview lists configured account children but has no implicit
+`default` selection. An invalid or partial map is a repair state: no account is
+usable or testable until matching policy, nonzero sender, and credentials are
+complete. A legacy no-map Telegram setup retains its compatible no-account
+detail and test path.
+
+The W18-19 source is independently reviewed and locally verified: full GUI
+test-source checking, 175 core and 350 actual GUI parser/action tests, final
+Clippy, formatting and GUI lint pass. Native rendering and live delivery
+acceptance remain separate. See
+[the W18-19 verification receipt](gold-wave18-19-verification.md).
+
 Wave 17 is locally verified by the focused unit and integration checks recorded
 in [its verification receipt](gold-wave17-verification.md). Full cross-platform
 CI and live Telegram acceptance remain separate.

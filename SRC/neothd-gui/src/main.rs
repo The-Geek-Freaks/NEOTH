@@ -10626,6 +10626,82 @@ fn main() -> Result<()> {
         });
     });
 
+    // Named Telegram maps require an exact account selection. This handler is
+    // separate from the historical parent-row test, so a mapped `default`
+    // cannot become an implicit fallback.
+    let weak_channel_account_test = window.as_weak();
+    window.on_channel_account_test(move |channel, account| {
+        let channel = channel.to_string();
+        let account = account.to_string();
+        let Some(w) = weak_channel_account_test.upgrade() else {
+            return;
+        };
+        let selection =
+            panel_logic::channel_account_test_command(Path::new("neoth"), &channel, &account);
+        if let Err(error) = selection {
+            w.set_status_line(format!("Telegram account test refused: {error}").into());
+            return;
+        }
+        buddy(&w, GuiActivity::ChannelTest);
+        let weak = weak_channel_account_test.clone();
+        std::thread::spawn(move || {
+            let label = format!("telegram/{account}");
+            let output = match which_neothd() {
+                Some(bin) => {
+                    match panel_logic::channel_account_test_command(&bin, &channel, &account) {
+                        Ok(mut command) => {
+                            scrub_gui_control_environment(&mut command);
+                            command
+                                .env("NO_COLOR", "1")
+                                .env("RUST_LOG_STYLE", "never")
+                                .env("CLICOLOR", "0")
+                                .env("NEOTH_LOG", "error");
+                            suppress_console_window(&mut command);
+                            command.output().map_err(|error| error.to_string())
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                None => Err("NEOTH CLI not found; reinstall or repair PATH".to_string()),
+            };
+            let message = match output {
+                Ok(output) => match panel_logic::parse_telegram_account_test_status(
+                    &String::from_utf8_lossy(&output.stdout),
+                    &account,
+                ) {
+                    Ok(result) => {
+                        let glyph = match result.status.as_str() {
+                            "ok" => "✓",
+                            "fail" => "✗",
+                            "unavailable" => "⊘",
+                            _ => "–",
+                        };
+                        format!("{glyph} {label}: {}", result.detail)
+                    }
+                    Err(error) if output.status.success() => {
+                        format!("{label} test returned invalid data: {error}")
+                    }
+                    Err(_) => format!(
+                        "{label} test failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                            .lines()
+                            .map(str::trim)
+                            .find(|line| !line.is_empty())
+                            .unwrap_or("(no detail)")
+                    ),
+                },
+                Err(error) => format!("{label} test failed: {error}"),
+            };
+            let channels = fetch_channel_status();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    apply_channels(&w, channels);
+                    w.set_status_line(message.into());
+                }
+            });
+        });
+    });
+
     // GUI-overhaul feature parity — remove a channel's credential through the
     // canonical CLI, then refresh its canonical configured/probe state. Gated
     // behind an inline confirm in the UI.
@@ -23021,6 +23097,18 @@ fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::Channel
             status: channel.status.into(),
             configured: channel.configured,
             detail: channel.detail.into(),
+            accounts: ModelRc::new(VecModel::from(
+                channel
+                    .accounts
+                    .into_iter()
+                    .map(|account| ChannelAccountRow {
+                        account_id: account.account_id.into(),
+                        status: account.status.into(),
+                        detail: account.detail.into(),
+                        runtime: account.runtime.unwrap_or_default().into(),
+                    })
+                    .collect::<Vec<_>>(),
+            )),
             setup_secret_f1: channel.setup_secret_mask[0],
             setup_secret_f2: channel.setup_secret_mask[1],
             setup_secret_f3: channel.setup_secret_mask[2],
@@ -27813,6 +27901,7 @@ mod chat_subprocess_tests {
                 status: "connected".to_string(),
                 configured: true,
                 detail: "healthy".to_string(),
+                accounts: Vec::new(),
                 setup_secret_mask: [false; 6],
             },
             panel_logic::ChannelStatus {
@@ -27820,6 +27909,7 @@ mod chat_subprocess_tests {
                 status: "unconfigured".to_string(),
                 configured: false,
                 detail: "missing credentials".to_string(),
+                accounts: Vec::new(),
                 setup_secret_mask: [false; 6],
             },
         ];

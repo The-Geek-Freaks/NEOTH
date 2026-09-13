@@ -2039,9 +2039,37 @@ pub struct ChannelStatus {
     pub status: String,
     pub configured: bool,
     pub detail: String,
+    /// Exact named Telegram-account rows from the CLI's static/read-only
+    /// channel inventory. Legacy Telegram remains a parent-only row.
+    pub accounts: Vec<ChannelAccountStatus>,
     /// Secret flags for the six text-entry slots, projected directly from the
     /// daemon registry. Slint binds every actual input widget to these flags.
     pub setup_secret_mask: [bool; 6],
+}
+
+/// One validated named Telegram account from `ChannelStatus.accounts`.
+/// Runtime is empty when the CLI cannot prove an exact current binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelAccountStatus {
+    pub account_id: String,
+    pub status: String,
+    pub detail: String,
+    pub runtime: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ParsedChannelAccountRow {
+    channel_ref: ParsedChannelAccountRef,
+    status: String,
+    detail: String,
+    #[serde(default)]
+    runtime: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ParsedChannelAccountRef {
+    channel_id: String,
+    account_id: String,
 }
 
 /// Parse the authoritative channel inventory. Malformed, empty, duplicated, or
@@ -2081,6 +2109,8 @@ pub fn parse_channel_status(json: &str) -> Result<Vec<ChannelStatus>, String> {
         status: String,
         configured: bool,
         detail: String,
+        #[serde(default)]
+        accounts: Vec<ParsedChannelAccountRow>,
     }
 
     let payload: Payload = serde_json::from_str(json)
@@ -2228,6 +2258,7 @@ pub fn parse_channel_status(json: &str) -> Result<Vec<ChannelStatus>, String> {
                 row.status
             ));
         }
+        let accounts = parse_channel_accounts(name, &row.status, row.accounts)?;
         // Defer an unknown row to the set comparison below so one diagnostic
         // reports the complete missing/unknown drift instead of stopping at
         // the first foreign ID. The placeholder is never returned to the UI:
@@ -2238,6 +2269,7 @@ pub fn parse_channel_status(json: &str) -> Result<Vec<ChannelStatus>, String> {
             status: row.status,
             configured: row.configured,
             detail: row.detail,
+            accounts,
             setup_secret_mask,
         });
     }
@@ -2280,6 +2312,90 @@ pub fn parse_channel_status(json: &str) -> Result<Vec<ChannelStatus>, String> {
     Ok(channels)
 }
 
+fn parse_channel_accounts(
+    parent_channel: &str,
+    parent_status: &str,
+    rows: Vec<ParsedChannelAccountRow>,
+) -> Result<Vec<ChannelAccountStatus>, String> {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    if parent_channel != "telegram" {
+        return Err(format!(
+            "channel `{parent_channel}` returned account rows; only telegram supports named accounts"
+        ));
+    }
+    if parent_status == "error" {
+        return Err("Telegram account rows cannot accompany an error parent status".to_string());
+    }
+
+    let mut previous = None;
+    let mut accounts = Vec::with_capacity(rows.len());
+    for row in rows {
+        if row.channel_ref.channel_id != "telegram" {
+            return Err(format!(
+                "Telegram account `{}` returned mismatched channel ref `{}`",
+                row.channel_ref.account_id, row.channel_ref.channel_id
+            ));
+        }
+        let account_id = neothd::channels::registry::ChannelAccountId::new(
+            row.channel_ref.account_id.trim().to_string(),
+        )
+        .map_err(|error| format!("invalid Telegram account id: {error}"))?;
+        if row.channel_ref.account_id != account_id.as_str() {
+            return Err(format!(
+                "Telegram account id `{}` is not canonical",
+                row.channel_ref.account_id
+            ));
+        }
+        if previous.as_ref().is_some_and(|last| last >= &account_id) {
+            return Err("Telegram account rows must be unique and in canonical order".to_string());
+        }
+        if !matches!(
+            row.status.as_str(),
+            "ok" | "warn" | "error" | "unavailable" | "not_configured"
+        ) {
+            return Err(format!(
+                "Telegram account `{}` returned unknown status `{}`",
+                account_id, row.status
+            ));
+        }
+        let detail = row.detail.trim();
+        if detail.is_empty()
+            || detail
+                .chars()
+                .any(|character| character.is_control() && !character.is_whitespace())
+        {
+            return Err(format!(
+                "Telegram account `{account_id}` returned invalid detail"
+            ));
+        }
+        let runtime = row.runtime.map(|runtime| runtime.trim().to_string());
+        if let Some(runtime) = runtime.as_deref()
+            && !matches!(
+                runtime,
+                "running"
+                    | "configured_not_started"
+                    | "failed"
+                    | "inactive"
+                    | "credentials_invalid"
+            )
+        {
+            return Err(format!(
+                "Telegram account `{account_id}` returned unknown runtime `{runtime}`"
+            ));
+        }
+        previous = Some(account_id.clone());
+        accounts.push(ChannelAccountStatus {
+            account_id: account_id.into_string(),
+            status: row.status,
+            detail: detail.to_string(),
+            runtime,
+        });
+    }
+    Ok(accounts)
+}
+
 /// Typed result from `neoth channel test <id> --output json`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelTestStatus {
@@ -2294,9 +2410,56 @@ pub fn parse_channel_test_status(
     json: &str,
     expected_channel: &str,
 ) -> Result<ChannelTestStatus, String> {
+    parse_channel_test_status_for_account(json, expected_channel, None)
+}
+
+/// Parse the mapped Telegram test response and bind it to its exact selected
+/// account. The GUI never treats a named `default` as a legacy fallback.
+pub fn parse_telegram_account_test_status(
+    json: &str,
+    expected_account: &str,
+) -> Result<ChannelTestStatus, String> {
+    let expected_account =
+        neothd::channels::registry::ChannelAccountId::new(expected_account.to_string())
+            .map_err(|error| format!("invalid selected Telegram account: {error}"))?;
+    parse_channel_test_status_for_account(json, "telegram", Some(expected_account.as_str()))
+}
+
+/// Build the exact read-only mapped Telegram test command. The account id is
+/// validated before it can reach argv; this GUI surface never infers a default
+/// account. Environment preparation remains the GUI launcher's responsibility.
+pub fn channel_account_test_command(
+    bin: &std::path::Path,
+    channel: &str,
+    account: &str,
+) -> Result<std::process::Command, String> {
+    if channel != "telegram" {
+        return Err("only Telegram has named account tests".to_string());
+    }
+    let account = neothd::channels::registry::ChannelAccountId::new(account.to_string())
+        .map_err(|error| format!("invalid Telegram account id: {error}"))?;
+    let mut command = std::process::Command::new(bin);
+    command
+        .arg("channel")
+        .arg("test")
+        .arg("telegram")
+        .arg("--account")
+        .arg(account.as_str())
+        .arg("--output")
+        .arg("json");
+    Ok(command)
+}
+
+fn parse_channel_test_status_for_account(
+    json: &str,
+    expected_channel: &str,
+    expected_account: Option<&str>,
+) -> Result<ChannelTestStatus, String> {
     #[derive(serde::Deserialize)]
     struct Payload {
         channel: String,
+        #[serde(default)]
+        account: Option<String>,
         status: String,
         detail: String,
     }
@@ -2308,6 +2471,16 @@ pub fn parse_channel_test_status(
             "channel test returned `{}` while `{expected_channel}` was requested",
             result.channel
         ));
+    }
+    match expected_account {
+        Some(expected_account) if result.account.as_deref() != Some(expected_account) => {
+            return Err(format!(
+                "Telegram account test returned `{}` while `{expected_account}` was requested",
+                result.account.as_deref().unwrap_or("no account")
+            ));
+        }
+        Some(_) => {}
+        None => {}
     }
     if !matches!(
         result.status.as_str(),
@@ -8957,6 +9130,202 @@ mod tests {
             parse_channel_status(&summary_drift.to_string())
                 .unwrap_err()
                 .contains("configured count")
+        );
+    }
+
+    #[test]
+    fn parse_channel_status_projects_canonical_telegram_account_rows() {
+        let payload = serde_json::json!({
+            "registry": { "schema_version": 1, "channels": [registry_row("telegram", &[])] },
+            "channels": [{
+                "name": "telegram", "status": "ok", "configured": true,
+                "detail": "configured account map",
+                "accounts": [
+                    { "channel_ref": { "channel_id": "telegram", "account_id": "default" }, "status": "ok", "detail": "ready", "runtime": "running" },
+                    { "channel_ref": { "channel_id": "telegram", "account_id": "ops_a" }, "status": "warn", "detail": "configured", "runtime": "configured_not_started" },
+                    { "channel_ref": { "channel_id": "telegram", "account_id": "ops_b" }, "status": "error", "detail": "failed", "runtime": "failed" }
+                ]
+            }],
+            "configured": 1, "total": 1,
+        });
+        let rows = parse_channel_status(&payload.to_string()).unwrap();
+        assert_eq!(
+            rows[0]
+                .accounts
+                .iter()
+                .map(|account| account.account_id.as_str())
+                .collect::<Vec<_>>(),
+            ["default", "ops_a", "ops_b"]
+        );
+        assert_eq!(rows[0].accounts[0].runtime.as_deref(), Some("running"));
+        assert_eq!(
+            rows[0].accounts[1].runtime.as_deref(),
+            Some("configured_not_started")
+        );
+        assert_eq!(rows[0].accounts[2].runtime.as_deref(), Some("failed"));
+
+        let old_payload = serde_json::json!({
+            "registry": { "schema_version": 1, "channels": [registry_row("telegram", &[])] },
+            "channels": [{ "name": "telegram", "status": "ok", "configured": true, "detail": "legacy" }],
+            "configured": 1, "total": 1,
+        });
+        assert!(
+            parse_channel_status(&old_payload.to_string()).unwrap()[0]
+                .accounts
+                .is_empty(),
+            "old CLI JSON has no fabricated legacy account child"
+        );
+    }
+
+    #[test]
+    fn parse_channel_status_rejects_invalid_telegram_account_children() {
+        let account = |channel_id: &str, account_id: &str, runtime: &str| {
+            serde_json::json!({
+                "channel_ref": { "channel_id": channel_id, "account_id": account_id },
+                "status": "ok", "detail": "configured", "runtime": runtime,
+            })
+        };
+        let payload = |parent: &str, status: &str, accounts: Vec<serde_json::Value>| {
+            serde_json::json!({
+                "registry": { "schema_version": 1, "channels": [registry_row(parent, &[])] },
+                "channels": [{ "name": parent, "status": status, "configured": true, "detail": "configured", "accounts": accounts }],
+                "configured": 1, "total": 1,
+            })
+        };
+        assert!(
+            parse_channel_status(
+                &payload("slack", "ok", vec![account("telegram", "ops_a", "running")]).to_string()
+            )
+            .is_err()
+        );
+        assert!(
+            parse_channel_status(
+                &payload("telegram", "ok", vec![account("slack", "ops_a", "running")]).to_string()
+            )
+            .is_err()
+        );
+        assert!(
+            parse_channel_status(
+                &payload("telegram", "ok", vec![account("telegram", "", "running")]).to_string()
+            )
+            .is_err()
+        );
+        assert!(
+            parse_channel_status(
+                &payload(
+                    "telegram",
+                    "ok",
+                    vec![
+                        account("telegram", "ops_b", "running"),
+                        account("telegram", "ops_a", "running")
+                    ]
+                )
+                .to_string()
+            )
+            .is_err()
+        );
+        assert!(
+            parse_channel_status(
+                &payload(
+                    "telegram",
+                    "ok",
+                    vec![
+                        account("telegram", "ops_a", "running"),
+                        account("telegram", "ops_a", "running")
+                    ]
+                )
+                .to_string()
+            )
+            .is_err()
+        );
+        assert!(
+            parse_channel_status(
+                &payload(
+                    "telegram",
+                    "ok",
+                    vec![account("telegram", "ops_a", "unknown")]
+                )
+                .to_string()
+            )
+            .is_err()
+        );
+        assert!(
+            parse_channel_status(
+                &payload(
+                    "telegram",
+                    "error",
+                    vec![account("telegram", "ops_a", "running")]
+                )
+                .to_string()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parse_telegram_account_test_binds_the_exact_selected_account() {
+        let result = parse_telegram_account_test_status(
+            r#"{"channel":"telegram","account":"default","status":"ok","detail":"reachable"}"#,
+            "default",
+        )
+        .unwrap();
+        assert_eq!(result.status, "ok");
+        assert!(
+            parse_telegram_account_test_status(
+                r#"{"channel":"telegram","account":"ops_b","status":"ok","detail":"reachable"}"#,
+                "ops_a",
+            )
+            .is_err()
+        );
+        assert!(
+            parse_telegram_account_test_status(
+                r#"{"channel":"telegram","status":"ok","detail":"reachable"}"#,
+                "ops_a",
+            )
+            .is_err()
+        );
+        assert!(
+            parse_telegram_account_test_status(
+                r#"{"channel":"slack","account":"ops_a","status":"ok","detail":"reachable"}"#,
+                "ops_a",
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn channel_account_test_command_uses_only_the_selected_exact_account() {
+        let command =
+            channel_account_test_command(std::path::Path::new("neoth"), "telegram", "ops_b")
+                .unwrap();
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "channel".to_string(),
+                "test".to_string(),
+                "telegram".to_string(),
+                "--account".to_string(),
+                "ops_b".to_string(),
+                "--output".to_string(),
+                "json".to_string(),
+            ]
+        );
+        assert!(
+            channel_account_test_command(std::path::Path::new("neoth"), "slack", "ops_b").is_err(),
+            "non-Telegram account selection must not spawn a probe"
+        );
+        assert!(
+            channel_account_test_command(std::path::Path::new("neoth"), "telegram", "").is_err(),
+            "missing account must not acquire a default"
+        );
+        assert!(
+            channel_account_test_command(std::path::Path::new("neoth"), "telegram", "OPS_B")
+                .is_err(),
+            "account validation follows the typed canonical-id contract"
         );
     }
 

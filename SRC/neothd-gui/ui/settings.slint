@@ -189,6 +189,16 @@ export struct MemoryRow {
     bytes: string,    // pre-formatted by Rust
 }
 
+// Wave18 — one exact named Telegram account from the canonical CLI inventory.
+export struct ChannelAccountRow {
+    account-id: string,
+    status: string,
+    detail: string,
+    // Empty means the runtime projection is unknown or cannot prove this
+    // exact current binding.
+    runtime: string,
+}
+
 // GOLD-R3-04 — canonical channel probe state (never a secret).
 export struct ChannelRow {
     name: string,
@@ -202,6 +212,7 @@ export struct ChannelRow {
     setup-secret-f4: bool,
     setup-secret-f5: bool,
     setup-secret-f6: bool,
+    accounts: [ChannelAccountRow],
 }
 
 /// DES-10 — one row in the live Channel Activity feed.
@@ -1114,6 +1125,7 @@ export component SettingsView inherits Rectangle {
     /// GUI-overhaul feature parity — live connectivity test / credential removal
     /// for a channel. Rust shells `neoth channel test|remove <name>`.
     callback channel-test-clicked(string);
+    callback channel-account-test-clicked(string, string);
     callback channel-remove-clicked(string);
     /// GAP-19 — Add a new channel credential from the GUI.
     /// Args: channel_type + six typed fields + one boolean policy flag. Rust
@@ -1961,10 +1973,12 @@ export component SettingsView inherits Rectangle {
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
-                        for c[index] in root.channels: HorizontalLayout {
-                            spacing: Theme.space-base;
+                        for c[index] in root.channels: VerticalBox {
+                            spacing: Theme.space-tight;
                             // Per-row confirm state (each for-instance gets its own).
                             property <bool> confirming: false;
+                            HorizontalLayout {
+                            spacing: Theme.space-base;
                             accessible-role: list-item;
                             accessible-label: c.name + ": " + c.status + ". " + c.detail;
                             Text {
@@ -2022,7 +2036,8 @@ export component SettingsView inherits Rectangle {
                                     add-channel-open = true;
                                 }
                             }
-                            if c.configured && !confirming: NeothButton {
+                            if c.configured && c.accounts.length == 0 && !confirming
+                                && !(c.name == "telegram" && c.status == "error"): NeothButton {
                                 label: "Test";
                                 primary: false;
                                 clicked => { root.channel-test-clicked(c.name); }
@@ -2052,6 +2067,53 @@ export component SettingsView inherits Rectangle {
                                 label: "Cancel";
                                 primary: false;
                                 clicked => { confirming = false; }
+                            }
+                            }
+                            if c.accounts.length > 0: VerticalBox {
+                                padding-left: Theme.space-8;
+                                spacing: Theme.space-tight;
+                                for account in c.accounts: HorizontalLayout {
+                                    spacing: Theme.space-base;
+                                    accessible-role: list-item;
+                                    accessible-label: "Telegram account " + account.account-id
+                                        + ": " + account.status + ". " + account.detail;
+                                    Text {
+                                        text: "↳ telegram/" + account.account-id;
+                                        overflow: elide;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-primary;
+                                        width: 180px;
+                                    }
+                                    VerticalBox {
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        Text {
+                                            text: account.status + " · runtime "
+                                                + (account.runtime == "" ? "unknown" : account.runtime);
+                                            overflow: elide;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            color: account.status == "error" ? Theme.accent-pink
+                                                : account.status == "warn" ? Theme.accent-amber
+                                                : Theme.text-tertiary;
+                                        }
+                                        Text {
+                                            text: account.detail;
+                                            font-family: Theme.font-display;
+                                            font-size: Theme.font-size-2xs;
+                                            color: Theme.text-tertiary;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+                                    if c.configured && !confirming: NeothButton {
+                                        label: "Test";
+                                        primary: false;
+                                        clicked => {
+                                            root.channel-account-test-clicked(c.name, account.account-id);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

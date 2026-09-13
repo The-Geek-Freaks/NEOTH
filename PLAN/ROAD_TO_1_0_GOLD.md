@@ -8,6 +8,24 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Waves 18–19 GUI and connect account consumers — LOCALLY VERIFIED;
+full CI pending (2026-09-13):** six independently reviewed source files extend
+published Wave17 `ad4c4826`. Settings/Channels preserves nested account readiness
+and runtime observations and tests only an explicitly selected Telegram account.
+`neoth connect telegram --account <id>` uses the same canonical account data;
+invalid maps stay repair-only and legacy detailed JSON keeps its shape.
+Core **175/0/0** and actual GUI parser/action **350/0/0** pass. TestBuild01
+PASS5m26/min189.98GiB/peak12.52; final GUI test-source check PASS1m47/min195.19GiB/
+peak6.67, with no GUI test-monolith link. Clippy02 PASS2m45/min193.00GiB/peak8.25;
+format/GUI lint/self-test and generated CLI docs pass. Two reviewed expectations
+are restricted to artificial headless-module lint conditions; production APIs
+were not changed for them. Exact evidence: `docs/gold-wave18-19-verification.md`
+and its 149-input/2-executable JSON receipts. Native rendering and live transport
+acceptance remain separate. Wave17 full CI
+[34777552729](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34777552729)
+is running on its own commit; its Preflight and Code Quality passed. P1-16 and
+counts are unchanged. The next W20 transport-evidence candidate is reviewed.
+
 **Wave 17 account CLI, runtime health and CI repairs — LOCALLY VERIFIED;
 full CI pending (2026-09-13):** exact account-list/test and authenticated
 same-instance runtime projection are independently reviewed. TestBuild02
