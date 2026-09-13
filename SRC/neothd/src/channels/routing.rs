@@ -32,6 +32,14 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::channels::registry::ChannelAccountId;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedChannelRoute {
+    pub channel: String,
+    pub account_id: Option<ChannelAccountId>,
+}
+
 /// Per-channel outbound destination — the "home channel", i.e. WHERE on a
 /// given channel a proactive message lands. All optional + `serde(default)`
 /// so a partially-filled routing file is valid. Telegram additionally falls
@@ -192,14 +200,20 @@ pub struct ChannelRouting {
     /// Default proactive channel (canonical name) when no per-source match.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_channel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_default_account_id: Option<ChannelAccountId>,
     /// Per-`source` overrides, e.g. `{"coding_session":"discord"}`. The
     /// `ProactiveItem.source` tag is the routing key.
     #[serde(default)]
     pub by_source: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub telegram_account_by_source: HashMap<String, ChannelAccountId>,
     /// Channel for failure/error alerts (e.g. a `coding_session` that ended
     /// with blocked tasks). Falls back to `default_channel`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_channel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_failure_account_id: Option<ChannelAccountId>,
     /// Per-channel outbound destinations.
     #[serde(default)]
     pub destinations: ChannelDestinations,
@@ -209,6 +223,41 @@ pub struct ChannelRouting {
 pub const CHANNEL_ROUTING_FILE: &str = "channel_routing.json";
 
 impl ChannelRouting {
+    /// Resolve channel and account from the same selected branch. A missing
+    /// source-specific account deliberately never falls back to default.
+    pub fn resolve_route(&self, source: &str, is_failure: bool) -> Option<ResolvedChannelRoute> {
+        if let Some(channel) = self.by_source.get(source) {
+            return Some(ResolvedChannelRoute {
+                channel: channel.clone(),
+                account_id: if channel == "telegram" {
+                    self.telegram_account_by_source.get(source).cloned()
+                } else {
+                    None
+                },
+            });
+        }
+        if is_failure && let Some(channel) = &self.failure_channel {
+            return Some(ResolvedChannelRoute {
+                channel: channel.clone(),
+                account_id: if channel == "telegram" {
+                    self.telegram_failure_account_id.clone()
+                } else {
+                    None
+                },
+            });
+        }
+        self.default_channel
+            .as_ref()
+            .map(|channel| ResolvedChannelRoute {
+                channel: channel.clone(),
+                account_id: if channel == "telegram" {
+                    self.telegram_default_account_id.clone()
+                } else {
+                    None
+                },
+            })
+    }
+
     /// Resolve the channel a proactive item should target. Priority:
     /// (1) per-`source` override, (2) `failure_channel` when `is_failure`,
     /// (3) `default_channel`. `None` ⇒ no routing rule applies → the caller
@@ -217,13 +266,8 @@ impl ChannelRouting {
     /// destination — destination resolution is a separate step so the
     /// autonomy gate + recipient-own-id invariant stay at the send site.
     pub fn resolve_channel(&self, source: &str, is_failure: bool) -> Option<String> {
-        if let Some(ch) = self.by_source.get(source) {
-            return Some(ch.clone());
-        }
-        if is_failure && let Some(ch) = &self.failure_channel {
-            return Some(ch.clone());
-        }
-        self.default_channel.clone()
+        self.resolve_route(source, is_failure)
+            .map(|route| route.channel)
     }
 
     /// Load from `path`. A missing or empty file is a fresh default config
@@ -263,8 +307,11 @@ mod tests {
         by_source.insert("coding_session".to_string(), "discord".to_string());
         ChannelRouting {
             default_channel: Some("telegram".to_string()),
+            telegram_default_account_id: None,
             by_source,
+            telegram_account_by_source: HashMap::new(),
             failure_channel: Some("slack".to_string()),
+            telegram_failure_account_id: None,
             destinations: ChannelDestinations {
                 discord_channel_id: Some("987654321".to_string()),
                 slack_channel_id: Some("C0B0QV5434G".to_string()),
@@ -324,6 +371,46 @@ mod tests {
             "no routing configured → None → caller keeps sidecar behaviour"
         );
         assert_eq!(r.resolve_channel("anything", true), None);
+    }
+
+    #[test]
+    fn source_branch_never_inherits_a_default_telegram_account() {
+        let mut routing = ChannelRouting::default();
+        routing.default_channel = Some("telegram".into());
+        routing.telegram_default_account_id = Some(ChannelAccountId::new("default").unwrap());
+        routing
+            .by_source
+            .insert("cron:daily".into(), "telegram".into());
+        let route = routing.resolve_route("cron:daily", false).unwrap();
+        assert_eq!(route.channel, "telegram");
+        assert_eq!(
+            route.account_id, None,
+            "source route must not fall back to default account"
+        );
+    }
+
+    #[test]
+    fn route_returns_the_account_from_the_selected_default_or_failure_branch() {
+        let mut routing = ChannelRouting::default();
+        routing.default_channel = Some("telegram".into());
+        routing.telegram_default_account_id = Some(ChannelAccountId::new("default-a").unwrap());
+        routing.failure_channel = Some("telegram".into());
+        routing.telegram_failure_account_id = Some(ChannelAccountId::new("failure-b").unwrap());
+
+        assert_eq!(
+            routing.resolve_route("ordinary", false).unwrap().account_id,
+            Some(ChannelAccountId::new("default-a").unwrap())
+        );
+        assert_eq!(
+            routing.resolve_route("ordinary", true).unwrap().account_id,
+            Some(ChannelAccountId::new("failure-b").unwrap())
+        );
+    }
+
+    #[test]
+    fn empty_account_map_is_omitted_from_legacy_routing_json() {
+        let encoded = serde_json::to_string(&ChannelRouting::default()).unwrap();
+        assert!(!encoded.contains("telegram_account_by_source"));
     }
 
     #[test]

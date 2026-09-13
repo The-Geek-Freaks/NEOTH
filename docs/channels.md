@@ -102,6 +102,35 @@ account; flat proactive Telegram and Cron Telegram announcement paths refuse to
 send while a map is active. Account-aware outbound routing is still incomplete,
 so this is not a full multi-account readiness claim.
 
+### Account-bound proactive Telegram routing (Wave 16; validation pending)
+
+`neoth proactive route --default --channel telegram --account <account-id>`
+selects an explicit Telegram
+account for a new mapped route. It accepts only an exact, non-legacy
+authenticated account bundle; a map-active Telegram route cannot omit an
+account. The selected account is stored with queued work, so a later routing
+default change cannot reroute it to another account.
+
+At physical delivery, the worker holds the existing `DeliveryLock` and, just
+before durable `Prepared` admission, reloads a fresh coherent config and
+credential pair. It resolves the stored account against that pair and builds the
+owning adapter from the returned bundle. The recipient is only that bundle's
+`allowed_user_id`; routing data, a queued body, and a legacy recipient cannot
+override it.
+
+A credential or policy update completed before this fresh admission applies to
+the attempt: it uses the current exact account bundle or settles without a send.
+This does not promise retroactive cancellation once the coherent pair has
+already been admitted. Under an active map, a missing, unknown, removed,
+partial, mismatched, or legacy-unbound account fails closed and never falls back
+to another account. A historical unbound Telegram item remains valid through the
+existing legacy flat path while the effective map is empty.
+
+New account-bound claims and durable delivery evidence use a version-4 typed
+channel reference. Historical queue rows, claims, and WAL records retain their
+existing versions and recovery semantics. P1-16 remains open for other account,
+transport, pairing, UI, health, and outbound surfaces.
+
 ## Managing channels from the CLI
 
 The `neoth channel` family manages the canonical messaging registry (Telegram,

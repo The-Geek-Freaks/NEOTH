@@ -423,6 +423,8 @@ fn exactly_one_production_proactive_transport_seam_exists() {
         "sole proactive transport seam moved outside the durable egress boundary: {seams:?}"
     );
     assert!(EGRESS.contains("pub(crate) async fn execute_claimed_once("));
+    assert!(EGRESS.contains("pub(crate) async fn execute_claimed_once_account_bound"));
+    assert!(EGRESS.contains("async fn execute_claimed_once_inner<"));
     for fossil in [
         "fn run_proactive_drain_tick(",
         "fn write_inflight_claim(",
@@ -439,7 +441,7 @@ fn exactly_one_production_proactive_transport_seam_exists() {
 fn durable_admission_precedes_owned_deadline_bounded_transport_and_terminalization() {
     let execute = between(
         EGRESS,
-        "pub(crate) async fn execute_claimed_once(",
+        "async fn execute_claimed_once_inner<",
         "/// Settle a configured-but-unavailable route",
     );
     let admission = [
@@ -514,6 +516,89 @@ fn durable_admission_precedes_owned_deadline_bounded_transport_and_terminalizati
     );
     assert!(EGRESS.contains("atomic_write_private_child_create_new("));
     assert!(EGRESS.contains("bind_written_claim(claim_root, name, &prepared)"));
+}
+
+#[test]
+fn bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_account() {
+    let compatibility = between(
+        EGRESS,
+        "pub(crate) async fn execute_claimed_once(",
+        "/// Execute only a typed mapped Telegram account.",
+    );
+    assert_eq!(
+        compatibility.matches("execute_claimed_once_inner(").count(),
+        1,
+        "the compatibility wrapper must delegate once to the shared durable executor"
+    );
+    assert!(
+        compatibility.contains("Some(transport_recipient.to_string()),")
+            && compatibility.contains("Some(channel),")
+            && compatibility.contains("None,\n        None,"),
+        "the compatibility wrapper must pass only its prebuilt transport inputs to the shared executor"
+    );
+
+    let bound = between(
+        EGRESS,
+        "pub(crate) async fn execute_claimed_once_account_bound<",
+        "// The two public compatibility wrappers deliberately converge",
+    );
+    assert_eq!(
+        bound.matches("execute_claimed_once_inner(").count(),
+        1,
+        "the account-bound wrapper must delegate once to the shared durable executor"
+    );
+    assert!(
+        bound.contains("Some(channel_ref),") && bound.contains("Some(config_source_path),"),
+        "the bound wrapper must carry its typed account ref and config source into shared admission"
+    );
+
+    let inner = between(
+        EGRESS,
+        "async fn execute_claimed_once_inner<",
+        "/// Settle a configured-but-unavailable route",
+    );
+    let checked_ref = inner
+        .find("validate_account_bound_channel_ref(channel_ref, target_channel)")
+        .expect("typed account-ref validation before admission");
+    let fresh_pair = inner
+        .find("fresh_bound_telegram_account(")
+        .expect("fresh coherent account lookup");
+    let prepared = inner
+        .find("persist_prepared_claim(&delivery_lock, home, &claim)")
+        .expect("Prepared persistence");
+    assert!(
+        checked_ref < fresh_pair && fresh_pair < prepared,
+        "the exact bound ref must be validated and freshly resolved before Prepared persists"
+    );
+    let bound_claim = between(
+        inner,
+        "let mut claim = new_claim_with_deadline_and_channel_ref(",
+        "let claim_file = persist_prepared_claim(&delivery_lock, home, &claim)",
+    );
+    assert!(
+        bound_claim.contains("channel_ref.clone(),"),
+        "the freshly admitted typed account ref must be persisted into the durable claim"
+    );
+    assert!(
+        inner.contains("item.account_id.as_ref() != Some(&channel_ref.account_id)"),
+        "the bound executor must reject a queued account id that conflicts with its typed ref"
+    );
+    let fresh_account = between(
+        EGRESS,
+        "fn fresh_bound_telegram_account(",
+        "/// Sole production transport seam for proactive messages.",
+    );
+    assert!(
+        fresh_account
+            .contains("crate::config::load_runtime_config_pair_from_path(config_source_path)")
+            && fresh_account.contains(
+                "accepted == loaded && accepted_config.ssh_tunnels == runtime.config.ssh_tunnels"
+            )
+            && fresh_account.contains("runtime\n        .authenticated_telegram_accounts()")
+            && fresh_account
+                .contains("!account.is_legacy_singleton() && account.channel_ref() == channel_ref"),
+        "fresh account admission must require accepted public config plus SSH equality and resolve only an exact non-legacy account from one coherent pair"
+    );
 }
 
 #[test]
@@ -603,18 +688,20 @@ fn owned_transport_cancellation_is_abort_then_reap_and_recovery_is_fail_closed()
         "recovery must reap cancelled adapter work before inspecting durable claims"
     );
     assert!(
-        recovery.contains("if claim.version == CLAIM_VERSION")
+        recovery.contains("PREVIOUS_CLAIM_VERSION | CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION")
+            && recovery.contains("claim.phase == ProactiveEgressPhase::Armed")
             && recovery.contains("is_some_and(|deadline| now_unix < deadline)")
+            && recovery.contains("ArmedClaimLeaseProbe::Busy => continue")
             && recovery.contains("continue;"),
-        "only an unexpired v2 Armed claim may remain in-flight during recovery"
+        "only an unexpired v2/v3/v4 Armed claim whose exact lease is not Busy may remain in-flight during recovery"
     );
     assert!(
         !recovery.contains("now_unix <= deadline"),
-        "deadline equality must not leave a v2 Armed attempt in-flight"
+        "deadline equality must not leave a v2/v3/v4 Armed attempt in-flight"
     );
     assert!(
         recovery.contains("ProactiveEgressOutcome::CrashUnknown"),
-        "legacy or expired Armed uncertainty must settle fail-closed"
+        "legacy or expired v2/v3/v4 Armed uncertainty must settle fail-closed"
     );
 }
 
@@ -622,7 +709,7 @@ fn owned_transport_cancellation_is_abort_then_reap_and_recovery_is_fail_closed()
 fn armed_claim_lease_and_registration_cover_admission_transport_and_terminalization() {
     let execute = between(
         EGRESS,
-        "pub(crate) async fn execute_claimed_once(",
+        "async fn execute_claimed_once_inner<",
         "/// Settle a configured-but-unavailable route",
     );
     let provider_start = execute
@@ -1118,9 +1205,16 @@ fn every_live_route_uses_the_choke_point_and_keet_binds_raw_capability() {
     let execute_macro = between(&route_compact, "macro_rules!execute", "matchroute{");
     assert_eq!(route_compact.matches("macro_rules!execute").count(), 1);
     assert_eq!(
-        dispatcher_compact.matches("execute_claimed_once").count(),
+        dispatcher_compact.matches("execute_claimed_once(").count(),
         1,
-        "production dispatcher must name the durable egress seam only inside execute!"
+        "production dispatcher must name the unbound durable egress wrapper only inside execute!"
+    );
+    assert_eq!(
+        dispatcher_compact
+            .matches("execute_claimed_once_account_bound(")
+            .count(),
+        1,
+        "account-bound Telegram dispatch must enter its dedicated durable wrapper exactly once"
     );
     assert!(execute_macro.contains("execute_claimed_once("));
     let keet_arm = between(route, "DeliveryRoute::Keet", "DeliveryRoute::Signal");

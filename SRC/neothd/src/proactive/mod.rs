@@ -52,6 +52,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::channels::registry::ChannelAccountId;
+
 pub mod action_staging;
 
 /// One queued proactive notification. Fields are operator-facing —
@@ -73,6 +75,10 @@ pub struct ProactiveItem {
     /// (`telegram` / `slack` / `cli`). Empty falls back to
     /// the operator's default channel.
     pub channel: String,
+    /// Exact account selected when this item was queued. `None` preserves the
+    /// historic account-unbound wire shape and must never be inferred later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<ChannelAccountId>,
     /// Producer tag for audit. e.g. `"g_01_mini"` / `"pl_03"` /
     /// `"ob_03"` / `"self_correction"`.
     pub source: String,
@@ -840,6 +846,7 @@ mod tests {
             priority,
             dedup_key: key.into(),
             channel: "telegram".into(),
+            account_id: None,
             source: source.into(),
             body: format!("body of {key}"),
             scheduled_for_unix: 0,
@@ -1265,6 +1272,24 @@ mod tests {
         // Drain history preserved — same-window subsequent load
         // still respects the cap.
         assert_eq!(loaded.budget_left(1000), 2);
+    }
+
+    #[test]
+    fn historical_unbound_item_json_and_quarantine_digest_stay_stable() {
+        // Exact pre-Wave16 item JSON. `account_id` is intentionally absent:
+        // this byte shape feeds both persistent queue migration and the
+        // domain-separated quarantine/egress evidence digest.
+        let historical = br#"{"priority":50,"dedup_key":"legacy","channel":"telegram","source":"source","body":"body of legacy","scheduled_for_unix":0,"is_failure":false,"expires_unix":0}"#;
+        let decoded: ProactiveItem = serde_json::from_slice(historical).unwrap();
+        assert_eq!(decoded.account_id, None);
+        assert_eq!(serde_json::to_vec(&decoded).unwrap(), historical);
+        assert_eq!(
+            QuarantinedProactiveItem::from_item(&decoded, ProactiveItemInvalidity::EmptyDedupKey,)
+                .unwrap()
+                .item_sha256,
+            crate::wal::events::effect_digest(b"proactive-queue-quarantined-item-v1", historical,),
+            "historical account-unbound item bytes must retain their evidence digest"
+        );
     }
 
     #[test]

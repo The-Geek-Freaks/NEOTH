@@ -8,6 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Wave 16 account-bound proactive delivery — LOCALLY ACCEPTED; full CI
+outstanding (2026-09-13):** sixteen production files plus one source gate
+implement the Telegram account-bound route/queue/delivery contract, with explicit
+`proactive route --account`, stored binding, fresh coherent admission under
+`DeliveryLock`, bundle-only recipient, v4 durable `ChannelRef`, and preserved
+legacy flat delivery only for an empty effective map. All 221 unit behaviors pass
+(plus one separately validated real cross-process child), and all 13 integration
+targets pass **157/0/0**. Final Clippy04 **PASS**: 3m04s, 205.10 GiB minimum
+free, 6.48 GiB peak; fmt, GUI lint/self-test, and Python 19+11+8 pass. Final
+source/test evidence is `docs/verification/gold-wave16-{source-manifest,
+test-matrix}.json`: 101 inputs and 14 executables match. Foundation, delivery,
+test, and final source-gate reviews are **APPROVE**. TestBuild02, final binary,
+catalogue and SelectedFINAL evidence remain recorded in the receipt. P1-16
+remains **OPEN**; counts remain **1,010 complete / 312 open / 2 partial** (314
+raw; 313 pre-tag blockers). Wave 15 exact CI `ea0d9c3e` remains pending. No
+Wave 16 CI, live Telegram, cross-platform, GUI-link, or macOS-runtime claim.
+
 **Wave 15 account maps and recovery locally accepted (2026-09-13):** sixteen
 source files implement Telegram
 account maps, keychain-aware migration/cleanup recovery, per-account fleet and

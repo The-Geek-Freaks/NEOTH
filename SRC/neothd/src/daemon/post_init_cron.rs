@@ -62,6 +62,7 @@ async fn run_post_init_check_inner(home: &Path) -> anyhow::Result<()> {
         priority: 80,
         dedup_key,
         channel: String::new(), // operator default channel
+        account_id: None,
         source: "post_init_check".to_string(),
         body,
         scheduled_for_unix: 0,

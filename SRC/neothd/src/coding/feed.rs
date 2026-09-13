@@ -395,6 +395,7 @@ pub(crate) fn build_session_summary_item(
         },
         dedup_key: format!("coding:session-summary:{session_id}"),
         channel: String::new(),
+        account_id: None,
         source: "coding_session".to_string(),
         body: render_session_summary(outcome, session_id),
         scheduled_for_unix: 0,

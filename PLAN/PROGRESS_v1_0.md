@@ -3,6 +3,20 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 16 account-bound proactive delivery — LOCALLY ACCEPTED; full CI
+> outstanding 2026-09-13:** sixteen production files plus one source gate
+> cover `proactive route --account`, stored binding, fresh coherent admission
+> under `DeliveryLock`, bundle-only recipient, v4 `ChannelRef`, and legacy flat
+> delivery only while the map is empty. Unit **221/0/0** plus one separately
+> validated real cross-process child and 13 integration targets **157/0/0** pass.
+> Final Clippy04 **PASS** 3m04/min205.10GiB/peak6.48; fmt/GUI lint/self-test and
+> Python19+11+8 pass. Exact receipts
+> `docs/verification/gold-wave16-{source-manifest,test-matrix}.json` match 101
+> inputs/14 executables. Foundation/delivery/test/final-source-gate reviews are
+> **APPROVE**. P1-16 stays OPEN; counts 1324/1010/312/2 (314 raw; 313 pre-tag
+> blockers). Wave15 exact CI `ea0d9c3e` is pending. No Wave16 CI/live Telegram/
+> cross-platform/GUI-link/macOS-runtime claim.
+>
 > **Wave 15 account maps and recovery locally accepted 2026-09-13:** sixteen
 > source files cover Telegram maps,
 > keychain migration/cleanup recovery, per-account fleet/reload, flat outbound/

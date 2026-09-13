@@ -185,6 +185,7 @@ pub fn build_reflection_item(
         priority: 50,
         dedup_key: format!("reflection:weekly:{iso_week_tag}"),
         channel: String::new(),
+        account_id: None,
         source: "g_01_mini".into(),
         body,
         scheduled_for_unix,

@@ -21,6 +21,7 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use tracing::{debug, info, warn};
 
+use crate::channels::routing::{CHANNEL_ROUTING_FILE, ChannelRouting};
 use crate::cron::briefing_prompt::render_briefing_system_prompt;
 use crate::cron::schema::{CronRole, DeliveryMode, Job, classify_role};
 use crate::cron::state::{DeliveryStatus, RuntimeState, target_hash};
@@ -773,17 +774,24 @@ async fn run_job_with_paths(
                     delivery_id = Some(id.clone());
                     match delivery.mode {
                         DeliveryMode::Announce => {
-                            let channel = delivery.channel.trim().to_ascii_lowercase();
+                            let requested_channel = delivery.channel.trim().to_ascii_lowercase();
                             let dedup_key = format!("cron-delivery:{id}");
-                            match enqueue_cron_delivery(
-                                proactive_queue_path,
-                                &job.id,
-                                &channel,
-                                &output_text,
-                                &dedup_key,
-                                now_unix_secs(),
-                            ) {
-                                Ok(inserted) => {
+                            let queued =
+                                resolve_cron_delivery_route(home, &job.id, &delivery.channel)
+                                    .and_then(|(channel, account_id)| {
+                                        enqueue_cron_delivery(
+                                            proactive_queue_path,
+                                            &job.id,
+                                            &channel,
+                                            account_id,
+                                            &output_text,
+                                            &dedup_key,
+                                            now_unix_secs(),
+                                        )
+                                        .map(|inserted| (channel, inserted))
+                                    });
+                            match queued {
+                                Ok((channel, inserted)) => {
                                     delivery_queued = true;
                                     delivery_status = Some(DeliveryStatus::Queued);
                                     if let Err(error) = RuntimeState::modify(home, |state| {
@@ -808,7 +816,7 @@ async fn run_job_with_paths(
                                 }
                                 Err(error) => {
                                     let message = format!(
-                                        "provider completed, but delivery queue persistence failed for channel `{channel}`: {error:#}"
+                                        "provider completed, but delivery queue routing or persistence failed for channel `{requested_channel}`: {error:#}"
                                     );
                                     delivery_status = Some(DeliveryStatus::Failed);
                                     if let Err(state_error) = RuntimeState::modify(home, |state| {
@@ -821,8 +829,8 @@ async fn run_job_with_paths(
                                         warn!(job_id = %job.id, delivery_id = %id, error = %state_error,
                                                 "Cron delivery failure could not be recorded in correlation state");
                                     }
-                                    warn!(job_id = %job.id, channel = %channel, error = %error,
-                                            "Cron announce enqueue failed");
+                                    warn!(job_id = %job.id, channel = %requested_channel, error = %error,
+                                            "Cron announce route/enqueue failed");
                                     if !delivery.best_effort {
                                         ok = false;
                                         err_text = Some(message);
@@ -945,6 +953,7 @@ async fn run_job_with_paths(
                     priority: 80,
                     dedup_key,
                     channel: "cli".to_string(),
+                    account_id: None,
                     source: "hermes_07".to_string(),
                     body,
                     scheduled_for_unix: 0,
@@ -1170,6 +1179,7 @@ fn enqueue_cron_delivery(
     queue_path: &Path,
     job_id: &str,
     channel: &str,
+    account_id: Option<crate::channels::registry::ChannelAccountId>,
     output_text: &str,
     dedup_key: &str,
     now_unix: i64,
@@ -1178,6 +1188,7 @@ fn enqueue_cron_delivery(
         priority: 70,
         dedup_key: dedup_key.to_string(),
         channel: channel.to_string(),
+        account_id,
         source: format!("cron:{job_id}"),
         body: output_text.to_string(),
         scheduled_for_unix: 0,
@@ -1187,6 +1198,26 @@ fn enqueue_cron_delivery(
     // `false` is an idempotent retry: this exact JOB_FIRED event is already
     // durable under the same dedup key.
     ProactiveQueue::enqueue_at(queue_path, item)
+}
+
+/// Persist an explicit current cron branch before queue admission. Unbound
+/// routes retain the historical queue channel and dynamic dispatcher routing;
+/// only a selected account-qualified branch changes the durable item channel.
+/// That account selector then travels with the same branch into the queue, so
+/// a later routing edit cannot silently relabel it to another Telegram account.
+fn resolve_cron_delivery_route(
+    home: &Path,
+    job_id: &str,
+    configured_channel: &str,
+) -> Result<(String, Option<crate::channels::registry::ChannelAccountId>)> {
+    let routing = ChannelRouting::load_from(&home.join(CHANNEL_ROUTING_FILE))
+        .context("load channel routing for Cron delivery")?;
+    let source = format!("cron:{job_id}");
+    match routing.resolve_route(&source, false) {
+        Some(route) if route.account_id.is_some() => Ok((route.channel, route.account_id)),
+        None => Ok((configured_channel.trim().to_ascii_lowercase(), None)),
+        Some(_) => Ok((configured_channel.trim().to_ascii_lowercase(), None)),
+    }
 }
 
 async fn finish_job_fired_failure(
@@ -1860,6 +1891,7 @@ channel_accounts:
             &queue_path,
             "delivery-job",
             "telegram",
+            None,
             "finished body",
             dedup_key,
             1_700_000_000,
@@ -1871,6 +1903,7 @@ channel_accounts:
             &queue_path,
             "delivery-job",
             "telegram",
+            None,
             "finished body",
             dedup_key,
             1_700_000_001,
@@ -1883,9 +1916,41 @@ channel_accounts:
         let item = &queue.peek()[0];
         assert_eq!(item.dedup_key, dedup_key);
         assert_eq!(item.channel, "telegram");
+        assert_eq!(item.account_id, None);
         assert_eq!(item.source, "cron:delivery-job");
         assert_eq!(item.body, "finished body");
         assert_eq!(item.expires_unix, 1_700_086_400);
+    }
+
+    #[test]
+    fn cron_delivery_persists_the_account_from_its_selected_route() {
+        let dir = tempdir().unwrap();
+        let account = crate::channels::registry::ChannelAccountId::new("ops_a").unwrap();
+        let mut routing = ChannelRouting::default();
+        routing.default_channel = Some("telegram".to_string());
+        routing.telegram_default_account_id = Some(account.clone());
+        routing
+            .save_to(&dir.path().join(CHANNEL_ROUTING_FILE))
+            .unwrap();
+
+        let (channel, selected_account) =
+            resolve_cron_delivery_route(dir.path(), "daily", "cli").unwrap();
+        assert_eq!(channel, "telegram");
+        assert_eq!(selected_account, Some(account.clone()));
+
+        let queue_path = dir.path().join("proactive_queue.json");
+        enqueue_cron_delivery(
+            &queue_path,
+            "daily",
+            &channel,
+            selected_account,
+            "finished body",
+            "cron-delivery:daily:1",
+            1_700_000_000,
+        )
+        .unwrap();
+        let reloaded = ProactiveQueue::load_from(&queue_path).unwrap();
+        assert_eq!(reloaded.peek()[0].account_id, Some(account));
     }
 
     #[tokio::test]
@@ -2131,7 +2196,7 @@ channel_accounts:
             outcome
                 .error
                 .as_deref()
-                .is_some_and(|error| error.contains("delivery queue persistence failed")),
+                .is_some_and(|error| error.contains("delivery queue routing or persistence failed")),
             "unexpected outcome: {:?}",
             outcome.error
         );

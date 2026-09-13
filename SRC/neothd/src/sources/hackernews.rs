@@ -353,6 +353,7 @@ pub fn build_tech_currency_item(
         priority: 50,
         dedup_key: format!("reflection:tech-currency:{day_tag}"),
         channel: String::new(),
+        account_id: None,
         source: "hn_tech_currency".into(),
         body,
         scheduled_for_unix,

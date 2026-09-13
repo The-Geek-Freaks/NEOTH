@@ -2652,6 +2652,7 @@ GOLD-FEAT-13 — view or set per-purpose channel routing for proactive sends (`~
 - `--dest <DEST>` — Per-channel destination id (use with `--channel`)
 - `--default` — Set `--channel` as the default proactive destination
 - `--failure` — Set `--channel` as the failure-alert destination
+- `--account <ACCOUNT>` — Exact configured Telegram account for this route. Required for new Telegram route mutations while the Telegram account map is active
 
 ### `neoth proactive show`
 

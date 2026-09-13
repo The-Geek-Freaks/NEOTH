@@ -34,6 +34,31 @@ account adapter. Inbound replies stay with the owning adapter. Flat proactive
 Telegram and Cron announcement paths refuse mapped configuration; this does
 not provide complete account-aware outbound routing.
 
+## Account-bound proactive Telegram routing
+
+`cli/proactive.rs` accepts `proactive route --default --channel telegram
+--account <account-id>` for an
+explicit mapped Telegram route. `channels/routing.rs` carries the selected
+channel and typed account from the same route branch; `proactive::ProactiveItem`
+serializes its optional account binding without changing historical JSON when it
+is absent. Cron and other producers persist the selection. The dispatcher treats
+a stored binding as authoritative instead of resolving a changed route default.
+
+For an account-bound physical attempt, `daemon/proactive_egress.rs` holds
+`DeliveryLock`, reloads the current coherent `RuntimeConfigPair`, checks the
+accepted public configuration and exact stored account, then derives the adapter
+and recipient only from the fresh authenticated bundle. The recipient is
+`bundle.allowed_user_id`; routing destinations and queued content cannot affect
+that choice. A completed credential update before pair admission applies; this
+does not claim cancellation after admission.
+
+New account-bound durable claims, intent/result WAL data, and projections use a
+v4 domain-separated `ChannelRef` binding. v1-v3 claims/frames/records and old
+queue bytes remain compatible. A map-active bad or missing stored ref settles
+without a send and cannot bind A work to B. A historical unbound Telegram item
+continues through the legacy flat path only while the effective map is empty.
+This Telegram-only slice does not establish full multi-account readiness.
+
 ## Architecture
 
 ```

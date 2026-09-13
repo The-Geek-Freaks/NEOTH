@@ -358,6 +358,19 @@ pub(crate) fn plan_delivery(
     }
 }
 
+fn routing_channel_for_item(
+    routing: &crate::channels::routing::ChannelRouting,
+    item: &crate::proactive::ProactiveItem,
+) -> Option<String> {
+    if item.account_id.is_some() {
+        None
+    } else {
+        routing
+            .resolve_route(&item.source, item.is_failure)
+            .map(|route| route.channel)
+    }
+}
+
 #[derive(Debug)]
 enum LiveRouteError {
     /// Item-specific adapter configuration rejected before a claim existed.
@@ -816,11 +829,18 @@ pub async fn run_proactive_delivery_tick(
 ) -> Result<usize, String> {
     let test_controller =
         crate::config::reload::ReloadController::new(config.clone(), home.join("freedom.yaml"));
+    let runtime = crate::config::RuntimeConfigPair {
+        config: config.clone(),
+        raw_credentials: credentials.clone(),
+        credentials: credentials.clone(),
+    };
+    let config_source_path = home.join("freedom.yaml");
     run_proactive_delivery_tick_with_accepted(
         home,
         wal_segment_path,
         test_controller.accepted_snapshot(),
-        credentials,
+        &config_source_path,
+        &runtime,
         writer,
         now_unix,
     )
@@ -828,11 +848,12 @@ pub async fn run_proactive_delivery_tick(
 }
 
 /// Production tick bound to one atomically accepted config generation.
-pub async fn run_proactive_delivery_tick_with_accepted(
+pub(crate) async fn run_proactive_delivery_tick_with_accepted(
     home: &Path,
     wal_segment_path: &Path,
     accepted_config: Arc<crate::config::reload::AcceptedConfigSnapshot>,
-    credentials: &Credentials,
+    config_source_path: &Path,
+    runtime: &crate::config::RuntimeConfigPair,
     writer: &WalWriterHandle,
     now_unix: i64,
 ) -> Result<usize, String> {
@@ -936,10 +957,13 @@ pub async fn run_proactive_delivery_tick_with_accepted(
     );
     let mut delivered = 0usize;
     for (item, queue_generation) in drained {
-        let target_channel = match canonical_target_channel(
-            routing.resolve_channel(&item.source, item.is_failure),
-            &item.channel,
-        ) {
+        // An explicit account was selected and persisted with this item. Its
+        // original channel remains authoritative: a later source/default
+        // routing edit must never replace account A with whatever account B
+        // happens to be selected now. Account-unbound historical items retain
+        // the existing dynamic channel-routing behaviour.
+        let selected_channel = routing_channel_for_item(&routing, &item);
+        let target_channel = match canonical_target_channel(selected_channel, &item.channel) {
             Ok(channel) => channel,
             Err(channel_bytes) => {
                 warn!(
@@ -961,15 +985,75 @@ pub async fn run_proactive_delivery_tick_with_accepted(
                 continue;
             }
         };
+        if item.source != "g_01_mini" && item.account_id.is_some() {
+            let action = Action::ProactiveChannelSend {
+                channel: target_channel.clone(),
+            };
+            let status = if target_channel != "telegram" {
+                crate::daemon::proactive_egress::record_adapter_configuration_error_once(
+                    &egress,
+                    item,
+                    &queue_generation,
+                    &target_channel,
+                )
+                .await?
+            } else {
+                let stored_account = item
+                    .account_id
+                    .clone()
+                    .expect("account-bound branch requires an account id");
+                let channel_ref = crate::channels::registry::ChannelRef::new(
+                    crate::channels::registry::ChannelId::Telegram,
+                    stored_account,
+                );
+                if !evaluate(&action, &policy).is_allow() {
+                    crate::daemon::proactive_egress::record_account_bound_policy_suppressed_once(
+                        &egress,
+                        item,
+                        &queue_generation,
+                        &target_channel,
+                        channel_ref,
+                    )
+                    .await?
+                } else {
+                    crate::daemon::proactive_egress::execute_claimed_once_account_bound(
+                        &egress,
+                        item,
+                        &queue_generation,
+                        &target_channel,
+                        channel_ref,
+                        config_source_path,
+                        |token, allowed_user_id| {
+                            Arc::new(crate::channels::telegram::TelegramChannel::new(
+                                token,
+                                Some(allowed_user_id),
+                            ))
+                        },
+                    )
+                    .await?
+                }
+            };
+            if let Some(status) = status {
+                delivered += usize::from(status.is_delivered());
+            }
+            continue;
+        }
+
         let route = if item.source == "g_01_mini" {
             DeliveryRoute::SidecarOnly
         } else {
-            plan_delivery(&target_channel, &policy, config, &routing, credentials)
+            plan_delivery(
+                &target_channel,
+                &policy,
+                config,
+                &routing,
+                &runtime.credentials,
+            )
         };
         let item_for_configuration_failure = item.clone();
         let status = match deliver_live_route(
             &egress,
-            credentials,
+            &runtime.credentials,
             config,
             item,
             &queue_generation,
@@ -1082,13 +1166,14 @@ pub fn spawn_proactive_drain_loop(
                 continue;
             }
             let config = accepted;
-            let credentials = runtime.credentials;
             if config.proactive.enabled {
+                let config_source_path = reload_controller.source_path().to_path_buf();
                 match run_proactive_delivery_tick_with_accepted(
                     &home,
                     &wal_segment_path,
                     Arc::clone(&accepted_config),
-                    &credentials,
+                    &config_source_path,
+                    &runtime,
                     &writer,
                     now_unix,
                 )
@@ -1139,6 +1224,7 @@ mod tests {
             priority,
             dedup_key: key.to_string(),
             channel: "cli".to_string(),
+            account_id: None,
             source: "test".to_string(),
             body: format!("test body {key}"),
             scheduled_for_unix: ts,
@@ -1604,6 +1690,28 @@ channel_accounts:
 "#,
         )
         .expect("account-map test credentials")
+    }
+
+    #[test]
+    fn explicit_queued_account_keeps_its_original_channel_when_routing_changes() {
+        let account_a = crate::channels::registry::ChannelAccountId::new("ops_a").unwrap();
+        let account_b = crate::channels::registry::ChannelAccountId::new("ops_b").unwrap();
+        let mut routing = default_rt();
+        routing.default_channel = Some("telegram".to_string());
+        routing.telegram_default_account_id = Some(account_b);
+        let mut queued = item("bound", 50, 0);
+        queued.channel = "telegram".to_string();
+        queued.account_id = Some(account_a);
+        assert_eq!(
+            routing_channel_for_item(&routing, &queued),
+            None,
+            "the dispatcher must use the durable item channel, never a later account route"
+        );
+        assert_eq!(
+            canonical_target_channel(routing_channel_for_item(&routing, &queued), &queued.channel)
+                .unwrap(),
+            "telegram"
+        );
     }
 
     #[test]

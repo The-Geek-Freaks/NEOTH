@@ -17,6 +17,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::channels::registry::{ChannelId, ChannelRef};
 use crate::channels::{Channel, ChannelError, MessageId};
 use crate::daemon::proactive_dispatcher::{PROACTIVE_DELIVERED_SIDECAR, ProactiveStatus};
 use crate::proactive::{
@@ -36,9 +37,13 @@ pub const PROACTIVE_DELIVERY_LOCK_FILE: &str = "proactive_delivery.lock";
 /// bounded live attempt, so an Armed v1 claim without a terminal result is
 /// immediately settled as `CrashUnknown` rather than replayed.
 const CLAIM_VERSION: u8 = 3;
+/// v4 is deliberately reserved for account-bound Telegram egress.  The v3
+/// bytes remain the unbound compatibility format and are never reinterpreted.
+const ACCOUNT_BOUND_CLAIM_VERSION: u8 = 4;
 const PREVIOUS_CLAIM_VERSION: u8 = 2;
 const LEGACY_CLAIM_VERSION: u8 = 1;
 const WAL_BINDING_VERSION: u8 = 3;
+const ACCOUNT_BOUND_WAL_BINDING_VERSION: u8 = 4;
 const PREVIOUS_WAL_BINDING_VERSION: u8 = 2;
 const LEGACY_WAL_BINDING_VERSION: u8 = 1;
 const MAX_CLAIMS: usize = 1_024;
@@ -344,8 +349,10 @@ impl ArmedClaimLease {
         claim: &ProactiveEgressClaim,
     ) -> Result<ArmedClaimLeaseProbe> {
         anyhow::ensure!(
-            matches!(claim.version, PREVIOUS_CLAIM_VERSION | CLAIM_VERSION)
-                && claim.phase == ProactiveEgressPhase::Armed,
+            matches!(
+                claim.version,
+                PREVIOUS_CLAIM_VERSION | CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION
+            ) && claim.phase == ProactiveEgressPhase::Armed,
             "only an Armed v2/v3 proactive claim may acquire a transport lease"
         );
         let expected_name = claim_name(claim);
@@ -422,8 +429,10 @@ impl ArmedClaimLease {
     /// adapter data into a durable error path.
     fn validate_claim(&self, claim: &ProactiveEgressClaim) -> Result<()> {
         anyhow::ensure!(
-            matches!(claim.version, PREVIOUS_CLAIM_VERSION | CLAIM_VERSION)
-                && claim.phase == ProactiveEgressPhase::Armed
+            matches!(
+                claim.version,
+                PREVIOUS_CLAIM_VERSION | CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION
+            ) && claim.phase == ProactiveEgressPhase::Armed
                 && claim.intent_id == self.intent_id
                 && claim.binding_sha256 == self.binding_sha256
                 && claim.binding_sha256 == binding_hash(claim)
@@ -479,6 +488,11 @@ pub(crate) struct ProactiveEgressClaim {
     pub intent_id: String,
     pub item: ProactiveItem,
     pub target_channel: String,
+    /// Account-qualified physical egress identity.  It is present only for
+    /// v4 claims; raw recipients, tokens and message bodies remain outside
+    /// the WAL frames that carry this public routing metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_ref: Option<ChannelRef>,
     pub recipient_sha256: String,
     pub message_sha256: String,
     pub message_bytes: usize,
@@ -605,6 +619,8 @@ struct ProactiveIntentFrame {
     intent_id: String,
     binding_sha256: String,
     target_channel: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    channel_ref: Option<ChannelRef>,
     recipient_sha256: String,
     message_sha256: String,
     message_bytes: usize,
@@ -637,6 +653,8 @@ struct ProactiveResultFrame {
     intent_id: String,
     binding_sha256: String,
     target_channel: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    channel_ref: Option<ChannelRef>,
     recipient_sha256: String,
     message_bytes: usize,
     outcome: ProactiveEgressOutcome,
@@ -672,6 +690,8 @@ pub struct ProactiveDeliveryRecord {
     outcome: ProactiveEgressOutcome,
     was_failure: bool,
     target_channel: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    channel_ref: Option<ChannelRef>,
     dedup_sha256: String,
     message_sha256: String,
     message_bytes: usize,
@@ -805,6 +825,7 @@ fn migrate_legacy_delivery_record(
         } else {
             legacy.item.channel.clone()
         },
+        channel_ref: None,
         dedup_sha256: effect_hash(
             b"proactive-egress-dedup-v1",
             legacy.item.dedup_key.as_bytes(),
@@ -969,8 +990,53 @@ fn binding_hash(claim: &ProactiveEgressClaim) -> String {
             }
             effect_hash(b"proactive-egress-binding-v3", &bytes)
         }
+        ACCOUNT_BOUND_CLAIM_VERSION => {
+            let Some(channel_ref) = claim.channel_ref.as_ref() else {
+                return effect_hash(b"proactive-egress-binding-v4-invalid", &bytes);
+            };
+            let Some(deadline) = claim.attempt_deadline_unix else {
+                return effect_hash(b"proactive-egress-binding-v4-invalid", &bytes);
+            };
+            let mut v4 = Vec::with_capacity(bytes.len() + 192);
+            for value in [
+                channel_ref.channel_id.as_str().as_bytes(),
+                channel_ref.account_id.as_str().as_bytes(),
+                bytes.as_slice(),
+            ] {
+                v4.extend_from_slice(&(value.len() as u64).to_be_bytes());
+                v4.extend_from_slice(value);
+            }
+            v4.extend_from_slice(&deadline.to_be_bytes());
+            v4.push(match claim.trust_admission_state {
+                TrustAdmissionState::NeverSubmitted => 0,
+                TrustAdmissionState::AwaitingAuthenticatedReceipt => 1,
+                TrustAdmissionState::ReceiptObserved => 2,
+            });
+            match &claim.trust_admission {
+                Some(descriptor) => match serde_json::to_vec(descriptor) {
+                    Ok(encoded) => {
+                        v4.extend_from_slice(&(encoded.len() as u64).to_be_bytes());
+                        v4.extend_from_slice(&encoded);
+                    }
+                    Err(_) => return effect_hash(b"proactive-egress-binding-v4-invalid", &v4),
+                },
+                None => v4.extend_from_slice(&0u64.to_be_bytes()),
+            }
+            effect_hash(b"proactive-egress-binding-v4", &v4)
+        }
         _ => effect_hash(b"proactive-egress-binding-invalid", &bytes),
     }
+}
+
+fn validate_account_bound_channel_ref(
+    channel_ref: &ChannelRef,
+    target_channel: &str,
+) -> Result<()> {
+    anyhow::ensure!(
+        channel_ref.channel_id == ChannelId::Telegram && target_channel == "telegram",
+        "v4 proactive account binding must be an exact telegram channel reference"
+    );
+    Ok(())
 }
 
 fn claim_in_phase(
@@ -1047,7 +1113,10 @@ fn validate_claim(claim: &ProactiveEgressClaim, file_name: &str) -> Result<()> {
     anyhow::ensure!(
         matches!(
             claim.version,
-            LEGACY_CLAIM_VERSION | PREVIOUS_CLAIM_VERSION | CLAIM_VERSION
+            LEGACY_CLAIM_VERSION
+                | PREVIOUS_CLAIM_VERSION
+                | CLAIM_VERSION
+                | ACCOUNT_BOUND_CLAIM_VERSION
         ),
         "unsupported proactive claim version"
     );
@@ -1058,7 +1127,8 @@ fn validate_claim(claim: &ProactiveEgressClaim, file_name: &str) -> Result<()> {
                 "legacy proactive claim unexpectedly carries an attempt deadline"
             );
             anyhow::ensure!(
-                claim.trust_admission.is_none()
+                claim.channel_ref.is_none()
+                    && claim.trust_admission.is_none()
                     && claim.trust_admission_state == TrustAdmissionState::NeverSubmitted,
                 "legacy proactive claim unexpectedly carries a durable admission"
             );
@@ -1072,7 +1142,8 @@ fn validate_claim(claim: &ProactiveEgressClaim, file_name: &str) -> Result<()> {
                 "proactive attempt deadline must be after claim creation"
             );
             anyhow::ensure!(
-                claim.trust_admission.is_none()
+                claim.channel_ref.is_none()
+                    && claim.trust_admission.is_none()
                     && claim.trust_admission_state == TrustAdmissionState::NeverSubmitted,
                 "v2 proactive claim unexpectedly carries a durable admission"
             );
@@ -1096,6 +1167,44 @@ fn validate_claim(claim: &ProactiveEgressClaim, file_name: &str) -> Result<()> {
                 }
                 (Some(_), TrustAdmissionState::NeverSubmitted) => anyhow::bail!(
                     "v3 proactive NeverSubmitted claim unexpectedly carries a descriptor"
+                ),
+            }
+            if let Some(descriptor) = claim.trust_admission.as_ref() {
+                validate_claim_trust_admission_binding(claim, descriptor)?;
+            }
+            anyhow::ensure!(
+                claim.channel_ref.is_none(),
+                "v3 proactive claim unexpectedly carries an account binding"
+            );
+        }
+        ACCOUNT_BOUND_CLAIM_VERSION => {
+            let deadline = claim
+                .attempt_deadline_unix
+                .context("v4 proactive claim is missing its attempt deadline")?;
+            anyhow::ensure!(
+                deadline > claim.created_at_unix,
+                "proactive attempt deadline must be after claim creation"
+            );
+            let channel_ref = claim
+                .channel_ref
+                .as_ref()
+                .context("v4 proactive claim is missing its account binding")?;
+            validate_account_bound_channel_ref(channel_ref, &claim.target_channel)?;
+            anyhow::ensure!(
+                claim.item.account_id.as_ref() == Some(&channel_ref.account_id),
+                "v4 proactive claim account binding conflicts with its queued item"
+            );
+            match (&claim.trust_admission, claim.trust_admission_state) {
+                (None, TrustAdmissionState::NeverSubmitted) => {}
+                (Some(descriptor), TrustAdmissionState::AwaitingAuthenticatedReceipt)
+                | (Some(descriptor), TrustAdmissionState::ReceiptObserved) => descriptor
+                    .validate()
+                    .context("validate proactive durable trust admission")?,
+                (None, _) => {
+                    anyhow::bail!("v4 proactive admission state requires an immutable descriptor")
+                }
+                (Some(_), TrustAdmissionState::NeverSubmitted) => anyhow::bail!(
+                    "v4 proactive NeverSubmitted claim unexpectedly carries a descriptor"
                 ),
             }
             if let Some(descriptor) = claim.trust_admission.as_ref() {
@@ -1584,6 +1693,7 @@ fn intent_frame(claim: &ProactiveEgressClaim) -> ProactiveIntentFrame {
         intent_id: claim.intent_id.clone(),
         binding_sha256: claim.binding_sha256.clone(),
         target_channel: claim.target_channel.clone(),
+        channel_ref: claim.channel_ref.clone(),
         recipient_sha256: claim.recipient_sha256.clone(),
         message_sha256: claim.message_sha256.clone(),
         message_bytes: claim.message_bytes,
@@ -1614,7 +1724,10 @@ fn validate_intent_frame(intent: &ProactiveIntentFrame) -> Result<()> {
     anyhow::ensure!(
         matches!(
             intent.proactive_binding_version,
-            LEGACY_WAL_BINDING_VERSION | PREVIOUS_WAL_BINDING_VERSION | WAL_BINDING_VERSION
+            LEGACY_WAL_BINDING_VERSION
+                | PREVIOUS_WAL_BINDING_VERSION
+                | WAL_BINDING_VERSION
+                | ACCOUNT_BOUND_WAL_BINDING_VERSION
         ),
         "unsupported proactive intent binding version"
     );
@@ -1623,13 +1736,28 @@ fn validate_intent_frame(intent: &ProactiveIntentFrame) -> Result<()> {
             intent.attempt_deadline_unix.is_none(),
             "legacy proactive intent unexpectedly carries an attempt deadline"
         ),
-        PREVIOUS_WAL_BINDING_VERSION | WAL_BINDING_VERSION => anyhow::ensure!(
-            intent
-                .attempt_deadline_unix
-                .is_some_and(|deadline| deadline > intent.created_at_unix),
-            "v2 proactive intent has an invalid attempt deadline"
-        ),
+        PREVIOUS_WAL_BINDING_VERSION | WAL_BINDING_VERSION | ACCOUNT_BOUND_WAL_BINDING_VERSION => {
+            anyhow::ensure!(
+                intent
+                    .attempt_deadline_unix
+                    .is_some_and(|deadline| deadline > intent.created_at_unix),
+                "v2 proactive intent has an invalid attempt deadline"
+            )
+        }
         _ => unreachable!("version was checked above"),
+    }
+    match (
+        intent.proactive_binding_version,
+        intent.channel_ref.as_ref(),
+    ) {
+        (ACCOUNT_BOUND_WAL_BINDING_VERSION, Some(channel_ref)) => {
+            validate_account_bound_channel_ref(channel_ref, &intent.target_channel)?;
+        }
+        (ACCOUNT_BOUND_WAL_BINDING_VERSION, None) => {
+            anyhow::bail!("v4 proactive intent is missing its account binding")
+        }
+        (_, None) => {}
+        _ => anyhow::bail!("pre-v4 proactive intent unexpectedly carries an account binding"),
     }
     validate_uuid_v7(&intent.intent_id)?;
     anyhow::ensure!(
@@ -1664,7 +1792,10 @@ fn validate_armed_frame(armed: &ProactiveArmedFrame) -> Result<()> {
     anyhow::ensure!(
         matches!(
             armed.proactive_binding_version,
-            LEGACY_WAL_BINDING_VERSION | PREVIOUS_WAL_BINDING_VERSION | WAL_BINDING_VERSION
+            LEGACY_WAL_BINDING_VERSION
+                | PREVIOUS_WAL_BINDING_VERSION
+                | WAL_BINDING_VERSION
+                | ACCOUNT_BOUND_WAL_BINDING_VERSION
         ),
         "unsupported proactive Armed binding version"
     );
@@ -1684,6 +1815,7 @@ fn intent_matches_claim(intent: &ProactiveIntentFrame, claim: &ProactiveEgressCl
         && intent.intent_id == claim.intent_id
         && intent.binding_sha256 == prepared.binding_sha256
         && intent.target_channel == claim.target_channel
+        && intent.channel_ref == claim.channel_ref
         && intent.recipient_sha256 == claim.recipient_sha256
         && intent.message_sha256 == claim.message_sha256
         && intent.message_bytes == claim.message_bytes
@@ -1709,7 +1841,10 @@ fn validate_result_frame(result: &ProactiveResultFrame) -> Result<()> {
     anyhow::ensure!(
         matches!(
             result.proactive_binding_version,
-            LEGACY_WAL_BINDING_VERSION | PREVIOUS_WAL_BINDING_VERSION | WAL_BINDING_VERSION
+            LEGACY_WAL_BINDING_VERSION
+                | PREVIOUS_WAL_BINDING_VERSION
+                | WAL_BINDING_VERSION
+                | ACCOUNT_BOUND_WAL_BINDING_VERSION
         ),
         "unsupported proactive result binding version"
     );
@@ -1727,6 +1862,19 @@ fn validate_result_frame(result: &ProactiveResultFrame) -> Result<()> {
             && result.target_channel.len() <= MAX_PROACTIVE_CHANNEL_BYTES,
         "invalid proactive result target channel"
     );
+    match (
+        result.proactive_binding_version,
+        result.channel_ref.as_ref(),
+    ) {
+        (ACCOUNT_BOUND_WAL_BINDING_VERSION, Some(channel_ref)) => {
+            validate_account_bound_channel_ref(channel_ref, &result.target_channel)?;
+        }
+        (ACCOUNT_BOUND_WAL_BINDING_VERSION, None) => {
+            anyhow::bail!("v4 proactive result is missing its account binding")
+        }
+        (_, None) => {}
+        _ => anyhow::bail!("pre-v4 proactive result unexpectedly carries an account binding"),
+    }
     anyhow::ensure!(
         is_sha256_hex(&result.recipient_sha256),
         "invalid proactive result recipient digest"
@@ -1851,6 +1999,7 @@ fn scan_wal_evidence(
                         version == u64::from(LEGACY_WAL_BINDING_VERSION)
                             || version == u64::from(PREVIOUS_WAL_BINDING_VERSION)
                             || version == u64::from(WAL_BINDING_VERSION)
+                            || version == u64::from(ACCOUNT_BOUND_WAL_BINDING_VERSION)
                     }),
                 "unsupported proactive WAL binding version"
             );
@@ -1936,6 +2085,7 @@ fn scan_wal_evidence(
         );
         anyhow::ensure!(
             result.target_channel == intent.target_channel
+                && result.channel_ref == intent.channel_ref
                 && result.recipient_sha256 == intent.recipient_sha256
                 && result.message_bytes == intent.message_bytes,
             "proactive result metadata conflicts with authenticated intent"
@@ -1989,7 +2139,7 @@ async fn append_intent(
     writer: &WalWriterHandle,
     claim: &ProactiveEgressClaim,
 ) -> Result<()> {
-    if claim.version == CLAIM_VERSION {
+    if matches!(claim.version, CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION) {
         anyhow::ensure!(
             claim.trust_admission_state == TrustAdmissionState::ReceiptObserved
                 && claim.trust_admission.is_some(),
@@ -2013,7 +2163,7 @@ async fn append_armed(
     writer: &WalWriterHandle,
     claim: &ProactiveEgressClaim,
 ) -> Result<()> {
-    if claim.version == CLAIM_VERSION {
+    if matches!(claim.version, CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION) {
         anyhow::ensure!(
             claim.trust_admission_state == TrustAdmissionState::ReceiptObserved
                 && claim.trust_admission.as_ref().is_some_and(|descriptor| {
@@ -2087,6 +2237,7 @@ fn terminal_result(
         intent_id: claim.intent_id.clone(),
         binding_sha256: claim.binding_sha256.clone(),
         target_channel: claim.target_channel.clone(),
+        channel_ref: claim.channel_ref.clone(),
         recipient_sha256: claim.recipient_sha256.clone(),
         message_bytes: claim.message_bytes,
         outcome,
@@ -2121,6 +2272,7 @@ fn verify_result_binding(
     );
     anyhow::ensure!(
         result.target_channel == claim.target_channel
+            && result.channel_ref == claim.channel_ref
             && result.recipient_sha256 == claim.recipient_sha256
             && result.message_bytes == claim.message_bytes,
         "proactive result metadata does not match its durable claim"
@@ -2261,6 +2413,7 @@ fn delivery_record(
         outcome: result.outcome,
         was_failure: claim.item.is_failure,
         target_channel: claim.target_channel.clone(),
+        channel_ref: claim.channel_ref.clone(),
         dedup_sha256: claim.dedup_sha256.clone(),
         message_sha256: claim.message_sha256.clone(),
         message_bytes: claim.message_bytes,
@@ -2403,6 +2556,13 @@ fn validate_delivery_record(record: &ProactiveDeliveryRecord) -> Result<()> {
             && record.target_channel.len() <= MAX_PROACTIVE_CHANNEL_BYTES,
         "proactive history target channel is invalid"
     );
+    if let Some(channel_ref) = record.channel_ref.as_ref() {
+        validate_account_bound_channel_ref(channel_ref, &record.target_channel)?;
+        anyhow::ensure!(
+            record.item.account_id.as_ref() == Some(&channel_ref.account_id),
+            "proactive history account binding conflicts with its queued item"
+        );
+    }
     record
         .item
         .validate()
@@ -2650,6 +2810,8 @@ fn verify_delivery_record_against_wal(
             && record.outcome == result.outcome
             && record.target_channel == intent.target_channel
             && record.target_channel == result.target_channel
+            && record.channel_ref == intent.channel_ref
+            && record.channel_ref == result.channel_ref
             && record.message_sha256 == intent.message_sha256
             && record.message_bytes == intent.message_bytes
             && record.message_bytes == result.message_bytes
@@ -3290,7 +3452,10 @@ async fn has_unexpired_inflight_dedup(
         for (claim_file, claim) in read_claims(&home, now_unix)? {
             if claim.dedup_sha256 != dedup_sha256
                 || claim.phase != ProactiveEgressPhase::Armed
-                || !matches!(claim.version, PREVIOUS_CLAIM_VERSION | CLAIM_VERSION)
+                || !matches!(
+                    claim.version,
+                    PREVIOUS_CLAIM_VERSION | CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION
+                )
             {
                 continue;
             }
@@ -3379,16 +3544,18 @@ fn new_claim(
     transport_recipient: &str,
     now_unix: i64,
 ) -> Result<ProactiveEgressClaim> {
-    new_claim_with_deadline(
+    new_claim_with_deadline_and_channel_ref(
         item,
         queue_generation,
         target_channel,
         transport_recipient,
         now_unix,
         deadline_after(now_unix, DEFAULT_DELIVERY_ATTEMPT_TIMEOUT)?,
+        None,
     )
 }
 
+#[cfg(test)]
 fn new_claim_with_deadline(
     item: ProactiveItem,
     queue_generation: &str,
@@ -3396,6 +3563,26 @@ fn new_claim_with_deadline(
     transport_recipient: &str,
     now_unix: i64,
     attempt_deadline_unix: i64,
+) -> Result<ProactiveEgressClaim> {
+    new_claim_with_deadline_and_channel_ref(
+        item,
+        queue_generation,
+        target_channel,
+        transport_recipient,
+        now_unix,
+        attempt_deadline_unix,
+        None,
+    )
+}
+
+fn new_claim_with_deadline_and_channel_ref(
+    item: ProactiveItem,
+    queue_generation: &str,
+    target_channel: &str,
+    transport_recipient: &str,
+    now_unix: i64,
+    attempt_deadline_unix: i64,
+    channel_ref: Option<ChannelRef>,
 ) -> Result<ProactiveEgressClaim> {
     item.validate()
         .map_err(anyhow::Error::new)
@@ -3406,7 +3593,11 @@ fn new_claim_with_deadline(
     );
     let item_bytes = serde_json::to_vec(&item).context("encode proactive item binding")?;
     let mut claim = ProactiveEgressClaim {
-        version: CLAIM_VERSION,
+        version: if channel_ref.is_some() {
+            ACCOUNT_BOUND_CLAIM_VERSION
+        } else {
+            CLAIM_VERSION
+        },
         phase: ProactiveEgressPhase::Prepared,
         intent_id: uuid::Uuid::now_v7().to_string(),
         message_bytes: item.body.len(),
@@ -3422,6 +3613,7 @@ fn new_claim_with_deadline(
         binding_sha256: String::new(),
         item,
         target_channel: target_channel.to_string(),
+        channel_ref,
         created_at_unix: now_unix,
         attempt_deadline_unix: Some(attempt_deadline_unix),
         trust_admission: None,
@@ -3439,6 +3631,36 @@ fn trust_operation_id_sha256(claim: &ProactiveEgressClaim) -> String {
 /// raw provider recipient and body remain in the private claim; the WAL and
 /// TrustDecision retain only this domain-separated digest.
 fn trust_request_binding_sha256(claim: &ProactiveEgressClaim) -> String {
+    if claim.version == ACCOUNT_BOUND_CLAIM_VERSION {
+        let Some(channel_ref) = claim.channel_ref.as_ref() else {
+            // Claim validation rejects this shape before admission. Keep this
+            // helper total so malformed durable input cannot panic a recovery
+            // path or silently receive a v3-equivalent trust identity.
+            return effect_hash(
+                b"proactive-trust-binding-v4-invalid",
+                b"missing-channel-ref",
+            );
+        };
+        let mut bytes = Vec::with_capacity(640);
+        for value in [
+            b"account-bound-v4".as_slice(),
+            channel_ref.channel_id.as_str().as_bytes(),
+            channel_ref.account_id.as_str().as_bytes(),
+            claim.target_channel.as_bytes(),
+            claim.recipient_sha256.as_bytes(),
+            claim.message_sha256.as_bytes(),
+            claim.item_sha256.as_bytes(),
+            claim.dedup_sha256.as_bytes(),
+            claim.queue_generation.as_bytes(),
+        ] {
+            bytes.extend_from_slice(&(value.len() as u64).to_be_bytes());
+            bytes.extend_from_slice(value);
+        }
+        return effect_hash(b"proactive-trust-binding-v4", &bytes);
+    }
+
+    // Keep the v1-v3 preimage byte-for-byte stable for existing durable
+    // descriptors and their authenticated receipts.
     let mut bytes = Vec::with_capacity(512);
     for value in [
         claim.target_channel.as_bytes(),
@@ -3467,8 +3689,8 @@ async fn ensure_trust_admission_receipt(
     claim: &mut ProactiveEgressClaim,
 ) -> Result<crate::permissions::trust_ledger::TrustOutcome> {
     anyhow::ensure!(
-        claim.version == CLAIM_VERSION,
-        "durable trust admission requires a v3 proactive claim"
+        matches!(claim.version, CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION),
+        "durable trust admission requires a v3 or v4 proactive claim"
     );
     validate_claim(claim, &claim_name(claim))
         .context("validate proactive claim before durable admission")?;
@@ -3570,7 +3792,7 @@ async fn reconcile_persisted_trust_admission(
     claim: &mut ProactiveEgressClaim,
 ) -> Result<crate::permissions::trust_ledger::TrustOutcome> {
     anyhow::ensure!(
-        claim.version == CLAIM_VERSION
+        matches!(claim.version, CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION)
             && matches!(
                 claim.trust_admission_state,
                 TrustAdmissionState::AwaitingAuthenticatedReceipt
@@ -3741,7 +3963,7 @@ async fn recover_pending_claims_locked(
         // is no configured adapter/context here, so a recovered pre-effect
         // allow is settled as NotAttempted and its queue generation may enter
         // later as a brand-new v3 operation; it is never silently resent.
-        if claim.version == CLAIM_VERSION
+        if matches!(claim.version, CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION)
             && claim.phase == ProactiveEgressPhase::Prepared
             && intent.is_none()
             && matches!(
@@ -3805,8 +4027,10 @@ async fn recover_pending_claims_locked(
         // this process observes a wall-clock jump. Probe the exact, bound
         // Armed inode before applying any v2 expiry rule: Busy means that
         // process still owns the attempt, regardless of `now_unix`.
-        let armed_claim_lease = if matches!(claim.version, PREVIOUS_CLAIM_VERSION | CLAIM_VERSION)
-            && claim.phase == ProactiveEgressPhase::Armed
+        let armed_claim_lease = if matches!(
+            claim.version,
+            PREVIOUS_CLAIM_VERSION | CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION
+        ) && claim.phase == ProactiveEgressPhase::Armed
             && intent.is_some()
             && armed.is_some()
             && result.is_none()
@@ -3867,10 +4091,12 @@ async fn recover_pending_claims_locked(
                 .await?;
             }
             (Some(_), Some(_), None)
-                if matches!(claim.version, PREVIOUS_CLAIM_VERSION | CLAIM_VERSION)
-                    && claim
-                        .attempt_deadline_unix
-                        .is_some_and(|deadline| now_unix < deadline) =>
+                if matches!(
+                    claim.version,
+                    PREVIOUS_CLAIM_VERSION | CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION
+                ) && claim
+                    .attempt_deadline_unix
+                    .is_some_and(|deadline| now_unix < deadline) =>
             {
                 // This is a v2 transport that was durably admitted but whose
                 // bounded attempt can still be live in another dispatcher.
@@ -4277,10 +4503,38 @@ fn fixed_transport_failure(category: &'static str) -> ChannelError {
     ChannelError::Transport(category.to_string())
 }
 
+enum FreshBoundAccountRefusal {
+    AcceptedConfigMismatch,
+    AccountUnavailable,
+}
+
+fn fresh_bound_telegram_account(
+    config_source_path: &Path,
+    accepted_config: &crate::config::FreedomConfig,
+    channel_ref: &ChannelRef,
+) -> std::result::Result<(crate::secret::SecretString, u64), FreshBoundAccountRefusal> {
+    let runtime = crate::config::load_runtime_config_pair_from_path(config_source_path)
+        .map_err(|_| FreshBoundAccountRefusal::AccountUnavailable)?;
+    let matches_accepted = matches!(
+        (serde_yaml::to_string(accepted_config), serde_yaml::to_string(&runtime.config)),
+        (Ok(accepted), Ok(loaded))
+            if accepted == loaded && accepted_config.ssh_tunnels == runtime.config.ssh_tunnels
+    );
+    if !matches_accepted {
+        return Err(FreshBoundAccountRefusal::AcceptedConfigMismatch);
+    }
+    let account = runtime
+        .authenticated_telegram_accounts()
+        .map_err(|_| FreshBoundAccountRefusal::AccountUnavailable)?
+        .into_iter()
+        .find(|account| !account.is_legacy_singleton() && account.channel_ref() == channel_ref)
+        .ok_or(FreshBoundAccountRefusal::AccountUnavailable)?;
+    Ok((account.token().clone(), account.allowed_user_id()))
+}
+
 /// Sole production transport seam for proactive messages.
 ///
-/// Adapter construction happens before entry. Once inside, failure to create a
-/// durable claim or WAL intent is fail-closed and performs zero transport I/O.
+/// The unbound compatibility path retains the reviewed v3 transport contract.
 pub(crate) async fn execute_claimed_once(
     context: &ProactiveEgressContext<'_>,
     item: ProactiveItem,
@@ -4289,11 +4543,74 @@ pub(crate) async fn execute_claimed_once(
     transport_recipient: &str,
     channel: Arc<dyn Channel>,
 ) -> Result<Option<ProactiveStatus>, String> {
+    execute_claimed_once_inner(
+        context,
+        item,
+        queue_generation,
+        target_channel,
+        Some(transport_recipient.to_string()),
+        Some(channel),
+        None,
+        None,
+        |_, _| unreachable!("unbound proactive delivery never invokes the account factory"),
+    )
+    .await
+}
+
+/// Execute only a typed mapped Telegram account.  The factory is deliberately
+/// one-shot and invoked under `DeliveryLock` only after a freshly coherent
+/// pair has admitted the exact account.  Production supplies the normal
+/// Telegram constructor; focused tests can supply isolated mock channels.
+pub(crate) async fn execute_claimed_once_account_bound<F>(
+    context: &ProactiveEgressContext<'_>,
+    item: ProactiveItem,
+    queue_generation: &str,
+    target_channel: &str,
+    channel_ref: ChannelRef,
+    config_source_path: &Path,
+    build_channel: F,
+) -> Result<Option<ProactiveStatus>, String>
+where
+    F: FnOnce(crate::secret::SecretString, u64) -> Arc<dyn Channel>,
+{
+    execute_claimed_once_inner(
+        context,
+        item,
+        queue_generation,
+        target_channel,
+        None,
+        None,
+        Some(channel_ref),
+        Some(config_source_path),
+        build_channel,
+    )
+    .await
+}
+
+// The two public compatibility wrappers deliberately converge at the sole
+// durable transport seam; packaging these distinct authority inputs would
+// obscure which values are caller-provided versus freshly admitted.
+#[allow(clippy::too_many_arguments)]
+async fn execute_claimed_once_inner<F>(
+    context: &ProactiveEgressContext<'_>,
+    item: ProactiveItem,
+    queue_generation: &str,
+    target_channel: &str,
+    prebuilt_recipient: Option<String>,
+    prebuilt_channel: Option<Arc<dyn Channel>>,
+    channel_ref: Option<ChannelRef>,
+    config_source_path: Option<&Path>,
+    build_channel: F,
+) -> Result<Option<ProactiveStatus>, String>
+where
+    F: FnOnce(crate::secret::SecretString, u64) -> Arc<dyn Channel>,
+{
     let home = context.home;
     let wal_segment_path = context.wal_segment_path;
     let writer = context.writer;
     let now_unix = context.now_unix;
     let timeout = context.delivery_attempt_timeout();
+    let mut build_channel = Some(build_channel);
 
     // Admission is one short critical section only. It includes recovery,
     // generation validation and all irreversible durable pre-transport ACKs;
@@ -4306,6 +4623,8 @@ pub(crate) async fn execute_claimed_once(
         armed_claim_lease,
         registration,
         generation_effect_lease,
+        transport_recipient,
+        channel,
     ) = {
         let delivery_lock = acquire_delivery_lock(home)
             .await
@@ -4327,6 +4646,72 @@ pub(crate) async fn execute_claimed_once(
         {
             return Ok(None);
         }
+        let (transport_recipient, channel) = match channel_ref.as_ref() {
+            Some(channel_ref) => {
+                validate_account_bound_channel_ref(channel_ref, target_channel)
+                    .map_err(|error| format!("validate account-bound route: {error:#}"))?;
+                if item.account_id.as_ref() != Some(&channel_ref.account_id) {
+                    return Err("account-bound route conflicts with queued account".to_string());
+                }
+                let config_source_path = config_source_path.ok_or_else(|| {
+                    "account-bound delivery is missing its config source path".to_string()
+                })?;
+                let config_source_path = config_source_path.to_path_buf();
+                let accepted_config = context.accepted_config().config().as_ref().clone();
+                let channel_ref_for_read = channel_ref.clone();
+                let fresh = tokio::task::spawn_blocking(move || {
+                    fresh_bound_telegram_account(
+                        &config_source_path,
+                        &accepted_config,
+                        &channel_ref_for_read,
+                    )
+                })
+                .await
+                .map_err(|error| format!("join account-bound pair admission: {error}"))?;
+                match fresh {
+                    Ok((token, allowed_user_id)) => {
+                        let channel = build_channel
+                            .take()
+                            .expect("account-bound channel factory is consumed once")(
+                            token,
+                            allowed_user_id,
+                        );
+                        (allowed_user_id.to_string(), channel)
+                    }
+                    Err(FreshBoundAccountRefusal::AcceptedConfigMismatch) => {
+                        drop(delivery_lock);
+                        return record_without_transport_once(
+                            context,
+                            item,
+                            queue_generation,
+                            target_channel,
+                            ProactiveEgressOutcome::PolicySuppressed,
+                            Some(channel_ref.clone()),
+                        )
+                        .await;
+                    }
+                    Err(FreshBoundAccountRefusal::AccountUnavailable) => {
+                        drop(delivery_lock);
+                        return settle_claimed_once_account_bound_configuration_error(
+                            context,
+                            item,
+                            queue_generation,
+                            target_channel,
+                            channel_ref.clone(),
+                        )
+                        .await;
+                    }
+                }
+            }
+            None => (
+                prebuilt_recipient.clone().ok_or_else(|| {
+                    "unbound proactive delivery is missing a transport recipient".to_string()
+                })?,
+                prebuilt_channel.clone().ok_or_else(|| {
+                    "unbound proactive delivery is missing its channel".to_string()
+                })?,
+            ),
+        };
         // Sample both clocks once at admission. The original monotonic budget
         // prevents a later wall-clock rollback from extending live I/O; the
         // wall-derived budget prevents whole-second WAL encoding from adding a
@@ -4352,13 +4737,14 @@ pub(crate) async fn execute_claimed_once(
             .context("proactive wall deadline overflow")
             .map_err(|error| format!("bind proactive wall deadline: {error:#}"))?;
         let transport_deadline = original_monotonic_deadline.min(wall_deadline);
-        let mut claim = new_claim_with_deadline(
+        let mut claim = new_claim_with_deadline_and_channel_ref(
             item,
             queue_generation,
             target_channel,
-            transport_recipient,
+            &transport_recipient,
             admission_now_unix,
             attempt_deadline_unix,
+            channel_ref.clone(),
         )
         .map_err(|error| format!("bind proactive claim: {error:#}"))?;
         let claim_file = persist_prepared_claim(&delivery_lock, home, &claim)
@@ -4474,6 +4860,8 @@ pub(crate) async fn execute_claimed_once(
             armed_claim_lease,
             registration,
             generation_effect_lease,
+            transport_recipient,
+            channel,
         )
     };
     if tokio::time::Instant::now() >= transport_deadline {
@@ -4483,7 +4871,7 @@ pub(crate) async fn execute_claimed_once(
     let mut transport = OwnedTransportAttempt::start(
         registration,
         channel,
-        transport_recipient.to_string(),
+        transport_recipient,
         claim.item.body.clone(),
         transport_deadline,
         armed_claim_lease,
@@ -4572,6 +4960,7 @@ async fn record_without_transport_once(
     queue_generation: &str,
     target_channel: &str,
     outcome: ProactiveEgressOutcome,
+    channel_ref: Option<ChannelRef>,
 ) -> Result<Option<ProactiveStatus>, String> {
     let home = context.home();
     let wal_segment_path = context.wal_segment_path();
@@ -4594,8 +4983,17 @@ async fn record_without_transport_once(
     if !generation_matches {
         return Ok(None);
     }
-    let mut claim = new_claim(item, queue_generation, target_channel, "", now_unix)
-        .map_err(|error| format!("bind sidecar proactive claim: {error:#}"))?;
+    let mut claim = new_claim_with_deadline_and_channel_ref(
+        item,
+        queue_generation,
+        target_channel,
+        "",
+        now_unix,
+        deadline_after(now_unix, DEFAULT_DELIVERY_ATTEMPT_TIMEOUT)
+            .map_err(|error| format!("bind sidecar proactive deadline: {error:#}"))?,
+        channel_ref,
+    )
+    .map_err(|error| format!("bind sidecar proactive claim: {error:#}"))?;
     let claim_file = persist_prepared_claim(&delivery_lock, home, &claim)
         .await
         .map_err(|error| format!("persist sidecar proactive claim: {error:#}"))?;
@@ -4675,6 +5073,7 @@ pub(crate) async fn record_sidecar_only_once(
         queue_generation,
         target_channel,
         ProactiveEgressOutcome::SidecarOnly,
+        None,
     )
     .await
 }
@@ -4694,6 +5093,27 @@ pub(crate) async fn record_policy_suppressed_once(
         queue_generation,
         target_channel,
         ProactiveEgressOutcome::PolicySuppressed,
+        None,
+    )
+    .await
+}
+
+/// Bound equivalent of policy suppression.  It records a known Telegram
+/// account even though policy denied before physical adapter construction.
+pub(crate) async fn record_account_bound_policy_suppressed_once(
+    context: &ProactiveEgressContext<'_>,
+    item: ProactiveItem,
+    queue_generation: &str,
+    target_channel: &str,
+    channel_ref: ChannelRef,
+) -> Result<Option<ProactiveStatus>, String> {
+    record_without_transport_once(
+        context,
+        item,
+        queue_generation,
+        target_channel,
+        ProactiveEgressOutcome::PolicySuppressed,
+        Some(channel_ref),
     )
     .await
 }
@@ -4713,6 +5133,28 @@ pub(crate) async fn record_adapter_configuration_error_once(
         queue_generation,
         target_channel,
         ProactiveEgressOutcome::AdapterConfigurationError,
+        None,
+    )
+    .await
+}
+
+/// Settle a refused mapped Telegram account without constructing an adapter.
+/// The retained v4 evidence states the exact selected account while raw
+/// recipients and provider credentials never enter a WAL frame.
+pub(crate) async fn settle_claimed_once_account_bound_configuration_error(
+    context: &ProactiveEgressContext<'_>,
+    item: ProactiveItem,
+    queue_generation: &str,
+    target_channel: &str,
+    channel_ref: ChannelRef,
+) -> Result<Option<ProactiveStatus>, String> {
+    record_without_transport_once(
+        context,
+        item,
+        queue_generation,
+        target_channel,
+        ProactiveEgressOutcome::AdapterConfigurationError,
+        Some(channel_ref),
     )
     .await
 }
@@ -4723,6 +5165,7 @@ pub(crate) fn delivery_record_for_gui_test() -> ProactiveDeliveryRecord {
         priority: 50,
         dedup_key: "gui-proactive".to_string(),
         channel: "telegram".to_string(),
+        account_id: None,
         source: "test".to_string(),
         body: "operator notification".to_string(),
         scheduled_for_unix: 0,
@@ -4941,12 +5384,33 @@ mod tests {
             priority: 50,
             dedup_key: key.to_string(),
             channel: "telegram".to_string(),
+            account_id: None,
             source: "test".to_string(),
             body: "private body".to_string(),
             scheduled_for_unix: 0,
             is_failure: false,
             expires_unix: 0,
         }
+    }
+
+    #[test]
+    fn historical_unbound_item_keeps_egress_item_hash() {
+        let historical = br#"{"priority":50,"dedup_key":"legacy","channel":"telegram","source":"test","body":"private body","scheduled_for_unix":0,"is_failure":false,"expires_unix":0}"#;
+        let item: ProactiveItem = serde_json::from_slice(historical).unwrap();
+        assert_eq!(item.account_id, None);
+        let claim = new_claim(
+            item,
+            "legacy-generation",
+            "telegram",
+            "123456",
+            1_700_000_000,
+        )
+        .unwrap();
+        assert_eq!(
+            claim.item_sha256,
+            effect_hash(b"proactive-egress-item-v1", historical),
+            "adding an absent account field must not perturb old claim evidence"
+        );
     }
 
     #[cfg(any(unix, windows))]
@@ -6738,6 +7202,77 @@ mod tests {
         validate_intent_frame(&v1_intent).unwrap();
     }
 
+    #[test]
+    fn v4_account_binding_rejects_cross_account_strip_and_version_tampering() {
+        let account_a = crate::channels::registry::ChannelAccountId::new("account-a").unwrap();
+        let account_b = crate::channels::registry::ChannelAccountId::new("account-b").unwrap();
+        let ref_a = ChannelRef::new(ChannelId::Telegram, account_a.clone());
+        let ref_b = ChannelRef::new(ChannelId::Telegram, account_b);
+        let mut bound_item = item("bound-account");
+        bound_item.account_id = Some(account_a);
+        let claim = new_claim_with_deadline_and_channel_ref(
+            bound_item,
+            "generation",
+            "telegram",
+            "111",
+            100,
+            160,
+            Some(ref_a.clone()),
+        )
+        .unwrap();
+        assert_eq!(claim.version, ACCOUNT_BOUND_CLAIM_VERSION);
+        validate_claim(&claim, &claim_name(&claim)).unwrap();
+
+        let intent = intent_frame(&claim);
+        validate_intent_frame(&intent).unwrap();
+        assert!(intent_matches_claim(&intent, &claim));
+        let result = terminal_result(
+            &claim,
+            ProactiveEgressOutcome::AdapterConfigurationError,
+            None,
+            None,
+            101,
+        );
+        validate_result_frame(&result).unwrap();
+        verify_result_binding(&result, &claim).unwrap();
+
+        let armed = claim_in_phase(&claim, ProactiveEgressPhase::Armed);
+        let armed_result = terminal_result(
+            &armed,
+            ProactiveEgressOutcome::CrashUnknown,
+            None,
+            None,
+            102,
+        );
+        let record = delivery_record(&armed, &armed_result, "000001.wal").unwrap();
+        assert_eq!(record.channel_ref, Some(ref_a.clone()));
+        verify_delivery_record_against_wal(&record, &evidence_for_claim(&armed, &armed_result))
+            .unwrap();
+
+        let mut cross_account = result.clone();
+        cross_account.channel_ref = Some(ref_b);
+        assert!(verify_result_binding(&cross_account, &claim).is_err());
+        let mut stripped = intent.clone();
+        stripped.channel_ref = None;
+        assert!(validate_intent_frame(&stripped).is_err());
+        let mut downgraded = claim.clone();
+        downgraded.version = CLAIM_VERSION;
+        downgraded.binding_sha256 = binding_hash(&downgraded);
+        assert!(validate_claim(&downgraded, &claim_name(&downgraded)).is_err());
+
+        let v3 = new_claim(item("unbound-compat"), "generation", "telegram", "111", 100).unwrap();
+        let v3_json = serde_json::to_vec(&v3).unwrap();
+        assert!(
+            !String::from_utf8(v3_json.clone())
+                .unwrap()
+                .contains("channel_ref")
+        );
+        let v3_round_trip: ProactiveEgressClaim = serde_json::from_slice(&v3_json).unwrap();
+        assert_eq!(v3_round_trip.channel_ref, None);
+        assert_eq!(v3_round_trip.binding_sha256, v3.binding_sha256);
+        assert_eq!(binding_hash(&v3_round_trip), v3.binding_sha256);
+    }
+
     #[tokio::test]
     async fn outer_cancellation_retains_and_structurally_reaps_transport_handle() {
         let baseline = cancelled_transport_reap_queue_len();
@@ -7064,6 +7599,648 @@ mod tests {
         assert_eq!(
             read_delivery_history(home.path()).unwrap()[0].outcome(),
             ProactiveEgressOutcome::CrashUnknown
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    struct ObservedChannel {
+        calls: std::sync::Mutex<Vec<(String, String)>>,
+    }
+
+    impl ObservedChannel {
+        fn new() -> Self {
+            Self {
+                calls: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<(String, String)> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Channel for ObservedChannel {
+        fn name(&self) -> &'static str {
+            "observed"
+        }
+
+        async fn run(&self, _handler: crate::channels::PipelineHandler) -> Result<()> {
+            Ok(())
+        }
+
+        async fn send_proactive(
+            &self,
+            chat_id: &str,
+            text: &str,
+        ) -> std::result::Result<MessageId, ChannelError> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push((chat_id.to_string(), text.to_string()));
+            Ok(MessageId("observed".to_string()))
+        }
+    }
+
+    fn bound_item(key: &str, account_id: &str) -> ProactiveItem {
+        let mut queued = item(key);
+        queued.account_id = Some(
+            crate::channels::registry::ChannelAccountId::new(account_id).expect("test account id"),
+        );
+        queued
+    }
+
+    fn write_bound_credentials(home: &Path, accounts: &[(&str, u64, &str)]) {
+        let mut credentials = crate::config::credentials::Credentials::default();
+        for (account_id, _allowed_user_id, token) in accounts {
+            credentials.channel_accounts.telegram.insert(
+                crate::channels::registry::ChannelAccountId::new(*account_id)
+                    .expect("test account id"),
+                crate::config::credentials::TelegramAccountCredentials {
+                    token: Some(crate::secret::SecretString::new((*token).to_string())),
+                },
+            );
+        }
+        credentials
+            .write(&home.join("credentials.yaml"))
+            .expect("write coherent test credentials");
+    }
+
+    fn write_exact_bound_credentials(home: &Path, accounts: &[(&str, u64, &str)]) {
+        let mut credentials = crate::config::credentials::Credentials::default();
+        for (account_id, _allowed_user_id, token) in accounts {
+            credentials.channel_accounts.telegram.insert(
+                crate::channels::registry::ChannelAccountId::new(*account_id)
+                    .expect("test account id"),
+                crate::config::credentials::TelegramAccountCredentials {
+                    token: Some(crate::secret::SecretString::new((*token).to_string())),
+                },
+            );
+        }
+        let rendered = serde_yaml::to_string(&credentials).expect("render exact test credentials");
+        crate::util::atomic_write::atomic_write_private(
+            &home.join("credentials.yaml"),
+            rendered.as_bytes(),
+        )
+        .expect("replace exact test credentials");
+    }
+
+    fn write_bound_runtime_pair(
+        home: &Path,
+        accounts: &[(&str, u64, &str)],
+    ) -> (PathBuf, crate::config::FreedomConfig) {
+        let mut config = crate::config::FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
+        for (account_id, allowed_user_id, _token) in accounts {
+            config.channel_accounts.telegram.insert(
+                crate::channels::registry::ChannelAccountId::new(*account_id)
+                    .expect("test account id"),
+                crate::config::TelegramAccountConfig {
+                    allowed_user_id: *allowed_user_id,
+                },
+            );
+        }
+        let source_path = home.join("freedom.yaml");
+        std::fs::write(&source_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        write_bound_credentials(home, accounts);
+        (source_path, config)
+    }
+
+    fn legacy_trust_request_binding_sha256(claim: &ProactiveEgressClaim) -> String {
+        let mut bytes = Vec::with_capacity(512);
+        for value in [
+            claim.target_channel.as_bytes(),
+            claim.recipient_sha256.as_bytes(),
+            claim.message_sha256.as_bytes(),
+            claim.item_sha256.as_bytes(),
+            claim.dedup_sha256.as_bytes(),
+            claim.queue_generation.as_bytes(),
+        ] {
+            bytes.extend_from_slice(&(value.len() as u64).to_be_bytes());
+            bytes.extend_from_slice(value);
+        }
+        effect_hash(b"proactive-trust-binding-v1", &bytes)
+    }
+
+    #[test]
+    fn v4_trust_request_binding_includes_only_the_typed_account_ref_as_new_input() {
+        let account_a = crate::channels::registry::ChannelAccountId::new("account-a").unwrap();
+        let account_b = crate::channels::registry::ChannelAccountId::new("account-b").unwrap();
+        let ref_a = ChannelRef::new(ChannelId::Telegram, account_a.clone());
+        let ref_b = ChannelRef::new(ChannelId::Telegram, account_b);
+        let claim = new_claim_with_deadline_and_channel_ref(
+            bound_item("same-legacy-inputs", "account-a"),
+            "generation",
+            "telegram",
+            "111",
+            100,
+            160,
+            Some(ref_a),
+        )
+        .unwrap();
+        let mut only_ref_differs = claim.clone();
+        only_ref_differs.channel_ref = Some(ref_b);
+        assert_ne!(
+            trust_request_binding_sha256(&claim),
+            trust_request_binding_sha256(&only_ref_differs),
+            "v4 trust admission must bind the typed account even when every legacy input is identical"
+        );
+
+        let v3 = new_claim(
+            item("legacy-trust-preimage"),
+            "generation",
+            "telegram",
+            "111",
+            100,
+        )
+        .unwrap();
+        assert_eq!(
+            trust_request_binding_sha256(&v3),
+            legacy_trust_request_binding_sha256(&v3),
+            "v1-v3 trust-admission preimages remain byte-compatible"
+        );
+    }
+
+    #[tokio::test]
+    async fn bound_delivery_uses_only_fresh_a_token_recipient_and_evidence() {
+        let home = tempfile::tempdir().unwrap();
+        let queued = bound_item("bound-a-only", "account-a");
+        let generation = seed_queue(home.path(), queued.clone());
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let (source_path, config) = write_bound_runtime_pair(
+            home.path(),
+            &[("account-a", 111, "token-a"), ("account-b", 222, "token-b")],
+        );
+        let accepted = crate::config::reload::ReloadController::new(config, source_path.clone())
+            .accepted_snapshot();
+        let context = ProactiveEgressContext::new(
+            home.path(),
+            &segment,
+            &writer,
+            accepted,
+            100,
+            DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
+        );
+        let account_a = crate::channels::registry::ChannelAccountId::new("account-a").unwrap();
+        let ref_a = ChannelRef::new(ChannelId::Telegram, account_a);
+        let mock_a = Arc::new(ObservedChannel::new());
+        let mock_b = Arc::new(ObservedChannel::new());
+        let factory_channel: Arc<dyn Channel> = mock_a.clone();
+        let factory_input = Arc::new(std::sync::Mutex::new(None));
+        let captured_input = Arc::clone(&factory_input);
+
+        assert_eq!(
+            execute_claimed_once_account_bound(
+                &context,
+                queued,
+                &generation,
+                "telegram",
+                ref_a.clone(),
+                &source_path,
+                move |token, allowed_user_id| {
+                    *captured_input
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                        Some((token.expose_secret().to_string(), allowed_user_id));
+                    factory_channel
+                },
+            )
+            .await
+            .unwrap(),
+            Some(ProactiveStatus::Delivered)
+        );
+        assert_eq!(
+            *factory_input
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            Some(("token-a".to_string(), 111))
+        );
+        assert_eq!(
+            mock_a.calls(),
+            vec![("111".to_string(), "private body".to_string())]
+        );
+        assert!(
+            mock_b.calls().is_empty(),
+            "A must never construct or call B"
+        );
+
+        let history = read_delivery_history(home.path()).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].channel_ref, Some(ref_a.clone()));
+        assert_eq!(history[0].outcome(), ProactiveEgressOutcome::Delivered);
+        let ids = HashSet::from([history[0].intent_id().to_string()]);
+        let evidence = scan_authenticated_wal(home.path(), &segment, &ids).unwrap();
+        assert_eq!(
+            evidence
+                .intents
+                .get(history[0].intent_id())
+                .unwrap()
+                .channel_ref,
+            Some(ref_a.clone())
+        );
+        assert_eq!(
+            evidence
+                .results
+                .get(history[0].intent_id())
+                .unwrap()
+                .channel_ref,
+            Some(ref_a)
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn bound_admission_uses_rotated_a_credentials_and_refuses_half_map_before_factory() {
+        let home = tempfile::tempdir().unwrap();
+        let rotated = bound_item("bound-a-rotated", "account-a");
+        let refused = bound_item("bound-a-half-map", "account-a");
+        let mut queue = ProactiveQueue::new();
+        assert!(queue.enqueue(rotated.clone()).unwrap());
+        assert!(queue.enqueue(refused.clone()).unwrap());
+        let rotated_generation = queue
+            .entry_generation(&rotated.dedup_key)
+            .unwrap()
+            .to_string();
+        let refused_generation = queue
+            .entry_generation(&refused.dedup_key)
+            .unwrap()
+            .to_string();
+        queue
+            .save_to(&home.path().join("proactive_queue.json"))
+            .unwrap();
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let (source_path, config) = write_bound_runtime_pair(
+            home.path(),
+            &[
+                ("account-a", 111, "token-a-old"),
+                ("account-b", 222, "token-b"),
+            ],
+        );
+        let accepted = crate::config::reload::ReloadController::new(config, source_path.clone())
+            .accepted_snapshot();
+        let context = ProactiveEgressContext::new(
+            home.path(),
+            &segment,
+            &writer,
+            accepted,
+            110,
+            DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
+        );
+        let ref_a = ChannelRef::new(
+            ChannelId::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account-a").unwrap(),
+        );
+        write_bound_credentials(
+            home.path(),
+            &[
+                ("account-a", 111, "token-a-rotated"),
+                ("account-b", 222, "token-b"),
+            ],
+        );
+        let rotated_mock = Arc::new(ObservedChannel::new());
+        let rotated_factory: Arc<dyn Channel> = rotated_mock.clone();
+        let rotated_token = Arc::new(std::sync::Mutex::new(None));
+        let captured_rotated_token = Arc::clone(&rotated_token);
+        assert_eq!(
+            execute_claimed_once_account_bound(
+                &context,
+                rotated,
+                &rotated_generation,
+                "telegram",
+                ref_a.clone(),
+                &source_path,
+                move |token, allowed_user_id| {
+                    *captured_rotated_token
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                        Some((token.expose_secret().to_string(), allowed_user_id));
+                    rotated_factory
+                },
+            )
+            .await
+            .unwrap(),
+            Some(ProactiveStatus::Delivered)
+        );
+        assert_eq!(
+            *rotated_token
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            Some(("token-a-rotated".to_string(), 111))
+        );
+        assert_eq!(
+            rotated_mock.calls(),
+            vec![("111".to_string(), "private body".to_string())]
+        );
+
+        write_exact_bound_credentials(home.path(), &[("account-b", 222, "token-b")]);
+        let exact_half_map_bytes = std::fs::read_to_string(home.path().join("credentials.yaml"))
+            .expect("read exact half-map test fixture");
+        assert!(
+            !exact_half_map_bytes.contains("account-a"),
+            "the exact credentials bytes must not retain A"
+        );
+        let reloaded_half_map = crate::config::load_runtime_config_pair_from_path(&source_path)
+            .expect("load exact half-map test fixture");
+        assert!(
+            !reloaded_half_map
+                .credentials
+                .channel_accounts
+                .telegram
+                .contains_key(&ref_a.account_id),
+            "the exact fixture must remove A before bound admission"
+        );
+        assert!(
+            reloaded_half_map.authenticated_telegram_accounts().is_err(),
+            "a config account without its credential must fail fresh pair validation"
+        );
+        let factory_calls = Arc::new(AtomicUsize::new(0));
+        let counted_factory_calls = Arc::clone(&factory_calls);
+        let refused_mock = Arc::new(ObservedChannel::new());
+        let refused_factory: Arc<dyn Channel> = refused_mock.clone();
+        assert_eq!(
+            execute_claimed_once_account_bound(
+                &context,
+                refused,
+                &refused_generation,
+                "telegram",
+                ref_a.clone(),
+                &source_path,
+                move |_token, _allowed_user_id| {
+                    counted_factory_calls.fetch_add(1, Ordering::SeqCst);
+                    refused_factory
+                },
+            )
+            .await
+            .unwrap(),
+            Some(ProactiveStatus::Failed)
+        );
+        assert_eq!(factory_calls.load(Ordering::SeqCst), 0);
+        assert!(refused_mock.calls().is_empty());
+        let history = read_delivery_history(home.path()).unwrap();
+        let refusal = history
+            .iter()
+            .find(|record| record.item().dedup_key == "bound-a-half-map")
+            .unwrap();
+        assert_eq!(
+            refusal.outcome(),
+            ProactiveEgressOutcome::AdapterConfigurationError
+        );
+        assert_eq!(refusal.channel_ref, Some(ref_a.clone()));
+        let ids = HashSet::from([refusal.intent_id().to_string()]);
+        let evidence = scan_authenticated_wal(home.path(), &segment, &ids).unwrap();
+        assert!(
+            evidence.armed.is_empty(),
+            "unavailable A cannot become Armed"
+        );
+        assert_eq!(
+            evidence
+                .results
+                .get(refusal.intent_id())
+                .unwrap()
+                .channel_ref,
+            Some(ref_a)
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn retired_bound_snapshot_records_policy_change_without_physical_send() {
+        let home = tempfile::tempdir().unwrap();
+        let queued = bound_item("bound-retired-before-arm", "account-a");
+        let generation = seed_queue(home.path(), queued.clone());
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let (source_path, config) =
+            write_bound_runtime_pair(home.path(), &[("account-a", 111, "token-a")]);
+        let controller =
+            crate::config::reload::ReloadController::new(config.clone(), source_path.clone());
+        let accepted = controller.accepted_snapshot();
+        let context = ProactiveEgressContext::new(
+            home.path(),
+            &segment,
+            &writer,
+            accepted,
+            120,
+            DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
+        );
+        let mut replacement = config.clone();
+        replacement.autonomy = crate::permissions::AutonomyLevel::Standard;
+        std::fs::write(&source_path, serde_yaml::to_string(&replacement).unwrap()).unwrap();
+        assert!(matches!(
+            controller.try_reload().unwrap(),
+            crate::config::reload::ReloadResult::Reloaded { .. }
+        ));
+        std::fs::write(&source_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+
+        let ref_a = ChannelRef::new(
+            ChannelId::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account-a").unwrap(),
+        );
+        let mock = Arc::new(ObservedChannel::new());
+        let factory_channel: Arc<dyn Channel> = mock.clone();
+        assert_eq!(
+            execute_claimed_once_account_bound(
+                &context,
+                queued,
+                &generation,
+                "telegram",
+                ref_a.clone(),
+                &source_path,
+                move |_token, _allowed_user_id| factory_channel,
+            )
+            .await
+            .unwrap(),
+            Some(ProactiveStatus::Suppressed)
+        );
+        assert!(mock.calls().is_empty());
+        let history = read_delivery_history(home.path()).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history[0].outcome(),
+            ProactiveEgressOutcome::PolicyChangedBeforeEffect
+        );
+        assert_eq!(history[0].channel_ref, Some(ref_a.clone()));
+        let ids = HashSet::from([history[0].intent_id().to_string()]);
+        let evidence = scan_authenticated_wal(home.path(), &segment, &ids).unwrap();
+        assert!(evidence.armed.is_empty());
+        assert_eq!(
+            evidence
+                .results
+                .get(history[0].intent_id())
+                .unwrap()
+                .channel_ref,
+            Some(ref_a)
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_bound_duplicate_settlement_calls_physical_adapter_once_and_retains_ref() {
+        let home = tempfile::tempdir().unwrap();
+        let queued = bound_item("bound-duplicate", "account-a");
+        let generation = seed_queue(home.path(), queued.clone());
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let (source_path, config) =
+            write_bound_runtime_pair(home.path(), &[("account-a", 111, "token-a")]);
+        let accepted = crate::config::reload::ReloadController::new(config, source_path.clone())
+            .accepted_snapshot();
+        let context = ProactiveEgressContext::new(
+            home.path(),
+            &segment,
+            &writer,
+            accepted,
+            130,
+            DEFAULT_DELIVERY_ATTEMPT_TIMEOUT,
+        );
+        let ref_a = ChannelRef::new(
+            ChannelId::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account-a").unwrap(),
+        );
+        let mock = Arc::new(ObservedChannel::new());
+        let first_channel: Arc<dyn Channel> = mock.clone();
+        let second_channel: Arc<dyn Channel> = mock.clone();
+        let first = execute_claimed_once_account_bound(
+            &context,
+            queued.clone(),
+            &generation,
+            "telegram",
+            ref_a.clone(),
+            &source_path,
+            move |_token, _allowed_user_id| first_channel,
+        );
+        let second = execute_claimed_once_account_bound(
+            &context,
+            queued,
+            &generation,
+            "telegram",
+            ref_a.clone(),
+            &source_path,
+            move |_token, _allowed_user_id| second_channel,
+        );
+        let (first, second) = tokio::join!(first, second);
+        let outcomes = [first.unwrap(), second.unwrap()];
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| **outcome == Some(ProactiveStatus::Delivered))
+                .count(),
+            1
+        );
+        assert_eq!(
+            mock.calls(),
+            vec![("111".to_string(), "private body".to_string())]
+        );
+        let history = read_delivery_history(home.path()).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].channel_ref, Some(ref_a));
+        assert_eq!(
+            recover_pending_claims(home.path(), &segment, &writer, 131)
+                .await
+                .unwrap(),
+            0,
+            "settled v4 evidence must not create a recovery replay"
+        );
+        assert_eq!(mock.calls().len(), 1);
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn expired_v4_armed_recovery_records_crash_unknown_for_a_once() {
+        let home = tempfile::tempdir().unwrap();
+        let queued = bound_item("bound-armed-recovery", "account-a");
+        let generation = seed_queue(home.path(), queued.clone());
+        let (segment, writer, join) = ready_writer(home.path()).await;
+        let ref_a = ChannelRef::new(
+            ChannelId::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account-a").unwrap(),
+        );
+        let delivery_lock = acquire_delivery_lock(home.path()).await.unwrap();
+        let mut prepared = new_claim_with_deadline_and_channel_ref(
+            queued,
+            &generation,
+            "telegram",
+            "111",
+            100,
+            160,
+            Some(ref_a.clone()),
+        )
+        .unwrap();
+        assert_eq!(prepared.version, ACCOUNT_BOUND_CLAIM_VERSION);
+        let claim_file = persist_prepared_claim(&delivery_lock, home.path(), &prepared)
+            .await
+            .unwrap();
+        assert_eq!(
+            ensure_trust_admission_receipt(
+                &delivery_lock,
+                home.path(),
+                &writer,
+                &test_full_policy(),
+                &claim_file,
+                &mut prepared,
+            )
+            .await
+            .unwrap(),
+            crate::permissions::trust_ledger::TrustOutcome::Allowed
+        );
+        append_intent(&delivery_lock, &writer, &prepared)
+            .await
+            .unwrap();
+        let armed = claim_in_phase(&prepared, ProactiveEgressPhase::Armed);
+        persist_armed_claim(&delivery_lock, &claim_file, &armed)
+            .await
+            .unwrap();
+        append_armed(&delivery_lock, &writer, &armed).await.unwrap();
+        drop(claim_file);
+        drop(delivery_lock);
+
+        assert_eq!(
+            recover_pending_claims(home.path(), &segment, &writer, 160)
+                .await
+                .unwrap(),
+            1
+        );
+        let history = read_delivery_history(home.path()).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].outcome(), ProactiveEgressOutcome::CrashUnknown);
+        assert_eq!(history[0].channel_ref, Some(ref_a.clone()));
+        let ids = HashSet::from([history[0].intent_id().to_string()]);
+        let evidence = scan_authenticated_wal(home.path(), &segment, &ids).unwrap();
+        assert_eq!(
+            evidence
+                .intents
+                .get(history[0].intent_id())
+                .unwrap()
+                .channel_ref,
+            Some(ref_a.clone())
+        );
+        let armed_frame = evidence.armed.get(history[0].intent_id()).unwrap();
+        assert_eq!(
+            armed_frame.proactive_binding_version,
+            ACCOUNT_BOUND_CLAIM_VERSION
+        );
+        assert_eq!(armed_frame.prepared_binding_sha256, prepared.binding_sha256);
+        assert_eq!(armed_frame.armed_binding_sha256, armed.binding_sha256);
+        assert_eq!(
+            evidence
+                .results
+                .get(history[0].intent_id())
+                .unwrap()
+                .channel_ref,
+            Some(ref_a)
+        );
+        assert_eq!(
+            recover_pending_claims(home.path(), &segment, &writer, 161)
+                .await
+                .unwrap(),
+            0,
+            "terminal v4 recovery evidence must make a later pass inert"
         );
         drop(writer);
         join.await.unwrap().unwrap();
