@@ -3,6 +3,13 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **P1-07 acceptance 2026-09-13:** the existing provider/family roster and
+> complete-matrix parity gate passed its own 36 focused tests at `1f2860cd`.
+> `GOLD-LF-P1-07` is complete; no production code was duplicated. Evidence:
+> `docs/gold-p1-07-acceptance.md` and its JSON receipt. Current counts:
+> **1,324 total / 1,008 complete / 314 open / 2 partial = 316 raw blockers
+> and 315 pre-tag blockers**. P1-08 live provenance and execution remain open.
+>
 > **Wave 7 completion 2026-09-13 — GOLD-LF-P1-05:** the remaining native
 > Settings/Buddy apply approval is implemented and verified. The complete
 > accepted patch is bound to one live-run approval; cancellation, expiry,
@@ -965,7 +972,7 @@
 > source, machine-readable ledger and ROAD. A dependency-free mutation-tested
 > checker runs in required Gold CI. `GOLD-LF-INTEGRITY-01`, the fully wired
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
-> WAL replay and P1-05 trust decisions are closed: **4 done / 114
+> WAL replay, P1-05 trust decisions and P1-07 family gate are closed: **5 done / 113
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

@@ -1,0 +1,45 @@
+{
+  "schema": "neoth-gold-existing-feature-acceptance/v1",
+  "item": "GOLD-LF-P1-07",
+  "verifiedSourceCommit": "1f2860cdf1becbd2b827720ed7ae1bc53476d875",
+  "sourceFiles": [
+    {
+      "path": "SRC/neothd/src/recall/goldset.rs",
+      "bytes": 44310,
+      "sha256": "3B307AEDE416970EEE99B2E755EACF634B9C9D80FFC881FC7B4BB1EFA585094D"
+    },
+    {
+      "path": "SRC/neothd/src/recall/parity_run.rs",
+      "bytes": 28638,
+      "sha256": "0C2F6CAC43F3B978A1E47CEE987CA1D0EA20F398DDB6FBC00D947FEC198F8A08"
+    }
+  ],
+  "binary": {
+    "path": "SRC/target/debug/deps/neothd-a576cce183334209.exe",
+    "sha256": "01D05C231C5663556369BB42EBD5083697EAA8BD99AA7A4AC040AE4C1ACF29B1",
+    "bytes": 273615360,
+    "lastWriteTimeUtc": "2026-09-13T07:21:45.2882016Z",
+    "testSummary": "14188 tests, 0 benchmarks",
+    "listExit": 0,
+    "recordedUtc": "2026-09-13T07:22:41.2125192Z"
+  },
+  "results": [
+    {
+      "label": "grader-config",
+      "filter": "recall::goldset::",
+      "exit_code": 0,
+      "summary": "test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 14167 filtered out; finished in 0.21s"
+    },
+    {
+      "label": "grader-parity",
+      "filter": "recall::parity_run::",
+      "exit_code": 0,
+      "summary": "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 14173 filtered out; finished in 0.02s"
+    }
+  ],
+  "passed": 36,
+  "failed": 0,
+  "scope": "Validates persisted family/provider configuration and complete grading participation in the deterministic parity gate. Does not authenticate live provider origins or close the P1-08 transcript/attested workflow.",
+  "review": "Independent targeted source/acceptance review CLEAR",
+  "staticContracts": {"roadmapTests":11,"lostFeatureTests":19,"exitCode":0}
+}

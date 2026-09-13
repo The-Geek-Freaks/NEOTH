@@ -1,10 +1,12 @@
 # SPEC -- Recall-Parity Methodology — NEOTH v1.1
 
 **Version:** 1.1
-**Last-Updated:** 2026-09-07
+**Last-Updated:** 2026-09-13
 **Implementation-Status:** PARTIAL — the deterministic scorer and P1-07
-versioned roster/coverage component are implemented; the P1-07 GOLD checkbox
-remains open in `ROAD_TO_1_0_GOLD.md` pending its own acceptance disposition.
+versioned roster/coverage component are implemented. P1-07 was accepted on
+2026-09-13 after 36 focused configuration/matrix tests against `1f2860cd`; see
+`docs/gold-p1-07-acceptance.md`. Its GOLD checkbox is complete. This validates
+the provider/family configuration gate, not live network provider origin.
 An offline P1-08 pipeline also exists in `cli/recall_score.rs` and
 `recall/parity_harness.rs`: candidate validation, operator-anchor ingest,
 four-grader batch planning, Ed25519-attested result ingest, family-bias output,
