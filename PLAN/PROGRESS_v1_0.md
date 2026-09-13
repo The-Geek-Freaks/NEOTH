@@ -1,7 +1,21 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-09-07
+**Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
+>
+> **Wave 7 completion 2026-09-13 — GOLD-LF-P1-05:** the remaining native
+> Settings/Buddy apply approval is implemented and verified. The complete
+> accepted patch is bound to one live-run approval; cancellation, expiry,
+> replay and stale UI completions cannot mint apply authority. An authenticated
+> TrustDecision precedes worktree creation. The final boundary inventory is
+> complete. **821 selected behavior tests pass, zero failures**, plus Core/GUI
+> checks, strict Clippy, formatting and the real Slint render/input probe.
+> Canonical evidence: `docs/gold-wave7-verification.md` and
+> `docs/verification/gold-wave7-{source-manifest,test-matrix}.json`.
+> P1-05 closes; current counts: **1,324 total / 1,007 complete / 315 open /
+> 2 partial = 317 raw blockers and 316 pre-tag blockers**. This supersedes
+> earlier checkpoints' open GUI/inventory status, not the separate full
+> workspace, live-provider, platform/package or release-candidate gates.
 >
 > **Wave 6 durable-egress checkpoint 2026-09-07:** proactive claims and webhook
 > outboxes now require a bound local-subject authenticated decision before
@@ -951,7 +965,7 @@
 > source, machine-readable ledger and ROAD. A dependency-free mutation-tested
 > checker runs in required Gold CI. `GOLD-LF-INTEGRITY-01`, the fully wired
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
-> WAL replay are closed: **3 done / 115
+> WAL replay and P1-05 trust decisions are closed: **4 done / 114
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

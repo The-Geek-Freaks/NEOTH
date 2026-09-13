@@ -1,0 +1,50 @@
+import { ConfirmDialog, NeothButton } from "../../../SRC/neothd-gui/ui/components.slint";
+import { Theme } from "../../../SRC/neothd-gui/ui/theme.slint";
+
+export component DialogProbe inherits Window {
+    in-out property <int> viewport-width: 960;
+    in-out property <int> viewport-height: 640;
+    in-out property <string> preview-text;
+    in-out property <string> detail;
+    in-out property <string> dialog-title: "Approve this accepted patch?";
+    in-out property <string> confirm-label: "Approve patch";
+    in-out property <string> cancel-label: "Reject patch";
+    in-out property <bool> dialog-visible: true;
+    in-out property <bool> confirm-enabled: true;
+    in-out property <bool> actions-enabled: true;
+    in-out property <int> confirmed-count;
+    in-out property <int> cancelled-count;
+    in-out property <int> background-count;
+    width: root.viewport-width * 1px;
+    height: root.viewport-height * 1px;
+    background: Theme.bg-void;
+    init => { Theme.animation-mode = 0; }
+
+    NeothButton {
+        x: Theme.space-screen;
+        y: Theme.space-screen;
+        label: "Underlying action";
+        clicked => { root.background-count += 1; }
+    }
+
+    if root.dialog-visible: ConfirmDialog {
+        width: root.width;
+        height: root.height;
+        title: root.dialog-title;
+        body: root.detail;
+        preview-text: root.preview-text;
+        confirm-label: root.confirm-label;
+        cancel-label: root.cancel-label;
+        danger: true;
+        confirm-enabled: root.confirm-enabled;
+        actions-enabled: root.actions-enabled;
+        confirmed => {
+            root.confirmed-count += 1;
+            root.actions-enabled = false;
+        }
+        cancelled => {
+            root.cancelled-count += 1;
+            root.dialog-visible = false;
+        }
+    }
+}

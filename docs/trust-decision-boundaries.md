@@ -21,13 +21,13 @@ grant bound to a different transport or peer. A free
 display label or a command's source-channel string cannot create a trusted
 subject or consume a local confirmation.
 
-The coding GUI and Buddy use the public unattended request constructor. At
-the prior checkpoint, a user-editable GUI source label of `cli` could select
-the CLI origin and omit the final policy check. The private confirmation
-marker closes that bypass: only the actual local CLI apply flags can create
-it, and every dispatcher apply receives the policy. Default GUI and Buddy
-apply requests still refuse `Confirm`, as they did before this change. They
-do not yet have a separately bound GUI approval flow.
+The coding GUI and Buddy explicitly select the interactive GUI route. At an
+earlier checkpoint, a user-editable source label of `cli` could select the CLI
+origin and omit the final policy check. The private CLI confirmation marker
+closes that bypass. The separate native GUI flow now requires an exact one-use
+patch approval, described below; every dispatcher apply still receives the
+policy. An unattended request or a GUI route without its live run broker cannot
+satisfy `Confirm`.
 
 ## Admission and persistence
 
@@ -117,13 +117,44 @@ DeliveredPendingAudit remains audit-only. Legacy proactive Armed uncertainty
 remains CrashUnknown without resend. Exactly once describes the TrustDecision,
 not physical provider delivery.
 
+## Native GUI accepted-patch approval
+
+Settings and Buddy select the public GUI apply route, which supplies no
+authority by itself. Only the live Coding run attaches its private approval
+broker to the dispatcher. One bounded pending slot binds the canonical
+repository identity, task, exact accepted patch digest, request binding and
+expiry. Events and snapshots expose metadata only. A separate local read
+returns the complete accepted patch while that exact approval remains pending;
+neither a preview read nor an audit artifact file authorizes an effect.
+
+The controller fences every observation, preview and response by UI revision,
+run ID and opaque approval ID. It reserves one local response and rejects
+delayed completions from an older approval. Cancellation synchronously closes
+this admission on the UI callback thread before asynchronous Core delivery.
+Shutdown, cancellation and terminal settlement clear pending preview state.
+
+The broker consumes its slot before replying and invalidates snapshot metadata
+in the same ordered transition. Reject, expiry, cancellation and replay cannot
+yield another grant. The private non-cloneable accepted grant remains bound to
+the exact request. After the approval wait, the dispatcher re-discovers the
+physical repository and recomputes the binding before the required final Gate.
+Only this matching grant supplies `native_gui_patch_approval`; a GUI route or
+source label alone cannot do so. The authenticated TrustDecision precedes the
+sole worktree effect, and the existing post-admission identity and cancellation
+checks still apply. Cancellation after writer ownership retains a truthful
+decision while preventing the later worktree effect.
+
+The local CLI confirmation capability remains private and distinct. GUI
+approval never makes an editable `LocalCliFlag` or source string authoritative.
+
 ## Remaining GOLD scope
 
 This document describes implemented boundaries; runtime evidence belongs to
-the corresponding source-bound batch verification report. It does not close
-the all-boundary `GOLD-LF-P1-05` task. The separate GUI apply-confirmation flow
-and completion of the overall boundary inventory remain open. Pure policy
-displays and scheduling probes must not be
+the corresponding source-bound batch verification report. The Wave 7 inventory
+and verified local runtime gates close `GOLD-LF-P1-05`; the final report is
+`gold-wave7-verification.md`. Full workspace, live-provider and platform/release
+acceptance remain separate Gold requirements. Pure policy displays and
+scheduling probes must not be
 turned into duplicate final decisions to inflate apparent coverage.
 
 The upstream authenticated channel-turn decision is distinct from the final

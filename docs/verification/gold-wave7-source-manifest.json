@@ -1,0 +1,72 @@
+{
+  "schema": "neoth-gold-changed-inputs/v1",
+  "batch": "wave7-native-patch-approval",
+  "baseCommit": "d8ecb8d5d4865d9c4c8e73fdfe983f6fd3851cb1",
+  "publicationTarget": "refs/heads/main",
+  "recordedUtc": "2026-09-13T07:20:14.773211+00:00",
+  "scope": "Changed compiled inputs only; not an inventory of every transitive dependency",
+  "coreGateFreezeUtc": "2026-09-13T07:20:14.773211+00:00",
+  "inputCount": 12,
+  "files": [
+    {
+      "path": "SRC/neothd/src/coding/service.rs",
+      "bytes": 129271,
+      "sha256": "9882a3fa9108330ca5f1e69b69ec07ae18796886c98193603a2e09737c6105b5"
+    },
+    {
+      "path": "SRC/neothd/src/coding/dispatcher.rs",
+      "bytes": 196373,
+      "sha256": "c71d104aee23665869147484305e8ee058b420ccd31b6768b53f4ba13d744512"
+    },
+    {
+      "path": "SRC/neothd/src/coding/mod.rs",
+      "bytes": 8176,
+      "sha256": "5b5b0dbb5af1c4d8e57304ad0fb2950b035b3993032ee0eedf022aa41d20dc79"
+    },
+    {
+      "path": "SRC/neothd-gui/src/coding_controller.rs",
+      "bytes": 33387,
+      "sha256": "38430ab1baf0472e61eee017e6355cd01800da473fba22b63e89c21eed7d4f3c"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "bytes": 1535015,
+      "sha256": "0aa733843f1d639fc56076672bf5f7ede7f8f0e27f2b01c30ec1575e1fbde03b"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/main.slint",
+      "bytes": 295673,
+      "sha256": "7cc37ed69f9de4a45aa92ef5e4b654b1ad0d195ba578e445bda0eab6e24b3e60"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/components.slint",
+      "bytes": 85234,
+      "sha256": "fcfe03d26e0001156951aad8ffc7657c47bb82faba5c420c243fb81b4af1133d"
+    },
+    {
+      "path": "tools/gui-dialog-probe/Cargo.toml",
+      "bytes": 437,
+      "sha256": "d329485dc82485568fd5bccb8e3d2d1a3ecaabbee85bc897e4b013ac593bcba7"
+    },
+    {
+      "path": "tools/gui-dialog-probe/Cargo.lock",
+      "bytes": 136035,
+      "sha256": "3d99d6f9cb8cc453344f72dfcde1000ed109a00dd2d291e7e45d443cfc2dee2c"
+    },
+    {
+      "path": "tools/gui-dialog-probe/build.rs",
+      "bytes": 111,
+      "sha256": "6098cdbff29a5b070833275fbc73942184d572a834482b6c6bea05083fde4a9d"
+    },
+    {
+      "path": "tools/gui-dialog-probe/src/main.rs",
+      "bytes": 11709,
+      "sha256": "4d14b3fda42764ad0d491ce819fdb5c4d56c0145ef5ec944ec5859556834e4c9"
+    },
+    {
+      "path": "tools/gui-dialog-probe/ui/probe.slint",
+      "bytes": 1814,
+      "sha256": "2acbebb3576a2b34cb930f02c50701878acd43c260631307b7010d022f1a328a"
+    }
+  ]
+}

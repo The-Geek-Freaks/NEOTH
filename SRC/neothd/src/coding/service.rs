@@ -12,7 +12,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, Notify, broadcast, watch};
+use sha2::{Digest, Sha256};
+use tokio::sync::{Mutex, Notify, broadcast, oneshot, watch};
 
 use super::classifier::{Complexity, classify_heuristic};
 use super::code_map_receipt::PreparedCodeMapContext;
@@ -26,6 +27,46 @@ use super::types::{Hemisphere, KanbanSessionId, KanbanTaskId, SessionStatus};
 
 const EVENT_SUBSCRIBER_CAPACITY: usize = 64;
 const RETAINED_TERMINAL_RUNS: usize = 64;
+const GUI_PATCH_APPROVAL_TTL: std::time::Duration = std::time::Duration::from_secs(120);
+const GUI_PATCH_APPROVAL_MAX_CHANGED_FILES: usize = 64;
+const GUI_PATCH_APPROVAL_MAX_FILE_LABEL_BYTES: usize = 512;
+
+#[cfg(test)]
+struct ApprovalPublicationPause {
+    entered: AtomicBool,
+    entered_notify: Notify,
+    release: Notify,
+    approval_id: std::sync::Mutex<Option<CodingPatchApprovalId>>,
+}
+
+#[cfg(test)]
+impl ApprovalPublicationPause {
+    fn new() -> Self {
+        Self {
+            entered: AtomicBool::new(false),
+            entered_notify: Notify::new(),
+            release: Notify::new(),
+            approval_id: std::sync::Mutex::new(None),
+        }
+    }
+
+    async fn wait_until_entered(&self) {
+        loop {
+            let notified = self.entered_notify.notified();
+            if self.entered.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    fn approval_id(&self) -> CodingPatchApprovalId {
+        self.approval_id
+            .lock()
+            .expect("test publication pause mutex poisoned")
+            .expect("publication pause must receive an approval id before entering")
+    }
+}
 
 /// Opaque identity for one local coding run. It is not a database row id and
 /// must never be substituted for a [`KanbanSessionId`].
@@ -36,6 +77,50 @@ impl CodingRunId {
     pub const fn raw(self) -> u64 {
         self.0
     }
+}
+
+/// Opaque native-GUI identifier for one pending exact-patch decision.
+///
+/// This alias avoids giving the GUI crate a direct `uuid` dependency. It is
+/// only an identifier: a matching live service-side broker entry remains the
+/// authority for a response.
+pub type CodingPatchApprovalId = uuid::Uuid;
+
+/// Bounded display data for one pending native patch approval. This contains
+/// no raw diff, prompt, provider output, or caller-supplied path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodingPatchApprovalMetadata {
+    pub approval_id: CodingPatchApprovalId,
+    pub task_id: KanbanTaskId,
+    pub repository_display: String,
+    pub patch_sha256: String,
+    pub request_binding_sha256: String,
+    pub changed_files: Vec<String>,
+    pub expires_unix: i64,
+}
+
+/// Result of consuming one native patch-approval response.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PatchApprovalResponse {
+    Accepted,
+    Rejected,
+    StaleOrUnknown,
+    Expired,
+}
+
+/// Exact accepted diff available only while the matching approval remains
+/// pending. Deliberately has no `Debug` or `Serialize` implementation.
+pub struct CodingPatchApprovalPreview {
+    pub metadata: CodingPatchApprovalMetadata,
+    pub patch_text: String,
+}
+
+/// Read-only preview result. Deliberately has no `Debug` or `Serialize`
+/// implementation because its available form contains raw accepted diff bytes.
+pub enum PatchApprovalPreviewResult {
+    Available(CodingPatchApprovalPreview),
+    StaleOrUnknown,
+    Expired,
 }
 
 /// Stable externally visible phase. A terminal result is carried separately so
@@ -148,6 +233,9 @@ pub struct CodingRunSnapshot {
     pub cancel_requested: bool,
     pub provider_state: ProviderCallState,
     pub task_count: usize,
+    /// Authoritative recovery for a GUI that subscribes after the advisory
+    /// event or whose bounded receiver lagged. It is metadata only.
+    pub pending_patch_approval: Option<CodingPatchApprovalMetadata>,
     pub terminal: Option<CodingRunResult>,
 }
 
@@ -170,6 +258,9 @@ pub enum CodingRunEvent {
     TasksInserted {
         count: usize,
     },
+    /// Advisory metadata-only notification for a pending exact-patch approval.
+    /// The full patch is available only through `patch_approval_preview`.
+    PatchApplyApprovalRequested(CodingPatchApprovalMetadata),
     CancelRequested,
     CancelAcknowledged {
         effect: CancellationEffect,
@@ -308,6 +399,16 @@ impl CodingStartRequest {
         self
     }
 
+    /// Route this run through the native interactive patch-approval flow.
+    ///
+    /// This is public because `neothd-gui` is a separate crate. It grants no
+    /// authority: every accepted patch still requires a matching, live opaque
+    /// approval from this run's broker immediately before the existing Gate.
+    pub fn with_gui_apply_route(mut self) -> Self {
+        self.apply_confirmation = ApplyConfirmation::GuiInteractive;
+        self
+    }
+
     pub(crate) fn with_prepared_code_map_context(
         mut self,
         prepared_code_map_context: Option<PreparedCodeMapContext>,
@@ -430,6 +531,7 @@ async fn build_dispatch_plan(
     let apply_config = if request.apply {
         let origin = match request.apply_confirmation {
             ApplyConfirmation::LocalCliFlag => ApplyOrigin::CliConfirmed,
+            ApplyConfirmation::GuiInteractive => ApplyOrigin::GuiRequested,
             // This value is only provenance.  A free-form source label never
             // becomes local authority or a trust-ledger subject.
             ApplyConfirmation::Unattended => ApplyOrigin::ChannelRequested,
@@ -438,6 +540,8 @@ async fn build_dispatch_plan(
             .with_policy(config.autonomy_policy());
         if request.apply_confirmation == ApplyConfirmation::LocalCliFlag {
             apply = apply.with_local_cli_confirmation();
+        } else if request.apply_confirmation == ApplyConfirmation::GuiInteractive {
+            apply = apply.with_gui_interactive_confirmation();
         }
         if let Some(writer) = writer.as_ref() {
             apply = apply.with_wal_writer(Arc::clone(writer));
@@ -852,7 +956,7 @@ impl CodingRunWorker for StoredDecompositionWorker {
         }
 
         let dispatch = if request.dispatch {
-            let Some(dispatch_plan) = self
+            let Some(mut dispatch_plan) = self
                 .dispatch_plan
                 .lock()
                 .expect("coding dispatch plan mutex poisoned")
@@ -867,6 +971,14 @@ impl CodingRunWorker for StoredDecompositionWorker {
             progress.set_phase(CodingRunPhase::Dispatching).await;
             if dispatch_plan.apply_config.is_some() {
                 progress.set_phase(CodingRunPhase::Applying).await;
+            }
+            if request.apply_confirmation == ApplyConfirmation::GuiInteractive
+                && let Some(apply_config) = dispatch_plan.apply_config.as_mut()
+            {
+                // A dispatch plan is prepared before a RunState exists. Attach
+                // this run's private broker only at the final service-owned
+                // dispatch boundary; route metadata alone never authorizes it.
+                apply_config.attach_gui_patch_approval_broker(progress.gui_patch_approval_broker());
             }
             // This checked call is added by the companion integration patch.
             // It returns a durable per-task effect receipt on cancellation,
@@ -1229,6 +1341,438 @@ impl CodingStartRequest {
     }
 }
 
+enum GuiPatchApprovalDecision {
+    Approved(GuiPatchApprovalGrant),
+    Rejected,
+    Expired,
+    Cancelled,
+}
+
+struct PendingGuiPatchApproval {
+    metadata: CodingPatchApprovalMetadata,
+    repository_identity: String,
+    patch_sha256: [u8; 32],
+    patch_text: String,
+    expires_at: tokio::time::Instant,
+    response: oneshot::Sender<GuiPatchApprovalDecision>,
+}
+
+/// Private per-run capability installed into the dispatcher only for a native
+/// GUI-routed run. A caller cannot construct a grant from an approval id or a
+/// display label.
+#[derive(Clone)]
+pub(crate) struct GuiPatchApprovalBroker {
+    state: std::sync::Weak<RunState>,
+    pending: Arc<Mutex<Option<PendingGuiPatchApproval>>>,
+    #[cfg(test)]
+    publication_pause: Option<Arc<ApprovalPublicationPause>>,
+    #[cfg(test)]
+    test_keepalive: Option<Arc<RunState>>,
+}
+
+/// Private, non-cloneable proof returned only after the broker consumed a
+/// matching accepted response. It is checked again at the Gate boundary.
+pub(crate) struct GuiPatchApprovalGrant {
+    repository_identity: String,
+    task_id: KanbanTaskId,
+    patch_sha256: [u8; 32],
+    request_binding_sha256: String,
+    state: std::sync::Weak<RunState>,
+}
+
+impl GuiPatchApprovalGrant {
+    pub(crate) fn matches(
+        &self,
+        repository_identity: &str,
+        task_id: KanbanTaskId,
+        patch_sha256: &[u8; 32],
+        request_binding_sha256: &str,
+    ) -> bool {
+        self.repository_identity == repository_identity
+            && self.task_id == task_id
+            && self.patch_sha256 == *patch_sha256
+            && self.request_binding_sha256 == request_binding_sha256
+    }
+
+    /// Recheck cancellation immediately before the dispatcher enters the
+    /// durable Gate. This closes the accept/cancel handoff without trying to
+    /// erase a decision that the Gate has already admitted.
+    pub(crate) fn ensure_active(&self) -> std::result::Result<(), String> {
+        let state = self
+            .state
+            .upgrade()
+            .ok_or_else(|| "native patch approval run is no longer live".to_owned())?;
+        if state.cancellation.is_requested() {
+            return Err("native patch approval cancelled".to_owned());
+        }
+        Ok(())
+    }
+}
+
+impl GuiPatchApprovalBroker {
+    fn new(state: std::sync::Weak<RunState>) -> Self {
+        Self {
+            state,
+            pending: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            publication_pause: None,
+            #[cfg(test)]
+            test_keepalive: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_dispatch_test() -> (Self, CodingCancellation) {
+        let cancellation = CodingCancellation::new();
+        let (events, _) = broadcast::channel(EVENT_SUBSCRIBER_CAPACITY);
+        let (terminal, _) = watch::channel(None);
+        let state = Arc::new_cyclic(|weak| RunState {
+            snapshot: Mutex::new(CodingRunSnapshot {
+                run_id: CodingRunId(92),
+                phase: CodingRunPhase::Applying,
+                repository_root: std::env::temp_dir(),
+                session_id: None,
+                cancel_requested: false,
+                provider_state: ProviderCallState::Completed,
+                task_count: 1,
+                pending_patch_approval: None,
+                terminal: None,
+            }),
+            cancellation: cancellation.clone(),
+            events,
+            terminal,
+            gui_patch_approval: Self::new(weak.clone()),
+        });
+        let mut broker = state.gui_patch_approval.clone();
+        broker.test_keepalive = Some(state);
+        (broker, cancellation)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_for_pending_metadata_for_test(&self) -> CodingPatchApprovalMetadata {
+        let _keepalive = self.test_keepalive.as_ref();
+        let state = self
+            .state
+            .upgrade()
+            .expect("test broker must retain its run state");
+        for _ in 0..128 {
+            if let Some(metadata) = state.snapshot.lock().await.pending_patch_approval.clone() {
+                return metadata;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("dispatcher did not publish a native patch approval");
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn respond_for_test(
+        &self,
+        approval_id: CodingPatchApprovalId,
+        approved: bool,
+    ) -> PatchApprovalResponse {
+        self.respond(approval_id, approved).await
+    }
+
+    #[cfg(test)]
+    fn with_publication_pause_for_test(mut self, pause: Arc<ApprovalPublicationPause>) -> Self {
+        self.publication_pause = Some(pause);
+        self
+    }
+
+    #[cfg(test)]
+    async fn pause_before_snapshot_for_test(&self) {
+        if let Some(pause) = self.publication_pause.as_ref() {
+            pause.entered.store(true, Ordering::Release);
+            pause.entered_notify.notify_waiters();
+            pause.release.notified().await;
+        }
+    }
+
+    pub(crate) async fn request_exact(
+        &self,
+        repository_identity: &str,
+        repository_display: String,
+        task_id: KanbanTaskId,
+        patch_text: &str,
+        request_binding_sha256: String,
+    ) -> std::result::Result<GuiPatchApprovalGrant, String> {
+        if patch_text.is_empty() || patch_text.len() > super::worker::MAX_WORKER_RESULT_BYTES {
+            return Err(
+                "native patch approval requires bounded non-empty accepted patch bytes".to_owned(),
+            );
+        }
+        let state = self
+            .state
+            .upgrade()
+            .ok_or_else(|| "native patch approval run is no longer live".to_owned())?;
+        if state.cancellation.is_requested() {
+            return Err("native patch approval cancelled".to_owned());
+        }
+
+        let patch_sha256: [u8; 32] = Sha256::digest(patch_text.as_bytes()).into();
+        let expires_at = tokio::time::Instant::now() + GUI_PATCH_APPROVAL_TTL;
+        let metadata = CodingPatchApprovalMetadata {
+            approval_id: uuid::Uuid::now_v7(),
+            task_id,
+            repository_display,
+            patch_sha256: hex::encode(patch_sha256),
+            request_binding_sha256: request_binding_sha256.clone(),
+            changed_files: bounded_changed_files(patch_text),
+            expires_unix: crate::time::now_unix_i64()
+                .saturating_add(GUI_PATCH_APPROVAL_TTL.as_secs() as i64),
+        };
+        let (response, receiver) = oneshot::channel();
+        let cancelled_before_publish = {
+            let mut pending = self.pending.lock().await;
+            if pending.is_some() {
+                return Err("native patch approval already pending for this run".to_owned());
+            }
+            *pending = Some(PendingGuiPatchApproval {
+                metadata: metadata.clone(),
+                repository_identity: repository_identity.to_owned(),
+                patch_sha256,
+                patch_text: patch_text.to_owned(),
+                expires_at,
+                response,
+            });
+            #[cfg(test)]
+            if let Some(pause) = self.publication_pause.as_ref() {
+                *pause
+                    .approval_id
+                    .lock()
+                    .expect("test publication pause mutex poisoned") = Some(metadata.approval_id);
+            }
+            #[cfg(test)]
+            self.pause_before_snapshot_for_test().await;
+            let mut snapshot = state.snapshot.lock().await;
+            if snapshot.terminal.is_some() || state.cancellation.is_requested() {
+                snapshot.pending_patch_approval = None;
+                pending.take()
+            } else {
+                snapshot.pending_patch_approval = Some(metadata.clone());
+                None
+            }
+        };
+        if let Some(current) = cancelled_before_publish {
+            let _ = current.response.send(GuiPatchApprovalDecision::Cancelled);
+            return Err("native patch approval cancelled".to_owned());
+        }
+        let _ = state
+            .events
+            .send(CodingRunEvent::PatchApplyApprovalRequested(
+                metadata.clone(),
+            ));
+
+        let decision = tokio::select! {
+            biased;
+            decision = receiver => decision.unwrap_or(GuiPatchApprovalDecision::Cancelled),
+            _ = state.cancellation.cancelled() => {
+                self.remove(metadata.approval_id, GuiPatchApprovalDecision::Cancelled).await;
+                GuiPatchApprovalDecision::Cancelled
+            }
+            _ = tokio::time::sleep_until(expires_at) => {
+                self.remove(metadata.approval_id, GuiPatchApprovalDecision::Expired).await;
+                GuiPatchApprovalDecision::Expired
+            }
+        };
+        match decision {
+            GuiPatchApprovalDecision::Approved(grant) => {
+                grant.ensure_active()?;
+                Ok(grant)
+            }
+            GuiPatchApprovalDecision::Rejected => Err("native patch approval rejected".to_owned()),
+            GuiPatchApprovalDecision::Expired => Err("native patch approval expired".to_owned()),
+            GuiPatchApprovalDecision::Cancelled => {
+                Err("native patch approval cancelled".to_owned())
+            }
+        }
+    }
+
+    async fn respond(
+        &self,
+        approval_id: CodingPatchApprovalId,
+        approved: bool,
+    ) -> PatchApprovalResponse {
+        let Some(state) = self.state.upgrade() else {
+            return PatchApprovalResponse::StaleOrUnknown;
+        };
+        let (current, result) = {
+            let mut pending = self.pending.lock().await;
+            let Some(current) = pending.as_ref() else {
+                return PatchApprovalResponse::StaleOrUnknown;
+            };
+            if current.metadata.approval_id != approval_id {
+                return PatchApprovalResponse::StaleOrUnknown;
+            }
+            let expired = tokio::time::Instant::now() >= current.expires_at;
+            let cancelled = state.cancellation.is_requested();
+            let current = pending.take().expect("pending approval checked above");
+            Self::clear_snapshot_while_pending(&state, approval_id).await;
+            if cancelled {
+                (current, PatchApprovalResponse::StaleOrUnknown)
+            } else if expired {
+                (current, PatchApprovalResponse::Expired)
+            } else {
+                let result = if approved {
+                    PatchApprovalResponse::Accepted
+                } else {
+                    PatchApprovalResponse::Rejected
+                };
+                (current, result)
+            }
+        };
+        let decision = match result {
+            PatchApprovalResponse::Accepted => {
+                GuiPatchApprovalDecision::Approved(GuiPatchApprovalGrant {
+                    repository_identity: current.repository_identity,
+                    task_id: current.metadata.task_id,
+                    patch_sha256: current.patch_sha256,
+                    request_binding_sha256: current.metadata.request_binding_sha256.clone(),
+                    state: Arc::downgrade(&state),
+                })
+            }
+            PatchApprovalResponse::Rejected => GuiPatchApprovalDecision::Rejected,
+            PatchApprovalResponse::Expired => GuiPatchApprovalDecision::Expired,
+            PatchApprovalResponse::StaleOrUnknown => GuiPatchApprovalDecision::Cancelled,
+        };
+        let _ = current.response.send(decision);
+        result
+    }
+
+    async fn preview(&self, approval_id: CodingPatchApprovalId) -> PatchApprovalPreviewResult {
+        let Some(state) = self.state.upgrade() else {
+            return PatchApprovalPreviewResult::StaleOrUnknown;
+        };
+        let expired_or_cancelled = {
+            let mut pending = self.pending.lock().await;
+            let Some(current) = pending.as_ref() else {
+                return PatchApprovalPreviewResult::StaleOrUnknown;
+            };
+            if current.metadata.approval_id != approval_id {
+                return PatchApprovalPreviewResult::StaleOrUnknown;
+            }
+            if tokio::time::Instant::now() >= current.expires_at
+                || state.cancellation.is_requested()
+            {
+                let current = pending.take();
+                Self::clear_snapshot_while_pending(&state, approval_id).await;
+                current
+            } else {
+                let digest: [u8; 32] = Sha256::digest(current.patch_text.as_bytes()).into();
+                if digest != current.patch_sha256
+                    || hex::encode(digest) != current.metadata.patch_sha256
+                {
+                    return PatchApprovalPreviewResult::StaleOrUnknown;
+                }
+                return PatchApprovalPreviewResult::Available(CodingPatchApprovalPreview {
+                    metadata: current.metadata.clone(),
+                    patch_text: current.patch_text.clone(),
+                });
+            }
+        };
+        if let Some(current) = expired_or_cancelled {
+            let cancelled = state.cancellation.is_requested();
+            let _ = current.response.send(if cancelled {
+                GuiPatchApprovalDecision::Cancelled
+            } else {
+                GuiPatchApprovalDecision::Expired
+            });
+            if cancelled {
+                PatchApprovalPreviewResult::StaleOrUnknown
+            } else {
+                PatchApprovalPreviewResult::Expired
+            }
+        } else {
+            PatchApprovalPreviewResult::StaleOrUnknown
+        }
+    }
+
+    async fn invalidate(&self) {
+        let Some(state) = self.state.upgrade() else {
+            return;
+        };
+        let current = {
+            let mut pending = self.pending.lock().await;
+            let current = pending.take();
+            if let Some(current) = current.as_ref() {
+                Self::clear_snapshot_while_pending(&state, current.metadata.approval_id).await;
+            }
+            current
+        };
+        if let Some(current) = current {
+            let _ = current.response.send(GuiPatchApprovalDecision::Cancelled);
+        }
+    }
+
+    async fn remove(&self, approval_id: CodingPatchApprovalId, decision: GuiPatchApprovalDecision) {
+        let Some(state) = self.state.upgrade() else {
+            return;
+        };
+        let current = {
+            let mut pending = self.pending.lock().await;
+            if pending
+                .as_ref()
+                .is_some_and(|current| current.metadata.approval_id == approval_id)
+            {
+                let current = pending.take();
+                Self::clear_snapshot_while_pending(&state, approval_id).await;
+                current
+            } else {
+                None
+            }
+        };
+        if let Some(current) = current {
+            let _ = current.response.send(decision);
+        }
+    }
+
+    /// Every mirrored-state mutation locks `pending` before `snapshot`.
+    /// Callers hold the pending lock, making a consumed entry and the recovery
+    /// snapshot one linearizable state transition.
+    async fn clear_snapshot_while_pending(state: &RunState, approval_id: CodingPatchApprovalId) {
+        let mut snapshot = state.snapshot.lock().await;
+        if snapshot
+            .pending_patch_approval
+            .as_ref()
+            .is_some_and(|metadata| metadata.approval_id == approval_id)
+        {
+            snapshot.pending_patch_approval = None;
+        }
+    }
+}
+
+fn bounded_changed_files(patch_text: &str) -> Vec<String> {
+    let mut files = crate::code_map::risk::patch_changed_files_from_text(patch_text);
+    files.sort_unstable();
+    files
+        .into_iter()
+        .filter_map(|file| safe_relative_display_file(&file))
+        .take(GUI_PATCH_APPROVAL_MAX_CHANGED_FILES)
+        .collect()
+}
+
+/// Provider-supplied diff headers are useful only as bounded display labels.
+/// Do not let control bytes, roots, path traversal, or malformed components
+/// escape the raw preview boundary through serializable event metadata.
+fn safe_relative_display_file(file: &str) -> Option<String> {
+    if file.is_empty()
+        || file.len() > GUI_PATCH_APPROVAL_MAX_FILE_LABEL_BYTES
+        || file.chars().any(char::is_control)
+        || file.starts_with(['/', '\\'])
+    {
+        return None;
+    }
+    let components = file.split(['/', '\\']).collect::<Vec<_>>();
+    if components.is_empty()
+        || components.iter().any(|component| {
+            component.is_empty() || matches!(*component, "." | "..") || component.contains(':')
+        })
+    {
+        return None;
+    }
+    Some(components.join("/"))
+}
+
 /// Worker-owned capability for emitting a canonical state transition.
 #[derive(Clone)]
 pub struct CodingRunProgress {
@@ -1295,6 +1839,10 @@ impl CodingRunProgress {
     pub fn cancellation(&self) -> CodingCancellation {
         self.state.cancellation.clone()
     }
+
+    fn gui_patch_approval_broker(&self) -> GuiPatchApprovalBroker {
+        self.state.gui_patch_approval.clone()
+    }
 }
 
 struct RunState {
@@ -1302,6 +1850,7 @@ struct RunState {
     cancellation: CodingCancellation,
     events: broadcast::Sender<CodingRunEvent>,
     terminal: watch::Sender<Option<CodingRunResult>>,
+    gui_patch_approval: GuiPatchApprovalBroker,
 }
 
 struct ActiveRun {
@@ -1368,14 +1917,16 @@ impl LocalCodingService {
             cancel_requested: false,
             provider_state: ProviderCallState::NotAttempted,
             task_count: 0,
+            pending_patch_approval: None,
             terminal: None,
         };
         let (terminal, terminal_rx) = watch::channel(None);
-        let state = Arc::new(RunState {
+        let state = Arc::new_cyclic(|weak| RunState {
             snapshot: Mutex::new(initial),
             cancellation: cancellation.clone(),
             events,
             terminal,
+            gui_patch_approval: GuiPatchApprovalBroker::new(weak.clone()),
         });
         // Publish the active row before allowing the worker to run. Without
         // this gate a very fast failure could remove a row that has not been
@@ -1474,6 +2025,48 @@ impl LocalCodingService {
             .iter()
             .find(|snapshot| snapshot.run_id == run_id)
             .cloned()
+    }
+
+    async fn respond_patch_approval(
+        &self,
+        run_id: CodingRunId,
+        approval_id: CodingPatchApprovalId,
+        approved: bool,
+    ) -> PatchApprovalResponse {
+        let state = self
+            .registry
+            .active
+            .lock()
+            .await
+            .get(&run_id)
+            .map(|active| Arc::clone(&active.state));
+        match state {
+            Some(state) => {
+                state
+                    .gui_patch_approval
+                    .respond(approval_id, approved)
+                    .await
+            }
+            None => PatchApprovalResponse::StaleOrUnknown,
+        }
+    }
+
+    async fn patch_approval_preview(
+        &self,
+        run_id: CodingRunId,
+        approval_id: CodingPatchApprovalId,
+    ) -> PatchApprovalPreviewResult {
+        let state = self
+            .registry
+            .active
+            .lock()
+            .await
+            .get(&run_id)
+            .map(|active| Arc::clone(&active.state));
+        match state {
+            Some(state) => state.gui_patch_approval.preview(approval_id).await,
+            None => PatchApprovalPreviewResult::StaleOrUnknown,
+        }
     }
 
     /// Request cancellation without claiming completion. Frontends that need a
@@ -1593,6 +2186,17 @@ enum RuntimeCommand {
         run_id: CodingRunId,
         reply: tokio::sync::oneshot::Sender<Option<CodingRunSnapshot>>,
     },
+    RespondPatchApproval {
+        run_id: CodingRunId,
+        approval_id: CodingPatchApprovalId,
+        approved: bool,
+        reply: tokio::sync::oneshot::Sender<PatchApprovalResponse>,
+    },
+    ReadPatchApprovalPreview {
+        run_id: CodingRunId,
+        approval_id: CodingPatchApprovalId,
+        reply: tokio::sync::oneshot::Sender<PatchApprovalPreviewResult>,
+    },
     RequestCancel {
         run_id: CodingRunId,
         reply: tokio::sync::oneshot::Sender<Result<()>>,
@@ -1693,6 +2297,50 @@ impl CodingService {
             return None;
         }
         result.await.ok().flatten()
+    }
+
+    /// Consume an opaque pending native patch approval. A stale id is a normal
+    /// typed result, while a stopped controller remains an operational error.
+    pub async fn respond_patch_approval(
+        &self,
+        run_id: CodingRunId,
+        approval_id: CodingPatchApprovalId,
+        approved: bool,
+    ) -> Result<PatchApprovalResponse> {
+        let (reply, result) = tokio::sync::oneshot::channel();
+        self.control
+            .commands
+            .send(RuntimeCommand::RespondPatchApproval {
+                run_id,
+                approval_id,
+                approved,
+                reply,
+            })
+            .map_err(|_| anyhow::anyhow!("coding service runtime is unavailable"))?;
+        result
+            .await
+            .map_err(|_| anyhow::anyhow!("coding service approval reply dropped"))
+    }
+
+    /// Read the full accepted patch only while the exact approval is pending.
+    /// This does not consume or extend the one-use approval.
+    pub async fn patch_approval_preview(
+        &self,
+        run_id: CodingRunId,
+        approval_id: CodingPatchApprovalId,
+    ) -> Result<PatchApprovalPreviewResult> {
+        let (reply, result) = tokio::sync::oneshot::channel();
+        self.control
+            .commands
+            .send(RuntimeCommand::ReadPatchApprovalPreview {
+                run_id,
+                approval_id,
+                reply,
+            })
+            .map_err(|_| anyhow::anyhow!("coding service runtime is unavailable"))?;
+        result
+            .await
+            .map_err(|_| anyhow::anyhow!("coding service preview reply dropped"))
     }
 
     pub async fn request_cancel(&self, run_id: CodingRunId) -> Result<()> {
@@ -1819,6 +2467,25 @@ impl CodingRunHandle {
         self.service.snapshot(self.run_id).await
     }
 
+    pub async fn respond_patch_approval(
+        &self,
+        approval_id: CodingPatchApprovalId,
+        approved: bool,
+    ) -> Result<PatchApprovalResponse> {
+        self.service
+            .respond_patch_approval(self.run_id, approval_id, approved)
+            .await
+    }
+
+    pub async fn patch_approval_preview(
+        &self,
+        approval_id: CodingPatchApprovalId,
+    ) -> Result<PatchApprovalPreviewResult> {
+        self.service
+            .patch_approval_preview(self.run_id, approval_id)
+            .await
+    }
+
     pub async fn request_cancel(&self) -> Result<()> {
         self.service.request_cancel(self.run_id).await
     }
@@ -1855,6 +2522,25 @@ async fn runtime_command_loop(
             }
             RuntimeCommand::Snapshot { run_id, reply } => {
                 let _ = reply.send(service.snapshot(run_id).await);
+            }
+            RuntimeCommand::RespondPatchApproval {
+                run_id,
+                approval_id,
+                approved,
+                reply,
+            } => {
+                let _ = reply.send(
+                    service
+                        .respond_patch_approval(run_id, approval_id, approved)
+                        .await,
+                );
+            }
+            RuntimeCommand::ReadPatchApprovalPreview {
+                run_id,
+                approval_id,
+                reply,
+            } => {
+                let _ = reply.send(service.patch_approval_preview(run_id, approval_id).await);
             }
             RuntimeCommand::RequestCancel { run_id, reply } => {
                 let _ = reply.send(service.request_cancel(run_id).await);
@@ -1999,6 +2685,7 @@ impl LocalCodingRunHandle {
 
 async fn request_cancellation(state: &RunState) {
     if state.cancellation.request() {
+        state.gui_patch_approval.invalidate().await;
         let mut snapshot = state.snapshot.lock().await;
         if snapshot.terminal.is_none() {
             snapshot.cancel_requested = true;
@@ -2012,6 +2699,7 @@ async fn request_cancellation(state: &RunState) {
 }
 
 async fn finish_run(state: &RunState, mut result: CodingRunResult) {
+    state.gui_patch_approval.invalidate().await;
     let mut snapshot = state.snapshot.lock().await;
     if snapshot.terminal.is_some() {
         return;
@@ -2077,6 +2765,214 @@ mod tests {
         CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile,
     };
     use std::sync::atomic::AtomicUsize;
+
+    fn approval_test_state() -> Arc<RunState> {
+        let (events, _) = broadcast::channel(EVENT_SUBSCRIBER_CAPACITY);
+        let (terminal, _) = watch::channel(None);
+        let cancellation = CodingCancellation::new();
+        Arc::new_cyclic(|weak| RunState {
+            snapshot: Mutex::new(CodingRunSnapshot {
+                run_id: CodingRunId(91),
+                phase: CodingRunPhase::Applying,
+                repository_root: std::env::temp_dir(),
+                session_id: None,
+                cancel_requested: false,
+                provider_state: ProviderCallState::Completed,
+                task_count: 1,
+                pending_patch_approval: None,
+                terminal: None,
+            }),
+            cancellation,
+            events,
+            terminal,
+            gui_patch_approval: GuiPatchApprovalBroker::new(weak.clone()),
+        })
+    }
+
+    async fn wait_for_pending_metadata(state: &RunState) -> CodingPatchApprovalMetadata {
+        for _ in 0..64 {
+            if let Some(metadata) = state.snapshot.lock().await.pending_patch_approval.clone() {
+                return metadata;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("native patch approval was not published");
+    }
+
+    #[tokio::test]
+    async fn native_patch_approval_preview_is_exact_and_response_is_one_use() {
+        let state = approval_test_state();
+        let broker = state.gui_patch_approval.clone();
+        let waiter = tokio::spawn({
+            let broker = broker.clone();
+            async move {
+                broker
+                    .request_exact(
+                        "canonical:test-repository",
+                        "canonical-test-repository".to_owned(),
+                        KanbanTaskId(7),
+                        "diff --git a/a.rs b/a.rs\n+++ b/a.rs\n+new bytes\n",
+                        "binding-7".to_owned(),
+                    )
+                    .await
+            }
+        });
+        let metadata = wait_for_pending_metadata(&state).await;
+        assert_eq!(
+            state
+                .snapshot
+                .lock()
+                .await
+                .pending_patch_approval
+                .as_ref()
+                .map(|pending| pending.approval_id),
+            Some(metadata.approval_id),
+            "snapshot is the recovery source before the advisory event is consumed"
+        );
+        match broker.preview(metadata.approval_id).await {
+            PatchApprovalPreviewResult::Available(preview) => {
+                assert_eq!(preview.metadata.request_binding_sha256, "binding-7");
+                assert_eq!(
+                    preview.patch_text,
+                    "diff --git a/a.rs b/a.rs\n+++ b/a.rs\n+new bytes\n"
+                );
+            }
+            PatchApprovalPreviewResult::StaleOrUnknown | PatchApprovalPreviewResult::Expired => {
+                panic!("live approval must return its exact preview")
+            }
+        }
+        assert_eq!(
+            broker.respond(metadata.approval_id, true).await,
+            PatchApprovalResponse::Accepted
+        );
+        assert_eq!(
+            broker.respond(metadata.approval_id, true).await,
+            PatchApprovalResponse::StaleOrUnknown
+        );
+        assert!(
+            state.snapshot.lock().await.pending_patch_approval.is_none(),
+            "consuming a response clears snapshot recovery with the pending slot"
+        );
+        let grant = waiter.await.unwrap().unwrap();
+        let digest: [u8; 32] =
+            Sha256::digest(b"diff --git a/a.rs b/a.rs\n+++ b/a.rs\n+new bytes\n").into();
+        assert!(grant.matches(
+            "canonical:test-repository",
+            KanbanTaskId(7),
+            &digest,
+            "binding-7",
+        ));
+        assert!(matches!(
+            broker.preview(metadata.approval_id).await,
+            PatchApprovalPreviewResult::StaleOrUnknown
+        ));
+    }
+
+    #[tokio::test]
+    async fn native_patch_approval_cancel_and_expiry_remove_raw_preview() {
+        let state = approval_test_state();
+        let broker = state.gui_patch_approval.clone();
+        let waiter = tokio::spawn({
+            let broker = broker.clone();
+            async move {
+                broker
+                    .request_exact(
+                        "canonical:test-repository",
+                        "canonical-test-repository".to_owned(),
+                        KanbanTaskId(8),
+                        "diff --git a/b.rs b/b.rs\n+++ b/b.rs\n+new bytes\n",
+                        "binding-8".to_owned(),
+                    )
+                    .await
+            }
+        });
+        let metadata = wait_for_pending_metadata(&state).await;
+        {
+            let mut pending = broker.pending.lock().await;
+            pending.as_mut().unwrap().expires_at = tokio::time::Instant::now();
+        }
+        assert_eq!(
+            broker.respond(metadata.approval_id, true).await,
+            PatchApprovalResponse::Expired
+        );
+        assert!(waiter.await.unwrap().is_err());
+        assert!(matches!(
+            broker.preview(metadata.approval_id).await,
+            PatchApprovalPreviewResult::StaleOrUnknown
+        ));
+
+        let waiter = tokio::spawn({
+            let broker = broker.clone();
+            async move {
+                broker
+                    .request_exact(
+                        "canonical:test-repository",
+                        "canonical-test-repository".to_owned(),
+                        KanbanTaskId(9),
+                        "diff --git a/c.rs b/c.rs\n+++ b/c.rs\n+new bytes\n",
+                        "binding-9".to_owned(),
+                    )
+                    .await
+            }
+        });
+        let metadata = wait_for_pending_metadata(&state).await;
+        state.cancellation.request();
+        assert_eq!(
+            broker.respond(metadata.approval_id, true).await,
+            PatchApprovalResponse::StaleOrUnknown
+        );
+        assert!(waiter.await.unwrap().is_err());
+        assert!(state.snapshot.lock().await.pending_patch_approval.is_none());
+    }
+
+    #[tokio::test]
+    async fn consume_during_publication_cannot_leave_stale_snapshot_metadata() {
+        let state = approval_test_state();
+        let pause = Arc::new(ApprovalPublicationPause::new());
+        let broker = state
+            .gui_patch_approval
+            .clone()
+            .with_publication_pause_for_test(Arc::clone(&pause));
+        let waiter = tokio::spawn({
+            let broker = broker.clone();
+            async move {
+                broker
+                    .request_exact(
+                        "canonical:test-repository",
+                        "canonical-test-repository".to_owned(),
+                        KanbanTaskId(10),
+                        "diff --git a/d.rs b/d.rs\n+++ b/d.rs\n+new bytes\n",
+                        "binding-10".to_owned(),
+                    )
+                    .await
+            }
+        });
+        pause.wait_until_entered().await;
+        assert!(
+            state.snapshot.lock().await.pending_patch_approval.is_none(),
+            "the slot is not externally visible until snapshot recovery is installed"
+        );
+        let approval_id = pause.approval_id();
+        let consumer = tokio::spawn({
+            let broker = broker.clone();
+            async move { broker.respond(approval_id, false).await }
+        });
+        pause.release.notify_one();
+        assert_eq!(consumer.await.unwrap(), PatchApprovalResponse::Rejected);
+        assert!(waiter.await.unwrap().is_err());
+        assert!(
+            state.snapshot.lock().await.pending_patch_approval.is_none(),
+            "response removes the slot and mirrored metadata in one ordered transition"
+        );
+    }
+
+    #[test]
+    fn approval_metadata_omits_hostile_diff_header_suffixes() {
+        let files = bounded_changed_files(
+            "+++ b/src/lib.rs\n+++ b/../secret\n+++ b//absolute\n+++ b/a/./b\n+++ b/a/../../b\n+++ b/a\\b\n+++ b/a\u{7f}b\n+++ b/C:drive\n+++ b/src/main.rs\n",
+        );
+        assert_eq!(files, vec!["a/b", "src/lib.rs", "src/main.rs"]);
+    }
 
     struct FixtureWorker {
         effects: Arc<AtomicUsize>,
@@ -2155,7 +3051,7 @@ mod tests {
 
         let explicitly_local = CodingStartRequest::new(
             "fixture".to_owned(),
-            root,
+            root.clone(),
             "not-a-cli-label".to_owned(),
             false,
             true,
@@ -2166,6 +3062,21 @@ mod tests {
         assert_eq!(
             explicitly_local.apply_confirmation,
             ApplyConfirmation::LocalCliFlag
+        );
+
+        let gui_route = CodingStartRequest::new(
+            "fixture".to_owned(),
+            root,
+            "cli".to_owned(),
+            false,
+            true,
+            true,
+        )
+        .unwrap()
+        .with_gui_apply_route();
+        assert_eq!(
+            gui_route.apply_confirmation,
+            ApplyConfirmation::GuiInteractive
         );
     }
 

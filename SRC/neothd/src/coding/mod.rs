@@ -111,9 +111,10 @@ pub use review::{
     ReviewBlocker, auto_promote_if_green, auto_promote_session, check_auto_promotable,
 };
 pub use service::{
-    CancellationEffect, CodingDispatchSummary, CodingRunEvent, CodingRunHandle, CodingRunId,
-    CodingRunPhase, CodingRunResult, CodingRunSnapshot, CodingService, CodingServiceConfig,
-    CodingStartRequest, ProviderCallState,
+    CancellationEffect, CodingDispatchSummary, CodingPatchApprovalId, CodingPatchApprovalMetadata,
+    CodingPatchApprovalPreview, CodingRunEvent, CodingRunHandle, CodingRunId, CodingRunPhase,
+    CodingRunResult, CodingRunSnapshot, CodingService, CodingServiceConfig, CodingStartRequest,
+    PatchApprovalPreviewResult, PatchApprovalResponse, ProviderCallState,
 };
 pub use types::{
     Hemisphere, KanbanComment, KanbanSession, KanbanSessionId, KanbanTask, KanbanTaskId,

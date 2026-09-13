@@ -120,6 +120,9 @@ pub enum ApplyOrigin {
     /// An apply requested over a messaging channel. No local auth →
     /// `Confirm` is NOT degraded.
     ChannelRequested,
+    /// A native GUI/Buddy run reached a concrete patch boundary. This remains
+    /// provenance only; an opaque per-run approval is still required.
+    GuiRequested,
 }
 
 /// Proof that the actual local CLI entry point parsed an `--apply` flag.
@@ -130,6 +133,7 @@ pub enum ApplyOrigin {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ApplyConfirmation {
     LocalCliFlag,
+    GuiInteractive,
     Unattended,
 }
 
@@ -140,6 +144,7 @@ impl ApplyOrigin {
             ApplyOrigin::CliConfirmed => "cli_confirmed",
             ApplyOrigin::DaemonScheduled => "daemon_scheduled",
             ApplyOrigin::ChannelRequested => "channel_requested",
+            ApplyOrigin::GuiRequested => "gui_requested",
         }
     }
 }
@@ -176,6 +181,9 @@ pub struct DispatchApplyConfig {
     /// to Allow (only `CliConfirmed`). See [`ApplyOrigin`].
     pub origin: ApplyOrigin,
     confirmation: ApplyConfirmation,
+    /// Installed only by the service after a real RunState exists. It is
+    /// private so UI labels and external callers cannot mint admission.
+    gui_patch_approval: Option<super::service::GuiPatchApprovalBroker>,
     pub test_cmd: Option<String>,
     pub test_timeout: std::time::Duration,
     pub wal_writer: WalWriterRef,
@@ -218,6 +226,7 @@ impl DispatchApplyConfig {
             repo_root: repo_root.into(),
             origin,
             confirmation: ApplyConfirmation::Unattended,
+            gui_patch_approval: None,
             test_cmd: None,
             test_timeout: std::time::Duration::from_secs(5 * 60),
             wal_writer: None,
@@ -233,6 +242,21 @@ impl DispatchApplyConfig {
     pub(crate) fn with_local_cli_confirmation(mut self) -> Self {
         self.confirmation = ApplyConfirmation::LocalCliFlag;
         self
+    }
+
+    /// Set only by the service's native GUI route. This still requires the
+    /// per-run broker to yield an exact one-use grant at admission time.
+    pub(crate) fn with_gui_interactive_confirmation(mut self) -> Self {
+        self.confirmation = ApplyConfirmation::GuiInteractive;
+        self
+    }
+
+    pub(crate) fn attach_gui_patch_approval_broker(
+        &mut self,
+        broker: super::service::GuiPatchApprovalBroker,
+    ) {
+        debug_assert_eq!(self.confirmation, ApplyConfirmation::GuiInteractive);
+        self.gui_patch_approval = Some(broker);
     }
 
     #[cfg(test)]
@@ -1165,6 +1189,7 @@ const APPLY_CANCELLED_BEFORE_WORKTREE: &str = "patch apply cancelled before work
 enum PatchApplyPausePoint {
     BeforeGate,
     AfterAdmission,
+    AfterGuiApprovalBeforeFreshDescriptor,
 }
 
 #[cfg(test)]
@@ -1189,7 +1214,7 @@ async fn authorize_patch_apply_before_worktree(
     let patch = outcome
         .patch_text()
         .ok_or_else(|| "accepted patch outcome has no immutable patch bytes".to_string())?;
-    let target = crate::code_map::CanonicalRepoRoot::discover(&cfg.repo_root)
+    let initial_target = crate::code_map::CanonicalRepoRoot::discover(&cfg.repo_root)
         .map_err(|error| format!("canonical repository validation failed before apply: {error}"))?;
     let policy = cfg.autonomy_policy.as_ref().ok_or_else(|| {
         "patch apply requires an immutable autonomy policy before worktree creation".to_string()
@@ -1198,21 +1223,83 @@ async fn authorize_patch_apply_before_worktree(
         "patch apply requires a home-backed permission audit writer before worktree creation"
             .to_string()
     })?;
-    let accepted_patch_sha256: [u8; 32] = Sha256::digest(patch.as_bytes()).into();
-    let binding = patch_apply_request_binding(
-        target.identity().as_str(),
+    let initial_patch_sha256: [u8; 32] = Sha256::digest(patch.as_bytes()).into();
+    let initial_binding = patch_apply_request_binding(
+        initial_target.identity().as_str(),
         task.task_id,
-        &accepted_patch_sha256,
+        &initial_patch_sha256,
         cfg.origin,
     );
+    let (target, accepted_patch_sha256, binding, confirmation_source) = match cfg.confirmation {
+        ApplyConfirmation::LocalCliFlag => (
+            initial_target,
+            initial_patch_sha256,
+            initial_binding,
+            Some("local_cli_code_apply_flag"),
+        ),
+        ApplyConfirmation::GuiInteractive => {
+            let broker = cfg.gui_patch_approval.as_ref().ok_or_else(|| {
+                "native GUI patch apply is missing its run-owned approval broker".to_owned()
+            })?;
+            let grant = broker
+                .request_exact(
+                    initial_target.identity().as_str(),
+                    initial_target.path().display().to_string(),
+                    task.task_id,
+                    patch,
+                    initial_binding,
+                )
+                .await?;
+            #[cfg(test)]
+            cfg.pause_for_test(PatchApplyPausePoint::AfterGuiApprovalBeforeFreshDescriptor)
+                .await;
+            // The GUI could wait for up to the approval TTL. Reconstruct the
+            // physical target and exact descriptor only after that wait; a
+            // replaced root must fail before it creates Gate history.
+            let target =
+                crate::code_map::CanonicalRepoRoot::discover(&cfg.repo_root).map_err(|error| {
+                    format!("canonical repository changed during native patch approval: {error}")
+                })?;
+            let accepted_patch_sha256: [u8; 32] = Sha256::digest(patch.as_bytes()).into();
+            let binding = patch_apply_request_binding(
+                target.identity().as_str(),
+                task.task_id,
+                &accepted_patch_sha256,
+                cfg.origin,
+            );
+            if !grant.matches(
+                target.identity().as_str(),
+                task.task_id,
+                &accepted_patch_sha256,
+                &binding,
+            ) {
+                return Err(
+                    "native GUI approval grant did not bind this exact patch apply".to_owned(),
+                );
+            }
+            grant.ensure_active()?;
+            // The broker grant is private and one-use. This source is written
+            // only after it matched the canonical root, task, patch digest,
+            // and existing request binding above.
+            (
+                target,
+                accepted_patch_sha256,
+                binding,
+                Some("native_gui_patch_approval"),
+            )
+        }
+        ApplyConfirmation::Unattended => {
+            (initial_target, initial_patch_sha256, initial_binding, None)
+        }
+    };
     let action = crate::permissions::Action::PatchApplyToRepo {
         repo_root: target.path().to_path_buf(),
         task_id: task.task_id.raw() as u64,
     };
     let mut gate = crate::permissions::Gate::for_policy(policy.clone())
         .with_confirm(crate::permissions::ConfirmStrategy::FailClosed);
-    if cfg.confirmation == ApplyConfirmation::LocalCliFlag {
-        gate = gate.with_preconfirmed_confirmation("local_cli_code_apply_flag");
+    if let Some(confirmation_source) = confirmation_source {
+        gate = gate.with_preconfirmed_confirmation(confirmation_source);
     }
     gate.check_with_audit_sink(
         &action,
@@ -1259,6 +1346,7 @@ fn patch_apply_request_binding(
         ApplyOrigin::CliConfirmed => 1,
         ApplyOrigin::DaemonScheduled => 2,
         ApplyOrigin::ChannelRequested => 3,
+        ApplyOrigin::GuiRequested => 4,
     }]);
     hex::encode(digest.finalize())
 }
@@ -3106,6 +3194,19 @@ mod tests {
             .with_wal_writer(std::sync::Arc::clone(writer))
     }
 
+    fn gui_test_apply_config(
+        repo: &std::path::Path,
+        writer: &std::sync::Arc<crate::wal::writer::WalWriterHandle>,
+        broker: crate::coding::service::GuiPatchApprovalBroker,
+    ) -> DispatchApplyConfig {
+        let mut config = DispatchApplyConfig::new(repo, ApplyOrigin::GuiRequested)
+            .with_autonomy(crate::permissions::AutonomyLevel::Full)
+            .with_gui_interactive_confirmation()
+            .with_wal_writer(std::sync::Arc::clone(writer));
+        config.attach_gui_patch_approval_broker(broker);
+        config
+    }
+
     #[test]
     fn patch_apply_binding_uses_physical_root_patch_task_and_origin() {
         let dir = tempfile::tempdir().unwrap();
@@ -3539,6 +3640,260 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_gui_grant_records_one_bound_decision_before_worktree_effect() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+        let home = dir.path().join("neoth-home");
+        let (writer, _writer_join) = authenticated_apply_writer(&home);
+        let session_id = store::insert_session(&conn, 1, "p", "h", "gui", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let accepted_patch = green_outcome_with_real_patch();
+        let canonical = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        let accepted_patch_sha256: [u8; 32] =
+            Sha256::digest(accepted_patch.patch_text.as_bytes()).into();
+        let expected_binding = patch_apply_request_binding(
+            canonical.identity().as_str(),
+            task_id,
+            &accepted_patch_sha256,
+            ApplyOrigin::GuiRequested,
+        );
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: accepted_patch,
+                name: "native-gui-approved",
+            }),
+        );
+        let (broker, _cancellation) =
+            crate::coding::service::GuiPatchApprovalBroker::for_dispatch_test();
+        let pause = patch_apply_pause(PatchApplyPausePoint::AfterAdmission);
+        let cfg = gui_test_apply_config(&repo, &writer, broker.clone())
+            .with_test_pause(Arc::clone(&pause));
+        let dispatch = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&cfg),
+        );
+        let approve = async {
+            let metadata = broker.wait_for_pending_metadata_for_test().await;
+            assert_eq!(metadata.task_id, task_id);
+            assert_eq!(metadata.request_binding_sha256, expected_binding);
+            let response = broker.respond_for_test(metadata.approval_id, true).await;
+            wait_for_patch_apply_pause(&pause).await;
+            let ledger = crate::permissions::TrustLedger::replay_subject_at_home(&home, "local")
+                .expect("the required GUI decision is durable before any worktree effect");
+            assert_eq!(ledger.entries.len(), 1);
+            assert_eq!(
+                ledger.entries[0].event.request_binding_sha256.as_deref(),
+                Some(expected_binding.as_str())
+            );
+            assert!(
+                !dir.path()
+                    .join(format!(".neoth-task-{}", task_id.raw()))
+                    .exists(),
+                "the after-admission pause precedes worktree creation"
+            );
+            pause.release.notify_one();
+            response
+        };
+        let (outcome, response) = tokio::join!(dispatch, approve);
+        assert_eq!(response, crate::coding::PatchApprovalResponse::Accepted);
+        assert_eq!(outcome.unwrap().tasks_completed, 1);
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(&home, "local")
+            .expect("native GUI Gate decision must be HMAC complete before worktree apply");
+        assert_eq!(ledger.entries.len(), 1);
+        let event = &ledger.entries[0].event;
+        assert_eq!(
+            event.action,
+            crate::permissions::ActionKind::PatchApplyToRepo
+        );
+        assert_eq!(
+            event.confirmation_source.as_deref(),
+            Some("native_gui_patch_approval")
+        );
+        assert_eq!(
+            event.request_binding_sha256.as_deref(),
+            Some(expected_binding.as_str())
+        );
+        assert!(matches!(
+            event.outcome,
+            crate::permissions::TrustOutcome::Allowed
+        ));
+        let worktree = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+        assert!(
+            worktree.exists(),
+            "admitted GUI patch must create its worktree"
+        );
+        let _ = crate::coding::worktree::cleanup_worktree(&repo, &worktree, true);
+    }
+
+    #[tokio::test]
+    async fn native_gui_route_without_run_broker_has_no_gate_or_worktree_authority() {
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let home = dir.path().join("neoth-home");
+        let (writer, _writer_join) = authenticated_apply_writer(&home);
+        let session_id = store::insert_session(&conn, 1, "p", "h", "gui", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: green_outcome(),
+                name: "native-gui-missing-broker",
+            }),
+        );
+        let cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::GuiRequested)
+            .with_autonomy(crate::permissions::AutonomyLevel::Full)
+            .with_gui_interactive_confirmation()
+            .with_wal_writer(writer);
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&cfg),
+        )
+        .await
+        .expect("missing GUI broker follows ordinary retry handling");
+        assert_eq!(outcome.tasks_completed, 0);
+        assert!(
+            !dir.path()
+                .join(format!(".neoth-task-{}", task_id.raw()))
+                .exists()
+        );
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(&home, "local")
+            .expect("missing broker must not create a final decision");
+        assert!(ledger.entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn native_gui_rejection_and_cancel_before_response_create_no_gate_history() {
+        for cancel_first in [false, true] {
+            let (dir, conn) = fresh_db();
+            let repo = dir.path().join("repo");
+            std::fs::create_dir_all(&repo).unwrap();
+            let home = dir.path().join("neoth-home");
+            let (writer, _writer_join) = authenticated_apply_writer(&home);
+            let session_id = store::insert_session(&conn, 1, "p", "h", "gui", None).unwrap();
+            let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+            let task = store::list_tasks_for_session(&conn, session_id)
+                .unwrap()
+                .pop()
+                .unwrap();
+            let worker = CannedWorker {
+                outcome: green_outcome(),
+                name: "native-gui-reject-cancel",
+            };
+            let accepted = WorkerContract::for_dispatch(&task, &worker, dir.path())
+                .validate_and_materialize(&task, &worker, green_outcome())
+                .unwrap();
+            let (broker, cancellation) =
+                crate::coding::service::GuiPatchApprovalBroker::for_dispatch_test();
+            let cfg = gui_test_apply_config(&repo, &writer, broker.clone());
+            let authorize = authorize_patch_apply_before_worktree(&task, &accepted, &cfg);
+            let answer = async {
+                let metadata = broker.wait_for_pending_metadata_for_test().await;
+                if cancel_first {
+                    cancellation.request();
+                }
+                broker.respond_for_test(metadata.approval_id, false).await
+            };
+            let (admission, response) = tokio::join!(authorize, answer);
+            assert!(admission.is_err());
+            assert_eq!(
+                response,
+                if cancel_first {
+                    crate::coding::PatchApprovalResponse::StaleOrUnknown
+                } else {
+                    crate::coding::PatchApprovalResponse::Rejected
+                }
+            );
+            assert!(
+                !dir.path()
+                    .join(format!(".neoth-task-{}", task_id.raw()))
+                    .exists(),
+                "reject/cancel must return before a worktree capability exists"
+            );
+            let ledger = crate::permissions::TrustLedger::replay_subject_at_home(&home, "local")
+                .expect("reject/cancel has no Gate history");
+            assert!(ledger.entries.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn native_gui_root_replacement_during_approval_refuses_before_gate() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+        let home = dir.path().join("neoth-home");
+        let (writer, _writer_join) = authenticated_apply_writer(&home);
+        let session_id = store::insert_session(&conn, 1, "p", "h", "gui", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        let worker = CannedWorker {
+            outcome: green_outcome_with_real_patch(),
+            name: "native-gui-root-replacement",
+        };
+        let accepted = WorkerContract::for_dispatch(&task, &worker, dir.path())
+            .validate_and_materialize(&task, &worker, green_outcome_with_real_patch())
+            .unwrap();
+        let (broker, _cancellation) =
+            crate::coding::service::GuiPatchApprovalBroker::for_dispatch_test();
+        let pause = patch_apply_pause(PatchApplyPausePoint::AfterGuiApprovalBeforeFreshDescriptor);
+        let cfg = gui_test_apply_config(&repo, &writer, broker.clone())
+            .with_test_pause(Arc::clone(&pause));
+        let authorize = authorize_patch_apply_before_worktree(&task, &accepted, &cfg);
+        let answer_and_replace = async {
+            let metadata = broker.wait_for_pending_metadata_for_test().await;
+            assert_eq!(
+                broker.respond_for_test(metadata.approval_id, true).await,
+                crate::coding::PatchApprovalResponse::Accepted
+            );
+            wait_for_patch_apply_pause(&pause).await;
+            let displaced = dir.path().join("repo-displaced");
+            std::fs::rename(&repo, &displaced).unwrap();
+            std::fs::create_dir_all(&repo).unwrap();
+            init_repo(&repo).unwrap();
+            pause.release.notify_one();
+        };
+        let (admission, ()) = tokio::join!(authorize, answer_and_replace);
+        assert!(
+            admission.is_err(),
+            "fresh descriptor must reject replaced root"
+        );
+        assert!(
+            !dir.path()
+                .join(format!(".neoth-task-{}", task_id.raw()))
+                .exists(),
+            "fresh descriptor failure occurs before worktree creation"
+        );
+        let ledger = crate::permissions::TrustLedger::replay_subject_at_home(&home, "local")
+            .expect("replaced root must not write an old-root decision");
+        assert!(ledger.entries.is_empty());
+    }
+
+    #[tokio::test]
     async fn allowed_hmac_decision_is_complete_before_first_worktree_effect() {
         if !git_available() {
             eprintln!("skipping: git not on PATH");
@@ -3803,6 +4158,7 @@ mod tests {
         assert_eq!(ApplyOrigin::CliConfirmed.as_str(), "cli_confirmed");
         assert_eq!(ApplyOrigin::DaemonScheduled.as_str(), "daemon_scheduled");
         assert_eq!(ApplyOrigin::ChannelRequested.as_str(), "channel_requested");
+        assert_eq!(ApplyOrigin::GuiRequested.as_str(), "gui_requested");
     }
 
     #[tokio::test]

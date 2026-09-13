@@ -7,6 +7,7 @@
 // for cards, no raw `Text` for screen titles. The 12/10 polish lives
 // in tokens + components, not in per-screen hex codes.
 
+import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 
 // ── NeothButton ──────────────────────────────────────────────────────
@@ -39,6 +40,10 @@ export component NeothButton inherits Rectangle {
     accessible-action-default => {
         if root.enabled && !root.loading { root.clicked(); }
     }
+    // Expose the real keyboard target to composite controls.  A caller that
+    // owns modal focus can now return focus here explicitly instead of letting
+    // Slint's window-wide Tab traversal reach controls behind its overlay.
+    forward-focus: key-focus;
 
     property <color> accent-color: root.danger ? Theme.accent-pink : Theme.accent-green;
 
@@ -1521,8 +1526,13 @@ export component TooltipArea inherits Rectangle {
 // Properties:
 //   title          — card heading (required).
 //   body           — secondary explainer text; hidden when empty.
+//   preview-text   — optional read-only exact text in a two-axis scroll view.
+//   cancel-label   — dismissal action label, default "Cancel".
 //   confirm-label  — Confirm button label, default "Confirm".
 //   danger         — true → Confirm uses consent-pink (destructive).
+//   confirm-enabled / actions-enabled — callers keep approval unavailable
+//                     until required review data exists and freeze both actions
+//                     while a one-use response is in flight.
 //
 // Callbacks: confirmed() / cancelled().
 // Escape key and scrim click both fire cancelled().
@@ -1530,13 +1540,18 @@ export component TooltipArea inherits Rectangle {
 export component ConfirmDialog inherits Rectangle {
     in property <string> title:         "";
     in property <string> body:          "";
+    in property <string> preview-text:  "";
+    in property <string> cancel-label:  "Cancel";
     in property <string> confirm-label: "Confirm";
     in property <bool>   danger:        false;
+    in property <bool>   confirm-enabled: true;
+    in property <bool>   actions-enabled: true;
+    // The dialog has exactly two possible decision controls.  Track the
+    // active one ourselves so every Tab and Backtab stays in this modal even
+    // when the primary action is still unavailable or both actions are frozen.
+    property <bool> focus-confirm-action: false;
     callback confirmed();
     callback cancelled();
-
-    // Resolved confirm accent — consent-pink for danger, memory-green otherwise.
-    property <color> _col: root.danger ? Theme.consent : Theme.accent-green;
 
     // (Slint 1.16 has no `dialog` accessible-role; label carries intent.)
     accessible-role: text;
@@ -1547,23 +1562,88 @@ export component ConfirmDialog inherits Rectangle {
     init => { self.opacity = 1; }
     animate opacity { duration: Theme.duration-fast; easing: ease-out; }
 
-    // Keyboard handler — Escape cancels.
+    // Property updates can disable the focused button synchronously (for
+    // example immediately after a one-use response).  Return focus to a live
+    // dialog target before Slint's normal traversal has any chance to select
+    // an element behind the scrim.
+    changed actions-enabled => {
+        if !root.actions-enabled {
+            root.focus-confirm-action = false;
+            dlg-focus.focus();
+        }
+    }
+    changed confirm-enabled => {
+        if root.actions-enabled && !root.confirm-enabled {
+            root.focus-confirm-action = false;
+            cancel-action.focus();
+        }
+    }
+
+    // Keyboard handler — Escape cancels and Tab never leaves this modal.
     dlg-focus := FocusScope {
+        width: root.width;
+        height: root.height;
         key-pressed(event) => {
             if event.text == "\u{1b}" {
-                root.cancelled();
+                if root.actions-enabled { root.cancelled(); }
+                return accept;
+            }
+            // Slint represents Tab as U+0009 and Backtab as U+0019.  Consume
+            // both before the window's global focus traversal can reach a
+            // background control.  With two actions either direction swaps
+            // the target; with one or none it stays on the only safe scope.
+            if event.text == "\u{0009}" || event.text == "\u{0019}" {
+                if !root.actions-enabled {
+                    root.focus-confirm-action = false;
+                    dlg-focus.focus();
+                } else if !root.confirm-enabled {
+                    root.focus-confirm-action = false;
+                    cancel-action.focus();
+                } else {
+                    // Platforms emit reverse traversal either as Backtab or
+                    // as Tab with Shift held.  The two-action ring has the
+                    // same opposite target in either direction, but both
+                    // encodings must be consumed here rather than delegated
+                    // to the window-wide traversal.
+                    if event.text == "\u{0019}" || event.modifiers.shift {
+                        root.focus-confirm-action = !root.focus-confirm-action;
+                    } else {
+                        root.focus-confirm-action = !root.focus-confirm-action;
+                    }
+                    if root.focus-confirm-action {
+                        confirm-action.focus();
+                    } else {
+                        cancel-action.focus();
+                    }
+                }
+                return accept;
+            }
+            // A frozen dialog intentionally has no keyboard action, but must
+            // still absorb activation keys so they cannot trigger background
+            // controls after a submission has started.
+            if !root.actions-enabled && (event.text == "\n" || event.text == " ") {
                 return accept;
             }
             return reject;
         }
-    }
 
-    // Scrim click cancels (card's inner TouchArea swallows its own events).
-    TouchArea { clicked => { root.cancelled(); } }
+        // Scrim click cancels (card's inner TouchArea swallows its own events).
+        TouchArea {
+            clicked => { if root.actions-enabled { root.cancelled(); } }
+        }
 
-    dlg-card := Rectangle {
-        width: min(480px, root.width - 80px);
-        height: dlg-layout.preferred-height;
+        dlg-card := Rectangle {
+        width: root.preview-text == ""
+            ? min(480px, root.width - 80px)
+            : min(880px, root.width - Theme.space-screen * 2);
+        // ScrollView has no useful natural height while it is vertically
+        // stretched, so its parent must reserve the preview viewport itself.
+        // This preserves the compact ordinary-dialog sizing while keeping a
+        // complete, visibly useful patch viewport on a normal desktop window.
+        property <length> preview-card-height: 560px;
+        height: root.preview-text == ""
+            ? min(dlg-layout.preferred-height, root.height - Theme.space-screen * 2)
+            : min(self.preview-card-height, root.height - Theme.space-screen * 2);
         x: (root.width  - self.width)  / 2;
         // 8px upward rise on entrance (sovereign curve), synchronized with
         // the opacity fade — the Linear/Notion/Claude-Desktop dialog feel.
@@ -1580,7 +1660,14 @@ export component ConfirmDialog inherits Rectangle {
         init => {
             self.opacity = 1;
             self.rise = 0px;
-            dlg-focus.focus();
+            // Start inside the decision set.  If actions are frozen, keep
+            // focus on the modal scope so Return/Tab remain contained.
+            root.focus-confirm-action = false;
+            if root.actions-enabled {
+                cancel-action.focus();
+            } else {
+                dlg-focus.focus();
+            }
         }
         animate opacity {
             duration: Theme.duration-fast;
@@ -1595,92 +1682,124 @@ export component ConfirmDialog inherits Rectangle {
         TouchArea { }
 
         dlg-layout := VerticalLayout {
-            padding: Theme.space-loose;
+            // Keep the generous dialog rhythm at regular widths.  A patch
+            // dialog may legitimately shrink to a phone-sized window; only
+            // then use the existing tight horizontal token so both explicit
+            // response controls remain inside the card.
+            padding-top: Theme.space-loose;
+            padding-bottom: Theme.space-loose;
+            padding-left: dlg-card.width < 360px ? Theme.space-tight : Theme.space-loose;
+            padding-right: dlg-card.width < 360px ? Theme.space-tight : Theme.space-loose;
             spacing: Theme.space-base;
 
-            Text {
-                text: root.title;
-                font-family: Theme.font-display;
-                font-size: Theme.font-size-h2;
-                font-weight: Theme.weight-semibold;
-                color: Theme.text-primary;
-                wrap: word-wrap;
+            // Keep the action row outside this scroll surface so a long
+            // canonical repository, metadata list, or full diff never pushes
+            // the explicit decision controls beyond the window.
+            body-scroll := ScrollView {
+                // A vertically stretched ScrollView reports no useful
+                // preferred height.  Derive one real content area from the
+                // card geometry instead: ordinary confirmation dialogs use
+                // their natural body up to that area, while a preview fills
+                // it.  Do not bind preview ScrollView height to zero here:
+                // stretch does not override an explicit zero height.
+                height: root.preview-text == ""
+                    ? min(body-content.preferred-height,
+                        max(0px, root.height - Theme.space-screen * 2
+                            - Theme.space-loose * 2 - Theme.space-base
+                            - 32px))
+                    : max(0px, min(dlg-card.preview-card-height,
+                        root.height - Theme.space-screen * 2) - Theme.space-loose * 2
+                        - Theme.space-base - 32px);
+                vertical-stretch: 0;
+                body-content := VerticalLayout {
+                    width: parent.visible-width;
+                    spacing: Theme.space-base;
+                    Text {
+                        text: root.title;
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-h2;
+                        font-weight: Theme.weight-semibold;
+                        color: Theme.text-primary;
+                        wrap: word-wrap;
+                    }
+
+                    if root.body != "": Text {
+                        text: root.body;
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-body;
+                        color: Theme.text-secondary;
+                        wrap: word-wrap;
+                    }
+
+                    if root.preview-text != "": VerticalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Accepted patch (read only)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            color: Theme.audit;
+                        }
+                        Rectangle {
+                            height: 280px;
+                            background: Theme.bg-sunken;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px;
+                            border-color: Theme.border-default;
+                            clip: true;
+                            ScrollView {
+                                width: parent.width;
+                                height: parent.height;
+                                VerticalLayout {
+                                    padding: Theme.space-tight;
+                                    Text {
+                                        text: root.preview-text;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-primary;
+                                        wrap: no-wrap;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
-            if root.body != "": Text {
-                text: root.body;
-                font-family: Theme.font-sans;
-                font-size: Theme.font-size-body;
-                color: Theme.text-secondary;
-                wrap: word-wrap;
-            }
-
-            HorizontalLayout {
+            action-row := HorizontalLayout {
                 alignment: end;
                 spacing: Theme.space-tight;
 
-                // ── Cancel ──────────────────────────────────────────
-                cancel-rect := Rectangle {
-                    height: 40px;
-                    width: max(96px, cancel-lbl.preferred-width + Theme.space-base * 2);
-                    background: cancel-ta.has-hover ? Theme.surface-3 : transparent;
-                    border-radius: Theme.radius-button;
-                    border-width: 1px;
-                    border-color: cancel-ta.has-hover ? Theme.border-strong : Theme.border-default;
-                    animate background   { duration: Theme.duration-micro; easing: ease-out; }
-                    animate border-color { duration: Theme.duration-micro; easing: ease-out; }
-                    accessible-role: button;
-                    accessible-label: "Cancel";
-                    accessible-action-default => { root.cancelled(); }
-
-                    cancel-lbl := Text {
-                        width: parent.width; height: parent.height;
-                        text: "Cancel";
-                        font-family: Theme.font-display;
-                        font-size: Theme.font-size-body;
-                        color: Theme.text-secondary;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                    cancel-ta := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.cancelled(); }
+                // Use the shared keyboard/focus implementation. This keeps
+                // Escape available from the containing focus scope after Tab,
+                // and disables pointer, keyboard and accessibility activation
+                // together while a one-use response is being submitted.
+                cancel-action := NeothButton {
+                    label: root.cancel-label;
+                    primary: false;
+                    size: "sm";
+                    enabled: root.actions-enabled;
+                    clicked => {
+                        root.focus-confirm-action = false;
+                        root.cancelled();
                     }
                 }
 
-                // ── Confirm ─────────────────────────────────────────
-                confirm-rect := Rectangle {
-                    height: 40px;
-                    width: max(96px, confirm-lbl.preferred-width + Theme.space-base * 2);
-                    background: confirm-ta.has-hover
-                        ? root._col.with-alpha(0.28)
-                        : root._col.with-alpha(0.16);
-                    border-radius: Theme.radius-button;
-                    border-width: 1px;
-                    border-color: root._col;
-                    animate background { duration: Theme.duration-micro; easing: ease-out; }
-                    accessible-role: button;
-                    accessible-label: root.confirm-label;
-                    accessible-action-default => { root.confirmed(); }
-
-                    confirm-lbl := Text {
-                        width: parent.width; height: parent.height;
-                        text: root.confirm-label;
-                        overflow: elide;
-                        font-family: Theme.font-display;
-                        font-size: Theme.font-size-body;
-                        font-weight: Theme.weight-medium;
-                        color: root._col;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                    confirm-ta := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.confirmed(); }
+                confirm-action := NeothButton {
+                    label: root.confirm-label;
+                    primary: true;
+                    danger: root.danger;
+                    size: "sm";
+                    loading: root.actions-enabled && !root.confirm-enabled;
+                    enabled: root.actions-enabled && root.confirm-enabled;
+                    clicked => {
+                        root.focus-confirm-action = true;
+                        root.confirmed();
                     }
                 }
             }
         }
+    }
     }
 }
 

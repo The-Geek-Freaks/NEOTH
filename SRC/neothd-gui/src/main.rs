@@ -13801,6 +13801,16 @@ fn main() -> Result<()> {
             std::sync::Arc::clone(&native_coding_cancel_controller),
         );
     });
+    let weak_native_coding_approval = window.as_weak();
+    let native_coding_approval_controller = std::sync::Arc::clone(&native_coding_controller);
+    window.on_native_coding_patch_approval_responded(move |approval_id, approved| {
+        request_native_coding_patch_approval_response(
+            weak_native_coding_approval.clone(),
+            std::sync::Arc::clone(&native_coding_approval_controller),
+            approval_id.to_string(),
+            approved,
+        );
+    });
     let weak_buddy_native_coding_start = window.as_weak();
     let buddy_native_coding_start_controller = std::sync::Arc::clone(&native_coding_controller);
     window.on_buddy_native_coding_start(move || {
@@ -20179,13 +20189,8 @@ fn start_native_coding_run(
         return;
     };
     if controller.has_active_run() {
-        window.set_native_coding_error(true);
-        window.set_native_coding_state("Coding run already active".into());
-        window.set_native_coding_detail(
-            "Wait for its terminal receipt or request cancellation before starting another run."
-                .into(),
-        );
-        buddy(&window, GuiActivity::NativeCodingFailed);
+        // A duplicate Settings/Buddy start must not repaint the existing live
+        // run as failed. Its retained state and terminal receipt stay visible.
         return;
     }
     let prompt = prompt.trim().to_owned();
@@ -20224,6 +20229,7 @@ fn start_native_coding_run(
     window.set_native_coding_running(true);
     window.set_native_coding_cancel_pending(false);
     window.set_native_coding_error(false);
+    clear_native_coding_patch_approval(&window, None);
     window.set_native_coding_terminal_receipt("".into());
     window.set_native_coding_run_id("".into());
     window.set_native_coding_state("Starting native coding run…".into());
@@ -20292,6 +20298,7 @@ fn start_native_coding_run(
                     let Some(window) = weak.upgrade() else {
                         return;
                     };
+                    clear_native_coding_patch_approval(&window, None);
                     window.set_native_coding_running(false);
                     window.set_native_coding_cancel_pending(false);
                     match terminal {
@@ -20316,6 +20323,7 @@ fn start_native_coding_run(
                     let Some(window) = weak.upgrade() else {
                         return;
                     };
+                    clear_native_coding_patch_approval(&window, None);
                     window.set_native_coding_running(false);
                     window.set_native_coding_cancel_pending(false);
                     set_native_coding_error(
@@ -20337,11 +20345,14 @@ fn request_native_coding_cancel(
         return;
     };
     let ui_revision = NATIVE_CODING_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
-    if !controller.has_active_run() {
+    let Some(cancel_target) = controller.prepare_cancel(ui_revision) else {
         // A terminal worker may have settled after the click but before this
         // callback. Leave its authoritative receipt untouched.
         return;
-    }
+    };
+    // Core cancellation removes the live broker slot. Clear the local raw
+    // preview immediately so a closing/cancelling run cannot retain a patch.
+    clear_native_coding_patch_approval(&window, None);
     window.set_native_coding_cancel_pending(true);
     window.set_native_coding_error(false);
     window.set_native_coding_state("Cancelling native coding run…".into());
@@ -20351,8 +20362,9 @@ fn request_native_coding_cancel(
     );
     buddy(&window, GuiActivity::NativeCodingCancelling);
     std::thread::spawn(move || {
-        let result = coding_bridge_runtime()
-            .and_then(|runtime| runtime.block_on(controller.request_cancel(ui_revision)));
+        let result = coding_bridge_runtime().and_then(|runtime| {
+            runtime.block_on(controller.dispatch_prepared_cancel(cancel_target))
+        });
         let _ = slint::invoke_from_event_loop(move || {
             if !native_coding_ui_revision_matches(ui_revision) {
                 return;
@@ -20361,23 +20373,31 @@ fn request_native_coding_cancel(
                 return;
             };
             match result {
-                Ok(Some(coding_controller::CodingCancelState::DeferredStart { revision }))
-                    if revision == ui_revision && controller.is_active_revision(revision) =>
+                Ok(())
+                    if matches!(
+                        cancel_target,
+                        coding_controller::CodingCancelState::DeferredStart { revision }
+                            if revision == ui_revision && controller.is_active_revision(revision)
+                    ) =>
                 {
                     window.set_native_coding_detail(
                         "Cancellation is queued until the Coding service returns the new run id."
                             .into(),
                     );
                 }
-                Ok(Some(coding_controller::CodingCancelState::Requested { revision, run_id }))
-                    if revision == ui_revision && controller.is_current(revision, run_id) =>
+                Ok(())
+                    if matches!(
+                        cancel_target,
+                        coding_controller::CodingCancelState::Requested { revision, run_id }
+                            if revision == ui_revision && controller.is_current(revision, run_id)
+                    ) =>
                 {
                     window.set_native_coding_detail(
                         "Cancellation was sent to the Coding service; waiting for its joined terminal receipt."
                             .into(),
                     );
                 }
-                Ok(_) => {}
+                Ok(()) => {}
                 Err(error) if controller.is_active_revision(ui_revision) => {
                     window.set_native_coding_cancel_pending(false);
                     window.set_native_coding_error(true);
@@ -20396,6 +20416,230 @@ fn request_native_coding_cancel(
     });
 }
 
+fn clear_native_coding_patch_approval(window: &MainWindow, approval_id: Option<&str>) -> bool {
+    if approval_id
+        .is_some_and(|expected| window.get_native_coding_approval_id().as_str() != expected)
+    {
+        return false;
+    }
+    window.set_native_coding_approval_open(false);
+    window.set_native_coding_approval_preview_ready(false);
+    window.set_native_coding_approval_submitting(false);
+    window.set_native_coding_approval_id("".into());
+    window.set_native_coding_approval_task("".into());
+    window.set_native_coding_approval_repository("".into());
+    window.set_native_coding_approval_patch_sha256("".into());
+    window.set_native_coding_approval_binding("".into());
+    window.set_native_coding_approval_files("".into());
+    window.set_native_coding_approval_expires("".into());
+    window.set_native_coding_approval_preview("".into());
+    true
+}
+
+fn native_coding_approval_expiry_text(expires_unix: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs() as i64);
+    if expires_unix <= now {
+        "expired".into()
+    } else {
+        format!("in {} seconds", expires_unix - now)
+    }
+}
+
+fn show_native_coding_patch_approval_loading(
+    window: &MainWindow,
+    metadata: &neothd::coding::CodingPatchApprovalMetadata,
+) {
+    let approval_id = metadata.approval_id.to_string();
+    if window.get_native_coding_approval_open()
+        && window.get_native_coding_approval_id().as_str() == approval_id
+    {
+        return;
+    }
+    window.set_native_coding_approval_id(approval_id.into());
+    window.set_native_coding_approval_task(metadata.task_id.raw().to_string().into());
+    window.set_native_coding_approval_repository(metadata.repository_display.clone().into());
+    window.set_native_coding_approval_patch_sha256(metadata.patch_sha256.clone().into());
+    window.set_native_coding_approval_binding(metadata.request_binding_sha256.clone().into());
+    window.set_native_coding_approval_files(metadata.changed_files.join("\n").into());
+    window.set_native_coding_approval_expires(
+        native_coding_approval_expiry_text(metadata.expires_unix).into(),
+    );
+    window.set_native_coding_approval_preview("".into());
+    window.set_native_coding_approval_preview_ready(false);
+    window.set_native_coding_approval_submitting(false);
+    window.set_native_coding_approval_open(true);
+}
+
+fn request_native_coding_patch_preview(
+    weak: slint::Weak<MainWindow>,
+    controller: std::sync::Arc<coding_controller::CodingController>,
+    revision: u64,
+    run_id: neothd::coding::CodingRunId,
+    metadata: neothd::coding::CodingPatchApprovalMetadata,
+) {
+    if !controller.observe_patch_approval(revision, run_id, metadata.clone()) {
+        return;
+    }
+    let approval_id = metadata.approval_id.to_string();
+    let loading_approval_id = approval_id.clone();
+    let _ = slint::invoke_from_event_loop({
+        let weak = weak.clone();
+        let controller = std::sync::Arc::clone(&controller);
+        let metadata = metadata.clone();
+        move || {
+            if controller.is_patch_approval_current(revision, run_id, &loading_approval_id)
+                && let Some(window) = weak.upgrade()
+            {
+                show_native_coding_patch_approval_loading(&window, &metadata);
+            }
+        }
+    });
+    std::thread::spawn(move || {
+        let result = coding_bridge_runtime().and_then(|runtime| {
+            runtime.block_on(controller.patch_approval_preview(revision, run_id, &approval_id))
+        });
+        let _ = slint::invoke_from_event_loop(move || {
+            if !controller.is_patch_approval_current(revision, run_id, &approval_id) {
+                return;
+            }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            if window.get_native_coding_approval_id().as_str() != approval_id {
+                return;
+            }
+            match result {
+                Ok(Some(neothd::coding::PatchApprovalPreviewResult::Available(preview)))
+                    if preview.metadata.approval_id.to_string() == approval_id =>
+                {
+                    window.set_native_coding_approval_task(
+                        preview.metadata.task_id.raw().to_string().into(),
+                    );
+                    window.set_native_coding_approval_repository(
+                        preview.metadata.repository_display.into(),
+                    );
+                    window.set_native_coding_approval_patch_sha256(
+                        preview.metadata.patch_sha256.into(),
+                    );
+                    window.set_native_coding_approval_binding(
+                        preview.metadata.request_binding_sha256.into(),
+                    );
+                    window.set_native_coding_approval_files(
+                        preview.metadata.changed_files.join("\n").into(),
+                    );
+                    window.set_native_coding_approval_expires(
+                        native_coding_approval_expiry_text(preview.metadata.expires_unix).into(),
+                    );
+                    window.set_native_coding_approval_preview(preview.patch_text.into());
+                    window.set_native_coding_approval_preview_ready(true);
+                }
+                Ok(Some(
+                    neothd::coding::PatchApprovalPreviewResult::StaleOrUnknown
+                    | neothd::coding::PatchApprovalPreviewResult::Expired,
+                ))
+                | Ok(None) => {
+                    if controller.clear_patch_approval(revision, run_id, &approval_id) {
+                        clear_native_coding_patch_approval(&window, Some(&approval_id));
+                        window.set_native_coding_state(
+                            "Patch approval is no longer available".into(),
+                        );
+                        window.set_native_coding_detail(
+                            "No patch was applied; the Coding service no longer has this exact pending patch."
+                                .into(),
+                        );
+                    }
+                }
+                Ok(Some(neothd::coding::PatchApprovalPreviewResult::Available(_))) => {}
+                Err(_error) => {
+                    tracing::warn!("native coding patch approval preview could not be loaded");
+                    window.set_native_coding_detail(
+                        "The full accepted patch could not be loaded. Approval remains unavailable; cancel the run to stop it."
+                            .into(),
+                    );
+                }
+            }
+        });
+    });
+}
+
+fn request_native_coding_patch_approval_response(
+    weak: slint::Weak<MainWindow>,
+    controller: std::sync::Arc<coding_controller::CodingController>,
+    approval_id: String,
+    approved: bool,
+) {
+    let revision = NATIVE_CODING_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
+    let Some(run_id) = controller.current_run_id(revision) else {
+        return;
+    };
+    if !controller.is_patch_approval_current(revision, run_id, &approval_id) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let result = coding_bridge_runtime().and_then(|runtime| {
+            runtime.block_on(controller.respond_patch_approval(
+                revision,
+                run_id,
+                &approval_id,
+                approved,
+            ))
+        });
+        let _ = slint::invoke_from_event_loop(move || {
+            if !controller.is_current(revision, run_id) {
+                return;
+            }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            if window.get_native_coding_approval_id().as_str() != approval_id {
+                return;
+            }
+            match result {
+                Ok(Some(neothd::coding::PatchApprovalResponse::Accepted)) => {
+                    if controller.clear_patch_approval(revision, run_id, &approval_id) {
+                        clear_native_coding_patch_approval(&window, Some(&approval_id));
+                        window.set_native_coding_state("Patch approval recorded".into());
+                        window.set_native_coding_detail(
+                            "The Coding service will perform its final repository checks before applying this reviewed patch."
+                                .into(),
+                        );
+                    }
+                }
+                Ok(Some(
+                    neothd::coding::PatchApprovalResponse::Rejected
+                    | neothd::coding::PatchApprovalResponse::StaleOrUnknown
+                    | neothd::coding::PatchApprovalResponse::Expired,
+                ))
+                | Ok(None) => {
+                    controller.clear_patch_approval(revision, run_id, &approval_id);
+                    clear_native_coding_patch_approval(&window, Some(&approval_id));
+                    window.set_native_coding_state("Patch was not applied".into());
+                    window.set_native_coding_detail(
+                        "This patch approval was rejected, expired, or had already been consumed."
+                            .into(),
+                    );
+                }
+                Err(_error) => {
+                    // The command may have reached Core even though its reply
+                    // did not. Do not reopen this one-use response; cancel the
+                    // run so Core removes any still-pending broker slot and
+                    // returns its authoritative terminal receipt.
+                    tracing::warn!(
+                        "native coding patch approval response delivery was indeterminate"
+                    );
+                    window.set_native_coding_detail(
+                        "The patch response could not be confirmed. Requesting cancellation instead of replaying it."
+                            .into(),
+                    );
+                    request_native_coding_cancel(weak.clone(), std::sync::Arc::clone(&controller));
+                }
+            }
+        });
+    });
+}
+
 fn spawn_native_coding_event_bridge(
     weak: slint::Weak<MainWindow>,
     controller: std::sync::Arc<coding_controller::CodingController>,
@@ -20408,9 +20652,30 @@ fn spawn_native_coding_event_bridge(
             return;
         };
         runtime.block_on(async move {
+            if let Some(metadata) = controller.recover_patch_approval(revision, run_id).await {
+                request_native_coding_patch_preview(
+                    weak.clone(),
+                    std::sync::Arc::clone(&controller),
+                    revision,
+                    run_id,
+                    metadata,
+                );
+            }
             loop {
                 match events.recv().await {
                     Ok(event) => {
+                        if let neothd::coding::CodingRunEvent::PatchApplyApprovalRequested(
+                            metadata,
+                        ) = &event
+                        {
+                            request_native_coding_patch_preview(
+                                weak.clone(),
+                                std::sync::Arc::clone(&controller),
+                                revision,
+                                run_id,
+                                metadata.clone(),
+                            );
+                        }
                         let terminal = matches!(&event, neothd::coding::CodingRunEvent::Terminal(_));
                         let (state, detail) = native_coding_event_text(&event);
                         let _ = slint::invoke_from_event_loop({
@@ -20447,6 +20712,15 @@ fn spawn_native_coding_event_bridge(
                                 }
                             }
                         });
+                        if let Some(metadata) = controller.recover_patch_approval(revision, run_id).await {
+                            request_native_coding_patch_preview(
+                                weak.clone(),
+                                std::sync::Arc::clone(&controller),
+                                revision,
+                                run_id,
+                                metadata,
+                            );
+                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
                 }
@@ -20500,6 +20774,11 @@ fn native_coding_event_text(event: &neothd::coding::CodingRunEvent) -> (&'static
         neothd::coding::CodingRunEvent::TasksInserted { count } => (
             "Tasks inserted",
             format!("Inserted {count} task(s) into the coding session."),
+        ),
+        neothd::coding::CodingRunEvent::PatchApplyApprovalRequested(_) => (
+            "Patch review required",
+            "Review the complete accepted patch before deciding whether this one patch may be applied."
+                .into(),
         ),
         neothd::coding::CodingRunEvent::CancelRequested => (
             "Cancellation requested",
@@ -20633,6 +20912,7 @@ fn apply_native_coding_terminal(window: &MainWindow, result: &neothd::coding::Co
 }
 
 fn set_native_coding_error(window: &MainWindow, message: &str) {
+    clear_native_coding_patch_approval(window, None);
     window.set_native_coding_running(false);
     window.set_native_coding_cancel_pending(false);
     window.set_native_coding_error(true);

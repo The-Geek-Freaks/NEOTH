@@ -1393,8 +1393,23 @@ export component MainWindow inherits Window {
     in property <string> native-coding-detail: "The Coding service will prepare local code-map evidence before any provider work.";
     in property <string> native-coding-run-id: "";
     in property <string> native-coding-terminal-receipt: "";
+    // A native Coding run asks for this exact patch only after it has been
+    // accepted by the worker. The raw preview is held only in this overlay,
+    // never in the generic run event stream or Settings models.
+    in-out property <bool> native-coding-approval-open: false;
+    in property <bool> native-coding-approval-preview-ready: false;
+    in-out property <bool> native-coding-approval-submitting: false;
+    in property <string> native-coding-approval-id: "";
+    in property <string> native-coding-approval-task: "";
+    in property <string> native-coding-approval-repository: "";
+    in property <string> native-coding-approval-patch-sha256: "";
+    in property <string> native-coding-approval-binding: "";
+    in property <string> native-coding-approval-files: "";
+    in property <string> native-coding-approval-expires: "";
+    in property <string> native-coding-approval-preview: "";
     callback native-coding-start-clicked(string, string, string, bool, bool, bool);
     callback native-coding-cancel-clicked;
+    callback native-coding-patch-approval-responded(string, bool);
     callback buddy-native-coding-start;
     callback buddy-native-coding-cancel;
     callback channels-refresh-clicked;
@@ -4950,6 +4965,49 @@ export component MainWindow inherits Window {
             root.gt-revoke-clicked(root.gt-revoke-id);
         }
         cancelled => { root.gt-revoke-confirm-open = false; }
+    }
+
+    // This is intentionally one native approval surface for Settings and
+    // Buddy. It renders the complete accepted diff before Approve becomes
+    // available; closing it is an explicit rejection for this exact patch.
+    if root.native-coding-approval-open: ConfirmDialog {
+        width: root.width;
+        height: root.height;
+        title: "Approve this accepted patch?";
+        body: "Task " + root.native-coding-approval-task
+            + " will change " + root.native-coding-approval-repository
+            + ". Review the complete patch below. This approval applies to this one patch only.\n\n"
+            + "Patch fingerprint: " + root.native-coding-approval-patch-sha256
+            + "\nChanged files: " + root.native-coding-approval-files
+            + "\nReview reference: " + root.native-coding-approval-binding
+            + "\nExpires: " + root.native-coding-approval-expires;
+        preview-text: root.native-coding-approval-preview;
+        cancel-label: root.native-coding-approval-submitting
+            ? "Sending response…" : "Reject patch";
+        confirm-label: root.native-coding-approval-submitting
+            ? "Sending response…" : "Approve patch";
+        danger: true;
+        confirm-enabled: root.native-coding-approval-preview-ready;
+        actions-enabled: !root.native-coding-approval-submitting;
+        confirmed => {
+            if (root.native-coding-approval-preview-ready
+                    && !root.native-coding-approval-submitting) {
+                root.native-coding-approval-submitting = true;
+                root.native-coding-patch-approval-responded(
+                    root.native-coding-approval-id,
+                    true,
+                );
+            }
+        }
+        cancelled => {
+            if (!root.native-coding-approval-submitting) {
+                root.native-coding-approval-submitting = true;
+                root.native-coding-patch-approval-responded(
+                    root.native-coding-approval-id,
+                    false,
+                );
+            }
+        }
     }
 
     // First-send outbound-LLM consent. "Once" is an exact one-shot

@@ -1,0 +1,216 @@
+{
+  "schema": "neoth-gold-selected-verification/v1",
+  "batch": "wave7-native-patch-approval",
+  "baseCommit": "d8ecb8d5d4865d9c4c8e73fdfe983f6fd3851cb1",
+  "publicationTarget": "refs/heads/main",
+  "status": "bounded local verification passed; not full workspace or release qualification",
+  "binary": {
+    "path": "SRC/target/debug/deps/neothd-a576cce183334209.exe",
+    "sha256": "01D05C231C5663556369BB42EBD5083697EAA8BD99AA7A4AC040AE4C1ACF29B1",
+    "bytes": 273615360,
+    "lastWriteTimeUtc": "2026-09-13T07:21:45.2882016Z",
+    "testSummary": "14188 tests, 0 benchmarks",
+    "listExit": 0,
+    "recordedUtc": "2026-09-13T07:22:41.2125192Z"
+  },
+  "sourceManifest": "gold-wave7-source-manifest.json",
+  "stats": {
+    "groups": 4,
+    "passedGroups": 4,
+    "passedExecutions": 821,
+    "failedExecutions": 0,
+    "ignoredHarnessEntries": 0
+  },
+  "gates": {
+    "environment": {
+      "platform": "Windows x64 MSVC",
+      "rustc": "1.95.0",
+      "cargoJobs": 1,
+      "testThreads": 1,
+      "profileDebug": 0,
+      "offline": true
+    },
+    "libraryTestBuild": {
+      "command": "SRC/_test.bat --no-run --locked --offline -j1",
+      "exit_code": 0,
+      "duration": "1m 28s"
+    },
+    "coreCheck": {
+      "command": "SRC/_check.bat",
+      "exit_code": 0,
+      "duration": "1m 33s"
+    },
+    "strictClippy": {
+      "command": "SRC/_clippy.bat",
+      "cargoArgs": "clippy -p neoth --lib --tests --no-deps -- -D warnings",
+      "exit_code": 0,
+      "duration": "2m 21s"
+    },
+    "guiCheck": {
+      "command": "SRC/_gui_check.bat check -p neothd-gui --tests --locked --offline -j1",
+      "exit_code": 0,
+      "duration": "6m 06s",
+      "scope": "Type-checks production GUI and test modules; does not link full desktop test executable"
+    },
+    "guiController": {
+      "command": "SRC/_gui_check.bat test -p neoth --test gui_coding_controller --locked --offline -j1 -- --test-threads=1",
+      "exit_code": 0,
+      "duration": "4m 07s",
+      "scope": "Imports actual production controller module"
+    },
+    "workspaceFormatting": {
+      "command": "SRC/_gui_check.bat fmt --all -- --check",
+      "exit_code": 0
+    },
+    "workspaceMetadata": {
+      "command": "SRC/_gui_check.bat metadata --locked --no-deps --format-version 1",
+      "packages": 5,
+      "workspaceMembers": 5,
+      "exit_code": 0
+    },
+    "staticContracts": {
+      "commands": [
+        "python packaging/tests/test_roadmap_release_gate.py",
+        "python scripts/test_lost_feature_integrity.py"
+      ],
+      "exit_code": 0,
+      "passedTests": [
+        11,
+        19
+      ],
+      "scope": "After final ROAD/PROGRESS updates"
+    }
+  },
+  "results": [
+    {
+      "label": "coding",
+      "filter": "coding::",
+      "exit_code": 0,
+      "summary": "test result: ok. 582 passed; 0 failed; 0 ignored; 0 measured; 13606 filtered out; finished in 21.15s",
+      "passed": 582,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "label": "permissions",
+      "filter": "permissions::",
+      "exit_code": 0,
+      "summary": "test result: ok. 200 passed; 0 failed; 0 ignored; 0 measured; 13988 filtered out; finished in 0.94s",
+      "passed": 200,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "label": "cli-code",
+      "filter": "cli::code::",
+      "exit_code": 0,
+      "summary": "test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 14159 filtered out; finished in 32.09s",
+      "passed": 29,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "label": "gui-controller",
+      "filter": "integration:gui_coding_controller",
+      "exit_code": 0,
+      "summary": "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "guiProbe": {
+    "command": "SRC/_gui_check.bat run --manifest-path ../tools/gui-dialog-probe/Cargo.toml --locked --offline -j1 -- ../work/gold-20260906/dialog-probe-attempt7",
+    "exit_code": 0,
+    "slint": "1.16.1",
+    "renderer": "public MinimalSoftwareWindow / software renderer",
+    "checks": [
+      "exact full preview bytes",
+      "normal and small viewport",
+      "ordinary dialog complete body",
+      "Tab and Shift+Tab reachability",
+      "Escape and scrim rejection",
+      "disabled Confirm and disabled all actions",
+      "pointer target and one-use response",
+      "scroll to final synthetic line120",
+      "keyboard and pointer background isolation"
+    ],
+    "visualInspection": "All seven PNGs inspected; exact final line120 visible in scrolled-end image; narrow controls insidecard.",
+    "binaries": [
+      {
+        "path": "SRC/target/debug/neoth-gui-dialog-probe.exe",
+        "sha256": "D5CFC06B3039F6212E14817AE3024EF1633181B8553401C04D59DF3F0EF5F151",
+        "bytes": 19006976,
+        "lastWriteTimeUtc": "2026-09-13T07:19:02.7712703Z"
+      },
+      {
+        "path": "SRC/target/debug/deps/gui_coding_controller-f7128ccc9fe56813.exe",
+        "sha256": "67CED24703E2B460DEE68732503E59EC0FC38EEE7578372CB550F3C058CD6886",
+        "bytes": 52300288,
+        "lastWriteTimeUtc": "2026-09-13T07:33:00.0776710Z"
+      }
+    ],
+    "screenshots": [
+      {
+        "path": "work/gold-20260906/dialog-probe-attempt7/dialog-disabled-confirm.png",
+        "bytes": 236869,
+        "sha256": "F6B0C59BB2750EED313DE03616BA618050DDB7730D44FD81748C22E3AED7731C"
+      },
+      {
+        "path": "work/gold-20260906/dialog-probe-attempt7/dialog-keyboard-focus.png",
+        "bytes": 238737,
+        "sha256": "1CC24811D25F702DB49C0E6C05A2F4B35762A3662135FF3D13C5635A0B6E8F8B"
+      },
+      {
+        "path": "work/gold-20260906/dialog-probe-attempt7/dialog-normal.png",
+        "bytes": 238724,
+        "sha256": "398F98EC7D84450BCBE8F847336D1DBE80F171C470ABFC10071B5934456A932D"
+      },
+      {
+        "path": "work/gold-20260906/dialog-probe-attempt7/dialog-ordinary.png",
+        "bytes": 30222,
+        "sha256": "A57E18FB2CE69B544F2D0DCBD643C8057EBEE2E083A41AF91CB8D579092D9893"
+      },
+      {
+        "path": "work/gold-20260906/dialog-probe-attempt7/dialog-scrolled-end.png",
+        "bytes": 261418,
+        "sha256": "73412C57DB8ED0F7F978AFC91FC0781430A8A11147CDCB0302952104B873EF31"
+      },
+      {
+        "path": "work/gold-20260906/dialog-probe-attempt7/dialog-small-scrolled.png",
+        "bytes": 27372,
+        "sha256": "CFA8028083C4A32BB254A122F058D4E9282494C6624E8B2DA614F9D91655F65E"
+      },
+      {
+        "path": "work/gold-20260906/dialog-probe-attempt7/dialog-small.png",
+        "bytes": 14741,
+        "sha256": "F5535FB0851D263DE111E40DDA75500024EB208EA52BB6BF1DD51F66620CBA97"
+      }
+    ],
+    "limits": [
+      "No Winit/GPU or full MainWindow acceptance",
+      "No OS accessibility tree or screen reader claim",
+      "No live provider or installer acceptance"
+    ]
+  },
+  "review": {
+    "status": "CLEAR",
+    "scope": "Final source, post-failure repairs and final proof consistency independently reviewed; all clear before commit"
+  },
+  "roadmap": {
+    "completed": [
+      "GOLD-LF-P1-05"
+    ],
+    "total": 1324,
+    "complete": 1007,
+    "open": 315,
+    "partial": 2,
+    "rawBlockers": 317,
+    "releaseTagBlockers": 316
+  },
+  "evidenceLimits": [
+    "Selected tests only, not all 14188 library tests",
+    "No current public CLI build or release artifact qualification claimed",
+    "Historical Waves4-6 retain their own source-bound broader boundary evidence"
+  ]
+}

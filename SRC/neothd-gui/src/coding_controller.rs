@@ -5,14 +5,16 @@
 //! provider bindings, SQLite connections, repository context, worker task, and
 //! terminal receipt.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 use anyhow::{Context, Result, bail};
 
 use neothd::coding::{
-    CodingRunHandle, CodingRunId, CodingRunResult, CodingService, CodingServiceConfig,
-    CodingStartRequest,
+    CodingPatchApprovalId, CodingPatchApprovalMetadata, CodingRunHandle, CodingRunId,
+    CodingRunResult, CodingService, CodingServiceConfig, CodingStartRequest,
+    PatchApprovalPreviewResult, PatchApprovalResponse,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +43,12 @@ enum ActiveCodingRun {
 struct ControllerState {
     next_revision: u64,
     active: Option<ActiveCodingRun>,
+    // Only bounded metadata reaches this controller state. The exact diff is
+    // requested from Core only while this matching live entry remains pending.
+    pending_patch_approval: Option<CodingPatchApprovalMetadata>,
+    // UI double-clicks and delayed callbacks cannot send a second response for
+    // an approval that this GUI revision has already handed to Core.
+    submitted_patch_approvals: HashSet<String>,
     shutting_down: bool,
 }
 
@@ -132,6 +140,8 @@ impl CodingController {
             .checked_add(1)
             .context("coding operation revision overflow")?;
         let revision = state.next_revision;
+        state.pending_patch_approval = None;
+        state.submitted_patch_approvals.clear();
         state.active = Some(ActiveCodingRun::Starting {
             revision,
             cancel_requested: false,
@@ -219,6 +229,11 @@ impl CodingController {
                 }) => *cancel_requested = true,
                 None => {}
             }
+            // A service shutdown invalidates its in-memory broker. Clear the
+            // GUI copy before awaiting Core so a queued event or preview
+            // cannot repopulate the closing window.
+            state.pending_patch_approval = None;
+            state.submitted_patch_approvals.clear();
             self.service
                 .lock()
                 .expect("coding service lock poisoned")
@@ -233,6 +248,9 @@ impl CodingController {
             .lock()
             .expect("coding controller lock poisoned")
             .active = None;
+        let mut state = self.state.lock().expect("coding controller lock poisoned");
+        state.pending_patch_approval = None;
+        state.submitted_patch_approvals.clear();
         Ok(())
     }
 
@@ -244,37 +262,28 @@ impl CodingController {
         &self,
         expected_revision: u64,
     ) -> Result<Option<CodingCancelState>> {
-        let target = {
-            let mut state = self.state.lock().expect("coding controller lock poisoned");
-            match state.active.as_mut() {
-                None => return Ok(None),
-                Some(ActiveCodingRun::Starting {
-                    revision,
-                    cancel_requested,
-                }) if *revision == expected_revision => {
-                    *cancel_requested = true;
-                    CodingCancelState::DeferredStart {
-                        revision: *revision,
-                    }
-                }
-                Some(ActiveCodingRun::Running {
-                    revision,
-                    run_id,
-                    cancel_requested,
-                }) if *revision == expected_revision => {
-                    *cancel_requested = true;
-                    CodingCancelState::Requested {
-                        revision: *revision,
-                        run_id: *run_id,
-                    }
-                }
-                Some(_) => return Ok(None),
-            }
+        let Some(target) = self.prepare_cancel(expected_revision) else {
+            return Ok(None);
         };
+        self.dispatch_prepared_cancel(target).await?;
+        Ok(Some(target))
+    }
+
+    /// Synchronously fences the exact GUI revision against further preview or
+    /// approval work. Call this on the UI callback thread before clearing the
+    /// modal or spawning the asynchronous Core cancellation delivery.
+    pub fn prepare_cancel(&self, expected_revision: u64) -> Option<CodingCancelState> {
+        self.mark_cancel_requested(expected_revision)
+    }
+
+    /// Delivers a cancellation that [`Self::prepare_cancel`] has already
+    /// fenced locally. Keeping the delivery separate prevents the UI from
+    /// leaving the approval window live while a background runtime starts.
+    pub async fn dispatch_prepared_cancel(&self, target: CodingCancelState) -> Result<()> {
         if let CodingCancelState::Requested { run_id, .. } = target {
             self.service()?.request_cancel(run_id).await?;
         }
-        Ok(Some(target))
+        Ok(())
     }
 
     /// Releases only the exact run/revision after the service supplied its
@@ -293,8 +302,164 @@ impl CodingController {
         });
         if matches {
             state.active = None;
+            state.pending_patch_approval = None;
+            state.submitted_patch_approvals.clear();
         }
         matches
+    }
+
+    /// Records bounded Core metadata for the current UI operation. Repeating
+    /// the same event/snapshot is harmless; a later patch replaces only the
+    /// displayed pending identity, never a response already sent to Core.
+    pub fn observe_patch_approval(
+        &self,
+        revision: u64,
+        run_id: CodingRunId,
+        metadata: CodingPatchApprovalMetadata,
+    ) -> bool {
+        let mut state = self.state.lock().expect("coding controller lock poisoned");
+        if !self.approval_admission_open(&state, revision, run_id) {
+            return false;
+        }
+        if state
+            .pending_patch_approval
+            .as_ref()
+            .is_some_and(|pending| pending.approval_id == metadata.approval_id)
+        {
+            return true;
+        }
+        state.pending_patch_approval = Some(metadata);
+        true
+    }
+
+    /// Recovers the service-owned pending metadata after the initial event
+    /// subscription or a bounded broadcast lag. It never reconstructs an
+    /// approval from disk and never fetches raw patch text.
+    pub async fn recover_patch_approval(
+        &self,
+        revision: u64,
+        run_id: CodingRunId,
+    ) -> Option<CodingPatchApprovalMetadata> {
+        if !self.is_approval_admission_open(revision, run_id) {
+            return None;
+        }
+        let metadata = self
+            .service()
+            .ok()?
+            .snapshot(run_id)
+            .await?
+            .pending_patch_approval?;
+        if self.observe_patch_approval(revision, run_id, metadata.clone()) {
+            Some(metadata)
+        } else {
+            None
+        }
+    }
+
+    /// Obtains the exact accepted text only for the current pending metadata.
+    /// The second fence prevents a delayed preview for patch A from painting a
+    /// newer patch B in the same run.
+    pub async fn patch_approval_preview(
+        &self,
+        revision: u64,
+        run_id: CodingRunId,
+        approval_id: &str,
+    ) -> Result<Option<PatchApprovalPreviewResult>> {
+        let approval_id = {
+            let state = self.state.lock().expect("coding controller lock poisoned");
+            let pending = state.pending_patch_approval.as_ref().filter(|pending| {
+                self.approval_admission_open(&state, revision, run_id)
+                    && pending.approval_id.to_string() == approval_id
+            });
+            let Some(pending) = pending else {
+                return Ok(None);
+            };
+            pending.approval_id
+        };
+        let preview = self
+            .service()?
+            .patch_approval_preview(run_id, approval_id)
+            .await?;
+        if self.is_patch_approval_current(revision, run_id, &approval_id.to_string()) {
+            Ok(Some(preview))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Sends one explicit decision for the exact visible approval. The
+    /// submitted-id fence is local UI ownership only; Core still consumes the
+    /// opaque one-use broker entry before any authority is created.
+    pub async fn respond_patch_approval(
+        &self,
+        revision: u64,
+        run_id: CodingRunId,
+        approval_id: &str,
+        approved: bool,
+    ) -> Result<Option<PatchApprovalResponse>> {
+        let Some(core_approval_id) =
+            self.reserve_patch_approval_response(revision, run_id, approval_id)
+        else {
+            return Ok(None);
+        };
+        // Cancellation/shutdown may have won after the local reservation but
+        // before this task reaches the service command edge.
+        if !self.is_patch_approval_current(revision, run_id, approval_id) {
+            return Ok(None);
+        }
+        let response = self
+            .service()?
+            .respond_patch_approval(run_id, core_approval_id, approved)
+            .await?;
+        Ok(Some(response))
+    }
+
+    fn reserve_patch_approval_response(
+        &self,
+        revision: u64,
+        run_id: CodingRunId,
+        approval_id: &str,
+    ) -> Option<CodingPatchApprovalId> {
+        let mut state = self.state.lock().expect("coding controller lock poisoned");
+        if !self.approval_admission_open(&state, revision, run_id)
+            || state
+                .pending_patch_approval
+                .as_ref()
+                .is_none_or(|pending| pending.approval_id.to_string() != approval_id)
+            || !state
+                .submitted_patch_approvals
+                .insert(approval_id.to_owned())
+        {
+            return None;
+        }
+        Some(
+            state
+                .pending_patch_approval
+                .as_ref()
+                .expect("matching pending approval")
+                .approval_id,
+        )
+    }
+
+    /// Clears only the exact completed/stale approval. A late completion for
+    /// patch A cannot close patch B when both belong to the same run.
+    pub fn clear_patch_approval(
+        &self,
+        revision: u64,
+        run_id: CodingRunId,
+        approval_id: &str,
+    ) -> bool {
+        let mut state = self.state.lock().expect("coding controller lock poisoned");
+        if !self.approval_admission_open(&state, revision, run_id)
+            || state
+                .pending_patch_approval
+                .as_ref()
+                .is_none_or(|pending| pending.approval_id.to_string() != approval_id)
+        {
+            return false;
+        }
+        state.pending_patch_approval = None;
+        true
     }
 
     pub fn has_active_run(&self) -> bool {
@@ -303,6 +468,22 @@ impl CodingController {
             .expect("coding controller lock poisoned")
             .active
             .is_some()
+    }
+
+    pub fn current_run_id(&self, revision: u64) -> Option<CodingRunId> {
+        self.state
+            .lock()
+            .expect("coding controller lock poisoned")
+            .active
+            .as_ref()
+            .and_then(|active| match active {
+                ActiveCodingRun::Running {
+                    revision: active_revision,
+                    run_id,
+                    ..
+                } if *active_revision == revision => Some(*run_id),
+                ActiveCodingRun::Starting { .. } | ActiveCodingRun::Running { .. } => None,
+            })
     }
 
     fn is_shutting_down(&self) -> bool {
@@ -328,6 +509,81 @@ impl CodingController {
                     } if *active_revision == revision && *active_run_id == run_id
                 )
             })
+    }
+
+    pub fn is_patch_approval_current(
+        &self,
+        revision: u64,
+        run_id: CodingRunId,
+        approval_id: &str,
+    ) -> bool {
+        let state = self.state.lock().expect("coding controller lock poisoned");
+        self.approval_admission_open(&state, revision, run_id)
+            && state
+                .pending_patch_approval
+                .as_ref()
+                .is_some_and(|pending| pending.approval_id.to_string() == approval_id)
+    }
+
+    fn is_approval_admission_open(&self, revision: u64, run_id: CodingRunId) -> bool {
+        let state = self.state.lock().expect("coding controller lock poisoned");
+        self.approval_admission_open(&state, revision, run_id)
+    }
+
+    fn approval_admission_open(
+        &self,
+        state: &ControllerState,
+        revision: u64,
+        run_id: CodingRunId,
+    ) -> bool {
+        if state.shutting_down {
+            return false;
+        }
+        state.active.as_ref().is_some_and(|active| {
+            matches!(
+                active,
+                ActiveCodingRun::Running {
+                    revision: active_revision,
+                    run_id: active_run_id,
+                    cancel_requested,
+                } if *active_revision == revision
+                    && *active_run_id == run_id
+                    && !*cancel_requested
+            )
+        })
+    }
+
+    /// Marks cancellation and revokes the GUI's ephemeral patch view in one
+    /// mutex acquisition, before the asynchronous service command starts.
+    fn mark_cancel_requested(&self, expected_revision: u64) -> Option<CodingCancelState> {
+        let mut state = self.state.lock().expect("coding controller lock poisoned");
+        let target = match state.active.as_mut() {
+            None => return None,
+            Some(ActiveCodingRun::Starting {
+                revision,
+                cancel_requested,
+            }) if *revision == expected_revision => {
+                *cancel_requested = true;
+                CodingCancelState::DeferredStart {
+                    revision: *revision,
+                }
+            }
+            Some(ActiveCodingRun::Running {
+                revision,
+                run_id,
+                cancel_requested,
+            }) if *revision == expected_revision => {
+                *cancel_requested = true;
+                CodingCancelState::Requested {
+                    revision: *revision,
+                    run_id: *run_id,
+                }
+            }
+            Some(_) => return None,
+        };
+        state.pending_patch_approval = None;
+        state.submitted_patch_approvals.clear();
+        Some(target)
     }
 
     /// Checks both `Starting` and `Running` ownership for a queued UI
@@ -437,13 +693,48 @@ pub fn native_coding_request(
         dispatch,
         apply,
     )
+    // This only routes an apply-capable GUI/Buddy run to Core's later
+    // interactive request. It does not preconfirm a patch or weaken Gate.
+    .map(CodingStartRequest::with_gui_apply_route)
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
+    use neothd::coding::{
+        CodingPatchApprovalId, CodingPatchApprovalMetadata, CodingRunId, KanbanTaskId,
+    };
+
     use super::{CodingCancelState, CodingController, native_coding_request};
+
+    fn test_run_id(raw: u64) -> CodingRunId {
+        serde_json::from_str(&raw.to_string()).expect("test CodingRunId json")
+    }
+
+    fn approval_metadata(id: &str) -> CodingPatchApprovalMetadata {
+        CodingPatchApprovalMetadata {
+            approval_id: id
+                .parse::<CodingPatchApprovalId>()
+                .expect("test approval id"),
+            task_id: serde_json::from_str::<KanbanTaskId>("42").expect("test task id"),
+            repository_display: "C:/canonical/repository".into(),
+            patch_sha256: "a".repeat(64),
+            request_binding_sha256: "b".repeat(64),
+            changed_files: vec!["src/example.rs".into()],
+            expires_unix: i64::MAX,
+        }
+    }
+
+    fn active_controller() -> (CodingController, u64, CodingRunId) {
+        let controller = CodingController::new();
+        let revision = controller.begin_start().expect("reserve test run");
+        let run_id = test_run_id(9);
+        controller
+            .activate(revision, run_id)
+            .expect("activate test run");
+        (controller, revision, run_id)
+    }
 
     #[test]
     fn only_one_gui_start_reservation_can_be_active() {
@@ -553,5 +844,75 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn patch_approval_ui_fence_rejects_delayed_previous_patch_clear() {
+        let (controller, revision, run_id) = active_controller();
+        let first = approval_metadata("00000000-0000-0000-0000-000000000001");
+        let second = approval_metadata("00000000-0000-0000-0000-000000000002");
+        let first_id = first.approval_id.to_string();
+        let second_id = second.approval_id.to_string();
+
+        assert!(controller.observe_patch_approval(revision, run_id, first));
+        assert!(controller.observe_patch_approval(revision, run_id, second));
+        assert!(!controller.clear_patch_approval(revision, run_id, &first_id));
+        assert!(controller.is_patch_approval_current(revision, run_id, &second_id));
+        assert!(controller.clear_patch_approval(revision, run_id, &second_id));
+    }
+
+    #[test]
+    fn patch_approval_response_is_reserved_only_once_per_visible_id() {
+        let (controller, revision, run_id) = active_controller();
+        let metadata = approval_metadata("00000000-0000-0000-0000-000000000003");
+        let approval_id = metadata.approval_id.to_string();
+        assert!(controller.observe_patch_approval(revision, run_id, metadata));
+
+        assert!(
+            controller
+                .reserve_patch_approval_response(revision, run_id, &approval_id)
+                .is_some()
+        );
+        assert!(
+            controller
+                .reserve_patch_approval_response(revision, run_id, &approval_id)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn cancellation_synchronously_revokes_pending_approval_before_core_cancel() {
+        let (controller, revision, run_id) = active_controller();
+        let metadata = approval_metadata("00000000-0000-0000-0000-000000000004");
+        let approval_id = metadata.approval_id.to_string();
+        assert!(controller.observe_patch_approval(revision, run_id, metadata.clone()));
+
+        assert_eq!(
+            controller.prepare_cancel(revision),
+            Some(CodingCancelState::Requested { revision, run_id })
+        );
+        assert!(!controller.is_patch_approval_current(revision, run_id, &approval_id));
+        assert!(!controller.observe_patch_approval(revision, run_id, metadata));
+        assert!(
+            controller
+                .reserve_patch_approval_response(revision, run_id, &approval_id)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn shutdown_synchronously_rejects_delayed_patch_approval_observation() {
+        let (controller, revision, run_id) = active_controller();
+        let metadata = approval_metadata("00000000-0000-0000-0000-000000000005");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("test runtime");
+
+        runtime
+            .block_on(controller.shutdown_and_join())
+            .expect("shutdown without a started service");
+
+        assert!(!controller.observe_patch_approval(revision, run_id, metadata));
+        assert!(!controller.is_current(revision, run_id));
     }
 }

@@ -1,0 +1,15 @@
+[package]
+name = "neoth-gui-dialog-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Deliberately isolated from the shipping workspace and its GUI test binary.
+[workspace]
+
+[dependencies]
+slint = { version = "=1.16.1", default-features = false, features = ["std", "renderer-software", "compat-1-2"] }
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+
+[build-dependencies]
+slint-build = "=1.16.1"

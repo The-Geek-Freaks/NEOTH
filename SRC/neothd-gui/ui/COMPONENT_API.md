@@ -7,6 +7,23 @@ Read this BEFORE writing any new `.slint` view. Guessing prop names is the
 - `label: string` (NOT `text`), `primary: bool`, `enabled: bool`, `loading: bool`,
   `size: string` ("sm"|"md"|"lg"), `danger: bool`, `shimmer: bool`
 - callback `clicked()`
+- `.focus()` forwards to the button's keyboard focus scope.
+
+## ConfirmDialog
+
+- `title: string`, `body: string`, `preview-text: string` (default empty)
+- `confirm-label: string` (default "Confirm"), `cancel-label: string` (default "Cancel")
+- `danger: bool`, `confirm-enabled: bool` (default true),
+  `actions-enabled: bool` (default true)
+- callbacks `confirmed()` and `cancelled()`; Escape and scrim invoke `cancelled()`
+  only while actions are enabled.
+- A nonempty preview is complete read-only text in a bounded scroll surface.
+  Keep Confirm disabled until the exact current preview is ready. Set
+  `actions-enabled: false` synchronously during one-use response submission.
+- Tab, Shift+Tab and Backtab stay within the dialog actions. Empty previews keep
+  ordinary dialog sizing; long body content scrolls without hiding the actions.
+- Run/approval identity, expiry and authority remain responsibilities of the
+  controller and Core broker; the component only presents and emits callbacks.
 
 ## Card  — `shimmer: bool`. Wrap content as `@children`.
 
