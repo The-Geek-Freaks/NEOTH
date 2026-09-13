@@ -4,6 +4,17 @@
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
 > **P1-07 acceptance 2026-09-13:** the existing provider/family roster and
+> complete-matrix parity gate is published on GitHub main at `b1bb5559`;
+> its exact-commit Preflight and Code Quality checks passed.
+>
+> **Bridge dependency checkpoint 2026-09-13:** Baileys remains
+> `7.0.0-rc13`; its Sharp peer is pinned to patched `0.35.4` for
+> Dependabot #28 / GHSA-rgj7-g3m4-5g8c. Frozen-lock installation, 14 bridge
+> tests (one platform skip), resolved peer inspection and an actual Windows
+> PNG encode/decode passed. Evidence: `docs/baileys-sharp-20260913.md`.
+> R3-10 remains open; no checkbox or release/platform claim changes.
+>
+> **P1-07 acceptance evidence 2026-09-13:** the existing provider/family roster and
 > complete-matrix parity gate passed its own 36 focused tests at `1f2860cd`.
 > `GOLD-LF-P1-07` is complete; no production code was duplicated. Evidence:
 > `docs/gold-p1-07-acceptance.md` and its JSON receipt. Current counts:
