@@ -8975,6 +8975,8 @@ struct ProviderHemisphere {
     /// False on incognito turns so recursive sub-councils cannot re-open a
     /// learned-memory surface after the outer prompt was scrubbed.
     allow_persistent_context: bool,
+    /// Explicit orchestration mode; never inferred from prompt text.
+    agreement_v1: bool,
 }
 
 #[async_trait::async_trait]
@@ -9200,7 +9202,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         // When `outer_role` is `None` (legacy / Split-recovery
         // wrappers) fall back to Phase 2 behaviour — reuse outer slots.
         use crate::config::inference::HemisphereRole;
-        let (sub_left, sub_right, sub_cere) = match self.outer_role {
+        let (mut sub_left, mut sub_right, mut sub_cere) = match self.outer_role {
             Some(outer) => {
                 let l = build_sub_hemisphere_with_config(
                     std::sync::Arc::clone(config),
@@ -9287,7 +9289,22 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                 )
             }
         };
+        sub_left.agreement_v1 = self.agreement_v1;
+        sub_right.agreement_v1 = self.agreement_v1;
+        sub_cere.agreement_v1 = self.agreement_v1;
         let prompt_hash = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
+        if self.agreement_v1 {
+            return crate::council::orchestrator::run_debate_v1_recursive_completion(
+                prompt,
+                prompt_hash,
+                depth - 1,
+                budget,
+                &sub_left,
+                &sub_right,
+                &sub_cere,
+            )
+            .await;
+        }
         let inner = crate::council::run_debate_with_depth_budget(
             prompt,
             prompt_hash,
@@ -9497,6 +9514,7 @@ async fn build_hemisphere(
         voice: config.inference.slot_for(role).voice,
         recall_fragment: None,
         allow_persistent_context: false,
+        agreement_v1: false,
     })
 }
 
@@ -9565,6 +9583,7 @@ async fn build_hemisphere_with_config(
         voice,
         recall_fragment,
         allow_persistent_context,
+        agreement_v1: false,
     })
 }
 
@@ -9623,6 +9642,7 @@ async fn build_sub_hemisphere_with_config(
         voice,
         recall_fragment: None,
         allow_persistent_context,
+        agreement_v1: false,
     })
 }
 
@@ -10688,6 +10708,43 @@ fn merge_operator_facts(config: &FreedomConfig, rendered_md: Option<String>) -> 
     }
 }
 
+/// V1 agreement audit stores report metadata only; statement text remains transient.
+async fn emit_council_agreement_evaluated(
+    writer: &crate::wal::writer::WalWriterHandle,
+    prompt_hash: u64,
+    outcome: &crate::council::CouncilDebate,
+) -> Result<()> {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "prompt_hash": format!("{prompt_hash:016x}"), "protocol": outcome.agreement.protocol,
+        "textual_identity": outcome.agreement.textual_identity,
+        "weighted_score": outcome.agreement.weighted_score,
+        "dimensions": outcome.agreement.dimensions,
+    }))
+    .context("serialize COUNCIL_AGREEMENT_EVALUATED payload")?;
+    let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::CouncilAgreementEvaluated as u8)
+        .build();
+    if let Err(e) = writer.append(header, payload).await {
+        warn!(error = %e, "could not append COUNCIL_AGREEMENT_EVALUATED frame");
+    }
+    Ok(())
+}
+
+/// Shared CLI/channel council audit seam. Incognito turns retain no council
+/// transcript or agreement metadata.
+async fn emit_council_dispatch_audits(
+    writer: &crate::wal::writer::WalWriterHandle,
+    prompt_hash: u64,
+    outcome: &crate::council::CouncilDebate,
+    config: &FreedomConfig,
+    incognito: bool,
+) {
+    if !incognito {
+        emit_council_transcripts(writer, prompt_hash, outcome, config).await;
+        let _ = emit_council_agreement_evaluated(writer, prompt_hash, outcome).await;
+    }
+}
+
 /// A-1 audit emission. Records every refused hemisphere with role +
 /// provider + class + cause so an operator running `neoth wal show` can
 /// reconstruct exactly which hemisphere said no + why, even when the
@@ -11373,9 +11430,7 @@ async fn dispatch_council_with_recovery_for_turn(
     // `neoth council replay` can show the actual prose. No-op unless
     // freedom.yaml::council.persist_transcripts = true. Emitted here so BOTH
     // the CLI and channel paths record replayable transcripts identically.
-    if !incognito {
-        emit_council_transcripts(writer, prompt_hash_pre, &outcome, config).await;
-    }
+    emit_council_dispatch_audits(writer, prompt_hash_pre, &outcome, config, incognito).await;
     // B-3 (Session 13) — record this debate's wall-clock so the NEXT
     // inbound's trigger eval honours the rate cooldown.
     if !incognito
@@ -11968,7 +12023,7 @@ async fn run_council_debate(
     // `hemisphere_council_depth > 1`. The Arc is shared across all
     // three so freedom.yaml is parsed exactly once per debate.
     let config_arc = std::sync::Arc::new(config.clone());
-    let left = build_hemisphere_with_config(
+    let mut left = build_hemisphere_with_config(
         config_arc.clone(),
         neoth_home,
         HemisphereRole::Left,
@@ -11978,7 +12033,7 @@ async fn run_council_debate(
         session_canary.clone(),
     )
     .await?;
-    let right = build_hemisphere_with_config(
+    let mut right = build_hemisphere_with_config(
         config_arc.clone(),
         neoth_home,
         HemisphereRole::Right,
@@ -11988,7 +12043,7 @@ async fn run_council_debate(
         session_canary.clone(),
     )
     .await?;
-    let cere = build_hemisphere_with_config(
+    let mut cere = build_hemisphere_with_config(
         config_arc,
         neoth_home,
         HemisphereRole::Cerebellum,
@@ -11998,6 +12053,9 @@ async fn run_council_debate(
         session_canary,
     )
     .await?;
+    left.agreement_v1 = true;
+    right.agreement_v1 = true;
+    cere.agreement_v1 = true;
     let prompt_hash = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
     // E-2 Phase 1 (Session 13) — thread the operator-configured
     // `hemisphere_council_depth` through the orchestrator so recursive
@@ -12014,7 +12072,7 @@ async fn run_council_debate(
     } else {
         Vec::new()
     };
-    let outcome = crate::council::run_debate_with_depth_budget(
+    let outcome = crate::council::run_debate_v1_with_depth_budget(
         &req.prompt,
         prompt_hash,
         depth,
@@ -15214,6 +15272,7 @@ modes:
             voice: None,
             recall_fragment: None,
             allow_persistent_context: false,
+            agreement_v1: false,
         };
         let error = hemisphere
             .ask("debate prompt")
@@ -16551,6 +16610,7 @@ modes:
             voice: None,
             recall_fragment: None,
             allow_persistent_context: true,
+            agreement_v1: false,
         };
         let result = ph.ask_with_depth("hi", 1).await.unwrap();
         assert_eq!(result.text, "ok");
@@ -16578,6 +16638,7 @@ modes:
             voice: None,
             recall_fragment: None,
             allow_persistent_context: true,
+            agreement_v1: false,
         };
         let result = ph.ask_with_depth("hi", 0).await.unwrap();
         assert_eq!(result.text, "ok");
@@ -16610,6 +16671,7 @@ modes:
             voice: None,
             recall_fragment: None,
             allow_persistent_context: true,
+            agreement_v1: false,
         };
         // depth=4 (MAX cap) + no config → still flat, one call.
         let result = ph.ask_with_depth("hi", 4).await.unwrap();
@@ -16645,6 +16707,7 @@ modes:
             voice: None,
             recall_fragment: None,
             allow_persistent_context: true,
+            agreement_v1: false,
         };
         let err = ph.ask_with_depth("hi", 2).await.unwrap_err();
         // Error msg names "build sub-" so operator sees which leg failed.
@@ -16665,6 +16728,7 @@ modes:
     ) -> crate::council::CouncilDebate {
         crate::council::CouncilDebate {
             factual_outcomes: Vec::new(),
+            agreement: Default::default(),
             prompt_hash_xxh3: 0,
             responses,
             dissent: crate::council::dissent::DissentScore(0.1),
@@ -16680,6 +16744,7 @@ modes:
     ) -> crate::council::CouncilDebate {
         crate::council::CouncilDebate {
             factual_outcomes: Vec::new(),
+            agreement: Default::default(),
             prompt_hash_xxh3: 0,
             responses,
             dissent: crate::council::dissent::DissentScore(0.7),
@@ -17178,6 +17243,7 @@ modes:
             voice: None,
             recall_fragment: None,
             allow_persistent_context: true,
+            agreement_v1: false,
         };
 
         let result = ph.ask_with_depth("hi", 2).await;
@@ -17226,6 +17292,7 @@ modes:
             voice: None,
             recall_fragment: None,
             allow_persistent_context: true,
+            agreement_v1: false,
         };
         let err = ph.ask_with_depth("hi", 2).await.unwrap_err();
         // Skip provider → build_hemisphere_with_config (Phase 2 path)
@@ -17379,6 +17446,7 @@ modes:
             voice: Some(CouncilVoice::SecurityEngineer),
             recall_fragment: None,
             allow_persistent_context: true,
+            agreement_v1: false,
         };
 
         ph.ask("operator question").await.unwrap();
@@ -19445,6 +19513,131 @@ modes:
     //   2. Second call with same guard → HOOK_SKIPPED_ONCE, no second HOOK_FIRED.
     //   3. Fresh SessionOnceGuard → fires again (independent session).
     //   4. once=false hook fires every time with no HOOK_SKIPPED_ONCE.
+
+    #[tokio::test]
+    async fn council_agreement_audit_wal_is_one_metadata_frame_without_declarations_or_body() {
+        use crate::config::inference::HemisphereRole;
+        use crate::council::agreement::{DeclaredValue, evaluate};
+
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("council-agreement.wal");
+        let (writer, join) = wal_spawn(segment.clone()).unwrap();
+        let mut outcome =
+            mk_outcome_consensus("operator-visible-body-must-not-persist", Vec::new());
+        outcome.agreement = evaluate(&[
+            (
+                HemisphereRole::Left,
+                true,
+                [
+                    DeclaredValue::Statement("declared-fact-must-not-persist".into()),
+                    DeclaredValue::Statement("declared-recommendation-must-not-persist".into()),
+                    DeclaredValue::Statement("declared-risk-must-not-persist".into()),
+                ],
+            ),
+            (
+                HemisphereRole::Right,
+                true,
+                [
+                    DeclaredValue::Statement("declared-fact-must-not-persist".into()),
+                    DeclaredValue::Statement("declared-recommendation-must-not-persist".into()),
+                    DeclaredValue::Statement("declared-risk-must-not-persist".into()),
+                ],
+            ),
+        ]);
+
+        emit_council_dispatch_audits(
+            &writer,
+            0x0a11ce_0000000001,
+            &outcome,
+            &FreedomConfig::default(),
+            false,
+        )
+        .await;
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = std::fs::read(segment).unwrap();
+        let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
+        let mut frames = Vec::new();
+        while !cursor.is_empty() {
+            let frame = decode_frame(cursor).expect("complete council agreement frame");
+            cursor = &cursor[frame.header.total_len as usize..];
+            frames.push(frame);
+        }
+        // The writer also appends its required authentication marker.
+        let agreement_frames: Vec<_> = frames
+            .iter()
+            .filter(|frame| {
+                frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                    && frame.header.event_subtype
+                        == crate::wal::events::ExtendedSubtype::CouncilAgreementEvaluated as u8
+            })
+            .collect();
+        assert_eq!(
+            agreement_frames.len(),
+            1,
+            "one agreement event per dispatch"
+        );
+        assert!(
+            !frames.iter().any(|frame| frame.header.event_type
+                == crate::wal::events::EVENT_TYPE_COUNCIL_TRANSCRIPT)
+        );
+        let frame = agreement_frames[0];
+        assert_eq!(
+            frame.header.event_type,
+            crate::wal::events::EVENT_TYPE_EXTENDED
+        );
+        assert_eq!(
+            frame.header.event_subtype,
+            crate::wal::events::ExtendedSubtype::CouncilAgreementEvaluated as u8
+        );
+        let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+        assert_eq!(payload["prompt_hash"], "0a11ce0000000001");
+        assert_eq!(payload["protocol"], "v1");
+        assert_eq!(payload["textual_identity"], true);
+        assert_eq!(payload["weighted_score"], 1.0);
+        let dimensions = payload["dimensions"].as_array().expect("dimension states");
+        assert_eq!(dimensions.len(), 3);
+        assert!(
+            dimensions
+                .iter()
+                .all(|dimension| dimension["state"] == "scored")
+        );
+
+        let serialized = String::from_utf8(frame.payload.to_vec()).unwrap();
+        for transient in [
+            "operator-visible-body-must-not-persist",
+            "declared-fact-must-not-persist",
+            "declared-recommendation-must-not-persist",
+            "declared-risk-must-not-persist",
+        ] {
+            assert!(!serialized.contains(transient), "WAL leaked {transient}");
+            assert!(
+                !bytes
+                    .windows(transient.len())
+                    .any(|window| window == transient.as_bytes())
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn incognito_council_dispatch_audit_emits_no_frames() {
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("incognito-council-agreement.wal");
+        let (writer, join) = wal_spawn(segment.clone()).unwrap();
+        let outcome = mk_outcome_consensus("private body", Vec::new());
+
+        emit_council_dispatch_audits(&writer, 1, &outcome, &FreedomConfig::default(), true).await;
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = std::fs::read(segment).unwrap();
+        assert_eq!(
+            bytes.len(),
+            SEGMENT_HEADER_LEN,
+            "Incognito must suppress council audit frames"
+        );
+    }
 
     /// Decode all frames from a WAL file after the segment header and collect
     /// event types into a Vec so tests can assert on them without caring about

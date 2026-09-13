@@ -26,3 +26,9 @@ Verification on Windows, Node `22.22.1`, pnpm `10.32.1`:
 This is local dependency and bridge regression evidence. It does not claim
 deployment, live WhatsApp delivery, Linux HEIF execution, or completion of
 the R3-10 release gate. No alert was dismissed or ignored.
+
+Published on GitHub main as `9c57a95109c70ccc34c9fdc2c4663015159e8b4f`.
+Its [Preflight](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34746482590)
+and [Code Quality](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34746482468)
+checks succeeded. GitHub marked Dependabot #28 `fixed` at
+`2026-09-13T07:57:28Z`.

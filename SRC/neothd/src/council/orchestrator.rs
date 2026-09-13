@@ -35,6 +35,7 @@ use futures_util::stream::{FuturesUnordered, StreamExt};
 
 use crate::config::inference::HemisphereRole;
 
+use super::agreement::{self, DeclaredValue};
 use super::budget::BudgetToken;
 use super::dissent::{DissentScore, score_dissent, score_dissent_via_embedding};
 use super::factual_check::{
@@ -56,6 +57,20 @@ pub const BUDGET_EXHAUSTED_ERROR: &str = "budget-exhausted";
 /// the orchestrator returns `Verdict::QuorumFailed` rather than
 /// inventing consensus from one voice.
 pub const QUORUM_THRESHOLD: u32 = 2;
+
+/// Runtime-only V1 evidence. It is deliberately neither serialized nor Debug:
+/// declarations may cross one recursive adapter boundary, never a WAL/UI one.
+struct DebateExecution {
+    debate: CouncilDebate,
+    declarations: Vec<(HemisphereRole, [DeclaredValue; 3])>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DebateMode {
+    Legacy,
+    AgreementV1,
+    ForwardedAgreementV1,
+}
 
 /// Trait every hemisphere participant implements. Production wraps a
 /// `Box<dyn Provider>`; tests use deterministic mocks.
@@ -209,6 +224,34 @@ pub async fn run_debate_with_depth_budget(
     left: &dyn HemisphereProvider,
     right: &dyn HemisphereProvider,
     cerebellum: &dyn HemisphereProvider,
+    embed_provider: Option<&dyn crate::providers::embed::EmbedProvider>,
+    assertions: &[FactualAssertion],
+) -> CouncilDebate {
+    run_debate_inner(
+        prompt,
+        prompt_hash_xxh3,
+        depth,
+        budget,
+        left,
+        right,
+        cerebellum,
+        embed_provider,
+        assertions,
+        DebateMode::Legacy,
+    )
+    .await
+    .debate
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_debate_inner(
+    prompt: &str,
+    prompt_hash_xxh3: u64,
+    depth: u8,
+    budget: BudgetToken,
+    left: &dyn HemisphereProvider,
+    right: &dyn HemisphereProvider,
+    cerebellum: &dyn HemisphereProvider,
     // SP-4 embed-wire Phase 3 — when `Some`, the FINAL dissent score is
     // computed via cosine distance over hemisphere-response embeddings
     // (`score_dissent_via_embedding`) instead of the Jaccard token
@@ -227,24 +270,43 @@ pub async fn run_debate_with_depth_budget(
     // `include_unverified = false` and converting rows to
     // `FactualAssertion` values (statement → subject, scope → tag).
     assertions: &[FactualAssertion],
-) -> CouncilDebate {
+    mode: DebateMode,
+) -> DebateExecution {
     let overall_start = Instant::now();
+    let agreement_v1 = mode != DebateMode::Legacy;
 
     // GOLD-R3-14 — validate every untrusted question/assertion envelope before
     // run_one can schedule a provider or charge the shared budget.
-    let enriched_prompt = match try_embed_ground_truth_tag(prompt, assertions) {
+    let prepared = match mode {
+        DebateMode::Legacy => try_embed_ground_truth_tag(prompt, assertions),
+        DebateMode::AgreementV1 => {
+            super::factual_check::try_embed_ground_truth_tag_with_instructions(
+                prompt,
+                assertions,
+                agreement::PROMPT_SUFFIX,
+            )
+        }
+        // Only the explicit recursive V1 adapter forwards the already-framed
+        // outer prompt. Reframing would demote static instructions to data.
+        DebateMode::ForwardedAgreementV1 => Ok(prompt.to_string()),
+    };
+    let enriched_prompt = match prepared {
         Ok(enriched) => enriched,
         Err(_) => {
-            return CouncilDebate {
-                prompt_hash_xxh3,
-                responses: Vec::new(),
-                dissent: DissentScore(0.0),
-                verdict: Verdict::QuorumFailed {
-                    responded: 0,
-                    required: QUORUM_THRESHOLD,
+            return DebateExecution {
+                debate: CouncilDebate {
+                    prompt_hash_xxh3,
+                    responses: Vec::new(),
+                    dissent: DissentScore(0.0),
+                    verdict: Verdict::QuorumFailed {
+                        responded: 0,
+                        required: QUORUM_THRESHOLD,
+                    },
+                    total_latency_ms: dur_to_ms(overall_start.elapsed()),
+                    factual_outcomes: Vec::new(),
+                    agreement: Default::default(),
                 },
-                total_latency_ms: dur_to_ms(overall_start.elapsed()),
-                factual_outcomes: Vec::new(),
+                declarations: Vec::new(),
             };
         }
     };
@@ -261,9 +323,10 @@ pub async fn run_debate_with_depth_budget(
         effective_prompt,
         depth,
         budget.clone(),
+        agreement_v1,
     ))
         as std::pin::Pin<
-            Box<dyn std::future::Future<Output = HemisphereResponse> + Send>,
+            Box<dyn std::future::Future<Output = V1Leaf> + Send>,
         >);
     tasks.push(Box::pin(run_one(
         HemisphereRole::Right,
@@ -271,9 +334,10 @@ pub async fn run_debate_with_depth_budget(
         effective_prompt,
         depth,
         budget.clone(),
+        agreement_v1,
     ))
         as std::pin::Pin<
-            Box<dyn std::future::Future<Output = HemisphereResponse> + Send>,
+            Box<dyn std::future::Future<Output = V1Leaf> + Send>,
         >);
     tasks.push(Box::pin(run_one(
         HemisphereRole::Cerebellum,
@@ -281,13 +345,16 @@ pub async fn run_debate_with_depth_budget(
         effective_prompt,
         depth,
         budget.clone(),
+        agreement_v1,
     ))
         as std::pin::Pin<
-            Box<dyn std::future::Future<Output = HemisphereResponse> + Send>,
+            Box<dyn std::future::Future<Output = V1Leaf> + Send>,
         >);
 
     let mut responses: Vec<HemisphereResponse> = Vec::with_capacity(3);
-    while let Some(resp) = tasks.next().await {
+    let mut declarations = Vec::with_capacity(3);
+    while let Some(leaf) = tasks.next().await {
+        let resp = leaf.response;
         // IMBA omission scan (LOWKEY-8 §4/§5): flag structural omissions
         // (missing mechanism on a why/how prompt, tone-drift, hedged false
         // assumption, information void) per hemisphere. Hot lane → tracing
@@ -305,6 +372,9 @@ pub async fn run_debate_with_depth_budget(
                 );
             }
         }
+        if let Some(values) = leaf.values {
+            declarations.push((resp.role, resp.is_usable(), values));
+        }
         responses.push(resp);
         // Early-exit check: quorum reached + present responses agree.
         // Audit 2026-05-19 Type #13 Phase 2: route both `is_present` and
@@ -320,7 +390,9 @@ pub async fn run_debate_with_depth_budget(
                 .filter_map(|r| r.outcome().text())
                 .collect();
             let early_dissent = score_dissent(&texts);
-            if early_dissent.is_consensus() {
+            let early_agreement =
+                !agreement_v1 || agreement::evaluate(&declarations).textual_identity;
+            if early_dissent.is_consensus() && early_agreement {
                 // Quorum + consensus → verdict locked. Drop the
                 // FuturesUnordered to cancel remaining hemispheres.
                 break;
@@ -359,8 +431,18 @@ pub async fn run_debate_with_depth_budget(
             .iter()
             .filter_map(|r| {
                 let text = r.outcome().text()?;
+                // V1 factual declarations are intentionally transient and
+                // participate in ground-truth checks; recommendations/risk do not.
+                let factual_input = declarations
+                    .iter()
+                    .find(|(role, _, _)| *role == r.role)
+                    .and_then(|(_, _, values)| match &values[0] {
+                        DeclaredValue::Statement(statement) => Some(format!("{text}\n{statement}")),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| text.to_string());
                 let outcome = factual_contradiction_check(
-                    text,
+                    &factual_input,
                     assertions,
                     DEFAULT_NEGATION_MARKERS,
                     DEFAULT_NEGATION_WINDOW_CHARS,
@@ -403,15 +485,197 @@ pub async fn run_debate_with_depth_budget(
         },
         None => score_dissent(&texts),
     };
-    let verdict = decide_verdict(&responses, dissent, &texts, &contradicting_roles);
-    CouncilDebate {
-        prompt_hash_xxh3,
-        responses,
-        dissent,
-        verdict,
-        total_latency_ms: dur_to_ms(overall_start.elapsed()),
-        factual_outcomes,
+    let agreement = if agreement_v1 {
+        agreement::evaluate(&declarations)
+    } else {
+        Default::default()
+    };
+    let legacy_verdict = decide_verdict(&responses, dissent, &texts, &contradicting_roles);
+    let verdict =
+        match legacy_verdict {
+            Verdict::Consensus { .. } if agreement_v1 && !agreement.textual_identity => {
+                Verdict::Split {
+                    summary: if agreement.dimensions.iter().any(|dimension| {
+                        matches!(dimension.state, agreement::DimensionState::Missing)
+                    }) {
+                        "agreement_evidence_missing".into()
+                    } else {
+                        "agreement_dimensions_not_identical".into()
+                    },
+                }
+            }
+            other => other,
+        };
+    DebateExecution {
+        debate: CouncilDebate {
+            prompt_hash_xxh3,
+            responses,
+            dissent,
+            verdict,
+            total_latency_ms: dur_to_ms(overall_start.elapsed()),
+            factual_outcomes,
+            agreement,
+        },
+        declarations: declarations
+            .into_iter()
+            .map(|(role, _, values)| (role, values))
+            .collect(),
     }
+}
+
+/// Production-only V1 entry. Compatibility entry points deliberately keep
+/// their historical plain-text behavior and a `not_evaluated` report.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_debate_v1_with_depth_budget(
+    prompt: &str,
+    prompt_hash_xxh3: u64,
+    depth: u8,
+    budget: BudgetToken,
+    left: &dyn HemisphereProvider,
+    right: &dyn HemisphereProvider,
+    cerebellum: &dyn HemisphereProvider,
+    embed_provider: Option<&dyn crate::providers::embed::EmbedProvider>,
+    assertions: &[FactualAssertion],
+) -> CouncilDebate {
+    // Frame untrusted input first; the inner runner adds the static agreement
+    // instruction outside that envelope, before the optional ground truth.
+    run_debate_inner(
+        prompt,
+        prompt_hash_xxh3,
+        depth,
+        budget,
+        left,
+        right,
+        cerebellum,
+        embed_provider,
+        assertions,
+        DebateMode::AgreementV1,
+    )
+    .await
+    .debate
+}
+
+/// Recursive-only bridge. The returned envelope is reconstructed from the
+/// selected inner winner's transient declaration and is immediately consumed
+/// by the outer V1 leaf parser; it never reaches UI/WAL serialization.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_debate_v1_recursive_completion(
+    prompt: &str,
+    prompt_hash_xxh3: u64,
+    depth: u8,
+    budget: BudgetToken,
+    left: &dyn HemisphereProvider,
+    right: &dyn HemisphereProvider,
+    cerebellum: &dyn HemisphereProvider,
+) -> Result<CompletionRecord, String> {
+    let execution = run_debate_inner(
+        prompt,
+        prompt_hash_xxh3,
+        depth,
+        budget,
+        left,
+        right,
+        cerebellum,
+        None,
+        &[],
+        DebateMode::ForwardedAgreementV1,
+    )
+    .await;
+    let (input_tokens, output_tokens) = (
+        execution
+            .debate
+            .responses
+            .iter()
+            .any(|r| r.input_tokens.is_some())
+            .then(|| {
+                execution
+                    .debate
+                    .responses
+                    .iter()
+                    .filter_map(|r| r.input_tokens)
+                    .sum()
+            }),
+        execution
+            .debate
+            .responses
+            .iter()
+            .any(|r| r.output_tokens.is_some())
+            .then(|| {
+                execution
+                    .debate
+                    .responses
+                    .iter()
+                    .filter_map(|r| r.output_tokens)
+                    .sum()
+            }),
+    );
+    let Some(body) = execution.debate.winning_text() else {
+        return execution
+            .debate
+            .usable_responses()
+            .next()
+            .and_then(|r| r.text.clone())
+            .map(|text| CompletionRecord {
+                text,
+                input_tokens,
+                output_tokens,
+            })
+            .ok_or_else(|| format!("inner council at depth {depth} produced no usable response"));
+    };
+    let mut candidates: Vec<_> = execution
+        .debate
+        .responses
+        .iter()
+        .filter(|r| r.text.as_deref() == Some(body))
+        .map(|r| r.role)
+        .collect();
+    candidates.sort_by_key(|role| role_index(*role));
+    let values: Vec<_> = candidates
+        .iter()
+        .filter_map(|role| {
+            execution
+                .declarations
+                .iter()
+                .find(|(declared_role, _)| declared_role == role)
+                .map(|(_, values)| values)
+        })
+        .collect();
+    let envelope = if execution.debate.agreement.textual_identity
+        && values.len() == candidates.len()
+        && !values.is_empty()
+        && values.iter().all(|candidate| *candidate == values[0])
+    {
+        render_agreement_suffix(values[0])
+    } else {
+        None
+    };
+    let text = match envelope {
+        Some(envelope) => format!("{body}{envelope}"),
+        None => body.to_string(),
+    };
+    Ok(CompletionRecord {
+        text,
+        input_tokens,
+        output_tokens,
+    })
+}
+
+fn render_agreement_suffix(values: &[DeclaredValue; 3]) -> Option<String> {
+    fn value(value: &DeclaredValue) -> Option<&str> {
+        match value {
+            DeclaredValue::Statement(statement) if !statement.trim().is_empty() => {
+                Some(statement.as_str())
+            }
+            DeclaredValue::NotApplicable => Some("NONE"),
+            DeclaredValue::Missing(_) | DeclaredValue::Statement(_) => None,
+        }
+    }
+    Some(format!(
+        "\n[NEOTH_AGREEMENT_V1]\nfactual_claims: {}\nrecommendations: {}\nrisk_assessment: {}\n[/NEOTH_AGREEMENT_V1]",
+        value(&values[0])?,
+        value(&values[1])?,
+        value(&values[2])?
+    ))
 }
 
 /// Stable sort key for `HemisphereResponse` so the response Vec keeps
@@ -425,13 +689,19 @@ fn role_index(role: HemisphereRole) -> u8 {
     }
 }
 
+struct V1Leaf {
+    response: HemisphereResponse,
+    values: Option<[DeclaredValue; 3]>,
+}
+
 async fn run_one(
     role: HemisphereRole,
     h: &dyn HemisphereProvider,
     prompt: &str,
     depth: u8,
     budget: BudgetToken,
-) -> HemisphereResponse {
+    agreement_v1: bool,
+) -> V1Leaf {
     let started = Instant::now();
     let provider = h.provider_id();
     // Pick #19 F6 fractal rule — charge BEFORE the LLM call. The shared
@@ -441,15 +711,18 @@ async fn run_one(
     // shape of a timeout-cancelled hemisphere) so the verdict step
     // sees a uniform `HemisphereResponse` regardless of cause.
     if let Err(_exhausted) = budget.charge() {
-        return HemisphereResponse {
-            role,
-            provider,
-            text: None,
-            error: Some(BUDGET_EXHAUSTED_ERROR.to_string()),
-            latency_ms: dur_to_ms(started.elapsed()),
-            input_tokens: None,
-            output_tokens: None,
-            refusal: None,
+        return V1Leaf {
+            response: HemisphereResponse {
+                role,
+                provider,
+                text: None,
+                error: Some(BUDGET_EXHAUSTED_ERROR.to_string()),
+                latency_ms: dur_to_ms(started.elapsed()),
+                input_tokens: None,
+                output_tokens: None,
+                refusal: None,
+            },
+            values: None,
         };
     }
     match h.ask_with_depth_budget(prompt, depth, budget).await {
@@ -461,27 +734,53 @@ async fn run_one(
             // around the refusal instead of treating the whole debate as
             // blocked. Classifier is pure-function pattern matching — fast
             // enough to run on every council reply without an escape hatch.
-            let refusal = classify_per_hemisphere(&rec.text);
-            HemisphereResponse {
-                role,
-                provider,
-                text: Some(rec.text),
-                error: None,
-                latency_ms: dur_to_ms(started.elapsed()),
-                input_tokens: rec.input_tokens,
-                output_tokens: rec.output_tokens,
-                refusal,
+            let parsed = agreement_v1.then(|| agreement::parse_final_suffix(&rec.text));
+            let text = parsed
+                .as_ref()
+                .map(|parsed| parsed.body.clone())
+                .unwrap_or(rec.text);
+            if agreement_v1 && text.trim().is_empty() {
+                return V1Leaf {
+                    response: HemisphereResponse {
+                        role,
+                        provider,
+                        text: None,
+                        error: Some("agreement_empty_response".to_string()),
+                        latency_ms: dur_to_ms(started.elapsed()),
+                        input_tokens: rec.input_tokens,
+                        output_tokens: rec.output_tokens,
+                        refusal: None,
+                    },
+                    values: None,
+                };
+            }
+            let refusal = classify_per_hemisphere(&text);
+            V1Leaf {
+                response: HemisphereResponse {
+                    role,
+                    provider,
+                    text: Some(text),
+                    error: None,
+                    latency_ms: dur_to_ms(started.elapsed()),
+                    input_tokens: rec.input_tokens,
+                    output_tokens: rec.output_tokens,
+                    refusal,
+                },
+                values: parsed.map(|parsed| parsed.values),
             }
         }
-        Err(reason) => HemisphereResponse {
-            role,
-            provider,
-            text: None,
-            error: Some(reason),
-            latency_ms: dur_to_ms(started.elapsed()),
-            input_tokens: None,
-            output_tokens: None,
-            refusal: None,
+        Err(reason) => V1Leaf {
+            response: HemisphereResponse {
+                role,
+                provider,
+                text: None,
+                error: Some(reason),
+                latency_ms: dur_to_ms(started.elapsed()),
+                input_tokens: None,
+                output_tokens: None,
+                refusal: None,
+            },
+            values: None,
         },
     }
 }
@@ -633,6 +932,59 @@ mod tests {
         MockHemisphere {
             id,
             response: Err(err),
+        }
+    }
+
+    struct RecursiveFake {
+        id: &'static str,
+        leaf: &'static str,
+        seen: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        calls: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    }
+
+    #[async_trait::async_trait]
+    impl HemisphereProvider for RecursiveFake {
+        fn provider_id(&self) -> String {
+            self.id.to_string()
+        }
+        async fn ask(&self, prompt: &str) -> Result<CompletionRecord, String> {
+            self.seen.lock().unwrap().push(prompt.to_string());
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(CompletionRecord {
+                text: self.leaf.to_string(),
+                input_tokens: None,
+                output_tokens: None,
+            })
+        }
+        async fn ask_with_depth_budget(
+            &self,
+            prompt: &str,
+            depth: u8,
+            budget: BudgetToken,
+        ) -> Result<CompletionRecord, String> {
+            if depth <= 1 {
+                return self.ask(prompt).await;
+            }
+            let left = RecursiveFake {
+                id: "il",
+                leaf: self.leaf,
+                seen: self.seen.clone(),
+                calls: self.calls.clone(),
+            };
+            let right = RecursiveFake {
+                id: "ir",
+                leaf: self.leaf,
+                seen: self.seen.clone(),
+                calls: self.calls.clone(),
+            };
+            let cere = RecursiveFake {
+                id: "ic",
+                leaf: self.leaf,
+                seen: self.seen.clone(),
+                calls: self.calls.clone(),
+            };
+            run_debate_v1_recursive_completion(prompt, 0, depth - 1, budget, &left, &right, &cere)
+                .await
         }
     }
 
@@ -1618,5 +1970,274 @@ mod tests {
             d.winning_text().is_some(),
             "all-contradicting case must still produce a verdict (graceful degradation)"
         );
+    }
+
+    #[tokio::test]
+    async fn v1_strips_suffix_before_refusal_and_requires_evidence() {
+        let good = "ordinary answer\n[NEOTH_AGREEMENT_V1]\nfactual_claims: fact.\nrecommendations: act.\nrisk_assessment: risk.\n[/NEOTH_AGREEMENT_V1]";
+        let l = mk("l", good);
+        let r = mk("r", good);
+        let c = mk("c", good);
+        let debate =
+            run_debate_v1_with_depth_budget("p", 0, 1, BudgetToken::new(3), &l, &r, &c, None, &[])
+                .await;
+        assert!(debate.agreement.textual_identity);
+        assert!(debate.responses.iter().all(|r| {
+            r.text.as_deref().unwrap_or("").contains("ordinary answer")
+                && !r.text.as_deref().unwrap_or("").contains("NEOTH_AGREEMENT")
+        }));
+        assert!(debate.responses.iter().all(|r| r.refusal.is_none()));
+    }
+
+    #[tokio::test]
+    async fn v1_missing_evidence_turns_legacy_consensus_into_split() {
+        let l = mk("l", "same ordinary answer");
+        let r = mk("r", "same ordinary answer");
+        let c = mk("c", "same ordinary answer");
+        let debate =
+            run_debate_v1_with_depth_budget("p", 0, 1, BudgetToken::new(3), &l, &r, &c, None, &[])
+                .await;
+        assert!(
+            matches!(debate.verdict, Verdict::Split { ref summary } if summary == "agreement_evidence_missing")
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_factual_declaration_is_checked_but_recommendation_is_not() {
+        let assertions = vec![mk_assertion("capital", "Paris")];
+        let answer = "neutral\n[NEOTH_AGREEMENT_V1]\nfactual_claims: capital is not Paris.\nrecommendations: capital is not Paris.\nrisk_assessment: NONE\n[/NEOTH_AGREEMENT_V1]";
+        let l = mk("l", answer);
+        let r = mk("r", answer);
+        let c = mk("c", answer);
+        let debate = run_debate_v1_with_depth_budget(
+            "capital?",
+            0,
+            1,
+            BudgetToken::new(3),
+            &l,
+            &r,
+            &c,
+            None,
+            &assertions,
+        )
+        .await;
+        assert!(
+            debate
+                .factual_outcomes
+                .iter()
+                .all(|(_, _, contradictions)| *contradictions > 0)
+        );
+        let recommendation_only = "neutral\n[NEOTH_AGREEMENT_V1]\nfactual_claims: NONE\nrecommendations: capital is not Paris.\nrisk_assessment: capital is not Paris.\n[/NEOTH_AGREEMENT_V1]";
+        let l = mk("l", recommendation_only);
+        let r = mk("r", recommendation_only);
+        let c = mk("c", recommendation_only);
+        let debate = run_debate_v1_with_depth_budget(
+            "capital?",
+            0,
+            1,
+            BudgetToken::new(3),
+            &l,
+            &r,
+            &c,
+            None,
+            &assertions,
+        )
+        .await;
+        assert!(
+            debate
+                .factual_outcomes
+                .iter()
+                .all(|(_, _, contradictions)| *contradictions == 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn recursive_v1_bridge_returns_only_selected_matching_evidence() {
+        let answer = "body\n[NEOTH_AGREEMENT_V1]\nfactual_claims: fact.\nrecommendations: act.\nrisk_assessment: refusal language is only a risk label.\n[/NEOTH_AGREEMENT_V1]";
+        let l = mk("l", answer);
+        let r = mk("r", answer);
+        let c = mk("c", answer);
+        let budget = BudgetToken::new(3);
+        let prompt = format!("p{}", agreement::PROMPT_SUFFIX);
+        assert_eq!(prompt.matches("[NEOTH_AGREEMENT_V1]").count(), 1);
+        let completion =
+            run_debate_v1_recursive_completion(&prompt, 0, 1, budget.clone(), &l, &r, &c)
+                .await
+                .unwrap();
+        assert!(completion.text.contains("[NEOTH_AGREEMENT_V1]"));
+        assert!((2..=3).contains(&budget.used()));
+        let ol = mk("ol", Box::leak(completion.text.into_boxed_str()));
+        let or = mk(
+            "or",
+            "body\n[NEOTH_AGREEMENT_V1]\nfactual_claims: fact.\nrecommendations: act.\nrisk_assessment: refusal language is only a risk label.\n[/NEOTH_AGREEMENT_V1]",
+        );
+        let oc = mk(
+            "oc",
+            "body\n[NEOTH_AGREEMENT_V1]\nfactual_claims: fact.\nrecommendations: act.\nrisk_assessment: refusal language is only a risk label.\n[/NEOTH_AGREEMENT_V1]",
+        );
+        let debate = run_debate_v1_with_depth_budget(
+            "p",
+            0,
+            1,
+            BudgetToken::new(3),
+            &ol,
+            &or,
+            &oc,
+            None,
+            &[],
+        )
+        .await;
+        assert!(matches!(debate.verdict, Verdict::Consensus { .. }));
+        assert!(
+            debate.responses.iter().all(|r| !r
+                .text
+                .as_deref()
+                .unwrap_or("")
+                .contains("NEOTH_AGREEMENT"))
+        );
+    }
+
+    #[tokio::test]
+    async fn recursive_v1_split_does_not_handoff_evidence_or_spend_past_cap() {
+        let l = mk(
+            "l",
+            "one\n[NEOTH_AGREEMENT_V1]\nfactual_claims: one.\nrecommendations: act.\nrisk_assessment: risk.\n[/NEOTH_AGREEMENT_V1]",
+        );
+        let r = mk(
+            "r",
+            "two\n[NEOTH_AGREEMENT_V1]\nfactual_claims: two.\nrecommendations: act.\nrisk_assessment: risk.\n[/NEOTH_AGREEMENT_V1]",
+        );
+        let c = mk(
+            "c",
+            "three\n[NEOTH_AGREEMENT_V1]\nfactual_claims: three.\nrecommendations: act.\nrisk_assessment: risk.\n[/NEOTH_AGREEMENT_V1]",
+        );
+        let budget = BudgetToken::new(2);
+        let completion = run_debate_v1_recursive_completion(
+            &format!("p{}", agreement::PROMPT_SUFFIX),
+            0,
+            1,
+            budget.clone(),
+            &l,
+            &r,
+            &c,
+        )
+        .await
+        .unwrap();
+        assert!(!completion.text.contains("NEOTH_AGREEMENT"));
+        assert_eq!(budget.used(), 2);
+    }
+
+    #[tokio::test]
+    async fn nested_v1_uses_one_forwarded_suffix_and_shared_budget() {
+        let answer = "body\n[NEOTH_AGREEMENT_V1]\nfactual_claims: fact.\nrecommendations: act.\nrisk_assessment: refusal wording is a risk label.\n[/NEOTH_AGREEMENT_V1]";
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let l = RecursiveFake {
+            id: "l",
+            leaf: answer,
+            seen: seen.clone(),
+            calls: calls.clone(),
+        };
+        let r = RecursiveFake {
+            id: "r",
+            leaf: answer,
+            seen: seen.clone(),
+            calls: calls.clone(),
+        };
+        let c = RecursiveFake {
+            id: "c",
+            leaf: answer,
+            seen: seen.clone(),
+            calls: calls.clone(),
+        };
+        let budget = BudgetToken::new(12);
+        let debate =
+            run_debate_v1_with_depth_budget("p", 0, 2, budget.clone(), &l, &r, &c, None, &[]).await;
+        assert!(matches!(debate.verdict, Verdict::Consensus { .. }));
+        assert!(debate.responses.iter().all(|response| {
+            response.refusal.is_none()
+                && !response
+                    .text
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("NEOTH_AGREEMENT")
+        }));
+        assert!(
+            seen.lock()
+                .unwrap()
+                .iter()
+                .all(|prompt| prompt.matches("[NEOTH_AGREEMENT_V1]").count() == 1)
+        );
+        assert!(calls.load(std::sync::atomic::Ordering::SeqCst) <= budget.used());
+        assert!(budget.used() <= budget.cap());
+        assert!(calls.load(std::sync::atomic::Ordering::SeqCst) > 0);
+        for prompt in seen.lock().unwrap().iter() {
+            assert!(prompt.lines().any(|line| line == "[NEOTH_AGREEMENT_V1]"));
+            let envelopes: Vec<serde_json::Value> = prompt
+                .lines()
+                .filter_map(|line| serde_json::from_str(line).ok())
+                .collect();
+            assert_eq!(
+                envelopes.len(),
+                1,
+                "the original question is framed exactly once"
+            );
+            assert!(!envelopes[0].to_string().contains("NEOTH_AGREEMENT_V1"));
+        }
+        for (leaf, cap) in [("body without evidence", 12), (answer, 2)] {
+            let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let calls = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+            let left = RecursiveFake {
+                id: "l",
+                leaf,
+                seen: seen.clone(),
+                calls: calls.clone(),
+            };
+            let right = RecursiveFake {
+                id: "r",
+                leaf,
+                seen: seen.clone(),
+                calls: calls.clone(),
+            };
+            let cere = RecursiveFake {
+                id: "c",
+                leaf,
+                seen,
+                calls: calls.clone(),
+            };
+            let budget = BudgetToken::new(cap);
+            let result = run_debate_v1_with_depth_budget(
+                "p",
+                0,
+                2,
+                budget.clone(),
+                &left,
+                &right,
+                &cere,
+                None,
+                &[],
+            )
+            .await;
+            assert!(!matches!(result.verdict, Verdict::Consensus { .. }));
+            assert!(!result.agreement.textual_identity);
+            assert!(budget.used() <= cap);
+            if cap == 2 {
+                assert_eq!(budget.used(), 2);
+                assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn envelope_only_v1_response_cannot_consense() {
+        let envelope = "[NEOTH_AGREEMENT_V1]\nfactual_claims: fact.\nrecommendations: act.\nrisk_assessment: risk.\n[/NEOTH_AGREEMENT_V1]";
+        let l = mk("l", envelope);
+        let r = mk("r", envelope);
+        let c = mk("c", envelope);
+        let debate =
+            run_debate_v1_with_depth_budget("p", 0, 1, BudgetToken::new(3), &l, &r, &c, None, &[])
+                .await;
+        assert!(!matches!(debate.verdict, Verdict::Consensus { .. }));
+        assert_eq!(debate.usable_responses().count(), 0);
     }
 }

@@ -32,7 +32,7 @@ use crate::wal::compress::decompress_frames;
 use crate::wal::events::{
     EVENT_TYPE_COUNCIL_DIVERSITY_WARNING, EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL,
     EVENT_TYPE_COUNCIL_SKIP, EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED, EVENT_TYPE_COUNCIL_TRANSCRIPT,
-    EVENT_TYPE_COUNCIL_WINNER_SELECTED,
+    EVENT_TYPE_COUNCIL_WINNER_SELECTED, EVENT_TYPE_EXTENDED, ExtendedSubtype,
 };
 use crate::wal::frame::decode_frame;
 use crate::wal::segment_header::parse_segment_header;
@@ -602,6 +602,12 @@ fn council_code_name(event_type: u8) -> Option<&'static str> {
 /// no salient extra field.
 fn council_row_summary(row: &CouncilEventRow) -> String {
     match row.code {
+        EVENT_TYPE_EXTENDED if row.code_name == "agreement_evaluated" => row
+            .payload
+            .get("textual_identity")
+            .and_then(|v| v.as_bool())
+            .map(|identical| format!("textual_identity={identical}"))
+            .unwrap_or_else(|| "agreement metadata".to_string()),
         EVENT_TYPE_COUNCIL_SKIP => row
             .payload
             .get("reason")
@@ -677,7 +683,12 @@ fn walk_council_frames(frames: &[u8], out: &mut Vec<CouncilEventRow>) -> Result<
             Ok(d) => d,
             Err(_) => break,
         };
-        if let Some(code_name) = council_code_name(dec.header.event_type) {
+        let code_name = council_code_name(dec.header.event_type).or_else(|| {
+            (dec.header.event_type == EVENT_TYPE_EXTENDED
+                && dec.header.event_subtype == ExtendedSubtype::CouncilAgreementEvaluated as u8)
+                .then_some("agreement_evaluated")
+        });
+        if let Some(code_name) = code_name {
             let payload: serde_json::Value =
                 serde_json::from_slice(dec.payload).with_context(|| {
                     format!(
@@ -1419,6 +1430,38 @@ mod tests {
         let mut synth = row(3, 3);
         synth.code = EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED;
         assert_eq!(council_row_summary(&synth), "");
+    }
+
+    #[test]
+    fn walk_council_frames_recognizes_agreement_extended_subtype_and_summary() {
+        let payload = serde_json::to_vec(&json!({
+            "prompt_hash": "00000000000000ab",
+            "protocol": "v1",
+            "textual_identity": false,
+            "weighted_score": 0.5,
+            "dimensions": [
+                {"dimension": "factual_claims", "state": "disagreed", "score": 0.0},
+                {"dimension": "recommendations", "state": "scored", "score": 1.0},
+                {"dimension": "risk_assessment", "state": "missing", "missing_reason": "absent"}
+            ]
+        }))
+        .unwrap();
+        let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
+            .event_subtype(ExtendedSubtype::CouncilAgreementEvaluated as u8)
+            .build();
+        let frames = crate::wal::frame::encode_frame(&header, &payload);
+        let mut rows = Vec::new();
+
+        walk_council_frames(&frames, &mut rows).unwrap();
+
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.code, EVENT_TYPE_EXTENDED);
+        assert_eq!(row.code_name, "agreement_evaluated");
+        assert_eq!(row.prompt_hash.as_deref(), Some("00000000000000ab"));
+        assert_eq!(row.payload["weighted_score"], 0.5);
+        assert_eq!(row.payload["dimensions"][1]["state"], "scored");
+        assert_eq!(council_row_summary(row), "textual_identity=false");
     }
 
     #[test]

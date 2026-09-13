@@ -13,6 +13,7 @@
 //! helpers remain deterministic; provider calls and durable audit writes stay
 //! in their explicit runtime callers.
 
+pub mod agreement;
 pub mod budget;
 pub mod callosum;
 pub(crate) mod daily_budget;
@@ -55,6 +56,7 @@ pub mod transparent;
 pub mod trigger;
 pub mod types;
 
+pub use agreement::{AgreementDimension, AgreementReport, DimensionAgreement, DimensionState};
 #[allow(unused_imports)]
 pub use budget::{BudgetExhausted, BudgetToken};
 #[allow(unused_imports)]
@@ -68,7 +70,10 @@ pub use eval::{EvalOutcome, FIXTURES, FixtureCategory, GroundTruthFixture, verif
 #[allow(unused_imports)]
 pub use motive_ident::classify_motive;
 #[allow(unused_imports)]
-pub use orchestrator::{run_debate, run_debate_with_depth, run_debate_with_depth_budget};
+pub use orchestrator::{
+    run_debate, run_debate_v1_with_depth_budget, run_debate_with_depth,
+    run_debate_with_depth_budget,
+};
 #[allow(unused_imports)]
 pub use trigger::{TriggerContext, TriggerDecision, TriggerPolicy, should_convene};
 #[allow(unused_imports)]

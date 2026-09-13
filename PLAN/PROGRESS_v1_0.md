@@ -3,25 +3,38 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
-> **P1-07 acceptance 2026-09-13:** the existing provider/family roster and
+> **Wave 9 completion 2026-09-13 — GOLD-LF-P1-06:** the production Council
+> now evaluates factual claims, recommendations and risks with explicit
+> 50/30/20 weights and conservative textual identity. Nested debates preserve
+> one trusted protocol instruction and the shared budget; inner Split,
+> malformed/absent evidence and empty answers cannot become V1 consensus.
+> Actual WAL/readback tests cover metadata-only emission and Incognito.
+> Final source review, Core check, strict Clippy and formatting passed;
+> **470 selected behavior tests passed, zero failures or ignored tests**.
+> Evidence: `docs/gold-wave9-verification.md` and its source/test JSON files.
+> Current counts: **1,324 total / 1,009 complete / 313 open / 2 partial =
+> 315 raw blockers and 314 pre-tag blockers**. P1-08 and the full release
+> gates remain open. Publication targets GitHub main directly.
+>
+> **P1-07 publication 2026-09-13:** the provider/family roster and
 > complete-matrix parity gate is published on GitHub main at `b1bb5559`;
 > its exact-commit Preflight and Code Quality checks passed.
+> The existing implementation passed 36 focused tests against `1f2860cd`;
+> no production code was duplicated. Evidence: `docs/gold-p1-07-acceptance.md`
+> and its JSON receipt. P1-07 is complete; P1-08 live provenance remains open.
 >
 > **Bridge dependency checkpoint 2026-09-13:** Baileys remains
 > `7.0.0-rc13`; its Sharp peer is pinned to patched `0.35.4` for
 > Dependabot #28 / GHSA-rgj7-g3m4-5g8c. Frozen-lock installation, 14 bridge
 > tests (one platform skip), resolved peer inspection and an actual Windows
 > PNG encode/decode passed. Evidence: `docs/baileys-sharp-20260913.md`.
+> Published on main at `9c57a951`; both exact-commit checks passed and
+> GitHub marked alert #28 fixed at 2026-09-13 07:57:28 UTC.
 > R3-10 remains open; no checkbox or release/platform claim changes.
 >
-> **P1-07 acceptance evidence 2026-09-13:** the existing provider/family roster and
-> complete-matrix parity gate passed its own 36 focused tests at `1f2860cd`.
-> `GOLD-LF-P1-07` is complete; no production code was duplicated. Evidence:
-> `docs/gold-p1-07-acceptance.md` and its JSON receipt. Current counts:
-> **1,324 total / 1,008 complete / 314 open / 2 partial = 316 raw blockers
-> and 315 pre-tag blockers**. P1-08 live provenance and execution remain open.
->
-> **Wave 7 completion 2026-09-13 — GOLD-LF-P1-05:** the remaining native
+> **Wave 7 completion 2026-09-13 — GOLD-LF-P1-05:** the approval batch is
+> published on main at `1f2860cd`; its exact-commit Preflight and Code
+> Quality checks passed. The native
 > Settings/Buddy apply approval is implemented and verified. The complete
 > accepted patch is bound to one live-run approval; cancellation, expiry,
 > replay and stale UI completions cannot mint apply authority. An authenticated
@@ -30,7 +43,7 @@
 > checks, strict Clippy, formatting and the real Slint render/input probe.
 > Canonical evidence: `docs/gold-wave7-verification.md` and
 > `docs/verification/gold-wave7-{source-manifest,test-matrix}.json`.
-> P1-05 closes; current counts: **1,324 total / 1,007 complete / 315 open /
+> P1-05 closes; counts at that checkpoint: **1,324 total / 1,007 complete / 315 open /
 > 2 partial = 317 raw blockers and 316 pre-tag blockers**. This supersedes
 > earlier checkpoints' open GUI/inventory status, not the separate full
 > workspace, live-provider, platform/package or release-candidate gates.
@@ -983,7 +996,7 @@
 > source, machine-readable ledger and ROAD. A dependency-free mutation-tested
 > checker runs in required Gold CI. `GOLD-LF-INTEGRITY-01`, the fully wired
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
-> WAL replay, P1-05 trust decisions and P1-07 family gate are closed: **5 done / 113
+> WAL replay, P1-05 trust decisions, P1-06 agreement and P1-07 family gate are closed: **6 done / 112
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

@@ -1,0 +1,58 @@
+{
+  "schema": "neoth-gold-source-manifest/v1",
+  "item": "GOLD-LF-P1-06",
+  "baseCommit": "9c57a95109c70ccc34c9fdc2c4663015159e8b4f",
+  "recordedUtc": "2026-09-13T08:22:14.6030439Z",
+  "files": [
+    {
+      "path": "SRC/neothd/src/council/agreement.rs",
+      "bytes": 16603,
+      "sha256": "80CD2E24BBDE60EE7D1D456A0A2F7FEA2200725936C82683D3EDEFE97743B6E3"
+    },
+    {
+      "path": "SRC/neothd/src/council/mod.rs",
+      "bytes": 3551,
+      "sha256": "524D5B63E574C1B4ADCFF83EF80E5A3296E8BADC6C1FF08F191FCD34B201F2C5"
+    },
+    {
+      "path": "SRC/neothd/src/council/types.rs",
+      "bytes": 60979,
+      "sha256": "F48390DF1D4151763435E3D3F688E905E99E2A79E88BFA9B8046F61FFCDE60AD"
+    },
+    {
+      "path": "SRC/neothd/src/council/orchestrator.rs",
+      "bytes": 86573,
+      "sha256": "5A0AC350CC5B1B4C63DB8A1675964E340370061B35BA6F497CF51A8F63BFD9F2"
+    },
+    {
+      "path": "SRC/neothd/src/council/factual_check.rs",
+      "bytes": 28264,
+      "sha256": "CFCC8B9EF95B31CAED4D540697DAAA0ECDBD72753E5DB993C8C2EA6257228B8E"
+    },
+    {
+      "path": "SRC/neothd/src/council/eval.rs",
+      "bytes": 15958,
+      "sha256": "3307FBED521E510BC965A098E0EA43F009C698F1093591367BE94B06918C1612"
+    },
+    {
+      "path": "SRC/neothd/src/council/transparent.rs",
+      "bytes": 6641,
+      "sha256": "F63A6BCF656A2377C59876A01442FE5AB734A82C5C3838D056A2B7AE5958E958"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "bytes": 842199,
+      "sha256": "70299E3654C626DE2F064CCDD2202C33309519A3F621FE40AB74CA912858CFB0"
+    },
+    {
+      "path": "SRC/neothd/src/cli/council.rs",
+      "bytes": 60797,
+      "sha256": "C9DA71F0DB9F32C0609BD4ED0AF4E5E577D20A01D62C04A2BDCE384C72A48ED0"
+    },
+    {
+      "path": "SRC/neothd/src/wal/events.rs",
+      "bytes": 267544,
+      "sha256": "EA6F4557DDACA202E4A630E7A83B258275E09B8779568DBBB64F4B99E7CC0F78"
+    }
+  ]
+}

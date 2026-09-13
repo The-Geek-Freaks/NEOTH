@@ -1,0 +1,105 @@
+{
+  "schema": "neoth-gold-test-matrix/v1",
+  "item": "GOLD-LF-P1-06",
+  "recordedUtc": "2026-09-13T08:31:02.053Z",
+  "sourceManifest": "gold-wave9-source-manifest.json",
+  "binary": {
+    "path": "SRC/target/debug/deps/neothd-a576cce183334209.exe",
+    "sha256": "D8EBFAE7283E5C898F40CC408BE3A9FD15216464066E7D6B1BEFB142E36C203D",
+    "bytes": 273872896,
+    "lastWriteTimeUtc": "2026-09-13T08:27:14.3217731Z",
+    "testSummary": "14205 tests, 0 benchmarks"
+  },
+  "groups": [
+    {
+      "filter": "council::",
+      "passed": 413,
+      "failed": 0,
+      "ignored": 0,
+      "exitCode": 0
+    },
+    {
+      "filter": "wal::events::",
+      "passed": 29,
+      "failed": 0,
+      "ignored": 0,
+      "exitCode": 0
+    },
+    {
+      "filter": "security::prompt_envelope::",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "exitCode": 0
+    },
+    {
+      "name": "selected CLI chat Council/hemisphere tests",
+      "exactTests": [
+        "cli::chat::tests::all_local_council_can_convene_with_zero_daily_usd_cap",
+        "cli::chat::tests::build_hemisphere_sets_role_voice_on_field_not_base_req",
+        "cli::chat::tests::council_agreement_audit_wal_is_one_metadata_frame_without_declarations_or_body",
+        "cli::chat::tests::council_mode_council_is_default_and_does_not_inject_skip",
+        "cli::chat::tests::council_mode_single_as_str_and_council_as_str",
+        "cli::chat::tests::council_mode_single_forces_skip_regardless_of_env",
+        "cli::chat::tests::council_nonfinal_leaf_is_quarantined_before_debate_aggregation",
+        "cli::chat::tests::council_outer_roles_override_primary_model_with_alias_resolved_role_models",
+        "cli::chat::tests::council_role_without_model_uses_its_provider_default_not_primary_model",
+        "cli::chat::tests::diversity_bonus_split_verdict_uses_other_hemisphere_as_proxy",
+        "cli::chat::tests::diversity_bonus_zero_for_errored_hemisphere",
+        "cli::chat::tests::evaluate_council_trigger_disable_beats_force_enable",
+        "cli::chat::tests::evaluate_council_trigger_disabled_flag_forces_skip",
+        "cli::chat::tests::evaluate_council_trigger_not_disabled_allows_force_enable",
+        "cli::chat::tests::evaluate_council_trigger_uses_configured_daily_usd_headroom",
+        "cli::chat::tests::hemisphere_recall_fragment_at_missing_db_is_none",
+        "cli::chat::tests::hemisphere_recall_fragment_cerebellum_pulls_operational_band",
+        "cli::chat::tests::hemisphere_recall_fragment_left_leads_with_groundtruth",
+        "cli::chat::tests::hemisphere_region_maps_roles_exhaustively",
+        "cli::chat::tests::incognito_council_dispatch_audit_emits_no_frames",
+        "cli::chat::tests::recursive_council_subslot_overrides_parent_model_with_alias_resolved_model",
+        "cli::chat::tests::sum_council_tokens_aggregates_and_preserves_unknown"
+      ],
+      "passed": 22,
+      "failed": 0,
+      "ignored": 0,
+      "exitCode": 0
+    }
+  ],
+  "total": {
+    "passed": 470,
+    "failed": 0,
+    "ignored": 0
+  },
+  "gates": {
+    "testBuild": "PASS",
+    "coreCheck": "PASS",
+    "strictClippy": "PASS",
+    "workspaceFormat": "PASS",
+    "independentSourceReview": "CLEAR",
+    "roadmapStatic": {
+      "passed": 11,
+      "failed": 0
+    },
+    "lostFeatureIntegrity": {
+      "passed": 19,
+      "failed": 0
+    }
+  },
+  "scope": "Focused Windows behavior evidence; no full library/workspace, live provider, installer, cross-platform release or semantic correctness claim.",
+  "finalReadback": {
+    "recordedUtc": "2026-09-13T08:31:46.548304+00:00",
+    "checked": [
+      "SRC/neothd/src/council/agreement.rs",
+      "SRC/neothd/src/council/mod.rs",
+      "SRC/neothd/src/council/types.rs",
+      "SRC/neothd/src/council/orchestrator.rs",
+      "SRC/neothd/src/council/factual_check.rs",
+      "SRC/neothd/src/council/eval.rs",
+      "SRC/neothd/src/council/transparent.rs",
+      "SRC/neothd/src/cli/chat.rs",
+      "SRC/neothd/src/cli/council.rs",
+      "SRC/neothd/src/wal/events.rs",
+      "SRC/target/debug/deps/neothd-a576cce183334209.exe"
+    ],
+    "mismatches": 0
+  }
+}

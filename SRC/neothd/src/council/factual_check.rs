@@ -173,6 +173,16 @@ pub fn try_embed_ground_truth_tag(
     prompt: &str,
     assertions: &[FactualAssertion],
 ) -> Result<String, crate::security::PromptBuildError> {
+    try_embed_ground_truth_tag_with_instructions(prompt, assertions, "")
+}
+
+/// Council-owned static instructions remain outside the untrusted question
+/// envelope and before the optional ground-truth suffix.
+pub(super) fn try_embed_ground_truth_tag_with_instructions(
+    prompt: &str,
+    assertions: &[FactualAssertion],
+    instructions: &'static str,
+) -> Result<String, crate::security::PromptBuildError> {
     let question_envelope = serialize_untrusted_prompt(
         PromptEnvelopePurpose::CouncilGroundTruthQuestion,
         &[UntrustedPromptField::new(
@@ -182,7 +192,7 @@ pub fn try_embed_ground_truth_tag(
     )?;
     if assertions.is_empty() {
         return Ok(format!(
-            "{QUESTION_ENVELOPE_INSTRUCTIONS}\n\n{question_envelope}"
+            "{QUESTION_ENVELOPE_INSTRUCTIONS}\n\n{question_envelope}{instructions}"
         ));
     }
     preflight_assertions_json(assertions)?;
@@ -196,7 +206,7 @@ pub fn try_embed_ground_truth_tag(
         )],
     )?;
     Ok(format!(
-        "{QUESTION_ENVELOPE_INSTRUCTIONS}\n\n{question_envelope}\n\n\
+        "{QUESTION_ENVELOPE_INSTRUCTIONS}\n\n{question_envelope}{instructions}\n\n\
          {open}\n{GROUND_TRUTH_ENVELOPE_INSTRUCTIONS}\n{assertions_envelope}\n{close}",
         open = GROUND_TRUTH_TAG_OPEN,
         close = GROUND_TRUTH_TAG_CLOSE,

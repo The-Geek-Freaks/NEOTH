@@ -221,6 +221,7 @@ mod tests {
     fn mk_debate_consensus(text: &str) -> CouncilDebate {
         CouncilDebate {
             factual_outcomes: Vec::new(),
+            agreement: Default::default(),
             prompt_hash_xxh3: 0,
             responses: vec![
                 mk_response(HemisphereRole::Left, text),
@@ -285,6 +286,7 @@ mod tests {
         let fixture = FIXTURES.iter().find(|f| f.id == "strawberry_rs").unwrap();
         let debate = CouncilDebate {
             factual_outcomes: Vec::new(),
+            agreement: Default::default(),
             prompt_hash_xxh3: 0,
             responses: vec![
                 mk_response(HemisphereRole::Left, "3 r's"),
@@ -305,6 +307,7 @@ mod tests {
         let fixture = FIXTURES.iter().find(|f| f.id == "strawberry_rs").unwrap();
         let debate = CouncilDebate {
             factual_outcomes: Vec::new(),
+            agreement: Default::default(),
             prompt_hash_xxh3: 0,
             responses: vec![mk_response(HemisphereRole::Left, "I refuse to answer")],
             dissent: DissentScore(0.0),

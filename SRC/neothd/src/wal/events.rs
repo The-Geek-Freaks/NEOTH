@@ -263,6 +263,9 @@ pub enum ExtendedSubtype {
     /// Legacy `PERMISSION_GRANTED` / `PERMISSION_DENIED` frames remain intact;
     /// this subtype is the typed, subject-scoped TrustLedger projection.
     TrustDecision = 0x2A,
+    /// GOLD-LF-P1-06 — metadata-only outcome of the strict Council
+    /// agreement protocol. Declared statements are intentionally transient.
+    CouncilAgreementEvaluated = 0x2B,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -359,6 +362,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::TranscriptMiningBound => "transcript_mining_bound",
             ExtendedSubtype::TranscriptMiningRevoked => "transcript_mining_revoked",
             ExtendedSubtype::TrustDecision => "trust_decision",
+            ExtendedSubtype::CouncilAgreementEvaluated => "council_agreement_evaluated",
         }
     }
 
@@ -407,6 +411,7 @@ impl ExtendedSubtype {
             0x28 => Some(ExtendedSubtype::TranscriptMiningBound),
             0x29 => Some(ExtendedSubtype::TranscriptMiningRevoked),
             0x2A => Some(ExtendedSubtype::TrustDecision),
+            0x2B => Some(ExtendedSubtype::CouncilAgreementEvaluated),
             _ => None,
         }
     }
@@ -457,6 +462,7 @@ impl ExtendedSubtype {
             Self::TranscriptMiningBound,
             Self::TranscriptMiningRevoked,
             Self::TrustDecision,
+            Self::CouncilAgreementEvaluated,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -4068,6 +4074,8 @@ mod tests {
             ExtendedSubtype::ContextEvidenceReceipt,
             ExtendedSubtype::TranscriptMiningBound,
             ExtendedSubtype::TranscriptMiningRevoked,
+            ExtendedSubtype::TrustDecision,
+            ExtendedSubtype::CouncilAgreementEvaluated,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

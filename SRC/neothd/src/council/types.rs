@@ -219,6 +219,10 @@ pub struct CouncilDebate {
     /// assertions may contain operator facts).
     #[serde(default)]
     pub factual_outcomes: Vec<(String, bool, usize)>,
+    /// Metadata-only evidence report. Legacy direct APIs leave this as
+    /// `not_evaluated`; production V1 debates populate it.
+    #[serde(default)]
+    pub agreement: super::agreement::AgreementReport,
 }
 
 impl CouncilDebate {
@@ -744,6 +748,7 @@ mod tests {
     fn debate(responses: Vec<HemisphereResponse>) -> CouncilDebate {
         CouncilDebate {
             factual_outcomes: Vec::new(),
+            agreement: Default::default(),
             prompt_hash_xxh3: 0,
             responses,
             dissent: super::super::dissent::DissentScore(0.1),
@@ -869,6 +874,7 @@ mod tests {
     fn winning_text_returns_consensus_payload() {
         let d = CouncilDebate {
             factual_outcomes: Vec::new(),
+            agreement: Default::default(),
             prompt_hash_xxh3: 0,
             responses: vec![],
             dissent: super::super::dissent::DissentScore(0.0),
@@ -884,6 +890,7 @@ mod tests {
     fn winning_text_returns_none_on_split() {
         let d = CouncilDebate {
             factual_outcomes: Vec::new(),
+            agreement: Default::default(),
             prompt_hash_xxh3: 0,
             responses: vec![],
             dissent: super::super::dissent::DissentScore(0.5),
@@ -899,6 +906,7 @@ mod tests {
     fn response_for_finds_by_role() {
         let d = CouncilDebate {
             factual_outcomes: Vec::new(),
+            agreement: Default::default(),
             prompt_hash_xxh3: 0,
             responses: vec![
                 mk_resp(HemisphereRole::Left, Some("L")),
@@ -975,6 +983,7 @@ mod tests {
     fn debate_with(responses: Vec<HemisphereResponse>) -> CouncilDebate {
         CouncilDebate {
             factual_outcomes: Vec::new(),
+            agreement: Default::default(),
             prompt_hash_xxh3: 0,
             responses,
             dissent: super::super::dissent::DissentScore(0.0),
